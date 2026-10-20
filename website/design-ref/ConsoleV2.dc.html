@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Console, draft 2: bold hero, screenshot slider, per-OS downloads</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+button{font-family: inherit}
+a{color:#6FD8F5}a:hover{color:#E6EEF5}
+</style>
+</helmet>
+<div style="width: 1440px; height: 2360px; box-sizing: border-box; background: #0A0E16; color: #E6EEF5; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; position: relative; overflow: hidden">
+
+  <svg aria-hidden="true" width="1440" height="1000" viewBox="0 0 1440 1000" style="position: absolute; top: 0; left: 0; pointer-events: none">
+    <defs>
+      <radialGradient id="cGlowA" cx="0.5" cy="0.18" r="0.55">
+        <stop offset="0" stop-color="#17A8E6" stop-opacity="0.30"></stop>
+        <stop offset="1" stop-color="#17A8E6" stop-opacity="0"></stop>
+      </radialGradient>
+      <radialGradient id="cGlowB" cx="0.88" cy="0.7" r="0.35">
+        <stop offset="0" stop-color="#4CC38A" stop-opacity="0.12"></stop>
+        <stop offset="1" stop-color="#4CC38A" stop-opacity="0"></stop>
+      </radialGradient>
+      <pattern id="cGrid" width="48" height="48" patternUnits="userSpaceOnUse">
+        <path d="M48 0 H0 V48" fill="none" stroke="#24303F" stroke-width="1" stroke-opacity="0.45"></path>
+      </pattern>
+      <linearGradient id="cGridFade" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#fff" stop-opacity="0.9"></stop>
+        <stop offset="1" stop-color="#fff" stop-opacity="0"></stop>
+      </linearGradient>
+      <mask id="cGridMask"><rect width="1440" height="1000" fill="url(#cGridFade)"></rect></mask>
+    </defs>
+    <rect width="1440" height="1000" fill="url(#cGrid)" mask="url(#cGridMask)"></rect>
+    <rect width="1440" height="1000" fill="url(#cGlowA)"></rect>
+    <rect width="1440" height="1000" fill="url(#cGlowB)"></rect>
+  </svg>
+
+  <!-- Top bar -->
+  <header style="position: relative; width: 1240px; display: flex; align-items: center; gap: 28px; padding: 20px 0; border-bottom: 1px solid #24303F">
+    <a href="/" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: #E6EEF5; font-weight: 800; font-size: 20px; letter-spacing: -0.01em">
+      <svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#17A8E6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="4"></rect><path d="M8 10 L11 12.5 L8 15"></path><path d="M13 15 H16"></path></svg>
+      Fugaro
+    </a>
+    <div style="flex-grow: 1"></div>
+    <nav aria-label="Site" style="display: flex; gap: 22px; font-size: 14px">
+      <a href="/" style="color: #9FB2C4; text-decoration: none">Home</a>
+      <a href="/how-it-works/" style="color: #9FB2C4; text-decoration: none">How it works</a>
+      <a href="/getting-started/" style="color: #9FB2C4; text-decoration: none">Getting started</a>
+      <a href="/console/" aria-current="page" style="color: #E6EEF5; text-decoration: none; font-weight: 600; border-bottom: 2px solid #17A8E6; padding-bottom: 2px">Console</a>
+      <a href="/caps-and-costs/" style="color: #9FB2C4; text-decoration: none">Caps and costs</a>
+      <a href="/docs/" style="color: #9FB2C4; text-decoration: none">Docs</a>
+      <a href="/changelog/" style="color: #9FB2C4; text-decoration: none">Changelog</a>
+      <a href="/security/" style="color: #9FB2C4; text-decoration: none">Security</a>
+      <a href="/faq/" style="color: #9FB2C4; text-decoration: none">FAQ</a>
+      <a href="/community/" style="color: #9FB2C4; text-decoration: none">Community</a>
+    </nav>
+  </header>
+
+  <!-- Hero -->
+  <section aria-labelledby="console-title" style="position: relative; width: 1240px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 28px; padding: 96px 0 64px">
+    <div style="display: inline-flex; align-items: center; gap: 10px; padding: 7px 14px; border: 1px solid #24303F; border-radius: 999px; background: #0D131D; font-size: 14px; color: #9FB2C4">
+      <span style="width: 8px; height: 8px; border-radius: 50%; background: #4CC38A; box-shadow: 0 0 10px #4CC38A"></span>
+      console-v0.9.0 · macOS
+    </div>
+    <h1 id="console-title" style="margin: 0; font-size: 104px; line-height: 0.94; font-weight: 900; letter-spacing: -0.045em">The Fugaro<br><span style="background: linear-gradient(92deg, #6FD8F5 0%, #17A8E6 55%, #4CC38A 100%); -webkit-background-clip: text; background-clip: text; color: transparent">desktop console</span></h1>
+    <p style="margin: 0; font-size: 26px; line-height: 1.4; color: #9FB2C4; max-width: 760px">A live view of your runs. No backend, no credential of its own.</p>
+    <div style="display: flex; align-items: center; gap: 28px; padding-top: 6px">
+      <a href="#downloads" style="display: inline-flex; align-items: center; gap: 12px; padding: 20px 34px; border-radius: 16px; background: linear-gradient(180deg, #2DB6F0 0%, #17A8E6 100%); color: #0A0E16; font-size: 20px; font-weight: 800; text-decoration: none; box-shadow: 0 12px 40px rgba(23,168,230,0.35)">
+        <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0A0E16" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 V16"></path><path d="M6 10 L12 16 L18 10"></path><path d="M4 20 H20"></path></svg>
+        Download for macOS
+      </a>
+      <a href="/getting-started/" style="font-size: 18px; font-weight: 600; color: #6FD8F5">Install the CLI first</a>
+    </div>
+  </section>
+
+  <!-- Screenshot slider -->
+  <section aria-label="Console screenshots" style="position: relative; width: 1240px; display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 0 0 112px">
+    <div style="width: 1240px; border-radius: 20px; padding: 1px; background: linear-gradient(140deg, #17A8E6 0%, #24303F 40%, #24303F 70%, #4CC38A 100%); box-shadow: 0 30px 80px rgba(0,0,0,0.5)">
+      <div style="border-radius: 19px; background: #0D131D; padding: 28px; display: flex; align-items: center; gap: 24px">
+        <button type="button" aria-label="Previous screenshot" style="width: 56px; height: 56px; flex-shrink: 0; border-radius: 16px; border: 1px solid #24303F; background: #121A26; color: #E6EEF5; display: flex; align-items: center; justify-content: center; cursor: pointer">
+          <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#E6EEF5" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5 L8 12 L15 19"></path></svg>
+        </button>
+
+        <div role="img" aria-label="Screenshot placeholder 1 of 3: no console screenshot exists yet" style="flex: 1 1 0; height: 620px; border-radius: 16px; border: 2px dashed #24303F; background: repeating-linear-gradient(135deg, #0D131D 0px, #0D131D 18px, #101722 18px, #101722 36px); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px">
+          <svg aria-hidden="true" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#9FB2C4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.6"></circle><path d="M21 16 L15.5 11 L6 19"></path></svg>
+          <div style="font-size: 22px; font-weight: 800; letter-spacing: -0.01em; color: #E6EEF5">SCREENSHOT PLACEHOLDER 1 / 3</div>
+          <div style="font-size: 16px; color: #9FB2C4">Real console screenshot goes here (not taken yet)</div>
+        </div>
+
+        <button type="button" aria-label="Next screenshot" style="width: 56px; height: 56px; flex-shrink: 0; border-radius: 16px; border: 1px solid #24303F; background: #121A26; color: #E6EEF5; display: flex; align-items: center; justify-content: center; cursor: pointer">
+          <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#E6EEF5" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5 L16 12 L9 19"></path></svg>
+        </button>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px">
+      <button type="button" aria-label="Show screenshot 1" aria-current="true" style="width: 32px; height: 10px; padding: 0; border: 0; border-radius: 999px; background: #17A8E6; cursor: pointer"></button>
+      <button type="button" aria-label="Show screenshot 2" style="width: 10px; height: 10px; padding: 0; border: 0; border-radius: 999px; background: #24303F; cursor: pointer"></button>
+      <button type="button" aria-label="Show screenshot 3" style="width: 10px; height: 10px; padding: 0; border: 0; border-radius: 999px; background: #24303F; cursor: pointer"></button>
+    </div>
+    <div style="font-size: 15px; color: #9FB2C4">Caption placeholder: one line naming the screen shown</div>
+  </section>
+
+  <!-- Downloads -->
+  <section id="downloads" aria-labelledby="downloads-heading" style="position: relative; width: 1240px; display: flex; flex-direction: column; gap: 36px; padding: 0 0 112px">
+    <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 40px">
+      <h2 id="downloads-heading" style="margin: 0; font-size: 64px; line-height: 1; font-weight: 900; letter-spacing: -0.04em">Downloads</h2>
+      <p style="margin: 0; font-size: 18px; color: #9FB2C4; max-width: 520px; text-align: right">Signed and notarised by Apple. <a href="/getting-started/" style="color: #6FD8F5">Install the CLI first</a>: the console runs its read-only commands.</p>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 24px">
+      <!-- macOS: offered -->
+      <div style="border-radius: 20px; padding: 1px; background: linear-gradient(160deg, #17A8E6 0%, #24303F 60%)">
+        <div style="height: 100%; box-sizing: border-box; border-radius: 19px; background: #0D131D; padding: 32px; display: flex; flex-direction: column; gap: 22px">
+          <div style="display: flex; align-items: center; gap: 14px">
+            <div style="width: 56px; height: 56px; border-radius: 16px; background: #121A26; border: 1px solid #24303F; display: flex; align-items: center; justify-content: center">
+              <svg role="img" aria-label="macOS" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#6FD8F5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"></rect><path d="M1 20h22"></path></svg>
+            </div>
+            <h3 style="margin: 0; font-size: 32px; font-weight: 850; letter-spacing: -0.02em">macOS</h3>
+            <div style="flex-grow: 1"></div>
+            <span style="font-size: 13px; font-weight: 700; color: #4CC38A; border: 1px solid #4CC38A; border-radius: 999px; padding: 4px 12px">Universal</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 12px">
+            <div style="display: flex; align-items: center; gap: 16px">
+              <a href="#downloads" style="flex-shrink: 0; width: 150px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 10px; padding: 14px 18px; border-radius: 14px; background: linear-gradient(180deg, #2DB6F0 0%, #17A8E6 100%); color: #0A0E16; font-weight: 800; font-size: 17px; text-decoration: none">
+                <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0A0E16" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 V16"></path><path d="M6 10 L12 16 L18 10"></path></svg>
+                macOS .dmg
+              </a>
+              <code style="font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #9FB2C4; word-break: break-all">3bde68eae6542886e5243c74f7137d58a05b8a6b349987c412bb42ba681abbfb</code>
+            </div>
+            <div style="display: flex; align-items: center; gap: 16px">
+              <a href="#downloads" style="flex-shrink: 0; width: 150px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 10px; padding: 14px 18px; border-radius: 14px; border: 1px solid #24303F; background: #121A26; color: #E6EEF5; font-weight: 800; font-size: 17px; text-decoration: none">
+                <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E6EEF5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 V16"></path><path d="M6 10 L12 16 L18 10"></path></svg>
+                macOS .zip
+              </a>
+              <code style="font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #9FB2C4; word-break: break-all">af86fb8bd01464e63395e9473b0adea4b9f8eae610542d691f31bf2f13117f8a</code>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 12px; border-radius: 14px; border: 1px solid #24303F; background: #0A0E16; padding: 12px 12px 12px 18px">
+            <code style="flex: 1 1 0; font-family: ui-monospace, Menlo, monospace; font-size: 15px; color: #E6EEF5">shasum -a 256 Fugaro.Console-*</code>
+            <button type="button" aria-label="Copy the checksum verification command" style="border: 1px solid #24303F; background: #121A26; color: #6FD8F5; font-weight: 700; font-size: 14px; border-radius: 10px; padding: 8px 14px; cursor: pointer">Copy</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Windows: not offered -->
+      <div style="border-radius: 20px; border: 1px solid #24303F; background: #0D131D; padding: 32px; display: flex; flex-direction: column; gap: 18px">
+        <div style="display: flex; align-items: center; gap: 14px">
+          <div style="width: 56px; height: 56px; border-radius: 16px; background: #121A26; border: 1px solid #24303F; display: flex; align-items: center; justify-content: center">
+            <svg role="img" aria-label="Windows" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#9FB2C4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18"></path><path d="M12 9v11"></path></svg>
+          </div>
+          <h3 style="margin: 0; font-size: 32px; font-weight: 850; letter-spacing: -0.02em">Windows</h3>
+        </div>
+        <span style="align-self: flex-start; font-size: 13px; font-weight: 700; color: #F5A524; border: 1px solid #F5A524; border-radius: 999px; padding: 4px 12px">Not offered</span>
+        <p style="margin: 0; font-size: 18px; line-height: 1.45; color: #9FB2C4">A Windows build does not exist yet.</p>
+      </div>
+
+      <!-- Linux: slot ready for a future card -->
+      <div style="border-radius: 20px; border: 2px dashed #24303F; background: #0D131D; padding: 31px; display: flex; flex-direction: column; gap: 18px">
+        <div style="display: flex; align-items: center; gap: 14px">
+          <div style="width: 56px; height: 56px; border-radius: 16px; background: #121A26; border: 1px solid #24303F; display: flex; align-items: center; justify-content: center">
+            <svg role="img" aria-label="Linux" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#9FB2C4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"></rect><path d="M7 9l3 3-3 3"></path><path d="M12 15h5"></path></svg>
+          </div>
+          <h3 style="margin: 0; font-size: 32px; font-weight: 850; letter-spacing: -0.02em">Linux</h3>
+        </div>
+        <span style="align-self: flex-start; font-size: 13px; font-weight: 700; color: #F5A524; border: 1px solid #F5A524; border-radius: 999px; padding: 4px 12px">Not offered</span>
+        <p style="margin: 0; font-size: 18px; line-height: 1.45; color: #9FB2C4">A Linux build does not exist yet.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Facts -->
+  <section aria-labelledby="facts-heading" style="position: relative; width: 1240px; display: flex; flex-direction: column; gap: 32px; padding: 0 0 120px">
+    <h2 id="facts-heading" style="margin: 0; font-size: 44px; line-height: 1; font-weight: 900; letter-spacing: -0.035em">Facts about the console</h2>
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px">
+      <div style="border-radius: 20px; border: 1px solid #24303F; background: #0D131D; padding: 30px; display: flex; flex-direction: column; gap: 14px">
+        <svg aria-hidden="true" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#6FD8F5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12 C5 6 9 4 12 4 C15 4 19 6 22 12 C19 18 15 20 12 20 C9 20 5 18 2 12 Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+        <h3 style="margin: 0; font-size: 24px; font-weight: 850; letter-spacing: -0.02em">Strictly read-only</h3>
+        <p style="margin: 0; font-size: 17px; line-height: 1.45; color: #9FB2C4">Kill, resume and cancel stay in the CLI.</p>
+      </div>
+      <div style="border-radius: 20px; border: 1px solid #24303F; background: #0D131D; padding: 30px; display: flex; flex-direction: column; gap: 14px">
+        <svg aria-hidden="true" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#4CC38A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 L20 6 V12 C20 16.5 16.5 20 12 21 C7.5 20 4 16.5 4 12 V6 Z"></path><path d="M8.5 12 L11 14.5 L15.5 9.5"></path></svg>
+        <h3 style="margin: 0; font-size: 24px; font-weight: 850; letter-spacing: -0.02em">No telemetry</h3>
+        <p style="margin: 0; font-size: 17px; line-height: 1.45; color: #9FB2C4">No crash reporting, no analytics, no identifier in the update check.</p>
+      </div>
+      <div style="border-radius: 20px; border: 1px solid #24303F; background: #0D131D; padding: 30px; display: flex; flex-direction: column; gap: 14px">
+        <svg aria-hidden="true" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#F5A524" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 L20 7.5 V16.5 L12 21 L4 16.5 V7.5 Z"></path><path d="M4 7.5 L12 12 L20 7.5"></path><path d="M12 12 V21"></path></svg>
+        <h3 style="margin: 0; font-size: 24px; font-weight: 850; letter-spacing: -0.02em">Its own artifact</h3>
+        <p style="margin: 0; font-size: 17px; line-height: 1.45; color: #9FB2C4">Published from the CLI's tag, declaring the CLI versions it was built against.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer style="position: relative; width: 1240px; display: flex; gap: 28px; padding: 32px 0; border-top: 1px solid #24303F; font-size: 15px">
+    <a href="https://github.com/dimipaun/fugaro" style="color: #9FB2C4">dimipaun/fugaro</a>
+    <a href="/security/" style="color: #9FB2C4">Security</a>
+    <a href="/changelog/" style="color: #9FB2C4">Changelog</a>
+    <a href="/privacy/" style="color: #9FB2C4">Privacy</a>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":2360}}'>class Component extends DCLogic { renderVals() { return {}; } }</script>
+</body>
+</html>
