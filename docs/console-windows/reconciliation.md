@@ -172,6 +172,11 @@ constraint this work must not break; `Open` is a question the tree cannot answer
 
 ### 2.7 The documents the ruling makes stale (brief item 7, and C4 in the README's O7)
 
+**One finding, four documents, and it is numbered once on purpose**: the sentence *"Windows stays
+out"* is one claim this repository makes in four places, and it is one finding because it moves in
+one edit or in none. The rows below are the four places, and each says which half of the sentence
+moved.
+
 | # | Class | Path | What it says today | What the ruling makes it |
 |---|---|---|---|---|
 | **F43** | Wrong | `docs/windows-cli/wsl.md` (its "What native Windows does not do yet" table, the row *"The desktop console \| Out of scope: it needs a Windows CLI and an Authenticode-grade decision first (**F40**)"*, and its F40 line above the table) | The console cannot reach a WSL-only installation. | **Partly reversed for the console**: this work is exactly that reach, and the ruling is the owner's own. The row needs a dated note; the CLI track's F40 stays true of the *CLI*, not of the console. |
