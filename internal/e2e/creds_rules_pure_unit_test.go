@@ -277,6 +277,12 @@ func TestCredsRulesRefusalNeverPrintsTheURL(t *testing.T) {
 		"https://" + crSandboxDBHost + "?auth=" + secret,
 		"https://owner:" + secret + "@" + crSandboxDBHost,
 		"https://owner:" + secret + "@evil.example.com/?auth=" + secret,
+		// The branch of rtdb.ValidateURL that echoes what it was given: a URL
+		// that is not a Firebase address at all. A URL can carry a credential
+		// in its host as well as in its userinfo or its query, and this is the
+		// one shape whose own message would print it — which is why the guard
+		// does not propagate that message.
+		"https://" + secret + ".example.com",
 	} {
 		env := crSandboxEnv()
 		env[crRTDBVar] = url
@@ -737,5 +743,44 @@ func TestCredsRulesSameJSON(t *testing.T) {
 		if crSameJSON(c.got, c.want) {
 			t.Errorf("crSameJSON(%v, %v) = true, want false", c.got, c.want)
 		}
+	}
+}
+
+// TestCredsRulesScratchNamesAreThrowaway: the names one run of the check
+// works under must be unmistakably the check's. A run id that had a real
+// run's shape (20060102-150405-xxxx, what budget.sweep's runIDTime parses)
+// would leave a real-looking Firebase Auth user behind (r~<slug>~<run>) if a
+// cleanup ever failed, and a slug that did not carry the scratch prefix would
+// not be the check's to delete.
+func TestCredsRulesScratchNamesAreThrowaway(t *testing.T) {
+	n := crNewNames(time.Now(), budget.Day(time.Now()))
+	for _, run := range []string{n.run, n.otherRun} {
+		if !strings.HasPrefix(run, crRepoBase) {
+			t.Errorf("the scratch run id %q does not carry the prefix %q", run, crRepoBase)
+		}
+		if len(run) >= 15 {
+			if _, err := time.Parse("20060102-150405", run[:15]); err == nil {
+				t.Errorf("the scratch run id %q has a real run's shape (20060102-150405-xxxx): an Auth user left behind by a failed cleanup would look like a real run's", run)
+			}
+		}
+	}
+	for _, slug := range []string{n.slug, n.otherSlug} {
+		if !strings.HasPrefix(slug, crRepoBase) {
+			t.Errorf("the scratch slug %q does not carry the prefix %q: `fugaro budget show --all` must show no %s* repository when the check is over", slug, crRepoBase, crRepoBase)
+		}
+	}
+	for _, name := range []string{n.n1, n.n2, n.n3} {
+		if !strings.HasPrefix(name, crRepoBase) {
+			t.Errorf("the scratch credential name %q does not carry the prefix %q", name, crRepoBase)
+		}
+	}
+	if n.run == n.otherRun {
+		t.Error("the two scratch runs are the same run id")
+	}
+	if n.day == n.oldDay {
+		t.Error("the refused day is the accepted day")
+	}
+	if n.repo == n.otherRepo {
+		t.Error("the two scratch repositories are the same repository")
 	}
 }
