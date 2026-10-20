@@ -841,3 +841,89 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 		t.Fatalf("a workflow with room for the set: %v", err)
 	}
 }
+
+// backendNamed is a backend.Backend that answers with one codec and nothing
+// else: launchBackend reads the seam for the backend a launch runs on, and no
+// test can select cloud-batch in this build (internal/localcfg refuses the
+// name until the enable task), so the name a launch would carry is stood in
+// for here. The embedded interface is nil, so any other method called on it
+// panics rather than answering something wrong.
+type backendNamed struct {
+	backend.Backend
+	codec backend.Codec
+}
+
+func (b backendNamed) Codec() backend.Codec { return b.codec }
+
+// TestAnArtifactLaunchIsRefusedOnCloudBatch is the launch's arm of Global
+// Constraint 13: an artifact-producing run is never launched on cloud-batch.
+// `fugaro validate` judges the checkout's own recipe offline, so the arm that
+// covers a launch naming its own recipe -- the one a reviewer found missing --
+// is this gate, which asks the same artifactOnBatchRefusal with the recipe the
+// run will actually use, before anything is written.
+//
+// Both ways a launch can carry an artifact recipe are here: the task's own
+// (--recipe, a repository recipe the launcher reads from the checkout) and the
+// one this checkout resolves for it (agent.recipe). The cloud-run case is the
+// mutation guard: a boundary that refused every backend would refuse the one
+// backend artifact runs live on (design artifact-runs.md D11).
+//
+// Mutation (drop the gate, or drop its backend comparison): the cloud-batch
+// case stops refusing; the message assertion fails.
+func TestAnArtifactLaunchIsRefusedOnCloudBatch(t *testing.T) {
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh, render: sh render.sh }\n" +
+		"    resources: { memory: 8Gi }\n"
+	testutil.WriteFiles(t, dir, map[string]string{
+		"fugaro.yaml":                 yaml,
+		".fugaro/recipes/sizzle.yaml": "version: 1\nname: sizzle\nmode: artifact\noutputs: { globs: [out/*.mp4] }\nsteps:\n  - render: {}\n",
+	})
+	t.Chdir(dir)
+	// agent.recipe is written after the first case, so the checkout-resolved
+	// arm is a separate launch and the task's own recipe is not resolved
+	// through it.
+	spec := func() *task.Spec {
+		return &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other",
+			Workflow: "svc", Task: "Render the sizzle reel",
+			Recipe: &task.Recipe{Name: "sizzle", Source: "repo"}}
+	}
+	env := func(name backend.Codec) *cloudEnv { return &cloudEnv{be: backendNamed{codec: name}} }
+	for _, tc := range []struct {
+		name string
+		be   backend.Codec
+		want bool
+	}{
+		{"cloud-batch", backend.BatchCodec(), true},
+		{"cloud-run", backend.CloudRunCodec(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkArtifactLaunch(context.Background(), env(tc.be), spec())
+			if tc.want {
+				if err == nil || !strings.Contains(err.Error(), artifactOnBatchMessage) {
+					t.Fatalf("an artifact launch on %s = %v, want the artifact boundary's refusal", tc.name, err)
+				}
+				if ExitCode(err) != ExitUserError {
+					t.Errorf("the refusal is not a user error: %v", err)
+				}
+				return
+			}
+			if err != nil && strings.Contains(err.Error(), artifactOnBatchMessage) {
+				t.Fatalf("an artifact launch on %s carries the artifact boundary's refusal, and that is the backend artifact runs live on: %v", tc.name, err)
+			}
+		})
+	}
+	// The checkout-resolved arm: a first run with no recipe in its task takes
+	// agent.recipe from this checkout, which is the recipe `fugaro validate`
+	// reads too -- and the same refusal follows it.
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml + "agent: { recipe: sizzle }\n"})
+	noRecipe := spec()
+	noRecipe.Recipe = nil
+	err := checkArtifactLaunch(context.Background(), env(backend.BatchCodec()), noRecipe)
+	if err == nil || !strings.Contains(err.Error(), artifactOnBatchMessage) {
+		t.Fatalf("an artifact launch through agent.recipe = %v, want the artifact boundary's refusal", err)
+	}
+}

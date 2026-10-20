@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 
@@ -23,6 +22,15 @@ import (
 // lines reachable. The one that outlives that enable is the artifact refusal
 // (Global Constraint 13): Task 10 lifts the backend-name refusal and must leave
 // that one standing.
+//
+// The artifact boundary has two arms and this file is only one of them. This
+// arm is offline and per-checkout, so it judges the recipe this checkout
+// resolves the way a launch would (agent.recipe, else the default); a launch
+// that names its own --recipe -- including one that would produce artifacts --
+// is judged by the launch's gate, run.go's checkArtifactLaunch, which asks the
+// same artifactOnBatchRefusal with the recipe the run will actually use. A
+// boundary enforced only here would be a hole the moment the name is
+// selectable, which is exactly what Global Constraint 13 exists to prevent.
 //
 // NOT written here, and why, so a reader of Task 8's step 4 does not have to
 // reconstruct it: design §4.4's item 2 (docker: true requires a Docker-capable
@@ -85,28 +93,50 @@ func batchValidateProblems(lc *localcfg.Config, cfg *config.Config, rcp *recipe.
 	// §8.5 and D11). The repository's recipe is what decides whether a run of
 	// it produces artifacts, so the check reads the recipe this checkout
 	// resolves the way a launch would (agent.recipe, else the default) rather
-	// than guessing from anything in fugaro.yaml.
-	if rcp != nil && rcp.Mode == recipe.ModeArtifact {
-		ps = append(ps, config.Problem{Path: "backend", Message: artifactOnBatchMessage})
+	// than guessing from anything in fugaro.yaml. That resolution is the
+	// offline approximation: a launch that names its own --recipe is judged by
+	// the launch's gate (run.go's checkArtifactLaunch, which asks the same
+	// function below), and Task 10 must leave both standing.
+	if msg, ok := artifactOnBatchRefusal(lc.Backend(), rcp); ok {
+		ps = append(ps, config.Problem{Path: "backend", Message: msg})
 	}
 
-	// The timeouts (design §4.4 item 4). A workflow's clock plus the slack
-	// every backend adds is what run.go sends as the job's maxRunDuration, and
-	// Batch fails a task after batch.MaxRunDuration RUNNING: a workflow past
-	// that is a job Batch refuses at create, so validate refuses it where the
+	// The timeouts (design §4.4 item 4). The job's maxRunDuration is the run's
+	// total plus the slack every backend adds, and Batch fails a task after
+	// batch.MaxRunDuration RUNNING: a total past that is a job Batch refuses at
+	// create, so validate refuses the input that reaches the field where the
 	// operator can see it.
-	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		total := cfg.Workflows[name].Timeouts.Total.Duration
-		if total <= 0 {
-			continue
-		}
-		if total+backend.TaskTimeoutSlack > batch.MaxRunDuration {
-			ps = append(ps, config.Problem{Path: "workflows." + name + ".timeouts.total", Message: fmt.Sprintf(
-				"a workflow on cloud-batch runs for at most %v: this is %v plus the %v every backend adds as the job's maxRunDuration, and Batch fails a task after 14 days RUNNING (docs/design/compute-backend.md §1.3, §9)",
-				batch.MaxRunDuration-backend.TaskTimeoutSlack, total, backend.TaskTimeoutSlack)})
-		}
+	//
+	// On this backend that input is batch.task_timeout, not a workflow's
+	// timeouts.total: batchTimeouts.TaskTimeout answers every workflow with
+	// lc.BatchTaskTimeout() (the field, else backend.MaxRunTime), and a launch
+	// carrying its own --total-timeout is capped at backend.MaxRunTime by
+	// run.go's own bound -- so neither can pass this ceiling. When the enable
+	// task reads the workflow's own timeouts.total per workflow (cloud.go's
+	// batchTimeouts), that value is what this bounds instead, and the field
+	// stops being the answer for every workflow.
+	limit := batch.MaxRunDuration - backend.TaskTimeoutSlack
+	if d := lc.BatchTaskTimeout(); d > limit {
+		ps = append(ps, config.Problem{Path: "batch.task_timeout", Message: fmt.Sprintf(
+			"batch.task_timeout is %v, and the job's maxRunDuration is that plus the %v every backend adds as its slack: Batch fails a task after 14 days RUNNING (%v), so a task timeout above %v is a job Batch refuses at create (docs/design/compute-backend.md §1.3, §9)",
+			d, backend.TaskTimeoutSlack, batch.MaxRunDuration, limit)})
 	}
 	return ps
+}
+
+// artifactOnBatchRefusal is the artifact boundary as both of its callers ask
+// it: the offline check above, and the launch's own gate (run.go's
+// checkArtifactLaunch), which is the arm that holds once Task 10 has made the
+// name selectable. One function rather than two conditions, because a boundary
+// that only one of the two paths enforces is the hole Global Constraint 13
+// exists to keep shut: `fugaro run --recipe <an artifact recipe>` on a Batch
+// installation would be exactly that, and the launch's gate is where the
+// recipe the run will actually use is known.
+func artifactOnBatchRefusal(backendName string, rcp *recipe.Recipe) (string, bool) {
+	if backendName != backend.CloudBatch || rcp == nil || rcp.Mode != recipe.ModeArtifact {
+		return "", false
+	}
+	return artifactOnBatchMessage, true
 }
 
 // artifactOnBatchMessage is the artifact boundary's refusal, named here so

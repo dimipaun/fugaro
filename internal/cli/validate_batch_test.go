@@ -28,6 +28,13 @@ import (
 // and every other field keeps the validation the tree already gives it.
 func batchValidateRig(t *testing.T, machineType, backendName string) *localcfg.Config {
 	t.Helper()
+	return batchValidateRigWith(t, machineType, backendName, "")
+}
+
+// batchValidateRigWith is the same rig with extra lines inside the batch block
+// (the task timeout), for a case that is about a field of the block.
+func batchValidateRigWith(t *testing.T, machineType, backendName, extra string) *localcfg.Config {
+	t.Helper()
 	yaml := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: my-runs\n" +
 		// A complete batch block, less the two fields this rig varies: a block
 		// missing its image, network or account is refused by localcfg's own
@@ -41,6 +48,7 @@ func batchValidateRig(t *testing.T, machineType, backendName string) *localcfg.C
 	if machineType != "" {
 		yaml += "  machine_type: " + machineType + "\n"
 	}
+	yaml += extra
 	lc, err := localcfg.Parse([]byte(yaml))
 	if err != nil {
 		t.Fatalf("the rig's own project config does not parse: %v", err)
@@ -136,16 +144,48 @@ func TestValidateArtifactRefusalIsCloudBatchOnly(t *testing.T) {
 	}
 }
 
-// TestValidateRefusesAWorkflowLongerThanTheRunningCeiling: run.go sends a
-// workflow's clock plus backend.TaskTimeoutSlack as the job's maxRunDuration,
-// and Batch fails a task after 14 days RUNNING (design §1.3, §9). A workflow
-// past that is a job Batch refuses at create, which is what validate is here
-// to say first.
+// TestValidateRefusesATaskTimeoutPastTheRunningCeiling: the job's
+// maxRunDuration is the run's total plus backend.TaskTimeoutSlack, and Batch
+// fails a task after 14 days RUNNING (design §1.3, §9). The total a run
+// reaches that field with on this backend is localcfg.BatchTaskTimeout --
+// batchTimeouts.TaskTimeout answers every workflow with it, and a
+// --total-timeout launch is capped at backend.MaxRunTime -- so
+// batch.task_timeout is what validate bounds. The field's own validation is
+// only "greater than zero" (internal/localcfg), which is why a value past the
+// ceiling would otherwise reach the create.
 //
-// Mutation (drop the check, drop the slack, or use a day count other than
-// batch.MaxRunDuration): the refusal case fails.
-func TestValidateRefusesAWorkflowLongerThanTheRunningCeiling(t *testing.T) {
-	lc := batchValidateRig(t, "e2-standard-4", backend.CloudBatch)
+// Mutation (drop the check, drop the slack, or bound the workflows'
+// timeouts.total instead -- which no launch sends in this build): the refusal
+// case fails, or the case that a long workflow is accepted fires.
+func TestValidateRefusesATaskTimeoutPastTheRunningCeiling(t *testing.T) {
+	lc := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, "  task_timeout: 360h\n")
+	ps := batchValidateProblems(lc, batchValidateConfig(t, batchValidateYAML), nil)
+	if len(ps) != 1 || ps[0].Path != "batch.task_timeout" {
+		t.Fatalf("batch.task_timeout: 360h on cloud-batch = %v, want one problem at batch.task_timeout", ps)
+	}
+	for _, want := range []string{"14 days", "batch.task_timeout", "Batch refuses"} {
+		if !strings.Contains(ps[0].Message, want) {
+			t.Errorf("the timeout refusal does not say %q: %s", want, ps[0].Message)
+		}
+	}
+	// The same installation on Cloud Run is not this check's business.
+	cr := batchValidateRigWith(t, "", backend.CloudRun, "  task_timeout: 360h\n")
+	if ps := batchValidateProblems(cr, batchValidateConfig(t, batchValidateYAML), nil); len(ps) != 0 {
+		t.Errorf("a 360h task timeout on cloud-run is refused by the Batch check: %v", ps)
+	}
+	// A block that names no task timeout is backend.MaxRunTime, which is inside
+	// the ceiling, and so is the longest value the field can carry under it.
+	inside := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, "  task_timeout: 335h\n")
+	if ps := batchValidateProblems(inside, batchValidateConfig(t, batchValidateYAML), nil); len(ps) != 0 {
+		t.Errorf("a 335h task timeout on cloud-batch = %v, want none", ps)
+	}
+	if ps := batchValidateProblems(batchValidateRig(t, "e2-standard-4", backend.CloudBatch), batchValidateConfig(t, batchValidateYAML), nil); len(ps) != 0 {
+		t.Errorf("the block's own default (backend.MaxRunTime) = %v, want none", ps)
+	}
+	// And a workflow's own clock is not what reaches the field in this build:
+	// a 360h workflow is a config the launch answers with batch.task_timeout,
+	// so the check that used to refuse it here does not (that bound belongs to
+	// the enable task, which is what reads the workflow's clock).
 	long := batchValidateConfig(t, `version: 1
 project: aurora
 git: { provider: github }
@@ -155,22 +195,8 @@ workflows:
     resources: { cpu: 2, memory: 4Gi }
     timeouts: { total: 360h }
 `)
-	ps := batchValidateProblems(lc, long, nil)
-	if len(ps) != 1 || ps[0].Path != "workflows.web.timeouts.total" {
-		t.Fatalf("a 360h workflow on cloud-batch = %v, want one problem at workflows.web.timeouts.total", ps)
-	}
-	if !strings.Contains(ps[0].Message, "14 days") {
-		t.Errorf("the timeout refusal does not name the ceiling: %s", ps[0].Message)
-	}
-	// The same workflow on Cloud Run is not this check's business.
-	cr := batchValidateRig(t, "", backend.CloudRun)
-	if ps := batchValidateProblems(cr, long, nil); len(ps) != 0 {
-		t.Errorf("a 360h workflow on cloud-run is refused by the Batch check: %v", ps)
-	}
-	// And a workflow inside the ceiling passes.
-	short := batchValidateConfig(t, batchValidateYAML)
-	if ps := batchValidateProblems(lc, short, nil); len(ps) != 0 {
-		t.Errorf("a 30m workflow on cloud-batch = %v, want none", ps)
+	if ps := batchValidateProblems(batchValidateRig(t, "e2-standard-4", backend.CloudBatch), long, nil); len(ps) != 0 {
+		t.Errorf("a 360h workflow clock is refused by the Batch timeout check, which bounds batch.task_timeout instead: %v", ps)
 	}
 }
 

@@ -547,7 +547,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// the workflow's memory, a render or probe step against the
 		// commands they need), so it runs before the budget read below and
 		// before createTask writes anything at all.
-		if err := checkArtifactLaunch(ctx, spec); err != nil {
+		if err := checkArtifactLaunch(ctx, env, spec); err != nil {
 			return launchResult{}, err
 		}
 		if !skipBudget {
@@ -1286,7 +1286,16 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 // execution behind. A launch whose recipe or workflow the launcher cannot
 // resolve locally is judged by the runner's own bootstrap instead
 // (checkGateCommands), which reports the same list.
-func checkArtifactLaunch(ctx context.Context, spec *task.Spec) error {
+//
+// It is also the arm of the artifact boundary that survives the enable (Global
+// Constraint 13, plan compute-backend.md Task 8 step 4): an artifact-producing
+// run is never launched on cloud-batch, and this is where the backend and the
+// recipe the run will actually use are both known -- `fugaro validate` judges
+// the checkout's own recipe offline, so a launch naming an artifact recipe with
+// --recipe is refused here rather than there. The two arms ask one function
+// (artifactOnBatchRefusal), so the boundary cannot be lifted from one path
+// while the other keeps it.
+func checkArtifactLaunch(ctx context.Context, env *cloudEnv, spec *task.Spec) error {
 	cfg := checkoutConfig(ctx, spec.Repo)
 	if cfg == nil {
 		return nil
@@ -1296,6 +1305,12 @@ func checkArtifactLaunch(ctx context.Context, spec *task.Spec) error {
 		return nil
 	}
 	rcp := recipeForLaunch(ctx, cfg, spec)
+	if msg, ok := artifactOnBatchRefusal(launchBackend(env.be), rcp); ok {
+		// Before the caps below and before anything is written, like every
+		// other refusal here: the run the boundary holds back leaves no task
+		// and no execution behind.
+		return userErr("%s", msg)
+	}
 	if rcp == nil || rcp.Mode != recipe.ModeArtifact {
 		return nil
 	}
