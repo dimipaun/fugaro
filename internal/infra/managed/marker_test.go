@@ -863,12 +863,13 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 			if strings.Contains(c, "storage.googleapis.com/") && !strings.Contains(c, "projects/_/buckets/"+tf.ManagedPrefix) {
 				t.Errorf("storage clause %q does not name the reserved prefix %q", c, tf.ManagedPrefix)
 			}
-			// An extract template is the documented form — literal text around
-			// ONE placeholder — and the multi-placeholder form is what the first
+			// An extract template is the form the design's C6 records — literal
+			// text around ONE placeholder (a reading the design marks UNVERIFIED)
+			// — and the multi-placeholder form is what the first
 			// cut wrote and what IAM refuses. TestDeployerFenceClausesAreTheModules
 			// pins this copy to the module's own text; this reads the copy.
 			if strings.Contains(c, "extract(") && strings.Count(c, "{") != 1 {
-				t.Errorf("clause %q carries %d placeholders, and the documented extract form carries one", c, strings.Count(c, "{"))
+				t.Errorf("clause %q carries %d placeholders, and the extract form C6 records carries one", c, strings.Count(c, "{"))
 			}
 		}
 	}
@@ -2512,13 +2513,15 @@ func (s *iamScan) checkProjectGrant(r tfResource, roles map[string][]string, loc
 // grants, so a storage role bound under, say, the API key's fence is a finding
 // rather than a grant read against another role's clauses. Each entry names
 // the resource type(s) its role reaches and the reserved managed prefix
-// (tf.ManagedPrefix, fmgd-); the five extract forms carry the DOCUMENTED
-// template — literal text around ONE placeholder, anchored at the collection
-// segment the resource's own name follows — because the segment before that
+// (tf.ManagedPrefix, fmgd-); the five extract forms carry the template the
+// design's C6 records — literal text around ONE placeholder, anchored at the
+// collection segment the resource's own name follows (C6 marks the grammar
+// UNVERIFIED: it is the design's reading of the reference, uncited in this
+// tree) — because the segment before that
 // name carries a value no plan knows (a project number, a location). The
 // multi-placeholder form ("projects/{project}/secrets/{secret}") is not that
 // form: it is what the first cut wrote, IAM would refuse the expression and
-// stop the owner-run apply, and TestDeployerExtractTemplatesAreTheDocumentedForm
+// stop the owner-run apply, and TestDeployerExtractTemplatesAreTheRecordedForm
 // (internal/infra/tf) is what refuses it. The account clause is the module's
 // text, interpolation and all.
 var deployerFenceClauses = map[string][]string{

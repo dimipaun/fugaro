@@ -324,7 +324,8 @@ const (
 //     .iam.gserviceaccount.com, whose front is the project — a plan-time
 //     literal (var.project) — so that service takes this form too.
 //   - "extract" tests the resource's own name, pulled out of the whole resource
-//     name: Value is the DOCUMENTED extraction template — literal text, ONE
+//     name: Value is the extraction template the design's C6 records — literal
+//     text, ONE
 //     {placeholder}, and nothing else — and Starts is what the extracted text
 //     must begin with. It is what the remaining five services need, because the
 //     segment before the resource's own name carries a value the module does
@@ -335,8 +336,8 @@ const (
 //     scheduler runs in another region from its jobs). The template anchors at
 //     the collection segment the resource's own name follows ("/secrets/",
 //     "/jobs/", …) and the extracted text runs to the end of the name, which for
-//     a resource of the clause's own type IS its own name — the reference
-//     defines the extraction by OCCURRENCE (the text after the FIRST occurrence
+//     a resource of the clause's own type IS its own name — the reading C6
+//     records defines the extraction by OCCURRENCE (the text after the FIRST occurrence
 //     of the literal prefix, and, with a suffix too, up to the first subsequent
 //     occurrence of it), which is what internal/infra/tf's cover_test.go models
 //     in extractSegment.
@@ -346,18 +347,20 @@ const (
 // contains the prefix.
 //
 // The template carries exactly one placeholder, and that is not a style choice:
-// the resource-attribute reference documents resource.name.extract with a
-// single {placeholder} and literal text around it. The first cut of this fence
-// wrote a multi-placeholder template — extract("projects/{project}/secrets/
-// {secret}") — which is not that form, and the failure it invites is the 0.8.6
-// outage again: setIamPolicy refusing the expression and stopping the owner-run
-// apply that creates the whole installation. TestDeployerExtractTemplatesAreThe
-// DocumentedForm refuses a template that grows a second placeholder.
+// the fence reads resource.name.extract as taking a single {placeholder} with
+// literal text around it, and the design's C6 records that grammar as UNVERIFIED
+// — no source in this tree quotes the reference's text for it. The first cut of
+// this fence wrote a multi-placeholder template — extract("projects/{project}/
+// secrets/{secret}") — which is not that form, and the failure it invites is the
+// 0.8.6 outage again: setIamPolicy refusing the expression and stopping the
+// owner-run apply that creates the whole installation. TestDeployerExtractTemplatesAreThe
+// RecordedForm refuses a template that grows a second placeholder.
 //
 // A name that does not carry the template's literal text extracts nothing (the
 // empty string), and the empty string does not start with the prefix, so a
-// non-match denies: C7 is settled by the documented semantics rather than by a
-// live probe (docs/design/managed-deployer-fence.md). What remains UNVERIFIED,
+// non-match denies under that same reading — C7, which the design records as
+// UNVERIFIED and models with extractSegment rather than by a live probe
+// (docs/design/managed-deployer-fence.md). What remains UNVERIFIED,
 // and what Check 68 measures, is whether these services honour resource.name at
 // all (C3).
 type DeployerClause struct {
@@ -445,8 +448,8 @@ func deployerServices(project string) []DeployerService {
 		// than unfenced.
 		//
 		// The template is the collection segment alone, not
-		// "projects/{project}/secrets/{secret}": the reference documents
-		// extract with ONE placeholder, and the project in a secret's name is
+		// "projects/{project}/secrets/{secret}": the form C6 records has
+		// extract take ONE placeholder, and the project in a secret's name is
 		// its NUMBER, which the module does not know at plan time.
 		{Role: DeployerSecretRole, Clauses: []DeployerClause{
 			{Type: "secretmanager.googleapis.com/Secret", Op: "extract", Value: "/secrets/{secret}", Starts: ManagedPrefix},

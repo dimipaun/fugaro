@@ -90,11 +90,13 @@ resource "google_service_account" "fugaro_deployer" {
 #     a managed plan chooses and which is not even constant inside one
 #     installation (this installation's scheduler runs in another region from
 #     its jobs). A name that does not match the template makes the condition
-#     false, and that is the documented semantics rather than a hope: extract
-#     returns the text the template's ONE {identifier} placeholder matched, so a
-#     name the template does not match extracts the empty string, and
-#     "".startsWith("fmgd-") is false. The design's C7 is settled that way and
-#     modelled by internal/infra/tf/cover_test.go's extractSegment. Check 68
+#     false, on the reading this module follows rather than on a citation: the
+#     design's C6 and C7 record that reading as UNVERIFIED — no source in this
+#     tree quotes the reference's text for extract's grammar — and the reading is
+#     that extract returns the text the template's ONE {identifier} placeholder
+#     matched, so a name the template does not match extracts the empty string,
+#     and "".startsWith("fmgd-") is false. The design's C7 is recorded that way
+#     and modelled by internal/infra/tf/cover_test.go's extractSegment. Check 68
 #     measures the two directions that can be constructed — a prefixed name and
 #     one that does not carry the prefix, including a name that contains it
 #     without starting with it and one the template names — but it cannot

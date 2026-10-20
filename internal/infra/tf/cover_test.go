@@ -1130,16 +1130,18 @@ var deployerExtractAnchors = map[string]string{
 	DeployerSchedulerRole:  "/jobs/",
 }
 
-// The extract templates are the DOCUMENTED form and nothing else.
+// The extract templates are the form the design's C6 records and nothing else.
 //
-// Google's IAM Conditions resource-attribute reference documents
-// resource.name.extract with a template that carries ONE placeholder, written
-// {name}, with literal text around it, and the call returns the text that
-// placeholder matched. The first cut of this fence used a multi-placeholder
-// template — extract("projects/{project}/secrets/{secret}") — which is not that
-// form, and the failure it invites is the 0.8.6 outage again: setIamPolicy
-// refuses the expression, and the owner-run apply that creates the whole
-// installation stops. It is also the form whose result the tree can model
+// The design reads the IAM Conditions resource-attribute reference as giving
+// resource.name.extract a template that carries ONE placeholder, written
+// {name}, with literal text around it, and returning the text that placeholder
+// matched — and it records that reading as UNVERIFIED, because no source in this
+// tree quotes the reference's text for it (docs/design/managed-deployer-fence.md,
+// "What this document does not claim"). The first cut of this fence used a
+// multi-placeholder template — extract("projects/{project}/secrets/{secret}") —
+// which is not that form, and the failure it invites is the 0.8.6 outage again:
+// setIamPolicy refuses the expression, and the owner-run apply that creates the
+// whole installation stops. It is also the form whose result the tree can model
 // honestly (extractSegment), rather than an undocumented "last segment"
 // behaviour.
 //
@@ -1147,8 +1149,8 @@ var deployerExtractAnchors = map[string]string{
 // from, in Go and (through TestDeployerBindingsAreTheModules) in the module, so
 // a template that grows a second placeholder is a test failure here rather than
 // an apply that never completes.
-func TestDeployerExtractTemplatesAreTheDocumentedForm(t *testing.T) {
-	// The documented shape: literal text, one {placeholder}, literal text.
+func TestDeployerExtractTemplatesAreTheRecordedForm(t *testing.T) {
+	// The recorded shape: literal text, one {placeholder}, literal text.
 	form := regexp.MustCompile(`^([^{}]*)\{([A-Za-z_][A-Za-z0-9_]*)\}([^{}]*)$`)
 	svcs := deployerServices(testDeployerProject)
 	seen := map[string]bool{}
@@ -1164,10 +1166,10 @@ func TestDeployerExtractTemplatesAreTheDocumentedForm(t *testing.T) {
 				continue
 			}
 			if n := strings.Count(c.Value, "{"); n != 1 {
-				t.Errorf("%s: extract template %q carries %d placeholders, and the documented form carries exactly one", s.Role, c.Value, n)
+				t.Errorf("%s: extract template %q carries %d placeholders, and the form C6 records carries exactly one", s.Role, c.Value, n)
 			}
 			if n := strings.Count(c.Value, "}"); n != 1 {
-				t.Errorf("%s: extract template %q carries %d closing braces, and the documented form carries exactly one placeholder", s.Role, c.Value, n)
+				t.Errorf("%s: extract template %q carries %d closing braces, and the form C6 records carries exactly one placeholder", s.Role, c.Value, n)
 			}
 			m := form.FindStringSubmatch(c.Value)
 			if m == nil {
@@ -1185,11 +1187,98 @@ func TestDeployerExtractTemplatesAreTheDocumentedForm(t *testing.T) {
 		}
 	}
 	// The template the first cut wrote is the one that must not come back, and
-	// the helper that models the documented semantics says so: it extracts
+	// the helper that models the recorded reading says so: it extracts
 	// nothing from a multi-placeholder template, so such a fence admits nothing
 	// even if IAM were to accept it.
 	if seg := extractSegment("projects/{project}/secrets/{secret}", "projects/12/secrets/fmgd-x"); seg != "" {
-		t.Errorf("extractSegment(multi-placeholder template) = %q, want \"\": a template that is not the documented form matches nothing", seg)
+		t.Errorf("extractSegment(multi-placeholder template) = %q, want \"\": a template that is not the form C6 records matches nothing", seg)
+	}
+}
+
+// TestDeployerExtractRuleIsRecordedAsUnverified holds the extract reading to the
+// label it can support.
+//
+// The round-5 review found the design's C6 and C7 reclassified from UNVERIFIED
+// to settled on a citation chain that reaches no source: deployer.tf's header
+// stated the rule without naming a document, Task 1.5 cites the reference for
+// the services' *name shapes* and never for the grammar, and extract( appears
+// nowhere else in the tree. `extractSegment` — the helper below — is this
+// repository's reimplementation, not evidence for it. The reading is also
+// unfalsifiable by any later run: every conditioned type's real names carry
+// their own clause's anchor, so no live step can construct a non-match (Check
+// 68's non-match probe was dropped on the strength of the settled label). An
+// uncited reading that nothing can measure is exactly what UNVERIFIED is for, so
+// this test reads the three files that carry the claim and refuses the settled
+// wording in all of them.
+func TestDeployerExtractRuleIsRecordedAsUnverified(t *testing.T) {
+	const designPath = "docs/design/managed-deployer-fence.md"
+	docBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(docBytes)
+	row := map[string]string{}
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| C6 |") || strings.HasPrefix(line, "| C7 |") {
+			row[strings.TrimSpace(line[2:4])] = line
+		}
+	}
+	for _, fact := range []string{"C6", "C7"} {
+		line, ok := row[fact]
+		if !ok {
+			t.Fatalf("%s's §3 table has no %s row: the label this test pins lives there, and a row that disappears takes the label with it", designPath, fact)
+		}
+		// The status cell, not the row: a row can mention UNVERIFIED in its
+		// prose while its label says something else, which is the state the
+		// round-5 review found these two rows in.
+		cells := strings.Split(line, "|")
+		if len(cells) < 5 {
+			t.Fatalf("%s's %s row is not a four-cell table row: %q", designPath, fact, line)
+		}
+		status := strings.TrimSpace(cells[4])
+		if !strings.HasPrefix(status, "**UNVERIFIED") {
+			t.Errorf("%s's %s row carries the status %q: the grammar and the first-occurrence rule are this repository's reading of the reference — no source in the tree quotes it and extractSegment is our own model — so the row records a reading rather than a citation, and its label has to say so", designPath, fact, status)
+		}
+	}
+	if !strings.Contains(doc, "no source in this tree quotes") {
+		t.Errorf("%s does not record where the extract grammar's citation stands: the review that reclassified C6 and C7 could name no source, and a reader has to be able to tell a citation from a reading", designPath)
+	}
+	if strings.Contains(doc, "C7 is not one of them") {
+		t.Errorf("%s's opening note says C7 has left the UNVERIFIED rows: no source in this tree quotes the reference's text for the grammar, and no live step can falsify the reading, so the label stays on", designPath)
+	}
+	// The two files that state the rule in code and in the plan: both may state
+	// the reading, and neither may promote it to a citation. The phrases are the
+	// ones the settled label was written in.
+	for _, path := range []string{
+		filepath.Join("..", "..", "..", "deploy", "terraform", "gcp", "modules", "installation", "deployer.tf"),
+		"cover.go",
+	} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := strings.Join(strings.Fields(string(b)), " ")
+		for _, phrase := range []string{
+			"documented semantics",
+			"documented form",
+			"the reference documents",
+			"is settled that way",
+		} {
+			if strings.Contains(text, phrase) {
+				t.Errorf("%s states the extract rule as %q: the reading is uncited — no source in this tree quotes the reference's text — and the design's C6/C7 rows carry UNVERIFIED for that reason", path, phrase)
+			}
+		}
+	}
+	// And the module states the label where the fence's rationale is read, so an
+	// owner-run apply is not made on the strength of a citation that does not
+	// exist.
+	modBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "terraform", "gcp", "modules", "installation", "deployer.tf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod := strings.Join(strings.Fields(string(modBytes)), " ")
+	if !strings.Contains(mod, "UNVERIFIED") {
+		t.Error("deployer.tf's header states the extract rule without recording that the design holds it UNVERIFIED: this file is what the owner reads before the apply that creates the fence, and the rule it states is a reading, not a citation")
 	}
 }
 
@@ -1197,15 +1286,17 @@ func TestDeployerExtractTemplatesAreTheDocumentedForm(t *testing.T) {
 //
 // deployer.tf is the file the plan is made from, so its comment on the extract
 // form is the fence's stated rationale: it is what the owner reads to decide
-// whether the fence is the documented one. It said the opposite of the
-// reference once — "extract tests the resource's own LAST segment" — twelve
-// lines above the paragraph arguing the documented rule, and a header that
+// whether the fence is the form the design records — a form the design marks
+// UNVERIFIED, because the repository holds the grammar by its own reading rather
+// than by a citation. It said the opposite of that reading once — "extract tests
+// the resource's own LAST segment" — twelve
+// lines above the paragraph arguing the rule, and a header that
 // states two readings states none.
 //
 // What this pins is the reading rather than the wording: the header names the
 // FIRST occurrence of the template's literal prefix, and it names the "last
 // segment" reading only to deny it.
-func TestDeployerHeaderStatesTheDocumentedExtractionRule(t *testing.T) {
+func TestDeployerHeaderStatesTheExtractionRule(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "terraform", "gcp", "modules", "installation", "deployer.tf"))
 	if err != nil {
 		t.Fatal(err)
@@ -1223,14 +1314,14 @@ func TestDeployerHeaderStatesTheDocumentedExtractionRule(t *testing.T) {
 	}
 	header := strings.Join(strings.Fields(strings.Join(prose, " ")), " ")
 	if !strings.Contains(header, "the FIRST occurrence of the template's literal prefix") {
-		t.Error("deployer.tf's header does not state the documented extraction rule (the text after the FIRST occurrence of the template's literal prefix): the module is where the fence's rationale is read, and the reference defines the extraction by occurrence")
+		t.Error("deployer.tf's header does not state the extraction rule the design's C6 records (the text after the FIRST occurrence of the template's literal prefix): the module is where the fence's rationale is read, and the reading defines the extraction by occurrence")
 	}
-	// The reading the first cut took, which the reference does not document: the
+	// The reading the first cut took, which the design records no rule for: the
 	// header may name it only to deny it, so the denial is removed before the
 	// rest is searched.
 	rest := strings.ReplaceAll(header, `not a "last segment" reading`, "")
 	if m := regexp.MustCompile(`(?i)last segment`).FindString(rest); m != "" {
-		t.Errorf("deployer.tf's header states the %q reading, and the reference documents no such rule: the header has to state one reading, and it is the one the design's C7 and this package's extractSegment model", m)
+		t.Errorf("deployer.tf's header states the %q reading, and the design records no such rule: the header has to state one reading, and it is the one the design's C7 and this package's extractSegment model", m)
 	}
 	// And the reason the five services take the extract form, which is the
 	// header's other half: without it the header reads as a preference rather
@@ -1241,37 +1332,39 @@ func TestDeployerHeaderStatesTheDocumentedExtractionRule(t *testing.T) {
 }
 
 // extractSegment is what resource.name.extract(template) returns for name under
-// the documented semantics: the template carries one {placeholder} with literal
-// text around it, and the call returns the text the placeholder matched — which
-// the reference defines by OCCURRENCE: with a prefix-only template, the
-// characters after the FIRST occurrence of the prefix, and with a suffix too,
-// the characters between that first occurrence of the prefix and the first
-// SUBSEQUENT occurrence of the suffix. This is the whole of the documented rule
-// as it bears on this fence: the first occurrence of each literal, and not the
-// last or the only one, and a suffix that ends the extracted text rather than
-// the name.
+// the reading the design's C6 records: the template carries one {placeholder}
+// with literal text around it, and the call returns the text the placeholder
+// matched — which that reading defines by OCCURRENCE: with a prefix-only
+// template, the characters after the FIRST occurrence of the prefix, and with a
+// suffix too, the characters between that first occurrence of the prefix and the
+// first SUBSEQUENT occurrence of the suffix. **C6 marks that reading UNVERIFIED**
+// — no source in this tree quotes the reference's text for the grammar, so this
+// helper is the repository's reading written down, not evidence for it. This is
+// the whole of the rule as it bears on this fence: the first occurrence of each
+// literal, and not the last or the only one, and a suffix that ends the extracted
+// text rather than the name.
 //
 // A name that does not carry the template's literal prefix — or, when the
 // template has a suffix, one that does not carry it after that prefix — matches
 // nothing, and the result is the empty string, which the condition's
-// .startsWith("fmgd-") reads as false, so a non-match denies (C7, settled by the
-// documented semantics rather than by a live probe: the empty string does not
-// start with the prefix).
+// .startsWith("fmgd-") reads as false, so a non-match denies under the same
+// reading (C7, likewise UNVERIFIED and equally unmeasurable live: the empty
+// string does not start with the prefix).
 //
 // This is the model the rest of these tests read the fence through. It is
 // deliberately not "the resource's last segment": that reading is what the
-// first cut assumed, and it is not what the reference documents. What makes the
+// first cut assumed, and it is not the reading C6 records. What makes the
 // run-to-the-end result the resource's own name is the type term beside it —
 // a resource of the clause's own type has its own name as the last segment, and
 // a longer name (a version under a secret, an execution under a job) is another
 // type, which no clause of that service names.
 //
-// A template that is not the documented form — no placeholder, an unterminated
-// one, or more than one — returns "" here because the reference defines no
-// result for it at all: this model reads the documented semantics, and refuses
-// to guess at a template the documentation does not describe. (Such a template
-// is refused outright by TestDeployerExtractTemplatesAreTheDocumentedForm; this
-// is the second line of that defence, not the first.)
+// A template that is not the recorded form — no placeholder, an unterminated
+// one, or more than one — returns "" here: the reading gives no result for it at
+// all, so this helper refuses to guess at a template it does not describe. (Such
+// a template is refused outright by
+// TestDeployerExtractTemplatesAreTheRecordedForm; this is the second line of
+// that defence, not the first.)
 func extractSegment(template, name string) string {
 	if strings.Count(template, "{") != 1 || strings.Count(template, "}") != 1 {
 		return ""
@@ -1300,11 +1393,14 @@ func extractSegment(template, name string) string {
 	return rest
 }
 
-// The helper above is the tree's model of Google's behaviour, so it is tested
-// as a model: the three shapes a template can take, the non-matches that have
-// to deny, and the near misses that must not be admitted by a prefix test on
-// the wrong text.
-func TestExtractSegmentModelsTheDocumentedSemantics(t *testing.T) {
+// The helper above is the tree's model of the reading the design's C6 records,
+// so it is tested as a model: the three shapes a template can take, the
+// non-matches that have to deny, and the near misses that must not be admitted by
+// a prefix test on the wrong text. The name says "the recorded reading" rather
+// than "the documented semantics" on purpose: C6 carries UNVERIFIED, and a test
+// name that asserts a citation the repository cannot produce is the same defect
+// the design was fixed for.
+func TestExtractSegmentModelsTheRecordedReading(t *testing.T) {
 	cases := []struct {
 		name, template, resource, want string
 	}{
@@ -1319,8 +1415,8 @@ func TestExtractSegmentModelsTheDocumentedSemantics(t *testing.T) {
 		{"the anchor in the container", "/secrets/{secret}", "projects/fmgd-/secrets/other", "other"},
 		{"a literal suffix", "/jobs/{job}/executions", "projects/12/locations/l/jobs/fmgd-x/executions", "fmgd-x"},
 		{"the suffix missing", "/jobs/{job}/executions", "projects/12/locations/l/jobs/fmgd-x", ""},
-		// The suffix does not have to END the name: the reference says the text
-		// runs from the prefix's first occurrence to the FIRST SUBSEQUENT
+		// The suffix does not have to END the name: the reading C6 records says the
+		// text runs from the prefix's first occurrence to the FIRST SUBSEQUENT
 		// occurrence of the suffix, so what follows that occurrence is outside
 		// the extracted text.
 		{"text after the suffix", "/jobs/{job}/executions", "projects/12/locations/l/jobs/fmgd-x/executions/e1", "fmgd-x"},
@@ -1329,10 +1425,10 @@ func TestExtractSegmentModelsTheDocumentedSemantics(t *testing.T) {
 		{"two placeholders", "projects/{project}/secrets/{secret}", "projects/12/secrets/fmgd-x", ""},
 		{"no placeholder at all", "/secrets/fmgd-", "projects/12/secrets/fmgd-x", ""},
 		{"an unterminated placeholder", "/secrets/{secret", "projects/12/secrets/fmgd-x", ""},
-		// The anchor twice: the reference names the occurrence — the FIRST one
+		// The anchor twice: the reading C6 records names the occurrence — the FIRST one
 		// — so the extracted text is what follows the first /jobs/ and runs to
 		// the end of the name. It does not start with the prefix, so the clause
-		// denies; what the fence reads here is the reference's rule and not a
+		// denies; what the fence reads here is C6's rule and not a
 		// guess about an ambiguous name.
 		{"the anchor twice", "/jobs/{job}", "projects/12/jobs/x/jobs/fmgd-x", "x/jobs/fmgd-x"},
 		// And the shape the same rule admits, which is worth naming rather than
@@ -1340,7 +1436,7 @@ func TestExtractSegmentModelsTheDocumentedSemantics(t *testing.T) {
 		// extracted text begins with it. No resource of these five services can
 		// be named that way — a secret id, an API key's uid, a repository id and
 		// a job id carry no path separator — so the fence never sees one, and
-		// the model reads the reference instead of the stricter "the anchor
+		// the model reads C6's rule instead of the stricter "the anchor
 		// exactly once" rule it used to apply.
 		{"the anchor twice, prefix after the first", "/jobs/{job}", "projects/12/jobs/fmgd-a/jobs/x", "fmgd-a/jobs/x"},
 	}
@@ -1455,8 +1551,8 @@ func TestDeployerConditionsAreWithinWhatIAMAccepts(t *testing.T) {
 // A clause is read as IAM reads it, (resource.type == T && name test), so every
 // name below is offered with the type Google reports for it: the type term is
 // half the condition and the half that keeps a LONGER name — a version under a
-// secret, an execution under a job — out of reach. Under the documented extract
-// semantics the parent's template matches such a name too and extracts a text
+// secret, an execution under a job — out of reach. Under the extract reading
+// C6 and C7 record, the parent's template matches such a name too and extracts a text
 // that begins with the prefix (extractSegment returns "fmgd-x/versions/1" for
 // the secret's own template), so what excludes it is the type the resource
 // itself reports, which no clause names, together with the permissions such a
@@ -1497,7 +1593,7 @@ func TestDeployerConditionFencesOnlyTheManagedPrefix(t *testing.T) {
 		// carry its clause's anchor at all — the bare prefix, with no
 		// collection path in front of it. No real resource of these services is
 		// named that way; the rows are here because this is the direction the
-		// documented semantics have to get right and the direction no live
+		// reading C6/C7 records has to get right and the direction no live
 		// probe can construct (C7): a template that does not match extracts the
 		// empty string, and the empty string does not start with the prefix, so
 		// the condition denies — it fails closed rather than open. A fence that

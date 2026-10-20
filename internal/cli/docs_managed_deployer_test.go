@@ -23,10 +23,12 @@ import (
 // `deploy/terraform/gcp/roots/installation` has no tfvars and no backend), the
 // two directions every service is measured in, the Secret Manager version read
 // and the section's own statement that the design's C7 — whether a name that
-// misses an `extract` template fails closed — is settled by the documented
-// semantics of `extract` rather than measured here (no live name of a
-// conditioned type can be made to miss its own template, so the register must
-// not read as measuring one), the restore that closes the gate again, and the
+// misses an `extract` template fails closed — is UNVERIFIED rather than
+// measured here, and cannot be measured here: no live name of a
+// conditioned type can be made to miss its own template, and the grammar is the
+// repository's reading of a reference no source in the tree quotes, so the
+// register must not read as either measuring it or inheriting an answer for it),
+// the restore that closes the gate again, and the
 // fact that Check 67 — the transitive-reach half — is not this section.
 //
 // The row and the heading carry the same facts as prose: a live check that does
@@ -90,13 +92,14 @@ func TestChecklistHasCheck68(t *testing.T) {
 		"C3",
 		"UNVERIFIED",
 		// And the one it names so the reader is not misled: C7 is named, and
-		// the section says outright that this check does not settle it —
-		// the documented semantics of `extract` do, and no live probe can
-		// construct the mismatch (see the section's step 6). Without this the
-		// register would read as measuring a question the check cannot
-		// construct a probe for.
+		// the section says outright that this check cannot settle it — no live
+		// step can construct the mismatch, and the design carries the reading as
+		// UNVERIFIED rather than as a citation (see the section's step 6).
+		// Without this the register would read as measuring, or as answering, a
+		// question the check cannot construct a probe for.
 		"C7",
-		"the documented semantics settle it",
+		"no step of this check can answer it",
+		"TestExtractSegmentModelsTheRecordedReading",
 		"empty string",
 		"extractSegment",
 		// C1's expected number, in the repository's own counting: the C1 step
@@ -348,17 +351,19 @@ func TestChecklistHasCheck68(t *testing.T) {
 		}
 	}
 
-	// 4. The fail-closed question: named, disowned, and answered elsewhere. The
+	// 4. The fail-closed question: named, disowned, and answered nowhere. The
 	// section has to say in as many words that this check does not settle C7 and
 	// why — a SecretVersion is not the secret clause's type, so the read is
 	// denied for want of the permission and the condition is never evaluated —
-	// and that the documented semantics of `extract` are what settle it, because
-	// the register must not read as measuring a question nothing live can.
+	// and that the design holds the reading UNVERIFIED rather than citing a
+	// reference, because the register must neither read as measuring a question
+	// nothing live can nor inherit a settled answer from the design.
 	for _, want := range []string{
 		"secretmanager.versions.*",
 		"What this step does not settle",
 		"C7 is not this check's question",
-		"the documented semantics settle it",
+		"cannot be settled here either",
+		"UNVERIFIED",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 68 does not carry %q", want)
@@ -617,4 +622,54 @@ func TestChecklistCheck68GuardRefusesBelong(t *testing.T) {
 			t.Errorf("the guard stopped without naming CHK68_PROJECT: %s", out)
 		}
 	})
+}
+
+// TestReleaseManagedDeployerBulletStatesTheCurrentReason: the Before-you-tag
+// bullet for `managedDeployerShipped` used to give the gate's reason as the
+// 0.8.6 fence itself — "that binding's `fmgd-` fence is not an IAM condition GCP
+// accepts as written (17 logical operators where IAM allows 12;
+// `resource.name.contains()` is not a supported function; `resource.name` is not
+// supported for most of the types it fences)" — and described one scoped role
+// with one conditioned binding. Both halves are now wrong about this tree: the
+// redesign replaced that shape with seven roles, seven conditioned bindings, at
+// most three logical operators per expression and no `contains(` anywhere, and
+// the reason the gate is still closed is that the fence has not been measured
+// live (the design's §9, Check 68 — USER-RUN, NOT RUN). A release checklist read
+// against the old text sends a release hunting a defect that is no longer there
+// and names a shape the module does not write.
+//
+// Mutation (verified, run and restored): put the old reason sentence back into
+// the bullet — this fails naming it.
+func TestReleaseManagedDeployerBulletStatesTheCurrentReason(t *testing.T) {
+	doc := readDoc(t, "docs/release.md")
+	start := strings.Index(doc, "Verify `managedDeployerShipped`")
+	if start < 0 {
+		t.Fatal("docs/release.md's Before-you-tag list has no `managedDeployerShipped` bullet: it is where a release verifies the managed gate")
+	}
+	bullet := doc[start:]
+	if end := strings.Index(bullet[1:], "\n- **"); end >= 0 {
+		bullet = bullet[:end+1]
+	}
+	// The current reason and the current shape, so a release reads what the tree
+	// gates off and why.
+	for _, want := range []string{
+		"seven conditioned bindings",
+		"has not been measured live",
+		"Check 68",
+	} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("the `managedDeployerShipped` bullet does not say %q: the gate is closed because the redesigned fence has not been measured live, and the bullet has to say so rather than describe a defect the redesign removed", want)
+		}
+	}
+	// The pre-redesign shape, which is history and not the reason: the bullet may
+	// record it as what the 2026-10-18 ruling responded to, and it may not state
+	// it as what the gate is closed for.
+	for _, wrong := range []string{
+		"so no installation creates the deployer's scoped role or its conditioned binding",
+		"is not an IAM condition GCP accepts as written",
+	} {
+		if strings.Contains(bullet, wrong) {
+			t.Errorf("the `managedDeployerShipped` bullet states %q: this tree writes seven conditioned roles with at most three logical operators each and no `resource.name.contains()`, so the old single-binding defect is the history behind the 2026-10-18 ruling and not the reason the gate is closed", wrong)
+		}
+	}
 }
