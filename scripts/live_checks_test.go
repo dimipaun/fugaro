@@ -1,9 +1,11 @@
 package scripts_test
 
 import (
+	"context"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -21,6 +23,13 @@ var liveCheckScripts = []struct {
 	{"check91.sh", "check91_test.sh"},
 }
 
+// liveCheckTimeout is each script's own deadline. The two are independent
+// programs that share nothing but this test: one hanging fake must not decide
+// the other's result, so they run CONCURRENTLY, each under its own deadline --
+// and the deadline is here rather than left to the package's -timeout, whose
+// message would name the package and not the script that hung.
+const liveCheckTimeout = 20 * time.Minute
+
 // TestLiveCheckScripts runs the bash test of each live check.
 func TestLiveCheckScripts(t *testing.T) {
 	for _, tool := range []string{"bash", "python3"} {
@@ -30,9 +39,14 @@ func TestLiveCheckScripts(t *testing.T) {
 	}
 	for _, c := range liveCheckScripts {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithTimeout(context.Background(), liveCheckTimeout)
+			defer cancel()
 			path := filepath.Join(testutil.ModuleRoot(), "scripts", "live-checks", c.test)
-			cmd := exec.Command("bash", path)
-			out, err := cmd.CombinedOutput()
+			out, err := exec.CommandContext(ctx, "bash", path).CombinedOutput()
+			if ctx.Err() != nil {
+				t.Fatalf("%s did not finish within %s and was killed:\n%s", c.test, liveCheckTimeout, out)
+			}
 			if err != nil {
 				t.Fatalf("%s: %v\n%s", c.test, err, out)
 			}
