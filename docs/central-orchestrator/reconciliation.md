@@ -1062,7 +1062,44 @@ that *"whichever of two open claims merges second renumbers itself"*, and 110 is
 twice. This work's owner-run checks are therefore named and not numbered, and the task that
 writes one takes the number then (§7 of the implementation plan).
 
-## 8. UNVERIFIED
+## 8. Items found while planning, kept here so they are not lost
+
+Four items are about documents rather than about code, and they are recorded rather than
+acted on. The decisions are §5's; these are smaller than decisions and one of them is not
+this work's to make.
+
+- **O1 — the D-number namespace.** This work's **D1–D26** and
+  [docs/setup-wizard/](../setup-wizard/)'s D1–D12 are numerically the same range and are told
+  apart only by their folder, as [docs/windows-cli/](../windows-cli/)'s D1–D16 and
+  `docs/rigor-modes/`'s D1–D19 already are. The register
+  ([docs/coordinator/README.md](../coordinator/README.md), "The numbers this work holds")
+  records D1–D192 as taken, **D79–D89 as deliberately unused** — *"an unused number is not a
+  free number"* — and **D193 onward as free**, which is the block this work would take if the
+  owner prefers one sequence. **Recommendation: keep the local namespace** (**D23**);
+  renumbering is mechanical and changes nothing but the numbers.
+- **O2 — a stale citation this work would land on top of.**
+  [docs/coordinator/README.md](../coordinator/README.md) and
+  [docs/coordinator/reconciliation.md](../coordinator/reconciliation.md) (its finding #29 and
+  its reading list) cite the always-on orchestrator design as
+  `docs/design/always-on-orchestrator.md`. PR #632 places that document at
+  `docs/mobile/design/always-on-orchestrator.md`, and `docs/design/` on `main` has no such
+  file. **A one-line fix for a later pull request, in the coordinator's folder** — the
+  coordinator's own index already says *"there is no link to it here"*, so the path appears in
+  prose twice and in no link.
+- **O3 — the spec's Follow-up names a file that does not exist.**
+  *"update fugaro-mobile-app-spec.md"* — the mobile spec is
+  [docs/mobile/functional-spec-v0.1.md](../mobile/functional-spec-v0.1.md) (C5). The six edits
+  it still needs are §4's list, and **D22** proposes that a separate pull request applies
+  them. Whoever writes that pull request also has to decide whether the spec's Follow-up
+  bullet is corrected in `spec.md` — **it is not, here**: `spec.md` is verbatim and its typo
+  list is empty.
+- **O4 — Check 110 is claimed twice and written by nobody.** The voice evaluation switch
+  (`docs/mobile/design/voice-evaluation-switch.md`, its Q4 answer) and the always-on
+  orchestrator design (**PR #632**, its §7 and Q5) both name it. The register's rule settles
+  it at merge time — *"whichever of two open claims merges second renumbers itself"* — and
+  this work takes **no** number, which is **D24**.
+
+## 9. UNVERIFIED
 
 | # | What is unverified | Why | What would settle it |
 | --- | --- | --- | --- |
@@ -1080,7 +1117,7 @@ writes one takes the number then (§7 of the implementation plan).
 | U12 | The exact number of live checks this work needs, and their collision settlement | see §7 | reading the register at merge time |
 | U13 | Whether `fugaro watch`'s stream can carry the lease without a second stream or a rules change | `internal/watch/source.go`'s `Supervisor.paths()` is a fixed four | writing it |
 
-## 9. Glossary
+## 10. Glossary
 
 - **Installation / project.** The same deployment unit: one GCP project with one runs bucket,
   one Firebase project and one project policy (`docs/design/v1.md` §1; the coordinator's
