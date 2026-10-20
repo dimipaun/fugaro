@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Eleven checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Twelve checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -320,8 +320,8 @@ added or removed without this sentence moving fails there:
 
   - **The homepage's prompt line** (the owner's feedback of 2026-10-19) moved the site
     figure alone, 1,028,085 → **1,028,787**, by **702 bytes**: the request the hero renders under
-    the headline, the `>` mark in front of it and the two rules that draw it as the chat's own
-    bubble — the homepage's inline stylesheet and its HTML. Nothing outside the homepage moved,
+    the headline, the `>` mark in front of it and the rules that draw it as a line a reader
+    types — the homepage's inline stylesheet and its HTML. Nothing outside the homepage moved,
     because the three files that changed all render on that one page, so the page weight and
     the script stand where they stood.
   - **The benefits** (the same feedback) moved the site figure alone again,
@@ -515,9 +515,11 @@ added or removed without this sentence moving fails there:
     are inside the `h1`'s own container — on the homepage as it was, with its install
     commands and its chat between the hero and the flow's first step heading, they were 24
     words from that container and 134 from the plan's region, and the stricter one is the
-    one enforced). On the homepage today the first `h2` is the chat's own *Through your
-    agent* — the chat is the first block under the promise — and the region is the request
-    the hero renders under the headline, the promise and its two calls to action: 23 words. A
+    one enforced). On the homepage today the first `h2` is the slider's first panel title,
+    *Easy to use*, and the region is the request the hero renders under the headline, the
+    promise, its three calls to action and the slider's three tab labels — the tabs sit above
+    the panel heading the region stops at, so the labels a reader chooses between are part of
+    what they read before the first section: 29 words. A
     page that carries blocks between its `h1` and
     its first `h2` is a page whose lead those blocks are part of, so the fix for a long lead
     is a shorter lead or an earlier first `h2`, never a reader that looks somewhere else. A page
@@ -576,11 +578,12 @@ added or removed without this sentence moving fails there:
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
   word ceilings' business, and no test here sees a viewport (D187). The ordering underneath it
   is a statement about the built pages, though, and it is this file's rules: the homepage's lead
-  region holds four elements — the promise, the row of links under it, and the two links in that
-  row — and the `h2` it stops at is the chat's own *Through your agent*: the illustration the
-  page puts directly under the promise is that heading's own block, sitting between the `h1` and
-  the `h2` that opens it, so the gate takes those elements out of the region before reading it.
-  The chat, the diagram and the install block are the sections that open after the lead region;
+  region holds the request the hero renders under the headline, the promise, the row of links
+  under it and the links in that row — and the `h2` it stops at is the slider's own first panel
+  title: the block the page puts directly under the promise is that heading's own block, sitting
+  between the `h1` and the `h2` that opens it, so the gate takes those elements out of the region
+  before reading it. The slider and the install block are the sections that open after the lead
+  region;
   Getting Started's install section opens with its commands, with the
   sentence about them still there after the paths; and on every route that prints a command —
   three of the eleven today, and the other eight are skipped rather than asserted about — the
@@ -592,6 +595,15 @@ added or removed without this sentence moving fails there:
   refusals are kept the way the other gates keep theirs: a case writes a synthetic `dist` with
   each defect planted beside a page that keeps every rule, and each rule was mutation-proved by
   removing it from the function and watching that case fail.
+- `test/slider.mjs` — the homepage's one slider (the draft of 2026-10-19, P5/P8): the block is
+  three tabs and three panels, every panel is in the HTML a reader receives, each tab is a
+  fragment link to the panel beside it and the stylesheet shows the panel the fragment names —
+  read one tab at a time, so a stylesheet that pairs the Benefits tab with the See it panel is
+  refused rather than counted as three pairs present. It also refuses a script in the block, the
+  `role="tab"`/`aria-selected` pair that describes a widget whose selection is scripted, a tab
+  under the owner's 44 px target, a tab row that cannot wrap, a rule that takes the focus ring
+  off the tabs, a panel wider than a 360 px phone's content box, and a step whose line is not the
+  repository's own sentence about it in the order its document writes them.
 - `test/meta.mjs` — the provenance-phrase gate (D186): a page must not explain why its own
   text exists, so D186's phrase list (`rendered from`, `generated rather than written`, …) is
   refused in the text a reader reads, on every built page. It is the one defect the other
