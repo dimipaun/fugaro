@@ -169,7 +169,7 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 			}
 		}
 		if len(usable) > 0 {
-			c, err := s.leastRecentlyExhausted(ctx, usable, marks, set)
+			c, err := s.leastRecentlyExhausted(ctx, usable, marks)
 			if err != nil {
 				return Credential{}, 0, err
 			}
@@ -420,7 +420,15 @@ func (s *Selector) take(ctx context.Context, run Run, c Credential, now time.Tim
 // been idle for a week and one that has just come back from a reset are the
 // same thing to a token's owner — quota they can spend — and the round robin is
 // what spreads new runs over them evenly.
-func (s *Selector) leastRecentlyExhausted(ctx context.Context, usable []Credential, marks map[string]Mark, set Settings) (Credential, error) {
+//
+// It reads no Settings, and it takes none: the tie-break's policy is the
+// round-robin counter in creds/ and the marks it orders by, both of which it
+// has, and a setting it consulted would be a policy input this signature
+// promised and the body never read — the shape a later reader takes for
+// "wired, and the round robin is where a per-tier rule would go" and then
+// looks for a caller that sets it. The settings the selection does turn on are
+// read where the tier is known (free, and the mark rules beside it).
+func (s *Selector) leastRecentlyExhausted(ctx context.Context, usable []Credential, marks map[string]Mark) (Credential, error) {
 	ordered := make([]Credential, len(usable))
 	copy(ordered, usable)
 	since := func(c Credential) time.Time { return recency(marks[c.Name]) }
