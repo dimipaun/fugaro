@@ -140,8 +140,10 @@ var agentMarkers = agentenv.Markers
 // agent's session.
 func agentMarker(getenv func(string) string) string { return agentenv.Marker(getenv) }
 
-// agentEnv reports whether getenv shows a coding agent's session.
-func agentEnv(getenv func(string) string) bool { return agentenv.Present(getenv) }
+// agentEnv reports whether getenv shows a coding agent's session. It is
+// agentMarker, so that a caller that only wants the yes/no cannot drift from
+// the caller that names the variable to unset.
+func agentEnv(getenv func(string) string) bool { return agentMarker(getenv) != "" }
 
 // writerIsTerminal reports whether w is a terminal. Tests replace it.
 var writerIsTerminal = func(w io.Writer) bool {
