@@ -1476,14 +1476,17 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` now holds three pending workflows,
+change `.github/workflows/`. `docs/pending-workflows/` now holds four pending workflows,
 `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
 P4.3) — `docs/pending-workflows/console-linux.yml` — the desktop console's Linux build check
 (2026-10-20: it packs the AppImage and the `.deb` on `ubuntu-latest` and uploads them, and
-holds no secret) — and `docs/pending-workflows/console-release-linux.yml` — the console's
+holds no secret) — `docs/pending-workflows/console-release-linux.yml` — the console's
 signing pipeline with the Linux legs added, which supersedes the staged `console-release.yml`
-and so is copied over it as well as into `.github/workflows/`. None of the three is this
-site's: the website's two manual
+and so is copied over it as well as into `.github/workflows/` — and
+`docs/pending-workflows/mobile-release.yml` — the mobile app's release (2026-10-20: on every
+`v*` tag and by hand it builds the iOS app on EAS and submits it to TestFlight's internal
+testers, behind the `mobile-release` environment and the owner's approval, and its Android
+job is written but disabled). None of the four is this site's: the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
 owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
 console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:

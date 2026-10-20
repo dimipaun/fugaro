@@ -1,0 +1,244 @@
+# STAGED, NOT APPLIED (2026-10-20). This file is the **mobile app's release
+# workflow**: on every `v*` release tag, and by hand, it builds the iOS app on
+# EAS and submits it to TestFlight's internal testers. **No agent copies,
+# edits, renames or deletes it** -- GitHub rejects a Fugaro push that touches
+# .github/workflows/**, so an agent run cannot deliver a workflow change at
+# all, and every workflow change in this repository is staged here for a human
+# (docs/pending-workflows/README.md, `## mobile-release.yml`).
+#
+# To apply it, from the repository root:
+#
+#     cp docs/pending-workflows/mobile-release.yml .github/workflows/mobile-release.yml
+#     git add .github/workflows/mobile-release.yml
+#     git rm docs/pending-workflows/mobile-release.yml
+#     git commit -m "mobile: build and submit the app on a release tag"
+#
+# **The staged copy is deleted after the copy-in**, as images.yml's and
+# console-linux.yml's are: this is a new workflow with nothing to be
+# byte-identical to. Two follow-up edits belong in that same commit -- the
+# sentence in website/README.md and this README's own opening line, both of
+# which count and name the files still pending here -- and
+# docs/pending-workflows/README.md's `## mobile-release.yml` section carries
+# both as exact text.
+#
+# TWO THINGS MUST EXIST BEFORE THIS FILE CAN RUN, AND NEITHER IS IN IT
+#
+#   1. the `mobile-release` GitHub environment, with the owner as its only
+#      required reviewer, and its deployment branches and tags set to `main`
+#      and to tags `v*`. This is the gate: the job holds an Expo access token
+#      and publishes to a store, so the run waits for a person's click exactly
+#      as `console-release` and `website-live` do.
+#   2. the environment secret `EXPO_TOKEN`: an Expo access token the owner
+#      creates in their own Expo account. **Only the name is written down
+#      anywhere in this repository** -- no agent has ever seen a value, and the
+#      job never prints one.
+#
+# docs/pending-workflows/README.md's `## mobile-release.yml` section has both
+# as commands, each labelled with the account it is done under.
+#
+# WHAT THIS FILE IS, AND WHAT IT DELIBERATELY DOES NOT CONTAIN
+#
+#   - **The store identity is not here.** The iOS bundle identifier lives in
+#     the EAS project's own `production` environment, and both `eas` commands
+#     below run through `eas env:exec production`, which is what loads it: the
+#     worker resolves `mobile/app.config.js` with the profile's environment,
+#     and the local `eas-cli` process that uploads the build resolves the same
+#     file before it uploads anything (mobile/README.md, "Building for internal
+#     testing"). Neither the identity's name nor its value is in this file, in
+#     `mobile/eas.json` or in `mobile/app.json`.
+#   - **Nothing here echoes a secret**, and nothing needs to. `EXPO_TOKEN` is
+#     the only one, it is bound once at job level, and no step prints its
+#     environment or runs a shell with tracing on.
+#   - **iOS only, for now.** The `android` job is written and **disabled**: it
+#     runs only when the repository variable `MOBILE_ANDROID_ENABLED` is
+#     exactly `true`, which the owner sets when the Play side is ready.
+#   - **`dry_run` stops before the submission.** A manual dispatch defaults to
+#     a dry run, so a person trying this workflow gets a build, a summary and
+#     no store upload; a tag push carries no such input and always submits.
+#   - **One release at a time.** The `concurrency` group is the workflow's own
+#     name rather than the ref, so two releases queue instead of submitting at
+#     once, and a release that is mid-submission is never cancelled.
+
+name: mobile-release
+
+on:
+  push:
+    # Every `v*` release tag. Nothing else starts this workflow by itself.
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "build only: stop before the submission to the store"
+        type: boolean
+        default: true
+
+# Least privilege: the job checks the repository out and talks to EAS. It holds
+# no write scope of any kind -- it creates no GitHub release, no tag and no
+# artifact of its own.
+permissions:
+  contents: read
+
+concurrency:
+  # Keyed on the workflow and not on the ref: two releases must never submit at
+  # once, and a release that is mid-submission must not be cancelled by the
+  # next tag arriving.
+  group: mobile-release
+  cancel-in-progress: false
+
+jobs:
+  ios:
+    name: iOS
+    # A pinned image rather than `ubuntu-latest`, the way the release pipelines
+    # pin theirs: what runs here is a client that talks to EAS, and a store
+    # submission is not a thing to re-point at a new image without saying so.
+    runs-on: ubuntu-24.04
+    # The EAS build itself is remote and waits; the step below blocks on it.
+    timeout-minutes: 90
+    # The gate. GitHub holds this job until the environment's only required
+    # reviewer -- the owner -- approves it, however it was started.
+    environment: mobile-release
+    permissions:
+      contents: read
+    env:
+      # The one secret this workflow holds: an Expo access token, created by
+      # the owner and stored as a secret **on the `mobile-release`
+      # environment**, so that it is released to this job only after the
+      # approval above. No step echoes it and none is allowed to.
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The Node line comes from mobile/package.json's `engines.node`, the same
+      # way console-linux.yml takes the console's: a second copy of it written
+      # here would be a pin that can disagree with the app's own.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: mobile/package.json
+      # `eas-cli` is the client that talks to EAS; the build itself runs on
+      # EAS's own workers. It is installed **unpinned**, and that is the one
+      # floating thing in this file: it is not a dependency of the app
+      # (mobile/package.json declares none, and this change may not edit the
+      # app), and docs/gcp-live-checklist.md's Check 89 installs it the same
+      # way on the owner's machine. Pinning it belongs with a lockfile entry in
+      # mobile/package.json; docs/pending-workflows/README.md's
+      # `## mobile-release.yml` section says so, and says what pinning it takes.
+      - name: install eas-cli
+        run: npm install --global eas-cli --ignore-scripts --no-audit --no-fund
+      - name: build the iOS app on EAS
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          # `eas env:exec production` is what keeps the store identity out of
+          # this file: the command runs with the EAS project's `production`
+          # environment loaded, so `eas-cli`'s own local resolution of
+          # `app.config.js` finds the bundle identifier where the owner put it.
+          # `--wait` is what makes the next step's `--latest` the build this
+          # step made: without it the CLI queues the build and returns.
+          eas env:exec production 'eas build --platform ios --profile internal --non-interactive --wait'
+      - name: put the build's URL in the run summary
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          # `eas build:list` is the shape docs/gcp-live-checklist.md's Check 89
+          # reads a build with, so the fields below are the ones this
+          # repository already relies on. It is a read: it needs no store
+          # identity, because `app.config.js` resolves without one outside a
+          # build (`mobile/README.md`, "Building for internal testing").
+          eas build:list --platform ios --profile internal --limit 1 --json > "$RUNNER_TEMP/mobile-build.json"
+          build_id=$(jq -r '.[0].id // "unknown"' "$RUNNER_TEMP/mobile-build.json")
+          build_url=$(jq -r '.[0].artifacts.buildUrl // "none"' "$RUNNER_TEMP/mobile-build.json")
+          {
+            echo "### Fugaro iOS build: ${GITHUB_REF_NAME}"
+            echo
+            echo "- build id: \`${build_id}\`"
+            echo "- artifact URL: ${build_url}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: submit to TestFlight
+        # `github.event.inputs` and not the `inputs` context: that context is
+        # documented for a manual dispatch and a reusable workflow, and this
+        # workflow also runs on a tag push, where the input is absent and the
+        # submission is what a release means.
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          # `--latest` is the build the step above made (it waited for it), and
+          # the same `eas env:exec production` is what gives this local
+          # `eas-cli` process the bundle identifier it needs to submit at all.
+          eas env:exec production 'eas submit --profile internal --platform ios --latest --non-interactive'
+      - name: say that a dry run stopped before the submission
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          {
+            echo
+            echo "**Dry run: the build above was made, and nothing was submitted to any store.**"
+            echo
+            echo "Dispatch this workflow again with \`dry_run\` unchecked to submit the build."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  android:
+    name: Android
+    # DISABLED until the owner turns it on: this job runs only when the
+    # repository variable MOBILE_ANDROID_ENABLED is exactly `true`. An unset
+    # variable is not `true`, so the job is skipped rather than run by
+    # accident. It is written out here, in the shape of the iOS job, so that
+    # turning it on is one repository setting rather than a workflow edit -- an
+    # edit an agent cannot make and the owner would have to.
+    #
+    # Two things the owner needs before setting it: the Play side's first
+    # release, which neither the Play API nor `eas submit` can create (the Play
+    # Console's own UI has to take it once), and the Play service-account
+    # credential on the EAS project (mobile/README.md, "Building for internal
+    # testing"). The submit track is `eas.json`'s
+    # `submit.internal.android.track`, which is exactly `internal` (C8).
+    if: ${{ vars.MOBILE_ANDROID_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: mobile-release
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: mobile/package.json
+      - name: install eas-cli
+        run: npm install --global eas-cli --ignore-scripts --no-audit --no-fund
+      - name: build the Android app on EAS
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          eas env:exec production 'eas build --platform android --profile internal --non-interactive --wait'
+      - name: put the build's URL in the run summary
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          eas build:list --platform android --profile internal --limit 1 --json > "$RUNNER_TEMP/mobile-build.json"
+          build_id=$(jq -r '.[0].id // "unknown"' "$RUNNER_TEMP/mobile-build.json")
+          build_url=$(jq -r '.[0].artifacts.buildUrl // "none"' "$RUNNER_TEMP/mobile-build.json")
+          {
+            echo "### Fugaro Android build: ${GITHUB_REF_NAME}"
+            echo
+            echo "- build id: \`${build_id}\`"
+            echo "- artifact URL: ${build_url}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: submit to the Play internal-testing track
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          eas env:exec production 'eas submit --profile internal --platform android --latest --non-interactive'
+      - name: say that a dry run stopped before the submission
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          {
+            echo
+            echo "**Dry run: the build above was made, and nothing was submitted to any store.**"
+            echo
+            echo "Dispatch this workflow again with \`dry_run\` unchecked to submit the build."
+          } >> "$GITHUB_STEP_SUMMARY"

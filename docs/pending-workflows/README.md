@@ -1,11 +1,12 @@
 # Pending workflow changes
 
-**Three files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task P4.3; see `## shared-tests.yml` below), **`console-linux.yml`** (the console's Linux build check, 2026-10-20; see `## console-linux.yml` below) **and `console-release-linux.yml`** (the console's signing pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged `console-release.yml`; see `## console-release-linux.yml` below). **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508), and `images.yml` was copied in and its staged copy removed in `6b57ba9` (`## images.yml` below is the record of that change, not a pending request). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+**Four files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task P4.3; see `## shared-tests.yml` below), **`console-linux.yml`** (the console's Linux build check, 2026-10-20; see `## console-linux.yml` below), **`console-release-linux.yml`** (the console's signing pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged `console-release.yml`; see `## console-release-linux.yml` below) **and `mobile-release.yml`** (the mobile app's iOS build and TestFlight submission, 2026-10-20; see `## mobile-release.yml` below). **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508), and `images.yml` was copied in and its staged copy removed in `6b57ba9` (`## images.yml` below is the record of that change, not a pending request). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
 - **`shared-tests.yml`** — the whole CI job for `shared/`'s tests, mobile plan Task **P4.3**: a `main`-filtered push and pull request under `shared/**`, `contents: read`, `npm ci` and `npm test` on Node 22 and Node 26, and every `shared/*/mutation-proof.sh` in the package, every action pinned by full commit SHA. `shared/` is outside the Go module, so no job in `ci.yml` runs it. Staged by a Fugaro run that cannot push a `.github/workflows/**` change; see `## shared-tests.yml` below, which also records what the job will report on `main` today.
 - **`website-preview.yml`** and **`website-promote.yml`** — the website's two new workflows, both `workflow_dispatch`-only: one builds a chosen ref and deploys it to a Firebase Hosting preview channel of the site's own project and prints the preview URL, the other promotes an existing preview channel to live and is the owner's alone (`environment: website-live` plus a guard on `github.actor`). Staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Read `docs/website/preview-promote.md` first**: it carries the owner-only one-time setup (the Workload Identity Federation pool and provider, the deployer service account and its Firebase Hosting roles, the `website-live` environment and the three repository variables) that both files need before they can run at all.
 - **`console-linux.yml`** — the console's **Linux build check**: one job on `ubuntu-latest` that packs the AppImage and the `.deb` on every pull request and every push to `main` and uploads them, holding no secret at all. Staged by the 2026-10-20 run that packages the console for Linux (the owner's ruling: Linux for 0.10.0, unsigned). It is its own workflow rather than a second job in `console-tests.yml` because the release gate's required-check list is derived from that file's job set; see `## console-linux.yml` below.
 - **`console-release-linux.yml`** — the console's signing, notarisation and publishing pipeline **with the Linux legs added**: a third job that builds and verifies the unsigned AppImage and `.deb`, and a `publish` that merges both legs, signs one merged `console-sha256sums.txt` keyless with cosign and attaches everything to `console-vX.Y.Z`. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-linux.yml` below.
+- **`mobile-release.yml`** — the **mobile app's release**, staged on 2026-10-20 on the owner's rulings of 2026-10-19/20 (the build runs from GitHub Actions on each release tag, and by hand; iOS only for now; the Android job written but off). On every `v*` tag and on a manual dispatch, one iOS job builds on EAS and submits to TestFlight's internal testers, behind the `mobile-release` GitHub environment and its only required reviewer (the owner) — the same click that gates `console-release` and `website-live`. The Android job is written and **disabled** until the owner turns it on; see `## mobile-release.yml` below.
 - **`images.yml` — applied, not pending.** The signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`, was staged here by a Fugaro run that cannot push a `.github/workflows/**` change, then copied into `.github/workflows/images.yml` and `git rm`'d from here in `6b57ba9`. `## images.yml` below is the record of that change and of the timing it had to meet, not something still to copy.
 
 **`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, it runs unconditionally on every pull request and every push to `main`, and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
@@ -29,7 +30,7 @@ git rm docs/pending-workflows/website-preview.yml docs/pending-workflows/website
 git commit -m "..."
 ```
 
-The two commands above are the website pair's. The `images.yml` commands that used to follow this block were run in `6b57ba9` and its staged file is gone; **two further files are pending as of 2026-10-20 — `console-linux.yml` and `console-release-linux.yml` — and each section below carries its own copy-in block**, the release one with an extra command, because it also replaces the staged `console-release.yml`.
+The two commands above are the website pair's. The `images.yml` commands that used to follow this block were run in `6b57ba9` and its staged file is gone; **three further files are pending as of 2026-10-20 — `console-linux.yml`, `console-release-linux.yml` and `mobile-release.yml` — and each section below carries its own copy-in block**, the release one with an extra command, because it also replaces the staged `console-release.yml`.
 
 **The website pair's own copy-in steps, in order.** (1) Do the one-time setup
 in `docs/website/preview-promote.md` first — the workflows refuse to run
@@ -731,6 +732,233 @@ What *is* asserted offline is the workflow's shape: three jobs, the permissions
 each holds, `publish`'s `needs`, the action pins, that every `run:` step is
 valid shell, and that the two staged console-release files differ only where
 this change says they do.
+
+## `mobile-release.yml`
+
+**Status: `mobile-release.yml` is staged and pending.** The copy has not been
+made — there is no `.github/workflows/mobile-release.yml` — and this document's
+opening line says the same. `TestPendingWorkflowsMobileReleaseIsStagedAndPinned`
+(`internal/cli/docs_mobile_release_workflow_test.go`) reads the staged file, and
+`TestPendingWorkflowsMobileReleaseReadmeNamesTheCopyInAndTheSetup` reads this
+section, so the two cannot drift apart silently. (Those names are held to this
+document by that second test, so the paragraph cannot go on naming a check that
+was renamed or deleted.)
+
+The mobile app's release. `mobile/` is its own artifact outside the Go module
+(D125) with its own release path, and this is that path: **on every `v*` release
+tag, and on a manual dispatch**, one iOS job builds the app on EAS and submits
+the finished build to TestFlight's internal testers. **The Android job is
+written in the same file and disabled.**
+
+**A new file**, so nothing is replaced: it stages `.github/workflows/mobile-release.yml`
+entire. It is a separate file from `ci.yml` for the reason `console-release.yml`
+is: **the job holds an Expo access token and publishes to a store**, and a branch
+of this repository can open a pull request, so a job holding that material must
+never sit in a file that runs on every pull request. This one does not even run
+on a pull request: its triggers are a tag push and a manual dispatch, and nothing
+else.
+
+**What the job is.** One job, `ios`, on the pinned `ubuntu-24.04` — the build
+itself runs on EAS's own workers, so the runner is only the client that uploads
+it — with `contents: read` and nothing else. It checks the repository out with
+`persist-credentials: false`, takes the Node line from `mobile/package.json`'s
+`engines.node` (the same way `console-linux.yml` takes the console's), installs
+`eas-cli`, runs `eas build --platform ios --profile internal --non-interactive
+--wait`, writes the build's id and artifact URL into `$GITHUB_STEP_SUMMARY`, and
+then runs `eas submit --profile internal --platform ios --latest
+--non-interactive`. Every action is pinned by full commit SHA with its `# vX.Y.Z`
+beside it. The `concurrency` group is the workflow's own name and not the ref, so
+two releases queue rather than submit at once, and a release that is mid-submission
+is never cancelled.
+
+**The store identity is not in this file, and cannot be.** The iOS bundle
+identifier and the Android package name live in the **EAS project's own
+`production` environment** (`mobile/README.md`, "Building for internal testing"),
+which is where the owner set them with `eas env:set`; both `eas` commands run
+through **`eas env:exec production`**, which is what loads them into the process.
+That matters twice over: EAS's build worker resolves `mobile/app.config.js` with
+the profile's environment, and the **local** `eas-cli` process that uploads the
+build resolves the same file before it uploads anything — the state the owner's
+first local submission stopped in, with `Specify ios.bundleIdentifier`. So there
+is nothing to add to the repository for the identity: no secret, no variable, no
+edit to `mobile/app.json` or `mobile/eas.json`.
+
+**`dry_run` stops before the submission.** The manual dispatch carries one
+boolean input, `dry_run`, defaulting to **true**: a person trying the workflow
+gets a build, a summary and no store upload, and dispatches again with it
+unchecked to submit. A tag push carries no input, so it always submits — which is
+what a release means. The step conditions read `github.event.inputs.dry_run` and
+not the `inputs` context, because that context is documented for a manual
+dispatch and a reusable workflow while this file also runs on a tag push.
+
+**The Android job is disabled.** It runs only when the repository variable
+`MOBILE_ANDROID_ENABLED` is exactly `true` — an unset variable is not `true`, so
+the job is skipped rather than run by accident. It is written out in the shape of
+the iOS job so that turning it on is **one repository setting rather than a
+workflow edit**: an edit an agent cannot make (GitHub refuses the push) and the
+owner would have to. Setting the variable is not the only thing the Android side
+needs — a brand-new Play app's **first** release has to be uploaded once through
+the Play Console's own UI, because neither the Play API nor `eas submit` can
+create it, and the Play service-account credential has to be on the EAS project
+(`mobile/README.md`, "Building for internal testing").
+
+### Before it can run: the two things the owner creates
+
+Neither is in the file, and neither can be: a staging file cannot create a GitHub
+environment or a secret. **Each step below is labelled with where it is done** —
+the repository, the owner's Expo account, or the owner's Apple account.
+
+**1. [per repo] The `mobile-release` environment, with the owner as its only
+required reviewer.** This is the gate: GitHub holds the job until that reviewer
+approves it, however the run was started — the same click `console-release` and
+`website-live` wait for. Either in the repository's **Settings → Environments**
+(create `mobile-release`, add yourself under **Required reviewers**, and under
+**Deployment branches and tags** choose **Selected branches** with `main` and the
+tag pattern `v*`), or with the API:
+
+```sh
+REPO=dimipaun/fugaro   # the repository the workflow runs in
+
+gh api --method PUT "repos/$REPO/environments/mobile-release" --input - <<JSON
+{
+  "reviewers": [{"type": "User", "id": $(gh api users/dimipaun --jq .id)}],
+  "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}
+}
+JSON
+
+# `main`, so a manual dispatch from the default branch is allowed...
+gh api --method POST "repos/$REPO/environments/mobile-release/deployment-branch-policies" \
+  -f name=main
+# ... and `v*`, so a release tag is. Both are needed: a policy that named only
+# `main` would refuse every tag, and one that named only tags would refuse every
+# manual dispatch.
+gh api --method POST "repos/$REPO/environments/mobile-release/deployment-branch-policies" \
+  -f name='v*' -f type=tag
+```
+
+**Leave "Prevent self-review" off.** The owner is both the actor and the only
+reviewer, and GitHub would otherwise refuse the owner's own approval of the
+owner's own run — the environment would hold every release forever. (The same
+note is in `docs/website/preview-promote.md`, step 6, for the same reason.)
+
+**2. [per Expo account] An Expo access token, and [per repo] the secret
+`EXPO_TOKEN` holding it.** The token is created in the owner's own Expo account
+(expo.dev → **Access tokens** → *Create token*), and the workflow reads it as
+`secrets.EXPO_TOKEN`. **Create it as a secret on the `mobile-release`
+environment**, not as a repository secret: the environment is what withholds it
+until the approval above, and a repository secret of the same name would be
+readable by every workflow in the repository, pull-request-triggered ones
+included. Either in **Settings → Environments → mobile-release → Environment
+secrets → Add secret**, or:
+
+```sh
+# Run this where you can paste the token; it is never written into this
+# repository and no agent has ever seen a value.
+gh secret set EXPO_TOKEN --repo "$REPO" --env mobile-release
+```
+
+**That is the whole list.** `EXPO_TOKEN` is the only secret this workflow needs,
+and it is the only `secrets.` reference in the file: the App Store Connect API
+key and the signing certificate are EAS's (server-side, under the owner's
+account), which is why the submission needs no second credential here.
+`TestPendingWorkflowsMobileReleaseIsStagedAndPinned` asserts that the file names
+exactly that one secret and carries no literal that could be one.
+
+**Nothing is added to the repository for the store identity**, because the
+identity is not here: `FUGARO_IOS_BUNDLE_ID` and `FUGARO_ANDROID_PACKAGE` stay in
+the EAS project's `production` environment, where the owner set them
+(`mobile/README.md`, "Building for internal testing"), and the file reads them
+only through `eas env:exec production`. Neither name appears in the workflow, and
+the test above refuses the file if either one — or a reverse-DNS-shaped value —
+ever does.
+
+### To copy it in
+
+```sh
+cp docs/pending-workflows/mobile-release.yml .github/workflows/mobile-release.yml
+git add .github/workflows/mobile-release.yml
+git rm docs/pending-workflows/mobile-release.yml
+git commit -m "mobile: build and submit the app on a release tag"
+```
+
+The `git rm` is not cleanup, it's load-bearing, for the reason it was for
+`images.yml`: while a staged copy exists the tests above read **it**, so leaving
+it in place would freeze them on its bytes and hide a later edit to the file that
+runs. This file is new, so there is no byte-identity clause to keep it — unlike
+`console-tests.yml` and `console-release.yml`, whose staged copies stay on
+purpose.
+
+**Two follow-up edits belong in that same commit**, because two sentences count
+and name the files still pending in this directory and both are held to the
+directory: the last section of `website/README.md` (which `website/test/readme.mjs`
+reads in both directions, count and names) and **this README's own opening line**
+(which `TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` holds to the same
+directory). Applying this file leaves the directory holding `shared-tests.yml`,
+`console-linux.yml` and `console-release-linux.yml`, so the two sentences that
+commit needs are (each block is the **exact** text to write in place of the
+sentence it replaces; the opening-line block is the whole claim, from its first
+bold marker to the end of its last sentence, and the sentence that follows it in
+this file — "**Two other files stay staged here by design**, `console-tests.yml`
+and `console-release.yml`" — is unchanged, because those two do stay staged):
+
+```
+**Three files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below), **`console-linux.yml`** (the console's Linux build check,
+2026-10-20; see `## console-linux.yml` below) **and `console-release-linux.yml`** (the console's
+signing pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged
+`console-release.yml`; see `## console-release-linux.yml` below).
+```
+
+```
+`docs/pending-workflows/` now holds three pending workflows,
+`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+P4.3) — `docs/pending-workflows/console-linux.yml` — the desktop console's Linux build check
+(2026-10-20: it packs the AppImage and the `.deb` on `ubuntu-latest` and uploads them, and
+holds no secret) — and `docs/pending-workflows/console-release-linux.yml` — the console's
+signing pipeline with the Linux legs added, which supersedes the staged `console-release.yml`
+and so is copied over it as well as into `.github/workflows/`. None of the three is this
+site's: the website's two manual
+```
+
+The second block is the head of `website/README.md`'s last paragraph, up to and
+including the words "the website's two manual" — the sentence continues as it
+does today, and `website/test/readme.mjs` reads the whole page rather than this
+sentence, so the rest of it needs no edit. It also reads the count as a word and
+compares it as a number, so `three` here is what the directory holds after this
+copy-in; the word `four` is the one this document's opening line carried while
+the file was pending.
+
+### Not verified
+
+**The workflow has never run, and no `eas` command in it has ever been run from
+this repository.** No Expo account, no Apple account and no store credential were
+available or permitted in the run that wrote it, and no agent runs `eas build`,
+`eas submit` or touches a signing key or a store credential (the mobile plan's
+Global Constraint 9, D120). Check 89 (`docs/gcp-live-checklist.md`) is the
+owner-run check for the store path, and it is **NOT RUN**.
+
+What *is* asserted offline, by `TestPendingWorkflowsMobileReleaseIsStagedAndPinned`,
+is the file's text: its two triggers and the absence of any third; `contents:
+read` as the whole permission and no job-level widening; the `mobile-release`
+environment on both jobs; the single `secrets.EXPO_TOKEN` reference and no
+secret-shaped literal; every `uses:` a full 40-hex SHA with its `# vX.Y.Z`; the
+`concurrency` group and `cancel-in-progress: false`; the `dry_run` input and the
+step conditions that read it; both `eas` commands under `eas env:exec production`
+and carrying `--non-interactive`; the summary step writing to
+`$GITHUB_STEP_SUMMARY`; the Android job's `if:` naming `MOBILE_ANDROID_ENABLED`
+and nothing else; and that neither the two identity variable names nor a
+reverse-DNS-shaped value appears anywhere in it.
+
+**The one thing in this file that is not pinned to a version is `eas-cli`.** The
+workflow installs it with `npm install --global eas-cli` — unpinned — and that is
+deliberate but not ideal: it is not a dependency of the app (`mobile/package.json`
+declares none, and this change may not edit the app), and
+`docs/gcp-live-checklist.md`'s Check 89 installs it the same way on the owner's
+machine. **Pinning it belongs with a lockfile entry in `mobile/package.json`**,
+which is a change to the app rather than to this staged file; until then, the
+version that runs is whatever `latest` was at the moment of the run. The action
+pins above are exact; this one is not, and it is named here so nobody reads the
+file's other pins as covering it.
 
 ## `website-preview.yml` and `website-promote.yml`
 
