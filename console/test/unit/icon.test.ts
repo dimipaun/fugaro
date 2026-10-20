@@ -212,21 +212,22 @@ describe('the console’s icon is the website’s mark', () => {
   })
 
   it('is a valid opaque 1024 x 1024 PNG', () => {
-    // 1024 rather than the 512 the site serves, and **not because the artwork is
-    // natively that big**. It is not: the source logo's visible artwork (the
-    // alpha bbox of `brand/fugaro-logo.png` at the generator's own threshold,
-    // alpha > 8) is 548 x 371 pixels, so the generator's `fit(art, 1024, 0.80,
-    // ground)` scales it up by 1.4949 to about 819 x 555, and the site's 512 is
-    // the same artwork the other way at 0.7474. The 1024 master is therefore an
-    // ~1.5x interpolation of the mark, and so is this file: what it buys is the
-    // size the `.icns` needs (electron-builder refuses anything under 512 for
-    // icns, and every slot from 512 down to 16 is a downscale of this one), not
-    // detail the source does not have. The README says the same, with the
-    // measured figures and what a genuinely crisp 1024 would need.
+    // 1024 rather than the 512 the site serves. The source logo's visible
+    // artwork (the alpha bbox of `brand/fugaro-logo.png` at the generator's own
+    // threshold, alpha > 8) is 1089 x 738 pixels since the owner replaced the
+    // source with a 2048 px one on 2026-10-20, so the generator's `fit(art,
+    // 1024, 0.80, ground)` draws it at 0.7522 to about 819 x 555 -- a
+    // reduction -- and the site's 512 is the same artwork at 0.3761. The 1024
+    // master is therefore a native-resolution rendering of the mark rather than
+    // an interpolation of a smaller one, which is what the README's account of
+    // the artwork's real size used to ask for (the source was 1024 x 1024 with a
+    // 548 x 371 mark until then, and this file was an ~1.5x upscale of it).
     //
-    // It remains the right file: it is the largest rendering the generator
-    // produces, and upscaling the site's 512 here with a second resampler would
-    // be a worse interpolation *and* a second derivation of the mark.
+    // What the size buys is the `.icns`: electron-builder refuses anything under
+    // 512 for that format, and every slot from 1024 down to 16 is a downscale of
+    // this one. It remains the right file: it is the largest rendering the
+    // generator produces, and resampling the site's 512 up here with a second
+    // resampler would be a second derivation of the mark.
     const icon = png(CONSOLE_ICON)
     expect(icon.width).toBe(1024)
     expect(icon.height).toBe(1024)
