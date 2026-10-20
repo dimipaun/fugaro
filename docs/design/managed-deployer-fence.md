@@ -1,4 +1,4 @@
-# The managed deployer's fence, redesigned for 0.9.5
+# The managed deployer's fence, redesigned for 0.9.6
 
 Status: **design + implementation, GATED OFF.** `managed_deployer_scoped`
 defaults to false and `internal/cli`'s `managedDeployerShipped` stays false, so
@@ -15,11 +15,25 @@ difference and §8 asks the owner to rule.
 **What this document does not claim.** It does not claim the redesigned fence
 is accepted by IAM, or that it fences anything on Google's side. Every
 statement about Google's behaviour that the repository cannot demonstrate is
-labelled UNVERIFIED and is what §9's check measures — except **C7, which §9
-cannot measure and says so**: a name of a conditioned type that misses its own
-`extract` template cannot be constructed, so C7 stays UNVERIFIED after the
-check. The claim "it applies cleanly" belongs to the owner's live check and to
-nothing here.
+labelled UNVERIFIED and is what §9's check measures. **C7 is not one of them
+any more**: the documented semantics of `resource.name.extract` settle it —
+a name that does not carry the template's literal text extracts the empty
+string, and the empty string does not start with the prefix, so a non-match
+denies (C6/C7 in §3). What §9 still measures is whether the services honour
+`resource.name` at all (C3), and whether IAM accepts the expressions. The claim
+"it applies cleanly" belongs to the owner's live check and to nothing here.
+
+**What this fence is expected to be worth if C3 is true.** The five services
+whose resource-attribute reference does not list `resource.name` — IAM service
+accounts, Cloud Run jobs, Cloud Scheduler jobs, Artifact Registry repositories
+and API keys — would, if `resource.name` is unsupported for them, have
+conditions that can never be satisfied: every request against those types is
+denied, so those five roles grant nothing. That is fail-closed and it is the
+safe direction, but it is not a fence: **after the flag flips, the deployer is
+expected to be fenced for Cloud Storage (proved by Check 32) and for Secret
+Manager, and to hold five roles that do nothing.** The feature's own use of
+those services would then have to be reconsidered (§8 point 3), and no document
+here may claim more than that until Check 68 has run.
 
 ## 1. The problem, as the tree records it
 
@@ -106,8 +120,8 @@ cannot test it and this run makes no live call.
 | C3 | `resource.name` is unsupported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, IAM service accounts and API keys | `deployer.tf:35-37` | recorded; **UNVERIFIED** — it is one of the things Check 68 measures (the other is the Secret Manager name form, so six of the seven services are measured) |
 | C4 | an unconditioned binding of a role defeats a conditioned binding of the same role; effective grant = union over bindings of (role's permissions ∩ resources the condition matches) | `deployer.tf:19-21`; enforced by `internal/infra/tf`'s `deployerGrant`/`unconditionedDeployerViolations` | **established in-tree** (the cover refuses the plan) |
 | C5 | `resource.type` for the nine types D75 names, and the name shapes (`projects/_/buckets/<b>`, `projects/<n>/secrets/<s>`, …) | `deployer.tf:51-64`; `internal/infra/tf/cover.go`'s clause model | recorded, and the storage form is proved (Check 32) |
-| C6 | `resource.name.extract("<template>")` returns the resource's own last segment when the name matches the template, and the template's placeholders are written `{project}`, `{location}`, `{job}` and so on | Google's IAM Conditions resource-attribute documentation, as cited by Task 1.5 | **UNVERIFIED** |
-| C7 | a resource whose name does not match the template makes `extract` fail, and a failing condition is false (deny) | Google's conditions semantics, as read into Task 1.5 | **UNVERIFIED**, load-bearing, and **not measurable by Check 68** — see §9 — so it stays UNVERIFIED after the check: §5's design is fail-closed only if a non-match denies |
+| C6 | `resource.name.extract("<template>")` takes a template of literal text around **one** `{identifier}` placeholder and returns the text that placeholder matched — with a prefix-only template, the text from after the literal prefix to the end of the name. A template with more than one placeholder is not the documented form | Google's IAM Conditions resource-attribute reference (`resource.name.extract`), as cited by Task 1.5 | **documented** — the fence's templates are written in that form and only that form, pinned by `TestDeployerExtractTemplatesAreTheDocumentedForm`. The first cut of this fence wrote `extract("projects/{project}/secrets/{secret}")`, three placeholders in the shape of a resource name, which is not that form: either `setIamPolicy` refuses the expression (F1's failure, the 0.8.6 outage again) or the call extracts nothing and the role grants nothing |
+| C7 | a name that does not carry the template's literal text matches nothing, so `extract` returns the empty string, and `"".startsWith("fmgd-")` is false — a non-match denies | the same reference, read with C2 (`startsWith` is the function applied to the result) | **settled by the documented semantics**, and modelled in the tree by `extractSegment` (`internal/infra/tf/cover_test.go`) plus the fail-closed rows of `TestDeployerConditionFencesOnlyTheManagedPrefix`. Not measurable live, and no longer needs to be: every conditioned type's real names carry their own clause's anchor, so no probe can construct the non-match, and the semantics say what happens if one existed. The residual — that the reference itself is wrong — is the same class of risk as C3 and is what §9's apply step would surface |
 | C8 | a project-level binding of a custom role reaches only that project's resources | IAM's resource hierarchy; also how every other Fugaro grant is written | recorded |
 | C9 | `resource.matchTag` exists and can test a tag on a resource, but tag *values* are per-project and a tag key has to be created in the organisation/project first | Task 1.5's option list; no Fugaro code uses tags today | **UNVERIFIED** |
 | C10 | `cloudscheduler.jobs.resume` does not exist; resume is `cloudscheduler.jobs.enable` | `deployer.tf:164` (the second 0.8.6 defect, already fixed) | recorded |
@@ -127,7 +141,11 @@ and each service gets the `resource.name` form that service honours: the proven
 `startsWith("projects/_/buckets/fmgd-")` for Cloud Storage, and, for the rest,
 either a `startsWith` on a path whose front is a plan-time literal, or
 `extract("<template>").startsWith("fmgd-")` where a middle segment (the project
-number, the location) is not knowable at plan time.
+number, the location) is not knowable at plan time. The `extract` templates are
+the documented form — literal text and one placeholder — anchored at the
+collection segment the resource's own name follows (`"/secrets/{secret}"`,
+`"/jobs/{job}"`), so the text extracted runs from there to the end of the name,
+which for a resource of the clause's own type is its own name.
 
 **What it protects.** Everything F3 names, provided C3 and C7 hold: the roles
 are disjoint, each is bound once, and each condition admits only `fmgd-` names.
@@ -144,15 +162,19 @@ one D75 already needed.
 - A condition Google rejects (C1/C2/C3 wrong) stops the apply — F1's failure,
   which is why the gate stays off until §9 passes. Detected at creation, not at
   use.
-- `extract` does not behave as C6/C7 describe: if a non-matching name makes the
-  condition *true* instead of false, the fence inverts and the deployer reaches
-  everything the role's permissions reach. This is the one failure that is not
-  fail-closed, and it is why the design uses `extract` only where a `startsWith`
-  on a literal front cannot be written. **It is also the failure §9 cannot
-  reach** — a name of a conditioned type that misses its own template cannot be
-  created — so it stands as accepted-unmeasured (§8 point 2) rather than as
-  tested, and the near miss §9 does use (a name that contains `fmgd-` without
-  starting with it) tests the prefix, not the template.
+- `extract` does not behave as C6/C7 document: under the documented semantics a
+  non-match extracts nothing and denies, and the tree models exactly that
+  (`extractSegment`, `TestDeployerConditionFencesOnlyTheManagedPrefix`). If the
+  reference were wrong in the other direction — a non-matching name making the
+  condition *true* — the fence would invert and the deployer would reach
+  everything the role's permissions reach. That is the one failure that is not
+  fail-closed, it is why the design uses `extract` only where a `startsWith` on
+  a literal front cannot be written, and **§9 cannot reach it**: a name of a
+  conditioned type that misses its own template cannot be created. The near miss
+  §9 does use (a name that contains `fmgd-` without starting with it) tests the
+  prefix, not the template. What changed with C6/C7 is that this is now a
+  residual risk about the documentation being wrong, not an open question about
+  what the documented behaviour is.
 - `resource.name` is unsupported for a service (C3): that service's condition
   cannot be written at all. R5 applies — drop the type (§8, open point 5).
 - Seven roles is seven objects to keep in step with the code. `internal/infra/tf`
@@ -309,25 +331,31 @@ Reasoning, in the order the requirements are numbered:
   scoped binding whose condition is not the one the code builds, byte for byte.
   The change is to make that "the one the code builds" a *set* — one per service
   — and to keep the same refusal strength per binding.
-- **R6** holds for six of the seven services without qualification, and for the
-  `extract` form it holds *if* C7 is right. That is the honest weak point of this
-  option. **§9's check cannot measure C7** (no name of a conditioned type can be
-  made to miss its own template, and the one name that does is of a type no
-  clause names), so this is a decision to take *unmeasured*: §8 point 2 asks the
-  owner to accept the `extract` dependency on that basis, take option 1b, or drop
-  the five services.
+- **R6** holds for all seven services, on the documented semantics: the storage
+  and service-account clauses are `startsWith` on a plan-time literal, and the
+  five `extract` clauses deny when their template does not match (C7). The
+  remaining exposure is not the fail-closed direction but the one that cannot be
+  measured: a service that does not honour `resource.name` at all (C3) leaves
+  its clause unsatisfiable, which is fail-closed — the role grants nothing —
+  and §9 measures it per service. **§8 point 2 is therefore no longer "accept
+  the `extract` dependency unmeasured"**; it is what to do with a service whose
+  clause cannot be evaluated at all (§8 point 3).
 - It **keeps the prefix meaningful**, which options 2 and 4 give up, and it does
   not need the tag infrastructure option 3 needs.
 - It **reduces blast radius**: today one wrong condition widens all nine types;
   after the split, a wrong condition widens one service.
 
-**Why not 1b.** It is option 1 with a smaller dependency, and it is the right
-fallback: for Cloud Storage and IAM service accounts the `startsWith` form is
-available today, and §6's implementation uses it for both. It is not the whole
+**Why not 1b.** It is option 1 with a smaller dependency, and it stays the
+recorded fallback: for Cloud Storage and IAM service accounts the `startsWith`
+form is available today, and §6's implementation uses it for both. It is not the
 design because five of the seven services have a middle segment the module
-cannot know at plan time, and the two ways to make it knowable — a project
-number input, a location allow-list — are either an input the module does not
-have or a fence with the allow-list's width as a hole.
+cannot know at plan time — Secret Manager's project **number**, and the
+**location** Artifact Registry, Cloud Run and Cloud Scheduler carry — and the
+two ways to make it knowable are a project-number input the module does not have
+or a location allow-list, which is a fence with the allow-list's width as a
+hole. The `extract` anchor form needs neither: `"/secrets/{secret}"` steps over
+the unknown project number and `"/jobs/{job}"` over the location, and both are
+in the documented one-placeholder form (C6).
 
 **Why not 2.** It is a smaller change and a *stronger* fence against the
 installation's own resources, and it should be reconsidered if §9 shows
@@ -350,12 +378,23 @@ condition. All seven are behind `count = var.managed_deployer_scoped ? 1 : 0`.
 | role | permissions | type(s) | condition clause |
 | --- | --- | --- | --- |
 | `fugaroDeployerStorage` (9) | `storage.buckets.{delete,get,setIamPolicy,update}`, `storage.objects.{create,delete,get,list,update}` | `storage.googleapis.com/Bucket`, `.../Object` | `resource.name.startsWith("projects/_/buckets/fmgd-")` — the form Check 32 proved |
-| `fugaroDeployerSecret` (3) | `secretmanager.secrets.{delete,setIamPolicy,update}` | `secretmanager.googleapis.com/Secret` | `resource.name.extract("projects/{project}/secrets/{secret}").startsWith("fmgd-")` |
+| `fugaroDeployerSecret` (3) | `secretmanager.secrets.{delete,setIamPolicy,update}` | `secretmanager.googleapis.com/Secret` | `resource.name.extract("/secrets/{secret}").startsWith("fmgd-")` |
 | `fugaroDeployerAccount` (4) | `iam.serviceAccounts.{actAs,delete,setIamPolicy,update}` | `iam.googleapis.com/ServiceAccount` | `resource.name.startsWith("projects/${var.project}/serviceAccounts/fmgd-")` — the project is a plan-time literal here (C5, `cover.go`'s `saName`) |
-| `fugaroDeployerApiKey` (2) | `apikeys.keys.{delete,update}` | `apikeys.googleapis.com/Key` | `resource.name.extract("projects/{project}/locations/{location}/keys/{key}").startsWith("fmgd-")` |
-| `fugaroDeployerRepository` (3) | `artifactregistry.repositories.{delete,setIamPolicy,update}` | `artifactregistry.googleapis.com/Repository` | `resource.name.extract("projects/{project}/locations/{location}/repositories/{repository}").startsWith("fmgd-")` |
-| `fugaroDeployerRunJob` (5) | `run.jobs.{delete,run,runWithOverrides,setIamPolicy,update}` | `run.googleapis.com/Job` | `resource.name.extract("projects/{project}/locations/{location}/jobs/{job}").startsWith("fmgd-")` |
-| `fugaroDeployerSchedulerJob` (5) | `cloudscheduler.jobs.{delete,enable,pause,run,update}` | `cloudscheduler.googleapis.com/Job` | `resource.name.extract("projects/{project}/locations/{location}/jobs/{job}").startsWith("fmgd-")` |
+| `fugaroDeployerApiKey` (2) | `apikeys.keys.{delete,update}` | `apikeys.googleapis.com/Key` | `resource.name.extract("/keys/{key}").startsWith("fmgd-")` |
+| `fugaroDeployerRepository` (3) | `artifactregistry.repositories.{delete,setIamPolicy,update}` | `artifactregistry.googleapis.com/Repository` | `resource.name.extract("/repositories/{repository}").startsWith("fmgd-")` |
+| `fugaroDeployerRunJob` (5) | `run.jobs.{delete,run,runWithOverrides,setIamPolicy,update}` | `run.googleapis.com/Job` | `resource.name.extract("/jobs/{job}").startsWith("fmgd-")` |
+| `fugaroDeployerSchedulerJob` (5) | `cloudscheduler.jobs.{delete,enable,pause,run,update}` | `cloudscheduler.googleapis.com/Job` | `resource.name.extract("/jobs/{job}").startsWith("fmgd-")` |
+
+The five `extract` templates are the documented form (C6): literal text around
+one placeholder, anchored at the collection segment the resource's own name
+follows, with nothing after the placeholder — so the extracted text is the
+resource's own name. They deliberately do **not** spell the whole resource path
+(`"projects/{project}/secrets/{secret}"`): that is three placeholders, not the
+documented form, and the project in a secret's name is the project **number**,
+which this module does not know at plan time. A template that grew a second
+placeholder is a test failure
+(`TestDeployerExtractTemplatesAreTheDocumentedForm`), not an apply that never
+completes.
 
 9+3+4+2+3+5+5 = **31** — D75's scoped list, partitioned, nothing added or
 dropped. Operator counts: storage 3 (two clauses, joined by one `||`), and 1 for
@@ -364,11 +403,21 @@ limit of 12 (C1), where the 0.8.6 shape's single condition counted 17.
 
 `secretmanager.googleapis.com/SecretVersion` is deliberately **not** fenced and
 **not** named by any clause: no permission in `fugaroDeployerSecret` acts on a
-version (`secretmanager.versions.*` is in no deployer role at all), and a
-version's own name (`projects/<n>/secrets/<secret>/versions/<v>`) does not match
-the secret template, so a clause for it would be dead weight in a condition that
-has to stay under 12 operators. A version resource is therefore out of the
-fence's reach by being out of the role's reach — fail-closed. If a version
+version (`secretmanager.versions.*` is in no deployer role at all). Note what
+excludes it, because it is not the name test: a version's name
+(`projects/<n>/secrets/<secret>/versions/<v>`) *does* carry the secret clause's
+anchor, and `extract("/secrets/{secret}")` returns `fmgd-x/versions/1` for it,
+which starts with the prefix. What keeps a version out is the **type** term
+beside the name test — a version reports
+`secretmanager.googleapis.com/SecretVersion`, which no clause names — together
+with the role pin, which holds `secretmanager.versions.*` out of every deployer
+role. The same is true of an execution under a managed Cloud Run job, a package
+under a managed repository and so on: they are other types. A version resource
+is therefore out of the fence's reach by being out of the role's reach —
+fail-closed. Both halves are pinned:
+`TestDeployerConditionFencesOnlyTheManagedPrefix` offers those longer names
+under their own types and refuses them, and asserts that no clause names those
+types. If a version
 permission were ever added to the role, `TestDeployerScopedRolesAreD75Partitioned`
 (internal/infra/tf/cover_test.go) refuses it: it is not in D75's scoped list,
 which that test carries as its own literal, and the partition test is what makes
@@ -406,19 +455,28 @@ unchanged.
    work there than D75 assumed, and the per-service split buys less than it
    looks like. If the prefix must keep meaning something, option 1 is the only
    one of the four that keeps it.
-2. **Accept the `extract` dependency?** Five of the seven services need
-   `resource.name.extract` (C6) and depend on C7's fail-closed behaviour.
-   **Check 68 cannot measure C7** (§9: no conditioned type can be given a name
-   that misses its own template, and the one name that does is of a type no
-   clause names), so this decision has to be taken *unmeasured*: accept it as
-   read, or fall back to 1b (with the project number and location inputs it
-   needs, and the location hole that comes with a location allow-list), or drop
-   those five services.
+2. **Accept the `extract` form as the design?** Five of the seven services need
+   `resource.name.extract`, written in the documented one-placeholder form (C6),
+   and their fail-closed behaviour follows from the documented semantics (C7)
+   rather than from a live probe — no probe can construct the non-match, because
+   every conditioned type's real names carry their own clause's anchor. The
+   decision left to the owner is therefore not "accept it unmeasured" but
+   whether the anchored form is the design at all, against option 1b (which
+   needs a project-number input and a location allow-list, and a location
+   allow-list is a fence with the allow-list's width as a hole) and against
+   dropping those five services (point 3). **What the tree can say is that the
+   form is documented, modelled and pinned; what it cannot say is that IAM
+   accepts it for those five types — that is point 3 and Check 68.**
 3. **What if `resource.name` is unsupported for a service (C3)?** R5 says drop
    the type. Dropping IAM service accounts or Cloud Run jobs guts the feature
    (a managed plan creates accounts and jobs); dropping API keys, scheduler jobs,
    Artifact Registry repositories or secrets is survivable. The owner should say
    now which drops are acceptable, so §9's result has a written consequence.
+   **This is the question that decides how much fence there is**: if C3 holds
+   for all five services, the deployer ends up fenced for Cloud Storage and
+   Secret Manager and holding five roles that deny everything (fail-closed, and
+   unusable) — which is a smaller feature than any document here may claim
+   until Check 68 has run.
 4. **What if `extract` is unsupported but `resource.name` is?** Then option 1b
    with the extra inputs becomes the design, and the location question in point 2
    has to be answered.
@@ -461,19 +519,26 @@ only**, never `belong`:
 **What it measures, and what it does not.** The check settles F1 (the shape
 applies), C1 (the operator counts) and C3 (whether `resource.name` is honoured,
 per type — six of the seven services; storage's form is already proved by
-Check 32). It does **not** settle the fail-closed question C7 **at all**, and the
-checklist's step 6 says why in full: every conditioned type's real names match
-that condition's own template — a bucket and an object under `projects/_/buckets/`,
+Check 32). Its **positive** direction is what carries the weight: a prefixed
+resource the impersonated account can act on is a clause that is evaluated and
+true, and it is the only thing that distinguishes a working fence from a clause
+that can never be satisfied. A service that fails the positive direction leaves
+its role granting nothing — fail-closed, and open point 3 above.
+
+The check does **not** probe the non-match direction of `extract` (C7), and the
+checklist's step 6 says why in full: every conditioned type's real names carry
+their own clause's anchor — a bucket and an object under `projects/_/buckets/`,
 a service account under `projects/<project>/serviceAccounts/`, and for the five
-`extract` services the resource *is* the last segment of its own template — so a
-name of a conditioned type that misses the template cannot be created; and the
-one name that does miss a template (a Secret Manager version) is of a type no
-clause names, so its request is denied for want of the permission before any
-condition is read. **C7 therefore stays UNVERIFIED after Check 68**, and open
-point 2 above is the owner's to answer on that basis: accept the `extract`
-dependency unmeasured, take option 1b, or drop the five services. The near miss
-in the check (a name that contains `fmgd-` without starting with it) tests the
-prefix test, and is not a substitute.
+`extract` services the anchor is the collection segment the resource's own name
+follows — so a name of a conditioned type that misses the anchor cannot be
+created; and the names that carry a longer path (a Secret Manager version, a
+Cloud Run execution, an Artifact Registry package) report types no clause names,
+so their requests are denied on the type term and for want of the permission
+before any name is read. **C7 does not need a live probe**: it follows from the
+documented semantics, is modelled by `extractSegment` and pinned by the
+fail-closed rows of `TestDeployerConditionFencesOnlyTheManagedPrefix`. The near
+miss in the check (a name that contains `fmgd-` without starting with it) tests
+the prefix test, and is not a substitute for any of this.
 
 Check 67 (the plan's Task 5.3) owns the transitive-reach half — what the
 identity can reach through impersonation and through the roles it may grant —

@@ -56,7 +56,7 @@ var managedGateCases = map[string][]string{
 }
 
 // While managedDeployerShipped is false (0.8.6 onward: 0.9.0 still ships with
-// the scoped role gated off, and the redesign is planned for 0.9.5), every
+// the scoped role gated off, and the redesign is planned for 0.9.6), every
 // command that would create a managed project, mark one managed or act as its
 // deployer refuses with the one message, as a user error, before anything
 // else: the message is the first refusal of each, so no other check (and no
@@ -180,8 +180,8 @@ func TestDoctorSaysManagedDeployerIsDisabled(t *testing.T) {
 	if c.Severity != "info" {
 		t.Errorf("severity %q, want info", c.Severity)
 	}
-	if !strings.Contains(c.Problem, "disabled in this release") || !strings.Contains(c.Problem, "0.9.5") {
-		t.Errorf("the line does not say the scoped role is disabled in this release and returns in 0.9.5: %q", c.Problem)
+	if !strings.Contains(c.Problem, "disabled in this release") || !strings.Contains(c.Problem, "0.9.6") {
+		t.Errorf("the line does not say the scoped role is disabled in this release and returns in 0.9.6: %q", c.Problem)
 	}
 	if checksFail([]doctorCheck{*c}, true) {
 		t.Error("the managed-deployer line fails doctor --strict")

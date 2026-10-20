@@ -20,8 +20,8 @@
 # condition on one binding cannot fence permissions an unconditioned binding of
 # the same role already grants project-wide.
 #
-# ONE BINDING PER SERVICE (0.9.5 redesign, docs/design/managed-deployer-fence.md).
-# Until 0.9.5 the conditioned half was ONE role, fugaroDeployerScoped, under one
+# ONE BINDING PER SERVICE (0.9.6 redesign, docs/design/managed-deployer-fence.md).
+# Until 0.9.6 the conditioned half was ONE role, fugaroDeployerScoped, under one
 # condition, and that condition could not be applied: it joined 9 clauses with
 # 17 logical operators where IAM allows 12, it called resource.name.contains(),
 # which is not a supported function (startsWith, endsWith, extract, == and !=
@@ -89,17 +89,20 @@ resource "google_service_account" "fugaro_deployer" {
 #     Artifact Registry, Cloud Run and Cloud Scheduler carry the location, which
 #     a managed plan chooses and which is not even constant inside one
 #     installation (this installation's scheduler runs in another region from
-#     its jobs). A name that does not match the template must make the condition
-#     false; that is Google's behaviour and not something this repository can
-#     check, so it is labelled UNVERIFIED in the design (C7). Check 68 measures
-#     the two directions that can be constructed — a prefixed name and one that
-#     does not carry the prefix, including a name that contains it without
-#     starting with it and one the template names — but it cannot construct the
-#     mismatch itself: every conditioned type's real resource name matches its
-#     own template, so no name of that type can be made to miss it. C7 therefore
-#     stays UNVERIFIED after Check 68, and the design's §8 point 2 (accept the
-#     extract dependency, or take option 1b, or drop the five services) is the
-#     owner's to answer on that basis.
+#     its jobs). A name that does not match the template makes the condition
+#     false, and that is the documented semantics rather than a hope: extract
+#     returns the text the template's ONE {identifier} placeholder matched, so a
+#     name the template does not match extracts the empty string, and
+#     "".startsWith("fmgd-") is false. The design's C7 is settled that way and
+#     modelled by internal/infra/tf/cover_test.go's extractSegment. Check 68
+#     measures the two directions that can be constructed — a prefixed name and
+#     one that does not carry the prefix, including a name that contains it
+#     without starting with it and one the template names — but it cannot
+#     construct the mismatch itself: every conditioned type's real resource name
+#     matches its own template, so no name of that type can be made to miss it.
+#     What remains open, and what the design's §8 point 2 asks the owner, is C3
+#     — whether resource.name is honoured per type at all — and how much fence
+#     there is if it is not.
 #
 # tf.deployerServices(project) is these strings, byte for byte, and
 # internal/infra/tf refuses a binding whose expression is not exactly its own
@@ -128,10 +131,17 @@ locals {
     "(resource.type == \"storage.googleapis.com/Object\" && resource.name.startsWith(\"projects/_/buckets/fmgd-\"))",
   ])
 
-  # One clause, the container's own type: a version's name does not match the
-  # secret's template, and no permission of this role acts on a version.
+  # One clause, the container's own type: a version's name does not carry this
+  # clause's type, and no permission of this role acts on a version. The
+  # template is the DOCUMENTED form — literal text and ONE placeholder, which is
+  # what the resource-attribute reference documents for resource.name.extract —
+  # and it anchors at the collection segment the resource's own name follows.
+  # The multi-placeholder form ("projects/{project}/secrets/{secret}") is not
+  # that form, and a condition IAM refuses stops the whole apply (the 0.8.6
+  # outage); the project in a secret's name is its NUMBER, which this module does
+  # not know at plan time, so the anchor is the segment and not the front.
   deployer_condition_secret = join(" || ", [
-    "(resource.type == \"secretmanager.googleapis.com/Secret\" && resource.name.extract(\"projects/{project}/secrets/{secret}\").startsWith(\"fmgd-\"))",
+    "(resource.type == \"secretmanager.googleapis.com/Secret\" && resource.name.extract(\"/secrets/{secret}\").startsWith(\"fmgd-\"))",
   ])
 
   deployer_condition_account = join(" || ", [
@@ -139,19 +149,19 @@ locals {
   ])
 
   deployer_condition_apikey = join(" || ", [
-    "(resource.type == \"apikeys.googleapis.com/Key\" && resource.name.extract(\"projects/{project}/locations/{location}/keys/{key}\").startsWith(\"fmgd-\"))",
+    "(resource.type == \"apikeys.googleapis.com/Key\" && resource.name.extract(\"/keys/{key}\").startsWith(\"fmgd-\"))",
   ])
 
   deployer_condition_repository = join(" || ", [
-    "(resource.type == \"artifactregistry.googleapis.com/Repository\" && resource.name.extract(\"projects/{project}/locations/{location}/repositories/{repository}\").startsWith(\"fmgd-\"))",
+    "(resource.type == \"artifactregistry.googleapis.com/Repository\" && resource.name.extract(\"/repositories/{repository}\").startsWith(\"fmgd-\"))",
   ])
 
   deployer_condition_runjob = join(" || ", [
-    "(resource.type == \"run.googleapis.com/Job\" && resource.name.extract(\"projects/{project}/locations/{location}/jobs/{job}\").startsWith(\"fmgd-\"))",
+    "(resource.type == \"run.googleapis.com/Job\" && resource.name.extract(\"/jobs/{job}\").startsWith(\"fmgd-\"))",
   ])
 
   deployer_condition_schedulerjob = join(" || ", [
-    "(resource.type == \"cloudscheduler.googleapis.com/Job\" && resource.name.extract(\"projects/{project}/locations/{location}/jobs/{job}\").startsWith(\"fmgd-\"))",
+    "(resource.type == \"cloudscheduler.googleapis.com/Job\" && resource.name.extract(\"/jobs/{job}\").startsWith(\"fmgd-\"))",
   ])
 }
 

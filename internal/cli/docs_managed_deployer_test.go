@@ -11,13 +11,18 @@ import (
 // managed-deployer-fence.md; deploy/terraform/gcp/modules/installation/
 // deployer.tf). The section is the only place the shape's open questions are
 // measured, so what this test holds is what makes it runnable by the owner and
-// safe to run: whose check it is, the four hard stops in the guard block, the
+// safe to run: whose check it is, the five hard stops in the guard block (the
+// belong one comparing PROJECT IDS and the installation's name, never a
+// `fugaro doctor` line read out of the checkout), the workdir and backend
+// configuration every terraform command below it needs (the checkout's
+// `deploy/terraform/gcp/roots/installation` has no tfvars and no backend), the
 // two directions every service is measured in, the Secret Manager version read
-// and the section's own statement that it does not settle the design's C7 (a
-// name of a conditioned type that misses its `extract` template cannot be
-// constructed, so the register must not read as measuring one), the restore
-// that closes the gate again, and the fact that Check 67 — the transitive-reach
-// half — is not this section.
+// and the section's own statement that the design's C7 — whether a name that
+// misses an `extract` template fails closed — is settled by the documented
+// semantics of `extract` rather than measured here (no live name of a
+// conditioned type can be made to miss its own template, so the register must
+// not read as measuring one), the restore that closes the gate again, and the
+// fact that Check 67 — the transitive-reach half — is not this section.
 //
 // The row and the heading carry the same facts as prose: a live check that does
 // not say it is the owner's, on a sandbox project, and never against `belong`
@@ -67,20 +72,26 @@ func TestChecklistHasCheck68(t *testing.T) {
 		"C3",
 		"UNVERIFIED",
 		// And the one it names so the reader is not misled: C7 is named, and
-		// the section says outright that it is NOT settled by this check.
-		// Without this the register would read as measuring a question the
-		// check cannot construct a probe for (see the section's step 6).
+		// the section says outright that this check does not settle it —
+		// the documented semantics of `extract` do, and no live probe can
+		// construct the mismatch (see the section's step 6). Without this the
+		// register would read as measuring a question the check cannot
+		// construct a probe for.
 		"C7",
-		"What this check does not settle",
-		"stays UNVERIFIED",
+		"the documented semantics settle it",
+		"empty string",
+		"extractSegment",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 68 does not say %q", want)
 		}
 	}
 
-	// 2. The guard block: the first block, with the four hard stops and the
-	// project set by the owner rather than read from gcloud.
+	// 2. The guard block: the first block, with the five hard stops, the project
+	// set by the owner rather than read from gcloud, and the belong stop
+	// comparing project ids and the installation's name — a `fugaro doctor` line
+	// says which installation the checkout is, which is no evidence at all about
+	// the project the check writes in.
 	blocks := bashBlocks(section)
 	if len(blocks) < 6 {
 		t.Fatalf("Check 68 has %d bash blocks, want the guard, the read-only setup and the steps", len(blocks))
@@ -88,7 +99,12 @@ func TestChecklistHasCheck68(t *testing.T) {
 	guard := strings.Join(blocks[0], "\n")
 	for _, want := range []string{
 		"CHK68_PROJECT:?",
-		"grep -qx belong",
+		"CHK68_INSTALLATION:?",
+		"BELONG=edge-devel-dimi",
+		`[ "$P" != "$BELONG" ]`,
+		`[ "$I" != belong ]`,
+		`sed -n 's/^gcp_project: *//p' "$C"`,
+		`$HOME/.config/fugaro/projects/${I:?}.yaml`,
 		"exit 1",
 		"--project=\"${P:?}\"",
 		"mkdir -p \"$CHK68_TMP\"; chmod 700 \"$CHK68_TMP\"",
@@ -99,6 +115,39 @@ func TestChecklistHasCheck68(t *testing.T) {
 	}
 	if strings.Contains(guard, "gcloud config get-value project") {
 		t.Error("Check 68's guard reads the project from gcloud's ambient configuration, which is the trap the check names")
+	}
+	// The commands of the block, without its comments: what the guard runs is
+	// what matters, and the comment above the belong stop names the thing it no
+	// longer reads.
+	guardCmds := ""
+	for _, line := range blocks[0] {
+		s := strings.TrimSpace(line)
+		if s == "" || strings.HasPrefix(s, "#") {
+			continue
+		}
+		guardCmds += s + "\n"
+	}
+	if strings.Contains(guardCmds, "fugaro doctor") {
+		t.Error("Check 68's guard reads a doctor line out of the checkout: that says which installation the checkout is, and proves nothing about $P")
+	}
+	// The workdir and its backend, which is where the gate variable lives and
+	// where the plan is made. The checkout's root has neither a tfvars file nor a
+	// backend block, so a check that plans there cannot run at all.
+	for _, want := range []string{
+		`XDG_STATE_HOME:-$HOME/.local/state`,
+		`/fugaro/terraform/${I:?}/installation`,
+		`TF_DATA_DIR="$W/.terraform" TF_CLI_CONFIG_FILE="$W/terraformrc"`,
+		"-backend-config=bucket=fugaro-tfstate-${P:?}",
+		"-backend-config=prefix=fugaro/installation",
+		`$W/gcp/roots/installation/terraform.tfvars.json`,
+		"managed_deployer_scoped: true",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 68 does not carry %q: the gate is set in the workdir's tfvars and the root is planned from the workdir", want)
+		}
+	}
+	if strings.Contains(section, "fugaro config path") {
+		t.Error("Check 68 uses `fugaro config path`, which does not exist: the local config is $HOME/.config/fugaro/projects/<name>.yaml, as the other checks name it")
 	}
 	// Every gcloud command in the section names its project, in every block.
 	commands := 0
@@ -168,14 +217,17 @@ func TestChecklistHasCheck68(t *testing.T) {
 		t.Error("Check 68 creates the API key without --key-id, so its ID is server-generated and its positive action can never succeed")
 	}
 
-	// 4. The fail-closed question: named, and disowned. The section has to say
-	// in as many words that this check does not settle C7, and why — a
-	// SecretVersion is not the secret clause's type, so the read is denied for
-	// want of the permission and the condition is never evaluated.
+	// 4. The fail-closed question: named, disowned, and answered elsewhere. The
+	// section has to say in as many words that this check does not settle C7 and
+	// why — a SecretVersion is not the secret clause's type, so the read is
+	// denied for want of the permission and the condition is never evaluated —
+	// and that the documented semantics of `extract` are what settle it, because
+	// the register must not read as measuring a question nothing live can.
 	for _, want := range []string{
 		"secretmanager.versions.*",
-		"What this check does not settle",
-		"stays UNVERIFIED",
+		"What this step does not settle",
+		"C7 is not this check's question",
+		"the documented semantics settle it",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 68 does not carry %q", want)

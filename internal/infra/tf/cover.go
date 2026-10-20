@@ -274,7 +274,7 @@ const (
 	// The seven conditioned roles' IDs, one per service, each holding that
 	// service's slice of every update, delete, run and pause permission, every
 	// *.setIamPolicy and actAs, and each bound to the deployer account exactly
-	// once under its own condition (deployerServices below). Until 0.9.5 this
+	// once under its own condition (deployerServices below). Until 0.9.6 this
 	// was ONE role, fugaroDeployerScoped, under one condition; that condition
 	// could not be applied (17 logical operators where IAM allows 12, a
 	// resource.name.contains() which is not a supported function, and
@@ -323,30 +323,39 @@ const (
 //     projects/<project>/serviceAccounts/<account>@<project>
 //     .iam.gserviceaccount.com, whose front is the project — a plan-time
 //     literal (var.project) — so that service takes this form too.
-//   - "extract" tests the resource's own LAST segment: Value is the name's
-//     template, placeholders and all, and Starts is what the extracted segment
-//     must begin with. It is what the remaining five services need, because
-//     the segment before the resource's own name carries a value the module
-//     does not have at plan time: Secret Manager names a secret with the
-//     project NUMBER rather than the id, and Artifact Registry, Cloud Run and
-//     Cloud Scheduler carry the location, which a managed plan chooses and
-//     which is not even constant inside one installation (the installation's
-//     own scheduler runs in another region from its jobs).
+//   - "extract" tests the resource's own name, pulled out of the whole resource
+//     name: Value is the DOCUMENTED extraction template — literal text, ONE
+//     {placeholder}, and nothing else — and Starts is what the extracted text
+//     must begin with. It is what the remaining five services need, because the
+//     segment before the resource's own name carries a value the module does
+//     not have at plan time: Secret Manager names a secret with the project
+//     NUMBER rather than the id, and Artifact Registry, Cloud Run and Cloud
+//     Scheduler carry the location, which a managed plan chooses and which is
+//     not even constant inside one installation (the installation's own
+//     scheduler runs in another region from its jobs). The template anchors at
+//     the collection segment the resource's own name follows ("/secrets/",
+//     "/jobs/", …) and the extracted text runs to the end of the name, which for
+//     a resource of the clause's own type IS its own name.
 //
 // Value is never ManagedPrefix alone: a value that admitted any name merely
 // containing "fmgd-" would admit a fugaro-* resource in a container whose name
 // contains the prefix.
 //
-// The extract form depends on Google behaviour this repository cannot check:
-// that a name not matching the template makes the condition false rather than
-// true (docs/design/managed-deployer-fence.md, C7). It is used only where
-// startsWith cannot be written, and Check 68 measures the two directions that
-// CAN be constructed — a prefixed name and a non-prefixed one, including a
-// name that contains the prefix without starting with it. The template
-// mismatch itself is out of reach: every conditioned type's real resource name
-// matches its own template, so a mismatching name of the same type cannot be
-// created, and C7 stays UNVERIFIED (the design's §8 point 2 is the owner's to
-// answer before the five extract services are relied on).
+// The template carries exactly one placeholder, and that is not a style choice:
+// the resource-attribute reference documents resource.name.extract with a
+// single {placeholder} and literal text around it. The first cut of this fence
+// wrote a multi-placeholder template — extract("projects/{project}/secrets/
+// {secret}") — which is not that form, and the failure it invites is the 0.8.6
+// outage again: setIamPolicy refusing the expression and stopping the owner-run
+// apply that creates the whole installation. TestDeployerExtractTemplatesAreThe
+// DocumentedForm refuses a template that grows a second placeholder.
+//
+// A name that does not carry the template's literal text extracts nothing (the
+// empty string), and the empty string does not start with the prefix, so a
+// non-match denies: C7 is settled by the documented semantics rather than by a
+// live probe (docs/design/managed-deployer-fence.md). What remains UNVERIFIED,
+// and what Check 68 measures, is whether these services honour resource.name at
+// all (C3).
 type DeployerClause struct {
 	Type, Op, Value, Starts string
 }
@@ -423,30 +432,35 @@ func deployerServices(project string) []DeployerService {
 			{Type: "storage.googleapis.com/Object", Op: "startsWith", Value: "projects/_/buckets/" + ManagedPrefix},
 		}},
 		// One clause, the container's own type: a secret VERSION's name does
-		// not match the secret's template, so no clause admits one, and no
+		// not carry the clause's type, so no clause admits one, and no
 		// permission of this role acts on one — the old shape's
 		// secretmanager.googleapis.com/SecretVersion clause was defensive, and
 		// under extract it would be dead weight rather than a second fence.
 		// secretmanager.versions.* is nowhere in the deployer, and the role pin
 		// refuses it, so a plan that added one would find it unusable rather
 		// than unfenced.
+		//
+		// The template is the collection segment alone, not
+		// "projects/{project}/secrets/{secret}": the reference documents
+		// extract with ONE placeholder, and the project in a secret's name is
+		// its NUMBER, which the module does not know at plan time.
 		{Role: DeployerSecretRole, Clauses: []DeployerClause{
-			{Type: "secretmanager.googleapis.com/Secret", Op: "extract", Value: "projects/{project}/secrets/{secret}", Starts: ManagedPrefix},
+			{Type: "secretmanager.googleapis.com/Secret", Op: "extract", Value: "/secrets/{secret}", Starts: ManagedPrefix},
 		}},
 		{Role: DeployerAccountRole, Clauses: []DeployerClause{
 			{Type: "iam.googleapis.com/ServiceAccount", Op: "startsWith", Value: saPrefix},
 		}},
 		{Role: DeployerAPIKeyRole, Clauses: []DeployerClause{
-			{Type: "apikeys.googleapis.com/Key", Op: "extract", Value: "projects/{project}/locations/{location}/keys/{key}", Starts: ManagedPrefix},
+			{Type: "apikeys.googleapis.com/Key", Op: "extract", Value: "/keys/{key}", Starts: ManagedPrefix},
 		}},
 		{Role: DeployerRepositoryRole, Clauses: []DeployerClause{
-			{Type: "artifactregistry.googleapis.com/Repository", Op: "extract", Value: "projects/{project}/locations/{location}/repositories/{repository}", Starts: ManagedPrefix},
+			{Type: "artifactregistry.googleapis.com/Repository", Op: "extract", Value: "/repositories/{repository}", Starts: ManagedPrefix},
 		}},
 		{Role: DeployerRunJobRole, Clauses: []DeployerClause{
-			{Type: "run.googleapis.com/Job", Op: "extract", Value: "projects/{project}/locations/{location}/jobs/{job}", Starts: ManagedPrefix},
+			{Type: "run.googleapis.com/Job", Op: "extract", Value: "/jobs/{job}", Starts: ManagedPrefix},
 		}},
 		{Role: DeployerSchedulerRole, Clauses: []DeployerClause{
-			{Type: "cloudscheduler.googleapis.com/Job", Op: "extract", Value: "projects/{project}/locations/{location}/jobs/{job}", Starts: ManagedPrefix},
+			{Type: "cloudscheduler.googleapis.com/Job", Op: "extract", Value: "/jobs/{job}", Starts: ManagedPrefix},
 		}},
 	}
 }
@@ -557,7 +571,7 @@ var RolePermissions = map[string][]string{
 	// The reaper's five, and no others (design compute-backend §3.7): it is
 	// never roles/batch.jobsEditor and never roles/compute.instanceAdmin.v1,
 	// both of which carry the create permissions a reaper must not have. It
-	// named six until 0.9.5, the sixth being batch.jobs.cancel -- a permission
+	// named six until 0.9.6, the sixth being batch.jobs.cancel -- a permission
 	// Google does not define, which is why the role could not be created and
 	// --provision-batch was refused. The queue deadline deletes a job that
 	// never left QUEUED instead (internal/backend/batch/reap.go).
@@ -576,7 +590,7 @@ var RolePermissions = map[string][]string{
 	// else — no write, and no cloudasset.assets.listResource, which belongs to
 	// the wider predefined role this replaced.
 	CloudAssetRole: {"cloudasset.assets.searchAllResources"},
-	// The deployer's eight roles (D75, Task 1.5, redesigned for 0.9.5). They
+	// The deployer's eight roles (D75, Task 1.5, redesigned for 0.9.6). They
 	// are not installation roles: nothing a run does needs them, and their
 	// bound is the split between them — creation, reads and
 	// serviceusage.services.enable in fugaroDeployer, and every update, delete,
@@ -1196,7 +1210,7 @@ func (c Cover) deployerGrant(typ string, ch Change, createsDeployer bool) string
 		return ""
 	}
 	if title != DeployerConditionTitle || expr != svc.Expression() {
-		return "grants " + svc.Role + " under a condition that is not " + DeployerConditionTitle + " on the managed prefix: " + svc.Expression() + " is the whole fence around that role, byte for byte (D75 (2), one binding per service since 0.9.5)"
+		return "grants " + svc.Role + " under a condition that is not " + DeployerConditionTitle + " on the managed prefix: " + svc.Expression() + " is the whole fence around that role, byte for byte (D75 (2), one binding per service since 0.9.6)"
 	}
 	return ""
 }

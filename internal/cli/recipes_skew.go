@@ -129,7 +129,7 @@ const catalogSince = "0.7.5"
 const catalogShipped = false
 
 // managedDeployerShipped is false until the release that ships a managed
-// deployer IAM can actually create: 0.9.5, by the owner's ruling of
+// deployer IAM can actually create: 0.9.6, by the owner's ruling of
 // 2026-10-19, which moved the redesign off 0.9.0 (the ruling of 2026-10-18,
 // "Gate it off by default; redesign for 0.9.0"), so 0.9.0 ships with the
 // scoped half still gated off, as 0.8.6 and 0.8.7 do. The deployer's

@@ -1044,6 +1044,182 @@ func TestDeployerOperatorCountMatchesTheRecordedDefect(t *testing.T) {
 // resource.name.contains() is not one of them, and neither is any other call.
 var deployerNameFunctions = []string{"startsWith", "endsWith", "extract"}
 
+// deployerExtractAnchors is the literal text each extract template must anchor
+// at, per service: the collection segment immediately before the resource's own
+// name. Nothing else may be in the template — the resource's own segment is
+// what the prefix is tested on, and a template that reached further into the
+// name would hand the wrong text to that test.
+var deployerExtractAnchors = map[string]string{
+	DeployerSecretRole:     "/secrets/",
+	DeployerAPIKeyRole:     "/keys/",
+	DeployerRepositoryRole: "/repositories/",
+	DeployerRunJobRole:     "/jobs/",
+	DeployerSchedulerRole:  "/jobs/",
+}
+
+// The extract templates are the DOCUMENTED form and nothing else.
+//
+// Google's IAM Conditions resource-attribute reference documents
+// resource.name.extract with a template that carries ONE placeholder, written
+// {name}, with literal text around it, and the call returns the text that
+// placeholder matched. The first cut of this fence used a multi-placeholder
+// template — extract("projects/{project}/secrets/{secret}") — which is not that
+// form, and the failure it invites is the 0.8.6 outage again: setIamPolicy
+// refuses the expression, and the owner-run apply that creates the whole
+// installation stops. It is also the form whose result the tree can model
+// honestly (extractSegment), rather than an undocumented "last segment"
+// behaviour.
+//
+// Structural, and deliberately so: it reads the templates the fence is built
+// from, in Go and (through TestDeployerBindingsAreTheModules) in the module, so
+// a template that grows a second placeholder is a test failure here rather than
+// an apply that never completes.
+func TestDeployerExtractTemplatesAreTheDocumentedForm(t *testing.T) {
+	// The documented shape: literal text, one {placeholder}, literal text.
+	form := regexp.MustCompile(`^([^{}]*)\{([A-Za-z_][A-Za-z0-9_]*)\}([^{}]*)$`)
+	svcs := deployerServices(testDeployerProject)
+	seen := map[string]bool{}
+	for _, s := range svcs {
+		for _, c := range s.Clauses {
+			if c.Op != "extract" {
+				continue
+			}
+			seen[s.Role] = true
+			anchor, want := deployerExtractAnchors[s.Role]
+			if !want {
+				t.Errorf("%s: uses extract, and this test names no anchor for it: an extract template has to be the collection segment the resource's own name follows", s.Role)
+				continue
+			}
+			if n := strings.Count(c.Value, "{"); n != 1 {
+				t.Errorf("%s: extract template %q carries %d placeholders, and the documented form carries exactly one", s.Role, c.Value, n)
+			}
+			if n := strings.Count(c.Value, "}"); n != 1 {
+				t.Errorf("%s: extract template %q carries %d closing braces, and the documented form carries exactly one placeholder", s.Role, c.Value, n)
+			}
+			m := form.FindStringSubmatch(c.Value)
+			if m == nil {
+				t.Errorf("%s: extract template %q is not literal text around one {placeholder}", s.Role, c.Value)
+				continue
+			}
+			if m[1] != anchor || m[3] != "" {
+				t.Errorf("%s: extract template %q is not %q followed by one placeholder and nothing else: the extracted text is the resource's own name, and a template that reached further into the name (or stopped short of it) would test the prefix against the wrong text", s.Role, c.Value, anchor+"{name}")
+			}
+		}
+	}
+	for role, anchor := range deployerExtractAnchors {
+		if !seen[role] {
+			t.Errorf("%s: no clause uses extract, and this test expects the %q template", role, anchor+"{name}")
+		}
+	}
+	// The template the first cut wrote is the one that must not come back, and
+	// the helper that models the documented semantics says so: it extracts
+	// nothing from a multi-placeholder template, so such a fence admits nothing
+	// even if IAM were to accept it.
+	if seg := extractSegment("projects/{project}/secrets/{secret}", "projects/12/secrets/fmgd-x"); seg != "" {
+		t.Errorf("extractSegment(multi-placeholder template) = %q, want \"\": a template that is not the documented form matches nothing", seg)
+	}
+}
+
+// extractSegment is what resource.name.extract(template) returns for name under
+// the documented semantics: the template carries one {placeholder} with literal
+// text around it, and the call returns the text the placeholder matched — the
+// text between the literal text before it and the literal text after it, which
+// with no suffix runs to the end of the name. A name that does not carry the
+// template's literal text matches nothing, and the result is the empty string,
+// which the condition's .startsWith("fmgd-") reads as false, so a non-match
+// denies (C7, settled by the documented semantics rather than by a live probe:
+// the empty string does not start with the prefix).
+//
+// This is the model the rest of these tests read the fence through. It is
+// deliberately not "the resource's last segment": that reading is what the
+// first cut assumed, and it is not what the reference documents. What makes the
+// run-to-the-end result the resource's own name is the type term beside it —
+// a resource of the clause's own type has its own name as the last segment, and
+// a longer name (a version under a secret, an execution under a job) is another
+// type, which no clause of that service names.
+//
+// A name carrying the anchor more than once matches nothing either: which
+// occurrence extract would take is not something the reference says, and an
+// ambiguous name is not a name this fence may admit.
+func extractSegment(template, name string) string {
+	if strings.Count(template, "{") != 1 || strings.Count(template, "}") != 1 {
+		return ""
+	}
+	open := strings.Index(template, "{")
+	closing := strings.Index(template, "}")
+	if open < 0 || closing < open {
+		return ""
+	}
+	pre, post := template[:open], template[closing+1:]
+	rest := name
+	if pre != "" {
+		if strings.Count(name, pre) != 1 {
+			return ""
+		}
+		rest = name[strings.Index(name, pre)+len(pre):]
+	}
+	if post != "" {
+		if !strings.HasSuffix(rest, post) || len(rest) < len(post) {
+			return ""
+		}
+		rest = rest[:len(rest)-len(post)]
+	}
+	return rest
+}
+
+// The helper above is the tree's model of Google's behaviour, so it is tested
+// as a model: the three shapes a template can take, the non-matches that have
+// to deny, and the near misses that must not be admitted by a prefix test on
+// the wrong text.
+func TestExtractSegmentModelsTheDocumentedSemantics(t *testing.T) {
+	cases := []struct {
+		name, template, resource, want string
+	}{
+		{"the secret's own name", "/secrets/{secret}", "projects/12/secrets/fmgd-x", "fmgd-x"},
+		{"a name without the anchor", "/secrets/{secret}", "projects/12/locations/us-east5/jobs/fmgd-x", ""},
+		// A version's name carries the anchor too, so extract returns the rest
+		// of the name — and it is the type term beside the clause, not the
+		// name test, that keeps a version out: no clause names
+		// secretmanager.googleapis.com/SecretVersion.
+		{"a version under the secret", "/secrets/{secret}", "projects/12/secrets/fmgd-x/versions/1", "fmgd-x/versions/1"},
+		{"another secret under the anchor", "/secrets/{secret}", "projects/12/secrets/other/versions/fmgd-x", "other/versions/fmgd-x"},
+		{"the anchor in the container", "/secrets/{secret}", "projects/fmgd-/secrets/other", "other"},
+		{"a literal suffix", "/jobs/{job}/executions", "projects/12/locations/l/jobs/fmgd-x/executions", "fmgd-x"},
+		{"the suffix missing", "/jobs/{job}/executions", "projects/12/locations/l/jobs/fmgd-x", ""},
+		{"a whole-name template", "{name}", "projects/_/buckets/fmgd-x", "projects/_/buckets/fmgd-x"},
+		{"two placeholders", "projects/{project}/secrets/{secret}", "projects/12/secrets/fmgd-x", ""},
+		{"no placeholder at all", "/secrets/fmgd-", "projects/12/secrets/fmgd-x", ""},
+		{"an unterminated placeholder", "/secrets/{secret", "projects/12/secrets/fmgd-x", ""},
+		{"the anchor twice", "/jobs/{job}", "projects/12/jobs/x/jobs/fmgd-x", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractSegment(tc.template, tc.resource); got != tc.want {
+				t.Errorf("extractSegment(%q, %q) = %q, want %q", tc.template, tc.resource, got, tc.want)
+			}
+		})
+	}
+	// And what the fence does with it: the extracted text is tested with the
+	// managed prefix, so the only names that pass are the ones whose own
+	// segment begins with it.
+	prefix := ManagedPrefix
+	for _, tc := range []struct {
+		template, resource string
+		admits             bool
+	}{
+		{"/secrets/{secret}", "projects/12/secrets/fmgd-x", true},
+		{"/secrets/{secret}", "projects/12/secrets/fugaro-token-signer", false},
+		{"/secrets/{secret}", "projects/12/secrets/x-fmgd-y", false},
+		{"/jobs/{job}", "projects/12/locations/us-east5/jobs/xfmgd-y", false},
+		{"/jobs/{job}", "projects/12/locations/us-east5/jobs/fmgd-x", true},
+	} {
+		seg := extractSegment(tc.template, tc.resource)
+		if got := strings.HasPrefix(seg, prefix); got != tc.admits {
+			t.Errorf("extract(%q) on %s = %q: admits=%v, want %v", tc.template, tc.resource, seg, got, tc.admits)
+		}
+	}
+}
+
 // Every one of the seven conditions is inside what IAM accepts, structurally:
 // at most 12 logical operators, only supported resource.name functions, no
 // contains() anywhere, a resource.type term in every clause, and exactly the
@@ -1119,73 +1295,79 @@ func TestDeployerConditionsAreWithinWhatIAMAccepts(t *testing.T) {
 	}
 }
 
-// extractSegment is what resource.name.extract(template) returns for name: the
-// resource's own last segment when the name has the template's shape, and ""
-// when it does not — which the condition reads as false. That reading is
-// Google's behaviour and not something this repository can check: it is
-// UNVERIFIED in the design (C7), and Check 68 cannot settle it either, because
-// every conditioned type's real resource name matches its own template, so a
-// mismatching name of the same type cannot be constructed. This function is how
-// the rest of the tests model that reading, not evidence for it.
-func extractSegment(template, name string) string {
-	ts, ns := strings.Split(template, "/"), strings.Split(name, "/")
-	if len(ts) != len(ns) || len(ts) < 2 {
-		return ""
-	}
-	for i, part := range ts {
-		if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") {
-			if ns[i] == "" {
-				return ""
-			}
-			continue
-		}
-		if part != ns[i] {
-			return ""
-		}
-	}
-	return ns[len(ns)-1]
-}
-
 // The conditions are the whole fence, so they are tested as one, service by
 // service: every clause names the resource type it admits and tests the managed
 // prefix at the resource's own name, and no clause — under either form — can
 // match one of Fugaro's own resources or the two state buckets.
+//
+// A clause is read as IAM reads it, (resource.type == T && name test), so every
+// name below is offered with the type Google reports for it: the type term is
+// half the condition and the half that keeps a LONGER name — a version under a
+// secret, an execution under a job — out of reach. Under the documented extract
+// semantics the parent's template matches such a name too and extracts a text
+// that begins with the prefix (extractSegment returns "fmgd-x/versions/1" for
+// the secret's own template), so what excludes it is the type the resource
+// itself reports, which no clause names, together with the permissions such a
+// resource would need (secretmanager.versions.* is not in the deployer at all;
+// the role pin refuses it).
 func TestDeployerConditionFencesOnlyTheManagedPrefix(t *testing.T) {
 	svcs := deployerServices(testDeployerProject)
+	type resource struct{ typ, name string }
 	// Fugaro's own names: what the fence must not admit, whatever a plan does.
-	forbidden := []string{
-		"projects/_/buckets/fugaro-runs-proj-1", "projects/_/buckets/fugaro-runs-proj-1/objects/fugaro/managed.json",
-		"projects/_/buckets/fugaro-managed-tfstate-proj-1/objects/fugaro/managed.tfstate",
-		"projects/_/buckets/fugaro-tfstate-proj-1/objects/fugaro/installation/default.tfstate",
-		"projects/12/locations/us-east5/jobs/fugaro-history", "projects/12/locations/us-east5/jobs/check",
-		"projects/12/secrets/fugaro-token-signer", "projects/12/locations/us-east5/repositories/fugaro-base",
-		"projects/12/serviceAccounts/fugaro-scheduler@proj-1.iam.gserviceaccount.com",
-		"projects/12/serviceAccounts/1234567890-compute@developer.gserviceaccount.com",
-		"projects/12/locations/global/keys/fugaro-web",
+	forbidden := []resource{
+		{"storage.googleapis.com/Bucket", "projects/_/buckets/fugaro-runs-proj-1"},
+		{"storage.googleapis.com/Object", "projects/_/buckets/fugaro-runs-proj-1/objects/fugaro/managed.json"},
+		{"storage.googleapis.com/Object", "projects/_/buckets/fugaro-managed-tfstate-proj-1/objects/fugaro/managed.tfstate"},
+		{"storage.googleapis.com/Object", "projects/_/buckets/fugaro-tfstate-proj-1/objects/fugaro/installation/default.tfstate"},
+		{"run.googleapis.com/Job", "projects/12/locations/us-east5/jobs/fugaro-history"},
+		{"run.googleapis.com/Job", "projects/12/locations/us-east5/jobs/check"},
+		{"cloudscheduler.googleapis.com/Job", "projects/12/locations/us-east4/jobs/fugaro-history-rollover"},
+		{"secretmanager.googleapis.com/Secret", "projects/12/secrets/fugaro-token-signer"},
+		{"artifactregistry.googleapis.com/Repository", "projects/12/locations/us-east5/repositories/fugaro-base"},
+		{"iam.googleapis.com/ServiceAccount", "projects/" + testDeployerProject + "/serviceAccounts/fugaro-scheduler@" + testDeployerProject + ".iam.gserviceaccount.com"},
+		{"iam.googleapis.com/ServiceAccount", "projects/" + testDeployerProject + "/serviceAccounts/1234567890-compute@developer.gserviceaccount.com"},
+		{"apikeys.googleapis.com/Key", "projects/12/locations/global/keys/fugaro-web"},
 		// An object carrying the prefix in a bucket that does not: the runs
 		// bucket's objects are reached by bucket name, never by object name
 		// (a clause testing the prefix anywhere in a storage name admits it).
-		"projects/_/buckets/fugaro-runs-x/objects/fmgd-y",
-		"projects/_/buckets/fugaro-runs-proj-1/objects/runs/fmgd-y/state.json",
-		"projects/_/buckets/fugaro-tfstate-proj-1/objects/fmgd-/default.tfstate",
-		"projects/_/buckets/x-fmgd-/objects/a",
+		{"storage.googleapis.com/Object", "projects/_/buckets/fugaro-runs-x/objects/fmgd-y"},
+		{"storage.googleapis.com/Object", "projects/_/buckets/fugaro-runs-proj-1/objects/runs/fmgd-y/state.json"},
+		{"storage.googleapis.com/Object", "projects/_/buckets/fugaro-tfstate-proj-1/objects/fmgd-/default.tfstate"},
+		{"storage.googleapis.com/Bucket", "projects/_/buckets/x-fmgd-"},
 		// A name whose segment merely CONTAINS the prefix, in the services that
 		// test a segment: the prefix is what the segment begins with.
-		"projects/12/secrets/x-fmgd-y", "projects/12/locations/us-east5/jobs/x-fmgd-y",
-		"projects/12/locations/us-east5/repositories/fugaro-fmgd-y",
-		"projects/12/serviceAccounts/x-fmgd-y@proj-1.iam.gserviceaccount.com",
-		"projects/12/locations/global/keys/fugaro-fmgd-y",
-		// A name the extract template does not match at all, offered to the
-		// templates that would otherwise reach into it: a non-match has to read
-		// as false, and a template that matched a longer or shorter path would
-		// hand the last segment of the wrong name to the prefix test.
-		"projects/12/locations/us-east5/jobs/fmgd-x/executions/e1",
-		"projects/12/secrets/fmgd-x/versions/1",
-		"projects/12/locations/us-east5/repositories/fmgd-x/packages/p",
-		"projects/12/locations/global/keys/fmgd-x/restrictions",
+		{"secretmanager.googleapis.com/Secret", "projects/12/secrets/x-fmgd-y"},
+		{"run.googleapis.com/Job", "projects/12/locations/us-east5/jobs/x-fmgd-y"},
+		{"artifactregistry.googleapis.com/Repository", "projects/12/locations/us-east5/repositories/fugaro-fmgd-y"},
+		{"iam.googleapis.com/ServiceAccount", "projects/" + testDeployerProject + "/serviceAccounts/x-fmgd-y@" + testDeployerProject + ".iam.gserviceaccount.com"},
+		{"apikeys.googleapis.com/Key", "projects/12/locations/global/keys/fugaro-fmgd-y"},
+		// A name of one of the five extract services' own types that does not
+		// carry its clause's anchor at all — the bare prefix, with no
+		// collection path in front of it. No real resource of these services is
+		// named that way; the rows are here because this is the direction the
+		// documented semantics have to get right and the direction no live
+		// probe can construct (C7): a template that does not match extracts the
+		// empty string, and the empty string does not start with the prefix, so
+		// the condition denies — it fails closed rather than open. A fence that
+		// had stopped testing the anchor would admit these five.
+		{"secretmanager.googleapis.com/Secret", ManagedPrefix + "x"},
+		{"apikeys.googleapis.com/Key", ManagedPrefix + "x"},
+		{"artifactregistry.googleapis.com/Repository", ManagedPrefix + "x"},
+		{"run.googleapis.com/Job", ManagedPrefix + "x"},
+		{"cloudscheduler.googleapis.com/Job", ManagedPrefix + "x"},
+		// The longer names, each under the type its own resource reports: a
+		// version under a managed secret, an execution under a managed job, a
+		// package under a managed repository. None of those types is one of the
+		// eight a clause names, so no condition admits them — and a fence that
+		// leaned on the name test alone would admit the first two, which is
+		// exactly what this block pins.
+		{"secretmanager.googleapis.com/SecretVersion", "projects/12/secrets/fmgd-x/versions/1"},
+		{"run.googleapis.com/Execution", "projects/12/locations/us-east5/jobs/fmgd-x/executions/e1"},
+		{"artifactregistry.googleapis.com/Package", "projects/12/locations/us-east5/repositories/fmgd-x/packages/p"},
 	}
 	// admits is the clause as the condition reads it: the name test the clause
-	// names, on the name the clause's own shape produces.
+	// names, on the name the clause's own shape produces. The type term is
+	// applied by the callers, which know which resource they are offering.
 	admits := func(c DeployerClause, name string) bool {
 		switch c.Op {
 		case "startsWith":
@@ -1226,11 +1408,37 @@ func TestDeployerConditionFencesOnlyTheManagedPrefix(t *testing.T) {
 			if c.Type == "iam.googleapis.com/ServiceAccount" && (c.Op != "startsWith" || c.Value != "projects/"+testDeployerProject+"/serviceAccounts/"+ManagedPrefix) {
 				t.Errorf("%s: the service-account clause %+v is not startsWith(\"projects/%s/serviceAccounts/%s\")", s.Role, c, testDeployerProject, ManagedPrefix)
 			}
-			for _, name := range forbidden {
-				if admits(c, name) {
-					t.Errorf("%s: clause %+v admits %s", s.Role, c, name)
+			for _, f := range forbidden {
+				// The type term is what the clause would be evaluated
+				// against, so a name of another type is not this clause's
+				// business: the condition it is half of denies it on the type
+				// term alone.
+				if c.Type != f.typ {
+					continue
+				}
+				if admits(c, f.name) {
+					t.Errorf("%s: clause %+v admits %s (%s)", s.Role, c, f.name, f.typ)
 				}
 			}
+		}
+	}
+	// The longer names are out of reach on the type term alone, so the types
+	// they report are pinned as types no clause names: a fence that grew a
+	// clause for SecretVersion or Execution would admit a version or an
+	// execution of a managed resource, and this is where that shows up.
+	named := map[string]string{}
+	for _, s := range svcs {
+		for _, c := range s.Clauses {
+			named[c.Type] = s.Role
+		}
+	}
+	for _, typ := range []string{
+		"secretmanager.googleapis.com/SecretVersion",
+		"run.googleapis.com/Execution",
+		"artifactregistry.googleapis.com/Package",
+	} {
+		if role, ok := named[typ]; ok {
+			t.Errorf("%s names %s, and the type term is what keeps a longer name out: a clause for it would admit a resource the deployer's scoped roles are not fenced for", role, typ)
 		}
 	}
 	// And what each condition must admit: its own service's prefixed resource,
@@ -1238,18 +1446,22 @@ func TestDeployerConditionFencesOnlyTheManagedPrefix(t *testing.T) {
 	// pass this test by refusing everything. The project is the NUMBER for the
 	// services whose names carry one, and the location is not the
 	// installation's — a managed plan chooses it.
-	admitted := map[string][]string{
-		DeployerStorageRole: {"projects/_/buckets/fmgd-x", "projects/_/buckets/fmgd-x/objects/o"},
-		// The container alone: a version's name does not match the secret's
-		// template, so no clause admits a version — and no permission of this
-		// role acts on one (secretmanager.versions.* is nowhere in the deployer,
-		// and the role pin refuses it).
-		DeployerSecretRole:     {"projects/12/secrets/fmgd-x"},
-		DeployerAccountRole:    {"projects/" + testDeployerProject + "/serviceAccounts/fmgd-x@" + testDeployerProject + ".iam.gserviceaccount.com"},
-		DeployerAPIKeyRole:     {"projects/12/locations/global/keys/fmgd-x"},
-		DeployerRepositoryRole: {"projects/12/locations/europe-west1/repositories/fmgd-x"},
-		DeployerRunJobRole:     {"projects/12/locations/europe-west1/jobs/fmgd-x"},
-		DeployerSchedulerRole:  {"projects/12/locations/us-east4/jobs/fmgd-x"},
+	admitted := map[string][]resource{
+		DeployerStorageRole: {
+			{"storage.googleapis.com/Bucket", "projects/_/buckets/fmgd-x"},
+			{"storage.googleapis.com/Object", "projects/_/buckets/fmgd-x/objects/o"},
+		},
+		// The container alone: a version's name reports another type
+		// (secretmanager.googleapis.com/SecretVersion), which no clause names,
+		// so no clause admits a version — and no permission of this role acts
+		// on one (secretmanager.versions.* is nowhere in the deployer, and the
+		// role pin refuses it).
+		DeployerSecretRole:     {{"secretmanager.googleapis.com/Secret", "projects/12/secrets/fmgd-x"}},
+		DeployerAccountRole:    {{"iam.googleapis.com/ServiceAccount", "projects/" + testDeployerProject + "/serviceAccounts/fmgd-x@" + testDeployerProject + ".iam.gserviceaccount.com"}},
+		DeployerAPIKeyRole:     {{"apikeys.googleapis.com/Key", "projects/12/locations/global/keys/fmgd-x"}},
+		DeployerRepositoryRole: {{"artifactregistry.googleapis.com/Repository", "projects/12/locations/europe-west1/repositories/fmgd-x"}},
+		DeployerRunJobRole:     {{"run.googleapis.com/Job", "projects/12/locations/europe-west1/jobs/fmgd-x"}},
+		DeployerSchedulerRole:  {{"cloudscheduler.googleapis.com/Job", "projects/12/locations/us-east4/jobs/fmgd-x"}},
 	}
 	for _, s := range svcs {
 		names, ok := admitted[s.Role]
@@ -1257,15 +1469,15 @@ func TestDeployerConditionFencesOnlyTheManagedPrefix(t *testing.T) {
 			t.Errorf("%s: this test names no resource the condition must admit", s.Role)
 			continue
 		}
-		for _, name := range names {
+		for _, r := range names {
 			ok := false
 			for _, c := range s.Clauses {
-				if admits(c, name) {
+				if c.Type == r.typ && admits(c, r.name) {
 					ok = true
 				}
 			}
 			if !ok {
-				t.Errorf("%s: no clause admits %s, which is the service's own prefixed resource", s.Role, name)
+				t.Errorf("%s: no clause admits %s (%s), which is the service's own prefixed resource", s.Role, r.name, r.typ)
 			}
 		}
 	}

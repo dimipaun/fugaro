@@ -605,3 +605,62 @@ func TestDeployerGrantConditions(t *testing.T) {
 		})
 	}
 }
+
+// deployerGrant checks the member itself, and that check is not reachable
+// through NotCovered: the grant table holds every one of the eight roles to
+// toDeployer (TestOnlyTheDeployerRolesNameTheDeployer pins the table), so
+// checkGrant turns a deployer role held by anyone else away before
+// deployerGrant runs. It is there because deployerGrant is the one function
+// that reads a deployer binding, and a widening of the table — the kind of
+// change the table's own tests would have to notice for this one to stay
+// correct — would otherwise open the deployer path with nothing in this
+// function to object.
+//
+// So it is pinned here, directly: the test calls deployerGrant with a binding
+// that is the modules' in every other respect, and the member is what it must
+// refuse for. Delete the check and this test fails with the empty reason the
+// function then returns, which is what keeps a later cleanup from deleting it
+// as dead code.
+func TestDeployerGrantRefusesAMemberThatIsNotTheDeployer(t *testing.T) {
+	scoped := "projects/proj-1/roles/" + DeployerStorageRole
+	plain := "projects/proj-1/roles/" + DeployerRole
+	expr, ok := DeployerConditionExpression("proj-1", DeployerStorageRole)
+	if !ok {
+		t.Fatalf("no condition for %s", DeployerStorageRole)
+	}
+	cond := []any{map[string]any{"title": DeployerConditionTitle, "expression": expr, "description": nil}}
+	// want is the reason the member check produces, which names the account the
+	// binding should have been on.
+	want := "which is not serviceAccount:" + DeployerAccount("proj-1") + ": the deployer's roles are held by the deployer account and by nothing else (D75)"
+	for name, tc := range map[string]struct {
+		member string
+		role   string
+	}{
+		"another Fugaro account":     {"serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com", scoped},
+		"a person":                   {"user:me@example.com", scoped},
+		"a lookalike address":        {"serviceAccount:fugaro-deployer-0123abcd@proj-1.iam.gserviceaccount.com", plain},
+		"another project's deployer": {"serviceAccount:fugaro-deployer@fp-2.iam.gserviceaccount.com", plain},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// The binding is the modules' in every other respect — the
+			// conditioned role under its own condition, the plain one under
+			// none — so the member is the only thing left to refuse.
+			after := map[string]any{"member": tc.member, "role": tc.role, "project": "proj-1"}
+			if tc.role == scoped {
+				after["condition"] = cond
+			}
+			ch := rc("google_project_iam_member", after, map[string]any{}, "create")
+			got := testCover.deployerGrant("google_project_iam_member", ch.Change, false)
+			if !strings.Contains(got, want) {
+				t.Errorf("deployerGrant = %q, want it to name the member: %q", got, want)
+			}
+		})
+	}
+	// The control: the same binding on the deployer account is the modules', so
+	// the rows above are refused for the member and for nothing else.
+	after := map[string]any{"member": "serviceAccount:" + DeployerAccount("proj-1"), "role": scoped, "project": "proj-1", "condition": cond}
+	ch := rc("google_project_iam_member", after, map[string]any{}, "create")
+	if got := testCover.deployerGrant("google_project_iam_member", ch.Change, false); got != "" {
+		t.Errorf("deployerGrant on the deployer account = %q, want the modules' binding", got)
+	}
+}
