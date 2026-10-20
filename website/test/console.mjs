@@ -6,7 +6,7 @@
 // release `console-v0.9.0` carries them, `site.yaml`'s `features.console_downloads` is true
 // and the data file's `available` is true with it. The page's Downloads section renders that
 // release, and the placeholder state it renders instead is a state a copy of the repository
-// is built into rather than the state this checkout ships (W3.1). Seven things are checked
+// is built into rather than the state this checkout ships (W3.1). Nine things are checked
 // here:
 //
 //   1. **The released section renders the release's own downloads.** One link per published
@@ -79,12 +79,14 @@ import {
   SITE_YAML,
   SUMS_FILE,
   assertReleaseURL,
+  consoleTag,
   downloadNeedle,
   downloadsData,
   publishedAssets,
   publishedDownloads,
   releaseSums,
   repoFile,
+  repository,
   servedName,
   workflowAssetRule,
   workflowTagPrefix,
@@ -197,7 +199,7 @@ function linksIn(html) {
  * Every href of a built page that names this repository's release-download path, with the page
  * it is on: the raw material of the gate over the whole built site. `downloadNeedle` is the
  * repository's own host and path, so a link to somebody else's release is not this gate's
- * business — the link gate is.
+ * business.
  */
 function downloadLinksIn(pages) {
   const needle = downloadNeedle()
@@ -208,6 +210,40 @@ function downloadLinksIn(pages) {
     }
   }
   return out
+}
+
+/**
+ * Item 9's gate: **every** download link a built page carries names an asset the release's own
+ * documents list, held to the release part by part (`assertReleaseURL`). It is the site-wide half
+ * of the checks above, which each read one page or one section — a link added anywhere, on a page
+ * nobody thought of, is the one no per-page case sees. The asset is the href's last segment
+ * (percent-decoded, because a served name may carry a dot but an href is a URL), and it has to be
+ * one of the names `publishedDownloads` derives from the release's own account of what it ships;
+ * only then is the whole URL held to the repository, the release path, the tag and that name.
+ *
+ * Returns the links it checked, so the caller can assert the scan found something: a gate over an
+ * empty set of pages passes without checking anything.
+ */
+function assertEveryDownloadLinkIsAListedAsset(pages, data = downloadsData()) {
+  const known = publishedDownloads(data)
+  const found = downloadLinksIn(pages)
+  for (const link of found) {
+    const segment = link.href.slice(link.href.lastIndexOf('/') + 1)
+    let name = segment
+    try {
+      name = decodeURIComponent(segment)
+    } catch {
+      // Left as written: an undecodable segment is not a name the release serves, and the
+      // assertion below is where that is said.
+    }
+    const download = known.find((entry) => entry.name === name)
+    assert.ok(
+      download,
+      `${link.page} links ${link.href}, and ${DOWNLOADS_JSON} names no asset ${JSON.stringify(name)}: every download link the site carries is an asset the release publishes, and a link for one the data file does not carry is a button no check here can see`,
+    )
+    assertReleaseURL(link.href, download.name, data)
+  }
+  return found
 }
 
 /**
@@ -794,6 +830,52 @@ test('with the console released, the section renders the downloads the release p
   assert.ok(
     !page.includes(downloadsData().not_released.text),
     'the section still renders the not-released sentence with the console released',
+  )
+
+  // And the same rule over the whole built site rather than over this section (item 9): every
+  // download link ANY built page carries is one of these assets, held to the release part by
+  // part. The copy above is already built in the one state that carries links at all, so the
+  // gate costs no second build — and the scan is asserted to have found them rather than
+  // trusted, because a gate that scanned nothing would pass for the wrong reason.
+  const siteLinks = assertEveryDownloadLinkIsAListedAsset(builtPages(built.dist))
+  assert.ok(
+    siteLinks.length >= expected.length,
+    `the built site carries ${siteLinks.length} download link(s) and the release publishes ${expected.length} asset(s): every published asset is offered somewhere a reader can reach it, and a gate over an empty scan is a gate that holds nothing`,
+  )
+})
+
+test('the site-wide download gate refuses a link the release does not carry', () => {
+  // The gate the case above runs is worth exactly the failure it can produce, and no build here
+  // can plant that failure: a link for an asset the data file does not name is not a state any
+  // file in this repository is in — it is a page that pasted a URL, which is the one thing a
+  // per-page case cannot see. So the gate is handed pages of its own, composed from the
+  // repository's own facts plus the one thing that is wrong, and each refusal is the assertion.
+  const data = downloadsData()
+  const base = `${repository().replace(/\/+$/, '')}/releases/download`
+  const page = (href) => [{ rel: 'planted/index.html', html: `<a href="${href}">Fugaro Console</a>` }]
+  const asset = encodeURIComponent(publishedDownloads(data)[0].name)
+
+  // An asset the release does not publish. The name is the only difference from a real link, so
+  // what fails is the name rather than the origin or the tag.
+  assert.throws(
+    () => assertEveryDownloadLinkIsAListedAsset(page(`${base}/${consoleTag(data)}/${asset}.not-published`), data),
+    /names no asset/,
+    'the gate accepted a download link for an asset the data file does not name',
+  )
+
+  // The release's own asset on another release: the gate holds the URL to the release, not only
+  // to the file name.
+  assert.throws(
+    () => assertEveryDownloadLinkIsAListedAsset(page(`${base}/${data.release.tag_prefix}9.9.9/${asset}`), data),
+    /not an asset of the console's own release/,
+    'the gate accepted a download link on a release the console has not cut',
+  )
+
+  // And it is not refusing everything: the release's own link — the state the case above hands
+  // it — passes.
+  assert.doesNotThrow(
+    () => assertEveryDownloadLinkIsAListedAsset(page(`${base}/${consoleTag(data)}/${asset}`), data),
+    "the gate refused a link to one of the release's own assets",
   )
 })
 

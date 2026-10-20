@@ -6998,6 +6998,11 @@ func consoleTail(out string, n int) string {
 // this file.
 const consoleFuseHookPath = "console/src/main/fuses.ts"
 
+// consoleSpawnPath is the module that resolves the CLI binary and builds the
+// child's environment, and the one table (§3.4 rules 4 and 5's lists, per
+// platform) the design's prose is held to.
+const consoleSpawnPath = "console/src/main/spawn.ts"
+
 // TestDocsConsoleLinuxFusesGoThroughThePackerContext pins the mechanism §7.6
 // states for Linux against the code that implements it, because the two were
 // written apart and disagreed: the design said the per-platform choice was made
@@ -7063,4 +7068,192 @@ func TestDocsConsoleLinuxFusesGoThroughThePackerContext(t *testing.T) {
 	if strings.Contains(hook, "exists on every packager") {
 		t.Errorf("%s claims `executableName` \"exists on every packager\": it does not -- `LinuxPackager` declares and assigns it, and the base `PlatformPackager` guards its own reads with `this instanceof LinuxPackager` and falls back to `appInfo.productFilename` elsewhere", consoleFuseHookPath)
 	}
+}
+
+// TestDocsConsoleSpawnListsCarryBothPlatforms pins §3.4's rules 4 and 5 -- the
+// two rules that state where the console looks for the CLI and what `PATH` it
+// gives the child -- to the table that implements them, per platform.
+//
+// The gap it closes was a citation with nothing behind it. §7.6 rule 1 sends the
+// reader to "§3.4 rule 4" for "Linux's own well-known locations", and the plan's
+// Task 5.1 note (the 2026-10-20 Linux amendment) names "§3.4 rules 4 and 5" as
+// where the per-platform resolution and child-`PATH` lists live -- and both rules
+// stated only the macOS lists. Linux's were in console/README.md, in
+// console/src/main/spawn.ts and in its tests, and nowhere in the document a
+// reader was sent to. So each rule now carries the Linux amendment the way D10's
+// cell carries its own, and this test holds both halves to spawn.ts's
+// DARWIN_LOCATIONS and LINUX_LOCATIONS -- the one table the app resolves against
+// (PLATFORM_LOCATIONS, through `locationsFor`).
+//
+// It is a per-platform, per-list, order-preserving comparison rather than a
+// "mentions Linux" check: rule 4's order IS the resolution order (a configured
+// path, then the platform's prefixes, and only then the app's own `PATH`) and
+// rule 5's is the order of the child's `PATH`, so a list whose entries are all
+// present in the wrong order is a different answer to the same question rather
+// than a rewording of the same one.
+//
+// The mutations that prove it: delete the Linux sentence from rule 4 (or from
+// rule 5); move one entry of spawn.ts's LINUX_LOCATIONS without moving it in the
+// design; and give either platform the other's Homebrew prefix.
+func TestDocsConsoleSpawnListsCarryBothPlatforms(t *testing.T) {
+	design := readDoc(t, "docs/design/desktop-console.md")
+	spawn := readDoc(t, consoleSpawnPath)
+
+	// §3.4's own rules, each bounded by the next numbered rule so that a phrase
+	// in rule 5 cannot satisfy rule 4's list.
+	recommendation := consoleReadmeSection(t, design, "### 3.4 The recommendation")
+
+	for _, tc := range []struct {
+		platform string
+		constant string
+		field    string
+		rule     int
+	}{
+		{"macOS", "DARWIN_LOCATIONS", "binaryPrefixes", 4},
+		{"Linux", "LINUX_LOCATIONS", "binaryPrefixes", 4},
+		{"macOS", "DARWIN_LOCATIONS", "childPathPrefixes", 5},
+		{"Linux", "LINUX_LOCATIONS", "childPathPrefixes", 5},
+	} {
+		want := consoleSpawnList(t, spawn, tc.constant, tc.field)
+		rule := consoleNumberedRule(t, recommendation, tc.rule)
+		if !consoleContainsRun(consoleBacktickedPaths(rule), want) {
+			t.Errorf(
+				"docs/design/desktop-console.md's §3.4 rule %d does not state %s's %s in the order %s gives it (%s): rule 4 is where the console looks for the CLI and rule 5 is the `PATH` the child gets, and §7.6 and the plan send a reader here for Linux's own lists",
+				tc.rule, tc.platform, tc.field, consoleSpawnPath, strings.Join(want, ", "),
+			)
+		}
+	}
+
+	// And the citations a reader follows resolve to those rules: §7.6 rule 1 is
+	// where the Linux section says which list the CLI is resolved from, and the
+	// plan's 2026-10-20 note is where the task says which rules carry the lists.
+	linux := consoleReadmeSection(t, design, "### 7.6 Linux, unsigned")
+	if !strings.Contains(linux, "§3.4 rule 4") {
+		t.Errorf("§7.6 no longer cites §3.4 rule 4 for the locations Linux's CLI is resolved from, and rule 4 is where Linux's own list is stated")
+	}
+	if plan := readDoc(t, "docs/plans/2026-10-15-desktop-console.md"); !strings.Contains(plan, "§3.4 rules 4 and 5") {
+		t.Errorf("the plan's 2026-10-20 Linux note no longer cites §3.4 rules 4 and 5 for the per-platform resolution and child-`PATH` lists, which are the two rules those lists are stated in")
+	}
+}
+
+// TestWebsiteConsoleTestHeadersCountTheirItems pins each console test file's own
+// account of how many things it checks to the list printed under it.
+//
+// The header is the first thing a reader of those files meets, and it is a claim
+// like every other claim in this repository: `website/test/console.mjs` said
+// "Seven things are checked here" over a list of nine -- the optional Linux block
+// and the site-wide download gate were added under it and the count was not --
+// which is the drift nobody notices by reading, and the one a reader trusts
+// instead of counting. The rule is mechanical: the header's numbered items run
+// 1..N in order, and the sentence says N.
+//
+// The mutations that prove it: write "Seven" back over the nine in
+// `website/test/console.mjs`, and number two of `console-option.mjs`'s items the
+// same way.
+func TestWebsiteConsoleTestHeadersCountTheirItems(t *testing.T) {
+	claimedRe := regexp.MustCompile(`(?m)^// .*?([A-Z][a-z]+) things are checked`)
+	itemRe := regexp.MustCompile(`(?m)^//\s+(\d+)\. \*\*`)
+	words := []string{"", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve"}
+
+	for _, path := range []string{"website/test/console.mjs", "website/test/console-option.mjs"} {
+		doc := readDoc(t, path)
+		claimed := claimedRe.FindStringSubmatch(doc)
+		if claimed == nil {
+			t.Errorf("%s no longer says how many things it checks (\"<N> things are checked here\"), and that sentence is where a reader takes the list's length from", path)
+			continue
+		}
+		items := itemRe.FindAllStringSubmatch(doc, -1)
+		if len(items) == 0 {
+			t.Errorf("%s says %q things are checked and carries no numbered item, so the count is about nothing", path, claimed[1])
+			continue
+		}
+		for i, m := range items {
+			if n, err := strconv.Atoi(m[1]); err != nil || n != i+1 {
+				t.Errorf("%s's header numbers its items %s at position %d: the list is 1..N in order, and a skipped or repeated number is a list nobody can count", path, m[1], i+1)
+			}
+		}
+		want := 0
+		for n, word := range words {
+			if word == claimed[1] {
+				want = n
+			}
+		}
+		if want == 0 {
+			t.Errorf("%s says %q things are checked, which is not a count this test reads (One to Twelve): write it as a word in that range, or extend the list here", path, claimed[1])
+			continue
+		}
+		if len(items) != want {
+			t.Errorf("%s says %q things are checked and lists %d: the sentence and the list are one fact, and the sentence is the one that drifts when an item is added under it", path, claimed[1], len(items))
+		}
+	}
+}
+
+// consoleNumberedRule is item n of a markdown numbered list, from its own marker
+// to the next item's.
+func consoleNumberedRule(t *testing.T, doc string, n int) string {
+	t.Helper()
+	start := strings.Index(doc, fmt.Sprintf("\n%d. **", n))
+	if start < 0 {
+		t.Fatalf("the section carries no numbered rule %d", n)
+	}
+	rest := doc[start+1:]
+	if end := strings.Index(rest, fmt.Sprintf("\n%d. **", n+1)); end >= 0 {
+		return rest[:end]
+	}
+	return rest
+}
+
+// consoleBacktickedPaths is the backticked tokens of a piece of prose that are
+// paths -- absolute or home-relative -- in the order they are written. A
+// backticked word that is not a path (`PATH`, a flag, a Go identifier) is not
+// collected.
+func consoleBacktickedPaths(text string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(text, -1) {
+		if strings.HasPrefix(m[1], "/") || strings.HasPrefix(m[1], "~") {
+			out = append(out, m[1])
+		}
+	}
+	return out
+}
+
+// consoleContainsRun reports whether want appears in got as a contiguous run, in
+// order: these lists are orders, so a membership check would accept an answer
+// with the right directories in the wrong sequence.
+func consoleContainsRun(got, want []string) bool {
+	for i := 0; i+len(want) <= len(got); i++ {
+		if slices.Equal(got[i:i+len(want)], want) {
+			return true
+		}
+	}
+	return false
+}
+
+// consoleSpawnList is one list of console/src/main/spawn.ts's platform table, as
+// the strings the code carries: the field's Object.freeze([...]) inside the named
+// constant, read rather than remembered.
+func consoleSpawnList(t *testing.T, src, constant, field string) []string {
+	t.Helper()
+	at := strings.Index(src, "export const "+constant)
+	if at < 0 {
+		t.Fatalf("%s no longer declares %s, the constant the design's §3.4 rules 4 and 5 state", consoleSpawnPath, constant)
+	}
+	block := src[at:]
+	if next := strings.Index(block[len("export const "+constant):], "\nexport const "); next >= 0 {
+		block = block[:len("export const "+constant)+next]
+	}
+	m := regexp.MustCompile(regexp.QuoteMeta(field) + `:\s*Object\.freeze\(\[([^\]]*)\]\)`).FindStringSubmatch(block)
+	if m == nil {
+		t.Fatalf("%s's %s carries no %s: Object.freeze([...]) list", consoleSpawnPath, constant, field)
+	}
+	var out []string
+	for _, raw := range strings.Split(m[1], ",") {
+		if v := strings.Trim(strings.TrimSpace(raw), "'\""); v != "" {
+			out = append(out, v)
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s's %s.%s is empty, and an empty list is nothing for the design to agree with", consoleSpawnPath, constant, field)
+	}
+	return out
 }
