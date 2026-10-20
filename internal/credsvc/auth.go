@@ -11,7 +11,9 @@
 // of it, and a test pins each:
 //
 //   - the caller is an installation job service account, not merely an
-//     identity that Cloud Run IAM let in (the owner's answer of 2026-10-19);
+//     identity that Cloud Run IAM let in: its ID token's signature is checked
+//     against Google's own certificates, and its email claim against the
+//     installation's job service accounts (the owner's answer of 2026-10-19);
 //   - the run identity is a Firebase ID token this installation's project
 //     issued, signed by a key Google publishes, for uid r~<slug>~<run>, with
 //     its fx claim still ahead of us (D134);
@@ -141,9 +143,8 @@ type Getter interface {
 }
 
 // RTDBOutcomes reads the outcomes from the installation's database, as the
-// service's own account (it is an admin reader: no run token may read
-// creds/, and the outcome nodes are world-readable to the installation's
-// rules but read here with the service's identity).
+// service's own account. It is a read of one node per day of a run's life,
+// and it is the only read this package makes of the installation's state.
 type RTDBOutcomes struct {
 	DB Getter
 }
