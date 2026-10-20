@@ -534,8 +534,15 @@ describe('the packaging configuration the fuses belong to', () => {
   })
 
   it('has exactly the mac keys this task decided', () => {
+    // `icon` joined the list with the icon task (the owner's brief of
+    // 2026-10-19): the bundle's application icon, from `build/icon.png`, which
+    // is the website's own mark. It adds nothing to what ships -- the file
+    // becomes the bundle's `icon.icns` and is not packed into the asar -- and
+    // `test/unit/icon.test.ts` is where that reading is asserted; the list is
+    // still pinned here so that a second icon key, or a *different* one, is a
+    // red test rather than a quiet line.
     expect(Object.keys(build.mac ?? {}).toSorted()).toEqual(
-      ['entitlements', 'entitlementsInherit', 'hardenedRuntime', 'target'].toSorted(),
+      ['entitlements', 'entitlementsInherit', 'hardenedRuntime', 'icon', 'target'].toSorted(),
     )
     for (const widening of ['asarUnpack', 'extraResources', 'extraFiles', 'binaries', 'identity']) {
       expect(build.mac, `build.mac.${widening} must be absent`).not.toHaveProperty(widening)
