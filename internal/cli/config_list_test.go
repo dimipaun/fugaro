@@ -1170,3 +1170,64 @@ func TestConfigListWarnsWhenTheStateFileIsOverItsReadBounds(t *testing.T) {
 		t.Errorf("the text form says nothing about the trimmed state file:\n%s", text)
 	}
 }
+
+// TestConfigListRejectsARowWhoseHostIsNoProviders: a state file can hold a
+// row for a host no provider lives on — an older fugaro's, a hand-written
+// one's, or one written before the recorder stopped taking the checkout's own
+// git.provider as evidence. The read must not name such a row valid: the pair
+// (provider, repository) is what the console builds a provider-host link
+// from, and a provider's name is only true of that provider's own host.
+//
+// Mutation (run, restore): put the `co.Provider` fallback back into the
+// provider lookup and this fails: the row is valid, because the checkout's
+// own file says github.
+func TestConfigListRejectsARowWhoseHostIsNoProviders(t *testing.T) {
+	dir := checkoutsFixture(t)
+	co := checkoutsAt(t, filepath.Join(dir, "src", "app"),
+		"version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n",
+		"https://git.evil.example/acme/app.git")
+	// Recorded as the enrolled github/acme/app, by hand: the write path
+	// refuses this now, which is why the read has to.
+	checkoutsRemember(t, "aurora", co, "https://github.com/acme/app.git")
+
+	doc, _ := configListJSON(t)
+	got := configListCheckoutsOf(t, doc, "aurora")
+	if len(got) != 1 {
+		t.Fatalf("checkouts = %+v, want the one remembered path", got)
+	}
+	if c := got[0]; c.Valid || c.Reason != checkoutOtherRepository {
+		t.Errorf("the row for a host no provider lives on = %+v, want valid false and reason %q", c, checkoutOtherRepository)
+	}
+}
+
+// TestConfigListReportsThePathBeforeTheEnrolment: an installation whose config
+// cannot be read enrolls nothing, and every row of it is invalid — but the
+// reason a row carries is the first thing wrong with the *path*, and
+// `not_enrolled` is what a row whose path is otherwise sound gets. A stale
+// path under an unreadable config is `missing`, not `not_enrolled`: the row
+// says what is wrong with the directory the operator can see, and the
+// enrolment is reported by its own field.
+//
+// Mutation (run, restore): move the `!enrolled` check to the top of
+// validateCheckoutPath and this fails with reason "not_enrolled" for a path
+// that is gone.
+func TestConfigListReportsThePathBeforeTheEnrolment(t *testing.T) {
+	dir := checkoutsFixture(t)
+	checkoutsRemember(t, "aurora", filepath.Join(dir, "gone", "app"), "https://github.com/acme/app.git")
+	if err := os.WriteFile(filepath.Join(dir, "xdg", "fugaro", "projects", "aurora.yaml"),
+		[]byte("version: 1\nname: aurora\ngcp_project: [not a string\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, _ := configListJSON(t)
+	got := configListCheckoutsOf(t, doc, "aurora")
+	if len(got) != 1 {
+		t.Fatalf("checkouts = %+v, want the remembered path", got)
+	}
+	if c := got[0]; c.Valid || c.Enrolled || c.Reason != checkoutMissing {
+		t.Errorf("the stale row of an unreadable config = %+v, want enrolled false, valid false and reason %q", c, checkoutMissing)
+	}
+	if len(doc.Warnings) == 0 || !strings.Contains(strings.Join(doc.Warnings, "\n"), "aurora") {
+		t.Errorf("warnings = %q, want the unreadable config named", doc.Warnings)
+	}
+}

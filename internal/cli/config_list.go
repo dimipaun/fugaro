@@ -378,11 +378,14 @@ func validateCheckoutPath(ctx context.Context, path, project string, id localcfg
 	if !ok || oi.Rewritten {
 		return false, checkoutOtherRepository
 	}
-	// The provider is the origin's, not the file's, exactly as it is where
-	// the checkout was recorded (checkoutProvider): a path whose directory
-	// says bitbucket over a github.com origin is a github checkout here, and
-	// one remembered as bitbucket/... is another repository than this one.
-	provider := checkoutProvider(co, oi.Host)
+	// The provider is the origin's host's, exactly as it is where the
+	// checkout was recorded (providerForHost) — the file's own git.provider
+	// is never consulted, not even for a host no provider lives on: a path
+	// whose directory says bitbucket over a github.com origin is a github
+	// checkout here, one remembered as bitbucket/... is another repository
+	// than this one, and a directory on a host no provider serves (with a
+	// file claiming github) is no provider's repository at all.
+	provider := providerForHost(oi.Host)
 	// sameRepo, not a string compare: owner/name is the same repository
 	// whichever case it is written in, and task.CanonicalRepo is the rule
 	// the rest of the tree compares repository names by.

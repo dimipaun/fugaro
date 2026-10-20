@@ -693,10 +693,15 @@ re-validated under the provider whose host its git origin is on (`github.com` �
 `github`, `bitbucket.org` → `bitbucket`), so a `fugaro.yaml` that says
 `bitbucket` over a `github.com` origin appears as `github/owner/name` — a
 copied config or a re-pointed checkout is not a `bitbucket/...` repository that
-no provider serves. Only for a host no provider lives on — a GitHub Enterprise
-or self-hosted Bitbucket box — is the file's `git.provider` used, because it is
-then the only thing that names one; a host and a file that both name none are
-not recorded at all. This is the rule a repository is *known* by (a provider
+no provider serves. **The file's `git.provider` is never used to name a row,
+not even for a host no provider lives on** — a GitHub Enterprise or
+self-hosted Bitbucket box — because that file is written by the checkout: a
+clone on an arbitrary host (`https://git.evil.example/acme/app.git`, with
+`git.provider: github` and `project: aurora` in its `fugaro.yaml`) would
+otherwise be recorded, and re-validated, as the enrolled `github/acme/app`,
+handing the console a valid path for a repository it does not own. **A host no
+provider lives on is therefore recorded as nothing at all**, and a row an older
+fugaro left for one is reported `other_repository` rather than valid. This is the rule a repository is *known* by (a provider
 knows a repository only when that provider's host is its origin's host), and it
 is what makes the pair safe to build a provider-host link from (design §5.1
 rule 2): a link built from the file's claim would point at the wrong host, on a
@@ -717,12 +722,21 @@ and nothing else; what it may *use* is the single rule above, and it applies to
 **An installation whose config cannot be read is still listed, by name, with a
 warning** — a picker that offered a name and then failed silently is worse than
 one that says what it could not read. **Its `checkouts` are listed anyway, and
-every one of them is `enrolled: false`, `valid: false` and `not_enrolled`**:
-which directory holds this project's checkout is a fact of this machine, not of
+every one of them is `enrolled: false` and `valid: false`** — enrolment is a
+fact of that very file, and a file that cannot be read enrolls nothing — **but
+the `reason` is the path's own, not `not_enrolled`**: the reasons are reported
+in the order the read examines the row, so a path that is gone is `missing`, a
+directory that is not a checkout `not_a_checkout`, one whose `fugaro.yaml`
+names another project `other_project`, one whose origin is another repository
+`other_repository`, and a path the document cannot spell `not_representable`;
+`not_enrolled` is what a row gets when the path itself is sound and the
+enrolment is the only thing wrong with it. The two fields answer two questions,
+and a reader that wants "this project does not own this repository" reads
+`enrolled: false` — which is true of every row here — rather than the reason.
+Which directory holds this project's checkout is a fact of this machine, not of
 the file that could not be parsed, so the row — the repository and the path —
-is still there to show the operator, but enrolment is a fact of that very file
-and a file that cannot be read enrolls nothing. The reader fails closed: no row
-of such an installation may be used for anything.
+is still there to show the operator. The reader fails closed: no row of such an
+installation may be used for anything.
 
 **Two writers racing lose one of the two updates.** The state file is written
 by a load-modify-write that is not locked, under a rename: a reader therefore

@@ -137,13 +137,21 @@ func TestACommandInACheckoutRecordsIt(t *testing.T) {
 // (design §5.1 rule 2), so the link would point at the wrong host. It is the
 // same rule repoKnown already holds a repository to.
 //
-// The file's provider is kept for a host no provider lives on — a GitHub
-// Enterprise or self-hosted Bitbucket box — where it is the only thing that
-// names one, and dropped entirely when neither names one.
+// **And a host no provider lives on records nothing, whatever the file
+// says.** A GitHub Enterprise or self-hosted Bitbucket box is a host no
+// provider's host is, so the pair (provider, owner/name) the file's
+// git.provider would give is not one a provider serves — and the pair is
+// exactly what the console builds a provider-host link from (design §5.1 rule
+// 2). The file's word is not evidence: a hostile checkout on an arbitrary
+// host (`https://git.evil.example/acme/app.git`, `git.provider: github`,
+// `project: aurora`) would otherwise be recorded, and re-validated, as the
+// enrolled github/acme/app — the enrolment gate this branch adds, bypassed by
+// a line the checkout itself controls. It is repoKnown's rule: a provider
+// knows a repository only when that provider's host is its origin's host.
 //
-// Mutation (run, restore): read co.Provider first in checkoutProvider, as the
-// code did before the review, and this fails with the state file holding
-// bitbucket/acme/app.
+// Mutation (run, restore): put the `co.Provider` fallback back into the
+// provider lookup (as the code did before this review) and the second subtest
+// fails with github/acme/app in the state file.
 func TestACheckoutIsRememberedUnderItsOriginsProvider(t *testing.T) {
 	t.Run("the origin's host wins over the file", func(t *testing.T) {
 		dir := checkoutsFixture(t)
@@ -164,11 +172,15 @@ func TestACheckoutIsRememberedUnderItsOriginsProvider(t *testing.T) {
 			t.Errorf("aurora's checkouts = %v, want nothing under the file's provider", known.Projects)
 		}
 	})
-	t.Run("the file's provider is kept where no provider's host is", func(t *testing.T) {
+	t.Run("a host no provider lives on records nothing", func(t *testing.T) {
+		// The file names a provider the project does enroll, for a host that
+		// provider does not serve: the pair the fallback would record is one
+		// a provider really has (github/acme/app), which is what makes this
+		// the case a link built from it would follow.
 		dir := checkoutsFixture(t)
 		co := checkoutsAt(t, filepath.Join(dir, "src", "app"),
-			"version: 1\nproject: aurora\ngit: { provider: bitbucket, base_branch: main }\n",
-			"https://git.acme.example/acme/app.git")
+			"version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n",
+			"https://git.evil.example/acme/app.git")
 		if _, err := checkoutProject(context.Background(), co); err != nil {
 			t.Fatal(err)
 		}
@@ -176,8 +188,8 @@ func TestACheckoutIsRememberedUnderItsOriginsProvider(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := known.Projects["aurora"]["bitbucket/acme/app"]; !ok {
-			t.Errorf("aurora's checkouts = %v, want the file's provider for a host no provider lives on", known.Projects)
+		if len(known.Projects["aurora"]) != 0 {
+			t.Errorf("aurora's checkouts = %v, want none: the file's provider is not evidence for a host no provider lives on", known.Projects)
 		}
 	})
 	t.Run("a host and a file that name no provider record nothing", func(t *testing.T) {

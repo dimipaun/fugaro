@@ -633,14 +633,24 @@ func writeHandWritten(t *testing.T, path string, doc *Checkouts) {
 // checkout's own fugaro.yaml claiming a project is a claim the checkout
 // makes, not an enrollment the operator gave.
 //
+// The fold is the tree's own (task.ASCIILower), not Unicode case folding: two
+// names that differ only by a Unicode case pair (U+212A KELVIN SIGN and "k")
+// are two repositories, and reading them as one would let a name the operator
+// never enrolled be treated as enrolled.
+//
 // Mutation (run, restore): return true unconditionally, or compare only
 // owner/name and not the provider, and the first and third cases below fail.
+// Fold with strings.EqualFold instead of task.ASCIILower and the look-alike
+// case fails: the repository above is written "acme/" + U+212A + "pp" (a Go
+// escape, so this file carries no look-alike character of its own), and
+// Unicode simple case folding reads that as the enrolled "acme/kpp".
 func TestConfigEnrollsIsALocalFact(t *testing.T) {
 	cfg := &Config{Repos: map[string]Repo{
 		"acme/app":     {Provider: "github"},
 		"Acme/Mixed":   {Provider: "bitbucket"},
 		"acme/no-prov": {},
 		"acme/other":   {Provider: "github"},
+		"acme/kpp":     {Provider: "github"},
 	}}
 	for _, c := range []struct {
 		name     string
@@ -652,6 +662,7 @@ func TestConfigEnrollsIsALocalFact(t *testing.T) {
 		{"enrolled, another provider", "bitbucket", "acme/app", false},
 		{"enrolled with no provider in the entry", "github", "acme/no-prov", true},
 		{"the fold the allow-list uses", "bitbucket", "acme/mixed", true},
+		{"the fold is ASCII only: a look-alike is another repository", "github", "acme/\u212app", false},
 		{"not in the map at all", "github", "attacker/evil", false},
 		{"a different repository", "github", "acme/vanished", false},
 	} {

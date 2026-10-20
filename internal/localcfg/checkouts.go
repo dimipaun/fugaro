@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The remembered checkouts: where this machine has a checkout of each
@@ -110,8 +111,11 @@ func (i CheckoutIdentity) Key() string { return i.Provider + "/" + i.Repo }
 // Enrolls reports whether the project config c enrolls the repository a
 // checkout was recorded under: c's own repos: map names owner/name, and — when
 // that entry names a provider — the same one. The map is keyed by the
-// operator's own spelling, so the comparison folds case (the same fold
-// configRepo makes for the allow-list commands).
+// operator's own spelling, so the comparison folds case — with task.ASCIILower,
+// the fold this tree adopts (configRepo's lookup, task.Slug's canonical form),
+// which folds A-Z and nothing else: Unicode case folding would let two
+// different names that look alike (U+212A KELVIN SIGN and "k") be read as one
+// repository, and a name is the thing a link is built from.
 //
 // It is a *local* fact, and that is the point: it reads the operator's own
 // project config and nothing else. The published allow-list is the cloud's
@@ -127,11 +131,12 @@ func (c *Config) Enrolls(provider, repo string) bool {
 	if c == nil {
 		return false
 	}
+	folded := task.ASCIILower(repo)
 	for name, r := range c.Repos {
-		if !strings.EqualFold(name, repo) {
+		if task.ASCIILower(name) != folded {
 			continue
 		}
-		return r.Provider == "" || strings.EqualFold(r.Provider, provider)
+		return r.Provider == "" || task.ASCIILower(r.Provider) == task.ASCIILower(provider)
 	}
 	return false
 }
