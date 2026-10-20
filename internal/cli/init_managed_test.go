@@ -679,13 +679,21 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	// address half over fugaro's own roots (tf.Guard with the command line's
 	// own --allow-delete, D72/D74), and the owner's entries are read by a
 	// managed apply of the project's agent-authored root alone.
+	//
+	// The before view therefore carries the whole identity a bucket's removal
+	// is identified by, time_created included (tf.removalInstanceAttributes):
+	// without it tf.RemovedIdentity identifies nothing and tf.Approves refuses
+	// "the plan does not identify the object this change removes" whatever
+	// init did with the list — so the row would pass for the reason that makes
+	// it say nothing.
 	const bucket = "module.installation.google_storage_bucket.runs"
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	ch := planChange{"address": bucket, "type": "google_storage_bucket",
 		"change": map[string]any{"actions": []string{"delete"},
-			"before": map[string]any{"id": "fugaro-runs-" + initProject, "name": "fugaro-runs-" + initProject, "project": initProject},
-			"after":  nil}}
+			"before": map[string]any{"id": "fugaro-runs-" + initProject, "name": "fugaro-runs-" + initProject, "project": initProject,
+				"time_created": "2026-01-02T03:04:05.678Z"},
+			"after": nil}}
 	r.allowDeleteList(t, initProject, tf.DeleteEntry{Address: bucket, Before: identityOf(t, ch)})
 	r.setPlan(t, ch)
 	_, _, err := executeStdin(t, "", "init", "--yes")
