@@ -467,6 +467,14 @@ func TestCredentialsServiceOptOutIsTwoSteps(t *testing.T) {
 	if strings.Contains(text, "is therefore a removal a plan may make") || strings.Contains(text, "removal a plan may make, not a refusal") {
 		t.Errorf("%s still claims the opt-out is a removal a plan may make: it is not, the container's prevent_destroy refuses the whole plan", path)
 	}
+	// The two installation steps are not the whole opt-out: the invoker grants
+	// and the dropped model-secret accessors are in the REPOSITORY roots, so a
+	// reader who stops here leaves every one of them declaring a service that
+	// is gone (re-review N2). The file has to say so.
+	const repoStep = "re-applied too, and before these two steps"
+	if !strings.Contains(text, repoStep) {
+		t.Errorf("%s does not say that every repository root is re-applied as part of the opt-out (%q): the invoker grants and the dropped model-secret accessors live in the repository roots, and one left declaring a service that is gone cannot apply", path, repoStep)
+	}
 	// The two lifecycle settings the two steps depend on.
 	containers := resourceBlocks(t, path, data, "google_secret_manager_secret")
 	if len(containers) != 1 || !hasAttr(containers[0].body, "prevent_destroy", "true") {

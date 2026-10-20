@@ -144,7 +144,14 @@ resource "google_cloud_run_v2_service" "credentials" {
   # service, this account and the grant above cannot be removed in that plan
   # either (independent security review of this file, M2, whose first version
   # of this comment claimed the opposite). Turning the service off is two
-  # owner steps, in this order, and C1.22's runbook carries them:
+  # owner steps, in this order, and C1.22's runbook carries them — together
+  # with a third that this file cannot do for itself: every repository root is
+  # re-applied too, and before these two steps. The `run.invoker` grants and
+  # the model-secret accessors this service displaced live in the REPOSITORY
+  # roots, so a repository root that is not re-applied keeps declaring a
+  # service that step 2 is about to remove, and its own apply then plans an
+  # invoker grant on a resource that no longer exists (independent security
+  # review of this file, re-review N2):
   #
   #   1. terraform state rm 'module.installation.google_secret_manager_secret.credentials_bundle[0]'
   #      — forgets the container. It deletes nothing in GCP and leaves every
