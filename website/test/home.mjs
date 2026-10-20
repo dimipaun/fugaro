@@ -62,7 +62,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { findAll, filesUnder, parse, textOf, walk } from './lib/html.mjs'
+import { cssDeclarations, cssRules, findAll, filesUnder, parse, textOf, walk } from './lib/html.mjs'
 import { buildCopy } from './lib/build.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -146,7 +146,12 @@ function classText(html, className) {
  * whitespace along with it.
  */
 function normalize(markdown) {
-  return markdown.replace(/[`*]/g, '').replace(/\s+/g, '')
+  // The typographic quotes are folded to their plain ones, the way `website/test/how-it-works.mjs`
+  // folds them: the site's markdown pipeline sets a repository's `'` as `’` on the page, so a
+  // label the page quotes from a document is the document's own line written in the type the
+  // page sets it in, and a comparison that kept the two apart would refuse every quotation with
+  // an apostrophe in it.
+  return markdown.replace(/[`*]/g, '').replace(/[‘’]/g, "'").replace(/\s+/g, '')
 }
 
 /** README.md's tagline: the line under its `# Fugaro` title, emphasis stripped (F48). */
@@ -176,11 +181,12 @@ function promiseLines() {
 
 /**
  * One `## <heading>` section of a document of this repository, up to the next `## ` — the
- * same reader `ArchitectureDiagram.astro` uses at build time, so the check and the build
- * resolve a section the same way. A heading's code span is a marker rather than part of its
- * name, which is why the search reads the headings with their backticks off: the section the
- * pull request's caption cites is `## Checkpoint pushes (\`git.pr.checkpoints\`)` and the key
- * in it is part of the name.
+ * reader the retired four-step flow's build-time caption guard used, kept here for the two
+ * places this file resolves a section: the design record's account of the watch screenshot, and
+ * `quotedSection` below, which holds the picture of the run's labels to theirs. A heading's code
+ * span is a marker rather than part of its name, which is why the search reads the headings with
+ * their backticks off: a section citing `## Checkpoint pushes (\`git.pr.checkpoints\`)` carries
+ * the key in its name.
  */
 function section(document, heading) {
   const text = repoFile(document)
@@ -282,184 +288,258 @@ function item4() {
 }
 
 /**
- * The sections a caption may be quoted from, by the name a step cites. A section rather than
- * the whole file: three of the four captions are lines of README.md, so held to the file
- * alone they could be shuffled among the steps and each would still be a quotation. Inside
- * one section the captions must also come in the order the section writes them, which is what
- * keeps two steps quoting the same section from swapping.
+ * One section of a document of this repository, as a label of the picture is held to it: the
+ * heading a name cites (`## <heading>`, or a `### <heading>` like `docs/gcp-setup.md`'s
+ * `Run, watch, diagnose`, read at the level it is written and up to the next heading of that
+ * level or higher), or the whole document when the name cites no section. A section rather than
+ * the whole file, because several of the picture's labels are lines of README.md, and held to
+ * the file alone they could be shuffled with every one of them still a quotation; inside one
+ * section the labels must also come in the order the section writes them, which is what keeps
+ * two labels quoting one section from swapping. `text` is null when the name cites no such
+ * document or section — this returns rather than asserting, because a label attributed to a
+ * section that is not there is one of the defects the check reports.
  *
- * The fourth cites `docs/git-providers.md`'s section on checkpoint pushes (the owner's
- * feedback of 2026-10-19): the pull request's caption is about when the pull request opens,
- * which is that document's fact rather than the README's, whose own line about the push is a
- * sentence about the branch.
+ * This is the retired four-step flow's own reader, kept with its subject: the flow held each of
+ * its captions to the section its `data-source` named, and the picture of the run that took the
+ * flow's place is held to its labels the same way (the owner's ruling of 2026-10-20).
  */
-function captionSources() {
-  return {
-    'README.md#Getting started': readmeSection('Getting started'),
-    'README.md#Why Fugaro': readmeSection('Why Fugaro'),
-    'README.md#How it works': readmeSection('How it works'),
-    'docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)': section('docs/git-providers.md', 'Checkpoint pushes (git.pr.checkpoints)'),
-    'docs/design/v1.md': repoFile('docs/design/v1.md'),
-  }
+function quotedSection(source) {
+  const at = /^([^#]+)#(.+)$/.exec(source)
+  const file = path.join(REPO, at ? at[1] : source)
+  if (!existsSync(file)) return { text: null }
+  const whole = readFileSync(file, 'utf8')
+  if (!at) return { text: whole }
+  const found = [...whole.matchAll(/^(#+) (.+)$/gm)].find((match) => match[2].replace(/`/g, '') === at[2])
+  if (!found) return { text: null }
+  const level = found[1].length
+  const rest = whole.slice(found.index)
+  const next = [...rest.matchAll(/^(#+) /gm)].find((match) => match.index > 0 && match[1].length <= level)
+  return { text: next ? rest.slice(0, next.index) : rest }
 }
 
-/** A built page's flow, as the elements it renders: the steps in order, with their arrows. */
-function flowOf(html) {
-  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
+/**
+ * The picture of the run, as one built page carries it: the figure, the name of each box of each
+ * drawing in the order the drawing prints them, the labels on each drawing, the list of words
+ * under the figure, and — the retired flow's own reading, still read here because what a page
+ * must *not* carry is as much of this check's subject as what it must — how many `ol.flow-steps`
+ * the page renders.
+ */
+function pictureOf(html) {
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
   const doc = parse(html)
-  const flows = findAll(doc, (el) => el.name === 'ol' && classes(el).includes('flow-steps'))
-  const out = { flows: flows.length, steps: [], arrows: 0 }
-  for (const flow of flows) {
-    for (const el of walk(flow)) {
-      if (el.name === 'svg' && classes(el).includes('step-arrow')) out.arrows += 1
-      if (el.name !== 'li' || !classes(el).includes('flow-step')) continue
-      const inner = (selector) => {
-        const node = [...walk(el)].find((child) => classes(child).includes(selector))
-        return node ? textOf(node).replace(/\s+/g, ' ').trim() : ''
-      }
-      out.steps.push({
-        name: el.attrs.get('data-step') ?? '',
-        source: el.attrs.get('data-source') ?? '',
-        // The heading and the caption are the step as a reader sees it; `data-step` is this
-        // check's own hook, and the two are held together below rather than one trusted for
-        // the other.
-        heading: inner('step-name'),
-        caption: inner('step-caption'),
-        // A list inside a step is a sub-list of it — the annotations D185 kept on the job
-        // step, which item 4's one-line-each picture does not carry.
-        nested: [...walk(el)].filter((child) => child.name === 'li').length,
+  const figures = findAll(doc, (el) => el.name === 'figure' && classes(el).includes('run-diagram'))
+  const words = findAll(doc, (el) => el.name === 'section' && classes(el).includes('run-words'))
+  const out = {
+    figures: figures.length,
+    flows: findAll(doc, (el) => el.name === 'ol' && classes(el).includes('flow-steps')).length,
+    drawings: [],
+    words: [],
+    // The regions a citation is read in: each drawing, and each list under the figure. A cursor
+    // per region rather than one per page, because the lists say the same run again — the second
+    // list quotes lines of the sections the first one quoted, and the phone drawing repeats the
+    // desktop drawing label for label — so one cursor across the page would refuse the second
+    // telling of a fact for being the second.
+    regions: [],
+    details: words.length,
+  }
+  for (const figure of figures) {
+    for (const svg of walk(figure)) {
+      if (svg.name !== 'svg') continue
+      out.drawings.push({
+        wide: classes(svg).includes('run-wide'),
+        // A box's name is its `run-name` text, joined: the drawing breaks a long name across
+        // two `<text>` lines ("Ephemeral" then "cloud job"), and the name a reader reads is
+        // both of them.
+        names: findAll(svg, (el) => el.name === 'g' && classes(el).includes('run-box')).map((box) =>
+          [...walk(box)]
+            .filter((el) => el.name === 'text' && classes(el).includes('run-name'))
+            .map((el) => textOf(el).trim())
+            .join(' '),
+        ),
+        labels: [...walk(svg)]
+          .filter((el) => el.name === 'g' && classes(el).includes('run-label'))
+          .map((el) => ({ source: el.attrs.get('data-source') ?? '', text: textOf(el).trim() })),
+      })
+      const drawing = out.drawings[out.drawings.length - 1]
+      out.regions.push({ where: `the ${drawing.wide ? 'wide' : 'tall'} drawing`, labels: drawing.labels })
+    }
+  }
+  for (const block of words) {
+    for (const list of findAll(block, (el) => (el.name === 'ol' || el.name === 'ul') && classes(el).some((name) => name.startsWith('run-')))) {
+      const klass = classes(list)
+      const labels = [...walk(list)]
+        .filter((el) => classes(el).some((name) => name === 'run-fact-text' || name === 'run-also-item'))
+        .map((el) => ({ source: el.attrs.get('data-source') ?? '', text: textOf(el).replace(/\s+/g, ' ').trim() }))
+      out.words.push(...labels)
+      out.regions.push({
+        where: klass.includes('run-facts') ? 'the facts under the picture' : klass.includes('run-also') ? 'the second list under the picture' : `the ${klass.join(' ')} list`,
+        labels,
       })
     }
   }
   return out
 }
 
-/** A step's slug as a heading: `data-step` is lowercase, a heading is not. */
-function capitalize(name) {
-  return name ? name[0].toUpperCase() + name.slice(1) : ''
-}
-
 /**
- * Every way a page's flow falls short of the changes spec's item 4, as the lines a reader
- * sees. Pure, over one page's HTML, so the built pages are checked with it and the refusals
- * below are proved with it: a fixture that breaks one rule has to make exactly that line
- * appear.
+ * Every way one built page's picture of a run falls short of what replaced the retired
+ * four-step flow (the owner's ruling of 2026-10-20), as the lines a reader sees. Pure, over one
+ * page's HTML, so the built pages are checked with it and the refusals below are proved with it.
  *
- * The ruling's part is the four names in order. The captions are held to the *section* each
- * step cites, in that section's order — `reached` is a cursor per section that only moves
- * forward, so two steps quoting one section can only quote it in the order it writes them.
- * Held to their files alone the captions are lines of the repository and can be shuffled
- * among the steps with every one of them still a quotation, while the page then says Fugaro
- * is where the pull request opens.
+ * The two claims the retired gate made are made here of the picture that took its place. Its
+ * first was that the page's steps are the changes spec's item 4's four names, in the ruling's
+ * order — now the drawing's four boxes, which are the same steps drawn rather than listed. Its
+ * second was that every caption is a line of the section its step cites, in that section's order
+ * — now every word on the figure: the labels drawn inside each drawing, and the two lists of the
+ * same run in words under it. A caption held to its file alone could be shuffled among the steps
+ * with every one of them still a quotation, so the cursor is kept, and it is per region — one
+ * drawing, and each list under the figure: the phone drawing carries the same labels as the
+ * desktop one in the same order, and the second list quotes lines of the sections the first one
+ * quoted, so a single cursor across the page would refuse the second telling of a fact for being
+ * the second rather than for being wrong.
+ *
+ * And the flow itself: a page that renders `ol.flow-steps` again is rendering the component the
+ * ruling deleted, which is why a page carrying one is refused here rather than passed for
+ * having, along with it, a picture that is right.
  */
-function flowFailures(html, ruling, sources) {
+export function pictureFailures(html, ruling) {
   const out = []
-  const flow = flowOf(html)
-  if (flow.flows !== 1) return [`the page renders ${flow.flows} flows, and it renders one: the flow is the picture of the run (P8, spec item 4)`]
-
-  const names = flow.steps.map((step) => step.name)
-  const wanted = ruling.steps.map((name) => name.toLowerCase())
-  if (names.join(' | ') !== wanted.join(' | ')) {
+  const picture = pictureOf(html)
+  if (picture.flows > 0) {
     out.push(
-      `the flow's steps are ${JSON.stringify(names)}, and the changes spec's item 4 names ${JSON.stringify(ruling.steps)}, in that order: a step added, dropped or reordered is a claim about how a run works (changes spec 2026-10-18, item 4)`,
+      `the page renders ${picture.flows} \`ol.flow-steps\`, and the four-step flow is retired: the owner's ruling of 2026-10-20 deletes \`ArchitectureDiagram.astro\` and its flow, and the picture of a run is How It Works' drawing with the run in words under it`,
+    )
+  }
+  if (picture.figures !== 1) {
+    out.push(
+      `the page renders ${picture.figures} pictures of a run, and it renders one: the run is one figure drawn at two scales, with the same run in words under it (the owner's draft of 2026-10-19; changes spec 2026-10-18, item 4)`,
+    )
+    return out
+  }
+  if (picture.details !== 1) {
+    out.push(
+      `the page renders ${picture.details} lists of the run in words, and it renders one: the picture is the drawing and the list under it, which is what a reader who skips the figure reads (the owner's draft of 2026-10-19; changes spec 2026-10-18, item 4)`,
     )
   }
 
-  const reached = new Map()
-  for (const [index, step] of flow.steps.entries()) {
-    const where = `the ${JSON.stringify(step.name)} step`
-    if (!step.caption) out.push(`${where} carries no caption, and every step has one short line saying what happens there (changes spec 2026-10-18, item 4)`)
-    if (!(step.source in sources)) {
-      out.push(`${where} attributes its caption to ${JSON.stringify(step.source)}, and a caption is held to a section of a document this repository carries (changes spec 2026-10-18, item 4)`)
-    } else {
-      const line = normalize(step.caption)
-      const from = reached.get(step.source) ?? 0
-      const at = normalize(sources[step.source]).indexOf(line, from)
+  for (const drawing of picture.drawings) {
+    const where = `the ${drawing.wide ? 'wide' : 'tall'} drawing`
+    if (drawing.names.join(' | ') !== ruling.steps.join(' | ')) {
+      out.push(
+        `${where} draws the boxes ${JSON.stringify(drawing.names)}, and the changes spec's item 4 names ${JSON.stringify(ruling.steps)}, in that order: the four boxes are the run's four steps, and a step added, dropped, renamed or reordered is a claim about how a run works (changes spec 2026-10-18, item 4; the owner's ruling of 2026-10-20)`,
+      )
+    }
+    if (drawing.labels.length === 0) {
+      out.push(
+        `${where} carries no labelled text, and the picture is its labels: a drawing whose words moved out of it says nothing (the owner's draft of 2026-10-19)`,
+      )
+    }
+  }
+
+  for (const region of picture.regions) {
+    const reached = new Map()
+    for (const label of region.labels) {
+      const held = quotedSection(label.source)
+      if (held.text === null) {
+        out.push(
+          `${region.where} attributes the label ${JSON.stringify(label.text)} to ${JSON.stringify(label.source)}, and a label is held to a section of a document this repository carries (Global Constraint 6; changes spec 2026-10-18, item 4)`,
+        )
+        continue
+      }
+      const line = normalize(label.text)
+      const from = reached.get(label.source) ?? 0
+      const at = normalize(held.text).indexOf(line, from)
       if (at === -1) {
         out.push(
-          `${where}'s caption ${JSON.stringify(step.caption)} does not appear in ${step.source} at or after the step before it: every caption is the repository's own words, in the order their document writes them (changes spec 2026-10-18, item 4; Global Constraint 6)`,
+          `${region.where}'s label ${JSON.stringify(label.text)} does not appear in ${label.source} at or after the label before it: every word of the picture is the repository's own words in the order their document writes them, and a paraphrase — or a line that moved above another — is the page inventing what the product says (Global Constraint 6, RF11; changes spec 2026-10-18, item 4)`,
         )
       } else {
-        reached.set(step.source, at + line.length)
+        reached.set(label.source, at + line.length)
       }
     }
-    // The name a reader sees, which is the heading: `data-step` is this check's own hook, and
-    // a heading that stopped matching the spec would leave the visible flow saying something
-    // the ruling does not.
-    const named = ruling.steps[index] ?? ''
-    if (step.heading !== named) {
-      out.push(
-        `${where}'s heading reads ${JSON.stringify(step.heading)}, and the changes spec's item 4 names it ${JSON.stringify(named)}: the heading is the name a reader sees (changes spec 2026-10-18, item 4)`,
-      )
-    }
-    // One short line per step, and no sub-list under one of them: item 4 asks for the picture
-    // with the minimum of copy, and the two annotations D185 hung on the job step are detail
-    // that belongs in the How It Works page's explanation rather than in the picture.
-    if (step.nested > 0) {
-      out.push(
-        `${where} carries ${step.nested} nested list item(s), and every step is one short line: the picture carries the four steps and nothing under them (changes spec 2026-10-18, item 4)`,
-      )
-    }
-  }
-
-  if (flow.arrows !== flow.steps.length - 1) {
-    out.push(
-      `the flow carries ${flow.arrows} arrows between ${flow.steps.length} steps, and it carries one between each pair: the spec's picture is a flow, and the arrows are what draw it (P8, spec item 4)`,
-    )
   }
   return out
 }
 
+const REDUCED_MOTION = /prefers-reduced-motion\s*:\s*reduce/i
+const ALLOWS_MOTION = /prefers-reduced-motion\s*:\s*no-preference/i
+/** A declaration that stops motion rather than starting it. */
+const STOPS = /^(none|auto|0m?s|1ms)\b/
 /**
- * A page carrying nothing but a flow, for the refusals below. The heading is the step's name
- * as the component writes it — capitalised from `data-step`, which is how the two are held
- * together — so the fixture page passes the same checks the built pages do; `heading` and
- * `nested` are the overrides the "a reader sees something else" cases break.
+ * What a reduce rule writes to take a kind of motion away, by the property it writes it in: a
+ * duration, delay or scroll behaviour set to nothing, and an animation's iteration count set to
+ * the one play it is given (the site's own guard writes `animation-iteration-count: 1`).
  */
-function flowPage(steps) {
-  const body = steps
-    .map((step, index) => {
-      const nested = step.nested ? `<ul class="step-annotations">${step.nested}</ul>` : ''
-      const arrow =
-        index < steps.length - 1 && step.arrow !== false
-          ? '<svg class="step-arrow" aria-hidden="true" focusable="false"><path class="arrow-line" d="M12 1 V 25"></path></svg>'
-          : ''
-      return `<li class="flow-step" data-step="${step.name}" data-source="${step.source}"><div class="step-card"><div class="step-head"><span class="step-number" aria-hidden="true">${index + 1}</span><h2 class="step-name">${step.heading ?? capitalize(step.name)}</h2></div><p class="step-caption">${step.caption}</p>${nested}</div>${arrow}</li>`
-    })
-    .join('')
-  return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1><figure class="flow"><ol class="flow-steps">${body}</ol></figure></main></body></html>`
+const NEUTRALISERS = {
+  'animation-duration': STOPS,
+  'animation-delay': STOPS,
+  'animation-iteration-count': /^(0|1)\b/,
+  'transition-duration': STOPS,
+  'transition-delay': STOPS,
+  'scroll-behavior': /^auto\b/,
 }
+/** The scroll-driven reveal the retired flow brought its steps in with. */
+const SCROLL_TIMELINE = ['animation-timeline', 'scroll-timeline', 'view-timeline']
 
 /**
- * The four steps as the page renders them, for the fixture cases: a copy of the markup, with
- * the repository's own lines in the sections the component cites and in the component's order.
+ * Every way one built page keeps motion for a reader who asked for less of it. The retired
+ * flow's own gate (W1.4 step 3, D105) asked the page to bring its steps in on a scroll-driven
+ * animation behind a `@supports` guard and a `prefers-reduced-motion: no-preference` query;
+ * that animation is retired with the flow (the owner's ruling of 2026-10-20), and neither of the
+ * two things that took its place moves at all — the slider's three panels are the fragment's and
+ * the drawing is a still picture. So what is left to hold is the page's remaining motion, every
+ * declaration of it: smooth scrolling, and the transitions on the copy control and the links.
+ * Each one has to be covered by the page's own answer to a reader who asks for less — a
+ * `prefers-reduced-motion: reduce` rule that sets it to nothing, either on the declaration's own
+ * selector or on the universal `*, :before, :after` guard — and the scroll-driven reveal is
+ * refused outright, because a page that reveals itself as a reader scrolls it is the flow's
+ * mechanism back under another name.
  */
-function fixtureSteps() {
-  return [
-    { name: 'your agent', source: 'README.md#Getting started', caption: "the plugin's working skill launches, watches and diagnoses runs" },
-    { name: 'fugaro', source: 'README.md#Why Fugaro', caption: 'it uses your Google Cloud project and your model credentials' },
-    { name: 'ephemeral cloud job', source: 'README.md#How it works', caption: 'one execution per task, then gone' },
-    {
-      name: 'pull request',
-      source: 'docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)',
-      caption: 'the first checkpoint opens the draft PR, marked not verified',
-    },
-  ]
+export function pageMotionFailures(css) {
+  const out = []
+  const rules = cssRules(css)
+  const reduce = rules.filter((rule) => rule.conditions.some((condition) => REDUCED_MOTION.test(condition)) && rule.selector)
+  const universal = reduce.filter((rule) => rule.selector.split(',').some((part) => part.trim() === '*'))
+  const stops = (rs, property) => rs.some((rule) => cssDeclarations(rule.body).some(([p, v]) => p === property && NEUTRALISERS[property].test(v)))
+  const covered = {
+    animation: stops(universal, 'animation-duration') && stops(universal, 'animation-iteration-count'),
+    transition: stops(universal, 'transition-duration'),
+    'scroll-behavior': stops(universal, 'scroll-behavior'),
+  }
+  const neutralised = (selector, kind) =>
+    reduce.some(
+      (rule) =>
+        rule.selector === selector &&
+        cssDeclarations(rule.body).some(([p, v]) => (p === kind || p === `${kind}-name` || p === `${kind}-duration`) && (NEUTRALISERS[p] ?? STOPS).test(v)),
+    )
+
+  for (const rule of rules) {
+    if (!rule.selector || rule.selector.startsWith('@')) continue
+    const declared = cssDeclarations(rule.body)
+    for (const [property, value] of declared) {
+      if (SCROLL_TIMELINE.includes(property) && !/^none\b/.test(value.trim())) {
+        out.push(
+          `${rule.selector}${rule.conditions.length > 0 ? ` (inside ${rule.conditions.join(' and ')})` : ''} declares ${property}: ${value}, and the page is not revealed by scrolling: the flow's scroll-driven animation is retired with the flow (the owner's ruling of 2026-10-20), and the slider's panels are the fragment's while the drawing is a still picture (W1.4 step 3, D105)`,
+        )
+      }
+    }
+    // A rule inside one of the two motion queries is the page's own handling of motion: a
+    // `reduce` rule *is* the answer, and a `no-preference` rule only ever runs for a reader who
+    // allows motion.
+    if (rule.conditions.some((condition) => REDUCED_MOTION.test(condition) || ALLOWS_MOTION.test(condition))) continue
+    for (const [property, value] of declared) {
+      let kind = null
+      if ((property === 'animation' || property === 'animation-name') && !/^none\b/.test(value)) kind = 'animation'
+      if ((property === 'transition' || property === 'transition-duration') && !STOPS.test(value)) kind = 'transition'
+      if (property === 'scroll-behavior' && /smooth/.test(value)) kind = 'scroll-behavior'
+      if (kind === null || covered[kind] || neutralised(rule.selector, kind)) continue
+      out.push(
+        `${rule.selector} declares ${property}: ${value}, and no prefers-reduced-motion: reduce rule neutralises it: motion is for a reader who allows it, and the reader who asks for less is answered by a rule that sets it to nothing (W1.4 step 3, D105)`,
+      )
+    }
+  }
+  return out
 }
 
-/**
- * Two steps quoting one section, for the ordering case: each step of the flow cites a section
- * of its own since the pull request's caption moved to `docs/git-providers.md` (the owner's
- * feedback of 2026-10-19), and the rule that a section's lines come in the section's order is
- * what has to keep holding. The lines are README.md's `## How it works` own — the job's line
- * from its diagram, and step 4's clause about the draft — in the order the section writes
- * them, so the pair is a real pair of that section's lines and not a shape invented here.
- */
-function sharedSectionSteps() {
-  const steps = fixtureSteps()
-  steps[3] = { ...steps[3], source: 'README.md#How it works', caption: 'a draft opens at the first push (marked not verified)' }
-  return steps
-}
 
 test("the hero headline is README.md's tagline line, byte for byte", () => {
   const tagline = readmeTagline()
@@ -1342,203 +1422,287 @@ test('the design record quotes the caption the site ships', () => {
   )
 })
 
-test("the flow is How It Works' own picture of a run, and the homepage carries none of it", () => {
+// ---- the picture of the run: the gates the retired four-step flow left behind ----------------
+//
+// The owner's ruling of 2026-10-20 retires `ArchitectureDiagram.astro` and the four-step flow
+// with it, and asks for the gates that read the flow to be replaced, one for one, by gates that
+// read what the pages show now. The four tests below are the flow's four gates, kept as gates
+// and moved onto the picture that took the flow's place on `/how-it-works/` — the drawing and
+// the run in words under it — and onto the block that took its place on the homepage, the
+// slider. Where the flow's gate read the flow's four steps, these read the drawing's four boxes;
+// where it read the flow's captions, these read every word on the figure; where it read the
+// flow's scroll-driven reveal, these read the motion the two pages actually keep.
+
+test("the run is How It Works' own picture of one, and the homepage carries the slider instead", () => {
   const ruling = item4()
   assert.equal(ruling.steps.length, 4, `the changes spec's item 4 names ${ruling.steps.length} steps, and the picture draws four (changes spec 2026-10-18, item 4)`)
 
-  // **One page carries the flow.** The owner's approved draft of 2026-10-19 ("Home, draft 2
+  // **One page carries the picture.** The owner's approved draft of 2026-10-19 ("Home, draft 2
   // (slider)") is the homepage's three blocks — the hero, the slider and the call to action —
-  // and the picture of a run is not one of them. It is `/how-it-works/`'s opening, where the
-  // four steps have the room to be drawn and where the detail under them is (item 4 keeps the
-  // detail off the homepage). Both pages rendered the same figure until this draft; the
-  // assertion below reads the homepage and refuses one, and `website/test/a11y.mjs` reads the
-  // same fact off the artifact's own ordered lists.
+  // and the picture of a run is not one of them: it is `/how-it-works/`'s opening, where the
+  // four steps have the room to be drawn and where the run in words under them is. The homepage
+  // is where the retired flow's absence is read, because the flow is what stood in the slider's
+  // place; `website/test/how-it-works.mjs` reads the same fact from the other side, refusing a
+  // diagram on any page but that one.
   const home = parse(builtPage(''))
-  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
   assert.equal(
-    findAll(home, (el) => el.name === 'figure' && classes(el).includes('flow')).length,
+    findAll(home, (el) => el.name === 'figure' && classes(el).includes('run-diagram')).length,
     0,
-    `the homepage renders a <figure class="flow">, and the draft's homepage is the hero, the slider and the call to action: the picture of the run is /how-it-works/'s opening (the owner's approved draft of 2026-10-19; changes spec 2026-10-18, item 4)`,
+    `the homepage renders a <figure class="run-diagram">, and the draft's homepage is the hero, the slider and the call to action: the picture of the run is /how-it-works/'s opening (the owner's approved draft of 2026-10-19; changes spec 2026-10-18, item 4)`,
   )
-  const hero = findAll(home, (el) => el.name === 'section' && classes(el).includes('hero'))[0]
-  assert.ok(hero, 'the homepage has no hero section, and the hero is the page\'s first block (P5, D102)')
+  assert.equal(
+    pictureOf(builtPage('')).flows,
+    0,
+    'the homepage renders the retired four-step flow: the owner\'s ruling of 2026-10-20 deletes `ArchitectureDiagram.astro` and the flow with it, and the block that stands in its place is the slider (website/test/slider.mjs holds the slider\'s own shape)',
+  )
 
-  const failures = flowFailures(builtPage('how-it-works'), ruling, captionSources())
+  // And the slider is the block in its place, read as the retired gate read the picture: three
+  // tabs, three panels, all of them in the HTML a reader receives, each tab a link to the panel
+  // it shows. A homepage whose tabs pointed at nothing would be a homepage whose blocks a reader
+  // without JavaScript cannot reach — which is what the flow's own gate said about the figure
+  // when it asked a page to render exactly one of them.
+  const tabs = findAll(home, (el) => el.name === 'a' && classes(el).includes('tab')).map((el) => el.attrs.get('href') ?? '')
+  const panels = findAll(home, (el) => classes(el).includes('panel')).map((el) => el.attrs.get('id') ?? '')
+  assert.equal(
+    tabs.length,
+    3,
+    `the homepage's slider offers ${tabs.length} tabs, and the draft's first panel is the three steps of using Fugaro beside a Benefits tab and a See it tab (the owner's approved draft of 2026-10-19; changes spec 2026-10-18, item 4)`,
+  )
+  assert.equal(
+    panels.length,
+    3,
+    `the homepage's slider carries ${panels.length} panels, and every tab it offers is a link to a panel: a tab that points at nothing shows nothing (the owner's approved draft of 2026-10-19)`,
+  )
+  assert.deepEqual(
+    tabs,
+    panels.map((id) => `#${id}`),
+    `the homepage's tabs point at ${JSON.stringify(tabs)} and its panels are ${JSON.stringify(panels.map((id) => `#${id}`))}: each tab is the link to the panel in its place, so the block is reachable without the script (the owner's approved draft of 2026-10-19)`,
+  )
+
+  // **And the picture is item 4's four steps, drawn**: the drawing's boxes, its labels, the run
+  // in words under it, and the section the words are the detail of.
+  const drawn = pictureOf(builtPage('how-it-works'))
+  assert.equal(
+    drawn.figures,
+    1,
+    `the /how-it-works/ page renders ${drawn.figures} pictures of a run, and it renders one: the picture is the page's opening (the owner's approved draft of 2026-10-19)`,
+  )
+  const failures = pictureFailures(builtPage('how-it-works'), ruling)
   assert.deepEqual(
     failures,
     [],
-    `the /how-it-works/ page's flow is not the one the changes spec's item 4 describes:\n  ${failures.join('\n  ')}`,
+    `the /how-it-works/ page's picture of a run is not the one the changes spec's item 4 describes:\n  ${failures.join('\n  ')}`,
   )
 
-  // And the copy that told the run again on the homepage is gone (item 4: "the duplicate
-  // text-heavy 'how it works' section is REMOVED"): the detail belongs to the page that opens
-  // with the picture. A section that came back would be a second description of the run to
-  // keep in step with the first.
+  // The run in words is the detail, and the detail is not on the homepage: item 4 removes the
+  // duplicate text-heavy "how it works" section from the homepage and leaves the explanation to
+  // the page that opens with the picture. A section that came back would be a second description
+  // of the run to keep in step with the first. (This is the retired gate's count of
+  // `section.run-detail`, moved onto the section that carries the same detail now: the
+  // run-detail section went with the flow in PR #726, and the list under the picture is what
+  // stands in its place.)
   assert.equal(
-    runDetailOf(builtPage('')).sections,
+    pictureOf(builtPage('')).details,
     0,
-    'the homepage renders a run-detail section: item 4 removes the duplicate text-heavy "how it works" section from the homepage and leaves the detail to the How It Works page (changes spec 2026-10-18, item 4)',
+    'the homepage renders the run in words: item 4 removes the duplicate text-heavy "how it works" section from the homepage and leaves the detail to the How It Works page, where it is the list under the picture (changes spec 2026-10-18, item 4)',
   )
   assert.equal(
-    runDetailOf(builtPage('how-it-works')).sections,
+    drawn.details,
     1,
-    'the How It Works page renders no run-detail section, and item 4 puts the detailed explanation under the picture there (changes spec 2026-10-18, item 4)',
+    'the How It Works page renders no run in words under its picture, and item 4 puts the detail under the picture there: the drawing alone is a picture a reader who cannot see it is told nothing by (changes spec 2026-10-18, item 4)',
   )
 })
 
-test('the flow refusals fire on the defect each one names', () => {
-  // The cases below are the check's own proof: the fixture page passes, and each fixture
-  // that breaks one rule of the flow makes exactly that rule's line appear. Without them a
-  // check that read no steps at all would pass every page.
-  const ruling = item4()
-  const sources = captionSources()
-  const failing = (steps) => flowFailures(flowPage(steps), ruling, sources)
-
-  assert.deepEqual(failing(fixtureSteps()), [], 'the fixture page does not pass the check it is the control for')
-
-  const dropped = fixtureSteps().slice(0, -1)
-  assert.ok(
-    failing(dropped).some((line) => /steps are .*and the changes spec's item 4 names/.test(line)),
-    'a step removed from the flow passes the check: the four steps are what item 4 draws, and a fifth or a missing one has to fail',
-  )
-
-  const reordered = [...fixtureSteps()]
-  ;[reordered[2], reordered[3]] = [reordered[3], reordered[2]]
-  assert.ok(
-    failing(reordered).some((line) => /steps are .*and the changes spec's item 4 names/.test(line)),
-    "two steps swapped pass the check: the order is the run's order, and a flow that drew the pull request before the job describes a run that cannot happen",
-  )
-
-  const paraphrased = fixtureSteps().map((step, i) => (i === 2 ? { ...step, caption: 'The agent works in the container.' } : step))
-  assert.ok(
-    failing(paraphrased).some((line) => /does not appear in README\.md#How it works/.test(line)),
-    'a caption written for the page passes the check: every caption is a line of the section it cites (Global Constraint 6, RF11)',
-  )
-
-  const elsewhere = fixtureSteps().map((step, i) => (i === 0 ? { ...step, source: 'website/content/cli-reference.md' } : step))
-  assert.ok(
-    failing(elsewhere).some((line) => /held to a section of a document this repository carries/.test(line)),
-    'a caption attributed to a document the flow may not quote passes the check: every caption comes from a section this check reads',
-  )
-
-  // Two steps of one section, each quoting a line of it: a check that held each caption to
-  // its section and no further would let them swap, and the page would then say the run opens
-  // a pull request that is done, then gone. The shipped flow cites four sections, so the pair
-  // is built here out of README.md's own `## How it works` lines — the job's and step 4's —
-  // and the rule is what has to keep holding for the day two steps share a section again.
-  const pair = sharedSectionSteps()
-  const swapped = pair.map((step, i) => (i === 2 ? { ...step, caption: pair[3].caption } : i === 3 ? { ...step, caption: pair[2].caption } : step))
-  assert.deepEqual(failing(pair), [], 'the two steps quoting one section do not pass the check their own case is about')
-  assert.ok(
-    failing(swapped).some((line) => /at or after the step before it/.test(line)),
-    'the job step\'s caption and the pull request step\'s swapped pass the check: each is still a line of README.md\'s "## How it works", and the order is what keeps each on the step it describes',
-  )
-
-  // The heading a reader sees, which is not the `data-step` this check reads: a page whose
-  // headings said something else entirely would otherwise pass on its attributes alone.
-  const retitled = fixtureSteps().map((step, i) => (i === 2 ? { ...step, heading: 'A container does the work' } : step))
-  assert.ok(
-    failing(retitled).some((line) => /heading reads .*and the changes spec's item 4 names it/.test(line)),
-    "a step heading replaced with a sentence of the page's own passes the check: the heading is the name a reader reads, and item 4 names it",
-  )
-
-  // Item 4's picture is four steps with one short line each, and D185's two annotations under
-  // the job step are detail that moved into the How It Works page's explanation.
-  const annotated = fixtureSteps().map((step, i) =>
-    i === 2 ? { ...step, nested: '<li class="annotation"><span class="annotation-name">cache</span></li>' } : step,
-  )
-  assert.ok(
-    failing(annotated).some((line) => /carries 1 nested list item\(s\)/.test(line)),
-    'a sub-list under a step passes the check: the picture carries the four steps and nothing under them (changes spec 2026-10-18, item 4)',
-  )
-
-  const arrowless = fixtureSteps().map((step, i) => (i === 1 ? { ...step, arrow: false } : step))
-  assert.ok(
-    failing(arrowless).some((line) => /carries 2 arrows between 4 steps/.test(line)),
-    'a step with no arrow after it passes the check: the picture is a flow, and the arrows are what make it one',
-  )
-
-  // And the reader itself: a page that renders no flow is the failure a check reading
-  // "no steps" would otherwise report as success.
-  assert.deepEqual(
-    flowFailures('<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1></main></body></html>', ruling, sources),
-    ['the page renders 0 flows, and it renders one: the flow is the picture of the run (P8, spec item 4)'],
-  )
-})
-
-test('the flow moves on scroll only for a reader who allows motion', () => {
-  // The page that renders the flow, because the CSS is inlined per page: the homepage renders
-  // no flow since the owner's approved draft of 2026-10-19, so its stylesheet carries none of
-  // these rules and a case that read it would be reading the wrong page.
-  const css = builtCSS(builtPage('how-it-works'))
-
-  // The animation is a scroll-driven one on the steps, and the reduced-motion path is the
-  // flow itself: a reader whose system asks for less motion gets every step in place,
-  // because the animation that brings a step in is inside a guard that never opens for
-  // them. That is why the guard is checked here rather than a fill mode (W1.4 step 3, D105).
-  assert.match(
-    css,
-    /animation-timeline:\s*view\(\)/,
-    'the flow has no scroll-driven animation, and W1.4 step 3 asks for one that reveals the steps as the reader reaches them',
-  )
-  assert.match(
-    css.replace(/\s+/g, ''),
-    /@supports\(animation-timeline:view\(\)\)/,
-    'the scroll-driven animation is not behind a feature query: a browser that cannot run it has to render the flow as it stands rather than render nothing',
-  )
-  assert.match(
-    css.replace(/\s+/g, ''),
-    /@media\(prefers-reduced-motion:no-preference\)/,
-    'the scroll-driven animation is not behind a preference query, so a reader who asked for less motion would get a flow that fades in as they scroll it (D105, W1.4 step 3)',
-  )
-})
-
-test("every caption in the flow is a line of the section its step cites, in that section's order", () => {
-  // The same rule `flowFailures` applies, said here one page at a time and with the page's
-  // name in the message, because this is the acceptance a reader can check: the four steps say
-  // what the repository says, in the order the repository says it. Three of the four quote a
-  // section of README.md, and the pull request's caption quotes `docs/git-providers.md`'s
-  // checkpoint pushes, which is the document that says when the pull request opens; a
-  // section's own order is the cursor below, and it is what a second step quoting the same
-  // section obeys.
-  const ruling = item4()
-  const sources = captionSources()
-
-  // The page that carries the flow, and the only one that does (the owner's approved draft of
-  // 2026-10-19 puts the homepage's picture of a run into `/how-it-works/`'s opening alone).
-  for (const route of ['how-it-works']) {
-    const where = `/${route}/`
-    const flow = flowOf(builtPage(route))
-
-    assert.equal(
-      flow.steps.length,
-      4,
-      `the ${where} page's flow renders ${flow.steps.length} steps, and the changes spec's item 4 names four (changes spec 2026-10-18, item 4)`,
-    )
+test("the flow's scroll-driven reveal is retired with it, and every motion the pages keep answers a reader who asks for less", () => {
+  // The retired gate (W1.4 step 3, D105) held the flow's reveal to two guards: a
+  // `@supports (animation-timeline: view())` feature query and a
+  // `@media (prefers-reduced-motion: no-preference)` preference query. The reveal is retired
+  // with the flow, and the gate that read it is replaced by the rule the two readings below
+  // state: the mechanism is refused outright, because neither thing that took the flow's place
+  // animates — the slider's panels are the fragment's and the drawing is a still picture — and
+  // the motion the pages do keep (smooth scrolling, and the transitions on the copy control and
+  // the links) is covered on each page by its own answer to a reader who asks for less.
+  for (const route of ['', 'how-it-works']) {
+    const where = route === '' ? '/' : `/${route}/`
+    const css = builtCSS(builtPage(route))
     assert.deepEqual(
-      flow.steps.map((step) => step.heading),
-      ruling.steps,
-      `the ${where} page's flow is headed ${JSON.stringify(flow.steps.map((step) => step.heading))}, and item 4 names ${JSON.stringify(ruling.steps)}: the headings are the names a reader reads (changes spec 2026-10-18, item 4)`,
+      pageMotionFailures(css),
+      [],
+      `the ${where} page keeps motion a reader who asked for less would still be given:\n  ${pageMotionFailures(css).join('\n  ')}`,
     )
-
-    const reached = new Map()
-    for (const step of flow.steps) {
-      const section = sources[step.source] ?? ''
+    const flat = css.replace(/\s+/g, '')
+    for (const property of ['animation-timeline', 'scroll-timeline', 'view-timeline']) {
       assert.ok(
-        step.source in sources,
-        `the ${where} page's ${JSON.stringify(step.name)} step attributes its caption to ${JSON.stringify(step.source)}, and a caption is held to a section of a document this repository carries (changes spec 2026-10-18, item 4)`,
+        !flat.includes(`${property}:`),
+        `the ${where} page declares \`${property}\`, and the page is not revealed by scrolling: the flow's scroll-driven animation is retired with the flow (the owner's ruling of 2026-10-20; W1.4 step 3, D105)`,
       )
-      const line = normalize(step.caption)
-      const from = reached.get(step.source) ?? 0
-      const at = normalize(section).indexOf(line, from)
+    }
+    assert.ok(
+      !/@keyframes/.test(flat),
+      `the ${where} page declares a \`@keyframes\` animation, and neither thing that replaced the flow animates: the slider's three panels are the fragment's and the drawing is a still picture (the owner's ruling of 2026-10-20; W1.4 step 3, D105)`,
+    )
+  }
+})
+
+test("every word of the picture is a line of the section it cites, in that section's order", () => {
+  // The same rule `pictureFailures` applies, said here one page at a time and with the page's
+  // name in the message, because this is the acceptance a reader can check: the figure and the
+  // run in words under it say what the repository says, in the order the repository says it.
+  // The retired gate read the flow's four captions this way; the labels drawn inside the figure
+  // and the list of the same run under it are what stands in their place, and the slider's own
+  // three lines are held to their sections the same way by `website/test/slider.mjs`'s
+  // `stepFailures`, which is the homepage's side of this acceptance.
+  const where = '/how-it-works/'
+  const picture = pictureOf(builtPage('how-it-works'))
+  const regions = picture.regions.map((region) => ({ ...region, where: `${where}'s ${region.where}` }))
+  assert.equal(
+    regions.length,
+    4,
+    `the ${where} page's picture is read as ${regions.length} regions and the page carries four — the wide drawing, the tall drawing, the facts under them and the second list under those: a reading that found fewer would pass the page on labels it never read (the owner's draft of 2026-10-19)`,
+  )
+
+  for (const region of regions) {
+    assert.ok(
+      region.labels.length > 0,
+      `nothing is labelled in ${region.where}, and the picture is its words: a region this check reads as empty is a region this check passes without reading (the owner's draft of 2026-10-19)`,
+    )
+    const reached = new Map()
+    for (const label of region.labels) {
+      const held = quotedSection(label.source)
+      assert.notEqual(
+        held.text,
+        null,
+        `${region.where} attributes the label ${JSON.stringify(label.text)} to ${JSON.stringify(label.source)}, and a label is held to a section of a document this repository carries (changes spec 2026-10-18, item 4)`,
+      )
+      const line = normalize(label.text)
+      const from = reached.get(label.source) ?? 0
+      const at = normalize(held.text).indexOf(line, from)
       assert.notEqual(
         at,
         -1,
-        `the ${where} page's ${JSON.stringify(step.name)} caption ${JSON.stringify(step.caption)} does not appear in ${step.source} at or after the step before it: every caption in the flow is the repository's own words in the order their section writes them, rather than the page's (changes spec 2026-10-18, item 4; Global Constraint 6)`,
+        `${region.where}'s label ${JSON.stringify(label.text)} does not appear in ${label.source} at or after the label before it: every word of the picture is the repository's own words in the order their document writes them, rather than the page's — and a line that moved above another is the page describing a run the repository does not (changes spec 2026-10-18, item 4; Global Constraint 6, RF11)`,
       )
-      reached.set(step.source, at + line.length)
+      reached.set(label.source, at + line.length)
     }
   }
+})
+
+test('the picture refusals fire on the defect each one names', () => {
+  // The cases below are the check's own proof: the fixture page — the built page's own figure and
+  // the built page's own run in words, side by side — passes, and each fixture that breaks one
+  // rule makes exactly that rule's line appear. Without them a check that read no boxes and no
+  // labels at all would pass every page, which is the failure mode a replacement gate this new
+  // has (the owner's ruling of 2026-10-20).
+  const ruling = item4()
+  const page = builtPage('how-it-works')
+  const figure = /<figure class="run-diagram"[\s\S]*?<\/figure>/.exec(page)
+  const words = /<section class="run-words"[\s\S]*?<\/section>/.exec(page)
+  assert.ok(figure && words, "the built /how-it-works/ page carries no `figure.run-diagram` and `section.run-words`, and the fixtures below are drawn from the page's own markup")
+  const fixture = (body) => `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1>${body}</main></body></html>`
+  const picturePage = (figureMarkup = figure[0], wordsMarkup = words[0]) => fixture(figureMarkup + wordsMarkup)
+  const failing = (html) => pictureFailures(html, ruling)
+  const control = picturePage()
+  assert.deepEqual(failing(control), [], 'the fixture page does not pass the check it is the control for')
+
+  // The four boxes, which are the ruling's four names: one renamed, two exchanged, one with no
+  // name at all.
+  const renamed = picturePage(figure[0].replace('>Your agent</text>', '>Your helper</text>'), words[0])
+  assert.notEqual(renamed, control, 'the fixture did not rename a box: the page\'s own markup carries no `>Your agent</text>`')
+  assert.ok(
+    failing(renamed).some((line) => /draws the boxes .*and the changes spec's item 4 names/.test(line)),
+    'a box renamed passes the check: the four boxes are the steps item 4 names, and a name the ruling does not carry is a claim about how a run works',
+  )
+
+  const tag = (name) => new RegExp(`<text class="run-name"[^>]*>${name}</text>`)
+  const swap = (html, one, other) => {
+    const first = tag(one).exec(html)
+    const second = tag(other).exec(html)
+    assert.ok(first && second, `the built page's figure names no \`${one}\` and \`${other}\` box, and this fixture exchanges them`)
+    return html.replace(first[0], '\u0000').replace(second[0], first[0]).replace('\u0000', second[0])
+  }
+  assert.ok(
+    failing(picturePage(swap(figure[0], 'Your agent', 'Fugaro'), words[0])).some((line) => /draws the boxes .*and the changes spec's item 4 names/.test(line)),
+    "two boxes swapped pass the check: the order is the run's order, and a picture that drew Fugaro asking for the work describes a run that cannot happen",
+  )
+  assert.ok(
+    failing(picturePage(figure[0].replace('>Your agent</text>', '></text>'), words[0])).some((line) => /draws the boxes \[\"\"/.test(line)),
+    'a box left with no name passes the check: every box of the picture is named, and a box whose name is gone says nothing about the step it draws',
+  )
+
+  // The labels: one paraphrased, one attributed to a section that is not there, and two of one
+  // section exchanged — each still the repository's words if the *file* were what bounded them.
+  const paraphrased = picturePage(figure[0].replace('>Fan out these three</text>', '>Fan out these two</text>'), words[0])
+  assert.notEqual(paraphrased, control, 'the fixture did not paraphrase a label: the page\'s own markup carries no `>Fan out these three</text>`')
+  assert.ok(
+    failing(paraphrased).some((line) => /does not appear in docs\/website\/redesign\/changes-spec-2026-10-18\.md at or after the label before it/.test(line)),
+    'a paraphrased label passes the check: every word of the picture is the repository\'s own (Global Constraint 6, RF11)',
+  )
+
+  const elsewhere = picturePage(figure[0].replace('data-source="plugin/skills/parallelism/SKILL.md"', 'data-source="plugin/skills/parallelism/SKILL.md#Nope"'), words[0])
+  assert.notEqual(elsewhere, control, 'the fixture did not misattribute a label: the page\'s own markup carries no `data-source="plugin/skills/parallelism/SKILL.md"`')
+  assert.ok(
+    failing(elsewhere).some((line) => /a label is held to a section of a document this repository carries/.test(line)),
+    'a label attributed to a section that does not exist passes the check: a label is quoted from a section this check reads',
+  )
+
+  // Two labels of one section, each quoting a line of it, in the order the section writes them:
+  // a check that held each label to its section and no further would let them swap, and the page
+  // would then say the draft opens before the job that opens it. The cursor is what keeps each
+  // label where the document put it, and the pair below is README.md's `## How it works` own two
+  // lines, moved into each other's place in the list under the picture.
+  const spanAt = (markup, text) => {
+    const at = markup.indexOf(text)
+    assert.notEqual(at, -1, `the built page's words list carries no ${JSON.stringify(text)}, and this fixture moves it`)
+    const start = markup.lastIndexOf('<span', at)
+    return markup.slice(start, markup.indexOf('</span>', at) + '</span>'.length)
+  }
+  const jobLine = spanAt(words[0], 'Cloud Run job per repository workflow')
+  const draftLine = spanAt(words[0], 'a draft opens at the first push')
+  const moved = words[0].replace(draftLine, '').replace(jobLine, draftLine + jobLine)
+  const swapped = picturePage(figure[0], moved)
+  assert.notEqual(swapped, control, 'the fixture did not move a line: the page\'s own words list carries no such spans')
+  assert.ok(
+    failing(swapped).some((line) => /at or after the label before it/.test(line)),
+    "the draft's line and the job's line swapped pass the check: each is still a line of README.md's \"## How it works\", and the order is what keeps each on the step it describes",
+  )
+
+  // And the reader itself: a page that renders no picture is the failure a check reading "no
+  // boxes" would otherwise report as success, and a page that renders the retired flow again is
+  // rendering the component the ruling deleted.
+  assert.ok(
+    failing(picturePage('', words[0])).some((line) => /renders 0 pictures of a run/.test(line)),
+    'a page with no figure passes the check: the page that carries the run is the page whose picture this check reads',
+  )
+  assert.ok(
+    failing(picturePage(figure[0] + '<ol class="flow-steps"><li class="flow-step">a step</li></ol>', words[0])).some((line) => /renders 1 `ol\.flow-steps`/.test(line)),
+    'a page that renders the retired flow again passes the check: the ruling deletes the component, and the flow is not a second description the pages may keep',
+  )
+  assert.ok(
+    failing(picturePage(figure[0], '')).some((line) => /renders 0 lists of the run in words/.test(line)),
+    'a page whose run in words is gone passes the check: the drawing alone is a picture a reader who cannot see it is told nothing by (changes spec 2026-10-18, item 4)',
+  )
+
+  // The motion gate: the page's own answer to a reader who asks for less, and the scroll-driven
+  // reveal the flow brought its steps in with.
+  const guard = '@media (prefers-reduced-motion:reduce){*,:before,:after{scroll-behavior:auto!important;transition-duration:1ms!important;transition-delay:0s!important;animation-duration:1ms!important;animation-iteration-count:1!important;animation-delay:0s!important}}'
+  assert.deepEqual(pageMotionFailures('.copy-button{transition:color var(--duration-fast)}html{scroll-behavior:smooth}' + guard), [], 'a page whose motion is guarded does not pass the motion check its own cases are about')
+  assert.ok(
+    pageMotionFailures('.copy-button{transition:color var(--duration-fast)}').some((line) => /transition: color var\(--duration-fast\), and no prefers-reduced-motion: reduce rule neutralises it/.test(line)),
+    'a transition with no reduce rule passes the motion check: motion is for a reader who allows it (W1.4 step 3, D105)',
+  )
+  assert.ok(
+    pageMotionFailures('html{scroll-behavior:smooth}').some((line) => /scroll-behavior: smooth, and no prefers-reduced-motion: reduce rule neutralises it/.test(line)),
+    'smooth scrolling with no reduce rule passes the motion check: the reader who asks for less is given a page that does not slide under them (W1.4 step 3, D105)',
+  )
+  assert.ok(
+    pageMotionFailures(`.step-card{animation-timeline:view()}${guard}`).some((line) => /declares animation-timeline: view\(\), and the page is not revealed by scrolling/.test(line)),
+    "the flow's scroll-driven reveal passes the motion check as long as it is guarded: the flow is retired and neither thing in its place animates, so the mechanism is refused rather than guarded (the owner's ruling of 2026-10-20)",
+  )
+  assert.ok(
+    pageMotionFailures(`${guard}.step-card{animation:reveal 2s} .step-card:hover{transition:none}`).length === 0,
+    'a neutralised animation and a disabled transition are both refused by the motion check, and neither is motion a reader is given',
+  )
 })
 
 
