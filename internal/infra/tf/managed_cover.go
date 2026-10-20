@@ -180,9 +180,11 @@ var managedGrantRules = map[string]bool{
 //
 //   - the delete (the design's D72/D74 — the plan carries no task of its own
 //     for this rule, and Tasks 1.2 and 1.4 are where its material is): a delete
-//     or a replace is admitted only for an exact address on the owner's own
-//     list, and only when the resource it removes or creates is one the rules
-//     below admit — the list alone never admits one (NotCovered);
+//     or a replace is admitted only for an entry of the owner's list that names
+//     the change's address AND the identity of the object the change removes
+//     (tf.Approves, plan Task 6.3 — an address on its own admits nothing), and
+//     only when the resource it removes or creates is one the rules below
+//     admit — the list alone never admits one (NotCovered);
 //   - the type: managedTypes rather than allowedTypes, so the twelve entries
 //     of managedDropped ask for a confirmation instead;
 //   - the resource: every name a managed resource carries must carry
@@ -274,13 +276,18 @@ func (c ManagedCover) WithDeleteEntries(entries []DeleteEntry) Deletable {
 // it is read at all) and the project it is in (managedProject).
 //
 // A delete and a replace are the one part of that walk the list
-// changes: they are admitted for an exact address on the owner's list alone —
-// managedActions says which action sets they are — and the resource is then
-// judged by the same chain as a create, on the view of it the change shows
-// (removed says which), so a listed address whose resource is not one a
-// managed plan may carry is refused for the resource. The list is what
-// managed.Spec.notCovered hands this cover beside the plan, the same slice
-// tf.Guard is handed, and a cover that was handed none admits no delete at all.
+// changes: they are admitted for an entry of the owner's list that names the
+// change's address and the identity of the object it removes, the pair
+// tf.RemoveIdentityText prints — managedActions says which action sets they
+// are — and the resource is then judged by the same chain as a create, on the
+// view of it the change shows (removed says which), so a listed address whose
+// resource is not one a managed plan may carry is refused for the resource.
+// An address alone admits nothing (Task 6.3, tf.Approves): the entry the owner
+// pastes from a refusal carries both halves, so an approval that outlived the
+// object it was given for, or a plan that put another object under the
+// address, is refused here. The list is what managed.Spec.notCovered hands
+// this cover beside the plan, the same entries tf.GuardEntries is handed, and
+// a cover that was handed none admits no delete at all.
 //
 // The whole chain is read on the removed view, and the two lock rules with it
 // (managedBucketLock, managedObjectLock): a listed delete of a bucket or an
