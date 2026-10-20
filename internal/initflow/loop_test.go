@@ -1087,6 +1087,58 @@ func TestRunCovers(t *testing.T) {
 	}
 }
 
+// A stage's own fix text is as untrusted as its error: the process may hold a
+// value the stage does not know it holds, and the fix is printed in the human
+// account ("stopped at <stage>; fix: …") and carried in --json's failed.fix,
+// so a secret in it reaches a terminal and a CI log unless fail() redacts it.
+func TestStageFixTextIsRedacted(t *testing.T) {
+	const secret = "s3cr3t-in-a-fix"
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight)
+	stages[0].(*fake).applyErr = &StageError{
+		Err: errors.New("the state bucket is not there"),
+		Fix: "run gcloud auth with " + secret + " unset, then rerun",
+	}
+	res, err := Run(context.Background(), stages, Options{Yes: true, Terminal: true, Out: &out, Redact: []string{secret}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	js, err := res.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Failed == nil {
+		t.Fatalf("the stage did not fail: %+v", res)
+	}
+	if strings.Contains(out.String(), secret) || strings.Contains(string(js), secret) || strings.Contains(res.Failed.Fix, secret) {
+		t.Errorf("a held value reached the output through a stage's fix:\n%s\n%s", out.String(), js)
+	}
+	if want := "fix: run gcloud auth with [redacted] unset, then rerun"; !strings.Contains(out.String(), want) {
+		t.Errorf("%q is not in the account:\n%s", want, out.String())
+	}
+}
+
+// --yes covers the stages the canonical order declares and nothing else. A
+// name no slot declares — a typo, a stage a later task registers before its
+// slot lands, a name from another version of this package — is refused, so the
+// mistake falls in the direction that asks rather than the one that confirms.
+func TestYesCoversOnlyDeclaredStages(t *testing.T) {
+	for _, name := range []string{"", "unknown", "install", "installation ", "installation2x", "Installation"} {
+		if YesCovers(name) {
+			t.Errorf("YesCovers(%q) is true: --yes may not reach a name the order does not declare", name)
+		}
+		if RunCovers(name) {
+			t.Errorf("RunCovers(%q) is true", name)
+		}
+	}
+	for _, name := range []string{Preflight, Installation, Services, Repository} {
+		if !YesCovers(name) {
+			t.Errorf("YesCovers(%s) is false: the order declares it and it is not noYes", name)
+		}
+	}
+}
+
 // Over every mode: the one confirmation is taken by a person at a real
 // terminal and by nothing else, exactly like a Typed step.
 func TestCanConfirmRunMatrix(t *testing.T) {
