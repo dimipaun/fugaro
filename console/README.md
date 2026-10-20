@@ -3686,7 +3686,7 @@ moment a row offers one (rule 7's pairing).
 
 | Where | What changed |
 |---|---|
-| `src/main/installlist.ts` | **new**: the reader for `fugaro config list --json` — `MAX_DISCOVERED_INSTALLATIONS` (256), `MAX_WARNING_LINES` (64), `MAX_DOCUMENT_STRING` (4096), a tolerant `checkouts` array, and the CLI's own `warnings` lines carried through |
+| `src/main/installlist.ts` | **new**: the reader for `fugaro config list --json` — `MAX_DISCOVERED_INSTALLATIONS` (256), `MAX_WARNING_LINES` (64), `MAX_DOCUMENT_STRING` (4096), a tolerant `checkouts` array, and the CLI's own `warnings` lines carried through: every line the CLI printed is drawn, and past `MAX_WARNING_LINES` the console appends one line saying how many it did not keep, so the bound is visible rather than a silent omission |
 | `src/main/onboarding.ts` | **new**: the two screens' facts — `FUGARO_INSTALL_COMMAND` (re-exported from `src/source/cli.ts`), `FUGARO_SETUP_COMMAND`, `GETTING_STARTED_URL`, `installCliState`, `firstInstallationState`, `NO_ONBOARDING` |
 | `src/main/picker.ts` | the registry is **loaded** (`registry.load()`: without it a store full of installations drew as an empty list, `refusal` was never drawn, and the first-run screen opened over an installation the operator already had), the rows are the CLI's list merged with the store's records, `listReply` gates the first-installation screen on `rows.length === 0`, and the checkouts a row offers are the ones the CLI printed |
 | `src/main/installations.ts` | the surface is **five** rows; a row's subject is a project name or a directory out of that installation's `checkouts`; `createPickTokens`, `MAX_OUTSTANDING_PICKS`, the `add`/`pickBinary`/`pickConfig`/`pickCheckout` rows, the `externalUrl` argument kind and the one `dialog.showOpenDialog` call are gone |
@@ -3694,7 +3694,7 @@ moment a row offers one (rule 7's pairing).
 | `src/main/window.ts`, `src/source/cli.ts` | the external-link path is the one `shell.openExternal` door (`validateExternalUrl`, `ALLOWED_EXTERNAL_HOSTS`), and the install command the source module already carried is re-exported rather than spelled twice |
 | `src/renderer/installations.html`, `src/renderer/installations.ts` | the form's ids are gone with the form; the view draws `#picker-list`, `#picker-warnings` and `#picker-onboarding`, and the link is a **button**, so the document holds no `href` and no URL at all |
 | `src/renderer/theme/screens.css` | the removed form's id-scoped rules leave, and the picker's real hooks are styled: `#picker-warnings li`, the onboarding screen's `h2`/`code`/link button, and one `--border-strong` boundary rule over every control the view draws (`#picker-list button`, `#picker-onboarding button`) — no new token and no new colour |
-| `test/unit/installlist.test.ts`, `test/unit/onboarding.test.ts` | **new**, and the pins described below |
+| `test/unit/installlist.test.ts`, `test/unit/onboarding.test.ts`, `test/unit/cli-stub.test.ts` | **new**, and the pins described below |
 | `test/unit/installations-ipc.test.ts`, `installations-store.test.ts`, `installations-view.test.ts`, `spawn.test.ts`, `stub.test.ts`, `stub.ts`, `configread.test.ts`, `window.test.ts` | rewritten or amended to the surface that exists |
 | `test/e2e/installations.spec.ts`, `test/e2e/degraded.spec.ts` | the picker spec drives the list, the warning row, the refused 0.5.0 and the unlisted directory; the degraded spec's `resolveBinary` gained its `appEnv` |
 | `docs/design/desktop-console.md` | §3.4 rules 4 and 7, D13 and §12 item 8, each amended where the form was named |
@@ -3804,6 +3804,57 @@ A screen a reply carries whose `kind` this build does not know is **no screen**
 map, so an unknown kind reached `copy.title` on `undefined` and threw while the
 window was being drawn — taking the rows and the CLI's own warning lines with it.
 
+### The empty document is the first run, and the stub prints it
+
+The state this whole change is about — a machine with a `fugaro` and no
+installation — is one document: `{"installations":[],"warnings":[]}`, the
+`config list --json` a CLI that found nothing prints. It reaches
+`firstInstallationState()` in `src/main/picker.ts` **only** by parsing: a CLI that
+printed nothing at all is text `parseInstallationsDocument` refuses
+(`JSON.parse('')` throws), and the picker draws the refusal line instead of the
+screen.
+
+The e2e stub therefore prints that document when no `installations.ndjson` was
+seeded (`test/fixtures/bin/fugaro`), rather than printing nothing — a stub whose
+`config list --json` succeeds must print what a successful one prints — and
+`test/unit/cli-stub.test.ts` runs the script in plain Node and puts the answer
+through the console's own parser. `test/e2e/installations.spec.ts` gained the
+case that state never had: an unseeded profile, the empty document, the picker
+D13 opens beside the dashboard, the "Set up your first installation" screen with
+its title, its one sentence, `fugaro init` and one link button, **no** row and
+**no** warning line — and the same answer over real IPC
+(`onboard: { kind: 'first-installation', command: FUGARO_SETUP_COMMAND }`,
+`rows: []`). It is the one case in that file that can skip, because an unseeded
+profile has no stored override to point rule 4 at: it skips by name when this
+machine's own `fugaro` is what resolved.
+
+### The store is addressed by two keys, and both are unique
+
+`readInstallationEntry` refused two entries sharing an **id** but not two sharing
+a **project name**, while every mutation and every reader of the registry is
+keyed by the project (`entryOf`, `choose`, `setCheckout`, `remove`, `remember`).
+A file with two records for one project loaded, and then `replace` — which writes
+a record over *every* entry whose project matches — put the same id in the file
+twice, so the **next** load refused the store outright: a console whose picker
+had nothing to draw it with, for a state no screen caused and no screen could
+repair. The uniqueness check now follows the key the store is actually addressed
+by, and the refusal names it (`two entries share the project …`).
+
+### A warning line the CLI printed is never dropped silently
+
+`installlist.ts`'s third rule said "this module keeps every line and bounds only
+its length", and the code did the opposite: `warned.slice(0, MAX_WARNING_LINES)`
+dropped the tail of a longer document without a word. The bound stays — a
+document may not make the picker's list unbounded — and the **omission is now
+named**: past `MAX_WARNING_LINES` the console appends one line carrying the count
+it did not keep. The two things that are still dropped without a line of their own
+are named in the rule where they happen: an element that is not a non-empty
+string (not a sentence, and not a line the CLI printed — its `Warnings` is a
+`[]string`), and a `checkouts` of the wrong type (rule 2's field, which no screen
+draws). A `warnings` that is *present* and is not an array is now a refusal like
+every other drawn field of the wrong type; an **absent** `warnings` reads as none,
+which is the direction that hides nothing the CLI sent.
+
 ### The mutations each guard was proved against
 
 Every property below was planted as a change to the shipped code, run, and removed;
@@ -3828,10 +3879,15 @@ the failure is the red step, and each test goes red **by name**.
 | `drawnScreen` removed, so any `kind` reaches `ONBOARDING_COPY` | `installations-view.test.ts`, "draws no screen for a kind it does not know, and draws the rows anyway" and the `viewOf` case beside it |
 | `internal/cli/config_init.go`'s `Use:` renamed (the setup-wizard rename) | `onboarding.test.ts`, "is the command the CLI itself declares" |
 | a wrong repository root in the test's own path arithmetic | `onboarding.test.ts`, "is a small closed union, and `none` is shared" |
+| the stub printing **nothing** for an absent `installations.ndjson` (the pre-review behaviour) | `cli-stub.test.ts`, "prints the empty document when no list was seeded, and the console reads it as \"none\"" |
+| `config list --json` dropped from the stub's allow-list sentence | `cli-stub.test.ts`, "refuses a command outside the allow-list, and the sentence names every one it answers" |
+| the tail of a long document dropped silently again (`warned.slice(0, MAX_WARNING_LINES)`) | `installlist.test.ts`, "bounds what one document may make the picker hold" |
+| a `warnings` that is not an array read as "no warnings" | `installlist.test.ts`, "refuses a `warnings` that is there and is not an array, and reads an absent one as none" |
+| the store's project-uniqueness check removed (the id one kept) | `installations-store.test.ts`, "refuses two entries for one project" |
 
 ### The verification, and what it did not cover
 
-`npx vitest run --dir test/unit` under Node 22 is green — **55 files, 2019 passed, 1
+`npx vitest run --dir test/unit` under Node 22 is green — **56 files, 2025 passed, 1
 skipped** (the console's own suite; the verify container runs this repository's Go
 build and test, so the console's tests are run locally and the pull request says so)
 — and `npx tsc --noEmit` is clean, which typechecks the Playwright specs too.
@@ -3856,6 +3912,11 @@ a spec that hardcoded the scratch stub would fail there for a fact about the
 machine. A machine where nothing this console can drive resolves skips them by
 name. `resolveConsoleBinary` itself now takes `HOME` out of the environment it is
 handed, so its answer is the app's own question rather than the spec runner's.
+The **last review round** added the first-run case described above to
+`installations.spec.ts` — the empty document and the "set up your first
+installation" screen — which is likewise typechecked and reviewed rather than
+executed here; what the unit suite proves about that state without a window is the
+stub's answer and the console's own parse of it (`cli-stub.test.ts`).
 
 **The checkouts a row offers are the ones the CLI's document carries.** The contract
 is tolerant of the array's absence and of a malformed entry, so a `config list` that

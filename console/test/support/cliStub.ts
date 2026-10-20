@@ -166,8 +166,12 @@ export interface CliStub {
    * project and region made up from the name, and -- for a name prefixed
    * `unreadable:` -- a row whose config could not be read, with its fields empty
    * and the CLI's own warning line, which the picker must show rather than hide.
-   * Unseeded, the file is absent, which is the document with no installations at
-   * all: the machine has none. */
+   * Unseeded, the file is absent and the stub answers with the **empty
+   * document** (`{"installations":[],"warnings":[]}`, `test/fixtures/bin/fugaro`),
+   * which is the document with no installations at all: the machine has none, and
+   * it is the state the "set up your first installation" screen is drawn for.
+   * (Not "no output": a CLI that printed nothing is text the console refuses, and
+   * the picker draws its warning line instead of that screen.) */
   seedInstallationsList(projects: readonly string[]): void
   /** setVersion rewrites the line the stub prints (`'0.8.1\n'`, `'banana\n'`, a
    * hostile line), in both places the stub was installed. */

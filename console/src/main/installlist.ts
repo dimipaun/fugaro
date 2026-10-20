@@ -15,16 +15,32 @@
 //      rule (§2: a field the console does not know is ignored, which is what
 //      makes a newer CLI's additions safe) — and a field *inside* it that arrives
 //      as the wrong type is a refusal: an installation drawn from a document the
-//      console does not understand is a screen that lies.
+//      console does not understand is a screen that lies. That covers
+//      `installations` itself (an array, never a map), each row's `name`,
+//      `gcp_project` and `region`, and a `warnings` that is present and is not an
+//      array. Two tolerances are deliberate and are made where they are used: an
+//      **absent** optional field reads as the empty value (a row with no
+//      `gcp_project`, a document with no `warnings` — in both cases the CLI sent
+//      nothing, so nothing is hidden), and `checkouts`, which the console only
+//      ever offers back to the CLI (rule 2) and does not draw, tolerates a wrong
+//      type rather than refusing every installation on the machine over a field
+//      no screen reads.
 //   2. **Nothing in the document is a path the console will run.** A row's
 //      `checkouts` are offered back to the CLI verbatim when the operator picks
 //      one (the CLI's own `--dir`/cwd), never resolved, joined or guessed at
 //      here, and the console holds only the ones this document listed.
-//   3. **A warning line is shown, never dropped.** The CLI lists an installation
-//      whose config could not be read with its fields empty *and* a warning that
-//      says why (`config_list.go`'s `Warnings`), and the "never a silent
-//      omission" rule is the CLI's own — this module keeps every line and bounds
-//      only its length.
+//   3. **A warning line the CLI printed is shown, never dropped.** The CLI lists
+//      an installation whose config could not be read with its fields empty *and*
+//      a warning that says why (`config_list.go`'s `Warnings`), and the "never a
+//      silent omission" rule is the CLI's own. Every line the CLI printed is
+//      drawn: one longer than `MAX_DOCUMENT_STRING` is cut with an ellipsis
+//      because the picker's rows are bounded, and the *number* of lines is
+//      bounded by `MAX_WARNING_LINES` **visibly** — past that the console appends
+//      one more line saying how many it did not keep, so a longer document is
+//      bounded and not silently shortened. The one thing dropped without a line
+//      of its own is an element that is not a non-empty string, which is not a
+//      sentence this console can show and not a line the CLI printed either
+//      (`Warnings` is a `[]string`).
 
 /** MAX_DISCOVERED_INSTALLATIONS bounds what the console will hold from one
  * document. It is far above a real machine's count (the CLI enumerates the
@@ -116,17 +132,41 @@ export function parseInstallationsDocument(text: string): InstallationsParse {
     )
   }
   const warned = value['warnings']
+  if (warned !== undefined && !Array.isArray(warned)) {
+    // Rule 1: `warnings` is a field this console draws, so a value of another
+    // type is a document it does not understand. Reading it as "no warnings"
+    // would hide whatever the CLI put in it -- the one direction rule 3 forbids.
+    return { ok: false, reason: 'the CLI’s installation list has `warnings` that are not an array' }
+  }
   const warnings: string[] = []
+  let dropped = 0
   if (Array.isArray(warned)) {
-    for (const line of warned.slice(0, MAX_WARNING_LINES)) {
+    for (const line of warned) {
       // A warning that is not a string is not a sentence this console can show;
-      // it is dropped here rather than drawn as `[object Object]`. What is *not*
-      // dropped is a warning the CLI printed.
+      // it is dropped here rather than drawn as `[object Object]`. It is not a
+      // warning the CLI *printed* either (`Warnings` is a `[]string`), so this
+      // is not the omission rule 3 is about.
       if (typeof line !== 'string' || line === '') continue
+      if (warnings.length >= MAX_WARNING_LINES) {
+        dropped += 1
+        continue
+      }
       warnings.push(line.length > MAX_DOCUMENT_STRING ? `${line.slice(0, MAX_DOCUMENT_STRING)}…` : line)
     }
   }
+  // The bound is kept and the omission is named, which is the whole of rule 3:
+  // a document with more warning lines than the console draws says so, rather
+  // than arriving on a screen shortened without a word.
+  if (dropped > 0) warnings.push(droppedWarningLines(dropped))
   return { ok: true, document: Object.freeze({ installations: Object.freeze(installations), warnings: Object.freeze(warnings) }) }
+}
+
+/** droppedWarningLines is the one line the console adds in place of the warnings
+ * past `MAX_WARNING_LINES`: it carries the count and nothing else -- no warning
+ * text is paraphrased, and nothing the console did drop is described as if it
+ * had been read. */
+function droppedWarningLines(count: number): string {
+  return `the CLI printed ${String(count)} more warning lines, which this console did not keep`
 }
 
 /** textField reads one string field of an entry, tolerating its absence (a

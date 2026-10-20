@@ -33,6 +33,11 @@
 //     *whole* file and never rewrites or deletes it: an operator who edited it
 //     by hand gets a console that says so, not one that silently discards their
 //     work.
+//   - **unique in both keys**: an id (which `active` names) and a project name
+//     (which every mutation and every reader of the registry names). Two entries
+//     for one project would make `replace` -- which writes a record over every
+//     entry whose project matches -- put the same id in the file twice, and the
+//     next load would refuse the store outright.
 
 import { randomBytes } from 'node:crypto'
 import {
@@ -333,8 +338,21 @@ function isAbsolutePath(value: unknown, max: number): value is string {
   return typeof value === 'string' && value !== '' && value.length <= max && isSafeInstallationValue(value) && isAbsolute(value)
 }
 
-/** readInstallationEntry checks one entry, and names the field it refused. */
-function readInstallationEntry(value: unknown, seenIds: Set<string>): StoredInstallation | string {
+/** readInstallationEntry checks one entry, and names the field it refused.
+ *
+ * Two uniqueness checks, one per key this file is addressed by: an id (which
+ * `active` names) and a project name (which **every** mutation and every reader
+ * of the registry names -- `entryOf`, `choose`, `setCheckout`, `remove`,
+ * `remember`). The project one is not decoration: `replace` writes a record over
+ * every entry whose project matches, so two records for one project would make
+ * one mutation write the same id twice and the *next* load refuse the file --
+ * a store the operator cannot repair from any screen, for a state no screen
+ * caused. */
+function readInstallationEntry(
+  value: unknown,
+  seenIds: Set<string>,
+  seenProjects: Set<string>,
+): StoredInstallation | string {
   if (!isPlainObject(value)) return 'an entry is not an object'
   const unknown = Object.keys(value).filter((key) => !INSTALLATION_KEYS.includes(key))
   if (unknown.length > 0) return `an entry carries a key this version does not know (${unknown.join(', ')})`
@@ -346,6 +364,8 @@ function readInstallationEntry(value: unknown, seenIds: Set<string>): StoredInst
   if (typeof project !== 'string' || !isProjectName(project)) {
     return 'an entry has a project name this console will not store'
   }
+  if (seenProjects.has(project)) return `two entries share the project ${project}`
+  seenProjects.add(project)
   // Optional, and checked only when it is there: an entry written before this
   // console stopped asking for a binary carries one, and it is an absolute path
   // or the entry is refused -- but an entry with none at all is the ordinary
@@ -398,9 +418,10 @@ export function readInstallationFile(raw: string): InstallationRead {
     return { ok: false, reason: `the file holds more than ${String(MAX_INSTALLATIONS)} installations` }
   }
   const seenIds = new Set<string>()
+  const seenProjects = new Set<string>()
   const installations: StoredInstallation[] = []
   for (const entry of entries) {
-    const read = readInstallationEntry(entry, seenIds)
+    const read = readInstallationEntry(entry, seenIds, seenProjects)
     if (typeof read === 'string') return { ok: false, reason: read }
     installations.push(read)
   }

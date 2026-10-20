@@ -22,16 +22,28 @@
 //
 // Nothing here depends on which `fugaro` the machine has installed: the active
 // record's binary is the stub, and rule 4 puts a configured path first.
+//
+// The **first run** is the one state with no record to point rule 4 at, and it
+// has a case of its own at the end of this file: an unseeded profile, the stub's
+// own empty `config list --json` document, and the "set up your first
+// installation" screen -- the console asking the operator for no binary and no
+// config, which is the headline of the change this file belongs to. That case is
+// the only one here that can skip, and it skips for exactly one reason: an
+// unseeded profile resolves through the well-known prefixes, so a machine with
+// its own `fugaro` in `/usr/local/bin` is not a machine this stub can answer for.
 
 import { join } from 'node:path'
 
 import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
+import { NO_ACTIVE_INSTALLATION } from '../../src/main/ipc'
 import { INSTALLATIONS_MENU_LABEL, PICKER_ENTRY_URL } from '../../src/main/picker'
+import { FUGARO_SETUP_COMMAND } from '../../src/main/onboarding'
 import { APP_ENTRY_URL } from '../../src/main/protocol'
+import { ONBOARDING_COPY } from '../../src/renderer/installations'
 import { CLI_VERSION_BUILT_AGAINST } from '../../src/shared/version'
-import { installCliStub } from '../support/cliStub'
+import { installCliStub, resolveConsoleBinary } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
 import { launchConsole } from '../support/launch'
 
@@ -217,6 +229,93 @@ test.describe('the installation picker, in the real window', () => {
       ])
     } finally {
       await app.close()
+    }
+  })
+})
+
+/** firstRunWindows answers the console's own window and the picker D13's first
+ * run opens beside it -- in whichever order `firstWindow` and the window event
+ * produced them. Both are identified by their document rather than by their
+ * position, because which one opens first is the app's business and not this
+ * spec's claim. */
+async function firstRunWindows(app: ElectronApplication): Promise<{ dashboard: Page; picker: Page }> {
+  const first = await app.firstWindow()
+  await first.waitForLoadState('domcontentloaded')
+  const second = app.windows().find((window) => window !== first) ?? (await app.waitForEvent('window'))
+  await second.waitForLoadState('domcontentloaded')
+  const pages = [first, second]
+  const picker = pages.find((page) => page.url() === PICKER_ENTRY_URL)
+  expect(picker, `the first run opened no picker: ${pages.map((page) => page.url()).join(', ')}`).toBeDefined()
+  const dashboard = pages.find((page) => page !== picker)
+  expect(dashboard?.url(), 'the first run opened something other than the dashboard').toBe(APP_ENTRY_URL)
+  return { dashboard: dashboard as Page, picker: picker as Page }
+}
+
+test.describe('the first run, in the real window', () => {
+  test('opens the picker on the empty list, and asks the operator for no binary and no config', async () => {
+    // **The headline state of this console** (owner's ruling of 2026-10-20): a
+    // machine with no installation at all. Nothing is seeded here -- no
+    // `installations.json` in the profile, and no `installations.ndjson` either,
+    // so the CLI answers `config list --json` with the empty document a real
+    // `config list --json` prints when it found nothing
+    // (`{"installations":[],"warnings":[]}`; `test/fixtures/bin/fugaro`). That
+    // document is the only thing that draws the "set up your first installation"
+    // screen: a CLI that printed *nothing* is text the console cannot parse, and
+    // `picker.ts` draws the warning line instead.
+    const fresh = installCliStub(CLI_VERSION_BUILT_AGAINST)
+    try {
+      // An unseeded profile has no stored override, so rule 4 walks the
+      // well-known prefixes and this *machine's* `fugaro` can win -- and the
+      // screen under test is the one the stub's empty document draws. So the
+      // spec runs only where the stub is what the app resolved, asked of the
+      // console's own resolver with this launch's own environment (the
+      // `resolveConsoleBinary` idiom `startup-skew.spec.ts` uses). It is not an
+      // assertion about the machine: it says which `fugaro` answered.
+      const winner = await resolveConsoleBinary(fresh.env)
+      const resolved = winner.ok ? winner.path : ''
+      const ours = resolved === join(fresh.dir, 'fugaro') || resolved === join(fresh.home, '.local', 'bin', 'fugaro')
+      test.skip(!ours, `this console resolved ${resolved === '' ? 'no fugaro' : resolved}, not the stub`)
+
+      const app = await launchConsole({ args: fresh.launchArgs(consoleDir), env: fresh.env })
+      try {
+        const { dashboard, picker } = await firstRunWindows(app)
+        // The console's own window, and its line: nothing has been chosen, and
+        // the console says so rather than guessing (D13).
+        const installation = await dashboard.evaluate(async () => {
+          const api = (window as unknown as { fugaro: { getInstallation: () => Promise<unknown> } }).fugaro
+          return await api.getInstallation()
+        })
+        expect(installation).toEqual({ ok: true, data: { chosen: false, sentence: NO_ACTIVE_INSTALLATION } })
+
+        // The screen, as the document has it: the title, the one sentence of
+        // what is missing, the one command -- the main process's own constant,
+        // never a string retyped here -- and the one link, which is a button.
+        const screen = picker.locator('#picker-onboarding')
+        await expect(screen.locator('h2')).toHaveText('Set up your first installation')
+        await expect(screen.locator('p').first()).toHaveText(
+          'The console found the Fugaro CLI, and it has no installation to show. Create one with:',
+        )
+        await expect(screen.locator('code')).toHaveText(FUGARO_SETUP_COMMAND)
+        await expect(screen.locator('button')).toHaveText([ONBOARDING_COPY['first-installation'].link])
+        // And nothing else is drawn: no row (the machine has none, and this
+        // profile holds no record either), no warning line (a refusal would have
+        // put one here instead of this screen), and no status sentence.
+        await expect(picker.locator('#picker-list li')).toHaveCount(0)
+        await expect(picker.locator('#picker-warnings li')).toHaveCount(0)
+        await expect(picker.locator('#picker-status')).toHaveText('')
+
+        // The same answer over real IPC: the main process's own reply, which is
+        // what the reading above is a drawing of.
+        const listed = await call(picker, 'list')
+        expect(listed.ok).toBe(true)
+        const data = listed.data as { onboard: { kind: string; command: string }; rows: readonly unknown[] }
+        expect(data.onboard).toEqual({ kind: 'first-installation', command: FUGARO_SETUP_COMMAND })
+        expect(data.rows).toEqual([])
+      } finally {
+        await app.close()
+      }
+    } finally {
+      fresh.remove()
     }
   })
 })

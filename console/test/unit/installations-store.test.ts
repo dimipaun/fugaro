@@ -187,6 +187,11 @@ describe('the file’s schema', () => {
     ['a dangling active', fileText([installation()], 'ffffffffffffffff'), 'active'],
     ['an active that is not an id', fileText([installation()], 'fugaro'), 'active'],
     ['a duplicate id', fileText([installation(), installation()]), 'share the id'],
+    [
+      'two entries for one project',
+      fileText([installation(), installation({ id: 'fedcba9876543210' })]),
+      'share the project',
+    ],
     ['an id that is not sixteen hex characters', fileText([installation({ id: 'ZZZ' })]), 'sixteen hex'],
     ['a relative binary path', fileText([installation({ binaryPath: 'bin/fugaro' })]), 'absolute'],
     ['a relative config path', fileText([{ ...installation(), configPath: 'config.toml' }]), 'absolute'],
@@ -204,12 +209,16 @@ describe('the file’s schema', () => {
   })
 
   it('refuses the seventeenth entry, and accepts the sixteenth', () => {
+    // Distinct projects as well as distinct ids: this file is addressed by both
+    // (the schema refuses two entries for one project), and a fixture that varied
+    // only the ids would be testing the count bound with a file the store itself
+    // would never write.
     const sixteen = Array.from({ length: MAX_INSTALLATIONS }, (_unused, index) =>
-      installation({ id: index.toString(16).padStart(16, '0') }),
+      installation({ id: index.toString(16).padStart(16, '0'), project: `project-${String(index)}` }),
     )
     expect(MAX_INSTALLATIONS).toBe(16)
     expect(readInstallationFile(fileText(sixteen)).ok).toBe(true)
-    const seventeen = [...sixteen, installation({ id: 'ffffffffffffffff' })]
+    const seventeen = [...sixteen, installation({ id: 'ffffffffffffffff', project: 'one-too-many' })]
     const read = readInstallationFile(fileText(seventeen))
     expect(read.ok).toBe(false)
     if (!read.ok) expect(read.reason).toContain('more than 16')

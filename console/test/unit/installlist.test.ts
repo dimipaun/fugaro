@@ -133,12 +133,39 @@ describe('the installation list document', () => {
       installations: [{ name: 'sandbox' }],
       warnings: Array.from({ length: MAX_WARNING_LINES + 10 }, (_value, index) => `warning ${String(index)}`),
     })
-    expect(manyWarnings.ok && manyWarnings.document.warnings).toHaveLength(MAX_WARNING_LINES)
+    expect(manyWarnings.ok).toBe(true)
+    if (!manyWarnings.ok) return
+    // The bound is kept and the *omission is named*: every line the console can
+    // still draw, then one more saying how many it did not keep. A document
+    // longer than the bound that lost its tail silently would be exactly the
+    // "silent omission" the CLI's own rule forbids.
+    expect(manyWarnings.document.warnings.slice(0, MAX_WARNING_LINES)).toEqual(
+      Array.from({ length: MAX_WARNING_LINES }, (_unused, index) => `warning ${String(index)}`),
+    )
+    expect(manyWarnings.document.warnings).toHaveLength(MAX_WARNING_LINES + 1)
+    expect(manyWarnings.document.warnings[MAX_WARNING_LINES]).toContain('10')
 
     // A warning that is not a string is not a sentence this console can draw:
-    // it is dropped, and dropping it does not refuse the read.
+    // it is dropped, and dropping it does not refuse the read. It is not a
+    // warning the CLI printed -- the CLI's `Warnings` is a `[]string` -- so
+    // rule 3's "never dropped" is not about it.
     const hostile = parsed({ installations: [{ name: 'sandbox' }], warnings: [{ toString: 'x' }, 3, 'real'] })
     expect(hostile.ok && [...hostile.document.warnings]).toEqual(['real'])
+  })
+
+  it('refuses a `warnings` that is there and is not an array, and reads an absent one as none', () => {
+    // Rule 1: a field the console draws that arrives as the wrong type is a
+    // refusal. `warnings` is drawn (rule 3), so a string where the array belongs
+    // is a document this console does not understand -- treating it as "no
+    // warnings" would hide whatever the CLI put there.
+    const wrong = parsed({ installations: [{ name: 'sandbox' }], warnings: 'the CLI said so' })
+    expect(wrong.ok).toBe(false)
+    expect(wrong.ok === false && wrong.reason).toContain('warnings')
+    // Absent is the other case, and it is the benign one: a CLI that did not send
+    // the field sent no warning lines, so there is nothing to hide.
+    const absent = parsed({ installations: [{ name: 'sandbox' }] })
+    expect(absent.ok).toBe(true)
+    expect(absent.ok && absent.document.warnings.length).toBe(0)
   })
 
   it('seeds both arrays, so "none" is a fact and never a null', () => {
