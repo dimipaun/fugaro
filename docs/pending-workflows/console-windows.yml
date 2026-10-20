@@ -20,7 +20,7 @@
 # match the applied ones.)
 #
 # DO NOT COPY THIS IN YET. Read this paragraph first, because it is not a
-# formality: **this job is red until two things in console/ have landed**, and a
+# formality: **this job is red until three things in console/ have landed**, and a
 # red check that nobody can fix by looking at it is worse than no check.
 #
 #   1. `console/package.json` has no `package:win` script and no `win` block,
@@ -28,15 +28,22 @@
 #      `['darwin','linux']` with `fuseTarget` **throwing** for anything else.
 #      `afterPack` is the pack's only fuse flipper, so `electron-builder --win`
 #      produces **no artifact at all** today, and the pack step below cannot
-#      succeed. (docs/console-windows/implementation-plan.md Part B.)
+#      succeed. (docs/console-windows/implementation-plan.md Part B, findings
+#      F35 and F36.)
 #   2. The unit suite has never run on Windows. `spawn.ts`'s `isExecutableFile`
 #      reads `stat.mode & 0o111`, which Windows never sets, and the suite's
 #      stubs are host executables -- so the test step below is red on a Windows
 #      runner until that is platform-aware, along with the `':'` split of the
 #      app's own `PATH`. (Parts A and C.)
+#   3. `console/package.json`'s `build.electronDownload.checksums` pins three
+#      zips -- darwin-arm64, darwin-x64, linux-x64 -- and no `win32-x64` one, so
+#      the Electron step below downloads its distribution against **no pinned
+#      hash** on this runner. Adding the fourth is a supply-chain pin and
+#      therefore an owner-reviewable edit rather than a convenience, and it
+#      lands with the other two. (Part B, finding F37.)
 #
-# The order the plan gives is: stage this file, land the two parts, then copy it
-# in. Staging it now is the point of the staging directory -- the file is
+# The order the plan gives is: stage this file, land those three edits, then copy
+# it in. Staging it now is the point of the staging directory -- the file is
 # reviewable while it is still a proposal.
 #
 # WHY THIS IS ITS OWN WORKFLOW, AND NOT A SECOND JOB IN console-tests.yml
@@ -85,12 +92,16 @@
 #   - **The version it packs is 0.0.0.** Nothing stamps console/package.json in
 #     CI and nothing should: only a release knows the version, and the release
 #     workflow stamps it from the tag with `-c.extraMetadata.version`. So the
-#     artifact here is named `Fugaro.Console-0.0.0-win-x64.exe`, and it is a
-#     build check, not a candidate for a release.
-#   - x64 only, which is what `build.win.target` pins in console/package.json:
-#     the same packer on the same runner, with the same fuses, and no
-#     cross-architecture build that nothing here can launch. It is also the only
-#     architecture `build.electronDownload.checksums` pins an archive for.
+#     artifact here will be named `Fugaro.Console-0.0.0-win-x64.exe` (the same
+#     product name and the same arch the Linux job's artifacts carry), and it is
+#     a build check, not a candidate for a release.
+#   - x64 only. There is no `build.win.target` in console/package.json today and
+#     this file does not add one: Part B does, pinned to x64, for the reason that
+#     a second architecture would be a cross-build nothing here can launch -- the
+#     same packer on the same runner, with the same fuses. That same part must
+#     also add the `win32-x64` hash to `build.electronDownload.checksums`, which
+#     pins three zips today and no Windows one, so that the Electron step below
+#     downloads against a pinned hash rather than merely fetching (finding F37).
 
 name: console-windows
 
@@ -161,11 +172,14 @@ jobs:
         run: npm run typecheck
       - name: run the unit suite
         run: npm run test:unit
-      # Electron's own download of its distribution, verified against the pinned
-      # package's `checksums.json`: `electron-v<version>-win32-x64.zip` is one of
-      # the hashes `build.electronDownload.checksums` pins. Then the build the
-      # packer packs (`npm run build` is what writes the file package.json's
-      # `main` points at).
+      # Electron's own download of its distribution, checked against the pinned
+      # package's `checksums.json`: `electron-v<version>-win32-x64.zip` will be
+      # one of the hashes `build.electronDownload.checksums` pins **once the
+      # win32-x64 pin this file's header asks for has landed** (finding F37) --
+      # today that block pins three zips and none of them is a Windows one, so
+      # this step fetches Electron unverified. Then the build the packer packs
+      # (`npm run build` is what writes the file package.json's `main` points
+      # at).
       - name: download Electron and build the app
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"

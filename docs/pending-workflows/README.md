@@ -6,7 +6,7 @@
 - **`website-preview.yml`** and **`website-promote.yml`** — the website's two new workflows, both `workflow_dispatch`-only: one builds a chosen ref and deploys it to a Firebase Hosting preview channel of the site's own project and prints the preview URL, the other promotes an existing preview channel to live and is the owner's alone (`environment: website-live` plus a guard on `github.actor`). Staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Read `docs/website/preview-promote.md` first**: it carries the owner-only one-time setup (the Workload Identity Federation pool and provider, the deployer service account and its Firebase Hosting roles, the `website-live` environment and the three repository variables) that both files need before they can run at all.
 - **`console-linux.yml`** — the console's **Linux build check**: one job on `ubuntu-latest` that packs the AppImage and the `.deb` on every pull request and every push to `main` and uploads them, holding no secret at all. Staged by the 2026-10-20 run that packages the console for Linux (the owner's ruling: Linux for 0.10.0, unsigned). It is its own workflow rather than a second job in `console-tests.yml` because the release gate's required-check list is derived from that file's job set; see `## console-linux.yml` below.
 - **`console-release-linux.yml`** — the console's signing, notarisation and publishing pipeline **with the Linux legs added**: a third job that builds and verifies the unsigned AppImage and `.deb`, and a `publish` that merges both legs, signs one merged `console-sha256sums.txt` keyless with cosign and attaches everything to `console-vX.Y.Z`. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-linux.yml` below.
-- **`console-windows.yml`** — the console's **Windows build check**: one job on `windows-latest` that typechecks, runs the unit suite and packs the unsigned NSIS installer on every pull request and every push to `main`, and uploads it, holding no secret at all. Staged by the 2026-10-20 run that plans the console's Windows build (the owner's ruling of that date: the console drives the **Linux** `fugaro` inside WSL, unsigned). **It is red until two things in `console/` land** — the `package:win` script and the `win32` fuse row, and the POSIX repairs that let the unit suite run on a Windows runner — which is why it is staged now and copied in later; the file's own header says so first. It is its own workflow rather than a second job in `console-tests.yml` for the reason `console-linux.yml` gives below; see `## console-windows.yml` below.
+- **`console-windows.yml`** — the console's **Windows build check**: one job on `windows-latest` that typechecks, runs the unit suite and packs the unsigned NSIS installer on every pull request and every push to `main`, and uploads it, holding no secret at all. Staged by the 2026-10-20 run that plans the console's Windows build (the owner's ruling of that date: the console drives the **Linux** `fugaro` inside WSL, unsigned). **It is red until three things in `console/` land** — the `package:win` script and the `win32` fuse row, the POSIX repairs that let the unit suite run on a Windows runner, and the `win32-x64` Electron checksum pin — which is why it is staged now and copied in later; the file's own header says so first. It is its own workflow rather than a second job in `console-tests.yml` for the reason `console-linux.yml` gives below; see `## console-windows.yml` below.
 - **`images.yml` — applied, not pending.** The signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`, was staged here by a Fugaro run that cannot push a `.github/workflows/**` change, then copied into `.github/workflows/images.yml` and `git rm`'d from here in `6b57ba9`. `## images.yml` below is the record of that change and of the timing it had to meet, not something still to copy.
 
 **`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, it runs unconditionally on every pull request and every push to `main`, and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
@@ -759,8 +759,9 @@ CLI is the *Linux* binary running inside WSL**, unsigned
 [docs/windows-cli/](../windows-cli/README.md)). One job, `console-windows`, on
 `windows-latest`: `contents: read`, **no environment and no secret at all**, the
 pinned toolchain (`npm ci --ignore-scripts`), `npm run typecheck`, `npm run
-test:unit`, Electron's own download verified against the checksums
-`console/package.json` pins, `npm run build`, then `npm run package:win` — which
+test:unit`, Electron's own download — which the checksums `console/package.json`
+pins will cover once the `win32-x64` hash below lands, and do not today —
+`npm run build`, then `npm run package:win` — which
 is `electron-builder --win --publish never`, with no `npx` in front of it — an
 assertion that exactly one `.exe` came out, and `upload-artifact`. It runs on
 every pull request and every push to `main`, with no path filter, for
@@ -774,7 +775,7 @@ before it packs. The e2e suite is not run here — it drives the console's real
 window under its real CSP and needs a display, which is the owner's manual
 checklist's job, not a runner's.
 
-**Read this before copying it in: it is red until two things in `console/` have
+**Read this before copying it in: it is red until three things in `console/` have
 landed, and they are not this directory's to do.**
 
 1. `console/package.json` has no `package:win` script and no `win` block, and
@@ -789,8 +790,13 @@ landed, and they are not this directory's to do.**
    are host executables (F4, F33) — so the test step is red on a Windows runner
    until that is platform-aware, along with the `':'` split of the app's own
    `PATH` (F5).
+3. `console/package.json`'s `build.electronDownload.checksums` pins three zips —
+   `darwin-arm64`, `darwin-x64`, `linux-x64` — and **no `win32-x64` one**, so the
+   Electron step downloads its distribution against no pinned hash on this
+   runner. That fourth hash is a supply-chain pin and an owner-reviewable edit
+   rather than a convenience (F37, Part B), and it lands with the other two.
 
-The order the plan gives is: **stage this file, land those two parts, then copy
+The order the plan gives is: **stage this file, land those three edits, then copy
 it in.** Staging it now is the point of this directory — the file is reviewable
 while it is still a proposal, and the header's first paragraph says the same
 thing to whoever opens the file rather than this page.
@@ -826,7 +832,7 @@ and `docs/release.md` carries the sentence once this lands
 **The version it packs is `0.0.0`.** Nothing stamps `console/package.json` in CI
 and nothing should — only a release knows the version, and
 `console-release.yml` stamps it from the tag with
-`-c.extraMetadata.version` — so the artifact here is named
+`-c.extraMetadata.version` — so the artifact here will be named
 `Fugaro.Console-0.0.0-win-x64.exe`. It is a build check, not a release
 candidate, and nothing in `console-release.yml` is changed by this file: the
 release pipeline gains a Windows leg when the owner decides it does, which is
@@ -858,16 +864,34 @@ the wrong text. Applying this file leaves `console-linux.yml`,
 `console-release-linux.yml` and `shared-tests.yml` pending, which is the state
 the `## console-linux.yml` section's own pair of blocks already describes.
 
-**What cannot be checked here.** This file's steps run on a runner: the staged
-copies in this directory are read by tests on a machine with no
-`electron-builder` run and no Windows, so the typecheck, the unit suite, the
-pack and the fuse read-back are the first real run's to confirm — and the owner's
-manual checklist in
+**What cannot be checked here, and what nothing checks yet.** This file's steps
+run on a runner: the staged copies in this directory are read by tests on a
+machine with no `electron-builder` run and no Windows, so the typecheck, the
+unit suite, the pack and the fuse read-back are the first real run's to confirm —
+and the owner's manual checklist in
 [docs/console-windows/implementation-plan.md](../console-windows/implementation-plan.md)
-§4 is what turns the uploaded installer into evidence. What *is* asserted
-offline is this file's shape: the runner, the permissions, the action pins, that
-every `run:` step is valid shell, and that the sentence above about what must
-land first is still true of `console/`'s tree.
+§4 is what turns the uploaded installer into evidence.
+
+**And unlike its sibling, no test reads this file.** `## console-linux.yml` above
+can say that offline tests check the runner, the permissions, the action pins and
+that every `run:` step is valid shell, because
+`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` and its neighbours read that
+file's **text**. Nothing reads this file's text: `git grep -ln console-windows.yml
+-- '*.go' '*.mjs' '*.js' '*.sh' '*.ts' '*.json' '*.yaml'` is empty, and every
+other hit in the tree is prose — this section, and this work's own three
+documents plus `website/README.md`'s name for it. The staging-directory guards
+see it only as a directory entry — `pendingWorkflows(t)` lists what is staged, and
+the count-and-name sentences in this README and in `website/README.md` are held to
+that list, so a copy-in that forgets this section is red. That is a guard over the
+*directory*, not over this file, and the difference matters: the runner, the
+permissions, the action pins, the shell of each `run:` step and the "must land
+first" paragraph above are all prose here, with a reviewer as the only thing
+checking them. The guards that would narrow that gap are Part H tasks in
+[docs/console-windows/implementation-plan.md](../console-windows/implementation-plan.md)
+— T-H1's directory guards and T-H2's red step, a test that this job's check name
+is **not** in `scripts/release-gate.sh`'s `names=(...)` — and neither is a shape
+guard of the Linux file's kind. Until one is written, the header repeats what must
+land first rather than pointing at a test, because there is no test to point at.
 
 ## `website-preview.yml` and `website-promote.yml`
 

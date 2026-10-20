@@ -38,10 +38,10 @@ because that tree is this work's subject and a reader checking one is checking t
 > the spec of this task as the reconciliation's source; do not touch code.
 
 The brief is the owner's own text and is not paraphrased here. What follows reconciles it against
-the tree, and **five of its own sentences are corrections to what the tree says today** rather than
+the tree, and **six of its own sentences are corrections to what the tree says today** rather than
 questions about it.
 
-### Corrections to the brief (C1–C5)
+### Corrections to the brief (C1–C6)
 
 | # | The brief's sentence | What the tree says | Consequence |
 |---|---|---|---|
@@ -143,7 +143,7 @@ constraint this work must not break; `Open` is a question the tree cannot answer
 | **F26** | Gap | `spawn.ts:1518` `probeVersion`'s `result.code` check; `spawn.ts:1133` `RunResult` | The version handshake reads the exit status and the one human line. Whether `wsl.exe` propagates the Linux child's status, and what it returns when the distribution cannot be started, are **UNVERIFIED** (U7, U8). Consequence: the resolver must not read a `wsl.exe` failure as a `fugaro` exit code, and the first-run pages must distinguish *no WSL*, *no such distribution*, *the distribution did not start* and *`fugaro` said no* — four states with four remedies, which is why F31 needs four state kinds and not one. |
 | **F27** | Gap | `spawn.ts:1043` `readText` | Output is decoded as UTF-8, with a `StringDecoder` so a character split across chunks survives. `wsl.exe`'s **own** messages (as opposed to the Linux child's) are UTF-16LE in some builds and UTF-8 in others, and `WSL_UTF8=1` changes it. Consequence: the distro list may arrive NUL-interleaved, and the picker needs an explicit decode with a test vector rather than a hope (U9). |
 | **F28** | Exists | `spawn.ts:1544` `decodeFeedLine` | The NDJSON reader strips a trailing `\r`. Consequence: the one place a Windows-side newline could have corrupted the feed does not — `watch --json` through `wsl.exe` is read by the same reader, and the plan's fixture work (F33) needs no new decoding. |
-| **F29** | Exists | `spawn.ts:1669` `restartDecision`; `spawn.ts:298` `DEFAULT_BACKOFF`; `startSidecar`'s `exit` backstop | The streaming path restarts on its own backoff and destroys its streams after the grace once the child has exited. Consequence: `watch` survives a *CLI* crash inside the distro the same way it survives one on macOS — but "the distribution went away" and "the CLI died" are different failures with different remedies, and the screen must be able to say which (F26). |
+| **F29** | Exists | `spawn.ts:1669` `restartDecision`; `spawn.ts:292` `DEFAULT_BACKOFF`; `startSidecar`'s `exit` backstop | The streaming path restarts on its own backoff and destroys its streams after the grace once the child has exited. Consequence: `watch` survives a *CLI* crash inside the distro the same way it survives one on macOS — but "the distribution went away" and "the CLI died" are different failures with different remedies, and the screen must be able to say which (F26). |
 
 ### 2.5 The first-run pages (brief items 1 and 6)
 
@@ -464,7 +464,7 @@ run by the owner, and so that no sentence in the docs depends on the answer befo
 | **U10** | Whether `wslpath -a -u` round-trips a `\\wsl.localhost\…` UNC path and a path under a custom mount | A Windows machine with a non-default mount |
 | **U11** | Whether `privateWorkingDirectory`'s Windows degradation (F12) is safe enough: `tmpdir()` on Windows is per-user, but nothing checks the ACL | A Windows machine, and an owner decision on whether an ACL check is owed |
 | **U12** | Whether the console's own store's `0600` matters on NTFS at all (F45) | `SECURITY.md`'s existing answer, and the owner's view of whether a Windows-specific note is owed |
-| **U13** | Whether the Windows console can *launch* — the window, the CSP, the picker — on a Windows host | The owner's manual checklist (§7 of the plan) |
+| **U13** | Whether the Windows console can *launch* — the window, the CSP, the picker — on a Windows host | The owner's manual checklist (§4 of [implementation-plan.md](implementation-plan.md)) |
 | **U14** | Whether `watch --json`'s feed arrives intact through the wrapper (no NUL interleaving, no lost final line) | The fake in D11(a) for the shape, and a real run for the bytes |
 | **U15** | Whether the 90-second read deadline is the right budget when a distribution is cold-starting (a first `wsl.exe` invocation can take seconds) | A Windows machine, measured |
 | **U16** | Whether `wsl.exe`'s argv is visible in the Windows process table to *other* users, and whether that matters for the paths it carries | The owner's judgement; the argv carries paths and a project name, never a secret (F18, F22) |
@@ -475,5 +475,5 @@ run by the owner, and so that no sentence in the docs depends on the answer befo
 **What this repository *can* establish, and does**: the argv the console builds (unit tests, with the
 fake), the environment the child receives (the stub's own report), the translation calls and their
 arguments (the fake records them), the refusal paths and their sentences, the workflow's shape and
-its pins, and the docs' consistency with the directory. That is the whole of §6's first column in the
-plan, and it is the reason the Windows leg is worth building before a Windows machine is in the room.
+its pins, and the docs' consistency with the directory. Those are the plan's Tier-A tasks — the
+whole of Parts A, C, D, E and F, and the parts of G and H that do not need a runner — and they are the reason the Windows leg is worth building before a Windows machine is in the room.
