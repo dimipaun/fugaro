@@ -1,18 +1,23 @@
 ---
 /**
  * website/src/pages/security.astro — the security page (website plan, Task W1.8; the
- * owner's brief and ruling D189 of 2026-10-19).
+ * owner's brief and ruling D189 of 2026-10-19, and the boundary diagram of 2026-10-20).
  *
- * **The page is three things, and nothing else**, and all three of them come from the
- * document:
+ * **The page is four things, and nothing else**: three of them are the document's own words,
+ * and the fourth is the page's own drawing written in them.
  *
- *   1. the **summary** is `SECURITY.md`'s own "In short" section, rendered from the
+ *   1. the **boundary diagram** (the owner's brief of 2026-10-20): one inline SVG of the
+ *      trust boundaries, the same facts as a list under it, and the two limits the document's
+ *      own summary names below that — every label a phrase of `SECURITY.md`, proved while the
+ *      page builds (`quoted()` below);
+ *   2. the **summary**, which is `SECURITY.md`'s own "In short" section, rendered from the
  *      generated copy of the document;
- *   2. the **"Reporting a vulnerability" section**, rendered from the same copy;
- *   3. a **link to `SECURITY.md`** in the repository.
+ *   3. the **"Reporting a vulnerability" section**, rendered from the same copy;
+ *   4. a **link to `SECURITY.md`** in the repository.
  *
  * The page used to render `SECURITY.md` in full, behind a contents list built from its
- * headings. The owner cut it to those three things, and D189 settled the one open question —
+ * headings. The owner cut it to three things, and then asked for the boundary diagram above
+ * them (2026-10-20). D189 settled the one open question —
  * where the summary comes from: **each long page's summary is rendered from a file, never
  * written on the page**, and for this page the file is `SECURITY.md` itself, whose short
  * "In short" section is the summary the page renders, written or approved by the owner as
@@ -20,7 +25,7 @@
  * page carries no summary prose of its own: a sentence here that the document does not state
  * is the one thing a security page may not have (D99), and there is now nowhere to write one.
  *
- * Four decisions are visible in the file:
+ * Six decisions are visible in the file:
  *
  *   1. **Both sections are the document's, word for word under the renderer.** They are
  *      extracted from the generated `website/content/security.md` — the file `go run
@@ -30,7 +35,32 @@
  *      either section stops the build rather than shipping a page with a hole in it.
  *      `website/test/security.mjs` holds both to the document, bullet for bullet and
  *      paragraph for paragraph.
- *   2. **A cross-reference inside the document becomes a link into the document.** The "In
+ *   2. **The diagram is the document's words too, and the build is what holds it there.** A
+ *      picture of a trust boundary is a claim about security, so every label of it — the
+ *      drawing's accessible name, each line inside the drawing, each fact under it and each of
+ *      the two lines below them — goes through `quoted()`: the phrase is looked for in
+ *      `SECURITY.md` while the page builds, and a phrase the document does not carry stops the
+ *      build (D99). The owner's brief for the picture named two things the document does not
+ *      say — that the pull request is a **draft** the owner **merges**, and that the container
+ *      is in **your own cloud project** — and a label that would need them is a label the page
+ *      does not carry: the drawing says the document's own "ends every run with a pull
+ *      request", and the container is the document's "one container per run".
+ *   3. **The drawing arranges the document's words, and the arrangement is a decision no gate
+ *      reads.** Every label being the document's own is what the build and
+ *      `website/test/security.mjs` prove; what the labels *say together* is drawn by hand, and
+ *      a picture can put two of the document's sentences side by side into a claim the
+ *      document makes only as a conditional. The model-key card is the one place that could
+ *      happen, so it is drawn as the document states it: `SECURITY.md`'s "What is not on by
+ *      default" bullet is one sentence — the budget gateway is **not on by default**, so the
+ *      real model key **sits in the agent's environment** — and its "With the budget gateway
+ *      on, model keys stay out of the agent's environment" is the other half of that same
+ *      conditional, never a second fact beside the first. So the card's title names the
+ *      gateway, its first line the default, and its last two lines the key and where it sits:
+ *      one state, the default one, which is the state the facts under the picture state too.
+ *      Drawing "the budget gateway" and "sits in the agent's environment" as two co-equal
+ *      lines would assert both halves of the conditional at once, and no test here reads a
+ *      picture's arrangement — which is why the arrangement is written down.
+ *   4. **A cross-reference inside the document becomes a link into the document.** The "In
  *      short" bullets each end by naming the section they come from
  *      (`([Known limits](#known-limits))`), and the page renders two of those sections and no
  *      others. A reference to one of the two the page carries — today the summary's
@@ -53,17 +83,22 @@
  *      fragment-less one against the fact that it is not a link — so a fragment dropped,
  *      aimed at another heading, sent to GitHub though the page carries it, or rendered as an
  *      anchor fails there.
- *   3. **The link is the repository's, and its path is read rather than typed.** The URL is
+ *   5. **The link is the repository's, and its path is read rather than typed.** The URL is
  *      built from `site.yaml`'s repository and the generated file's own `source:` header, so
  *      the page cannot point at a document this repository does not carry.
- *   4. **The styles are global and token-only.** The rendered sections arrive through
+ *   6. **The styles are global and token-only.** The rendered sections arrive through
  *      `set:html`, which Astro's scoped styles do not reach, so the block below is
  *      `is:global` and every selector is prefixed with the page's own marker attribute so it
  *      cannot reach another page. Colours come from W1.2's semantic tokens and never from a
  *      literal here.
  *
  * Nothing in this file fetches anything, reads a clock or starts a process: the page is
- * built from the files in this repository (Global Constraints 4 and 5).
+ * built from the files in this repository (Global Constraints 4 and 5). The diagram is one
+ * inline `<svg>`: the drawing loads nothing — no image file, no font file, no script of its
+ * own — and the page adds no script of its own either. The site's one first-party file,
+ * `public/scripts/site.js`, is the layout's and loads on every page (the layout is held to
+ * that by `website/test/layout.mjs`); nothing in it reads the drawing, which is markup a
+ * browser paints.
  */
 import Base from '../layouts/Base.astro'
 import { loadSite } from '../content.ts'
@@ -269,6 +304,98 @@ if (reportingParagraphs.length === 0) {
     `${securityDocument.path}'s "## ${REPORTING}" section carries no paragraph, and this page renders that section as the document writes it: an emptied section is a heading over nothing, and the page has no fallback text of its own (D189).`,
   )
 }
+
+// ---------------------------------------------------------------------------------------
+// The boundary diagram (the owner's brief of 2026-10-20), in the document's own words.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * `SECURITY.md` as a phrase is looked for in it: its link syntax reduced to the words that
+ * carry it, its inline markers removed, every run of whitespace collapsed to one space, in
+ * lower case. A label is compared against this and not against the file, so a line the
+ * document wrapped or a code span it marked is not read as a difference in what it says —
+ * and nothing else is normalized, because the words are the whole point: a word the document
+ * does not carry is a word this page may not render (D99).
+ */
+const documentText = securityDocument.body
+  .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+  .replace(/[*`]/g, '')
+  .replace(/\s+/g, ' ')
+  .toLowerCase()
+
+/** The same reading of a label the page renders, for the comparison above. */
+function normalized(text: string): string {
+  return text.replace(/[*`]/g, '').replace(/\s+/g, ' ').toLowerCase()
+}
+
+/**
+ * A phrase of the document, proved to be one while the page builds. Every label of the
+ * boundary diagram goes through this: the page carries the document's own words and no others
+ * (D99), so a label that drifts from the file — a word changed, or a claim the document does
+ * not make — stops the build rather than shipping a sentence about security that the policy
+ * does not state. Case is the page's own (a heading capitalizes its first word); the words
+ * are not.
+ */
+function quoted(text: string): string {
+  if (!documentText.includes(normalized(text))) {
+    throw new Error(
+      `${securityDocument.path} does not say ${JSON.stringify(text)}, and this page renders it as a label of its boundary diagram. The page carries the document's own words and no others (D99), so the label goes or the document changes — and a change to the document is the owner's.`,
+    )
+  }
+  return text
+}
+
+/**
+ * One label of the drawing, in the document's words, ending with the space that separates it
+ * from the label after it.
+ *
+ * The space is not drawn and is not a typo. SVG strips a line's trailing whitespace before it
+ * lays the line out, and each label here is positioned by its own `x`/`y` rather than
+ * following the one before it. It is there for the site's spacing gate (`test/spacing.mjs`,
+ * round 3 of this page's review), which reads two adjacent runs of text with no space between
+ * them as one word: two labels of this drawing are two runs of text, so without it the gate
+ * reads "the agent" followed by "permission prompts turned off" as "agentpermission" — the
+ * defect that gate exists for, reported on a picture where no reader can see it. Every label
+ * ends with it, uniformly, so the rule is one rule.
+ */
+function diagramLabel(text: string): string {
+  return `${quoted(text)} `
+}
+
+/** The heading the drawing sits under: the document's own sentence for the boundary. */
+const DIAGRAM_HEADING = quoted('The trust boundary is the container')
+
+/**
+ * The drawing's accessible name: the document's one-sentence summary of the design, which is
+ * what the picture draws. A screen reader reads this name, and then the list under the
+ * picture, which carries the same facts as words.
+ */
+const DIAGRAM_LABEL = quoted(
+  'Fugaro runs a coding agent with its permission prompts turned off, in a fresh cloud container per run, and ends every run with a pull request',
+)
+
+/**
+ * The facts under the picture, as the document's own clauses: who sends the task, what the
+ * run is, whose accounts the per-repository identity runs under, and where the model key sits.
+ * Each is rendered with the page's own inline markup, so a code span in the document is a
+ * `<code>` here exactly as it is in the summary below.
+ */
+const DIAGRAM_FACTS = [
+  'The design assumes you trust the repository and the source of the task: anyone who can push to it, launch a run, or is listed in `followup.trusted` can steer an agent that holds the credentials below',
+  'Fugaro runs a coding agent with its permission prompts turned off, in a fresh cloud container per run, and ends every run with a pull request',
+  "Each repository's jobs and builds run as their own service accounts",
+  "What is not on by default: the budget gateway, so with no `budget:` block the real model key sits in the agent's environment",
+].map((fact) => inline(quoted(fact)))
+
+/**
+ * The two lines under it: what the boundaries stop and what nothing stops, each the
+ * document's own summary bullet, whole. The cross-reference a bullet ends with is not part of
+ * its sentence, so it is not part of the line.
+ */
+const DIAGRAM_LIMITS = [
+  'What limits the blast radius today: one container per run, per-repository identities, and narrow git credentials — a project-wide credential is not narrow',
+  "What no boundary stops: network egress is unrestricted, the agent shares the container with the runner and can read its `/proc`, and the caps are the gateway's — set a credit limit on every key you give Fugaro",
+].map((line) => inline(quoted(line)))
 ---
 
 <Base
@@ -277,6 +404,107 @@ if (reportingParagraphs.length === 0) {
 >
   <article class="security" data-security-page>
     <h1>Security</h1>
+
+    {/* The boundary diagram (the owner's brief of 2026-10-20): one inline SVG of the trust
+        boundaries, the same facts as a list under it, and the two limits below that. Every
+        label is a phrase of SECURITY.md, proved while the page builds (`quoted()` above), and
+        the drawing is one picture with a name: `role="img"` and an aria-label, so a screen
+        reader reads the name and then the list rather than every label of the drawing as a
+        loose string of its own. No script reads it and none is loaded for it.
+
+        **The geometry is a rhythm and an inset, and the gate reads both.** A card's title is
+        drawn 26 units below its top edge and its lines 24 units apart, so a three-line card is
+        96 units high and a four-line one 120; the last baseline of every card ends inside the
+        inset the card declares (`data-pad`), on the x-axis and the y-axis both — the review of
+        2026-10-20 found two cards whose last line was drawn past their own inset, because the
+        gate measured the labels against the box horizontally and never vertically. A card that
+        cannot hold its lines on the rhythm is a card that has to grow, and the heights and the
+        `viewBox` grow with it. */}
+    <section data-security-diagram>
+      <h2>{DIAGRAM_HEADING}</h2>
+      <figure>
+        <svg
+          class="boundary-drawing"
+          viewBox="0 0 360 744"
+          role="img"
+          aria-label={DIAGRAM_LABEL}
+          focusable="false"
+        >
+          {/* Who sends the task: the repository, and the people the document trusts with it.
+              The phrase is the longest the drawing draws and it is broken where it is broken
+              because of that: at the estimate the gate measures with, the breaks the first cut
+              and its first repair used (after "run,", then after "launch") are each wider than
+              this card's content box, and this one fits it. The lines of a drawing are
+              hand-placed and the gate re-measures them. */}
+          <rect class="boundary-card" data-pad="16" x="12" y="12" width="336" height="92" rx="12" />
+          <text class="boundary-title" font-size="13" x="28" y="42">{diagramLabel('the source of the task')}</text>
+          <text class="boundary-line" font-size="13" x="28" y="66">{diagramLabel('anyone who can push to it, launch a')}</text>
+          <text class="boundary-line" font-size="13" x="28" y="88">{diagramLabel('run, or is listed in followup.trusted')}</text>
+
+          <g class="boundary-arrow">
+            <line x1="180" y1="104" x2="180" y2="121" />
+            <polygon class="boundary-arrow-head" points="180,130 174,119 186,119" />
+          </g>
+
+          {/* The boundary itself: one container per run, and what the document says is inside
+              it. The dashed box is the boundary, so nothing is drawn crossing it except the
+              two arrows that leave it. */}
+          <rect class="boundary-boundary" data-pad="20" x="12" y="130" width="336" height="480" rx="16" />
+          <text class="boundary-heading" font-size="20" x="32" y="166">{diagramLabel('one container per run')}</text>
+
+          <rect class="boundary-card" data-pad="16" x="32" y="182" width="288" height="72" rx="10" />
+          <text class="boundary-title" font-size="13" x="48" y="208">{diagramLabel('the agent')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="232">{diagramLabel('permission prompts turned off')}</text>
+
+          <rect class="boundary-card" data-pad="16" x="32" y="262" width="288" height="96" rx="10" />
+          <text class="boundary-title" font-size="13" x="48" y="288">{diagramLabel('the runner')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="312">{diagramLabel('the agent shares the container')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="336">{diagramLabel('can read its /proc')}</text>
+
+          <rect class="boundary-card" data-pad="16" x="32" y="366" width="288" height="96" rx="10" />
+          <text class="boundary-title" font-size="13" x="48" y="392">{diagramLabel('per-repository identities')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="416">{diagramLabel('their own service accounts')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="440">{diagramLabel('narrow git credentials')}</text>
+
+          {/* The key the container holds, and the gateway that would keep it out of the agent's
+              environment — the document's own conditional, in the order it states it: the
+              gateway is *not on by default*, so the real key sits in the agent's environment.
+              The two are one sentence and not two facts, so they are drawn as one: the card's
+              title names the gateway, its first line the default, and its last two lines the
+              key and where it sits. Drawing "the budget gateway" beside "sits in the agent's
+              environment" as two co-equal lines would be a conjunction the document never
+              states (SECURITY.md:64 and :72 are the two halves of one conditional), and the
+              arrangement is the one thing about this drawing no gate reads — the gate measures
+              each label against the box it is drawn in, and cannot read what the boxes mean. */}
+          <rect class="boundary-card" data-pad="16" x="32" y="470" width="288" height="120" rx="10" />
+          <text class="boundary-title" font-size="13" x="48" y="496">{diagramLabel('the budget gateway')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="520">{diagramLabel('not on by default')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="544">{diagramLabel('the real model key')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="568">{diagramLabel("sits in the agent's environment")}</text>
+
+          {/* Out of the container: the pull request every run ends with. */}
+          <g class="boundary-arrow">
+            <line x1="150" y1="610" x2="150" y2="627" />
+            <polygon class="boundary-arrow-head" points="150,636 144,625 156,625" />
+          </g>
+          <rect class="boundary-card" data-pad="16" x="12" y="636" width="318" height="64" rx="12" />
+          <text class="boundary-title" font-size="13" x="28" y="674">{diagramLabel('ends every run with a pull request')}</text>
+
+          {/* And out of the boundary, past it: the egress the document says nothing stops. */}
+          <g class="boundary-arrow">
+            <path d="M330 584 H 342 V 687" />
+            <polygon class="boundary-arrow-head" points="342,696 336,685 348,685" />
+          </g>
+          <text class="boundary-line" font-size="13" x="348" y="720" text-anchor="end">{diagramLabel('network egress is unrestricted')}</text>
+        </svg>
+
+        <ul class="boundary-facts">
+          {DIAGRAM_FACTS.map((fact) => <li set:html={fact} />)}
+        </ul>
+
+        {DIAGRAM_LIMITS.map((line) => <p class="boundary-limit" set:html={line} />)}
+      </figure>
+    </section>
 
     {/* The document's own summary (D189): the "In short" section of SECURITY.md, rendered
         bullet for bullet. Nothing here is written on this page; the text is the owner's. */}
@@ -320,6 +548,93 @@ if (reportingParagraphs.length === 0) {
   [data-security-page] h2 {
     font-size: var(--font-size-lg);
     margin: 0 0 var(--space-sm);
+  }
+
+  /* The boundary diagram. One `<svg>` with a 360-unit-wide `viewBox`, drawn top to bottom and
+     rendered at the width of the column up to 360 px, so the picture scales as one picture and
+     every label keeps its place in it at every width. The drawing is vertical at all of them:
+     a second, narrower layout below a breakpoint would buy nothing, because the labels are set
+     at the site's smallest type size and scale with the picture below that — nothing reflows,
+     so nothing can collide.
+
+     The size is a `font-size` on each `<text>` and not a declaration here, because it is the
+     drawing's own geometry: the gate measures a label against the box it is drawn in
+     (`website/test/security.mjs`), and the box it has is a length in the picture's units, so
+     the size it is drawn at has to be one too. 13 units is `--font-size-xs` (0.8125rem) and 20
+     is `--font-size-lg` (1.25rem) at the 16 px root the picture's 360 units are laid out
+     against, which is the width it is shown at — the same arrangement, and the same estimate,
+     as the How It Works drawing (`src/components/RunDiagram.astro`). No script reads or writes
+     any of this; the shapes are painted from the classes below and every colour is a token. */
+  [data-security-diagram] {
+    margin: 0 0 var(--space-lg);
+  }
+
+  [data-security-diagram] figure {
+    margin: 0;
+  }
+
+  [data-security-diagram] svg {
+    display: block;
+    width: 100%;
+    max-width: 22.5rem;
+    height: auto;
+  }
+
+  [data-security-diagram] text {
+    font-family: var(--font-sans);
+    fill: var(--text-muted);
+  }
+
+  [data-security-diagram] .boundary-title {
+    font-weight: 600;
+    fill: var(--text);
+  }
+
+  [data-security-diagram] .boundary-heading {
+    font-weight: 600;
+    fill: var(--accent);
+  }
+
+  [data-security-diagram] .boundary-card {
+    fill: var(--surface);
+    stroke: var(--border);
+    stroke-width: var(--border-width);
+  }
+
+  [data-security-diagram] .boundary-boundary {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2;
+    stroke-dasharray: 7 5;
+  }
+
+  [data-security-diagram] .boundary-arrow {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2;
+  }
+
+  [data-security-diagram] .boundary-arrow-head {
+    fill: var(--accent);
+    stroke: none;
+  }
+
+  [data-security-diagram] ul {
+    list-style: none;
+    margin: var(--space-sm) 0 0;
+    padding: 0;
+    max-width: var(--measure);
+  }
+
+  [data-security-diagram] li {
+    margin: 0 0 var(--space-2xs);
+    line-height: var(--leading-normal);
+  }
+
+  [data-security-diagram] .boundary-limit {
+    max-width: var(--measure);
+    margin: var(--space-sm) 0 0;
+    line-height: var(--leading-normal);
   }
 
   [data-security-summary] {

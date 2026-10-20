@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Eleven checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Fourteen checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **987,954 bytes in a checkout with no tags** and to **987,954 bytes with the
+  commit builds to **988,254 bytes in a checkout with no tags** and to **988,254 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -260,9 +260,10 @@ added or removed without this sentence moving fails there:
 
   - **Getting Started's three bands** (the owner's feedback of 2026-10-19) moved the site
     figure alone, 977,921 → **979,575**, by the **1,654 bytes** the rework costs: the install
-    section shows the quick path above the fold with the console option beside it, the page
-    carries a "Set up your installation" list of its own, and the other install paths and the
-    platform list moved into a Details section below them. The page weight does not move: the
+    section showed the quick path above the fold with the console option beside it (the card
+    round at the end of this list replaced that pair with a card per system), the page carries
+    a "Set up your installation" list of its own, and the other install paths and the platform
+    list moved into a Details section below them. The page weight does not move: the
     heaviest page is still the docs hub, which renders none of it, and the page that grew is
     Getting Started's, at 25,871 bytes.
 
@@ -323,8 +324,8 @@ added or removed without this sentence moving fails there:
 
   - **The homepage's prompt line** (the owner's feedback of 2026-10-19) moved the site
     figure alone, 1,028,085 → **1,028,787**, by **702 bytes**: the request the hero renders under
-    the headline, the `>` mark in front of it and the two rules that draw it as the chat's own
-    bubble — the homepage's inline stylesheet and its HTML. Nothing outside the homepage moved,
+    the headline, the `>` mark in front of it and the rules that draw it as a line a reader
+    types — the homepage's inline stylesheet and its HTML. Nothing outside the homepage moved,
     because the three files that changed all render on that one page, so the page weight and
     the script stand where they stood.
   - **The benefits** (the same feedback) moved the site figure alone again,
@@ -565,6 +566,84 @@ added or removed without this sentence moving fails there:
     **+7,187**, the 0.9.5 reference), and **987,954 bytes** for the whole site (972,362 on
     `main`, so **+15,592**). The script and the number of files did not move, and the
     clone figure moved by the same bytes.
+  - **The caps page's figures became labelled rows on a phone** (the owner's feedback of
+    2026-10-19: "these render terrible on mobile"), and moved the site figure alone,
+    973,619 → **974,846**, by **1,227 bytes**, on one page: below the site's 48 rem breakpoint
+    each row of both figures tables is a block, each cell a line the stylesheet labels with its
+    column's own header through `content: attr(data-label)`, and the wide layout's own fit —
+    the nowrap figures and the box that scrolled around them — moved inside a `min-width:
+    48rem` block, with the stacked figures set at `--font-size-base` rather than `base.css`'s
+    smaller table size. The page weight and the script did not move: the heaviest page is the
+    docs hub, which renders neither table, and the caps page's own growth is nowhere near it.
+    The clone figure moved by the same bytes. The shape is held by `test/caps-figures.mjs`
+    (above), whose reading run against the old component fails on every defect it is written for:
+    the cells unlabelled, the five stacking declarations missing, the head row left in the flow,
+    no label rule reaching the page's cells, the wide layout's nowrap figures and scroll box in
+    force at the phone's width, and the figures at the table's smaller type.
+  - **The console page was cut to its essentials** (the owner's feedback of 2026-10-19: "way
+    too much text, nobody cares"), and moved the site figure alone, 974,846 → **974,047**, by
+    **799 bytes off** one page. What a reader gets now is one sentence on what the console is,
+    the three properties with one line each, and the downloads: the page's facts come from
+    `content/downloads.json` and the four sentences there are shorter, and the page's own
+    markup is unchanged — the shorter sentences are the whole of the move. The numbers did not
+    move, and that is the check worth keeping: the two macOS artifacts, their published names,
+    their SHA-256 values and the tag they are derived from are the same values, and the page
+    still says in the data file's own words that Windows and Linux builds do not exist yet.
+    The page's words went 239 → **133** against the ceiling the budget states, which is the
+    room "Adding a console screenshot" below counts. The page weight and the script did not
+    move: the heaviest page is the docs hub, and the console page is not it.
+  - **The homepage became the hero, one three-tab slider and one Get started button** (the
+    owner's approved draft "Home, draft 2 (slider)", 2026-10-19), and it moved the site figure
+    alone, 975,034 → **968,916**, by **6,118 bytes**. All of it is on the homepage: the chat's
+    conversation left the site with `AgentChat.astro` — its markup and the rules that drew it,
+    which the page inlined — the flow's figure and its stylesheet went with the rest of the
+    page's middle, and the two install cards became one button and one command. The slider's own
+    rules, the `fugaro watch` capture's slot and the 44 px minimum the owner's brief measures
+    every control against — which the hero's two links were a fraction of a pixel short of on
+    their padding and their line height alone — came back onto the page, which is why the move is
+    a net 6,118 bytes rather than the whole of what left. The page weight and the script did not
+    move: the heaviest page is the docs hub, which renders none of this, and the site ships the
+    same one script. The word ceiling is `privacy`'s own page, which the draft did not touch; the
+    homepage's own words are well under it. The clone figure moved by the same bytes.
+  - **Getting Started's install options became one card per system** (the owner's draft of
+    2026-10-19, "Getting started, draft 2 (OS icons)"), and moved the site figure alone,
+    975,034 → **975,713**, by **679 bytes** net: two `<article class="install-card">` blocks,
+    each carrying its system's name, the note and the command the install file offers it, and
+    one inline `<svg>` glyph of the page's own — a laptop for macOS, a terminal for Linux — with
+    the rules that lay the cards out in a grid, box them and size the glyph, all of it inlined
+    into the one page that renders the section; and against that, the two `data-option` wrappers
+    and the option box's own rules, which the cards replace, and the console's heading, which
+    moved a level down to sit inside the macOS card. The page weight and the script did not
+    move: the heaviest page is the docs hub, which renders no install section, and nothing
+    outside Getting Started's own page and stylesheet changed. The page's own words fell with
+    the boxes they sat in, 248 → **247**, so the word ceiling did not move. The rules the
+    cards are held to — no card for a system the file does not carry, one icon per card, and it
+    draws something — are `test/os-cards.mjs`'s, and the count of gates in this README moved with
+    it.
+  - **The security page opens with the trust boundary drawn** (the owner's brief of 2026-10-20),
+    and it moved the site figure alone, 975,034 → **980,342**, by **5,308 bytes**. The page is
+    four things now and nothing else: the drawing comes first, above the document's *In short*
+    section, and it is one inline `<svg>` — the source of the task and the people who can steer
+    a run, the one container per run and what it holds, the pull request that leaves it, and the
+    egress nothing stops — with a name on it for a screen reader, the document's own facts as a
+    list under it and its two limit lines below that. **Every label of the drawing is a phrase of
+    `SECURITY.md`**, and `website/test/security.mjs` reads each one back off the built page and
+    refuses a label that is in neither the document's own *In short* section nor the words the
+    region carries beside the picture — its heading, the facts under it and the two lines below
+    them, and not the rest of the page — which is why the drawing says "one container per run"
+    and "ends every run with a pull request" where the brief's own sketch said "your own cloud
+    project" and "a draft pull request you merge": the policy makes neither of those claims. The
+    model-key card draws the document's conditional as the one sentence it is — the budget
+    gateway is not on by default, so the real model key sits in the agent's environment — rather
+    than setting the gateway and the key's place side by side as two facts, which would be a
+    claim the policy never makes. The drawing is shapes and text in the markup and loads
+    nothing, so the page weight and the script did not move: the heaviest page is still the docs
+    hub, and no file the site ships was added. The clone figure moved by the same bytes.
+    **Its review round moved the same figure by the last 308 of those bytes**: the drawing now
+    declares its own geometry in the markup — every card the inset its labels are drawn at
+    (`data-pad`), every label the size it is drawn at (`font-size`) — so that `test/security.mjs`
+    can measure each label against the box it is drawn in and refuse one that overruns its card,
+    which is why the source card's phrase is broken after "launch a" and not after "launch".
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -591,7 +670,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,083,750 bytes. Three times 361,250: the heaviest page, the
     docs hub, at 289,000 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,704,829 bytes. Three times 1,234,943 (every file in `dist/`, 987,954
+  - **Whole site:** 3,705,954 bytes. Three times 1,235,318 (every file in `dist/`, 988,254
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -610,9 +689,11 @@ added or removed without this sentence moving fails there:
     are inside the `h1`'s own container — on the homepage as it was, with its install
     commands and its chat between the hero and the flow's first step heading, they were 24
     words from that container and 134 from the plan's region, and the stricter one is the
-    one enforced). On the homepage today the first `h2` is the chat's own *Through your
-    agent* — the chat is the first block under the promise — and the region is the request
-    the hero renders under the headline, the promise and its two calls to action: 23 words. A
+    one enforced). On the homepage today the first `h2` is the slider's first panel title,
+    *Easy to use*, and the region is the request the hero renders under the headline, the
+    promise, its three calls to action and the slider's three tab labels — the tabs sit above
+    the panel heading the region stops at, so the labels a reader chooses between are part of
+    what they read before the first section: 29 words. A
     page that carries blocks between its `h1` and
     its first `h2` is a page whose lead those blocks are part of, so the fix for a long lead
     is a shorter lead or an earlier first `h2`, never a reader that looks somewhere else. A page
@@ -671,11 +752,12 @@ added or removed without this sentence moving fails there:
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
   word ceilings' business, and no test here sees a viewport (D187). The ordering underneath it
   is a statement about the built pages, though, and it is this file's rules: the homepage's lead
-  region holds four elements — the promise, the row of links under it, and the two links in that
-  row — and the `h2` it stops at is the chat's own *Through your agent*: the illustration the
-  page puts directly under the promise is that heading's own block, sitting between the `h1` and
-  the `h2` that opens it, so the gate takes those elements out of the region before reading it.
-  The chat, the diagram and the install block are the sections that open after the lead region;
+  region holds the request the hero renders under the headline, the promise, the row of links
+  under it and the links in that row — and the `h2` it stops at is the slider's own first panel
+  title: the block the page puts directly under the promise is that heading's own block, sitting
+  between the `h1` and the `h2` that opens it, so the gate takes those elements out of the region
+  before reading it. The slider and the install block are the sections that open after the lead
+  region;
   Getting Started's install section opens with its commands, with the
   sentence about them still there after the paths; and on every route that prints a command —
   three of the eleven today, and the other eight are skipped rather than asserted about — the
@@ -687,6 +769,31 @@ added or removed without this sentence moving fails there:
   refusals are kept the way the other gates keep theirs: a case writes a synthetic `dist` with
   each defect planted beside a page that keeps every rule, and each rule was mutation-proved by
   removing it from the function and watching that case fail.
+- `test/slider.mjs` — the homepage's one slider (the draft of 2026-10-19, P5/P8): the block is
+  three tabs and three panels, every panel is in the HTML a reader receives, each tab is a
+  fragment link to the panel beside it and the stylesheet shows the panel the fragment names —
+  read one tab at a time, so a stylesheet that pairs the Benefits tab with the See it panel is
+  refused rather than counted as three pairs present. It also refuses a script in the block, the
+  `role="tab"`/`aria-selected` pair that describes a widget whose selection is scripted, a tab
+  under the owner's 44 px target, a tab row that cannot wrap, a rule that takes the focus ring
+  off the tabs, a panel wider than a 360 px phone's content box, and a step whose line is not the
+  repository's own sentence about it in the order its document writes them.
+- `test/os-cards.mjs` — the install cards on Getting Started (the owner's draft of
+  2026-10-19, "Getting Started, draft 2 (OS icons)"). Two rules about the shape no other gate
+  can see: **no card names a system `data/install.yaml` does not carry** — the card's
+  `data-platform` is held to the file's platform list, its heading to the file's own name for
+  that system, and its path to the path the file offers that system *first*, so a card under a
+  system the file has never heard of, or under the Windows entry it marks `untested` (D94), or
+  carrying a route the file does not offer that system, is refused — and **every card is drawn
+  with exactly one icon**, `aria-hidden`, out of the tab order, drawing a shape, referencing
+  nothing, and distinct from every other card's. The empty drawing is the refusal no other gate
+  can make: an `<svg>` with no shape in it is an element that is present, named, decorated and
+  clean, and it renders as an empty box. The file the cards are held to is the site's own
+  reader of it (`content.ts`'s `loadInstallFacts()`), not a second parser in the gate. Its
+  refusals are kept with fixtures that plant one defect each beside a fixture page that keeps
+  every rule, and with two builds of a copy of the repository for the states the page's own
+  frontmatter refuses: a supported system with no path under it, and one this page has no glyph
+  for.
 - `test/meta.mjs` — the provenance-phrase gate (D186): a page must not explain why its own
   text exists, so D186's phrase list (`rendered from`, `generated rather than written`, …) is
   refused in the text a reader reads, on every built page. It is the one defect the other
@@ -861,15 +968,48 @@ added or removed without this sentence moving fails there:
   makes it a stacking context; the skip link and the consent banner carry the chrome's layer
   and nothing else does; and **no other rule declares a `z-index` at all**, which is the only
   thing a content component would need to paint over an open menu. The defect it was written
-  for is the diagram: `ArchitectureDiagram.astro`'s steps are `position: relative` — that is
-  what their arrows are placed against — and a positioned box with no `z-index` paints with
-  every other such box in tree order, where the header is the first and a block drawn after it
-  covers the menu on the two pages that carry the drawing. `base.css` gives `.site-header` the
+  for is the diagram: the retired four-step flow's steps were `position: relative` — that is
+  what their arrows were placed against, and the homepage's slider is the positioned block that
+  stands where they stood — and a positioned box with no `z-index` paints with every other such
+  box in tree order, where the header is the first and a block drawn after it covers the menu on
+  the pages that carry a positioned block. (The owner's ruling of 2026-10-20 retires the flow
+  and `ArchitectureDiagram.astro` with it; the diagram's own history stays in
+  `test/stacking.mjs`'s note.) `base.css` gives `.site-header` the
   header's layer instead, in one rule rather than one per component, and this gate keeps it
   there. Its refusals are kept the way the others keep theirs: a fixture page carries the scale
   and the three layered rules, and a case plants each defect — a header with no layer, a header
   a layer cannot apply to, a content block with a layer of its own — and watches the named
   refusal come back.
+- `test/caps-figures.mjs` — the caps page's figures survive a phone (the owner's feedback of
+  2026-10-19: "these render terrible on mobile", read on the page's right-hand part, the cost
+  figures). The page's two tables — what a job costs and the aggregation's per-recipe ranges —
+  were both read as tables at 360 px: the first inside an `overflow-x: auto` box, which is six
+  nowrap columns scrolling sideways inside their own box, and the second with no box at all,
+  whose minimum content width is what widened the document. Below the site's 48 rem breakpoint
+  each row is now a block, each cell a line labelled with its column's own header text through
+  `data-label`, and the label is printed by one rule (`content: attr(data-label)`) rather than
+  written into every cell; the wide table's own fit — the nowrap figures and the scroll box
+  around them — is scoped to `min-width: 48rem`, and the stacked figures are set at
+  `--font-size-base`, because `base.css` sets every `table` at the table's smaller type. The
+  gate reads the built page's own markup and stylesheet: every cell's `data-label` is its
+  column's head text in its column's order, each of the five elements a stacked table is made of
+  (the table, its body, its rows and both kinds of cell) is separately `display: block` at 360 and
+  at 390 px with the head out of the flow, the rule that prints the labels is matched against the
+  page's own cells — a `content: attr(data-label)` on a selector that reaches no cell prints
+  nothing, and reads exactly like the rule that works — nothing in force at those widths holds a
+  figure on one line or in a scroll box, no box is wider than `main`'s own content box at 360 px
+  (read out of the stylesheet, not typed), the figures are no smaller than the body, and the two
+  declarations the wide layout is made of are read again at 768 and at 1280 px, so a block that
+  was deleted or moved behind a wider query is refused rather than green on every phone width.
+  It reads the checkout's build and a copy built with a fixture `costs.json`, because the
+  per-recipe table is the one this checkout cannot render (D96); the fixture case also plants a
+  defect only that table's cells can show, so the second table is read rather than assumed. Its
+  refusals are kept the way the others keep theirs: the reading run against `main`'s own
+  `CapsCosts.astro` fails on every defect it is written for — every cell unlabelled, the five
+  stacking declarations missing, the head row left in the flow, no rule printing a label, the
+  nowrap figures and the scroll box in force at the phone's width, and the figures at the table's
+  smaller type — and every refusal has a case that plants the one thing it names in the
+  artifact's own bytes.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
@@ -1001,8 +1141,9 @@ file therefore carries the release's *published names* rather than a URL: `relea
 that module is the one reader of the file, and each page renders what it returns.
 
 Three places offer the console from those facts: the console page's own Downloads section
-(W1.6), Getting Started's console option beside the CLI (the owner's changes spec of
-2026-10-18, item 6), and the homepage's call to action (the owner's brief of 2026-10-19, item
+(W1.6), Getting Started's console option inside the macOS install card (the owner's changes spec
+of 2026-10-18, item 6; the card placement is the owner's draft of 2026-10-19), and the
+homepage's call to action (the owner's brief of 2026-10-19, item
 6: the hero action row carries a `Desktop console` link to `/console/`, and nothing about the
 console at all, rendered from `features.console_downloads`). In all three, the unreleased state
 is **structural rather than editorial**: the download list is rendered from `available`'s
@@ -1014,8 +1155,8 @@ homepage's call to action to the flag-off half (the row is exactly the two links
 before, and mentions the console nowhere), and `website/test/console-option.mjs` holds Getting
 Started to it in **both** states: the shipped one, read off the built page, and the released
 one, read off a build of a copy with the flag flipped. That second case also runs the budget gate over the flag-on build
-(`FUGARO_GATES_DIST`), because the two-option page costs words and Getting Started was at the
-ceiling D188 set when the console shipped — 250 words then, 300 since the owner's feedback
+(`FUGARO_GATES_DIST`), because rendering the console's block costs words and Getting Started
+was at the ceiling D188 set when the console shipped — 250 words then, 300 since the owner's feedback
 of 2026-10-19 moved it (above) — and the owner's flip has to be the whole change and may not be the
 change that breaks the ceiling. A data file that says the console has shipped while the flag says it
 has not stops the build, naming both files: they are one fact.
@@ -1130,14 +1271,15 @@ Adding the first one is two edits:
 - **The console page's weight:** that page is a fraction of the page ceiling above, so it has
   room for the pictures it renders, and it is not the page the ceiling is derived from (the
   docs hub is).
-- **The page's words, and this is the tight one.** The console page stands at **239 of the 250
-  words** D188 allows it, and a row's words all count: the caption is text under the picture,
-  and the `alt` is counted too, because it is the text a reader gets when the picture does not
+- **The page's words.** The console page stands at **133 of the 949 words** the ceiling above
+  allows it, and a row's words all count: the caption is text under the picture, and the `alt`
+  is counted too, because it is the text a reader gets when the picture does not
   arrive (`test/budget.mjs`'s `visibleText` reads an `img`'s `alt`). The slider's own heading
-  takes one more. So **ten words across all the rows' `alt` and `caption` together** is the
-  whole of the room there is, and the first screenshot that needs more than that needs the page
-  ceiling raised in the same commit that adds it — D188's own rule: the number moves where the
-  need is, and a build that needs more fails until it moves.
+  takes one more. The page stood at 239 words against D188's 250 until the owner's cut of
+  2026-10-19 took its prose to the essentials, and the room that cut bought is the room the
+  screenshots land in: a page that needs more than the ceiling needs it raised in the same
+  commit that adds it — D188's own rule: the number moves where the need is, and a build that
+  needs more fails until it moves.
 
 The slider's own bytes do **not** move when a screenshot is added: the component's stylesheet is
 inlined into the console page whether or not the slider renders, which is the 1,115 bytes the
@@ -1169,25 +1311,30 @@ five of the documents the site renders sit elsewhere in the repository, and the 
 them there.
 
 - **The changes spec**, `docs/website/redesign/changes-spec-2026-10-18.md` — the reader's
-  own request in the hero's chat is item 3's example of one, quoted from the ruling that
-  asked for the chat (`src/components/AgentChat.astro`).
-- **The two skills the agent reads**, `plugin/skills/parallelism/SKILL.md` and
-  `plugin/skills/working/SKILL.md` — the agent's two answers in that chat, and the line about
-  what the watch screen shows. The launch status line is *not* one of them: it is the
-  illustration's own label, and the build refuses it if it turns out to be a sentence of the
-  skill its turn cites (`AgentChat.astro`). Item 3's acceptance is that the
-  agent's lines "show the real shape of the skills' behaviour", and every line a turn of the
+  own request in the hero's prompt line is item 3's example of one, quoted from the ruling
+  that asked for it (`src/components/Hero.astro`, through `src/lib/agent-request.mjs`, which
+  is where the line is held to that document at build time).
+- **The skill the reader's screen is described by**, `plugin/skills/working/SKILL.md` — the
+  line about what the watch screen shows, under the command in the slider's "See it" panel.
+  The two answers the chat's illustration spoke, and the launch status line it printed, left
+  the site with `AgentChat.astro` when the owner's approved draft of 2026-10-19 ("Home, draft
+  2 (slider)") folded the chat into the slider: the status line was the illustration's own
+  label rather than a document's line, and the build refused it if it turned out to be a
+  sentence of the skill its turn cited. Item 3's acceptance is that the
+  agent's lines "show the real shape of the skills' behaviour", and every line the
   illustration *speaks* is a line of the document it cites, so the build reads those files and
   stops, naming the file, when a line is not in one of them. (The three `Pull request n of 3`
-  labels are the illustration's own rather than a document's lines — a run that has not
-  happened has no numbers to quote — and the caption labels the figure an illustration rather
-  than claiming its lines are quotations.) **This is why a test build's copy of the
+  labels were the illustration's own rather than a document's lines — a run that has not
+  happened has no numbers to quote — and the caption labelled the figure an illustration
+  rather than claiming its lines are quotations.) **This is why a test build's copy of the
   repository carries `plugin/skills/`**: `test/lib/build.mjs` and the five test files that
   stage their own copy skip only the parts of `plugin/` a build does not read
   (`READ_UNDER_PLUGIN`).
-- **The four steps' captions and the run's detail** come from `README.md` and
-  `docs/design/v1.md`, cited by the component that quotes each line
-  (`src/components/ArchitectureDiagram.astro`, `src/components/RunDiagram.astro`).
+- **The four steps' captions and the run's detail** came from `README.md` and
+  `docs/design/v1.md`, cited by the component that quoted each line: the four-step flow's
+  captions were `src/components/ArchitectureDiagram.astro`'s, retired with the flow by the
+  owner's ruling of 2026-10-20, and the run's detail is `src/components/RunDiagram.astro`'s,
+  where every label is held to the document it cites.
 
 ## Layout
 

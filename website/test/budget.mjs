@@ -25,7 +25,8 @@
 // console option into this build — and, from the same brief, the security page's cut to three
 // things (the policy document's own *In short* section, its own reporting section and a link to
 // the document), together with the 2 bytes the new spacing gate's own find cost the console
-// page — and, last, the two rounds of 2026-10-19/20 this reading re-derived the figures for:
+// page, and the boundary diagram the owner's brief of 2026-10-20 has that page open with (its labels,
+// the facts under it and its review round's declared geometry) — and, last, the two rounds of 2026-10-19/20 this reading re-derived the figures for:
 // the CLI's bare `--repo` usage strings, which moved the CLI reference and caps-and-costs by
 // 1,126 bytes and which the round that made them left un-derived, and the owner's 2048 px logo,
 // which regenerated every icon the site serves and so moved the site figure down by 10,345 and
@@ -326,14 +327,16 @@ function textBetween(main, from, to) {
  * region is the reading and the container is not.
  *
  * **Where the homepage stands today** (2026-10-19): its `h1` is the headline, its first `h2`
- * is the chat's own "Through your agent" — the chat is the first block under the promise
- * (review round 5) and its heading is inside it — and the region between the two headings is
- * the request the hero renders under the headline (the owner's feedback of 2026-10-19),
- * the promise and its two calls to action: **23 words**, the number the built page measures.
- * Both readings agree here, because everything between the `h1` and that heading is inside
- * the hero's own section; they did not agree on the homepage of two rounds ago, when the
- * hero's section held the `h1`, the install blocks and the chat sat between it and the flow's
- * first step heading, and the container reading said 24 words where the region said 134. The
+ * is the slider's first panel title, "Easy to use" — the slider is the first block under the
+ * promise (the owner's approved draft of 2026-10-19, "Home, draft 2 (slider)") and that
+ * heading is inside its first panel — and the region between the two headings is the request
+ * the hero renders under the headline (the owner's feedback of 2026-10-19), the promise, its
+ * three calls to action and the slider's three tab labels: **29 words**, the number the built
+ * page measures. Both readings agree here, because everything between the `h1` and that
+ * heading is inside the hero's own section; they did not agree on the homepage of two rounds
+ * ago, when the hero's section held the `h1`, the install blocks and the chat sat between it
+ * and the flow's first step heading, and the container reading said 24 words where the region
+ * said 134. The
  * region is what is enforced, on this page and on any page that grows a block between its
  * `h1` and its first `h2` later.
  *

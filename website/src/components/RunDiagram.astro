@@ -12,9 +12,11 @@
  *
  *   ┌ Spend caps watch the whole run ───────────────────────────────────────────┐
  *
- * The How It Works page is this figure and the run in words under it. The homepage keeps
- * `ArchitectureDiagram.astro`, the four-step flow of the changes spec's item 4, which is a
- * different drawing of the same run (the ruling is in `website/README.md`).
+ * The How It Works page is this figure and the run in words under it, and it is the site's
+ * picture of a run: the four-step flow the homepage used to carry — the changes spec's item 4,
+ * in `ArchitectureDiagram.astro` — is retired with the component by the owner's ruling of
+ * 2026-10-20, and the homepage's block in its place is the slider (the ruling is in
+ * `website/README.md`).
  *
  * **Every label is a line a document of this repository writes.** The box names, the lines
  * under them, the stage names and the three cap facts are the repository's own words — the
@@ -63,9 +65,10 @@ import path from 'node:path'
 import { REPO_ROOT } from '../content.ts'
 
 /** A string with its markdown markers, its apostrophes and its whitespace removed: how a
- * label and the document it claims to come from are compared, the reading
- * `ArchitectureDiagram.astro` uses. A page may set a document's straight apostrophe in the
- * site's own type, and that is a glyph rather than a word. */
+ * label and the document it claims to come from are compared — the reading the retired flow's
+ * build-time guard used, and the one `website/test/how-it-works.mjs` and `website/test/home.mjs`
+ * hold this page's labels with. A page may set a document's straight apostrophe in the site's
+ * own type, and that is a glyph rather than a word. */
 function comparable(document: string): string {
   return document.replace(/[`*]/g, '').replace(/[‘’]/g, "'").replace(/\s+/g, '')
 }
@@ -246,8 +249,12 @@ function textWidth(text: string, size: number): number {
 /**
  * A label's lines: the text broken at word boundaries to fit `room` units, and a single word
  * wider than the room broken inside itself — a name the repository words in one long word
- * breaks rather than running out of the box, the guard `ArchitectureDiagram.astro`'s
- * `overflow-wrap: anywhere` is for its step names.
+ * breaks rather than running out of the box, which is what the retired flow declared
+ * `overflow-wrap: anywhere` for on its step names, and what the slider gets from the
+ * `overflow-wrap: break-word` its page already sets: `base.css` writes it once on `main`, the
+ * property is inherited, and the slider's third grid track is a `minmax(0, 1fr)` the step name
+ * is broken inside rather than allowed to widen (this drawing cannot lean on that, because a
+ * label here is drawn at coordinates rather than laid out, so it breaks the text itself).
  */
 function wrap(text: string, room: number, size: number): string[] {
   const chars = Math.max(3, Math.floor(room / (CHAR * size)))

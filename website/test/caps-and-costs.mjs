@@ -751,7 +751,11 @@ test('getting started promises commands only where install.yaml carries them', a
   const built = buildWith(t, () => {})
   const page = builtPage(built, '/getting-started/')
 
-  const articles = [...page.matchAll(/<article data-path="([^"]+)"[\s\S]*?<\/article>/g)].map((match) => ({
+  // The opening tag is read as `<article …>` rather than as `<article data-path="…">`: the
+  // cards the owner's draft of 2026-10-19 put in `#install` carry their class and their
+  // platform before the path, and a regex pinned to the old attribute order would stop seeing
+  // the two paths those cards hold — one of which is the no-commands shape this case is about.
+  const articles = [...page.matchAll(/<article[^>]*data-path="([^"]+)"[\s\S]*?<\/article>/g)].map((match) => ({
     id: decode(match[1]),
     block: match[0],
   }))

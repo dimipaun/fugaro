@@ -41,14 +41,15 @@
 //      cannot render a picture nobody can identify (`alt`, caption) or a box the browser
 //      cannot reserve (the two sizes).
 //
-// **The fixture's text is this file's own, and that is the console page's tight spot.** The
-// page stands at 239 of the 250 words D188 allows it, and the page ceiling counts a row's
-// `alt` as well as its `caption` (`test/budget.mjs`'s `visibleText`), so two rows with a
-// sentence each are already more words than the page has room for: a build carrying this
-// fixture would be refused by the word gate, and that is why the fixture build is asserted
-// about here rather than held to that gate. It is a real tension and the owner's to settle —
-// website/README.md, "Adding a console screenshot", states the numbers, and the first
-// screenshot that needs more words needs the page ceiling raised in the commit that adds it.
+// **The fixture's text is this file's own.** The page stood at 239 of the 250 words D188
+// allowed it, and the page ceiling counts a row's `alt` as well as its `caption`
+// (`test/budget.mjs`'s `visibleText`), so this fixture was once a build the word gate would
+// have refused. The owner's cut of 2026-10-19 took the page to 133 words against the ceiling
+// the budget states, so two rows with a sentence each now fit — but the fixture build is
+// still asserted about here rather than held to that gate, because this file is about the
+// slider and not about the page's words: website/README.md, "Adding a console screenshot",
+// states the numbers, and a screenshot that needs more words than the ceiling allows needs it
+// raised in the commit that adds it.
 //
 // How it builds: the fixture and the refusal cases mutate a file and build again, so they
 // build a copy of the repository in a temp directory rather than this checkout — the shape

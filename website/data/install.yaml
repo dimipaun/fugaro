@@ -1,10 +1,12 @@
 # website/data/install.yaml -- the one install source the site renders.
 #
-# The paths below are in the order the page renders them, and the **first one is the quick
-# path**: `website/src/pages/getting-started.astro` shows it above the fold, with its own
-# command and copy control, and renders the rest further down in its Details section. So the
-# order is a fact about the page rather than a list, and a path moved to the top is the path
-# a reader runs first (a path with no command there fails the fold's own gate).
+# The paths below are in the order a reader runs them, and the **first path that names a
+# system is that system's quick path**: `website/src/pages/getting-started.astro` draws one
+# card per platform marked supported below and puts under it the first path whose own
+# `platforms:` list carries that system's goos, with that path's command and copy control.
+# Every path no card carries is rendered further down in the page's Details section. So the
+# order is a fact about the page rather than a list, and a path moved above another is the
+# path the systems that name both of them are offered first.
 #
 # Read as bytes by internal/cli/docs_website_install_test.go, which pins:
 # every command below to the file its `source:` names (README.md's

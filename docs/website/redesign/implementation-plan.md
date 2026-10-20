@@ -231,7 +231,8 @@ If D189 takes alternative (a) instead, Global Constraint 6 is amended in
 exception for a marked summary block, in this part.
 
 **Departure: Global Constraint 12, and where the security page is held now** (the owner's
-brief of 2026-10-19, D189; recorded 2026-10-19, as shipped on this branch). The first
+brief of 2026-10-19, D189; recorded 2026-10-19, as shipped on this branch, and amended by the
+owner's brief of 2026-10-20 for the drawing the page now opens with). The first
 plan's Global Constraint 12 says a security claim is never paraphrased, and gives it a
 shape: **the security page is generated from `SECURITY.md`, byte for byte below the title,
 with its headings unchanged so the document's own cross-references keep pointing the right
@@ -242,7 +243,10 @@ things about the constraint are not what this branch ships:
 
 - **The page is not the document.** `/security/` is the brief's three things and nothing
   else: the document's own "In short" section as the page's summary, its own "Reporting a
-  vulnerability" section, and a link to the policy. The cross-references those two sections
+  vulnerability" section, and a link to the policy. **The owner's brief of 2026-10-20 made it
+  four**: the boundary diagram the page opens with — one inline SVG of the trust
+  boundaries, its labels the document's own words, the same facts as a list under it and the
+  document's two limit lines below that. The cross-references those two sections
   carry are rewritten — `#known-limits` becomes a link into `SECURITY.md` in the repository
   at that section, because the page does not render the section it names, while
   `#reporting-a-vulnerability` resolves to the page's **own** anchor, because the page does
@@ -256,8 +260,18 @@ things about the constraint are not what this branch ships:
   page's own anchor where the page renders that section, the repository URL for the rest —
   refuses a
   reference rendered as a link where the document has no heading for it, and refuses a page
-  that is anything other than the three things. That file — not the Go test — is where a
-  change to the page's shape fails.
+  that is anything other than those four things. That file — not the Go test —
+  is where a change to the page's shape fails.
+- **The drawing changes what "never paraphrased" has to mean, and the gate carries the
+  change** (the owner's brief of 2026-10-20). Every word of the page is still the document's —
+  the drawing's labels are phrases of `SECURITY.md` and a phrase the document does not carry
+  stops the build (D99) — but a picture **arranges** the words it is made of, and two of the
+  document's sentences set beside each other can read as a claim the document makes only as a
+  conditional. So the constraint's substance is kept and stated more exactly: no security claim
+  on the page is a word the document does not use, and the arrangement is a decision written
+  down in `security.astro` (its decision 3) because no test here reads a picture's arrangement —
+  the one place it could mislead is the model-key card, whose conditional the page draws as the
+  one sentence the document states it in.
 - **The Go pin reads the generated copy, and always did.** The constraint's other half
   survives untouched and is what `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd`
   actually enforces: it reads **`website/content/security.md`**, the file the content
@@ -511,7 +525,8 @@ under `website/test/` is picked up with no edit there. The Go pins (`internal/cl
 `internal/clidoc`) are untouched by every part: no part changes a generated document, the
 canonical host or the install facts, and the generated `website/content/security.md` stays
 byte-identical to `SECURITY.md` (P4's summary is added to the file itself, by the owner).
-The **page** the brief cuts to three things is a departure from Global Constraint 12's
+The **page** the briefs cut to the document's own sections and the drawing above them is a
+departure from Global Constraint 12's
 byte-for-byte shape, recorded in P4's departure note; it is held by
 `website/test/security.mjs`.
 

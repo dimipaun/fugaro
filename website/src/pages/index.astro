@@ -1,75 +1,41 @@
 ---
 // website/src/pages/index.astro — the site's front page (website plan, Task W1.4; redesign
-// part P8, findings RF20 and RF21; changes spec of 2026-10-18, items 3 and 4).
+// parts P5 and P8; the owner's approved draft "Home, draft 2 (slider)", 2026-10-19).
 //
-// **The order is the page's argument**, and the review of this branch asked for it in so
-// many words: the promise and the one thing to do about it, then the example of it through
-// the reader's own agent — the conversation, and the one command — then what a run is, the
-// four steps drawn, then the commands.
+// **The page is three blocks, and the draft says which three**: the hero — the title, the
+// prompt line and the one-line promise, with the call to action the site has always had — then
+// one slider whose three tabs are how it is to use, why it is worth it and what it looks like
+// running, then one large "Get started" button with the install command under it. The page
+// before this one was five blocks: the hero, the chat, the flow, the four benefits and two
+// install cards. The draft folds the middle three into the slider's panels and the last two
+// into the button, which is why this file renders `Hero`, `HomeSlider` and `HomeInstall` and
+// nothing else.
 //
-// **The chat is the first block under the promise and the diagram is the second** (review
-// round 5, which found the page's own picture of a run standing between a reader and the
-// thing they are being offered). What the page is selling is a conversation with the agent
-// the reader already has, so the illustration of that conversation is what they meet first;
-// the flow is what the agent does inside one of its turns, and it reads as the explanation
-// under the example. The earlier arrangement put the diagram first for item 4's acceptance —
-// that the diagram is the most visually prominent element in its section, which a picture
-// four blocks down is not — and that still holds: the flow is its own section directly under
-// the chat, drawn at the full width of the page's column, and nothing after it competes with
-// it. Item 4 orders the diagram against the *promise*, not against the chat.
+// **What left the page, and where it went.** The chat's illustration is the slider's first
+// panel in the draft's own words — the three steps a reader takes, each with a line of the
+// README under it — so `AgentChat.astro` is gone rather than hidden: a component no page
+// renders is a component whose build-time guards no longer run. The four-step flow left the
+// site with the owner's ruling of 2026-10-20, which retires `ArchitectureDiagram.astro`: the
+// run is `/how-it-works/`'s own drawing, and the slider is the homepage's block in the flow's
+// place. The benefits are still `Benefits.astro`, rendered by the slider's second panel; and
+// the two install cards are the button above the one command most readers run, with every path
+// still laid out on `/getting-started/`.
 //
-// Every other thing the front page could say is a section of its own with a section's own
-// facts (W2.x, W3.x), and a placeholder here would be a sentence the product cannot back
-// (F50). What the page reads, it reads through the content pipeline (W1.3) — it holds no fact
-// of its own.
+// Every block reads what it renders through the content pipeline (W1.3) and holds it to the
+// repository; this page holds no fact of its own.
 import Base from '../layouts/Base.astro'
 import Hero from '../components/Hero.astro'
-import ArchitectureDiagram from '../components/ArchitectureDiagram.astro'
-import AgentChat from '../components/AgentChat.astro'
-import Benefits from '../components/Benefits.astro'
+import HomeSlider from '../components/HomeSlider.astro'
 import HomeInstall from '../components/HomeInstall.astro'
 ---
 
 <Base title="Fugaro">
+  {/* Three top-level blocks, each carrying its own gutter and its own room below: `main:has(>
+      .hero)` drops `main`'s padding on this page, so no block adds a top padding on top of the
+      block above's bottom one, and the gap between two of them is one padding rather than two
+      (`website/test/base-styles.mjs`'s `homeRhythmFailures` reads the three at 1280, 768 and
+      375 px). */}
   <Hero />
-  {/* Divs rather than sections: the flow is a figure and the chat is a figure, and a
-      `<section>` around one of them with no heading of its own would be a landmark a reader
-      has to skip through with no name on it. */}
-  <div class="home-chat">
-    <AgentChat />
-  </div>
-  <div class="home-flow">
-    <ArchitectureDiagram />
-  </div>
-  {/* The benefits, between what a run is and how to get one: the flow says what happens to a
-      task, and the README's four reasons are what a reader weighs before they install it
-      (the owner's feedback of 2026-10-19). `Benefits.astro` renders the section and its
-      heading itself, so it is its own landmark rather than a figure in a div. */}
-  <Benefits />
+  <HomeSlider />
   <HomeInstall />
 </Base>
-
-<style>
-  /* **The two blocks this page renders**, and only them. They sit on the same column as the
-     hero and the install paths (W1.2's tokens; the spacing is the layout's, not a number of
-     this page's own). `main:has(> .hero)` drops `main`'s padding on this page, so each
-     top-level block carries the gutter **and the room below itself** — which is what makes the
-     space between two blocks the block above's own bottom padding, and why no block adds a top
-     padding of its own on top of it (review round 5: the install section's `--space-lg` over
-     the flow's `--space-3xl` was 144 px of blank page between the last card and the "Install"
-     heading, and `base-styles.mjs`'s `homeRhythmFailures` refuses a pair of blocks that both
-     pad one gap).
-
-     **`.home-benefits` was in this list and never matched** (review round 6): Astro appends
-     this page's scope to a selector declared here, and the `<section class="home-benefits">` is
-     rendered by `Benefits.astro`, so it carries that component's scope and this rule reached
-     neither — the section kept no gutter and no room below it, and the rhythm reading, which
-     looks for a padding on the block, read the dead rule as the block's padding and passed. A
-     block's rule belongs in the file that renders the block; the section declares its own. */
-  .home-chat,
-  .home-flow {
-    max-width: var(--page-max);
-    margin: 0 auto;
-    padding: 0 var(--space-md) var(--space-3xl);
-  }
-</style>
