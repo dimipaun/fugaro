@@ -558,11 +558,11 @@ field this task reads out of a document is `day`, which the rollover needs.
 |---|---|
 | 1 — argv is an array, `shell: false`, never built from a job-written field | `argvFor` is the only place an argv is built. It walks the row's *declared* arguments, refuses an undeclared key by name, and passes every value through a conservative character whitelist, so a value that arrived from a document cannot become a command word. Every emitted element is its own array entry, every emitted flag is asserted against `SPAWN_FLAGS`, and the spawner is always called with the literal `shell: false`. The schema's kinds and the table's kinds are related by exactly one mapping, `SPAWN_KIND_FOR`, and `assertSpawnSurface` refuses a row whose kind disagrees with the operation's schema — so a validated value that argv cannot spell is a table-load failure rather than a refusal a user reads |
 | 3 — `--project` on every command that takes it | `SPAWN_COMMANDS` carries `takesProject` per row: the nine commands of `addCloudFlags` (`internal/cli/cloud.go:51`) plus a tenth row (the console has two operations over `logs`, `--json` and `--url`, and neither may be the one that forgets). The handshake's argv is exactly `["version"]`, because `newVersionCmd` is `cobra.NoArgs` with no flags. `--config <path>` follows `--project` whenever the installation declares one |
-| 4 — the binary is resolved explicitly | the operator's configured path, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and only then every entry of the app's own `PATH`; the resolved path and version are what the header draws. **A candidate that exists but whose version cannot be read is refused rather than skipped** — falling through to the next `fugaro` on the machine would silently change which installation the numbers came from |
+| 4 — the binary is resolved explicitly | an installation's *configured* path if this console's store already has one (an **optional override**, and no migration: an entry that predates this keeps working), then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin` — and **never the app's inherited `PATH`** (amended 2026-10-20 by the owner's ruling: the PATH step is gone, and the console asks the operator for no binary at all); the resolved path and version are what the header draws. **A candidate that exists but whose version cannot be read is refused rather than skipped** — falling through to the next `fugaro` on the machine would silently change which installation the numbers came from |
 | 5 — the child's environment is built, not inherited | exactly `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`, the five `XDG_*` variables and the chosen installation's `FUGARO_PROJECT`. A hostile `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_*`, `SSH_AUTH_SOCK` or ambient `FUGARO_PROJECT` in the app's environment cannot reach the child |
 | 5 — the child's `PATH` is a list, not one directory | the resolved binary's own directory first, then `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin` — because the CLI looks up external tools itself (`exec.LookPath`, `internal/cli/doctor.go:147`), and `terraform` and `cosign` do not sit beside the `fugaro` binary even under Homebrew. The app's inherited `PATH` still never reaches the child, and a tool outside that list is reported as *not on the `PATH` the console gives the CLI* rather than as "not installed" |
 | 5 — the working directory is set explicitly | the installation's checkout when it has one, otherwise a private `0700` directory the app owns under the system temporary directory, checked with `lstat` (not a link, owned by this uid, mode `0700`) rather than trusted to `mkdir`. Never `/`, which is nobody's checkout. `doctor` is called with `--dir <that directory>` and **never `--strict`**: outside a checkout its `plugin-pin` check is a warning that `--strict` turns into a failure about the checkout rather than about the environment on screen |
-| 7 — the app never reads the operator's config | the config's *path* is a string on the installation, passed to the child as `--config`; the CLI is the reader. The add-an-installation check is a **spawn** for the same reason: one allow-listed `doctor --json` with the checkout as the child's working directory, and a checkout that belongs to another project is refused with the CLI's own `this checkout belongs to project %s; --project says %s` — and **not stored**, because storing it would leave every screen refused later with nothing on screen explaining why |
+| 7 — the app never reads the operator's config | the config's *path* is a string on the installation, passed to the child as `--config`; the CLI is the reader. The checkout's pairing check is a **spawn** for the same reason: one allow-listed `doctor --json` with the checkout as the child's working directory, and a checkout that belongs to another project is refused with the CLI's own `this checkout belongs to project %s; --project says %s` — the only screen that asks for a checkout at all, and it asks at that moment, because the checkout is optional and nothing in the first run wants one — and **not stored**, because storing it would leave every screen refused later with nothing on screen explaining why |
 | 10 — the spawn log (D20) | `src/main/spawnlog.ts`, documented below |
 | 10 — the installations file (D13, C8) | `src/main/installations.ts`, documented below: the second and last file the app writes |
 | Task 0.2's four settled behaviours | restart with the CLI's own backoff (1 s doubling to 30 s) except after a refusal, a signal read as the ordinary end of a feed, the UTC-midnight rollover marked as a **gap** rather than a zero, and the reader rule that a stdout line which is not a JSON object is **skipped** and surfaced as a notice — the degraded mode writes a plain sentence on the same stream as the documents (`runWatchDegraded`, `internal/cli/watch.go`) |
@@ -1696,8 +1696,10 @@ writes** (design §5.1 rule 10, §7.4), and the owner ruled it in on 2026-10-18
   whose `rename` throws `ENOSPC` and asserts the previous bytes are untouched.
 - **Nothing is written on the refusing path, and nothing on a read.** The
   `recordingFs()` in `test/unit/installations-store.test.ts` asserts **no write
-  at all** until an `add`, a `choose` or a `remove` — a load, a `list` and a
-  `current` write nothing.
+  at all** until a `choose`, a `checkout` or a `remove` — a load, a `list` and a
+  `current` write nothing. (The `add` this sentence named until 2026-10-20 is
+  gone with the form; the property is the same one, over the three mutations that
+  are left.)
 
 The file is Electron-free, and the store's filesystem is injected as
 `InstallationFs`, so every property above is a plain-Node unit test.
@@ -1711,9 +1713,11 @@ candidate is stored with the `CliCompatibility` the console actually read from
 *that* binary, not from whichever `fugaro` happens to be on `PATH` (rule 4). A
 binary below the hard floor is refused and **nothing is stored**; a binary in
 the reduced range is stored and its row says `reduced`. The CLI's own pairing
-check (`doctor --json`) then runs on every add as one allow-listed spawn, and a
-checkout that belongs to another project is refused **with the CLI's sentence
-shown** and not stored — the console never reads `fugaro.yaml` itself (rule 7).
+check (`doctor --json`) then runs on every **checkout** as one allow-listed
+spawn — the one thing that makes a checkout a mutation, since 2026-10-20 and the
+form's removal; it used to run on every add — and a checkout that belongs to
+another project is refused **with the CLI's sentence shown** and not stored — the
+console never reads `fugaro.yaml` itself (rule 7).
 Every probe of an add or a choose runs from the checkout when one is given and
 from the console's private directory otherwise — never from the binary's own
 directory — and is in the spawn log, with the candidate's project, when the
@@ -1764,10 +1768,23 @@ dashboard's header. `src/main/picker.ts` builds it:
   the editing and window shortcuts keep working; the window is opened by that
   item and by the first run (`openOnFirstRun`, which opens only when no
   installation has been chosen).
-- **One mutation at a time.** An add, a choose or a remove runs only after the
-  one before it has finished — for a choose, after the window it asked for is
+- **One mutation at a time.** A choose, a checkout or a remove runs only after
+  the one before it has finished — for a choose, after the window it asked for is
   up — and the picker's controls are disabled while a request is in flight, so
   two quick chooses cannot leave two dashboards open.
+
+**Amended 2026-10-20, by the owner's ruling.** The bullets above are the record of
+Task 3.4b and three of them describe a window that no longer exists: the surface is
+**five** rows now (`list`, `choose`, `checkout`, `remove`, `openExternal`), not
+eight; there is **no `add`, no `pickBinary`, no `pickConfig` and no `pickCheckout`**,
+so `createPickTokens`, `MAX_OUTSTANDING_PICKS` and the one `dialog.showOpenDialog`
+call are gone with them, and the picker window is where `dialog` is no longer a dep;
+and a **path is not a subject** of any row any more — a row is keyed by a project
+name, plus a directory out of that installation's own `checkouts`. `validateInstallation`
+and the `doctor --json` pairing check are still spawns, but they run on a **choose**
+and on a **checkout** rather than on an add, which is the next section's own record.
+The full account of what replaced the form is in "The first run asks for nothing"
+below.
 
 `src/main/index.ts` wires it in: `installInstallationPicker(...)` with Electron's
 own `BrowserWindow`, `session.defaultSession`, `ipcMain`, `dialog`, `Menu` and
@@ -3643,3 +3660,139 @@ ran. Apple's icon shape: macOS draws its own rounded-rect mask over a full-bleed
 the mark is not redrawn, recoloured or inset to anticipate it — that would be editing the
 website's artwork. And any signed or notarised build: unchanged from Task 4.1's record
 above.
+
+## The first run asks for nothing (the owner's ruling of 2026-10-20)
+
+The console's first run used to open a form: a project name, **Choose binary…**,
+**Choose config…**, **Choose checkout…**, **Add**. The owner ruled it out on
+2026-10-20, and the ruling is the whole of this work: *"The console should never
+ask the user the binary, the config. All of this is purely discoverable
+automatically. Just use the Fugaro binary that's installed on the system. … the
+console should just list all the installations / projects that it finds locally.
+As for the repo, that should be optional: we ask for it only for the stuff that
+we need. … If we don't find the Fugaro binary, or there's no installation that we
+can find locally, we should have a nice page directing the user to the website to
+help them get started."*
+
+So the picker window is a **list and two screens**, and the operator is asked for
+exactly one thing, once, and only where it is genuinely needed: a checkout, at the
+moment a row offers one (rule 7's pairing).
+
+| Where | What changed |
+|---|---|
+| `src/main/installlist.ts` | **new**: the reader for `fugaro config list --json` — `MAX_DISCOVERED_INSTALLATIONS` (256), `MAX_WARNING_LINES` (64), `MAX_DOCUMENT_STRING` (4096), a tolerant `checkouts` array, and the CLI's own `warnings` lines carried through |
+| `src/main/onboarding.ts` | **new**: the two screens' facts — `FUGARO_INSTALL_COMMAND` (re-exported from `src/source/cli.ts`), `FUGARO_SETUP_COMMAND`, `GETTING_STARTED_URL`, `installCliState`, `firstInstallationState`, `NO_ONBOARDING` |
+| `src/main/picker.ts` | the registry is **loaded** (`registry.load()`: without it a store full of installations drew as an empty list, `refusal` was never drawn, and the first-run screen opened over an installation the operator already had), the rows are the CLI's list merged with the store's records, `listReply` gates the first-installation screen on `rows.length === 0`, and the checkouts a row offers are the ones the CLI printed |
+| `src/main/installations.ts` | the surface is **five** rows; a row's subject is a project name or a directory out of that installation's `checkouts`; `createPickTokens`, `MAX_OUTSTANDING_PICKS`, the `add`/`pickBinary`/`pickConfig`/`pickCheckout` rows, the `externalUrl` argument kind and the one `dialog.showOpenDialog` call are gone |
+| `src/main/spawn.ts` | `config list` joins `COMMANDS_WITHOUT_PROJECT` and the spawn table; `PICKER_COMMANDS` is the picker's own one read |
+| `src/main/window.ts`, `src/source/cli.ts` | the external-link path is the one `shell.openExternal` door (`validateExternalUrl`, `ALLOWED_EXTERNAL_HOSTS`), and the install command the source module already carried is re-exported rather than spelled twice |
+| `src/renderer/installations.html`, `src/renderer/installations.ts` | the form's ids are gone with the form; the view draws `#picker-list`, `#picker-warnings` and `#picker-onboarding`, and the link is a **button**, so the document holds no `href` and no URL at all |
+| `test/unit/installlist.test.ts`, `test/unit/onboarding.test.ts` | **new**, and the pins described below |
+| `test/unit/installations-ipc.test.ts`, `installations-store.test.ts`, `installations-view.test.ts`, `spawn.test.ts`, `stub.test.ts`, `stub.ts`, `configread.test.ts`, `window.test.ts` | rewritten or amended to the surface that exists |
+| `test/e2e/installations.spec.ts`, `test/e2e/degraded.spec.ts` | the picker spec drives the list, the warning row, the refused 0.5.0 and the unlisted directory; the degraded spec's `resolveBinary` gained its `appEnv` |
+| `docs/design/desktop-console.md` | §3.4 rules 4 and 7, D13 and §12 item 8, each amended where the form was named |
+| this file | the section you are reading |
+
+### The list is the CLI's, and the console's own records sit beside it
+
+`fugaro config list --json` is the list (the CLI's own document, contract §6.8). The
+console adds one kind of row the CLI cannot print — **a record in its own store that
+the CLI did not list** — and marks it `in this console's list only`, because there is
+no migration and an installation the operator chose yesterday must not vanish because
+today's CLI cannot enumerate it. The reverse never happens: a row the CLI listed is
+drawn even when its config could not be read, **with the CLI's own warning line**
+underneath and `the config could not be read` where its GCP project would be, because
+hiding an installation the CLI itself still counts is the console deciding what the
+operator may see.
+
+The **first-installation screen is gated on the console having no rows at all**, not
+on the CLI's list being empty: an operator with a legacy store entry has an
+installation, and a screen telling them to create one would be the console forgetting
+what it holds.
+
+### The binary is resolved, and the store is an override
+
+Rule 4 is amended in the design document and in the table above: a *configured* path
+(if this console's store already has one — the field is an **optional override** and
+there is no migration), then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`,
+`/usr/bin`. **The app's inherited `PATH` is never searched**, which was the previous
+rule's last step and is exactly the "discoverable automatically" the ruling asks for.
+A candidate that exists but whose version cannot be read is refused rather than
+skipped, as before.
+
+### The checkout is optional, and asked for late
+
+Nothing in the first run wants a repository. The one place a repository is genuinely
+needed is the pairing check, so that is where the question lives now: a row offers
+the checkouts **the CLI listed for that installation**, one button each, and setting
+one runs the allow-listed `doctor --json` with that directory as the child's working
+directory. A directory the CLI never listed is refused by name — `not one of the
+checkouts the CLI listed` — and a row that already has one offers to drop it, which
+is how an operator gets back to the ordinary no-checkout state. `~/.config/fugaro` is
+still not read by the console: the CLI is the reader.
+
+### The two screens, and the two constants they copy
+
+- **No `fugaro` binary: "Install the Fugaro CLI first"** — the sentence, the places
+  the resolution looked (the answer's own `searched`, drawn as the answer gave it),
+  `brew install dimipaun/tap/fugaro`, and a link button to
+  `https://fugaro.dev/getting-started/`.
+- **A binary and no installation: "Set up your first installation"** — one sentence,
+  `fugaro init`, and the same link button.
+
+Both commands live in **one constant each** in `src/main/onboarding.ts`, and
+`test/unit/onboarding.test.ts` pins them to the repository's own copies: the install
+command to the `brew install ` lines of `website/data/install.yaml` (whose own Go test
+pins those in turn to the `README.md` line each `source:` names), to `README.md`, and
+to `SOURCE_INSTALL_COMMAND`, the constant `src/source/cli.ts` has carried since Task
+4.4; the setup command to `README.md`'s getting-started step (`1. Run …`) and to
+`internal/cli/config_init.go`'s `Use: "init"`, which is the thing that would have to
+change for the string to be wrong — and the module names `docs/setup-wizard/`, whose
+plan renames it to `fugaro setup`, so the rename is one line and one red test. The
+comment-stripped module is asserted to carry `fugaro init` **exactly once**, because
+two spellings of one command is precisely the drift the file exists to catch. The URL
+is pinned to `website/src/pages/getting-started.astro` and to
+`website/data/site.yaml`'s `canonical_url` and `allowed_hosts`.
+
+The screens are drawn in the approved visual language — dark, the shipped tokens,
+no new colour, no new font, no image, no remote content — and **the CSP does not
+change and nothing embeds the website**: the link is a button whose click the main
+process answers through `openExternalValidated`, and the picker's `openExternal` row
+takes **no arguments at all**, so a frame that sends a URL has sent a key no row
+declares and is refused before any handler runs. `will-navigate` and
+`setWindowOpenHandler` still deny everything else.
+
+### The mutations each guard was proved against
+
+Every property below was planted as a change to the shipped code, run, and removed;
+the failure is the red step, and each test goes red **by name**.
+
+| Mutation | What fails |
+|---|---|
+| `registry.load()` dropped from `src/main/picker.ts` | `installations-ipc.test.ts`, 3 cases — the rows, the refusal and the first-run screen |
+| the `choose` membership guard removed, so any project may be named | `installations-ipc.test.ts`, the unlisted-project case |
+| the `openExternal` row regains its `url` argument | `installations-ipc.test.ts`, 5 cases — the frozen table, the preload mirror, the schema and the two link cases |
+| the checkout membership check removed | `installations-ipc.test.ts`, the directory-the-CLI-never-listed case |
+| one character of `FUGARO_INSTALL_COMMAND` changed | `onboarding.test.ts`, the install-command cases — and by name |
+| one character of `FUGARO_SETUP_COMMAND` changed | `onboarding.test.ts`, the setup-command and two-states cases |
+| `GETTING_STARTED_URL` pointed at another path or host | `onboarding.test.ts`, the link case |
+
+### The verification, and what it did not cover
+
+`npx vitest run --dir test/unit` under Node 22 is green (the console's own suite; the
+verify container runs this repository's Go build and test, so the console's tests are
+run locally and the pull request says so), and `npx tsc --noEmit` is clean — which
+typechecks the Playwright specs too.
+
+**The e2e suite was rewritten and was not run in the container this work was done
+in**: Playwright's Electron launch needs a display and a GTK/NSS/glib stack the image
+does not have (`libglib-2.0.so.0` is missing and there is no root to install it), so
+`test/e2e/installations.spec.ts` is compiler-checked and reviewed rather than
+executed here. It is the one verification this branch could not complete.
+
+**The checkouts a row offers are the ones the CLI's document carries.** The contract
+is tolerant of the array's absence and of a malformed entry, so a `config list` that
+prints no `checkouts` offers none — and the console then offers no way to set one at
+all, which is the truthful state rather than an invented directory. The stub's
+`seedInstallationsList` writes none today, so the e2e path for the button is unit
+coverage rather than a window.
