@@ -23,7 +23,13 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
+
+// The service reads the outcomes as its own account: the database client is
+// the Getter the outcome reader is built over, and this says so at compile
+// time rather than in a comment.
+var _ Getter = (*rtdb.Client)(nil)
 
 // The identities in these tests are built at run time: an RSA key generated
 // here, a token signed with it, and claim values that are test names. No
