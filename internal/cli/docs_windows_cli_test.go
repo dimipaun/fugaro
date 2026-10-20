@@ -15,25 +15,36 @@ import (
 // its own file — this one, the same convention docs_in_job_review_test.go
 // states for docs/in-job-review/.
 //
-// The documents are docs-only and no task in them is approved, so what a guard
-// can usefully hold is the plan's own shape and the plan's own claims about
-// itself: the status line, the numbered findings and decisions with no gap, the
-// support table naming commands that exist, the census stating the command
-// beside every count, and — the claim that would otherwise be unbacked — that
-// each documentation task names the guard that owns it. Every one of those is a
-// sentence a later edit can quietly break, which is what makes them worth
-// pinning rather than asserting in prose.
+// The documents are docs-only — the owner approved Slice 0 and Slice 1 of the
+// plan and no other task, and Slice 0 is the part of it that is written — so
+// what a guard can usefully hold is the plan's own shape and the plan's own
+// claims about itself: the status line, the numbered findings and decisions
+// with no gap, the support table naming commands that exist, the census stating
+// the command beside every count, and — the claim that would otherwise be
+// unbacked — that each documentation task names the guard that owns it. Every
+// one of those is a sentence a later edit can quietly break, which is what
+// makes them worth pinning rather than asserting in prose.
+//
+// A document that says of itself "this is not done yet" is one of those
+// sentences: three of them went false in the commit that made them true (the
+// index's row for the guide, **O3**'s gap, and the reconciliation's own gate
+// paragraph), and each is pinned below where it lives.
 const (
 	windowsCLIReadme = "docs/windows-cli/README.md"
 	windowsCLISpec   = "docs/windows-cli/spec.md"
 	windowsCLIRecon  = "docs/windows-cli/reconciliation.md"
 	windowsCLIPlan   = "docs/windows-cli/implementation-plan.md"
+	// windowsCLIWSL is Slice 0's document (T0.1): the route that works today,
+	// which is the only part of this folder a Windows reader can act on.
+	windowsCLIWSL = "docs/windows-cli/wsl.md"
 
-	// windowsCLIStatus is the index's status line, word for word: the folder is
-	// a plan with nothing implemented and every decision open. It moves only
-	// when the work it describes moves (implementation-plan.md T6.3), which is
-	// why it is asserted rather than left to a reader.
-	windowsCLIStatus = "**Status: plan only; nothing is implemented; decisions open.**"
+	// windowsCLIStatus is the index's status line, word for word: what has been
+	// approved, what of it is written, and which decisions are still open. It
+	// moves only when the work it describes moves — T0.3 moved it to the
+	// owner's ruling of 2026-10-20 (D16), and T6.3 is the move that will state
+	// the tier the work reached — which is why it is asserted rather than left
+	// to a reader.
+	windowsCLIStatus = "**Status: Slice 0 and Slice 1 approved (D16, 2026-10-20); Slice 0 is written; no code is implemented; D1–D6 are answered and D7–D15 are open.**"
 
 	// windowsCLIPin is this file, by path: the plan names it as the owning guard
 	// test of every documentation task, so the name lives in one place.
@@ -52,6 +63,7 @@ var windowsCLIIndexedFiles = []string{
 	"[spec.md](spec.md)",
 	"[reconciliation.md](reconciliation.md)",
 	"[implementation-plan.md](implementation-plan.md)",
+	"[wsl.md](wsl.md)",
 }
 
 // windowsCLIClasses are the five words a finding may be classified with
@@ -63,11 +75,12 @@ var (
 	windowsCLITiers   = []string{"**Supported", "**Best effort", "**Not supported", "**Out of scope"}
 )
 
-// TestDocsWindowsCLIIsWritten: the folder exists with its index and its three
+// TestDocsWindowsCLIIsWritten: the folder exists with its index and its four
 // documents, the index carries the status line word for word and names the
-// other three files, and each document carries the structure the brief asked
+// other four files, and each document carries the structure the brief asked
 // for. Its red state is this test: the folder's guard did not exist until this
-// file did.
+// file did, and wsl.md's own red state was this test naming a document that was
+// not written yet (implementation-plan.md T0.1).
 func TestDocsWindowsCLIIsWritten(t *testing.T) {
 	readme := readDoc(t, windowsCLIReadme)
 	spec := readDoc(t, windowsCLISpec)
@@ -82,6 +95,11 @@ func TestDocsWindowsCLIIsWritten(t *testing.T) {
 		"**D1–D16**",
 		"**F1–F42**",
 		"**U1–U13**",
+		// The guide's row (T0.2). The index said the guide "has no Windows
+		// text at all today" while this pull request was the task that wrote
+		// it, so the row records the section instead of the gap — the claim
+		// and the commit that made it false cannot be the same commit.
+		"now carries the Windows and WSL forms",
 	}, windowsCLIIndexedFiles...) {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s lacks %q", windowsCLIReadme, want)
@@ -109,6 +127,13 @@ func TestDocsWindowsCLIIsWritten(t *testing.T) {
 		// against.
 		windowsCLIRevision,
 		"54cb02a8ea43e74231e42e38f130b5dd37f1563e",
+		// O3 is a finding against the tree at that revision and stays one; what
+		// it must not do is still read as an open gap once the task it named
+		// has shipped. The finding keeps its text and gains the task.
+		"**T0.2** shipped it",
+		// The same rule for the reconciliation's own gate paragraph, which was
+		// written before the owner's answers and says the gate is not passed.
+		"was passed on 2026-10-20",
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q", windowsCLIRecon, want)
@@ -124,6 +149,40 @@ func TestDocsWindowsCLIIsWritten(t *testing.T) {
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s lacks %q", windowsCLIPlan, want)
+		}
+	}
+
+	// The WSL document (T0.1) is the one thing in this folder a Windows reader
+	// can act on today, so the claims it makes are pinned rather than left to a
+	// reader: the state of the native build, F39's two traps and its Claude Code
+	// requirement, and the console's own answer (F40). Each is a sentence a
+	// later edit can drop without any other symptom.
+	wsl := readDoc(t, windowsCLIWSL)
+	for _, want := range []string{
+		// The route, and the honest state of the native one beside it.
+		"Windows archive is published",
+		"**F39**",
+		"**F40**",
+		// F39's two traps, each by the path it is about: the checkout's
+		// filesystem and the two credential files that are not the same file.
+		"`/mnt/c`",
+		"file modes",
+		"~/.config/gcloud/application_default_credentials.json",
+		`%APPDATA%\gcloud\application_default_credentials.json`,
+		// F39's third requirement, which is not about the CLI at all.
+		"Claude Code",
+		"inside WSL",
+		// F40: the console cannot reach a WSL-only installation.
+		"desktop console",
+		// The install block's verification, which must name the archive it
+		// downloaded: `checksums.txt` covers every platform's archive and its
+		// SBOM, so the bare `fugaro_${V}_` this document inherited from
+		// release.md matches files the block never fetched and `sha256sum -c`
+		// exits 1 with "FAILED open or read" for each of them.
+		`grep " fugaro_${V}_linux_amd64.tar.gz\$" checksums.txt | sha256sum -c -`,
+	} {
+		if !strings.Contains(wsl, want) {
+			t.Errorf("%s lacks %q", windowsCLIWSL, want)
 		}
 	}
 }
@@ -553,7 +612,7 @@ var proseLineRefRE = regexp.MustCompile(`[A-Za-z0-9_./-]+\.(go|ya?ml|md|json|tom
 // moved. A citation in prose is the kind that rots, which is why the header
 // forbids it and why this test exists.
 func TestDocsWindowsCLICitesNoProseLineNumbers(t *testing.T) {
-	for _, path := range []string{windowsCLIRecon, windowsCLIPlan, windowsCLIReadme} {
+	for _, path := range []string{windowsCLIRecon, windowsCLIPlan, windowsCLIReadme, windowsCLIWSL} {
 		doc := readDoc(t, path)
 		fenced := false
 		for i, line := range strings.Split(doc, "\n") {

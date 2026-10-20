@@ -1,4 +1,4 @@
-# What fugaro init reads back: the names a Batch job's definition needs (the
+# What fugaro update reads back: the names a Batch job's definition needs (the
 # preloaded boot image) and the ones an operator or the doctor check looks
 # for (the accounts, the router and NAT).
 

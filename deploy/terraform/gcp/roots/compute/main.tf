@@ -1,5 +1,5 @@
 # The compute root: the Batch backend's installation-level provisioning
-# (design docs/design/compute-backend.md §8.1 task 6). fugaro init writes it
+# (design docs/design/compute-backend.md §8.1 task 6). fugaro update writes it
 # into a workdir of its own with terraform.tfvars.json and a backend config
 # naming the state bucket, and plans and applies it there — a workdir and a
 # state prefix of its own, so the installation's tfvars, imports and saved

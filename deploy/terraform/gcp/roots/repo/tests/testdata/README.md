@@ -1,7 +1,7 @@
 # Terraform test fixtures
 
 `bitbucket-oauth.tfvars.json` and `github-vertex.tfvars.json` are the golden
-tfvars `fugaro init --repo` writes, regenerated with
+tfvars `fugaro update` writes, regenerated with
 `go test ./internal/infra -run TestGoldenTfvars -update` (TestGoldenTfvars
 compares them byte for byte).
 

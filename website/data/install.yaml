@@ -88,9 +88,9 @@ paths:
           --certificate-identity "https://github.com/dimipaun/fugaro/.github/workflows/release.yml@refs/tags/v$V" \
           --certificate-oidc-issuer https://token.actions.githubusercontent.com
       - |-
-        grep " fugaro_${V}_" checksums.txt | shasum -a 256 -c -      # macOS
+        grep " fugaro_${V}_$(uname -s | tr A-Z a-z)_" checksums.txt | shasum -a 256 -c -      # macOS
       - |-
-        grep " fugaro_${V}_" checksums.txt | sha256sum -c -         # Linux
+        grep " fugaro_${V}_$(uname -s | tr A-Z a-z)_" checksums.txt | sha256sum -c -         # Linux
 
   - id: go-install
     name: Go install

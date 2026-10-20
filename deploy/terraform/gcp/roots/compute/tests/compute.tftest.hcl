@@ -1,5 +1,5 @@
 # Plans the compute root against a mock provider: no credentials, no network
-# beyond the provider download. The names are the ones fugaro init writes into
+# beyond the provider download. The names are the ones fugaro update writes into
 # terraform.tfvars.json (internal/infra/compute.go), and the base pin is the
 # shape 57a measured on 2026-10-15 (a pinned Artifact Registry path through the
 # installation's remote repository).

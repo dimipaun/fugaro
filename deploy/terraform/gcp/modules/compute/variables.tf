@@ -1,4 +1,4 @@
-# Every name and member arrives from fugaro init's terraform.tfvars.json.
+# Every name and member arrives from fugaro update's terraform.tfvars.json.
 # The validation blocks check shapes only; nothing here derives a name. The
 # module is the Batch backend's installation-level provisioning (design
 # docs/design/compute-backend.md §3.2, §3.7, §8.1 task 6): the two APIs, the
@@ -96,7 +96,7 @@ variable "project_number" {
 }
 
 variable "manage_apis" {
-  description = "Whether this root enables the two APIs. Off, the project is left to be managed elsewhere (init --skip-apis)."
+  description = "Whether this root enables the two APIs. Off, the project is left to be managed elsewhere (fugaro update --skip-apis)."
   type        = bool
   default     = true
 }

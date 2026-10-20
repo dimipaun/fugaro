@@ -1,6 +1,6 @@
 # Plans one repository against a mock provider: no credentials, no network
-# beyond the provider download. The inputs are the golden tfvars fugaro
-# init --repo writes (the Go side of the contract checks it produces
+# beyond the provider download. The inputs are the golden tfvars
+# fugaro update writes (the Go side of the contract checks it produces
 # exactly these files), so a shape Go and Terraform disagree on fails here.
 #
 # An assertion can't reach into a child module's resources, so the root
@@ -69,7 +69,7 @@ run "root_github" {
   }
   assert {
     condition     = output.github_app_id == "123456"
-    error_message = "the GitHub App ID must come back as an output, for init --repo to read"
+    error_message = "the GitHub App ID must come back as an output, for fugaro update to read"
   }
 }
 
@@ -917,7 +917,7 @@ run "people_job" {
   }
 
   assert {
-    # fugaro init puts the operators among the launchers too (they get
+    # fugaro update puts the operators among the launchers too (they get
     # everything launchers get), so the fixture's operator runs jobs.
     condition = tomap({ for k, m in google_cloud_run_v2_job_iam_member.launcher : k => m.role }) == tomap({
       "user:launcher@example.com" = "projects/proj-1234/roles/fugaroJobRunner"
@@ -1041,7 +1041,7 @@ run "scheduler_region_and_paused" {
 }
 
 # Cloud Run checks a job's secrets when it creates it, and the check job
-# mounts the provider credential at latest, so until fugaro init --repo
+# mounts the provider credential at latest, so until fugaro update
 # finds a version (or the job already exists) it plans no check job, and
 # so no invoker grant or Scheduler job either.
 run "check_not_deployed" {
