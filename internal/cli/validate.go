@@ -396,7 +396,12 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 // file that writes no budget under an installation whose ceiling enforces has
 // the gateway on. The ceiling is this file's project's, and a file that
 // belongs to no selected project config has none — the reading the rest of
-// this file gives that state.
+// this file gives that state — so the gateway rule is judged only where that
+// ceiling can be read at all. Judging it without one reads the file's own mode
+// as the run's, which is a problem no run of the configuration necessarily
+// has: the same file under an installation whose ceiling observes has the
+// gateway on and is valid. The state with no ceiling is refused by O2 below
+// anyway, on the reason that is true of it.
 //
 // O2 (the owner's ruling of 2026-10-17, reconciliation.md §4) is the reason
 // this function reads the *published* policy: a repository may ask for the
@@ -414,21 +419,19 @@ func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 	if cfg.Agent.Auth != config.AuthCascade {
 		return nil
 	}
-	ceiling := policy.Layer{}
-	readable := lc != nil && lc.Name == cfg.Project
-	if readable {
-		ceiling = ceilingLayer(lc)
-	}
-	problems := config.CheckCascadeGateway(cfg.Agent, policy.Merge(ceiling, runner.FileLayer(cfg)).Mode)
+	var problems []config.Problem
 	refuse := func(why string) {
 		problems = append(problems, config.Problem{Path: "agent.auth", Message: fmt.Sprintf(
 			"is refused: %s. Set %s in the project policy and publish it (fugaro project policy publish) — a repository asks for the cascade, and only the operator can set it there (O2)",
 			why, "routing.claude: {via: cascade}")})
 	}
-	if !readable {
+	if lc == nil || lc.Name != cfg.Project {
 		refuse(fmt.Sprintf("no project config for %s is selected here, so the policy this project has published cannot be read", pluginwire.Printable(cfg.Project)))
 		return problems
 	}
+	// The ceiling is readable from here on, so the gateway rule can be judged
+	// over the run's own mode.
+	problems = config.CheckCascadeGateway(cfg.Agent, policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode)
 	p, found, err := projectPolicyRead(ctx, lc)
 	switch {
 	case err != nil:
@@ -1008,6 +1011,19 @@ func routingInertWhy(why runner.RoutingInert, auth, mode string) string {
 	}
 	switch why {
 	case runner.RoutingInertNoGateway:
+		// The cascade is the one auth whose gateway is not a model API's
+		// credential: a cascade run's calls are carried by the credentials
+		// service (D133, D143), and runner.GatewayOn answers false for the value
+		// because it knows api-key and vertex only — teaching it `cascade` is
+		// plan Task C1.19. So the reach is the same today and this clause's
+		// conclusion stands, but the reason below is false of it: the cascade's
+		// gateway is precisely the one that does not need a credential of the
+		// job's own, and the sentence would read as "the cascade has no
+		// credential for a gateway to carry", the opposite of what the value
+		// asks for. The arm below says what is true instead.
+		if auth == config.AuthCascade {
+			return "no run of this configuration has a gateway (agent.auth is " + config.AuthCascade + " and budget.mode is " + m + ": a cascade run's gateway is the credentials service's, and this Fugaro's runner does not put one in front of a cascade run yet)"
+		}
 		return "no run of this configuration has a gateway (agent.auth is " + auth + " and budget.mode is " + m + ": the gateway needs a model API's credential and an observing or enforcing budget)"
 	case runner.RoutingInertAutoVertex:
 		return "via: auto does not route a Vertex run (Vertex serves Claude under the project's own credential, and its jobs carry no Anthropic API key)"

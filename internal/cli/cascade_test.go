@@ -45,13 +45,15 @@ func cascadePolicy() string {
 // enabled is not a valid file, whichever side failed to answer.
 //
 // Mutation (run, restored), one per refusal this function makes: drop the
-// `!readable` early return and the "no project config" subtest fails; drop
-// the `refuse` call from the `!found || p == nil` case and both the "no
-// policy published" and the "no database" subtests fail (they would report
-// the file valid); make the routing case unreachable and the "published
-// policy without the switch" subtest fails. What is left is the case that
-// must pass — the published switch — and the other auth, which never
-// reaches any of them.
+// `!readable` early return and the "no project config" subtest fails; judge
+// the gateway rule from the file's own mode before readability is known
+// (config.CheckCascadeGateway over policy.Merge(policy.Layer{}, …)) and the
+// same subtest fails on the gateway line it may not carry; drop the `refuse`
+// call from the `!found || p == nil` case and both the "no policy published"
+// and the "no database" subtests fail (they would report the file valid);
+// make the routing case unreachable and the "published policy without the
+// switch" subtest fails. What is left is the case that must pass — the
+// published switch — and the other auth, which never reaches any of them.
 func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 	t.Run("a published policy without the switch", func(t *testing.T) {
 		f := newLaunchBudget(t, "observe")
@@ -124,6 +126,16 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 				t.Errorf("the refusal does not say %q:\n%s", want, out)
 			}
 		}
+		// And the O2 refusal is the whole of it here: with no project config
+		// selected this command cannot read the installation's ceiling either,
+		// and the file's own mode is only a lower bound on the run's — a file
+		// that writes no budget under a ceiling that enforces has the gateway
+		// on. So the gateway rule is not judged from it: the line this state
+		// used to carry was the file's own mode read as the run's, a problem no
+		// run of this configuration necessarily has.
+		if strings.Contains(out, "needs the budget gateway") {
+			t.Errorf("the gateway rule was judged without the ceiling that decides the run's mode:\n%s", out)
+		}
 	})
 
 	t.Run("another auth is not this rule's business", func(t *testing.T) {
@@ -173,6 +185,49 @@ func TestValidateRefusesCascadeWithBudgetOff(t *testing.T) {
 	out, errOut, err := execute(t, "validate", path)
 	if err != nil {
 		t.Fatalf("a cascade file whose installation observes was refused: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+}
+
+// TestValidateCascadeSwitchReasonNeverBlamesTheGateway: a cascade run's
+// gateway is the credentials service's, not a model API's credential, and
+// runner.GatewayOn answers false for `cascade` because it knows api-key and
+// vertex only (the change that teaches it the value is plan Task C1.19). What
+// the switch's reach makes of a cascade run is therefore right today — no run
+// of this configuration has a gateway, so the pins keep Claude's own IDs —
+// but the reason validate printed for it was not: "the gateway needs a model
+// API's credential" is false of a cascade run, whose whole point is a gateway
+// carrying a credential that is not the job's own (D133, D143).
+//
+// The state is the one the switch's reach is asked about: the project config's
+// switch names a Claude model this checkout carries no route for, so the pin
+// has no fall-back (D1b) and the line says what the run does with it.
+//
+// Mutation (run, restored): drop the cascade arm from routingInertWhy's
+// RoutingInertNoGateway case — the line then blames the gateway's credential
+// rule and this test fails on that sentence.
+func TestValidateCascadeSwitchReasonNeverBlamesTheGateway(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	publishPolicy(t, f, cascadePolicy())
+	// The switch is the operator's own file, and it names a model only a route
+	// this repository may not send code to claims (routedProjectBlock admits
+	// acme/sandbox; the checkout is acme/other).
+	f.appendConfig(t, routedProjectBlock+routedSwitchBlock)
+	inCheckoutOf(t, "acme/other")
+	out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+	if err != nil {
+		t.Fatalf("validate refused a configuration whose runs do not reach the switch: %v\n%s%s", err, out, errOut)
+	}
+	if !strings.Contains(errOut, "routing.claude") {
+		t.Fatalf("want the note about the switch's reach:\n%s%s", out, errOut)
+	}
+	if strings.Contains(out+errOut, "the gateway needs a model API's credential") {
+		t.Fatalf("the reason blames a gateway rule that is false of a cascade run:\n%s%s", out, errOut)
+	}
+	if !strings.Contains(errOut, "credentials service") {
+		t.Fatalf("the reason does not name the gateway a cascade run's calls are carried by:\n%s%s", out, errOut)
+	}
+	if strings.Contains(out, "the project's routing switch is not usable") {
+		t.Fatalf("the halt is asserted for a run that does not reach the switch:\n%s", out)
 	}
 }
 
