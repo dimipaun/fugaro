@@ -24,7 +24,7 @@ Flags:
 Subcommands:
 
 - `fugaro accounts` -- List the named Claude accounts a repository may use
-- `fugaro allow-delete` -- Record the Terraform addresses a run may delete or replace (the project's owner)
+- `fugaro allow-delete` -- Record the objects a run may delete or replace, by address (the project's owner)
 - `fugaro artifacts` -- List and download what an artifact run delivered
 - `fugaro backends` -- List the compute backends an installation can run its jobs on
 - `fugaro budget` -- Show and change the project's model-spend caps and kill switches
@@ -111,24 +111,72 @@ This command has no subcommands.
 
 ## `fugaro allow-delete`
 
-Record the Terraform addresses a run may delete or replace (the project's owner)
+Record the objects a run may delete or replace, by address (the project's owner)
 
 Record which Terraform addresses the project's owner approves for deletion or
-replacement, in a managed project's fugaro/allow-delete.json at the root of
-the runs bucket. An approval lives in that object and nowhere else: this
-command is Fugaro's only writer of it, with the operator's own credentials.
+replacement, and which object at each address is approved, in a managed
+project's fugaro/allow-delete.json at the root of the runs bucket. An approval
+lives in that object and nowhere else: this command is Fugaro's only writer of
+it, with the operator's own credentials.
 
-An address is the Terraform address a plan reports, as in
-google_cloud_run_v2_job.web or module.web.google_storage_bucket.data, and
-nothing else is recorded — no note and no reason: the object's own version
-history is the record of who approved what and when.
+An argument is an address and the identity of the object approved there,
+written as ADDRESS=IDENTITY: the Terraform address a plan reports, as in
+google_cloud_run_v2_job.web or module.web.google_storage_bucket.data,
+followed by the identity a refused managed apply printed for the object that
+address removes, as in
+
+  fugaro allow-delete 'module.web.google_storage_bucket.data=type=google_storage_bucket project=proj-1234 name=data id=data-bucket instance=2026-01-02T03:04:05.678Z'
+
+An approval is of one object and not of the address: the same address carrying
+another object later — another name, a renamed or replaced resource, one moved
+in from elsewhere — is not approved by it, so an entry an earlier apply already
+used admits nothing more. The identity is compared character for character with
+the one the plan's before view shows, so copy it from the refusal rather than
+retyping it. A refusal prints it inside a sentence of its own, so copy the
+identity up to and not including the ')' that closes that sentence's
+parenthetical — pasting that bracket as well is forgiven, once, since the
+sentence put it there; one matched pair of double quotes is stripped the same
+way, because a shell or a message may have added them (a quote at one end only
+is a character of the identity, and is kept). What is not forgiven is any other
+parenthesis: an identity holds none — a value's '(' and ')' are escaped with
+everything else this program's printers would touch — so an argument that still
+holds one is refused rather than recorded as an entry that would match no
+removal. The two ends agree byte for byte because the identity is written in an
+escaped form — a space in a value as \x20, a backslash as \\, a parenthesis as
+\x28 and \x29, and any other byte with no printable form as \xHH — so that what
+a refusal prints is exactly what a plan shows. An identity longer than 8192
+characters is refused here and by the plan: no refusal prints one, and the plan
+refuses the removal rather than matching a printed part of it, so recording it
+would be an approval that deletes nothing.
+
+What the identity tells apart, and what it does not, said here rather than left
+to be discovered. For the seven managed types whose state carries a value the
+provider mints once per instance — a bucket's time_created, a secret's or an
+artifact repository's create_time, a Cloud Run job's or an API key's uid, a
+service account's unique_id, a bucket object's generation — the identity
+carries that value, so an object of one of those types deleted and then created
+again under the same name at the same address carries a DIFFERENT identity and
+this entry no longer approves its removal. It does not for the seven types that
+have no such value: a Cloud Scheduler job, a project service, and the five
+*_iam_member types, whose whole state is the grant they carry. For those the
+identity is the named object, and a re-creation under the same name at the same
+address is approved by the entry that named it. The provider's own id is not
+one of the instance values: for every managed type it is derived from the
+configured name (an API key's id is projects/P/locations/global/keys/NAME).
+If the difference matters for a resource of the second kind, review the list
+rather than rely on the entry having been used up.
+
+Nothing else is recorded — no note and no reason: the object's own version
+history is the record of who approved what and when, and the identity is what
+the approved delete is identified by.
 
 Run it in your own terminal, as an operator, with your own credentials. Pass
-the addresses to approve, and they replace the list: an invocation that leaves
-an address out removes that approval, so the command names the entries it
-would drop and asks for the project's name before writing such a list. With no
-addresses the command prints the list and writes nothing; it never empties the
-list, because an empty list is what an absent one already means.
+the entries to approve, and they replace the list: an invocation that leaves an
+entry out removes that approval, so the command names the entries it would drop
+and asks for the project's name before writing such a list. With no arguments
+the command prints the list — each entry in the same ADDRESS=IDENTITY form, so
+a line can be pasted back — and writes nothing; it never empties the list,
+because an empty list is what an absent one already means.
 
 What the object is for: a run's own credentials cannot write it, and the
 deployer account a managed apply impersonates will not be able to (D75, Task
@@ -148,14 +196,19 @@ check below is that the bucket is the project's own runs bucket, which every
 installation has, not that the project is Fugaro-managed.
 
 The list is read fail-closed: an absent object, an empty one, one naming
-another project, one whose fields are not exactly the three this command
-writes, or one this package cannot read is no addresses — and no addresses
-refuses every delete and replacement rather than permitting them. The write
-is fail-closed too: if the current list cannot be read, nothing is written,
-and the write is conditioned on the object being unchanged since that read,
-so a concurrent write is never silently overwritten (run the command again).
+another project, one written by an older Fugaro (its addresses carry no
+identities, so nothing in it says which object was approved), one whose
+identities are an earlier build's (an entry that names the object without the
+per-instance value its type has matches no removal the gate identifies, so it
+approves nothing — re-approve it from a current refusal), one whose fields
+are not exactly the ones this command writes, or one this package cannot read
+is no entries — and no entries refuses every delete and replacement rather
+than permitting them. The write is fail-closed too: if the current list cannot
+be read, nothing is written, and the write is conditioned on the object being
+unchanged since that read, so a concurrent write is never silently overwritten
+(run the command again).
 
-Usage: `fugaro allow-delete [ADDRESS...]`
+Usage: `fugaro allow-delete [ADDRESS=IDENTITY...]`
 
 Flags:
 

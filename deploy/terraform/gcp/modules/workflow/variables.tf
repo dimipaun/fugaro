@@ -138,6 +138,23 @@ variable "runs_bucket" {
   }
 }
 
+variable "credentials_service" {
+  description = "The installation's credentials service (D146, D147): its Cloud Run service name and region, or null while the installation has not opted in. Null is what keeps the job's model-secret accessors and creates no invoker grant; set, it is what drops them (the service holds those credentials) and grants the job's account roles/run.invoker on it (D135)."
+  type = object({
+    name   = string
+    region = string
+  })
+  default = null
+
+  validation {
+    condition = var.credentials_service == null ? true : (
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.credentials_service.name)) &&
+      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.credentials_service.region))
+    )
+    error_message = "credentials_service needs a Cloud Run service name and a region such as us-east5."
+  }
+}
+
 variable "job_runner_role" {
   description = "The installation's fugaroJobRunner role, as its full name projects/<project>/roles/<id>."
   type        = string
