@@ -1062,6 +1062,23 @@ down).
   `website/README.md`'s (that round also re-derived the three figures from the gates' own
   build, because the base they carried was stale — `website/content/cli-reference.md` had been
   regenerated a round earlier without re-deriving them, which is recorded there).
+- **And the review of that review round: the side of the query, and the way the head points.**
+  Two of the three readings the round above added held less than they said. **The changeover was
+  held by its width alone** — `(width<=59.25rem)` and `(width>=59.25rem)` name the same width
+  and show the drawings to opposite readers, so a stylesheet that turned `.run-tall` on above
+  59.25 rem and `.run-wide` off there satisfied every reading while stacking the drawing on a
+  desktop and showing the shrunk wide one to the phone the floor exists for; the gate reads
+  which side each switched rule holds on now, and refuses one read from above. **The head was
+  held where it sat, not which way it pointed** — and the head the component drew was mirrored,
+  its point at the base's place, so it landed on `implement` pointing back up its own line at
+  the stage the run came from; a mirrored head is the same triangle over the same two x's, so
+  only the corners can say which way round it was drawn, and the gate reads them (the point has
+  to lead the base along the direction the line arrives in) and refuses a head that is not a
+  triangle of three corners. The component's own header comment had still said the drawings
+  change over "below 48 rem — the width the site's chrome switches at", which the round above
+  made false. Neither fix moved a byte: the head is the same numbers written in another order
+  and the side of a query is a reading, so the figures in `website/README.md` are the ones the
+  build already measured.
 - **What is still the owner's check.** The drawing was built to the draft the owner approved,
   and whether the page then looks right is the owner's reading of it (70a–70c, D190): this run
   cannot see a rendered page, no screenshot is committed here, and the gate says what the

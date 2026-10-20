@@ -44,21 +44,25 @@
 //     `viewBox` and the stylesheet gives it `width: 100%` of the column and a `max-width` of
 //     the same, so a drawing is scaled rather than clipped; no rule of the diagram's declares a
 //     width a 360 px phone cannot fit, or a `white-space: nowrap` that cannot break; and
-//     exactly one of the two drawings is displayed at a time, at one width the stylesheet
+//     exactly one of the two drawings is displayed at a time, below one width the stylesheet
 //     declares, so the run is drawn twice and read once. The width they change over at is read
 //     out of the stylesheet and the box each drawing is scaled into out of the page's own
 //     gutter and ceiling, because what the changeover buys is a label size: the wide drawing's
 //     smallest label is 16 units of a 1200-unit picture, so the drawing is shown where its
 //     column puts that label at 12 px or more, and the tall drawing — drawn at a phone's own
-//     width, with a ceiling of its own scale — meets the phone's column instead. A number typed
-//     in here would keep agreeing with itself after the page's gutter moved.
+//     width, with a ceiling of its own scale — meets the phone's column instead. Which *side*
+//     of that width each rule holds on is read too, since the same width read from the other
+//     side shows the wide drawing to the phone it cannot be read on. A number typed in here
+//     would keep agreeing with itself after the page's gutter moved.
 //   - **The loop's arrow is drawn, and it joins the stages the run repeats.** The draft draws
 //     `[fix ─► review(2)]`: the arrow leaves `review`, runs up beside the pills and lands back
 //     on `implement`. So the pill the arrow's two ends land on is read from the stage words the
 //     drawing itself pairs with its pills, the line has to reach those two pills, the head that
-//     lands it has to be drawn at the end of the line that lands on `implement`, and no part of
-//     the arrow may be drawn across a pill. An arrow deleted from the drawing, or redrawn
-//     between two other stages, is a run the page does not describe.
+//     lands it has to be drawn at the end of the line that lands on `implement` — and with its
+//     point ahead of its base along that line, since a head is where the arrow points and a
+//     head turned round lands on the right pill pointing the wrong way — and no part of the
+//     arrow may be drawn across a pill. An arrow deleted from the drawing, or redrawn between
+//     two other stages, is a run the page does not describe.
 //
 // Standard library only; no network (Global Constraint 4).
 
@@ -199,12 +203,12 @@ const CHAR = 0.62
 const textWidth = (text, size) => [...text].length * CHAR * size
 
 /**
- * The box a `<path>` is drawn in, from its own `d`: the points of the polyline the diagram
- * draws with (`M`, `H`, `V` and `L`), which is all the loop and its head are made of. A
- * command this does not know is a path whose extent this check cannot read, and the caller
- * refuses that rather than passing it.
+ * The points of the polyline a `<path>` draws with (`M`, `H`, `V` and `L`), which is all the
+ * loop's line and its head are made of. A command this does not know is a path this check
+ * cannot read, and the caller refuses that rather than passing it — the head below is read
+ * corner by corner, so a path whose shape cannot be turned into corners is not a head.
  */
-function pathBox(d) {
+function pathPoints(d) {
   const points = []
   let x = 0
   let y = 0
@@ -217,10 +221,47 @@ function pathBox(d) {
     else if (command !== 'Z') known = false
     if (command !== 'Z') points.push([x, y])
   }
-  if (!known || points.length === 0) return null
+  return known && points.length > 0 ? points : null
+}
+
+/** The box those points are drawn in. */
+function pathBox(d) {
+  const points = pathPoints(d)
+  if (points === null) return null
   const xs = points.map((point) => point[0])
   const ys = points.map((point) => point[1])
   return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) }
+}
+
+/**
+ * Which way an arrow's head points, read from the line it is drawn on and the head's own
+ * corners. The direction is the one the line arrives in, taken from its last two points; the
+ * two corners of a triangle that sit at the same place along that direction are the base the
+ * head is drawn from, and the third is its point. The point has to be *ahead* of the base on
+ * the way in: a head whose point trails its base is drawn backwards, pointing at the stage the
+ * arrow came from rather than the one it lands on. The head's box cannot tell these apart —
+ * the mirrored head is the same triangle over the same two x's — so the reading is the
+ * corners, not the extent. `null` is a head this cannot read: fewer or more than three corners,
+ * a line of no length, or corners that do not give it one base.
+ */
+function headLeadsLine(line, head) {
+  if (line === null || head === null || line.length < 2 || head.length !== 3) return null
+  const [from, to] = line.slice(-2)
+  const length = Math.hypot(to[0] - from[0], to[1] - from[1])
+  if (length === 0) return null
+  const dx = (to[0] - from[0]) / length
+  const dy = (to[1] - from[1]) / length
+  const along = head.map(([x, y]) => x * dx + y * dy)
+  const bases = [[0, 1], [0, 2], [1, 2]].filter(([i, j]) => Math.abs(along[i] - along[j]) < 0.5)
+  if (bases.length !== 1) return null
+  const [base] = bases
+  const apex = [0, 1, 2].find((index) => !base.includes(index))
+  return {
+    line: { from, to },
+    apex: head[apex],
+    base: base.map((index) => head[index]),
+    leads: along[apex] - (along[base[0]] + along[base[1]]) / 2 > 0.5,
+  }
 }
 
 /** The box a text node is drawn in: its own size, and the baseline it sits on. */
@@ -337,6 +378,7 @@ export function runDiagramOf(html) {
               .map((el) => ({
                 klass: classes(el).find((name) => name.startsWith('run-loop')) ?? '',
                 path: pathBox(el.attrs.get('d') ?? ''),
+                points: pathPoints(el.attrs.get('d') ?? ''),
               })),
           }
         }),
@@ -404,6 +446,26 @@ function queryWidth(conditions) {
     else found = null
   }
   return found
+}
+
+/**
+ * Which side of the width a media query's condition is on: `'below'` for a rule that holds at
+ * the widths *up to* the one it names (`max-width: 59.25rem`, built as `(width<=59.25rem)`),
+ * `'above'` for one that holds from that width up (`min-width`), and `null` for a query that
+ * names no width, or names two that disagree about their side. A width read from the wrong
+ * side is the same width, so the width alone cannot say which drawing a reader gets: the
+ * stacked run below 59.25 rem and the stacked run *above* it are two different pages.
+ */
+function querySide(conditions) {
+  let side = null
+  for (const [, minimum, maximum, kind] of (conditions ?? '').matchAll(
+    /(min-)?(max-)?width\s*(:|<=|>=|<|>)\s*([\d.]+)(rem|px)/g,
+  )) {
+    const here = kind === '>=' || kind === '>' || (kind === ':' && minimum) ? 'above' : kind === '<=' || kind === '<' || (kind === ':' && maximum) ? 'below' : null
+    if (here === null || (side !== null && side !== here)) return null
+    side = here
+  }
+  return side
 }
 
 /** Whether a rule's own conditions hold at a viewport: the widths a query names, and nothing
@@ -658,13 +720,14 @@ export function runDiagramFailures(html, css, docs = sources()) {
         }
       }
       // The loop the draft draws: an arrow that leaves `review`, runs up beside the stages and
-      // lands back on `implement` — the `fix` round `docs/design/v1.md` §4 draws. Three
+      // lands back on `implement` — the `fix` round `docs/design/v1.md` §4 draws. Four
       // readings, because the arrow is a claim about the run rather than decoration: it has
       // to be *drawn* (the line, and the head that lands it — an arrow deleted from the
       // drawing leaves a run with no fix round in it), it has to join `review` and
-      // `implement` rather than two other stages, and it has to be drawn beside the pills
-      // rather than across them (a line struck through the two stages the round trip is
-      // between).
+      // `implement` rather than two other stages, its head has to be where the arrow points
+      // (the one end of the line that lands on `implement`, and turned the way the line runs),
+      // and it has to be drawn beside the pills rather than across them (a line struck through
+      // the two stages the round trip is between).
       if (box.texts.some((text) => text.stage)) {
         const lines = box.loop.filter((path) => path.klass === 'run-loop-line')
         const heads = box.loop.filter((path) => path.klass === 'run-loop-head')
@@ -688,6 +751,15 @@ export function runDiagramFailures(html, css, docs = sources()) {
           const landed = (tip.y0 + tip.y1) / 2
           if (!reaches(landed, implement) || tip.x0 < from.x0 - 0.5 || tip.x1 > from.x1 + 0.5) {
             out.push(`${where}'s ${box.name} draws the arrow's head from x ${tip.x0.toFixed(1)} to x ${tip.x1.toFixed(1)} at y ${landed.toFixed(1)}, and the head of the round trip sits at the end of its line that lands on \`implement\` — the line runs x ${from.x0.toFixed(1)} to x ${from.x1.toFixed(1)}, y ${from.y0.toFixed(1)} to y ${from.y1.toFixed(1)} —: an arrowhead is where the arrow points, and a head drawn anywhere else points at something the round trip does not do (the owner's draft of 2026-10-19)`)
+          }
+          // And which way it points, which is not where it sits: the head is a triangle, its
+          // three corners say which way round it was drawn, and the two x's a mirrored head is
+          // drawn over are the ones the correct head is drawn over too.
+          const head = headLeadsLine(lines[0].points, heads[0].points)
+          if (head === null) {
+            out.push(`${where}'s ${box.name} draws the loop's arrowhead as a path this check cannot read as a triangle (${heads[0].points?.length ?? 0} corners), and an arrowhead is the three corners of a triangle — one point, on a base — or it is not an arrow that says which stage the round trip lands on (the owner's draft of 2026-10-19)`)
+          } else if (!head.leads) {
+            out.push(`${where}'s ${box.name} draws the loop's arrowhead backwards: its point is at x ${head.apex[0].toFixed(1)}, its base at x ${head.base.map(([x]) => x.toFixed(1)).join(' and ')}, and the line arrives at x ${head.line.to[0].toFixed(1)} from x ${head.line.from[0].toFixed(1)} — the point trails the base the way the line runs, so the head points back at the stage the run came from rather than at the one it lands on: an arrowhead is where the arrow points (the owner's draft of 2026-10-19)`)
           }
         }
         for (const path of box.loop) {
@@ -717,6 +789,11 @@ export function runDiagramFailures(html, css, docs = sources()) {
   //     width the drawings change over at, which is the whole reason that width is 59.25 rem
   //     and not the site's 48 rem chrome breakpoint: at a 768 px viewport the column scales
   //     the wide drawing's 16 unit labels to 9.6 px, a label a reader cannot read.
+  //
+  // A rule's *width* is not enough to say what a reader at a viewport is shown: `(width<=59.25rem)`
+  // and `(width>=59.25rem)` name the same width and show the drawings at opposite ends of it.
+  // So each switched rule carries which side of its width it holds on, and the changeover the
+  // two `some` checks below hold is the one that shows the stacked run to the narrow reader.
   const shown = (klass) => {
     const rules = diagramDeclarations(css).filter(
       (declaration) => declaration.property === 'display' && new RegExp(`\\.${klass}(?![\\w-])`).test(declaration.selector),
@@ -725,24 +802,26 @@ export function runDiagramFailures(html, css, docs = sources()) {
       plain: rules.filter((rule) => !rule.conditions).map((rule) => rule.value),
       switched: rules
         .filter((rule) => rule.conditions)
-        .map((rule) => ({ value: rule.value, at: queryWidth(rule.conditions) })),
+        .map((rule) => ({ value: rule.value, at: queryWidth(rule.conditions), side: querySide(rule.conditions) })),
     }
   }
   const tallShown = shown('run-tall')
   const wideShown = shown('run-wide')
   const widths = [...new Set([...tallShown.switched, ...wideShown.switched].map((rule) => rule.at))]
   const switchAt = widths.length === 1 ? widths[0] : null
+  const described = (rule) =>
+    `\`display: ${rule.value}\` ${rule.at === null ? 'at a width this check cannot read' : `${rule.side === null ? 'on no side this check can read of' : `at or ${rule.side}`} ${rule.at} px`}`
   if (!tallShown.plain.includes('none')) {
     out.push(`the tall drawing is \`display: ${tallShown.plain.join(', ') || '(nothing declared)'}\` above the width the two drawings change over at, and only one of the two drawings is shown at a time: the run is drawn twice and read once (the owner's draft of 2026-10-19)`)
   }
   if (switchAt === null) {
     out.push(`the two drawings change over at ${widths.length === 0 ? 'no width this check can read' : `${widths.length} different widths (${widths.map((at) => (at === null ? 'one it cannot read' : `${at} px`)).join(', ')})`}: one drawing is shown at a time, so the page's stylesheet declares the single width that swaps them, and the whole reason that width is where it is is the label size below (the owner's draft of 2026-10-19)`)
   } else {
-    if (!tallShown.switched.some((rule) => rule.value === 'block' && rule.at === switchAt)) {
-      out.push(`the tall drawing is \`display: ${tallShown.switched.map((rule) => rule.value).join(', ') || '(nothing declared)'}\` inside a media query, and a phone is met with the stacked run rather than the shrunk wide one: the query at ${switchAt} px is the one that shows it (the owner's draft of 2026-10-19)`)
+    if (!tallShown.switched.some((rule) => rule.value === 'block' && rule.at === switchAt && rule.side === 'below')) {
+      out.push(`the tall drawing is ${tallShown.switched.map(described).join(', ') || 'not declared inside a media query'}, and a phone is met with the stacked run rather than the shrunk wide one: the query at ${switchAt} px is the one that shows it, read from below — a query naming the same width from above shows the stacked run to a desktop and the shrunk wide one to the phone it cannot be read at (the owner's draft of 2026-10-19)`)
     }
-    if (!wideShown.switched.some((rule) => rule.value === 'none' && rule.at === switchAt)) {
-      out.push(`the wide drawing is \`display: ${wideShown.switched.map((rule) => rule.value).join(', ') || '(nothing declared)'}\` inside a media query, and the wide drawing is turned off at the same width the tall one is turned on at: two drawings on a page is the run drawn twice and read twice (the owner's draft of 2026-10-19)`)
+    if (!wideShown.switched.some((rule) => rule.value === 'none' && rule.at === switchAt && rule.side === 'below')) {
+      out.push(`the wide drawing is ${wideShown.switched.map(described).join(', ') || 'not declared inside a media query'}, and the wide drawing is turned off below the same width the tall one is turned on below: two drawings on a page is the run drawn twice and read twice, and a query naming the same width from above turns the wide one off for the desktop and leaves both of them on the phone (the owner's draft of 2026-10-19)`)
     }
   }
   const switchColumn = switchAt === null ? null : columnAt(css, switchAt)
@@ -889,6 +968,28 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
     return html.replace(path[0], `${path[1]}${moved}"`)
   }
 
+  // The loop's arrowhead turned round: the same triangle over the same two x's with its point
+  // and the base exchanged, which is the head drawn back along its own line. The head is
+  // `M base (y-6) L point y L base (y+6) Z`, so the numbers are three corners and the first is
+  // the base the third repeats; the swap writes the point's x where the base's was.
+  const headCorners = (html) => {
+    const head = /(<path class="run-loop-head" d=")([^"]*)"/.exec(html)
+    assert.ok(head, 'the built page draws no loop arrowhead, and this fixture redraws it')
+    const numbers = head[2].match(/-?\d+(?:\.\d+)?/g)
+    assert.equal(numbers.length, 6, 'the loop arrowhead is three corners of a triangle, and this fixture redraws it corner by corner')
+    return { head, numbers }
+  }
+  const mirrorHead = (html) => {
+    const { head, numbers: [base, yTop, point, yMid, , yBottom] } = headCorners(html)
+    return html.replace(head[0], `${head[1]}M ${point} ${yTop} L ${base} ${yMid} L ${point} ${yBottom} Z"`)
+  }
+  // And the point dropped, leaving the base: two corners in the box the head was drawn in, so
+  // the position check still passes and the head is refused for what it is.
+  const flattenHead = (html) => {
+    const { head, numbers: [base, yTop, , , other, yBottom] } = headCorners(html)
+    return html.replace(head[0], `${head[1]}M ${base} ${yTop} L ${other} ${yBottom}"`)
+  }
+
   // The loop redrawn between two other stages, in the lane it keeps: the arrow's two ends
   // moved up one stage row, so the round trip leaves `verify` and lands on `bootstrap` — a fix
   // round the run does not take. The row is the drawing's own: every pill is drawn six units
@@ -990,6 +1091,24 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       'an arrowhead somewhere else',
       shiftX(page, 'run-loop-head', 40),
       /draws the arrow's head from x .* and the head of the round trip sits at the end of its line/,
+    ],
+    // The head's *direction*, which is not its position: the triangle turned round over the
+    // same two x's, which is the head the file drew before this check existed — the point at
+    // the base's place and the base where the point belongs, so the arrow lands pointing back
+    // the way it came. Nothing about the head's box changes, so the position check above cannot
+    // see it.
+    [
+      'a loop arrowhead pointing back down its own line',
+      mirrorHead(page),
+      /draws the loop's arrowhead backwards/,
+    ],
+    // And a head that is not a triangle at all: the point dropped, leaving the base — the head
+    // is what says which way the arrow points, so a path that is not three corners is refused
+    // rather than measured.
+    [
+      'a loop arrowhead that is not a triangle',
+      flattenHead(page),
+      /cannot read as a triangle \(2 corners\)/,
     ],
     [
       'a loop line nothing can measure',
@@ -1111,7 +1230,16 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
     [
       'a wide drawing that is not turned off at the changeover',
       replaceOnce('{display:none}.run-tall', '{display:block}.run-tall'),
-      /the wide drawing is `display: block` inside a media query/,
+      /the wide drawing is `display: block`/,
+    ],
+    // The same width read from the other side: `(width>=59.25rem)` names the width the page
+    // changes over at and changes over the wrong way — the stacked drawing is shown to the
+    // desktop and the shrunk wide one to the phone the floor exists for. Both rules are still
+    // at 948 px, so the width alone cannot see it.
+    [
+      'the drawings changing over the other way round',
+      replaceOnce('(width<=59.25rem)', '(width>=59.25rem)'),
+      /a phone is met with the stacked run|turned off below the same width/,
     ],
     // And the arithmetic itself: a stylesheet that does not say what `main`'s gutter is leaves
     // the box every readability number is taken at unmeasurable, which is refused rather than

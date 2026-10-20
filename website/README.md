@@ -488,11 +488,19 @@ added or removed without this sentence moving fails there:
     ceiling of its own scale — 22.5 rem, one unit to the pixel — so a tablet is shown the
     phone's picture rather than that picture stretched to the column, and
     `website/test/how-it-works.mjs` holds that ceiling, the changeover and the floor at the
-    column the page's own stylesheet gives each drawing. The same file holds the arrow itself
+    column the page's own stylesheet gives each drawing, and reads which *side* of that width
+    each rule holds on rather than only the width: `(width<=59.25rem)` and `(width>=59.25rem)`
+    name the same width and show the drawings to opposite readers, so a changeover read from
+    the wrong side — the stacked drawing on the desktop, the shrunk wide one on the phone the
+    floor exists for — is refused too. The same file holds the arrow itself
     now: the line and the head that lands it, drawn at all, joining `review` and `implement`
     rather than two other stages, and the head at the end of the line that lands on
-    `implement`. Before, the gate refused only an arrow drawn across a stage pill, so deleting
-    the arrow from both drawings left it green. The page weight and the script did not move:
+    `implement`, pointing the way the line runs — the head is a triangle and its own three
+    corners say which way round it was drawn, because a mirrored head is the same triangle over
+    the same two x's and its box cannot tell the two apart. Before, the gate refused only an
+    arrow drawn across a stage pill, so deleting the arrow from both drawings left it green,
+    and the head the component drew was mirrored: it sat on the right pill pointing back up
+    its own line, at the stage the run came from. The page weight and the script did not move:
     the rules are scoped to the component, which one page renders, and the script is
     untouched.
   - **And the round re-derived the three figures from the build rather than from its own
