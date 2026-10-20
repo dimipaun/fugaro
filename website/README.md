@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **979,813 bytes in a checkout with no tags** and to **979,813 bytes with the
+  commit builds to **979,966 bytes in a checkout with no tags** and to **979,966 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -460,7 +460,7 @@ added or removed without this sentence moving fails there:
     page and refuses an icon that references a file or an origin. The words are the ones the
     section already carried, so the word ceiling did not move.
   - **The security page opens with the trust boundary drawn** (the owner's brief of 2026-10-20),
-    and it moved the site figure alone, 975,034 → **979,813**, by **4,779 bytes**. The page is
+    and it moved the site figure alone, 975,034 → **979,966**, by **4,932 bytes**. The page is
     four things now and nothing else: the drawing comes first, above the document's *In short*
     section, and it is one inline `<svg>` — the source of the task and the people who can steer
     a run, the one container per run and what it holds, the pull request that leaves it, and the
@@ -500,7 +500,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,556 bytes. Three times 350,852: the heaviest page, the
     docs hub, at 280,681 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,674,301 bytes. Three times 1,224,767 (every file in `dist/`, 979,813
+  - **Whole site:** 3,674,874 bytes. Three times 1,224,958 (every file in `dist/`, 979,966
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 

@@ -358,12 +358,14 @@ const DIAGRAM_LABEL = quoted(
 
 /**
  * The facts under the picture, as the document's own clauses: who sends the task, what the
- * run is, and where the model key sits. Each is rendered with the page's own inline markup,
- * so a code span in the document is a `<code>` here exactly as it is in the summary below.
+ * run is, whose accounts the per-repository identity runs under, and where the model key sits.
+ * Each is rendered with the page's own inline markup, so a code span in the document is a
+ * `<code>` here exactly as it is in the summary below.
  */
 const DIAGRAM_FACTS = [
   'The design assumes you trust the repository and the source of the task: anyone who can push to it, launch a run, or is listed in `followup.trusted` can steer an agent that holds the credentials below',
   'Fugaro runs a coding agent with its permission prompts turned off, in a fresh cloud container per run, and ends every run with a pull request',
+  "Each repository's jobs and builds run as their own service accounts",
   "What is not on by default: the budget gateway, so with no `budget:` block the real model key sits in the agent's environment",
 ].map((fact) => inline(quoted(fact)))
 
@@ -396,7 +398,7 @@ const DIAGRAM_LIMITS = [
       <figure>
         <svg
           class="boundary-drawing"
-          viewBox="0 0 360 640"
+          viewBox="0 0 360 664"
           role="img"
           aria-label={DIAGRAM_LABEL}
           focusable="false"
@@ -415,7 +417,7 @@ const DIAGRAM_LIMITS = [
           {/* The boundary itself: one container per run, and what the document says is inside
               it. The dashed box is the boundary, so nothing is drawn crossing it except the
               two arrows that leave it. */}
-          <rect class="boundary-boundary" x="12" y="130" width="336" height="376" rx="16" />
+          <rect class="boundary-boundary" x="12" y="130" width="336" height="400" rx="16" />
           <text class="boundary-heading" x="32" y="166">{diagramLabel('one container per run')}</text>
 
           <rect class="boundary-card" x="32" y="182" width="274" height="72" rx="10" />
@@ -427,29 +429,30 @@ const DIAGRAM_LIMITS = [
           <text class="boundary-line" x="48" y="310">{diagramLabel('the agent shares the container')}</text>
           <text class="boundary-line" x="48" y="328">{diagramLabel('can read its /proc')}</text>
 
-          <rect class="boundary-card" x="32" y="342" width="274" height="72" rx="10" />
+          <rect class="boundary-card" x="32" y="342" width="274" height="96" rx="10" />
           <text class="boundary-title" x="48" y="368">{diagramLabel('per-repository identities')}</text>
-          <text class="boundary-line" x="48" y="392">{diagramLabel('narrow git credentials')}</text>
+          <text class="boundary-line" x="48" y="392">{diagramLabel('their own service accounts')}</text>
+          <text class="boundary-line" x="48" y="416">{diagramLabel('narrow git credentials')}</text>
 
-          <rect class="boundary-card" x="32" y="422" width="274" height="72" rx="10" />
-          <text class="boundary-title" x="48" y="448">{diagramLabel('the real model key')}</text>
-          <text class="boundary-line" x="48" y="470">{diagramLabel("sits in the agent's environment")}</text>
-          <text class="boundary-line" x="48" y="488">{diagramLabel('the budget gateway')}</text>
+          <rect class="boundary-card" x="32" y="446" width="274" height="72" rx="10" />
+          <text class="boundary-title" x="48" y="472">{diagramLabel('the real model key')}</text>
+          <text class="boundary-line" x="48" y="494">{diagramLabel("sits in the agent's environment")}</text>
+          <text class="boundary-line" x="48" y="512">{diagramLabel('the budget gateway')}</text>
 
           {/* Out of the container: the pull request every run ends with. */}
           <g class="boundary-arrow">
-            <line x1="150" y1="506" x2="150" y2="523" />
-            <polygon class="boundary-arrow-head" points="150,532 144,521 156,521" />
+            <line x1="150" y1="530" x2="150" y2="547" />
+            <polygon class="boundary-arrow-head" points="150,556 144,545 156,545" />
           </g>
-          <rect class="boundary-card" x="12" y="532" width="298" height="64" rx="12" />
-          <text class="boundary-title" x="28" y="570">{diagramLabel('ends every run with a pull request')}</text>
+          <rect class="boundary-card" x="12" y="556" width="298" height="64" rx="12" />
+          <text class="boundary-title" x="28" y="594">{diagramLabel('ends every run with a pull request')}</text>
 
           {/* And out of the boundary, past it: the egress the document says nothing stops. */}
           <g class="boundary-arrow">
-            <path d="M316 480 H 328 V 583" />
-            <polygon class="boundary-arrow-head" points="328,592 322,581 334,581" />
+            <path d="M316 504 H 328 V 607" />
+            <polygon class="boundary-arrow-head" points="328,616 322,605 334,605" />
           </g>
-          <text class="boundary-line" x="348" y="616" text-anchor="end">{diagramLabel('network egress is unrestricted')}</text>
+          <text class="boundary-line" x="348" y="640" text-anchor="end">{diagramLabel('network egress is unrestricted')}</text>
         </svg>
 
         <ul class="boundary-facts">
