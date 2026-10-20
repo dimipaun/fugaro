@@ -181,13 +181,36 @@ restore_run() {
   # `set -o pipefail` would carry that exit out of the substitution, `set -e` would end the
   # script inside this cleanup, and the RESULT block would never be printed: the owner would
   # be left with a deleted service and no statement of what was left behind.
-  local svc_left img_left repo_left
+  #
+  # Guarded is not the same as COUNTED, though. `gcloud … | wc -l` prints 0 for a query that
+  # printed nothing, and a query that FAILED printed nothing too: an expired ADC session late
+  # in a two-hour run, a transient API error, and the deletes above (guarded the same way)
+  # can all fail together and still leave a block that reads "the three counts read 0" —
+  # `restore: PASS`, exit 0, and the ownership records removed, which is the false PASS the
+  # scratch-removed row beside it exists to prevent. So each query's own exit status is read
+  # here, and a count that could not be READ is reported as that rather than as a 0.
+  local svc_left img_left repo_left svc_rc=0 img_rc=0 repo_rc=0
   svc_left=$(gcloud run services list --project="${P:?}" --region="${L:?}" \
-    --filter="metadata.name=${SVC}" --format='value(metadata.name)' | wc -l | tr -d ' ') || true
-  img_left=$(gcloud artifacts docker images list "${L}-docker.pkg.dev/${P}/${SVC}" \
-    --project="${P:?}" --include-tags --format='value(image)' 2>/dev/null | wc -l | tr -d ' ') || true
+    --filter="metadata.name=${SVC}" --format='value(metadata.name)' | wc -l | tr -d ' ') || svc_rc=$?
   repo_left=$(gcloud artifacts repositories list --project="${P:?}" --location="${L:?}" \
-    --filter="name:${SVC}" --format='value(name)' | wc -l | tr -d ' ') || true
+    --filter="name:${SVC}" --format='value(name)' | wc -l | tr -d ' ') || repo_rc=$?
+  # The images live inside the repository, so the question is asked only while the repository
+  # list succeeded and said one is there: against a repository this Restore has just deleted
+  # the CLI answers NOT_FOUND, and that answer IS the count of images left, not a failed
+  # query. A repository list that FAILED is not read as "gone" (an empty value is not a
+  # measurement), so the images are asked about then — and a failure there is a failure.
+  if [ "$repo_rc" = 0 ] && [ "$repo_left" = 0 ]; then
+    img_left=0
+  else
+    img_left=$(gcloud artifacts docker images list "${L}-docker.pkg.dev/${P}/${SVC}" \
+      --project="${P:?}" --include-tags --format='value(image)' 2>/dev/null | wc -l | tr -d ' ') || img_rc=$?
+  fi
+  if [ "$svc_rc" != 0 ] || [ "$img_rc" != 0 ] || [ "$repo_rc" != 0 ]; then
+    fact "restore-counts" FAIL "a list query failed, so how many are left cannot be read: services ${svc_left:-unread} (the query exited ${svc_rc}), images ${img_left:-unread} (exit ${img_rc}), repository ${repo_left:-unread} (exit ${repo_rc}). Each count must read 0 for this check's own things to be gone, and a query that failed is not a 0"
+    fact "restore" FAIL "the counts could not all be read (the service list exited ${svc_rc}, the image list exited ${img_rc}, the repository list exited ${repo_rc}), so this check cannot say whether what it created is still in ${P}/${L}. Nothing was tried a second time, and nothing is claimed: run the three list commands by hand — they are the three in this check's steps appendix, docs/credentials-service/check91-steps.md, under the Restore — and read the answer yourself. The scratch directory is KEPT on purpose — it holds the records that say what is this check's — at $SCRATCH, and it is this check's own: remove it yourself (rm -rf) once you no longer need them. A fresh run of this check does NOT take it over: it makes a new scratch directory of its own and stops in the guards while the service or the repository is still in the project."
+    SCRATCH_KEPT=yes
+    return 0
+  fi
   fact "restore-counts" PASS "services: ${svc_left}, images: ${img_left}, repository: ${repo_left} (each must read 0)"
   if [ "$svc_left" != 0 ] || [ "$img_left" != 0 ] || [ "$repo_left" != 0 ]; then
     fact "restore" FAIL "the counts are not all 0, so something this check created is still there (services=${svc_left} images=${img_left} repository=${repo_left}). Nothing was tried a second time: delete the survivors by hand (the service and its image, and the repository if the repo-existed record says no), then run the three list commands above until all three counts read 0. The scratch directory is KEPT on purpose — it holds the records that say what is this check's — at $SCRATCH, and it is this check's own: remove it yourself (rm -rf) once you no longer need them. A fresh run of this check does NOT take it over: it makes a new scratch directory of its own and stops in the guards while the service or the repository is still in the project."

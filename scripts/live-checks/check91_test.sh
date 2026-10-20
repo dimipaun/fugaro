@@ -117,6 +117,18 @@ def rm(name):
         pass
 
 
+def listfails(kind):
+    """Whether this run says the list QUERY itself fails, as a real one does when the
+    session's credentials have expired or the API answers with a transient error. It is
+    not the same answer as an empty list: an empty list is exit 0 and prints nothing,
+    which is what a count of 0 is read from."""
+    want = os.environ.get("FAKE_GCLOUD_LIST_FAILS", "")
+    return want == "all" or kind in want.split(",")
+
+
+LIST_FAILED = "ERROR: There was a problem refreshing your current auth tokens: the fake gcloud was told to fail this list\n"
+
+
 if mode == "hang":
     import time
     time.sleep(600)
@@ -133,6 +145,9 @@ if args[:2] == ["run", "services"] and args[2:3] == ["describe"]:
     sys.exit(0)
 
 if args[:2] == ["run", "services"] and args[2:3] == ["list"]:
+    if listfails("services"):
+        sys.stderr.write(LIST_FAILED)
+        sys.exit(1)
     if state("service"):
         print("fugaro-chk91")
     sys.exit(0)
@@ -162,6 +177,9 @@ if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["delete"]:
     sys.exit(0)
 
 if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["list"]:
+    if listfails("repositories"):
+        sys.stderr.write(LIST_FAILED)
+        sys.exit(1)
     if state("repo"):
         print("projects/fugaro-dev/locations/us-east5/repositories/fugaro-chk91")
     sys.exit(0)
@@ -171,6 +189,9 @@ if args[:2] == ["artifacts", "docker"] and args[2:3] == ["images"]:
         rm("image")
         sys.exit(0)
     if args[3:4] == ["list"]:
+        if listfails("images"):
+            sys.stderr.write(LIST_FAILED)
+            sys.exit(1)
         # A list against a repository that is not there is NOT_FOUND for the real CLI: it
         # exits non-zero with the error on stderr and prints nothing. The Restore's image
         # count is the one query that meets this -- the repository is deleted just before
@@ -569,6 +590,50 @@ test_restore_leftover() {
   expect_absent "$out" "re-run this check" "leftover restore: the block promises no impossible re-run"
 }
 
+# A count QUERY that fails is not a count of 0. The deletes above are guarded the same way,
+# so a run whose session has expired late in its two hours can have every gcloud call fail at
+# once, and `... | wc -l` prints 0 for a query that printed nothing -- the same 0 an empty
+# list prints. Read as a count, that is `restore: PASS`, exit 0, and the ownership records
+# deleted: exactly the false PASS the scratch-removed row beside it exists to prevent.
+test_restore_count_query_failure_is_not_zero() {
+  local dir=$work/countfail
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_DELETE_FAILS=yes FAKE_GCLOUD_LIST_FAILS=all
+  expect_status "$status" 1 "failing count queries: the verdict"
+  expect_contains "$out" "FACT restore-counts: FAIL" "failing count queries: the counts are not read as 0"
+  expect_contains "$out" "a list query failed" "failing count queries: the fact says why there is no count"
+  expect_absent "$out" "FACT restore-counts: PASS" "failing count queries: no count is claimed"
+  expect_absent "$out" "FACT restore: PASS" "failing count queries: the Restore does not claim a clean project"
+  expect_contains "$out" "FACT restore: FAIL" "failing count queries: the Restore says it cannot tell"
+  expect_contains "$out" "END (exit 1)" "failing count queries: the block still comes back"
+  # The records are what the owner deletes the survivors by hand from, so they are KEPT --
+  # a failed query is not a reason to throw away the only statement of what is this check's.
+  if [ ! -d "$scratch" ]; then
+    fail "failing count queries: the scratch directory was removed on a Restore that could not read its counts"
+  else
+    kept+=("$scratch")
+  fi
+  expect_contains "$err" "the scratch directory is kept" "failing count queries: the message"
+}
+
+# One failed query is enough: the other two counts reading 0 must not paper over the one that
+# could not be read. Here the service list is the one that fails, and the still-existing
+# repository means the run cannot say the service is gone.
+test_restore_count_query_failure_is_not_papered_over() {
+  local dir=$work/onefail
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_DELETE_FAILS=yes FAKE_GCLOUD_LIST_FAILS=services
+  expect_status "$status" 1 "one failing count query: the verdict"
+  expect_contains "$out" "FACT restore-counts: FAIL" "one failing count query: the fact"
+  expect_absent "$out" "restore-counts: PASS — services: 0" "one failing count query: the failed service list is not reported as 0"
+  expect_contains "$out" "FACT restore: FAIL" "one failing count query: the Restore says it cannot tell"
+  if [ ! -d "$scratch" ]; then
+    fail "one failing count query: the scratch directory was removed"
+  else
+    kept+=("$scratch")
+  fi
+}
+
 # A scratch directory the run cannot remove is a FAIL, and a FAIL in the block is a
 # non-zero exit: the row is added to the facts BEFORE the verdict is read out of them, so a
 # block that reads `scratch-removed: FAIL` cannot end at `exit 0` and be taken for a pass.
@@ -658,6 +723,8 @@ test_burst_stream
 test_liveness_probe_failure_is_recorded
 test_no_http2_curl
 test_restore_leftover
+test_restore_count_query_failure_is_not_zero
+test_restore_count_query_failure_is_not_papered_over
 test_scratch_removal_failure_is_a_failure
 test_sigint
 test_never_belong
