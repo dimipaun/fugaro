@@ -1,14 +1,21 @@
 # The console's style: the theme, the layout, and the wiring
 
-**Status: design only; nothing is implemented.** Proposed 2026-10-19, at the owner's
-request ("a console styling task is needed … draft a styling design before anyone builds
-it"). Owner: **@Dimi**. Every claim below was read on `origin/main` at `82ba600` and names
-the file and the symbol it was read from. Nothing here starts until the owner approves it:
-**no `.css` file, no Go, no TypeScript, no change to `console/`, and no change to
-`SERVED_FILES` follows this document on its own.** The build plan it produces is
-[§7](#7-the-build-plan-phase-6-unapproved), added to
-[the desktop-console plan](../plans/2026-10-15-desktop-console.md) as **Phase 6,
-UNAPPROVED**.
+**Status: design only; APPROVED by the owner on 2026-10-19, and Phase 6 is being built to
+it.** *The status as first written, kept:* **Status: design only; nothing is implemented.**
+Proposed 2026-10-19, at the owner's request ("a console styling task is needed … draft a
+styling design before anyone builds it"). Owner: **@Dimi**. Every claim below was read on
+`origin/main` at `82ba600` and names the file and the symbol it was read from. Nothing here
+starts until the owner approves it: *no `.css` file, no Go, no TypeScript, no change to
+`console/`, and no change to `SERVED_FILES` follows this document on its own* — which is
+why this document is the design and the build plan it produces,
+[§7](#7-the-build-plan-phase-6), is the work. **The owner approved both on 2026-10-19**, so
+that go is given: §7's tasks are **APPROVED by the owner on 2026-10-19**, **Task 6.1** (the
+token layer) is the first of them, and
+[the desktop-console plan](../plans/2026-10-15-desktop-console.md) carries the same approval
+in its phase heading, its Phase-summary row and its PR rows. **One of the six questions §8
+put to the owner is answered in the ruling itself and is binding on the tasks below**:
+**Q1 is option (b)** — one value set, dark; the light set does not ship, and §3.3's table is
+kept as the record of it.
 
 Related: [desktop-console.md](desktop-console.md) (§5.1 the hard rules, §6.1 the six
 transfers from tmog.org, §6.2 the four screens, §6.3 how it degrades),
@@ -114,7 +121,10 @@ reopen it:
 
 What was never decided, and is what this document decides or puts to the owner:
 
-1. the token file's contents — names, values, light and dark;
+1. the token file's contents — names and values, **as shipped the dark set alone** (the
+   owner's Q1 ruling of 2026-10-19, [§8](#8-open-for-the-owner)); *as first written,
+   "names, values, light and dark", and §3.3 is kept as the record of the light set that
+   ruling deferred;*
 2. how a theme is *chosen* (today `CONSOLE_THEME` in `entry.ts` is the literal `'dark'`,
    and the file's own header says "no task's Files name the code that would read the
    operating system's preference");
@@ -169,15 +179,21 @@ Three facts hold across every screen and are stated once:
 
 ### 2.1 The dashboard's chrome — `src/renderer/entry.ts`
 
-The entry draws the body's three children, in this order, all from `domSurface`'s mount:
-`section.console-installation`, `nav.console-views`, `div.console-panel` (asserted by
-`test/e2e/entry.spec.ts`: `expect(shape.bodyChildren).toEqual(['console-installation', 'console-views', 'console-panel'])`
-— the run that asserts it is an `ok` one, because **a fourth child precedes these three
-whenever the mode is not `ok`**: `startConsole` appends the version-skew banner to the same
-mount first (§2.8, §4.1)).
+The entry draws the body's four children, in this order, all from `domSurface`'s mount:
+`aside.console-rail` (§4.1's installation rail), `section.console-installation`,
+`nav.console-views`, `div.console-panel` — asserted by `test/e2e/entry.spec.ts`:
+`expect(shape.bodyChildren).toEqual(['console-rail', 'console-installation', 'console-views', 'console-panel'])`
+in an `ok` run. The rail is the canvas's one structural addition and the fourth child is the
+one this document adds to an assertion the spec already carries, so the list is **four names
+and not three**: a spec left at three fails against the entry the same task writes, and a
+table below that lists three regions leaves the rail's hooks unlisted, which §2's licence
+rule does not allow. **A fifth child precedes these four whenever the mode is not `ok`**:
+`startConsole` appends the version-skew banner to the same mount first (§2.8, §4.1), and in
+**refused** mode it is the whole document.
 
 | Region | Element and hooks | What it holds |
 |---|---|---|
+| Installation rail | `aside.console-rail` → `div.console-rail-head` (`p.console-rail-title`, `button.console-rail-collapse`), `div.console-rail-list` → one `button.console-rail-row` per installation it draws (`span.console-rail-name`, `span.console-rail-project`, `span.console-rail-state`, `span.console-rail-spend`), `div.console-rail-add` → `button.console-rail-add`, `p.console-rail-hint`; the ARIA is `role="tablist"` on the list, `role="tab"` and `aria-selected` on its rows, `aria-controls`/`aria-expanded` on the collapse control | the canvas's structural addition (§4.1): the header row and its collapse control, one tab per row, **one row per installation the dashboard can read** (§4.1), the add row and the hint. The first `role=` in the renderer. **Twelve hooks on thirteen elements** — `console-rail-add` names the foot row and its button both — and a rule selects no other: the tree, the tokens and the keyboard are §4.1's |
 | Installation line | `section.console-installation`, `data-installation`, `data-mode` | `data-installation="chosen"` with `p.installation-project`, `p.installation-binary`, `p.installation-version` and `data-mode`; `data-installation="none"` with `p.installation-none`; `data-installation="unreadable"` with `p.installation-unreadable`; and `p.installation-store-refusal` |
 | Navigation | `nav.console-views` → one `button.console-view` per view | `type="button"`, `data-view="live\|spend\|projects"`, `aria-current="true\|false"`, label as text |
 | Panel | `div.console-panel` | the mounted screen's root |
@@ -192,9 +208,15 @@ mount first (§2.8, §4.1)).
 - **There is no keyboard handling in `entry.ts` at all**: no `keydown`, no roving tabindex,
   no focus management. Interaction is `click` plus one `visibilitychange` listener. Tab
   order is implicit DOM order. **This is the gap [§4.3](#43-keyboard-and-focus) has to
-  close in CSS and in one small entry change.**
+  close in CSS and in one small entry change** — two of them, since the rail's list is a
+  second tablist (§4.3), and both are Task 6.5's.
 - The only ARIA attribute in the whole renderer is `aria-current`; **no element carries
-  `role=`**.
+  `role=`**. The rail is where that changes, and **the split is the same one the nav gets**:
+  `role="tablist"` on `div.console-rail-list`, `role="tab"` and `aria-selected` on its rows
+  are the renderer's first `role=` and its first tablist, and they are **Task 6.5's** — the
+  keyboard task, which also gives the nav's buttons their role and their `aria-selected` —
+  while the collapse control's `aria-controls`/`aria-expanded` come with the control itself,
+  in Task 6.3.
 
 ### 2.2 The installation picker — `console/src/renderer/installations.html` + `console/src/renderer/installations.ts`
 
@@ -489,6 +511,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | polling (no Firebase) | degraded | `data-kind="no-firebase"` + `data-state="polling"` |
 | no binary / refused | unavailable | `data-kind="no-binary"` / `"refused"` |
 | skew (refused / reduced) | chrome | the version-skew banner; the nav is missing the withheld buttons |
+| the rail's row states (§4.1) | chrome (the installation rail) | `span.console-rail-state` with the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`. **Not a state the code emits today** — the rail is the canvas's addition, and what a row reads is §4.1's open item — so whichever task draws the row draws the word with it: the word is what makes the tone redundant, and the collapsed rail keeps it in the row's accessible name |
 | not built | Projects (`policy`, `enrollment`) | `data-state="not-built"` + a `projects-because` sentence |
 | empty | picker (status line), Live (a `gap` bar), Spend (a `gap` point, a caps note) | the console's own sentence, never an empty box |
 | cap reached | **none — not a state in the code.** The cap is a `percent` reading and a bar's `data-fill` | the stylesheet may colour a threshold; the code emits no flag |
@@ -534,7 +557,7 @@ fallback to `--font-mono`.
 
 ## 3. The theme system
 
-### 3.1 One file, two value sets, one vocabulary
+### 3.1 One file, one value set, one vocabulary
 
 Following [the website's own split](../../website/src/styles/tokens.css) — "the palette is
 a value set for a fixed vocabulary rather than a second copy of it" — the console gets:
@@ -542,9 +565,16 @@ a value set for a fixed vocabulary rather than a second copy of it" — the cons
 | File | Holds | Contains no |
 |---|---|---|
 | `console/src/renderer/theme/tokens.css` | the **vocabulary**: spacing steps, radii, type sizes, leading, weights, motion durations, the focus-ring width and offset | colour |
-| `console/src/renderer/theme/palette.css` | the **value set**: every colour token, light and dark, each written once | sizes, spacing, motion |
+| `console/src/renderer/theme/palette.css` | the **value set**: every colour token, each written once — **as shipped, the dark set alone** (the owner's Q1 ruling of 2026-10-19; §3.3 is the record of the light set, which no task owns) | sizes, spacing, motion |
 | `console/src/renderer/theme/base.css` | reset, document, chrome, layout, responsive, focus, forced-colors | colour literals — it reads the tokens |
 | `console/src/renderer/theme/screens.css` | the per-screen rules, in the order §2 lists the screens | colour literals |
+
+**One value set ships, and it is the dark one** (the owner's Q1 ruling of 2026-10-19,
+[§8](#8-open-for-the-owner)): `palette.css` holds the dark values of §3.2 and nothing else,
+and §3.3 is kept as the record of the light set the ruling deferred. *The heading as first
+written, kept:* `One file, two value sets, one vocabulary` — the file held a light and a
+dark set and a `color-scheme` decided which one was used, the mechanism §3.6 records and
+the ruling removed.
 
 The plan's tree carries all four `src/renderer/theme/*.css` lines, each annotated with the
 task that writes it (`docs/plans/2026-10-15-desktop-console.md:120` — the tree as this change
@@ -602,8 +632,11 @@ should be able to check rather than assume:
   wrong: it is the site's, not this design's invention, and it is reused precisely because
   "attention" means the same thing on both sides of the product.
 - **One reuses a value under a different name**: the website's `--accent-on-dark` `#6FD8F5`
-  is the console's `--accent-ink`. The console has two grounds, so "on-dark" would name the
-  wrong one of them.
+  is the console's `--accent-ink`. "on-dark" is the site's name and the console calls the
+  tone by what it is — the accent as text; *as first written, "The console has two grounds,
+  so 'on-dark' would name the wrong one of them", which was the light set's reason (the
+  owner's Q1 ruling of 2026-10-19 leaves the one ground below, and the rename stands on the
+  name alone).*
 - **Six are invented here**, because the website has no equivalent: `--surface-alt`
   `#18222F` and `--border-strong` `#5B7491`, and the four state colours the console needs
   and the site does not — `--ok` `#4CC38A`, `--error` `#F2648C`, `--halted` `#C9A0FF`,
@@ -617,23 +650,29 @@ the site at all. One of them did move, and [§3.4](#34-contrast-computed) is whe
 | Token | Value | Hue | Role |
 |---|---|---|---|
 | `--ground` | `#0A0E16` | 220° | the window's ground |
-| `--surface` | `#121A26` | 216° | a panel, a card |
-| `--surface-alt` | `#18222F` | 214° | a table header, a zebra row |
+| `--surface` | `#121A26` | 216° | a panel, a card, the installation rail's ground (§4.1) |
+| `--surface-alt` | `#18222F` | 214° | a table header, a zebra row, the rail's selected row |
 | `--text` | `#E6EEF5` | 208° | body text |
 | `--text-muted` | `#9FB2C4` | 209° | labels, secondary prose |
 | `--accent` | `#17A8E6` | 198° | structure: rules, the focus ring, a filled control, the cap bar below its threshold |
 | `--accent-ink` | `#6FD8F5` | 193° | the accent **as text** — links, an accent heading |
 | `--border` | `#24303F` | 213° | a **decorative** hairline |
 | `--border-strong` | `#5B7491` | 212° | a border that marks a **control's extent** |
-| `--ok` | `#4CC38A` | 151° | measured and inside the cap |
+| `--ok` | `#4CC38A` | 151° | measured and inside the cap; the rail's `running` row (§4.1) |
 | `--warn` | `#F5A524` | 37° | attention: near deadline, silent, a cap approaching |
 | `--error` | `#F2648C` | 343° | failed, lost, an infra error |
 | `--halted` | `#C9A0FF` | 266° | killed — a **deliberate stop**, not a failure |
 | `--stale` | `#8A9AAB` | 211° | the last-known values after the feed stopped |
 
-### 3.3 The light value set — the same hue, darkened for a light ground
+### 3.3 The light value set — the record of the set the ruling deferred
 
-The website has no light ground ("the site has one, dark, appearance, and the brief does
+**This section is the record of the light value set, and no task owns it** (the owner's Q1
+ruling of 2026-10-19: option (b), dark only — [§8](#8-open-for-the-owner)). Nothing below
+ships; it is kept because a later ruling for a light theme should be a change of values
+against it rather than a redesign.
+
+*As designed, when the console was to ship both sets:* **the light value set — the same
+hue, darkened for a light ground.** The website has no light ground ("the site has one, dark, appearance, and the brief does
 not ask for a second", RF19), so this is the first light set in the product and it is
 derived from the same sampled hue: the accent moves from 198° to **199.6°** and is darkened
 until it clears 4.5:1 as text and 3:1 as a boundary on **each of the three light surfaces**,
@@ -661,12 +700,14 @@ needs its own accent step rather than the same value:
   where the background stops being the value §3.4 measured. The rows of that table are
   computed on the surface, not on the hover. The roles are not mirrored between the sets:
   on the dark set the ink is the *lighter* tone, on the light set the *darker* one.
+  *The owner's Q1 ruling of 2026-10-19 left this set unshipped — this paragraph is the
+  record of it, and no task reads it.*
 
 | Token | Value | Hue | Role |
 |---|---|---|---|
 | `--ground` | `#F2F6FA` | 210° | the window's ground (a blue-tinted paper, not white) |
-| `--surface` | `#FFFFFF` | — | a panel |
-| `--surface-alt` | `#E7EEF5` | 210° | a table header, a zebra row |
+| `--surface` | `#FFFFFF` | — | a panel, the installation rail's ground (§4.1) |
+| `--surface-alt` | `#E7EEF5` | 210° | a table header, a zebra row, the rail's selected row |
 | `--text` | `#0B1219` | 210° | body text |
 | `--text-muted` | `#516274` | 211° | labels, secondary prose |
 | `--accent` | `#0B6E9E` | 200° | structure, a filled control |
@@ -681,7 +722,11 @@ needs its own accent step rather than the same value:
 
 ### 3.4 Contrast, computed
 
-Every ratio below was computed from the sRGB relative-luminance definition
+**The dark numbers below are the ones that ship; every light column, and every phrase
+below that speaks of "the light set", "both sets" or "either set", is the arithmetic of the
+deferred set that §3.3 records** (the owner's Q1 ruling of 2026-10-19: one value set, dark
+— [§8](#8-open-for-the-owner)). They are kept because a later ruling for a light theme
+should be measured against them rather than computed again. Every ratio was computed from the sRGB relative-luminance definition
 (`(L1+0.05)/(L2+0.05)`) over the literal values in §3.2 and §3.3, by the same arithmetic
 `website/test/a11y.mjs` uses. **Requirements: 4.5:1 for body-size text, 3:1 for large text
 and for any boundary that marks a control's extent.**
@@ -719,8 +764,9 @@ and for any boundary that marks a control's extent.**
 | `--border` (decorative) | 1.24 | 1.35 | 1.15 | 1 px hairlines only |
 
 **A label on a filled control** (a filled button, a state chip, a kill banner's fill)
-carries `--ink-on-fill`, which is `--ground` on the dark set and `--surface` on the light
-set — light-on-dark and dark-on-light, as the two sets are inverses:
+carries `--ink-on-fill`, which is **`--ground` on the dark set that ships** and `--surface`
+on the light set §3.3 records — light-on-dark and dark-on-light, as the two sets would have
+been inverses:
 
 | Fill | Dark: `--ground` on it | Light: `--surface` on it | Needs |
 |---|---|---|---|
@@ -739,7 +785,9 @@ distance between two states in it is computed below rather than asserted — the
 revision of this section asserted a minimum, and the assertion was false in both sets (the
 dark set's `--warn`/`--error` pair was **37.0°** apart, its `--halted`/`--stale` pair
 **55.0°**, and the light set's `--warn`/`--error` pair **39.7°**). What this design holds
-instead is a rule and a number:
+instead is a rule and a number (the light set's figures are the deferred set's, which the
+owner's Q1 ruling of 2026-10-19 left unshipped — §3.3 is its record — and the dark set's
+are the ones that ship):
 
 > **Any two of the five state colours are at least 50° apart in hue, _or_ at least 3:1
 > apart in luminance contrast.** The first is what the five present colours meet; the
@@ -773,9 +821,10 @@ stays in the red family — a crimson rather than a fire-engine red — which is
 means: failed, lost, an infrastructure error, distinct from the deliberate stop that is
 `--halted`. Nothing else in either set moved.
 
-The two sets do **not** share their hues closely enough for one table to serve both: the
+The two sets did **not** share their hues closely enough for one table to serve both: the
 light set's `--halted` is 278° where the dark set's is 266°, 12° away, and its `--ok` is
-3.5° away, so both sets are tabulated.
+3.5° away, so both sets are tabulated here — **the dark table is the one that ships, and
+the light table is the deferred set's (§3.3, the owner's Q1 ruling of 2026-10-19).**
 
 **Dark: the ten pairs of state colours**
 
@@ -825,6 +874,7 @@ the code already emits**, and the stylesheet must never be the only carrier of a
 
 | State | The non-colour mark, already in the DOM |
 |---|---|
+| the rail's three row states (§4.1) | the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`, both in `span.console-rail-state`; the glyph alone is what the collapsed rail draws, and the row's accessible name then carries the word, so the tone is never the only carrier in either state |
 | killed / halted | the banner's **words**: `KILLED by <who> <when> "<reason>"` / `HALTED` |
 | stale | the banner's sentence, naming the 45 s threshold, plus `last read <at>` |
 | silent / lost / near / over deadline | the flag's **text** (`silent`, `lost`, `near deadline`, …) in `span.live-run-flag` |
@@ -841,8 +891,13 @@ The rules this makes binding on the stylesheet: (1) **a colour never replaces a 
 (2) a state colour is used on a **fill, a rule or a badge**, and the badge keeps its text;
 (3) the one state that is a colour-only reading today — a cap bar past its threshold — is
 always drawn beside its own percentage, so the colour is redundant by construction;
-(4) `--ok` is used for *measured and inside the cap*, never decoratively, per §6.1 rule 3
-("never decoratively").
+(4) `--ok` is used for *measured and inside the cap* **and for the rail's `running` row** —
+the installation the console is reading now, whose word is drawn beside its dot (§4.1), so
+the tone is still a state and not decoration — and never decoratively, per §6.1 rule 3
+("never decoratively"). *The rail's `running` is the second reading `--ok` carries, and it
+was added to this rule and to §3.2's role cell in the same edit that added the rail: a state
+word drawn in a tone whose stated role it does not have is a rule an implementer cannot
+justify against this document.*
 
 **This list is the primary defence; the separation table in [§3.4](#34-contrast-computed)
 is the secondary one.** The rule is not that the states are far apart in hue — an earlier
@@ -856,6 +911,18 @@ there because that is the only way to state it honestly.
 
 ### 3.6 How the theme is chosen
 
+**The owner's Q1 ruling of 2026-10-19 supersedes the mechanism below, and what ships is one
+declaration.** The console ships one value set, dark: `:root { color-scheme: dark; }` in
+`palette.css`, with the design's `:root, [data-theme]` pair kept around it so a later light
+set would be a change of values rather than a restructuring. **There is no switch and no
+script**: `light-dark()`, `prefers-color-scheme`, the OS-driven `light dark` pair and a
+`[data-theme='light']` block appear nowhere in the theme directory, and
+`console/test/unit/theme-tokens.test.ts` (Task 6.1) fails by name on each of the four, in
+either letter case and either quote style. The three sources below, the code block and the
+`light-dark()` paragraph are **the record of option (a)**, which the owner did not take; a
+task that wants a light theme again needs a new ruling and the case above changed with it.
+*As designed, before the ruling:*
+
 Three sources, in this order, and **one switch**:
 
 1. **The operating system, by default.** No script is involved: `:root` carries
@@ -867,15 +934,20 @@ Three sources, in this order, and **one switch**:
 3. **The owner's override**, if the owner wants one ([Q2](#8-open-for-the-owner)), which
    *writes that same attribute* (or, equivalently, `nativeTheme.themeSource` in the main
    process). Nothing in the CSS changes for it.
+   *These three sources are the two-set design the owner's Q1 ruling of 2026-10-19 removed;
+   they are kept as the record of it, and the ruled console reads no source at all.*
 
 The palette is written **once per token** with `light-dark()`, which reads the *used*
-`color-scheme` of the element it is declared on:
+`color-scheme` of the element it is declared on — *the two-set design the owner's Q1 ruling
+of 2026-10-19 removed, kept as the record of it:*
 
 ```css
+/* The two-set form, removed by the owner's Q1 ruling of 2026-10-19. */
 :root { color-scheme: light dark; }          /* the OS decides, until told otherwise   */
 [data-theme='light'] { color-scheme: light; } /* a screen, a mount, the document root   */
 [data-theme='dark']  { color-scheme: dark; }
 
+/* The two-set form, removed by the owner's Q1 ruling of 2026-10-19. */
 :root, [data-theme] {                          /* declared on both, so a mount can switch */
   --ground: light-dark(#F2F6FA, #0A0E16);
   --surface: light-dark(#FFFFFF, #121A26);
@@ -891,6 +963,9 @@ any depth. `light-dark()` needs Chromium 123; the console pins Electron 44.7.2
 (`console/package.json`), which is far past it — and the fallback, if the owner prefers no
 modern function, is two explicit blocks selected by attribute, with the token test
 asserting both blocks name exactly the same vocabulary (see [§9](#9-alternatives-considered)).
+**The owner's Q1 ruling of 2026-10-19 removed all of this**: `palette.css` sets
+`color-scheme: dark` outright, the pair is kept so a later light set would be a change of
+values rather than a restructuring, and the token test fails by name on each spelling above.
 
 **What each document gets, then:**
 
@@ -898,13 +973,16 @@ asserting both blocks name exactly the same vocabulary (see [§9](#9-alternative
 |---|---|---|
 | `index.html` (dashboard) | `console.js` | the entry puts `data-theme` on the mount it draws the chrome into, so the nav, the installation line and the panel all switch together; each screen additionally stamps its own root (as it does today) |
 | `installations.html` (picker) | `installations.js` | the picker's script stamps `document.documentElement` (or its `<main>`); its CSS is id-scoped |
-| `refusal.html` | **none** | `:root`'s `color-scheme: light dark` alone — **the OS decides, and no code runs.** This is the strongest argument for making the OS the default rather than a stored preference: the one document the console shows when nothing else works must be themed without a script |
+| `refusal.html` | **none** | `:root`'s `color-scheme` alone — **nothing decides anything, and no code runs.** As shipped under the Q1 ruling that is `dark` outright; the pre-ruling form of this row said `light dark` and was the strongest argument for making the OS the default rather than a stored preference, since the one document the console shows when nothing else works must be themed without a script |
 
 **Why the entry and not the screens decide.** Today the entry names one theme for every
 drawing (`CONSOLE_THEME`, and `renderLive(…, theme)` and its three siblings take it as an
 argument). That stays: the *argument* is what a golden frame records, and a screen never
-reads the environment. What changes in [Task 6.5](#75-task-65--the-theme-switch-the-window-background-and-the-keyboard)
-is the **value**: `CONSOLE_THEME` becomes the answer of a small `themeChoice()` that reads
+reads the environment. **Under the Q1 ruling `CONSOLE_THEME` keeps the value it has today**
+— the literal `'dark'`, which is the one set that ships — and no `matchMedia` read, no
+`change` subscription and no `nativeTheme` query comes with it. *What the two-set design
+would have changed in [Task 6.5](#75-task-65--the-theme-switch-the-window-background-and-the-keyboard):
+`CONSOLE_THEME` becomes the answer of a small `themeChoice()` that reads
 `matchMedia('(prefers-color-scheme: dark)')` and subscribes to its `change` event — a
 `matchMedia` read is neither a network call nor a style write, so the CSP is untouched and
 the `ElementLike` interface is untouched (a media query is not a DOM write).
@@ -972,15 +1050,20 @@ animated would be a figure whose last frame is a lie about when the value was re
 proposes to change, and it is *not* a CSS change: with no `backgroundColor`, a theme's
 window flashes the platform's default (usually white) before the document paints.
 
-**Which ground the window paints is a decision, and the first revision of this section
-left it ambiguous.** It said "equal to `--ground`" — but `--ground` has **two** values,
-`#0A0E16` and `#F2F6FA`, and §3.6 makes the OS the default, so a single pinned literal is
-wrong on one of the two machines. Pinning the dark ground alone is the worse of the two
-errors: on a light-OS machine it introduces the very flash §4.1 exists to remove, **dark**
-where the document is about to paint light.
+**Under the owner's Q1 ruling of 2026-10-19 the window paints one ground, and it is
+`#0A0E16`.** One value set ships, so `--ground` has one value, a single literal is right on
+every machine, and **no `nativeTheme` read and no `'updated'` listener comes with it** — the
+proposal that needed them was the two-set one. The token test therefore asserts that one
+literal against the shipped `--ground` (Task 6.5), not the pair below. *Which ground the
+window paints, as the two-set design decided it and kept as the record of option (a):* it
+said "equal to `--ground`", and with `--ground` carrying **two** values, `#0A0E16` and
+`#F2F6FA`, and §3.6 making the OS the default, a single pinned literal would have been wrong
+on one of the two machines — pinning the dark ground alone being the worse of the two errors,
+because on a light-OS machine it would introduce the very flash §4.1 exists to remove,
+**dark** where the document is about to paint light.
 
-So the window paints **the ground of the theme it is about to show**, and the main process
-reads which that is from `nativeTheme`:
+So the two-set design had the window paint **the ground of the theme it is about to show**,
+with the main process reading which that is from `nativeTheme`:
 
 - `nativeTheme.shouldUseDarkColors` → `#0A0E16` (the dark `--ground`), otherwise
   `#F2F6FA` (the light one);
@@ -991,30 +1074,47 @@ reads which that is from `nativeTheme`:
   `shouldUseDarkColors` is its answer, and the renderer's `matchMedia` read (Task 6.5) is
   asking the same question of the same preference. The `data-theme` attribute is still the
   single switch for the CSS.
+  *These three bullets are the two-set design's, and the owner's Q1 ruling of 2026-10-19
+  removed them: none of `nativeTheme`, `shouldUseDarkColors` or `themeSource` is read.*
 
-`nativeTheme` is core Electron and needs no dependency and no CSP change. The main process
-still cannot read the CSS, so **both** literals are duplicates of the two `--ground`
-values; the plan's Task 6.5 carries it, and the token test asserts **both** equalities —
+`nativeTheme` is core Electron and needs no dependency and no CSP change. **As shipped under
+the ruling none of it is read**: the main process cannot read the CSS, so a background
+literal is a duplicate of `--ground` however many sets there are, and with one set there is
+one duplicate to keep honest — the plan's Task 6.5 carries it, and the token test asserts the
+one equality. *The two-set form of the same problem:* **both** literals are duplicates of
+the two `--ground` values, and the token test asserts **both** equalities —
 the dark literal against `--ground` in the dark set and the light literal against `--ground`
 in the light set — rather than the ambiguous "equal to `--ground`" the first revision
 wrote.
 
-The document is one column, and the entry appends up to **four** children to it —
-`document.body`, which is the mount `startConsole` is handed:
+**Under the canvas the owner approved on 2026-10-19 the document is a two-column grid**,
+and the entry appends up to **five** children to `document.body`, which is the mount
+`startConsole` is handed. The canvas's one structural addition is a **left vertical
+installation rail** — the block below describes it — and the entry draws it as **one**
+child, `aside.console-rail`, in the grid's first column. The three bands of the bullets
+below are the second column and are otherwise unchanged:
 
 ```
-┌───────────────────────────────────────────────────────────────────────────┐
-│ section.console-skew   the version-skew banner — reduced mode only        │  when there is one
-├───────────────────────────────────────────────────────────────────────────┤
-│ section.console-installation   project · binary · version · mode          │  1 line
-├───────────────────────────────────────────────────────────────────────────┤
-│ nav.console-views   [ Live ] [ Spend ] [ Projects ]                       │  1 line
-├───────────────────────────────────────────────────────────────────────────┤
-│ div.console-panel                                                         │
-│   section.live | .spend | .projects | .run | .degraded | .console-unavailable
-└───────────────────────────────────────────────────────────────────────────┘
+┌───────────────────┬───────────────────────────────────────────────────────┐
+│ section.console-skew   spans both columns — reduced mode only          │  when there is one
+├───────────────────┼───────────────────────────────────────────────────────┤
+│ aside.console-rail│ section.console-installation   project · binary · …   │  1 line
+│   the installation├───────────────────────────────────────────────────────┤
+│   rail, §4.1 below│ nav.console-views   [ Live ] [ Spend ] [ Projects ]   │  1 line
+│                   ├───────────────────────────────────────────────────────┤
+│                   │ div.console-panel                                     │
+│                   │   section.live | .spend | .projects | .run | .degraded │
+│                   │   | .console-unavailable                              │
+└───────────────────┴───────────────────────────────────────────────────────┘
 ```
 
+- **The rail is the body's second child when there is a banner, and its first when there is
+  not**, and it comes **before** the installation line in both cases: the entry appends it
+  after `startConsole` has drawn the skew banner and before `drawInstallation`'s line, so
+  DOM order and visual order agree — a rail drawn on the left but appended last would put
+  the chrome after the content in the tab order, which is the one thing a rail may not do.
+  Under the canvas's grid the banner **spans both columns**; when it is present the rail and
+  the three bands below it share the rows under it.
 - **The version-skew banner is not in the panel, and it is not the panel's first child
   either.** `startConsole` appends it to the mount it was handed (`app.ts` 333) and that
   mount is `document.body` (`entry.ts` 180-183), so the banner is the body's **first
@@ -1024,7 +1124,7 @@ The document is one column, and the entry appends up to **four** children to it 
   holds the screen and nothing else. It is `section.console-skew` — a section, not a div —
   and it carries `data-theme`, `data-mode` and `data-skew` (`shared/version.ts` 579-587). In
   **refused** mode it is the whole document, because `bootDashboard` returns straight after
-  it and the other three children are never appended.
+  it and **the other four children — the rail included — are never appended**.
 - **The installation line and the nav are chrome and never scroll**; the panel scrolls.
   A sticky header is the difference between a dense screen and a screen that looks broken
   the moment it is longer than the window.
@@ -1038,6 +1138,167 @@ The document is one column, and the entry appends up to **four** children to it 
 - The installation line's three states (`chosen`, `none`, `unreadable`) are styled as
   three states: `chosen` is `--text`, `none` is `--text-muted`, and `unreadable` carries
   the `--warn` rule and its own sentence.
+
+**The installation rail — the canvas's one structural addition.** The canvas the owner
+approved on 2026-10-19 draws a **left vertical rail**: the installations as vertical tabs, a
+region the bands above do not have. It is the canvas's *only* structural addition. The
+content column to its right keeps the title bar, the view nav and the panel exactly as the
+bullets above describe them, and the four screens the canvas draws — Live, Spend, Projects
+and Run detail — are reached as [§2](#2-screen-inventory) says: three from the nav, and Run
+detail from a run row. The rail adds no tab of its own, and the console gains no view.
+
+The rail itself is `aside.console-rail` — the one element the entry appends for it — and its
+tree is **thirteen classed elements**, each element's class a hook a rule may select. Those
+thirteen elements carry **twelve classes**: the foot row and its button share
+`console-rail-add` (a row and the control inside it are one region, and the class names the
+region), so a stylesheet selects twelve distinct hooks and
+[§2.1](#21-the-dashboards-chrome--srcrendererentryts) lists the same twelve. **The count is
+stated here and in §2.1 because it is what a reader checks the tree against**, and the tree
+below is the list:
+
+```
+aside.console-rail                        the rail — the grid's first column
+├─ div.console-rail-head                  the header row
+│   ├─ p.console-rail-title               the word "Installations"
+│   └─ button.console-rail-collapse       the collapse control
+├─ div.console-rail-list  role="tablist"  the installation rows, one tab each
+│   └─ button.console-rail-row  role="tab"
+│       ├─ span.console-rail-name         the installation's name
+│       ├─ span.console-rail-project      its GCP project, in small text
+│       ├─ span.console-rail-state        the state glyph **and** the state word
+│       └─ span.console-rail-spend        the spend
+├─ div.console-rail-add                   the foot row, with a top divider above it
+│   └─ button.console-rail-add            "+ Add installation"
+└─ p.console-rail-hint                    "Switch with the shortcut keys 1 2 3"
+```
+
+- **The width is a fixed 216 px expanded and 56 px collapsed**, two literals in `base.css`
+  and **not tokens**: like `CONSOLE_WINDOW_SIZE`'s 1180 × 780 they are facts about this
+  window rather than values a screen reads, and no §3.1 table gains a row for them. The
+  collapsed width is the icon column — 16 px of padding, a 24 px glyph, 16 px again — so a
+  collapsed row still draws its glyph at the size the expanded rail draws it and the
+  collapse control keeps its own box in the header row above. **Both are stated here rather
+  than left to the task**: a rail whose collapsed width is the implementer's invention is a
+  rail whose icons sit at a different size in the two states, and the canvas draws the
+  icons-only state without its arithmetic. [§4.2](#42-narrow-windows)'s
+  breakpoints are the **window's**, written in `em` against the root size, and the rail is a
+  fixed 216 px of what is left: **the layers therefore fire with the content column 216 px
+  narrower than the width each one names** — §4.2 states it, and the figures are kept as the
+  window's rather than re-cut here, because they were chosen against a window whose resize
+  the operator controls. The rail itself never narrows with the window — it narrows only when
+  the operator collapses it, which is a control and not a media query.
+- **Tokens, and no new ones.** The rail's ground is `--surface`, the rules between its rows
+  are the `--border` hairline, the selected row is `--surface-alt` (the raised surface) with
+  a **3 px `--accent` left border**, the header's title and a row's name are `--text`, and
+  the small text and the add row are `--text-muted`. Every value here is a row of the set
+  that ships, [§3.2](#32-the-dark-value-set--the-consoles-first-screen); the palette gains
+  nothing, and a rule that wants a tone this list does not name is a rule that has not read
+  [§3.1](#31-one-file-one-value-set-one-vocabulary).
+- **The three state words, each beside its glyph.** The glyph is drawn **and** the word is
+  drawn — never one instead of the other ([§3.5](#35-never-colour-alone)):
+
+| Word | Glyph | Tone | What it says |
+|---|---|---|---|
+| `running` | `●` | `--ok` | the console is reading this installation now |
+| `silent` | `▲` | `--warn` | its last read was refused, or its feed has gone quiet |
+| `idle` | `○` | `--text-muted` | it is stored, and nothing is being read from it |
+
+- **The selected row** carries `aria-selected="true"` **and** the 3 px `--accent` left
+  border on `--surface-alt`; the attribute is the machine-readable mark and the border is
+  the drawn one, so the selection is not a colour alone either. The nav's `aria-current`
+  stays the nav's own marker — the rail is a tablist and marks itself as one.
+- **The header row** is a title and a control: `p.console-rail-title` reads
+  "Installations", and `button.console-rail-collapse` toggles the rail between its full
+  width and its icons-only state. **The button has an accessible name in both states** —
+  "Collapse the installations rail" and "Expand the installations rail" — and it carries
+  `aria-controls` naming `div.console-rail-list` and `aria-expanded`, so the state it is
+  about is announced rather than drawn only.
+- **The collapsed state is icons only, and it is a name-preserving collapse.** A row keeps
+  its glyph and drops its name, its project, its state word and its spend from *sight*; the
+  row's accessible name is then the whole of what it draws — the installation's name, its
+  project, the state word and the spend — so the word §3.5 requires is still announced and
+  the collapse removes no fact. The add row keeps its label and its accessible name, the
+  hint is hidden, and the rail's width is the **56 px** the width bullet above states — a
+  second literal beside the 216 px one and not a second token.
+- **The foot row is an entrance to the flow the console already has.** "+ Add installation"
+  opens the **existing** add-installation flow — the installation picker window of §2.2,
+  built by the main process's picker module (ruling C9), whose add form is the one place an
+  installation is created. The rail adds **no inline form, no second add path, no new store
+  operation and no new file**, and it is not a second way to remove or edit anything.
+- **What the rail draws, and the read the console does not have.** The rail draws **one row
+  per installation the dashboard can read**, and today that is **one row: the installation
+  the operator chose**, with its name, its project, its state and its spend. **A row carries
+  four fields and no one read answers all four**, so this document names the read behind
+  each rather than implying one. The **name and the project** are what `installation.current`
+  answers, for that installation and no other: it **takes no argument at all and names no
+  id**, so a renderer cannot ask about an installation other than the one this console is
+  running (`src/main/ipc.ts`, the fourteenth operation). **Its payload keeps one label,
+  `project`** — `ActiveInstallation` carries `id`, `project`, `binary`, `config`, `checkout`,
+  the handshake's version and `mode`, and **no display name** — so the row's name span draws
+  that label and the small-text project span draws the same one: the canvas's two-line
+  identity, drawn from the one label the store keeps. The **state word is the rail's own mark
+  and not a field of any read**: the rail knows whether it is reading this installation now —
+  which is why its one row says `running`, or `silent` when that read was refused or the feed
+  has gone quiet — while `idle`, the stored installation nothing is read from, is the word
+  for a row the read the next bullet names would draw. The **spend is the console's own
+  budget read** — `budget.show` on the dashboard's channel, whose counted and spent dollars
+  §2.4's caps panel already draws — and **no field is added to it for the rail**. The stored
+  list is the picker's own
+  read (§2.2): `INSTALLATION_OPERATIONS` is registered in `src/main/picker.ts` and each
+  channel is gated on **the picker's own document**, so a frame on the dashboard is answered
+  `SENDER_REFUSAL` and the two documents cannot reach each other's surface.
+- **A row per stored installation needs a read this design does not add.** The canvas draws
+  the rail with an installation per row; **this phase draws the rows it can read**, and the
+  read that would fill the rest is **a surface addition — a bounded, schema-checked list read
+  on the dashboard's bridge** — which is exactly what [§11](#11-what-this-document-does-not-decide)
+  withholds: this document does not change the preload or the IPC allow-list, and no task in
+  Phase 6 owns those files. **So no task draws a row for an installation the dashboard cannot
+  read**, and nothing here invents one: the spans in the tree are the shape every row has,
+  the three state words are the rail's vocabulary with `running` the active row's, and the
+  shortcut keys address the rows the rail draws — a rail of one row has one tab stop in its
+  list. **The canvas settled the shape of a row; it did not settle where a non-active row's
+  figures come from, and landing that read is a decision for the owner** (it is a second
+  installations read on a bridge C9 keeps read-only, and the ruling that authorizes it is not
+  this document's to make).
+- **The rail adds no write action, and the console stays READ ONLY.** **The rail cannot
+  choose an installation, and this section does not pretend otherwise**: the console's one
+  choose operation is the picker's (`fugaro:installations/choose`, ruling C9) on the picker's
+  own channel, and a frame on this document cannot reach it — so choosing an installation
+  stays where it is today, in the picker window the header, the degraded screen and this
+  rail's foot row all open. A row's `aria-selected` is the rail's own mark of which row is
+  the active one, and it selects nothing. Nothing on the rail adds, removes or edits an
+  installation, no renderer ever sends a path, and the only file a choose writes is the
+  installations file the picker already writes — the console design's rule 10, as C8's
+  answer amended it, is what keeps that list closed.
+- **The keyboard** — the detail is [§4.3](#43-keyboard-and-focus): the rail's list is **a
+  tablist in its own right**, `div.console-rail-list` with `role="tablist"` and one
+  `role="tab"` row each; it uses a **roving `tabindex`** (the selected row is `0`, the rest
+  `-1`), Arrow Up and Arrow Down move between the rows, **Home** and **End** go to the first
+  and the last, and **Enter selects** — the arrow keys move focus and the key that chooses is
+  Enter, which is the pattern's manual-activation form; **what Enter selects is the row**
+  (the rail's own mark of which row is active), since the command that changes which
+  installation the console reads is the picker's and is unreachable from this document. The
+  **shortcut keys** select by position: **Command-1** to **Command-3** on macOS and
+  **Control-1** to **Control-3** elsewhere address the first three rows **the rail draws**,
+  which is the hint's own sentence. The collapse
+  control is a tab stop **before** the list and the add row is a tab stop **after** it, so
+  the rail's tab stops are the button, the list and the add row — three, whatever the number
+  of installations.
+
+**Two things the canvas did not decide, and what this design does with each.**
+
+1. **No alert badge.** The canvas draws the state word and its glyph in **every** row, so a
+   `silent` installation — the rail's own attention state — raises no separate badge when it
+   is not the selected row, and neither would a fourth word if the rail ever gains one (a
+   `halted` installation, say): a badge would be a second mark for a fact already written in
+   the row, and a count of them would be a number nobody asked the console for. A later
+   design that wants one adds it as a mark on the row rather than as a second word.
+2. **The shortcut keys and the platform.** They are Command + digit on macOS and Control +
+   digit elsewhere, as the bullet above states. macOS reserves neither form inside an
+   application window, and **the console has no other keyboard shortcut to collide with**:
+   the entry has no keydown handling at all today (§2.1), so these are the console's first
+   keyboard shortcuts and there is no binding for them to collide with. A later shortcut
+   that wants one of these takes it from here rather than overriding it quietly.
 
 ### 4.2 Narrow windows
 
@@ -1057,6 +1318,18 @@ and is lost the moment a query is written in `px`:
 | ≤ 48.75em (780 px) | the nav wraps to two rows, the installation line drops to project · mode, and any three-column figure group becomes two |
 | ≤ 35em (560 px) | the ledger, the caps panel and the panels' source lines stack; **no figure is ever dropped or truncated** — what is dropped is a column, and a dropped column is one whose value is repeated in a `title` |
 
+**The rail is 216 px of every width above, and the three figures are the window's.** The
+queries measure the viewport, so each one fires with the content column **216 px narrower
+than the number it names** — 1000 px of window is 784 px of column while the rail is
+expanded. The figures are kept rather than re-cut: they were chosen as window widths an
+operator resizes to, the column's own width is not what a media query can see, and [§4.1](#41-the-windows-structure)
+is where the rail's width is stated. **What the layers may not do is assume the column they
+used to get**: a layer that used to have 1000 px has 784, so a table that drops a column at
+the first breakpoint is dropping it from a column a fifth narrower than the one the choice
+was made against, and Task 6.3 — the task that draws the rail — re-reads the three figures
+against the column it leaves rather than against the window. Collapsing the rail returns the
+216 px, which is why the collapse control is a control and not a breakpoint.
+
 **The rule that outranks the breakpoints: a figure is never hidden to make a layout fit.**
 A dense console that hides a cap on a narrow window is the console lying about spend,
 which §6.1 rule 1 forbids more strongly than any layout does.
@@ -1065,20 +1338,35 @@ which §6.1 rule 1 forbids more strongly than any layout does.
 
 - **The focus ring** is one rule and it is a token, as on the website:
   `:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: var(--focus-ring-offset) }`.
-  The accent clears 3:1 against both grounds in both sets (§3.4), which is exactly the
-  requirement for a focus indicator.
+  The accent clears 3:1 against **the ground that ships** (§3.4's dark column; under the
+  owner's Q1 ruling of 2026-10-19 there is one), and it did so against both grounds of both
+  sets — which is exactly the requirement for a focus indicator.
 - **`:focus-visible` and never `:focus`** — a mouse click must not leave a ring on a nav
   button, and a keyboard user must never lose one.
-- **The nav is the one place the console needs a roving tabindex, and it does not have
-  one.** Today `entry.ts` creates one `button.console-view` per view with no keyboard
-  handling at all, so Tab walks all three buttons and neither arrow keys nor
-  Home/End move between them. Task 6.5 adds the WAI-ARIA tablist behaviour in ~15 lines:
-  `role="tablist"` on the nav, `role="tab"` on each button, `aria-current` (already there)
-  plus `aria-selected`, **roving `tabindex`** (the current view is `0`, the others `-1`),
-  and Arrow/Home/End handling that calls the existing `show(id)`. **This is a renderer
-  change and it is not a style change** — no attribute it writes is a style, so the CSP
-  and `ElementLike` are untouched. It is in the styling plan because a keyboard-less nav is
-  a layout defect the styling work is where you notice.
+- **The console needs a roving tabindex in two places, and it has one in neither.** Today
+  `entry.ts` creates one `button.console-view` per view with no keyboard handling at all, so
+  Tab walks all three buttons and neither arrow keys nor Home/End move between them. Task
+  6.5 adds the WAI-ARIA tablist behaviour in ~15 lines: `role="tablist"` on the nav,
+  `role="tab"` on each button, `aria-current` (already there) plus `aria-selected`,
+  **roving `tabindex`** (the current view is `0`, the others `-1`), and Arrow/Home/End
+  handling that calls the existing `show(id)`. **And the rail's list is the second** — §4.1
+  gives it the same treatment over `div.console-rail-list` and its `role="tab"` rows, one
+  tab stop for the whole list rather than one per installation, with **Enter** as the key
+  that selects (the nav's `show(id)` **is** its selection, so a nav button needs no second
+  key and the rail's rows do: the arrows move focus and Enter chooses). **Both are renderer
+  changes and neither is a style change** — no attribute either writes is a style, so the
+  CSP and `ElementLike` are untouched. They are in the styling plan because a keyboard-less
+  tablist is a layout defect, and the styling work is where you notice it.
+- **The focus order is the DOM order, and the rail is first.** A tab through the chrome
+  goes: the rail's collapse control, the rail's list (one stop, however many installations),
+  the rail's add row — then the view nav, then the panel's own controls, and the panel's
+  contents in the order the screen draws them. That is the layout's promise and not a
+  preference: the rail is appended before the installation line (§4.1), so the tab order a
+  reader gets is the order they see, left to right and top to bottom. **A rail drawn on the left
+  and appended last would put the whole chrome ahead of it**, which is
+  the WCAG 2.4.3 failure this ordering exists to avoid — and it is also why the shortcut
+  keys exist: `Ctrl`/`Cmd` + digit reaches the first three rows the rail draws (§4.1)
+  without walking the tab order at all.
 - **A skipped-by-default DOM stays skipped**: the console has no skip link and does not
   need one (there is no repeated block of links before the content), and it must not gain
   a link that would need the allow-list's `openExternal` to do nothing.
@@ -1095,8 +1383,8 @@ Windows High Contrast and `forced-colors: active` discard author colours. Two ru
 2. One `@media (forced-colors: active)` block per stylesheet, each in the task that writes
    the rules it defends: `base.css` carries the chrome's — let the system paint its
    backgrounds by setting `background: Canvas` / `color: CanvasText` on the chrome, map the
-   current view to `Highlight`/`HighlightText`, and re-enable the border the system
-   collapses. `screens.css` carries the rows' and badges' — `Canvas`/`CanvasText` on the row
+   current view **and the rail's selected row** to `Highlight`/`HighlightText`, and re-enable
+   the border the system collapses — the rail's accent left border is exactly such a border. `screens.css` carries the rows' and badges' — `Canvas`/`CanvasText` on the row
    surfaces, `LinkText`/`GrayText` where a fill was carrying a meaning, and
    `border: 1px solid CanvasText` on a panel, because a hairlines-only table becomes
    structureless without it. Neither block names a colour literal; both read the tokens.
@@ -1153,7 +1441,7 @@ and each later task appends its own file in the same commit that creates it:
 
 | Task | Creates | `THEME_STYLESHEETS` after it |
 |---|---|---|
-| 6.1 | `tokens.css`, `palette.css` | *(no list yet — nothing reads the directory)* |
+| 6.1 | `tokens.css`, `palette.css` | *(no list yet — nothing reads the directory at this stage; Task 6.2 is the row below)* |
 | 6.2 | the bundler step itself | `tokens.css`, `palette.css` |
 | 6.3 | `base.css` | `tokens.css`, `palette.css`, `base.css` |
 | 6.4 | `screens.css` | `tokens.css`, `palette.css`, `base.css`, `screens.css` |
@@ -1169,12 +1457,25 @@ moves both sides together.
 - it reads `src/renderer/theme/` and **refuses a `.css` file that is not on the list**
   (`BundleRefusal`, exactly as the served root refuses a foreign file), so a stylesheet
   nobody reviewed cannot be served;
-- it refuses a **missing** file on the list, so a rename fails the build rather than
-  silently dropping a layer of the cascade — and, equally, so a list cannot run ahead of
-  the files it names;
-- it refuses an **`@import`** and a **remote `url()`** in any theme file — the bundle is one
-  file and the console is offline (`connect-src 'none'`), so an import would either fail
-  at runtime or be a network call the CSP forbids;
+- it refuses a **missing** file on the list, and one that is **not a regular file**, so a
+  rename fails the build rather than silently dropping a layer of the cascade — and,
+  equally, so a list cannot run ahead of the files it names. The second half is a symlink's:
+  a link at a listed name would put bytes the theme directory does not hold into the served
+  stylesheet, which is the same failure the stray-`.css` refusal is about from the other
+  side;
+- it refuses a **backslash**, an **`@import`**, a **quoted string that begins as a URL** and
+  a **remote `url()`** in any theme file — the bundle is one file and the console is offline
+  (`connect-src 'none'`), so an import would either fail at runtime or be a network call the
+  CSP forbids. The backslash is what makes the other three hold: CSS unescapes identifiers
+  and strings before anything else sees them, so `@\69mport "./base.css";` is an `@import`
+  and `u\72l(...)` is a `url(...)`, and no scan here unescapes. The quoted-string scan is
+  the one that catches a URL `image-set()` takes as a **bare string**, which never writes
+  `url(`. *(These two bullets and the symlink half of the one above are the review of #694's
+  follow-up, 2026-10-19; `console/README.md`'s Task 6.2 section writes out what the step
+  refuses and the mutants each refusal is proved against.)*
+- it writes through nothing that is a **symbolic link** — neither a listed theme file, nor
+  an output file, nor the directory it writes outputs into (`mkdirSync` accepts a symlinked
+  directory in silence, so the directory is checked as well as the file);
 - it writes `dist/bundle/console.css` = each file's bytes in list order, each preceded by a
   `/* <name> */` banner so a reader of the artefact can see the seam, and the whole file
   preceded by one line naming the build (`/* console.css — generated by
@@ -1293,13 +1594,20 @@ invalidates, and — worse — it would let a reviewer believe the screens had b
 ### 6.2 The computed-background assertion — so identical frames can never be recorded again
 
 **A per-spec assertion that the computed background colour differs between the schemes**,
-in all four golden specs, next to the existing theme read:
+in all four golden specs, next to the existing theme read. **Under the owner's Q1 ruling of
+2026-10-19 there is one value set, so "differs between the schemes" is the wrong sentence**:
+the two runs stamp different `data-theme` values and must paint the **same** ground, and the
+assertion becomes that both runs compute the shipped `--ground` — the same guard, since a
+tree with no stylesheet still fails it by reading `rgba(0, 0, 0, 0)` twice. The code below is
+the two-set form, kept as the record of option (a):
 
 ```ts
+// The two-set form, removed by the owner's Q1 ruling of 2026-10-19.
 const paintedBackground = (el: Element): string =>
   getComputedStyle(el).backgroundColor
 
-// for each theme, after the screen is drawn:
+// for each theme, after the screen is drawn (the two-set form, removed by the
+// owner's Q1 ruling of 2026-10-19):
 expect(paintedBackground(root), `${theme}: the screen paints no background`)
   .not.toBe('rgba(0, 0, 0, 0)')
 const [light, dark] = [/* the two runs' values */]
@@ -1310,17 +1618,19 @@ expect(light, 'light and dark paint the same background: the stylesheet is not b
 This is the test the current suite is missing. Every one of the four specs already reads
 `data-theme` off the screen root (`scope.querySelector('.live')?.getAttribute('data-theme')`),
 which passes today with no stylesheet at all. The new assertion fails **the moment a
-stylesheet stops being served, stops being linked, or stops switching** — which is exactly
-the regression that could otherwise be recorded as a fresh golden and never noticed.
+stylesheet stops being served, stops being linked, or stops painting** — under the ruling
+there is no switch left to stop, and the first two are what remains — which is exactly the
+regression that could otherwise be recorded as a fresh golden and never noticed.
 
 **This assertion lands in [Task 6.6](#76-task-66--the-golden-frames-re-recorded), with the
 recording it guards — but what it waits for is the stylesheet, not Task 6.5's theme
 choice.** It reads a *computed* background off a screen root, so it can pass only once a
 rule paints one, and the rules that paint a screen root are the stylesheet's: `palette.css`
 gives each theme its `--ground` and its `color-scheme`, and `base.css` and `screens.css`
-spend them. Task 6.5 is a different subject — it changes `CONSOLE_THEME` in `entry.ts` from
-the literal `'dark'` to the media query's answer, which is the **app's** boot path and the
-window's own `backgroundColor`.
+spend them. Task 6.5 is a different subject — as designed it changed `CONSOLE_THEME` in
+`entry.ts` from the literal `'dark'` to the media query's answer, which is the **app's** boot
+path and the window's own `backgroundColor`; under the ruling it keeps the literal and what
+is left of the task is the background and the keyboard.
 
 The four golden specs never read it. Each draws its screen directly with the theme it
 names — `mount(theLastFrame(), 'light')`, `renderSpend(factory, model, 'light')` and their
@@ -1334,7 +1644,10 @@ An earlier revision of this section said the light run still stamped `'dark'` an
 assertion "would fail in Task 6.3 or 6.4"; both were wrong, and the hard dependency they
 justified — on Task 6.5 — was wrong with them. The assertion belongs with the recording it
 guards because 6.6 is where the goldens are re-made, and it could not land before the rules
-it reads: the phase's own ordering, not the theme switch, is what puts it last.
+it reads: the phase's own ordering, not the theme switch, is what puts it last. **The owner's
+Q1 ruling of 2026-10-19 does not change any of this** — one value set ships, so the two runs
+must paint the same ground, and the sentence above about the two runs disagreeing about the
+attribute is a fact about the specs rather than a design this document prescribes.
 
 ### 6.3 Contrast as unit tests
 
@@ -1342,18 +1655,30 @@ it reads: the phase's own ordering, not the theme switch, is what puts it last.
 should reuse the arithmetic of rather than re-derive):
 
 - it **reads `theme/palette.css` for its colour numbers** — the literals the window paints,
-  not a copy of them. **Two of its cases read a file other than `palette.css`, and each
-  lands in the task that writes what it reads** (the `--border` scan, which reads `base.css`
-  and `screens.css`, in Task 6.4; the window background, which reads the main process's
-  window module, in Task 6.5), so Task 6.1 writes this file with the palette cases alone and
-  the other two arrive where their subject matter does;
+  not a copy of them. **Three of the cases described below are not in the file that shipped
+  with Task 6.1** (the file Task 6.1 wrote carries eight cases, and this list is the design
+  the file is measured against), each for one of two reasons: the **two-set vocabulary case**
+  is *replaced* — with one value set it would compare a set with itself, so the shipped case
+  asserts the vocabulary is declared **exactly** (§3.1's tokens, and no name outside them)
+  and that neither layer carries what the other owns —
+  while the other **two read a file other than `palette.css`, and each lands in the task that
+  writes what it reads** (the `--border` scan, which reads `base.css` and `screens.css`, in
+  Task 6.4; the window background, which reads the main process's window module, in Task 6.5).
+  Task 6.1 writes this file with the palette cases alone; the two arrive where their subject
+  matter does, and the replacement is described with its case below;
 - one case computes **every pair of §3.4** and asserts the ratio its role requires: 4.5:1
   for `--text`, `--text-muted`, `--accent-ink` and all five state colours on `--ground`,
   `--surface` and `--surface-alt`; 3:1 for `--accent` and `--border-strong` on each; 4.5:1
   for `--ink-on-fill` on every fill;
 - a case asserts the **vocabulary** is complete and identical in both sets — the token
   names of one set are exactly the token names of the other, and every token of §3.1–§3.3
-  is present — so a token added to light and not to dark fails by name;
+  is present — so a token added to light and not to dark fails by name. **Under the owner's
+  Q1 ruling there is one set, so this case cannot be written as designed and Task 6.1
+  replaces it with the case the file carries**: the vocabulary is declared **exactly** —
+  every token of §3.1's table is present, *and* no name outside it is, so a step added to
+  `tokens.css` on its own fails by name — neither layer carries what the other owns (no
+  colour in `tokens.css`, no step in `palette.css`), and each of those two directions is a
+  case a mutation fails by name;
 - a case asserts `--border` is **only** used decoratively: no rule in `base.css` or
   `screens.css` uses `--border` where the property is `outline` or where the border marks
   a control (a scan of the CSS text, in the spirit of `screen-literals.test.ts`). **This
@@ -1361,10 +1686,12 @@ should reuse the arithmetic of rather than re-derive):
   read something other than `palette.css`, and the two files it reads are created by Tasks
   6.3 and 6.4 — see [§7.4](#74-task-64--the-screens). Task 6.1 writes the file and its
   palette cases; Task 6.4 adds this case at the point where both stylesheets exist;
-- a case asserts **the main process's window background equals the ground of the theme it
-  is about to paint** ([§4.1](#41-the-windows-structure)) — **both** literals, the dark one
-  against the dark `--ground` and the light one against the light `--ground`, rather than
-  the ambiguous "equal to `--ground`" a `--ground` with two values cannot support. **This
+- a case asserts **the main process's window background equals the ground the window is
+  about to paint** ([§4.1](#41-the-windows-structure)) — under the Q1 ruling **one**
+  literal, `#0A0E16`, against the shipped `--ground`; *as the two-set design wrote it,*
+  **both** literals, the dark one against the dark `--ground` and the light one against the
+  light `--ground`, rather than the ambiguous "equal to `--ground`" a `--ground` with two
+  values cannot support. **This
   case is [Task 6.5](#75-task-65--the-theme-switch-the-window-background-and-the-keyboard)'s
   and not Task 6.1's**, for the plainest of reasons: the two literals are a change to
   `console/src/main/window.ts`, and Task 6.5 is the task that makes it — `consoleWindowOptions`
@@ -1397,7 +1724,9 @@ golden**: forced-colors rendering is the platform's and its pixels are not ours 
 
 **It lands in halves, each with the rules it tests**, because a case written for a
 stylesheet that does not exist yet is a case that fails: the chrome's half — the current
-view still marked, the chrome's boundary still visible — is [Task 6.3](#73-task-63--the-layout)'s,
+view still marked, the chrome's boundary still visible, **and the rail's rows with them**,
+since §4.4's rule 1 is what the rail's three state words are for and a `silent` row's word
+and glyph have to survive the same screen — is [Task 6.3](#73-task-63--the-layout)'s,
 in `test/e2e/entry.spec.ts`, which is the spec that already drives the dashboard the
 chrome is drawn into; the per-screen half — the state words and the row boundary, in each
 screen's own spec — is [Task 6.4](#74-task-64--the-screens)'s. This is also why §4.4's
@@ -1407,7 +1736,7 @@ in `base.css` and the rows' and badges' is in `screens.css`.
 ### 6.5 The docs test
 
 `internal/cli/docs_console_styling_test.go` (new), in the shape of
-`docs_budget_token_channel_test.go`, with eleven tests:
+`docs_budget_token_channel_test.go`, with thirteen tests:
 
 1. a **presence test** over this document's eleven section headings and its load-bearing
    strings — the status line, `SERVED_FILES`, "No inline style attribute", `Never colour
@@ -1437,11 +1766,27 @@ in `base.css` and the rows' and badges' is in `screens.css`.
    anchors were dead when the test was written — two of them for exactly that missing
    hyphen, one left over from an earlier revision of §7.5 that named a heading since
    rewritten;
-4. a **plan test** that [Phase 6](#7-the-build-plan-phase-6-unapproved) exists, that its
+4. a **plan test** that [Phase 6](#7-the-build-plan-phase-6) exists, that its
    six task headings are there, that the four `theme/*.css` files are in the plan's tree,
-   and that the phase names all six of the [§8](#8-open-for-the-owner) questions.
+   and that the phase names all six of the [§8](#8-open-for-the-owner) questions. **It also
+   carries the two-set pin**: it reads both this document and the plan for the phrases that
+   assume two value sets — `light and dark`, `light dark`, `light-dark(`,
+   `prefers-color-scheme`, `color-scheme: light`, `both value sets`, `two value sets`,
+   `two grounds`, `two --ground`, `two literals`, `two schemes`, `two sets`, `both sets`,
+   `in each set`, `the light set`, `matchMedia`, `themeChoice`, `data-theme='light'` and
+   `data-theme="light"` — and fails on one whose **own paragraph** is not marked with the
+   ruling (`2026-10-19`, `Q1`, "as first written", "as designed", "as the two-set", "the
+   record of", "record of option", "deferred", "would have", "did not take", "the ruling",
+   "as shipped", "removed", "supersedes" and "kept"), so the plan's claim that every such
+   place is marked is a claim a run checks rather than a claim a reader trusts. The mark is
+   paragraph-local on purpose: an exemption that ran from a marked paragraph to the end of
+   its section was one a sentence could hide behind, since every paragraph of §3.6, §4.1 and
+   §8 sits under a ruling sentence somewhere above it. The paragraph is lower-cased and its
+   whitespace is collapsed before the match, so a phrase a rewrap splits across two lines,
+   or one whose capitalisation a sentence changes (`matchMedia` for `matchmedia`), is the
+   same phrase to the test as it is to a reader;
 
-**Items 5 to 9 — five of the eleven — read §3.4's numbers rather than its prose**, which is the
+**Items 5 to 9 — five of the thirteen — read §3.4's numbers rather than its prose**, which is the
 half the review of the first revision asked for. They recompute WCAG 2.1's relative luminance
 (`(L1+0.05)/(L2+0.05)`) and circular hue distance
 (`min(|Δh|, 360°−|Δh|)`) from the literal values in §3.2 and §3.3, in four lines of Go each,
@@ -1454,8 +1799,11 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    `--border-strong`, 4.5:1 for `--ink-on-fill` on every fill; and that `--border` is
    **still below** 3:1, because a hairline that cleared it would be a boundary this design
    should have named as one;
-6. a **state-separation test** that the ten pairs of state colours in each set are the ten
-   the literals make, that every one clears §3.4's minimum, and that each row says which
+6. a **state-separation test** that the ten pairs of state colours are the ten
+   the literals make — **both tables below are read, because §3.4 keeps both: the dark
+   table's ten are the set that ships, and the light table's ten are the record of the set
+   the owner's Q1 ruling of 2026-10-19 deferred (§3.3), asserted as that record rather than
+   as a set anything paints** — that every one clears §3.4's minimum, and that each row says which
    arm of §3.4's disjunction it took — 50° of hue, **or** 3:1 of luminance contrast where
    hue cannot separate a pair — so a pair that missed both fails the test and a row that
    tabulated a fallback pair as if hue had separated it fails too. It does **not** demand
@@ -1479,9 +1827,9 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    that branch; the synthetic table here is what keeps the branch itself tested rather than
    dead code. It also pins both thresholds as inclusive, which is how §3.4 writes them ("at
    least 50°", "at least 3:1").
-10. a **phase-ordering test**, the tenth and the only case of the eleven that is neither about
-   this document's shape nor about its numbers — it reads
-   [§7](#7-the-build-plan-phase-6-unapproved) and the plan together: it cuts the plan's
+10. a **phase-ordering test**, the tenth, the one case of the thirteen that is about the two
+   documents' agreement on the phase's order rather than about either alone — it reads
+   [§7](#7-the-build-plan-phase-6) and the plan together: it cuts the plan's
    Phase 6 at its six task headings and §7 at its seven, and fails when a task's `**Files**`
    or `**Tests**` clause names a **later** task — the shape both of this revision's ordering
    errors took — when [§5.2](#52-how-the-bundler-emits-it)'s `THEME_STYLESHEETS` literal
@@ -1492,13 +1840,13 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    And it counts itself: §6.5's own opening line says how many tests this file holds, and the
    case fails when that word and the file's `TestDocsConsoleStyling*` declarations disagree —
    the defect this revision found in the other direction, when the tenth test landed and the
-   line stayed at nine. Each of its cases is mutation-proven, and the seven mutations are
+   line stayed at nine. Each of its cases is mutation-proven, and the eight mutations are
    named in [§7.7](#77-the-red-steps). It reads the plan as text for the same boundary reason
    the rest of this file does.
 11. a **counts test** over this section and §7.7, which is what keeps the numbers above from
    rotting: it numbers the ordered list here and requires it to run 1 to N with no gap and N
    to be the count this section's opening line prints in words; it reads the group sentence
-   ("Items 5 to 9 — five of the eleven") against the list it names, in every number the
+   ("Items 5 to 9 — five of the thirteen") against the list it names, in every number the
    sentence prints;
    it counts the rows of §7.7's red-step table and the clauses of its two mutation lists
    against the words above them; and it counts this document's `## ` headings against the
@@ -1508,6 +1856,28 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    the evidence: this section introduced its §3.4 group as "five that read §3.4's numbers"
    over a list numbered 5 to 10, so a reader counting the items after the sentence counted
    six.
+12. a **rail test** over §4.1's rail block, the twelfth: it requires the block to say the rail
+   is a **left vertical rail**, to name `aside.console-rail`, **both its widths** — the
+   216 px expanded one and the 56 px collapsed one, each its own required string, so dropping
+   either fails by name — `div.console-rail-list` as the tablist, the hint "Switch with the
+   shortcut keys 1 2 3", **Command-1** and **Control-1**, the words READ ONLY and "+ Add
+   installation", `role="tablist"`, a **roving `tabindex`**, Enter selects, and **Home** and
+   **End**, each asserted separately because the section names both keys and a case that
+   required only "Home" would pass over a block that had dropped End; it reads the three
+   state words off the table the block draws them in, **one row each**, so `running`'s row
+   carries its dot and `--ok`, `silent`'s its triangle and `--warn`, and `idle`'s its open
+   circle and `--text-muted` — a glyph moved to the wrong word, or a word given a tone §3.2
+   does not have, fails by name; it counts the tree's classed elements and its distinct
+   classes and requires §4.1's sentence and §2.1's row to state the same two numbers, so the
+   count cannot rot silently; and it requires the block to say the rail draws the rows the
+   dashboard can read rather than a row per stored installation. It is the case that keeps
+   the canvas's one structural addition from being remembered rather than written down.
+13. a **rail-ownership test** over the plan, the thirteenth: it reads Task 6.3's `**Scope**`
+   and `**Files**` and Task 6.5's `**Scope**` and requires each to name what that task owns —
+   the rail's structure, and the entry that draws its elements, in 6.3; the rail's shortcut
+   keys in 6.5 — because a design that describes a region and a plan whose tasks do not name
+   it is a region nobody builds. It reads the plan as text for the same boundary reason the
+   rest of this file does.
 
 **The citation test stats a file; these five read the file**, which is the difference
 between a citation that exists and a citation that is true. Neither substitutes for the
@@ -1532,15 +1902,20 @@ named with the change ([§7.7](#77-the-red-steps)).
 
 ---
 
-## 7. The build plan (Phase 6, UNAPPROVED)
+## 7. The build plan (Phase 6)
 
 Added to [the plan](../plans/2026-10-15-desktop-console.md) as a new **Phase 6** in the
 file's own numbering, in the five places that file carries a phase: one section
 `## Phase 6 — …`; **six** `### Task 6.n:` headings; **one** row in the Phase summary table;
 **five** rows in the PR groups table (`J` to `J5`, one row per PR *group* — the phase is six
 tasks across five groups, since `J3` is the two PRs of Tasks 6.3 and 6.4); and
-**four** lines in the File Structure tree, one per `theme/*.css` file. **Nothing here is approved**: the plan's OWNER APPROVAL GATE stands, and these tasks
-carry `UNAPPROVED` until the owner answers [§8](#8-open-for-the-owner). Task 6.2's heading
+**four** lines in the File Structure tree, one per `theme/*.css` file. **These six tasks are
+`APPROVED by the owner on 2026-10-19`**, and so is this document: the owner's approval is the
+go, **Q1** is answered by it (option (b), dark only) while **Q2 to Q6 stand as §8 writes
+them**, and the plan's phase heading, summary row and PR rows say the same. *The heading as first written,
+kept:* `The build plan (Phase 6, UNAPPROVED)`, whose text read "**Nothing here is approved**:
+the plan's OWNER APPROVAL GATE stands, and these tasks carry `UNAPPROVED` until the owner
+answers §8" — that was the state on 2026-10-19, before the go. Task 6.2's heading
 carries `SECURITY-SENSITIVE, independent opus review`, and Global Constraints rule 9's list
 gains `6.2` in the same edit — `TestPlanRule9ListsEveryFlaggedHeading` fails otherwise,
 which is the mutation this change is proved against.
@@ -1548,13 +1923,18 @@ which is the mutation this change is proved against.
 **Order, and why it is this one.** 6.1 (the tokens) is first because everything reads it.
 6.2 (the wiring) is second because until it lands **nothing on screen changes at all** —
 the CSS files are inert without a `<link>`. 6.3 and 6.4 (layout, then the screens) are
-then ordinary CSS PRs that a reviewer can read as a stylesheet. 6.5 (the switch and the
-keyboard) is the only task that touches the entry. 6.6 (the frames) is last and owner-run.
+then ordinary CSS PRs that a reviewer can read as a stylesheet. **Two tasks touch
+`console/src/renderer/entry.ts`, and they are the two ends of the chrome**: 6.3 appends the
+rail's elements (§4.1) and 6.5 (the switch and the keyboard) is the one that adds the
+attributes and the keys — the rail is drawn by 6.3 and takes the keyboard in 6.5, so neither
+PR carries a stylesheet written against an element nothing draws, and neither carries an
+element with no keys. 6.6 (the frames) is last and owner-run.
 
 ### 7.1 Task 6.1 — the tokens
 
 - **Scope:** `console/src/renderer/theme/tokens.css` (the vocabulary of §3.1),
-  `theme/palette.css` (both value sets, §3.2–§3.3), and `console/test/unit/theme-tokens.test.ts`
+  `theme/palette.css` (the dark value set of §3.2 — §3.3 is the record of the set the
+  owner's Q1 ruling of 2026-10-19 deferred, and no task writes it), and `console/test/unit/theme-tokens.test.ts`
   (the contrast and vocabulary cases of §6.3).
 - **Files:** the three above; the plan's tree; `console/README.md`'s theme note.
 - **Tests:** the red step is real: the token test is written first, and the failing pair it
@@ -1600,25 +1980,46 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
 
 ### 7.3 Task 6.3 — the layout
 
-- **Scope:** `theme/base.css` — the reset, the document, the three bands of §4.1, the nav's
-  tab-list styling, the focus ring, the responsive layers of §4.2, and the **chrome's**
-  `@media (forced-colors: active)` block of §4.4.
-- **Files:** `theme/base.css`; `THEME_STYLESHEETS` in the bundler, which gains
+- **Scope:** `theme/base.css` — the reset, the document as the two-column grid of §4.1 and
+  **the installation rail** and its rules: the rail's fixed 216 px expanded width and its
+  56 px collapsed width, its header row and
+  its collapse control, its rows with their name, project, state glyph and word and spend
+  spans, its selected row's 3 px accent border, its foot row and its hint — the three bands
+  of §4.1, the nav's tab-list styling, the focus ring, the responsive layers of §4.2, and the
+  **chrome's** `@media (forced-colors: active)` block of §4.4. **The rail's elements are
+  drawn by `entry.ts`, and this task is what draws them**, because the rules that select
+  them are this task's and a hook nothing emits is not a hook — the same rule that puts
+  `degraded-num` in Task 6.4's Files. The rail's **keys** are not here: they are Task 6.5's,
+  which is already the task that gives the nav its own.
+- **Files:** `theme/base.css`; `src/renderer/entry.ts` (the rail's elements);
+  `THEME_STYLESHEETS` in the bundler, which gains
   `'base.css'` in this commit — the list is the theme directory's whole contents and the
   bundler refuses a listed file that is missing, so the file and its entry move together
-  (§5.2); `README.md`; `test/e2e/entry.spec.ts` (the forced-colors smoke's chrome half).
+  (§5.2); `README.md`; `test/e2e/entry.spec.ts` (the forced-colors smoke's chrome half, and
+  the body-children assertion the rail moves).
 - **Tests:** the forced-colors smoke's chrome half (§6.4) — the current view still marked,
-  and the chrome's boundary still visible, both under `emulateMedia({ forcedColors:
-  'active' })` — written first, which is this task's red step.
+  the chrome's boundary still visible and the rail's rows with them, all under
+  `emulateMedia({ forcedColors: 'active' })` — written first, which is this task's red step;
+  a case that the rail draws **one row per installation the dashboard can read** — the
+  active installation's, from `installation.current` — with its state word and its glyph,
+  **and draws no row for an installation it cannot read**, since the dashboard's surface has
+  no list read and this task adds none (§4.1, §11); and **the §2-inventory selector scan over
+  `base.css`**, which is this task's and
+  not §7.4's alone: the rail's hooks are the chrome's and §2.1 lists them, so the list the
+  scan checks against is the inventory's tables rather than the screens' class literals,
+  which cannot see a rule written against a hook the entry draws.
 - **Verification:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run
   test:e2e -- entry`; the
   e2e specs that read the chrome's shape (`entry.spec.ts`'s
-  `['console-installation', 'console-views', 'console-panel']`) still pass. The four golden
+  `['console-rail', 'console-installation', 'console-views', 'console-panel']`) still pass. The four golden
   tests are skipped in this task and in the two after it (`FUGARO_CONSOLE_GOLDENS=skip`,
   which the staged console-tests workflow already sets): a layout change is a picture the
   baselines do not have, and re-recording them before the last stylesheet lands is what
   [Task 6.6](#76-task-66--the-golden-frames-re-recorded) exists to stop.
-- **Reviewer tier:** ordinary.
+- **Reviewer tier:** ordinary — but it is one of the two tasks that touch the entry
+  (§7.5 adds the attributes and the keys and this one draws the rail's elements), so it is
+  reviewed against §5.5's "no style, no loosening" rule explicitly: the rail's elements are
+  created with classes and attributes, and the styling is `base.css`'s.
 
 ### 7.4 Task 6.4 — the screens
 
@@ -1638,8 +2039,10 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
 - **Tests:** the forced-colors smoke per screen (§6.4) — every state word still in the DOM
   and the row boundary still visible; a case that
   `screens.css` selects only hooks the [§2](#2-screen-inventory) inventory names — a scan
-  of the stylesheet's selectors checked against a list derived from the screens' own class
-  literals, so a rule that styles a class nothing emits fails; the
+  of the stylesheet's selectors checked against a list derived from the inventory's tables,
+  the screens' own class literals **and the chrome's hooks of §2.1**, since the rail's
+  **twelve** hooks — §2.1's twelve, on its thirteen elements — are the entry's and not a
+  screen's, so a rule that styles a class nothing emits fails; the
   `--border`-is-decorative scan.
 - **Verification:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run
   test:e2e`, with the goldens skipped as in Task 6.3.
@@ -1647,31 +2050,55 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
 
 ### 7.5 Task 6.5 — the theme switch, the window background and the keyboard
 
-- **Scope:** `CONSOLE_THEME` becomes the answer of a `themeChoice()` that reads
-  `matchMedia('(prefers-color-scheme: dark)')` and subscribes to `change` (§3.6); the entry
-  stamps `data-theme` on the mount it draws the chrome into; the picker's script stamps its
-  document; `consoleWindowOptions` gains `backgroundColor`, **both literals**, read from
-  `nativeTheme.shouldUseDarkColors` and re-set on `nativeTheme`'s `updated` event (§4.1);
-  the nav's tablist behaviour (§4.3).
-- **Files:** `console/src/renderer/entry.ts`, `console/src/renderer/installations.ts`,
-  `console/src/main/window.ts`, `console/test/unit/{entry-wiring,window,theme-tokens}.test.ts`.
-- **Tests, mutation-proven:** `CONSOLE_THEME` no longer follows the media query → the
-  unit test fails; either background literal drifts from **its own** `--ground` (the dark
-  one from the dark set's, the light one from the light set's) → the token test fails —
-  one assertion per literal, since "equal to `--ground`" is ambiguous with two grounds.
-  **That assertion is this task's and cannot be an earlier one's** (§6.3): the two literals
-  arrive in `src/main/window.ts` here, so this is the first task at which there is anything
-  to compare them against. And a second roving-tabindex regression → the entry wiring test
-  fails.
-- **Note on the CSP and `ElementLike`:** this task writes **attributes only**. A
-  `matchMedia` read is not a DOM write and not a network call; `data-theme` is a
-  `data-*` attribute, which is what the screens already write; `role`, `aria-*` and
-  `tabindex` are attributes. **`ElementLike` needs no widening, no style is written, and
-  the CSP is not touched.**
+**The owner's Q1 ruling of 2026-10-19 removes the switch this task is named for** (§3.6,
+[§8](#8-open-for-the-owner)). One value set ships, dark, so there is nothing to switch
+between: the scope below is the two-set design this task was written from, and the heading
+is kept as the record of what it was scheduled to do. What is left of the task is **the
+window background and the keyboard**.
+
+- **Scope:** `CONSOLE_THEME` stays the literal `'dark'` it is today — no `themeChoice()`,
+  no `matchMedia` read, no `change` subscription and no `nativeTheme` query comes with it
+  (§3.6); `consoleWindowOptions` gains `backgroundColor`, **one literal**, `#0A0E16`,
+  against the one `--ground` (§4.1); the nav's tablist behaviour **and the rail's** (§4.3) —
+  the rail's list gets the same roving `tabindex`, Arrow/Home/End between its rows and
+  **Enter to select**, together with the **shortcut keys** that select by position (§4.1).
+  The rail's keys are new to this task and belong here rather than in Task 6.3: the rail is
+  the canvas's region and this is the task that gives the console its keyboard.
+  *The scope as designed, before the ruling:* `CONSOLE_THEME` becomes the answer of a
+  `themeChoice()` that reads `matchMedia('(prefers-color-scheme: dark)')` and subscribes to
+  `change`; the entry stamps `data-theme` on the mount it draws the chrome into; the
+  picker's script stamps its document; `consoleWindowOptions` gains **both background
+  literals**, read from `nativeTheme.shouldUseDarkColors` and re-set on `nativeTheme`'s
+  `updated` event.
+- **Files:** `console/src/renderer/entry.ts` (the nav's tablist behaviour and its
+  roving `tabindex`, §4.3), `console/src/main/window.ts` (the one background literal,
+  §4.1), and `console/test/unit/{entry-wiring,theme-tokens}.test.ts` (the roving-tabindex
+  case and the window-background case) — the same four files the plan's Task 6.5 names
+  under its own **Files**, which is the list a pin compares with this one file for file.
+  *As designed:* the same list with `console/src/renderer/installations.ts` (the picker's
+  script, which the ruling leaves alone) and `console/test/unit/window.test.ts` — the same
+  pair the plan's Task 6.5 keeps as the same record.
+- **Tests, mutation-proven:** the window's background literal drifts from `--ground`
+  (`#0A0E16` edited to `#121A26`) → the token test fails by name — **one literal, one
+  direction, which is the ruled scope**; a roving-tabindex regression → the entry wiring
+  test fails. *The two-set form of the background case:* `CONSOLE_THEME` no longer follows
+  the media query → the unit test fails; either literal drifts from **its own** `--ground`
+  → the token test fails, one assertion per literal, since "equal to `--ground`" was
+  ambiguous with two grounds. **That assertion is this task's and cannot be an earlier
+  one's** (§6.3): the literal arrives in `src/main/window.ts` here, so this is the first
+  task at which there is anything to compare it against.
+- **Note on the CSP and `ElementLike`:** this task writes **attributes only** — `role`,
+  `aria-*` and `tabindex` on the nav. **`ElementLike` needs no widening, no style is
+  written, and the CSP is not touched.** *The two-set design also read `matchMedia` and
+  stamped `data-theme`; neither is a DOM style write or a network call, which is why that
+  form would have left `ElementLike` and the CSP alone too.*
 - **Verification:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run
-  test:e2e` — skipped here too, since this task is what changes what the two schemes paint.
-- **Reviewer tier:** ordinary — but it is the one task that touches the entry, so it is
-  reviewed against §5.5's "no style, no loosening" rule explicitly.
+  test:e2e` — skipped here too, since this task changes what the window paints behind the
+  first frame.
+- **Reviewer tier:** ordinary — but it is one of the two tasks that touch the entry
+  ([§7.3](#73-task-63--the-layout) appends the rail's elements and this one adds the
+  attributes and the keys), so it is reviewed against §5.5's "no style, no loosening" rule
+  explicitly.
 
 ### 7.6 Task 6.6 — the golden frames, re-recorded
 
@@ -1705,31 +2132,57 @@ matter most, and the mutation each is proved against:
 | `theme-tokens.test.ts` (6.1) | a palette value edited to break one ratio — the test names the pair and the ratio |
 | `bundle.test.ts` / `csp-document.test.ts` (6.2) | `/console.css` dropped from `SERVED_FILES`; a `<link>`'s `href` changed; `style-src` widened by one token |
 | the forced-colors smoke (6.3's chrome half, 6.4's per screen) | the `@media (forced-colors: active)` block deleted from the stylesheet under it — the boundary collapses and the case fails |
-| the golden specs' `paintedBackground` assertion (6.6) | the `<link>` removed from `index.html` — the two schemes then paint the same colour and the assertion fails |
+| the golden specs' `paintedBackground` assertion (6.6) | the `<link>` removed from `index.html` — nothing paints the ground and both runs read the compositor's `rgba(0, 0, 0, 0)`, so the assertion fails. *Under the two-set design the same mutation failed because the two schemes then painted the same colour, which one set cannot show:* |
 
-**And the four this document's own docs test was proved against, each run for real and
+**And the five this document's own docs test was proved against, each run for real and
 reverted** ([§6.5](#65-the-docs-test)): the status line replaced with `Status: draft.`; a
 cited path removed from the text, and another moved on disk; an in-page anchor left as the
 broken slug it was written as; Phase 6's heading stripped of `UNAPPROVED`, one of its six
-question markers dropped, and one of its task headings renamed. The seventh is the plan's
+question markers dropped, and one of its task headings renamed; and the rail's two glyphs
+swapped between `running` and `silent` in §4.1's table, or its **216 px** expanded width — or
+its **56 px** collapsed one — dropped from the block beside it, which the rail test catches
+on the row the glyph moved to and by name, once per width — as does **§7's ordering sentence
+put back to a wording that makes 6.5 the sole owner of the entry**, which the same case
+refuses wherever either document carries that claim — the guard is a pattern over the two
+documents rather than one fixed sentence, so it was run against §7's sentence, §7.5's
+original phrasing and the plan's `J4` row, three wordings of the same claim, and the third is
+the one this round found still standing.
+The seventh is the plan's
 own: `6.2` removed from Global Constraints rule 9's list, which
 `TestPlanRule9ListsEveryFlaggedHeading` catches. **And the ordering test (§6.5's tenth)
-carries seven of its own**, one per case, planted and reverted: the four-name
+carries eight of its own**, one per case, planted and reverted: the four-name
 `THEME_STYLESHEETS` literal restored; `base.css` put back into Task 6.2's `**Files**`; the
 window-background case put back into Task 6.1's `**Tests**`; a later task named in Task
 6.3's `**Tests**`; `THEME_STYLESHEETS` removed from Task 6.3's `**Files**`; §6.3's
-"This case is [Task 6.5]'s and not Task 6.1's" removed; and §6.5's opening line put back to
-"nine tests" over a file that declares ten.
+"This case is [Task 6.5]'s and not Task 6.1's" removed; §6.5's opening line put back to
+"nine tests" over a file that declares ten; and `entry.ts` dropped from §7.5's `**Files**`
+while the plan's Task 6.5 keeps it, which is the two documents' lists disagreeing about the
+task that still owns the nav's keyboard behaviour. The two-set pin beside them is proved the
+same way, twice: an unmarked two-set sentence planted in a section that states the ruling
+somewhere above it, and a phrase a rewrap splits across two lines. **The sentence in §6.5
+that describes that pin is proved as well** — a phrase dropped from its enumeration of them
+fails the case that reads the sentence against the pin's own list, which is how a reader is
+kept from writing a weaker scan than the one that ships — and so is the plan's list beside
+§7.5's, file for file: a file moved from one document's ruled list to the other's fails by
+name.
 
 ---
 
 ## 8. Open for the owner
 
-Six questions this design does not answer for the owner. **No D-number is allocated** —
-they are the console plan's `C`-series style only in shape, and a number is the owner's to
-give.
+Six questions this design does not answer for the owner, **one of which the owner has since
+answered**: Q1 was ruled on 2026-10-19 (option (b), dark only) and the answer is written into
+the question below, while Q2 to Q6 stand open. **No D-number is allocated** — they are the
+console plan's `C`-series style only in shape, and a number is the owner's to give.
 
 **Q1 — Does the console ship a light theme at all, and is the OS the default?**
+- **ANSWERED by the owner on 2026-10-19: option (b), dark only** — matching today's
+  `CONSOLE_THEME`, with the light set deferred to §3.3's table and no OS default added.
+  `palette.css` sets `color-scheme: dark`; the four spellings a light theme would need
+  (`light dark`, `light-dark()`, `prefers-color-scheme`, a `[data-theme='light']` block)
+  fail `console/test/unit/theme-tokens.test.ts` by name. **This is the one question the
+  approval of 2026-10-19 answered**, and §3.6, §4.1, §6.2 and §6.3 and the plan's Tasks 6.1,
+  6.5 and 6.6 each carry what (b) changes in them. **Q2 to Q6 below stand open.**
 - *Options:* (a) light and dark both ship, the OS decides, an override is offered
   (**recommended**); (b) dark only, matching today's `CONSOLE_THEME`, with light deferred;
   (c) light and dark, the OS decides, **no override at all**.
@@ -1759,6 +2212,8 @@ give.
   when the theme was a preference; the token layer makes each variant additive (one more
   `.css` and one more entry on `THEME_STYLESHEETS`), so deferring costs nothing and shipping
   six palettes costs six contrast sets to review and six more goldens per screen.
+  *Unanswered, like Q2 and Q4 to Q6: the owner's Q1 ruling of 2026-10-19 answered Q1 alone,
+  and the options above keep the wording they were put to the owner in.*
 
 **Q4 — Are PR #629's darwin baselines superseded, or kept until the CSS lands?**
 - *Options:* (a) superseded — the CSS lands, then one recording pass (**recommended**);
@@ -1844,11 +2299,22 @@ regions, the states and the palette below are the same ones §2 and §3 specify,
 canvas that invents a screen, a region, a state or a colour is a canvas that disagrees with
 the code.
 
+**The canvas has since been drawn and approved.** The owner approved it on 2026-10-19: the
+four screens — Live, Spend, Projects and Run detail — in the one value set that ships, the
+dark one, with the boundary screens of frame 5 drawn in the same set. Its **one structural
+addition to this design is the installation rail** ([§4.1](#41-the-windows-structure)),
+which this brief did not ask for and the owner accepted: the region's structure, its tokens,
+its state words, its keys, the collapsed state and the read-only rule it keeps are specified
+in §4.1, and a canvas drawn again from this brief draws the rail with the rest of the frame.
+
 **The tone, in one line:** *dense, calm, operator-grade — an instrument, not a marketing
 page.* The console is read at a glance, many times an hour, by the person who owns the
 bill. Nothing is decorative, nothing is hidden, and no figure is ever dressed up.
 
-**What to draw (five frames, each in light and dark):**
+**What to draw (five frames, in the one value set that ships, the dark one):** *As first
+written, "five frames, each in light and dark" — the light frames are not drawn, since the
+owner's Q1 ruling of 2026-10-19 (option (b), dark only) leaves §3.3 as the record of a set
+no task owns.*
 
 1. **Live** — the default. The three bands (§4.1) with the installation line, the tab-like
    nav and the panel. Regions in order: the header (`h1.live-project`, mode, day,
@@ -1876,8 +2342,11 @@ bill. Nothing is decorative, nothing is hidden, and no figure is ever dressed up
    the refusal screen (`<h1>Fugaro console</h1>` and one sentence). The last of these is the
    **no-script** case and must look complete anyway.
 
-**The palette to draw in:** §3.2 (dark) and §3.3 (light), with the semantic roles of
-[§2.9](#29-every-state-variant-in-one-table). `--ok` is for measured-and-inside-cap;
+**The palette to draw in:** §3.2 — the dark set, the one that ships; §3.3 is the record of
+the deferred light set and a canvas is not drawn from it (the owner's Q1 ruling of
+2026-10-19) — with the semantic roles of
+[§2.9](#29-every-state-variant-in-one-table). `--ok` is for measured-and-inside-cap and for
+the installation rail's `running` row (§4.1);
 `--warn` for attention; `--error` for failed/lost; `--halted` for **killed**, a deliberate
 stop and not a failure — it must not read as an error; `--stale` for last-known values.
 **Never colour alone**: every state badge carries its word (§3.5).
@@ -1894,10 +2363,19 @@ draw a zero.
 
 - **It does not change the CSP** (§5.5), the protocol handler's refusals, the preload, the
   IPC allow-list or the spawn contract.
+- **It does not add a read to the dashboard's bridge, and the rail is drawn without one.**
+  The installation rail the canvas draws needs a bounded, schema-checked list read on the
+  dashboard's surface to fill a row per stored installation ([§4.1](#41-the-windows-structure));
+  the dashboard has none today — `installation.current` is its one installations read, it
+  takes no argument and names no id, and the picker's list is on the picker's own channels —
+  and this document **does not add it**. No Phase 6 task owns `src/preload/` or the IPC
+  allow-list, and the phase draws the rows the dashboard can read. **A multi-row rail is a
+  surface decision for the owner, and it is not taken here.**
 - **It allocates no D-number and no C-number** (§8); the six questions are the owner's and
   are unnumbered on purpose.
-- **It does not approve Phase 6.** The plan's OWNER APPROVAL GATE stands: the tasks are
-  `UNAPPROVED` until the owner answers [§8](#8-open-for-the-owner) and gives the go.
+- **It does not approve Phase 6** — that was the first revision's line, and the owner's
+  approval of 2026-10-19 is the act that did. *As first written:* the tasks are `UNAPPROVED`
+  until the owner answers [§8](#8-open-for-the-owner) and gives the go.
 - **It does not decide the home for a theme override** (Q2) — that is a §5.1-rule-10
   amendment and an owner's ruling, not a styling choice.
 - **It does not re-record the golden frames.** That is Task 6.6 and it is owner-run.

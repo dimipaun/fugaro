@@ -1,7 +1,8 @@
 ---
 /**
  * website/src/pages/privacy.astro — the privacy statement (website plan, Task W1.12;
- * reconciliation findings 16 and 18; decisions D93, D106 and W3.2's privacy defaults).
+ * reconciliation findings 16 and 18; decisions D93, D106 and W3.2's privacy defaults;
+ * the software part is the owner's request of 2026-10-19).
  *
  * The page a reader is owed once the site measures anything: what is collected, by what, when
  * it loads, how the answer is given and how it is taken back. It is also the page where the
@@ -9,33 +10,61 @@
  * banner appears on this page even for a visitor who already decided, which is what makes
  * consent withdrawable from the one page that says how (W1.12 step 3).
  *
- * **Every sentence about measurement is a fact the build holds, and nothing is invented.**
- * The page reads `site.yaml` through the content pipeline, exactly as the layout does, and
- * branches on `analytics.enabled`: with the flag off it says the site collects nothing, and
- * it names no vendor, because there is no vendor to name. With the flag on it states what the
- * site's own gate does — Google Analytics 4, one page view per page, no event and no user id,
- * Google Signals and ads personalisation off, GA4's own IP anonymisation — and it does not
- * restate Google's policy for Google. Four of its claims are held to the artifact by
- * `website/test/consent.mjs`: that no page carries a form or a field; that the tool it names
- * is the tool the build would load (the page names Google Analytics, and the origin the gate
- * loads from must be Google's); that the withdrawal it describes deletes the cookies it says
- * it does (the script touches `document.cookie`, and the sentence and the code are held to
- * each other); and that the defaults it states are the ones the gate's
+ * **Two parts, because two audiences read it.** The App Store and Play listings need one
+ * privacy policy URL, and that URL has to cover the software as well as the site, so the page
+ * carries "The website" and "The software" as its two parts. Part one is unchanged in
+ * substance: every sentence about measurement is a fact the build holds and nothing is
+ * invented. The page reads `site.yaml` through the content pipeline, exactly as the layout
+ * does, and branches on `analytics.enabled`: with the flag off it says the site collects
+ * nothing, and it names no vendor, because there is no vendor to name. With the flag on it
+ * states what the site's own gate does — Google Analytics 4, one page view per page, no event
+ * and no user id, Google Signals and ads personalisation off, GA4's own IP anonymisation —
+ * and it does not restate Google's policy for Google. Four of its claims are held to the
+ * artifact by `website/test/consent.mjs`: that no page carries a form or a field; that the
+ * tool it names is the tool the build would load (the page names Google Analytics, and the
+ * origin the gate loads from must be Google's); that the withdrawal it describes deletes the
+ * cookies it says it does (the script touches `document.cookie`, and the sentence and the
+ * code are held to each other); and that the defaults it states are the ones the gate's
  * `config` call makes, in both directions — an option the script sets is a sentence the page
  * owes the reader, and an option the script stops setting is a sentence the page may not keep
  * ("the privacy defaults the page states are the ones the site's script makes"). The last
  * claim, that the page names nothing it cannot hold, is the one no test makes: it is a
  * sentence to read rather than a string to match.
  *
- * **It is measured like every other page**, and D188's ceiling is 250 words: W3.2 turned the
- * flag on, so the branch a reader now sees is the one that has to fit — and it fits exactly,
- * which is why the sentence about the host's request logs was traded back in against shorter
- * wording elsewhere rather than dropped (an earlier draft cut it and pointed at `/security/`
- * for it, which does not carry it: the security page is the Fugaro program's posture, not the
- * host's logs). Any sentence added here costs a sentence traded out — including the owner's
- * ruling of 2026-10-18, that a withdrawal deletes the cookies Google's tag set: the sentence
- * saying so replaced "Google's cookies stay until you clear them", and the clause pointing at
- * Google's own policy beyond IP anonymisation paid for the rest.
+ * **Part two states only what the code and the documents hold**, and
+ * `website/test/privacy.mjs` holds each sentence to its source: the CLI's and the console's
+ * reach is read from the hosts their sources name, the update check from
+ * `internal/updatecheck` and `internal/cli/updatewarn.go` (one GET to GitHub's public
+ * "latest release" endpoint, at most once a day, cached on the machine, and the two switches
+ * that turn it off), the phone app's two credentials and its secure storage from
+ * `mobile/src/accounts/`, and the app's reporting from the other direction — the page names
+ * Firebase Crashlytics and Firebase Analytics, so the same gate refuses that naming unless
+ * the repository carries the plan for it (`docs/plans/2026-10-19-mobile-telemetry.md`) or the
+ * app's own dependency list already carries the two packages, and it refuses the app's
+ * carrying them without the page naming them. The app's "no advertising identifier" is read
+ * off the tree, not asserted: the scan refuses the platform's advertising-identifier APIs
+ * anywhere under `mobile/`. The project the app signs in to is the reader's own — the CLI and
+ * the console reach nothing the Fugaro project operates, and the app's reports are the one
+ * flow that does, which is why the page states them and says that the app versions carrying
+ * them have no switch to turn them off (the owner's ruling of 2026-10-19). The clause that
+ * says which of the other things a reader may hold these reports do not touch names the two
+ * other tools and not the website: the website's own measurement is part one's subject, it is
+ * Google Analytics under a consent that part states, and a software-part sentence calling the
+ * website unaffected would be this page contradicting its own first half.
+ *
+ * **The app's paragraph describes the app as it will be, and says so.** Crashlytics and
+ * Analytics are the owner's ruling of 2026-10-19 and are not in the app yet, so the
+ * sentences above them are read off the design that will build them, and the page says which
+ * version carries the reports rather than implying the build a reader may hold does. When the
+ * telemetry plan lands in this repository, the gate's second direction becomes the plan file
+ * rather than the page's own "earlier builds" sentence, with no change to this page.
+ *
+ * **It is measured like every other page**, and D188's ceiling is no longer 250 words: the
+ * privacy statement is the one page that is not the site's pitch — it carries what a reader
+ * and a store reviewer both need, and the ceiling is re-derived from its own count, in
+ * `website/README.md`, the way D192 re-derives the byte budgets. The sentence about the
+ * host's request logs stays where W3.2 put it, now as a line of "What this site does not do"
+ * rather than a section of its own.
  *
  * The page carries no script of its own and no copy of the consent key: the banner is the
  * layout's, rendered here because this page asks for it. The styles are scoped, token-only
@@ -48,6 +77,11 @@ import { loadSite } from '../content.ts'
 // the build rather than shipping a statement about a configuration nobody checked (W1.3).
 const site = loadSite()
 const analyticsEnabled = site.facts.analytics.enabled
+
+// The repository, from the same file every other GitHub link on the site is built from
+// (W1.7): the issue tracker and the reporting route are links a reader acts on, so they are
+// built rather than typed.
+const repo = site.facts.repository
 ---
 
 <Base title="Privacy" alwaysOffer>
@@ -55,12 +89,15 @@ const analyticsEnabled = site.facts.analytics.enabled
     <h1>Privacy</h1>
 
     <p class="privacy-lead">
-      What this website does with a visitor's browser, and what it leaves to others.
+      What this website does with a visitor's browser, and what the software does with your
+      data.
     </p>
+
+    <h2>The website</h2>
 
     {analyticsEnabled ? (
       <>
-        <h2>What this site collects</h2>
+        <h3>What this site collects</h3>
         <p>
           This site counts visits with <strong>Google Analytics 4</strong>. If you accept,
           Google's script reports the page's path, without any query, to Google, which
@@ -73,7 +110,7 @@ const analyticsEnabled = site.facts.analytics.enabled
           by default.
         </p>
 
-        <h2>Consent</h2>
+        <h3>Consent</h3>
         <p>
           Google's script loads only after you accept: until then this page has asked Google
           nothing. <strong>Accept</strong>, in the banner, loads Google's
@@ -89,7 +126,7 @@ const analyticsEnabled = site.facts.analytics.enabled
           (<code>_ga</code> and the rest) from this browser.
         </p>
 
-        <h2>What this site does not do</h2>
+        <h3>What this site does not do</h3>
         <ul>
           <li>It sets no cookie of its own.</li>
           <li>It has no account, form or comment box.</li>
@@ -97,13 +134,11 @@ const analyticsEnabled = site.facts.analytics.enabled
             It loads nothing from another origin except Google's script, and only after you
             accept.
           </li>
+          <li>
+            It keeps no log of its own. The host's request logs are the host's, and this
+            repository does not control them.
+          </li>
         </ul>
-
-        <h2>What this page does not cover</h2>
-        <p>
-          It leaves the host's request logs, which this repository does not control, and the
-          Fugaro program on your machine, to the <a href="/security/">security page</a>.
-        </p>
       </>
     ) : (
       <>
@@ -115,14 +150,14 @@ const analyticsEnabled = site.facts.analytics.enabled
           time, and the site asks you first.
         </p>
 
-        <h2>Analytics</h2>
+        <h3>Analytics</h3>
         <p>
           This site has no analytics at all: nothing counts your visit, and no analytics
           script, cookie or identifier is involved in the page you are reading. There is no
           consent to give here, and nothing to withdraw.
         </p>
 
-        <h2>What this site does not do</h2>
+        <h3>What this site does not do</h3>
         <ul>
           <li>It sets no cookie, and it loads nothing that could set one.</li>
           <li>
@@ -130,9 +165,82 @@ const analyticsEnabled = site.facts.analytics.enabled
             player.
           </li>
           <li>It sells nothing, because it collects nothing to sell.</li>
+          <li>
+            It keeps no log of its own. The host's request logs are the host's, and this
+            repository does not control them.
+          </li>
         </ul>
       </>
     )}
+
+    <h2>The software</h2>
+
+    <h3>Where it runs</h3>
+    <p>
+      The command line tool and the desktop console run on your own machine. They talk to
+      your own Google Cloud project, your own git provider and the model provider you
+      configured, and to nothing the Fugaro project operates. Nothing is reported anywhere:
+      no telemetry, no usage statistics, no crash report, no identifier.
+    </p>
+
+    <h3>The update check</h3>
+    <p>
+      The one thing the tool asks outside your own accounts is whether a newer release
+      exists. It asks GitHub, at most once a day: one request to this repository's public
+      release list, carrying nothing about you, with the answer kept on your machine.
+      <code>FUGARO_NO_UPDATE_CHECK=1</code> or <code>update_check: false</code> turns it off;
+      <code>fugaro doctor</code>, which you run yourself, still reports your version.
+    </p>
+
+    <h3>The phone app</h3>
+    <p>
+      The phone app is built to sign in to your own Firebase project — the project id you type
+      in for an installation — and to read only what that project's rules grant it. Signing in,
+      it names the paired device to that project, and nothing else of yours goes with it. Its
+      writes go into the mailbox your own installation reads. Its two credentials, a Firebase
+      ID token and the pairing key, live in the device's secure storage, the Keychain or the
+      Keystore, and nowhere else.
+    </p>
+    <p>
+      <strong>Crash reports and anonymous usage.</strong> The app version that carries these
+      reports sends two things to a Firebase project the Fugaro project operates, and not to
+      your own: crashes, through <strong>Firebase Crashlytics</strong>, and anonymous usage,
+      through <strong>Firebase Analytics</strong>. A crash report holds the crash's logs,
+      diagnostics and app performance data; the usage count says which screens were opened.
+      Firebase gives the app an app-instance identifier of its own, and that travels with both.
+      Google holds all of it, as Firebase's processor, for the Fugaro project, under{' '}
+      <a href="https://firebase.google.com/support/privacy" rel="noopener">Google's Firebase
+      privacy policy</a>.
+    </p>
+    <p>
+      Never sent: the contents of any message, anything from your installation or its mailbox,
+      your credentials and your keys. The reports are read to find and fix crashes and to see
+      which screens are used, and for nothing else. The app carries no advertising identifier.
+    </p>
+    <p>
+      The app versions that carry these reports send them. There is no switch inside the app to
+      turn them off: uninstalling the app stops them, and not installing it avoids them. The
+      command line tool and the console are unaffected: they carry none of these reports.
+      Earlier builds of the app send nothing at all.
+    </p>
+
+    <h3>Deleting your data</h3>
+    <p>
+      Everything else the software holds lives in your own accounts, your own cloud project and
+      your own devices, and removing the installation removes it. The crash reports and
+      anonymous usage above are the exception, and deleting the app does not remove them:
+      Google holds them for the Fugaro project, under the policy linked above. Uninstalling the
+      app stops the sending. It does not take a report already sent out of Google's hands, and
+      the issue tracker is where to ask about one.
+    </p>
+
+    <h3>Contact</h3>
+    <p>
+      Questions and bug reports go to the repository's{' '}
+      <a href={`${repo}/issues`} rel="noopener">issue tracker</a>. Report a vulnerability
+      through <a href={`${repo}/blob/main/SECURITY.md#reporting-a-vulnerability`} rel="noopener">SECURITY.md</a>'s
+      private route, never in a public issue.
+    </p>
   </article>
 </Base>
 
@@ -153,6 +261,12 @@ const analyticsEnabled = site.facts.analytics.enabled
   }
 
   .privacy h2 {
+    font-size: var(--font-size-2xl);
+    line-height: var(--leading-snug);
+    margin: var(--space-3xl) 0 var(--space-md);
+  }
+
+  .privacy h3 {
     font-size: var(--font-size-xl);
     line-height: var(--leading-snug);
     margin: var(--space-2xl) 0 var(--space-sm);

@@ -1801,14 +1801,18 @@ seam the renderer entry (Task 3.4a) needs to answer the dashboard's
   the documents the handler serves, as the bundler's copies of
   `src/renderer/index.html`, `src/renderer/refusal.html` and
   `src/renderer/installations.html` in `dist/bundle/`; the two bundles,
-  `dist/bundle/console.js` and `dist/bundle/installations.js`; the two preloads
-  a window loads by absolute path, `dist/preload/index.js` and
+  `dist/bundle/console.js` and `dist/bundle/installations.js`; **the served
+  stylesheet, `dist/bundle/console.css`** (Task 6.2 — every document links it,
+  so an app packaged without it opens a window with no style at all); the two
+  preloads a window loads by absolute path, `dist/preload/index.js` and
   `dist/preload/installations.js`; and the compiled main process, shared and
   source modules under `dist/**` except the two Task 4.1 excludes by name.
   `test/unit/build-files.test.ts` reads that list off the tree rather than
   repeating it, so a third document or a third preload is covered when it is
   added, and a file that works here but is missing from the shipped bundle
-  fails a named test instead of shipping.
+  fails a named test instead of shipping — the stylesheet is the one
+  `bundlerOutputs` names by hand, and that is why a `build.files` that dropped
+  it fails by name.
 - **The picker's bundle entry** is the bundler's second entry
   (`pickerBundlePaths` in `tools/bundle-renderer/index.ts`): `npm run build`
   writes `dist/bundle/installations.js` beside `console.js`, each bundle step
@@ -2202,14 +2206,14 @@ rather than moving it: `build.files` is
 ```json
 ["dist/main/**/*.js", "!dist/main/fuses.js", "dist/preload/index.js",
  "dist/preload/installations.js", "dist/shared/**/*.js", "dist/source/**/*.js",
- "!dist/source/fixture.js", "dist/bundle/console.js", "dist/bundle/index.html",
- "dist/bundle/installations.html", "dist/bundle/installations.js",
- "dist/bundle/refusal.html"]
+ "!dist/source/fixture.js", "dist/bundle/console.css", "dist/bundle/console.js",
+ "dist/bundle/index.html", "dist/bundle/installations.html",
+ "dist/bundle/installations.js", "dist/bundle/refusal.html"]
 ```
 
-(as amended when Task 3.4a moved the served root to `dist/bundle/` and Task
-3.4b added the picker's document, script and preload; the paragraph below is
-Task 4.1's record of its own first list)
+(as amended when Task 3.4a moved the served root to `dist/bundle/`, Task 3.4b
+added the picker's document, script and preload, and Task 6.2 added the served
+stylesheet; the paragraph below is Task 4.1's record of its own first list)
 
 — the compiled main process, preload, shared and source modules, the document
 the window actually loads, and nothing else. Two compiled files are excluded by
@@ -2686,3 +2690,342 @@ a scratch copy of the staged file and turned the named test red:
 | the `ditto -c -k --keepParent` zip of the bundle dropped | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on that line; and `TestDocsConsoleNotarizeAndStapleScript`, on the calls the fake `xcrun` and `ditto` log |
 | the script left non-executable | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on its file mode (the signing step runs it directly) |
 | the "Re-copy required" note deleted from `docs/pending-workflows/README.md` while the staged and applied files differ | `TestDocsConsoleReleaseStagedChangeSaysItNeedsACopyIn`: the owner is the one who has to copy the file in, and that section is where they read it |
+
+## The theme's tokens, and the palette they are painted in (Task 6.1)
+
+`src/renderer/theme/` holds the console's styling, in the four files the plan's File
+Structure tree promised and the design's section 3.1 lays out. Two of them exist today and
+two do not, and that is the phase's own order rather than an omission:
+
+| File | Holds | Written by |
+|---|---|---|
+| `src/renderer/theme/tokens.css` | the **vocabulary**: spacing, radii, type sizes, leading, weights, the two row heights, the focus ring's width and offset, and the two motion values. **No colour.** | Task 6.1 (this section) |
+| `src/renderer/theme/palette.css` | the **value set**: every colour token the console paints, each written once. **No size, no spacing, no motion.** | Task 6.1 (this section) |
+| `src/renderer/theme/base.css` | the reset, the document, the three bands, the nav, focus, the responsive layers and the chrome's forced-colors block | Task 6.3 (not yet) |
+| `src/renderer/theme/screens.css` | the per-screen rules, in the order the design's section 2 lists the screens | Task 6.4 (not yet) |
+
+**As of Task 6.2 these two files are read, served and linked, and the paragraph that follows
+is the record of the stage before that.** Each is named by `THEME_STYLESHEETS` in
+`tools/bundle-renderer/index.ts`, the bundler's stylesheet step concatenates them (in list
+order) into `dist/bundle/console.css`, `/console.css` is one of the entries `SERVED_FILES`
+names — the list `test/unit/bundle.test.ts` holds the served root to, not a filter the
+handler consults — and each of the three documents links it — see the section at the foot of
+this file.
+`test/unit/bundle.test.ts` fails if a stylesheet `THEME_STYLESHEETS` names still says in its
+own prose that nothing reads it, which is the sentence this paragraph used to open with and
+the reason it was rewritten rather than left standing.
+
+> **What this paragraph said at Task 6.1, kept as the record of that state.** "Nothing reads
+> these two files yet … They are inert until Task 6.2 lands the bundler's stylesheet step,
+> the `/console.css` entry in `SERVED_FILES`, the three `<link>` elements and the unit tests
+> that pin them: a merge of this file pair alone changes nothing on screen. When 6.2 lands,
+> the four files become **one** served artifact, `dist/bundle/console.css`, concatenated in
+> the design's order (vocabulary, values, then the rules that read them) — and the
+> packaged-file list in this README and in `package.json`'s `build.files` has to name it,
+> which `test/unit/build-files.test.ts` holds (`bundlerOutputs` gains it in that task's
+> commit, so an app that ships without its stylesheet fails a test rather than drawing an
+> unstyled window)." Every one of those consequences is what 6.2 did.
+
+### Dark only, which is the owner's ruling of 2026-10-19
+
+The design's Q1 asked whether the console ships a light theme and recommended light and
+dark with the OS deciding. **The owner ruled dark only**: the console ships one value set,
+matching the `CONSOLE_THEME` its screens are drawn with today, and the light set is
+deferred — the design's section 3.3 table stays as the record of it, for whichever later
+task the owner hands it to. So `palette.css` sets `color-scheme: dark` outright, and no
+theme file uses `light-dark()`, reads `prefers-color-scheme`, declares the OS-driven
+`light dark` pair or keys a block on `data-theme='light'`. Each of those four spellings is
+the way a light theme could arrive without a task owning it, and
+`test/unit/theme-tokens.test.ts` fails by name on every one of them.
+
+### The colour contract is a test, and it reads the file rather than a copy of it
+
+`test/unit/theme-tokens.test.ts` parses `palette.css`'s hex literals out of the stylesheet
+itself and computes every pair the design's section 3.4 tabulates — 4.5:1 for body-size
+text and the five state colours on all three surfaces, 3:1 for the accent and the control
+border as UI colours, 4.5:1 for a label on a filled control — with WCAG 2.1's
+relative-luminance definition, the same arithmetic `website/test/a11y.mjs` uses. It also
+holds the value set to the design's section 3.2 table name by name and literal by literal,
+keeps `--border` below 3:1 (it is a decorative hairline, never a control's extent), keeps
+the five state colours at least 50° apart in hue, and refuses a colour in the vocabulary.
+The red step is kept as a case: a deliberately failing fixture, `#646464` on `#14141F`,
+must print `--text-muted on --surface is 3.1:1, needs 4.5:1` — one decimal, because that is
+the line `a11y.mjs`'s own committed fixture prints.
+
+**Three** of the cases the design's section 6.3 assigns to `theme-tokens.test.ts` are not in
+the file, and two different reasons put them elsewhere:
+
+- the **"vocabulary complete and identical in both sets"** case is *replaced*: under the
+  owner's dark-only ruling there is one value set, so it would compare a set with itself.
+  What catches what it was written for is here instead — the vocabulary is declared
+  **exactly** (every token of the design's section 3.1 table is present, and no name
+  outside it), no colour is spelled in `tokens.css`, and no step is spelled in
+  `palette.css`;
+- the **`--border`-is-decorative scan** of `base.css` and `screens.css` is Task 6.4's: both
+  files are created later, by Tasks 6.3 and 6.4, so the case lands in the task that writes
+  what it reads;
+- the **window-background comparison** against `consoleWindowOptions` is Task 6.5's:
+  `backgroundColor` is a key that task adds to `src/main/window.ts`, and under the ruling it
+  is one literal, `#0A0E16`, checked against the one `--ground`.
+
+## The wiring: the stylesheet is bundled, served and linked (Task 6.2)
+
+Task 6.1 wrote the theme's two stylesheets and nothing read them. This task makes them a
+file the console **serves** and every document **links**, and it is the SECURITY-SENSITIVE
+one of the phase, because the thing it touches is the served root and the policy that
+governs it. What it does, in four pieces:
+
+| Where | What changed |
+|---|---|
+| `tools/bundle-renderer/index.ts` | a **stylesheet step**: `THEME_STYLESHEETS`, the refusals below, and `dist/bundle/console.css` |
+| `src/main/protocol.ts` | **one** new `SERVED_FILES` entry, `/console.css` — six where there were five |
+| `src/renderer/{index,installations,refusal}.html` | **one** `<link rel="stylesheet" href="./console.css">` in each `<head>`, beside the CSP `<meta>` |
+| `package.json`, this file | `build.files` and the served-files list gain `dist/bundle/console.css` |
+
+### One file, in cascade order, and the list is the directory's whole contents
+
+The theme is four source files under `src/renderer/theme/` and the served root is a flat
+allow-list, so the four are emitted as **one** file. `THEME_STYLESHEETS` is the list, and
+it is **the directory's whole contents**, which is what makes both of its refusals hold:
+
+- a `.css` file in the theme directory that is **not** on the list is a `BundleRefusal`,
+  so a stylesheet nobody reviewed cannot be served;
+- a listed file that is **missing** is a `BundleRefusal`, so a rename fails the build
+  rather than silently dropping a layer of the cascade — and, equally, so the list cannot
+  run ahead of the files it names.
+
+**That second refusal is why the list has two entries here and four later.** A task that
+landed all four names before Tasks 6.3 and 6.4 create `base.css` and `screens.css` would
+turn `npm run build` red the moment it merged. So `base.css` is appended by Task 6.3 and
+`screens.css` by Task 6.4, each in the commit that creates the file, and every
+intermediate state is a real build of the files that exist.
+`test/unit/bundle.test.ts` reads the list rather than four hard-coded names, so its case is
+true here with two files in it and stays true when the other two are appended.
+
+The step also refuses four things in any theme file, and the first is what makes the
+other three hold: a **backslash**, an **`@import`**, a **quoted string that names a URL**
+and a **remote `url()`**. The bundle is one file and the console is offline
+(`connect-src 'none'`), so an import would either fail at runtime or be a request the CSP
+forbids — and CSS reads `\` as the start of an **escape**, so `@\69mport "./base.css";` is
+an `@import`, `u\72l(...)` is a `url(...)` and `"\68ttp://…"` is a remote URL. Every scan in
+this tool is a scan and not a parse (the reason a *comment* that mentions `@import` is
+refused for it), so none of them unescapes, and the escape itself is what is refused.
+Neither theme file holds one, and a file that wants an escaped character writes the
+character — a scan that tried to tell the harmless escapes from the load-bearing ones would
+be the parser this tool does not have. `test/unit/bundle.test.ts` plants all four spellings
+of an escaped rule, `content: "\2014"` among them, which is the case that makes the rule a
+rule rather than a list of three shapes.
+
+The quoted-string scan is separate from the `url()` one because `image-set()` and
+`-webkit-image-set()` take a **bare string** as a URL, which is a remote load that never
+writes `url(`: `image-set("https://cdn.example/x.png" 1x)` is a request the `url()` scan and
+the at-rule scan both miss. Both scans read a target the same way — a scheme that leaves
+this machine, or the protocol-relative `//` — and the `url()` scan runs first, so a quoted
+`url('http://…')` is refused as the call that made the request. A quoted `<string>` may hold
+the *other* mark inside it, because CSS allows it — `image-set("https://cdn.example/a'b.png"
+1x)` is a valid URL — and the scan reads it as one.
+
+The target test is **anchored at the start of the string**, which is what keeps the cost
+narrow: a string that merely *mentions* a URL is not a URL, so `content: "see the design's
+notes, https://…"` passes. What is refused is a string that *begins* as a URL and is not one
+— `content: "Note: hello"` reads as the scheme `Note:` — and the fix is to reword the string.
+That is the whole of the false-positive surface, and it is the direction the tool errs in
+everywhere else.
+
+Both scans read the target **as the URL parser would read it**, and not as the bytes are
+written: ASCII tab and newline are removed wherever they are, and the leading and trailing C0
+controls and spaces are stripped, before the scheme test. So `url(" https://…")` and
+`image-set("\thttps://…" 1x)` are remote loads with the scheme behind a byte the test used to
+require at character 0, and both are refused now. The refusal still quotes the call **as it is
+written**, so the message names the bytes to change. One spelling is not reached and is stated
+rather than solved: a raw LF *inside* a quoted string, which `QUOTED_STRING_RE`'s body cannot
+cross — the section below carries the measurement that settles why the body stays bounded,
+and the `url()` scan, whose quoted body does cross lines, refuses that spelling.
+
+`url(./mark.png)` and `url(data:...)` are admitted — a path on this origin, and a byte
+string rather than a request (`img-src 'self' data:` allows the second). Two asymmetries
+are admitted with them and are stated rather than solved, because neither weakens anything:
+`data:` is allowed by `img-src` and by **no** other directive, so an `@font-face
+src: url(data:…)` would pass the build and be blocked when it is painted (`font-src 'self'`);
+and `blob:` is admitted by the same reading of `REMOTE_SCHEME_RE` while **no** directive
+allows it at all. Both are a silent failure mode — a rule that builds and does not paint —
+and not a hole: the CSP refuses the load either way.
+
+The `@import` scan is **ASCII case-insensitive**, matching `CSS_URL_RE` and
+`REMOTE_SCHEME_RE` beside it and matching CSS itself, where at-rule names are
+case-insensitive: `@IMPORT url("./base.css");` is the same rule, and it is the spelling that
+would otherwise slip through — its target is relative, so the remote-URL refusal does not
+see it, and the emitted `console.css` would carry an import at a path that is not in
+`dist/bundle/` and drop that layer out of the cascade with nothing failing.
+`test/unit/bundle.test.ts` plants `@import`, `@IMPORT` and `@Import`, and controls with the
+word spelled without its `@`. The stray-`.css` refusal beside these is case-insensitive too:
+`stray.CSS` is a stylesheet, and which checkout made the bundle should not decide whether
+the list is the directory's whole contents.
+
+**No CSS is parsed, minified, autoprefixed or rewritten.** The bytes on disk are the bytes
+served, which is what makes `theme-tokens.test.ts`'s contrast arithmetic meaningful: it
+reads the same literals the window paints. The only bytes added are comment banners — one
+naming the build, one per layer so a reader can see the seam — and a layer that does not end
+in a newline gains exactly one before the next layer's banner, so the seam is always a line
+of its own (`test/unit/bundle.test.ts` plants an unterminated stylesheet for it; neither real
+file reaches that arm).
+
+**A listed stylesheet may not say in its own prose that nothing reads it.**
+`test/unit/bundle.test.ts` scans every file `THEME_STYLESHEETS` names for the wording its
+Task 6.1 stage used — `inert`, "nothing reads", "no task reads", "not read by anything",
+"nothing links" — and fails on it. That is what rewrote `tokens.css`'s opening paragraph in
+this task: the sentence was true of a tree where nothing read the directory and is false of
+one where the bundler reads it, the served root serves it and every document links it. The
+scan is over the **list** and not the directory, so a stylesheet the list does not name is
+left to the stray-`.css` refusal that owns it, and the case is proved on a planted tree in
+both directions.
+
+### The CSP is unchanged, and the stylesheet is admitted by a directive that was always there
+
+`style-src 'self'` is the **third directive** of `CONTENT_SECURITY_POLICY` and has been
+since Task 1.1. A `<link rel="stylesheet">` to `app://console/console.css` is a stylesheet
+from this origin, so `'self'` admits it. `default-src 'none'` is not consulted for it;
+`font-src 'self'` is not consulted (no web font is loaded — the font stack opens with
+`system-ui`); `connect-src 'none'` is not consulted (a `<link>` is not a fetch
+`connect-src` governs, and no script fetches the CSS). **No directive is added, none is
+loosened, and there is no inline style, no `<style>` element and no `'unsafe-inline'`
+anywhere.** `mediaTypeFor` already mapped `.css`, so the protocol handler's change is the
+`SERVED_FILES` entry and nothing else — **and that entry is a list the handler never
+reads**: `resolveBundleRequest` serves any file under the root a URL names, deliberately
+(`protocol.ts` says so itself: `SERVED_FILES` is "deliberately not a second filter"), so the
+entry is the *test-held mirror* of `dist/bundle/` and not a runtime allow-list. The
+enforcement is the directory's contents, which the build decides; the list is how a reader
+and `test/unit/bundle.test.ts` see what the build decided.
+
+Four things hold that, and each is a test rather than a promise:
+
+- `csp-document.test.ts` reads `style-src` on its own and refuses `'unsafe-inline'`,
+  `'unsafe-eval'`, `'unsafe-hashes'`, `*`, `http:` and `https:` in it; it asserts **one**
+  `<link>` per document, `rel="stylesheet"`, `href="./console.css"`, with no `media`, no
+  `onload`, no `integrity` and no `crossorigin`; and it serves the file through the real
+  `serveAppRequest` and holds the response to `text/css; charset=utf-8`, `nosniff` and the
+  CSP header;
+- `window.test.ts` holds the whole policy string to the design's wording and
+  `APP_SCHEME_PRIVILEGES` to having no `bypassCSP`, unchanged by this task;
+- `screen-literals.test.ts` gains a scan over **every** module under `src/renderer`: a
+  `.style` property write (computed keys included) and `setAttribute('style', …)` are
+  offences with no vocabulary behind them, because `style-src 'self'` backs no inline style
+  at all;
+- `bundle.test.ts` holds `dist/bundle/` equal to `SERVED_FILES` in both directions, so a
+  file that appears beside the bundle — or a name dropped from the list — fails rather
+  than being served by a handler that would happily serve it.
+
+### The mutations this task is proved against
+
+Each was planted for real, run, and removed. The red step is the failure, not the diff.
+
+| Mutation | What fails |
+|---|---|
+| a stray `.css` planted in `src/renderer/theme/` | `npm run build`, with `… holds stray.css, which THEME_STYLESHEETS does not list` |
+| a listed stylesheet deleted from the theme directory | `npm run build`, with `THEME_STYLESHEETS names tokens.css, which … does not hold` |
+| `@import` added to a theme file | `npm run build`, with `… holds an @import` |
+| the same rule spelled `@IMPORT` | `bundle.test.ts`, on the case-insensitive scan — the mutant was planted (the `i` flag dropped) and the case observed failing |
+| `url(https://…)` added to a theme file | `npm run build`, with `… loads url(https://…) from another origin` |
+| `/console.css` dropped from `SERVED_FILES` | `bundle.test.ts`, on the directory equality |
+| a `<link>`'s `href` changed in one document | `csp-document.test.ts`, on that document's one stylesheet |
+| the `<link>` removed from one document | `csp-document.test.ts`, on the count |
+| `'unsafe-inline'` added to `style-src` | `csp-document.test.ts` and `window.test.ts` |
+| `style="…"` in a served document | `csp-document.test.ts`, on the inline-style scan |
+| `el.style.color` written in `entry.ts` | `screen-literals.test.ts`, on the renderer-wide scan |
+| `dist/bundle/console.css` removed from `build.files` | `build-files.test.ts` (`bundlerOutputs`) and `fuses.test.ts` |
+| "Nothing reads this file yet" put back into a listed theme file | `bundle.test.ts`, on the unwired-claim pin — planted in `tokens.css` and observed failing, then reworded |
+| the newline append removed from `stylesheetText` | `bundle.test.ts`, on the planted unterminated stylesheet — the mutant was planted (`source.css` without the `${…}\n` arm) and the case observed failing on the `a { color: red; }/* palette.css */` seam |
+
+### The follow-up's own mutations (review of #694, 2026-10-19)
+
+The independent review of the merged task left four minors and three nits, and each fix
+landed with a case that was mutated first. Each mutant below was planted in
+`tools/bundle-renderer/index.ts`, run, and reverted; in every run exactly the cases named
+failed and no other case did.
+
+| Mutation | What fails |
+|---|---|
+| the backslash refusal removed | `bundle.test.ts`, "refuses a backslash, which CSS reads as an escape" — the four escaped spellings, `@\69mport` first |
+| the quoted-string refusal removed | `bundle.test.ts`, "refuses a quoted string that names a URL" — `image-set("https://…")` is admitted with it gone |
+| the `isFile()` check on a listed theme file removed (`statSync` in its place) | `bundle.test.ts`, "refuses a listed theme file that is a symlink" |
+| `buildConsole` put back to the old order (stylesheet before the foreign-file refusal) | `bundle.test.ts`, "refuses a foreign file in the served root before it writes anything" — the refusal still lands, but `console.css` is already there |
+| `refuseSymlinkedOutput` dropped from either writer | `bundle.test.ts`, "refuses to write the stylesheet through a symlink" (and "…its bundle through a symlink") |
+| `THEME_STYLESHEETS`' first two entries swapped | `bundle.test.ts`, "names the cascade in the design's order" — **and nothing else**, which is the finding: before that case, this mutant left the whole suite green |
+| the stray-file extension test made case-sensitive again | `bundle.test.ts`, "refuses a .css the list does not name whatever its extension's case is" |
+
+**A second pass over those fixes** (same review, 2026-10-19) closed two gaps the cases
+above left, each reproduced against the compiled tool before it was fixed and mutated
+after, and one overclaim in the prose:
+
+| Mutation | What fails |
+|---|---|
+| the three `refuseSymlinkedDirectory` calls removed | `bundle.test.ts`, both "…into a symlinked directory" cases and the `buildConsole` half of "refuses a foreign file in the served root before it writes anything" |
+| `QUOTED_STRING_RE`'s body narrowed to `[^"'\n]*` (excluding both marks, as it first shipped) | `bundle.test.ts`, "refuses a quoted string that names a URL" and the probe case — `image-set("https://…/a'b.png" 1x)` is admitted by the narrow body |
+
+The directory half was the one that mattered: with the file check alone, `dist/bundle` as a
+symlink to a directory outside the tree built **cleanly** and left `console.css` outside the
+served root. Two of these shapes a case can only reach by planting the link itself, which is
+what those cases do. A symlink *above* the output directory is still followed, and that is
+stated in `refuseSymlinkedDirectory` rather than left to be discovered: resolving the whole
+chain would refuse `/var`-style paths the platform ships (`os.tmpdir()` is under `/var` on
+macOS), and `dist/` is gitignored, so this shape needs a tampered working tree rather than a
+reviewed commit.
+
+### The two leftovers #701 left open (2026-10-19)
+
+The review of the follow-up above left two non-structural findings open, on the owner's
+merge-then-follow-up rule. Each was reproduced against the compiled tool before it was
+fixed, and each mutant below was planted in `tools/bundle-renderer/index.ts`, run, and
+reverted; in every run exactly the cases named failed and no other case did.
+
+| Mutation | What fails |
+|---|---|
+| the pre-write `refuseSymlinkedOutput` pass removed from `buildConsole` | `bundle.test.ts`, "refuses a symlinked output before it writes anything" — the refusal still lands inside `bundleRenderer`, with `console.css` already written, and for the document with `console.js` too |
+| the pre-write `moduleClosure` pass removed from `buildConsole` | `bundle.test.ts`, "refuses a module the walk will not bundle before it writes anything" — `require('electron')` is refused one writer later, with `console.css` already written |
+| `isRemoteTarget` put back to the raw `startsWith('//') \|\| REMOTE_SCHEME_RE` test | `bundle.test.ts`, "refuses a url() on another origin…", "refuses a quoted string that names a URL…" and the probe case — `url(" https://…")` and `image-set("\thttps://…" 1x)` are admitted |
+| `URL_STRIPPED_RE`'s replace dropped, the edge strip kept | `bundle.test.ts`, the same two cases, on `url("/\t/x.png")` alone — the "tab and newline are removed *wherever* they are" half of the parser's rule |
+
+**The one byte left open, and the measurement that settles it.** A raw LF *inside* a quoted
+string is still not refused by the quoted-string scan, because `QUOTED_STRING_RE`'s body is
+bounded by the newline. Widening the body to `[\s\S]` was tried, observed and reverted: it
+buys `image-set("\nhttps://…" 1x)` — a `<bad-string-token>` the tokenizer drops before any
+URL is resolved — and pays for it with `image-set('http://cdn.example/x.png' 1x)` and
+`-webkit-image-set('//cdn.example/a"b.png' 2x)`, which both stop being refused the moment an
+*unbalanced* quote precedes them in the same file. Both theme files hold an apostrophe in
+their prose, so those two cases failed on the widened body and passed on the narrow one. The
+`url()` scan, whose quoted body is not bounded by the newline, refuses the LF spelling;
+`bundle.test.ts`'s probe asserts both halves so the asymmetry is a decision rather than an
+accident.
+
+### What this task does not own
+
+`base.css` and `screens.css` are Tasks 6.3 and 6.4, and each appends its own file to
+`THEME_STYLESHEETS` in the commit that creates it. The golden frames are re-recorded by
+Task 6.6, which is owner-run, and the goldens stay held until then — held, not unchanged.
+
+**The frames have already moved, and this task is one of the things that moved them.** An
+earlier draft of this paragraph offered "a stylesheet that paints nothing yet is not a
+picture change" as the reason the goldens need no re-record before 6.6. That is false twice
+over. The shipped `palette.css` declares `color-scheme: dark` on `:root`, and its own
+comment says what that does: the picker and the refusal document — neither of which reads the
+theme the entry chose — paint dark rather than in the platform's default, and the canvas's
+own background follows it. A frame taken now differs from the same frame taken before this
+task, before a single layout rule exists. And Task 6.3's rules and 6.4's screens move the
+picture again, far more than this.
+
+So the honest reason the goldens wait is 6.6's own: **every frame recorded before the last
+stylesheet lands is a picture of an intermediate tree, and the next task invalidates it** —
+which is exactly the regression 6.6 exists to stop, because a baseline re-recorded mid-phase
+is a baseline nobody reviewed. What holds them is two things already in the tree, and neither
+is this README: `playwright.config.ts`'s `updateSnapshots: 'none'` (`test/unit/playwright.test.ts`
+pins it), so a run with no baseline **fails** rather than writing one, and each golden spec's
+`test.skip(SKIP_GOLDENS, …)` on `FUGARO_CONSOLE_GOLDENS=skip`, which the staged
+console-tests workflow sets. No golden PNG is committed yet, and none is until Task 6.6
+records all eight at once, on each platform.
+
+This task re-records nothing, and no frame is compared or written by it: the golden tests
+are among the ones the skip covers, and the eight baselines are Task 6.6's single recording
+act.
+
+The `--border`-is-decorative scan is Task 6.4's and the window-background comparison is Task
+6.5's, both for the reasons Task 6.1's section above gives.

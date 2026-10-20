@@ -51,4 +51,4 @@ workflows:
       test: |
         go test -timeout 15m $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images)
     resources: { cpu: 4, memory: 8Gi }
-    timeouts: { total: 2h, stage: 90m, verify: 25m, finalize_reserve: 5m }
+    timeouts: { total: 3h, stage: 150m, verify: 25m, finalize_reserve: 5m }

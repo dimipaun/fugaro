@@ -157,8 +157,9 @@ func newRunsStatsCmd() *cobra.Command {
 			"nothing. Two identities that differ only in what the sanitising drops -- an\n" +
 			"invisible character a paste left in one of them, say -- or only past the cap are\n" +
 			"one key and one row: the row is the key, not the person. A private view is not\n" +
-			"read off that key. It holds the runs whose launch recorded your identity itself,\n" +
-			"compared as runs ls --mine compares it, so someone whose identity merely\n" +
+			"read off that key. It holds the runs whose launch recorded your identity itself --\n" +
+			"the identity fugaro run writes to launch.json at launch, not the requested_by that\n" +
+			"runs ls --mine compares -- so someone whose identity merely\n" +
 			"sanitises to the same text is never counted in it and your own row can be\n" +
 			"smaller than that key's row in the full table.\n\n" +
 			"A window can hold every run of every repository in the bucket, so the read is\n" +
@@ -213,8 +214,9 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 
 	// Who the caller is, and how the installation's own lists place them.
 	// Both are read the way the rest of the CLI reads them: lc.Me is the
-	// identity `fugaro run` records and `runs ls --mine` matches, and the
-	// lists are the ones fugaro doctor's bucket check reads (roles.go).
+	// identity `fugaro run` records at launch (launch.json's launched_by),
+	// and the lists are the ones fugaro doctor's bucket check reads
+	// (roles.go).
 	me, meErr := env.lc.Me(ctx)
 	// The identity is emitted the way every other identity in this document
 	// is: through IdentityOf, so it is one printable line, bounded, and the
@@ -250,10 +252,11 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 		return err
 	}
 	if view == userStatsViewOwn {
-		// Matched on the identity the run recorded, exactly as runs ls --mine
-		// matches: launch.json's launched_by is the requester the launch was
-		// made for (run.go), so "your own runs" has one meaning in this CLI and
-		// this is it.
+		// Matched on the identity the run's launch recorded: launch.json's
+		// launched_by, the identity `fugaro run` writes at launch. That is not
+		// runs ls --mine's comparison -- --mine reads task.json's requested_by
+		// -- and the two coincide for a normal launch while a backfilled
+		// launch.json can differ.
 		//
 		// Not on the row's key. A key is sanitised text two people can share --
 		// identities that differ only in characters the sanitising drops, or

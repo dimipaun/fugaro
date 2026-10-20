@@ -353,6 +353,34 @@ type AgentEntry struct {
 	UpdatedAt      int64  `json:"updatedAt,omitempty"`
 	Spent          Micros `json:"spent,omitempty"`
 	Halted         string `json:"halted,omitempty"`
+	// Credential is the name — never the value — of the credential the run's
+	// cascade is currently using (credentials-service plan, task C1.3's rules
+	// child of the same name; C1.16 and C1.19 write it). It is what `fugaro
+	// watch` and `fugaro runs` show when someone asks which account a run is
+	// spending on, and what the plan's D140 asks the record to carry beside
+	// Record.OAuthAccount.
+	//
+	// It is spelled in the plan's snake_case, like the mailbox's reply_to: the
+	// node's name is part of the rules (the template validates `credential`),
+	// so the Go field follows it rather than the entry's camelCase.
+	//
+	// Rules deployed before the credentials children refuse it; a `cascade`
+	// run then halts with HaltCredsRulesDenied rather than dropping the write
+	// (C1.17), because a run whose credential is unrecorded is one nobody can
+	// account for.
+	//
+	// clipEntry clips it and strips it like every other string of the entry (a
+	// name past the rules' MaxString, or carrying a control or bidi character,
+	// would otherwise have the whole PATCH denied and freeze the run's
+	// registry). A reader that displays it still sanitises with
+	// internal/safetext: an entry written by another release is not this one's
+	// to trust.
+	Credential string `json:"credential,omitempty"`
+	// WaitingUntil is the instant, in epoch milliseconds, the run expects to
+	// resume at while it is waiting for a credential to become usable again
+	// (D152's `oauth-only` "waiting, expected resume time"; C1.17 writes it).
+	// Zero means nothing is pending and the node is absent.
+	WaitingUntil int64 `json:"waiting_until,omitempty"`
 	// RequestedBy must equal the token's rb claim (the launcher's identity),
 	// or the rules refuse the write.
 	RequestedBy string `json:"requestedBy"`

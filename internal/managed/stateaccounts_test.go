@@ -2,7 +2,6 @@ package managed
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -312,15 +311,45 @@ func TestAccountsOfStateOfAnEmptyState(t *testing.T) {
 	}
 }
 
-// And the document round-trips through encoding/json the way a state bucket
-// holds it: the fields this build reads are the ones Terraform writes.
+// TestAccountsOfStateReadsTerraformsOwnFieldNames: the fields this build reads
+// are the ones Terraform writes -- version, resources, and per resource mode,
+// type, name and instances[].attributes -- so a document in Terraform's
+// spelling is read, and the same document in encoding/json's default (this
+// build's own Go field names) is not a state at all: its version reads as
+// absent and is refused, rather than being read as a state that accounts for
+// nothing (which would fall every run back as if the project were foreign).
 func TestAccountsOfStateReadsTerraformsOwnFieldNames(t *testing.T) {
-	var m map[string]any
-	if err := json.Unmarshal(stateDoc(4, stateRes("managed", "google_storage_bucket", "runs", `{"id":"b"}`)), &m); err != nil {
-		t.Fatal(err)
+	bucket := `{"id":"fugaro-runs-` + gcpProject + `","name":"fugaro-runs-` + gcpProject + `"}`
+	got, err := AccountsOfState(stateDoc(4, stateRes("managed", "google_storage_bucket", "runs", bucket)))
+	if err != nil {
+		t.Fatalf("AccountsOfState: %v", err)
 	}
-	if _, ok := m["resources"]; !ok {
-		t.Fatal("the fixture is not shaped like a state document")
+	want := StateResource{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + gcpProject}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("AccountsOfState = %+v, want %+v read out of Terraform's own field names", got, want)
+	}
+
+	// The names are Terraform's and are not guessed at. A top-level key of
+	// another spelling -- format_version, the name a reader that guessed would
+	// want -- reads as version 0, and the document is refused rather than read
+	// as a state that accounts for nothing.
+	other := []byte(`{"format_version":4,"resources":[]}`)
+	if got, err := AccountsOfState(other); err == nil {
+		t.Errorf("a state document spelled with format_version was read: %+v", got)
+	}
+
+	// And a resource entry whose fields are spelled another way contributes
+	// nothing: the document is a valid state (the right version, so no error)
+	// that accounts for nothing, which is the safe direction -- its resources
+	// stay foreign and the run keeps its confirmations -- rather than being
+	// read by position or by a guess at the name.
+	guessed := stateDoc(4, `{"mode":"managed","kind":"google_storage_bucket","name":"runs","instances":[{"attributes":`+bucket+`}]}`)
+	got2, err := AccountsOfState(guessed)
+	if err != nil {
+		t.Fatalf("AccountsOfState on a resource spelled with kind: %v", err)
+	}
+	if len(got2) != 0 {
+		t.Errorf("a resource whose type field is spelled %q was read as %+v, want nothing", "kind", got2)
 	}
 }
 

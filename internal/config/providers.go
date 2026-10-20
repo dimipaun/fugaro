@@ -601,8 +601,18 @@ func conventionUsable(name string) bool {
 // shape), and it lives here rather than in Validate for one reason: both
 // collisions are relative to the owner's providers, which are in the local
 // config and never in a fugaro.yaml — Validate(c *Config) has no table to
-// judge a name against, and the callers that hold both (fugaro validate, and
-// the job spec's own SecretMounts) call this.
+// judge a name against, and the one caller that holds both (`fugaro validate`,
+// internal/cli/validate.go) calls this.
+//
+// The job spec does not call it: internal/infra/spec.go's SecretMounts
+// implements the same two refusals inline (spec.go, the loop over
+// w.Secrets), because its message is the job's own — it names the workflow and
+// refuses at the mount rather than collecting a Problem — and there is one
+// rule in two places. internal/infra's
+// TestTheSpecAndValidateRefuseTheSameWorkflowSecretNames holds them together:
+// it refuses exactly the names this one refuses, so a name cannot pass
+// `fugaro validate` and stop a run's job, or be refused at the mount and
+// admitted here.
 //
 // The refusal names the provider and the name, and never a value: a workflow
 // secret's Name is a name, but the same field is a place a value has been

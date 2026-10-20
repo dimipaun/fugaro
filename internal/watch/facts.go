@@ -60,8 +60,9 @@ type RunFacts struct {
 	// LaunchedBy is who started the run, as launch.json recorded it at launch:
 	// a person's address, or the identity an automated launch runs as (a
 	// service account, a CI runner). "" when the reader has no launch.json for
-	// the run, or the one it has recorded no launcher (every run launched
-	// before the launcher was recorded) — never a value this package invents.
+	// the run, or the one it has recorded no launcher (a backfilled launch, a
+	// local run with no execution, or the synthetic launch `fugaro logs`
+	// builds) — never a value this package invents.
 	//
 	// UNTRUSTED display text, like everything else a launcher writes: it is
 	// sanitised here and shown, and nothing decides anything by it

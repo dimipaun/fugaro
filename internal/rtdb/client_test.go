@@ -132,6 +132,47 @@ func TestRTDBPatchMultiPathAtomic(t *testing.T) {
 	}
 }
 
+// TestRTDBRefusesAnEmptyKeyBeforeTheRequest: a path with an empty segment — the
+// `runs/x/r/byTier//spent` a caller produces when it builds the path from a
+// tier it left unset — is refused by the client, and refused *before* any
+// request, so the database is never asked and no rule is ever consulted about
+// it.
+//
+// The distinction matters to a caller that reads an error as the rules' answer.
+// internal/budget/rules' emulator cases do exactly that: `mustDeny` requires
+// `ErrPermission` and fails on anything else, so a case built on an empty key
+// fails with this path error rather than proving a denial — and because it is
+// fatal, every case after it stops running (review finding B1). The guard that
+// makes an empty or arbitrary tier unwritable is the rules' own
+// `$tier == 'b' || $tier == 'c'` validation; what is pinned here is that this
+// error is not the rules'.
+func TestRTDBRefusesAnEmptyKeyBeforeTheRequest(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	c := newClient(t, f)
+	for _, tc := range []struct {
+		why     string
+		root    string
+		updates map[string]any
+	}{
+		{"an empty segment in an update key", "", map[string]any{"runs/x/r/byTier//spent": 1}},
+		{"an empty segment in the root", "runs//r", map[string]any{"spent": 1}},
+		{"a trailing slash in an update key", "", map[string]any{"runs/x/": 1}},
+	} {
+		n := len(f.Requests())
+		err := c.Patch(ctx(t), tc.root, tc.updates)
+		if err == nil {
+			t.Errorf("%s was accepted", tc.why)
+			continue
+		}
+		if errors.Is(err, rtdb.ErrPermission) || errors.Is(err, rtdb.ErrUnavailable) {
+			t.Errorf("%s = %v, want a local path error and not the database's answer", tc.why, err)
+		}
+		if got := len(f.Requests()); got != n {
+			t.Errorf("%s sent %d request(s): the client refuses it before the database is asked", tc.why, got-n)
+		}
+	}
+}
+
 func TestRTDBPermissionIsTyped(t *testing.T) {
 	f := gcpfake.NewRTDB(t)
 	c := newClient(t, f)

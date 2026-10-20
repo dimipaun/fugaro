@@ -1,5 +1,13 @@
 # A Docker-capable compute backend: workloads on Compute Engine VMs
 
+> **Not shipped, and not in 0.9.0.** `fugaro init --provision-batch` refuses
+> before any cloud call while `internal/cli`'s `batchProvisionShipped` is false:
+> the reaper role this backend's compute module creates names
+> `batch.jobs.cancel`, which is not a permission Google has, so its provisioning
+> cannot complete, and the reaper is still to be redesigned. 0.8.6's notes said
+> the Batch backend would return in 0.9.0; 0.9.0's own notes state it as a known
+> limit instead.
+
 Status: design for review (2026-10-15), written to the owner's ruling of
 2026-10-14 (restored in the generic-tool plan, PR #374): the Docker-capable
 execution backend, generic-tool section 1, was "gen-2 first, a VM backend as

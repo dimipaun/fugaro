@@ -8,10 +8,16 @@
 // the accessibility of the Keychain item, the account-isolation rules and the
 // shapes of the calls all live in `src/`, in files with tests. What can still
 // go wrong here is a wrong import, a wrong port on the wrong store, and an SDK
-// that is not installed; the first two are visible in the twelve lines below
-// and the third is verified when the app is first built on a machine with the
+// that is not installed; the first two are visible in the wiring below and the
+// third is verified when the app is first built on a machine with the
 // toolchain, which is listed as unverified in `mobile/README.md` and in this
 // task's pull request.
+//
+// **The demo's wiring, added 2026-10-19.** This file also builds the demo
+// controller and the two screens, because the shell may import neither React's
+// hooks nor react-native itself (`src/app/root.js` explains why); the four
+// imports below are the whole of the demo's reach into the app, and the demo
+// reaches no further than a reviewer's tap.
 //
 // **The pairing that matters is the next four lines.** `expoSecureStorePort`
 // wraps the Keychain and is given to `SecretStore` -- D111's two items.
@@ -27,8 +33,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { registerRootComponent } from 'expo';
 import * as SecureStore from 'expo-secure-store';
-import { createElement } from 'react';
-import { Text, View } from 'react-native';
+import { createElement, useSyncExternalStore } from 'react';
+import { Pressable, Text, View } from 'react-native';
 
 import { asyncStoragePort } from './src/accounts/expo-async-storage.js';
 import { expoSecureStorePort } from './src/accounts/expo-secure-store.js';
@@ -38,7 +44,10 @@ import {
   SecretStore,
   SettingsStore,
 } from './src/accounts/index.js';
+import { createFirstScreen } from './src/app/first-screen.js';
 import { createRoot } from './src/app/root.js';
+import { createDemoMode } from './src/demo/index.js';
+import { createDemoScreen } from './src/demo/screen.js';
 
 const registry = new ResourceRegistry();
 
@@ -48,7 +57,34 @@ const store = new AccountStore({
   registry,
 });
 
+// The demo (owner ruling of 2026-10-19): built here, entered only by the
+// reviewer tapping "Try the demo" on the first screen. Nothing about it runs at
+// startup -- `createDemoMode` builds no client, no store and no queue until
+// `enter()` is called -- and it takes no port, no account store and no key
+// source, which is why a demo that could read this phone's Keychain does not
+// exist to be written. `src/demo/safety.test.js` is the fence around both.
+const demo = createDemoMode();
+
+// React's own subscription over the demo's `subscribe`/`state` pair, which is
+// the shape `useSyncExternalStore` takes: the shell re-renders when the demo
+// changes, and never polls it.
+const useDemo = () => useSyncExternalStore(demo.subscribe, demo.state);
+
+const screens = {
+  // The screen the demo is entered from, with the seam `pairingScreen` that
+  // P6.8's pairing screen will occupy -- above the demo control, never instead
+  // of it (`src/app/first-screen.js`).
+  first: createFirstScreen({
+    React: { createElement }, View, Text, Pressable, onTryDemo: () => demo.enter(), pairingScreen: null,
+  }),
+  demo: createDemoScreen({
+    React: { createElement }, View, Text, Pressable, onConfirm: () => demo.confirm(),
+  }),
+};
+
 // The four modules are passed in rather than imported by `src/`, which is what
 // lets every assertion about the tree run in CI with no device (see
 // `src/app/root.js`).
-registerRootComponent(createRoot({ React: { createElement }, store, View, Text }));
+registerRootComponent(createRoot({
+  React: { createElement }, store, View, Text, Pressable, useDemo, screens, onLeaveDemo: () => demo.leave(),
+}));

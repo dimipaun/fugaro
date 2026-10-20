@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 )
 
@@ -195,5 +196,39 @@ func TestGCSBucketInsertAndSetPolicy(t *testing.T) {
 	}
 	if code, _ := do("PUT", "/storage/v1/b/b1/iam", `{"etag":"`+etag+`","bindings":[]}`); code != 412 {
 		t.Fatalf("set with the old etag: %d", code)
+	}
+}
+
+// AnswerMissingAs403 models a caller without storage.objects.list: a missing
+// object under the prefix answers 403, a missing one elsewhere still 404, and
+// a present one under the prefix is read as usual.
+func TestGCSFakeAnswersMissingAs403UnderPrefix(t *testing.T) {
+	ctx := context.Background()
+	g := NewGCS(t)
+	g.AnswerMissingAs403("runs", "tokens/")
+	g.Put("runs", "tokens/acme-app/r1/budget-token", []byte("x"))
+	c := g.Client(t)
+	status := func(name string) int {
+		_, err := c.Bucket("runs").Object(name).NewReader(ctx)
+		var ae *googleapi.Error
+		switch {
+		case err == nil:
+			return http.StatusOK
+		case errors.As(err, &ae):
+			return ae.Code
+		case errors.Is(err, storage.ErrObjectNotExist):
+			return http.StatusNotFound
+		}
+		t.Fatalf("read %s: %v", name, err)
+		return 0
+	}
+	for name, want := range map[string]int{
+		"tokens/acme-app/r2/budget-token": http.StatusForbidden,
+		"runs/acme-app/r2/task.json":      http.StatusNotFound,
+		"tokens/acme-app/r1/budget-token": http.StatusOK,
+	} {
+		if got := status(name); got != want {
+			t.Errorf("read %s = %d, want %d", name, got, want)
+		}
 	}
 }

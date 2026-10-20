@@ -31,6 +31,7 @@
       "dist/shared/**/*.js",
       "dist/source/**/*.js",
       "!dist/source/fixture.js",
+      "dist/bundle/console.css",
       "dist/bundle/console.js",
       "dist/bundle/index.html",
       "dist/bundle/installations.html",

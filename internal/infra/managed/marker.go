@@ -382,15 +382,20 @@ func writeMarker(ctx context.Context, s *storage.Service, bucket, created, proje
 // Like WriteMarker, the caller warns rather than fails: the project exists
 // either way, and a project with the object and no label is the fail-closed
 // direction — the read answers "not managed" for it, with a reason naming the
-// label (docs/gcp-setup.md carries the owner-run backfill).
+// label (docs/gcp-setup.md carries the owner-run backfill). And like
+// WriteMarker's, the error is one bounded field (safetext.FieldErr) before it
+// is returned: what it carries is a project name out of a configuration and the
+// words of a Resource Manager answer, and `fugaro init` prints it in a warning.
+// The bound is on the message alone, so a *googleapi.Error inside it is still
+// matched.
 func WriteManagedLabel(ctx context.Context, c *crm.Service, created, project string) error {
 	if created == "" {
 		return nil
 	}
 	if project == "" || project != created {
-		return fmt.Errorf("refusing to label project %q as %s: this run created %q, and the label records a creation — adding Firebase to an existing project, a project this run did not create, is not one", project, ProjectLabelKey, created)
+		return safetext.FieldErr(fmt.Errorf("refusing to label project %q as %s: this run created %q, and the label records a creation — adding Firebase to an existing project, a project this run did not create, is not one", project, ProjectLabelKey, created))
 	}
-	return writeManagedLabel(ctx, c, project, "the run that created the project")
+	return safetext.FieldErr(writeManagedLabel(ctx, c, project, "the run that created the project"))
 }
 
 // WriteManagedLabelForFlag writes the same label under the other gate a
@@ -418,11 +423,15 @@ func WriteManagedLabel(ctx context.Context, c *crm.Service, created, project str
 // managed_flag.go may call this — the flag's typed confirmation is a
 // parameter of the command, not of this function, so a caller that skips the
 // command skips the gate.
+//
+// The error is one bounded field (safetext.FieldErr), exactly as
+// WriteManagedLabel's is: the project name is the operator's own argument and
+// the rest is a Resource Manager answer, and the owner-run command prints it.
 func WriteManagedLabelForFlag(ctx context.Context, c *crm.Service, project string) error {
 	if project == "" {
-		return fmt.Errorf("refusing to write the %s label: no project name", ProjectLabelKey)
+		return safetext.FieldErr(fmt.Errorf("refusing to write the %s label: no project name", ProjectLabelKey))
 	}
-	return writeManagedLabel(ctx, c, project, "the owner flagging the project")
+	return safetext.FieldErr(writeManagedLabel(ctx, c, project, "the owner flagging the project"))
 }
 
 // writeManagedLabel is the write both gates above end in, so that the label

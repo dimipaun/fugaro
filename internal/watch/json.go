@@ -101,13 +101,15 @@ type JSONRun struct {
 	// it at launch: a person's address, or the identity an automated launch
 	// runs as (a service account, a CI runner). It is the full recorded
 	// identity, where the text views show the short form a column has room for
-	// (runview.LauncherShort). Absent when the record has none — a run from
-	// before the launcher was recorded, or one whose launch.json the reader
-	// does not have — never a value this package invents.
+	// (runview.LauncherShort). Absent when the record has none — one whose
+	// launch.json the reader does not have, or a launch built without a
+	// launcher (the recovery backfill, a local run with no execution, or the
+	// synthetic launch `fugaro logs` builds) — never a value this package
+	// invents.
 	//
-	// UNTRUSTED display text a launcher wrote: sanitised (clean) like every
-	// other bucket-derived string here, and never an authority — no policy,
-	// admission or budget rule reads it.
+	// UNTRUSTED display text a launcher wrote: sanitised with safetext.Field
+	// like every other bucket-derived string here, and never an authority — no
+	// policy, admission or budget rule reads it.
 	LaunchedBy string `json:"launched_by,omitempty"`
 }
 

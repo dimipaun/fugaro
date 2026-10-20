@@ -182,6 +182,24 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		return nil, nil, userErr("the deployed security rules are generation %d (%s = %d) and this Fugaro's are generation %d: the rules this database runs under came from a newer Fugaro, and 'fugaro init --firebase' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade') and re-run init with the newer binary; 'fugaro doctor' reports this as policy-rules-skew",
 			markerGen, projectpolicy.PathRulesMarker(), markerGen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
 	}
+	// The credentials children's own generation is read and refused the same
+	// way (credentials-service plan, task C1.3). It is a marker of its own
+	// because the change that adds those children does not bump RulesVersion —
+	// doing so would drop every published policy on an installation whose owner
+	// has not redeployed the rules yet — so the document generation cannot
+	// answer "does this database carry the credentials children". A marker
+	// above this binary's needs a future release's write, and deploying this
+	// binary's older document under it would leave a `cascade` launch passing
+	// the marker gate on rules that do not carry the children.
+	var credsGen int
+	credsEtag, credsFound, err := d.c.GetETag(ctx, rules.PathCredsRulesMarker(), &credsGen)
+	if err != nil {
+		return nil, nil, dbErr("reading "+rules.PathCredsRulesMarker(), err)
+	}
+	if credsFound && credsGen > rules.CredsRulesVersion {
+		return nil, nil, userErr("the deployed security rules carry credentials generation %d (%s = %d) and this Fugaro's are generation %d: the credentials children this database runs under came from a newer Fugaro, and 'fugaro init --firebase' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade') and re-run init with the newer binary",
+			credsGen, rules.PathCredsRulesMarker(), credsGen, rules.CredsRulesVersion, rules.CredsRulesVersion)
+	}
 	d.acts = nil
 	var warnings []string
 	mark := dbMark{By: markBy, Project: d.project, GCPProject: d.gcpProject, Version: markVersion}
@@ -274,6 +292,18 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	if !markerFound || markerGen != projectpolicy.RulesVersion {
 		d.put(projectpolicy.PathRulesMarker(), markerEtag, projectpolicy.RulesVersion,
 			fmt.Sprintf("records the rules generation (%s = %d)", projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion))
+	}
+	// The credentials children's generation, written beside it and for the same
+	// reason, with the same two cases (credentials-service plan, task C1.3):
+	// after the deploy above, and on the no-deploy path when it is absent —
+	// where the deployed rules are byte-for-byte the generated ones, so the
+	// children this marker names are the children the database runs under. The
+	// read at the top of this function is where a marker above this binary's
+	// CredsRulesVersion refused the plan; here only the write is left, and the
+	// etag is that read, so a marker changed since is a 412 at Apply.
+	if !credsFound || credsGen != rules.CredsRulesVersion {
+		d.put(rules.PathCredsRulesMarker(), credsEtag, rules.CredsRulesVersion,
+			fmt.Sprintf("records the credentials rules generation (%s = %d)", rules.PathCredsRulesMarker(), rules.CredsRulesVersion))
 	}
 	return d.acts, warnings, nil
 }

@@ -88,19 +88,29 @@ export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
 
 /**
  * SERVED_FILES is the whole of what the served root holds (desktop-console plan
- * Task 3.4a, step 4; Task 3.4b's second entry): the dashboard's and the
- * refusal's documents and the one script the dashboard loads, and the picker's
- * document and its own script.
+ * Task 3.4a, step 4; Task 3.4b's second entry; Task 6.2's stylesheet): the
+ * dashboard's and the refusal's documents, the one script the dashboard loads
+ * and the one stylesheet every document links, and the picker's document and its
+ * own script.
  *
  * The root itself is `dist/bundle/` (`rendererRoot` in `src/main/index.ts`),
- * and the five files are there because `npm run build` puts them there: `tsc`
+ * and the six files are there because `npm run build` puts them there: `tsc`
  * compiles `src/renderer/entry.ts` and `src/renderer/installations.ts` and
  * everything they require, and `tools/bundle-renderer/index.ts` writes
- * `console.js` and `installations.js` and copies the three documents
- * verbatim. `test/unit/bundle.test.ts` holds this list and that directory equal
- * in both directions, so a file that appears beside the bundle -- or a name
- * dropped from this list -- is a failing test rather than a document the
- * console serves and nothing vouches for.
+ * `console.js`, `installations.js` and `console.css` and copies the three
+ * documents verbatim. `test/unit/bundle.test.ts` holds this list and that
+ * directory equal in both directions, so a file that appears beside the bundle
+ * -- or a name dropped from this list -- is a failing test rather than a
+ * document the console serves and nothing vouches for.
+ *
+ * **`/console.css` is the one entry Task 6.2 adds, and it is a stylesheet this
+ * origin serves rather than a second policy.** `style-src 'self'` is already the
+ * third directive of `CONTENT_SECURITY_POLICY` below, so a `<link
+ * rel="stylesheet">` to `app://console/console.css` is admitted by a directive
+ * that was always there: no directive is added, none is loosened, and
+ * `default-src 'none'` and `connect-src 'none'` are not consulted for it (a
+ * `<link>` is not a fetch `connect-src` governs). `mediaTypeFor` already maps
+ * `.css`, so this entry is the whole of the handler's change.
  *
  * It is a list of URL paths rather than of file names because that is how the
  * handler speaks, and it is deliberately **not** a second filter inside
@@ -111,6 +121,7 @@ export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
  * it does not list.
  */
 export const SERVED_FILES: readonly string[] = Object.freeze([
+  '/console.css',
   '/console.js',
   '/index.html',
   '/installations.html',

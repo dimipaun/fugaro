@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -155,8 +157,89 @@ func TestDocsProjectNamedOAuthTokensAccountJobFacts(t *testing.T) {
 }
 
 // The operator guide's own path: the page plan task 4 writes, kept out of the
-// site's hand-kept guide list until 0.9.0 ships.
+// site's hand-kept guide list until the hub lists it (0.9.0 shipped without
+// the entry; adding it is the website's change, not this test's).
 const projectClaudeAccountsDoc = "docs/project-claude-accounts.md"
+
+// releasedFugaroVersion is the version of the tree's own release, read out of
+// the plugin manifest the release process bumps
+// (plugin/.claude-plugin/plugin.json; scripts/bump-plugin-version.sh, held in
+// step by plugin's TestHeaderVersionEqualsPluginVersion). The guides below tell
+// an operator which release does and does not read 0.9.0's work, so they name
+// this version; deriving it here rather than pinning a literal is what makes a
+// version bump fail these tests on the drift instead of leaving the pages
+// describing a release that is no longer the latest one.
+func releasedFugaroVersion(t *testing.T) string {
+	t.Helper()
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal([]byte(readDoc(t, "plugin/.claude-plugin/plugin.json")), &manifest); err != nil {
+		t.Fatalf("plugin/.claude-plugin/plugin.json: %v", err)
+	}
+	if manifest.Version == "" {
+		t.Fatal("plugin/.claude-plugin/plugin.json carries no version")
+	}
+	return manifest.Version
+}
+
+// releasedAtLeast fails the test unless version (x.y.z) is want or later: the
+// pages below call 0.9.0's work released, which a tree still at 0.8.x would
+// make false.
+func releasedAtLeast(t *testing.T, version, want string) {
+	t.Helper()
+	parse := func(v string) [3]int {
+		var out [3]int
+		parts := strings.SplitN(v, ".", 3)
+		if len(parts) != 3 {
+			t.Fatalf("version %q is not x.y.z", v)
+		}
+		for i, p := range parts {
+			n, err := strconv.Atoi(p)
+			if err != nil {
+				t.Fatalf("version %q is not x.y.z: %v", v, err)
+			}
+			out[i] = n
+		}
+		return out
+	}
+	got, min := parse(version), parse(want)
+	for i := range got {
+		if got[i] != min[i] {
+			if got[i] < min[i] {
+				t.Fatalf("the tree's release is %s, and the pages call %s's work released", version, want)
+			}
+			return
+		}
+	}
+}
+
+// TestDocsProjectNamedOAuthTokensStatusNamesTheReleasedCLI: the design doc's
+// status line says which release does not read the feature, and it is the same
+// claim the operator guide and gcp-setup.md make in the same words -- the
+// released CLI is the version the tree carries, not the one it carried when
+// the page was written. The line is derived rather than pinned, for the reason
+// releasedFugaroVersion gives: a bump must fail here rather than leave the
+// page describing a release that is no longer the latest one. (It had drifted:
+// the line named 0.8.6 while the tree was at 0.8.7.)
+func TestDocsProjectNamedOAuthTokensStatusNamesTheReleasedCLI(t *testing.T) {
+	doc := readDoc(t, "docs/design/project-named-oauth-tokens.md")
+	var status string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "Status:") {
+			status = line
+			break
+		}
+	}
+	if status == "" {
+		t.Fatal("docs/design/project-named-oauth-tokens.md carries no Status line")
+	}
+	released := releasedFugaroVersion(t)
+	releasedAtLeast(t, released, "0.9.0")
+	if !strings.Contains(status, "release 0.9.0 (released; the released CLI is "+released+")") {
+		t.Errorf("the design doc's status line does not name the released CLI %s: %s", released, status)
+	}
+}
 
 // TestDocsProjectClaudeAccountsOperatorGuide: the operator guide says what an
 // operator has to be told, in the one place the rest of this repository can
@@ -183,11 +266,12 @@ const projectClaudeAccountsDoc = "docs/project-claude-accounts.md"
 // GitHub limit in §11, each of which is a fact an operator acts on.
 func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 	doc := readDoc(t, projectClaudeAccountsDoc)
+	released := releasedFugaroVersion(t)
 	for _, want := range []string{
 		// Which release this is, and where the reader is (the two scopes the
 		// owner requires on every setup command).
-		"**0.9.0, unreleased.**",
-		"The released Fugaro is 0.8.7",
+		"**0.9.0, released.**",
+		"The released Fugaro is " + released + ",",
 		"**per installation**",
 		"**per repository checkout**",
 		// What a named account is.
@@ -245,7 +329,7 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 		// does and does not carry (see
 		// TestDocsProjectClaudeAccountsSharedJobLimitsAreTrue for the same
 		// claims tied to the code that makes them true).
-		"**0.8.7 does not read any of it.**",
+		"**0.8.x does not read any of it.**",
 		"**A GitHub run on a shared job reaches its provider, and it is still not a per-repository job.**",
 		"`FUGARO_GITHUB_APP_ID`",
 		"`projectJobGitHubAppID`",
@@ -264,6 +348,9 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 	if rel, ok := projectpolicy.VersionRelease(3); !ok || rel != "0.9.0" {
 		t.Fatalf("projectpolicy.VersionRelease(3) = (%q, %v), and the guide labels the page 0.9.0", rel, ok)
 	}
+	// "0.9.0, released" and "The released Fugaro is <tree's version>" are one
+	// claim only while the tree's release is 0.9.0 or later.
+	releasedAtLeast(t, released, "0.9.0")
 	if !strings.Contains(doc, "policy version 3") {
 		t.Errorf("%s does not name policy version 3, which is the node the release it documents writes", projectClaudeAccountsDoc)
 	}
@@ -420,9 +507,12 @@ func TestDocsProjectClaudeAccountsNoSecretShapes(t *testing.T) {
 // for the profile field's sentence and the project-wide storage step.
 func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
 	doc := readDoc(t, "docs/gcp-setup.md")
+	// The section says the feature is in the released CLI: that must be true
+	// of the tree's own release, or the page describes a CLI nobody has.
+	releasedAtLeast(t, releasedFugaroVersion(t), "0.9.0")
 	for _, want := range []string{
 		"## Claude accounts a project job serves (0.9.0)",
-		"**It is not in the released CLI — 0.8.7 does not read any of it**",
+		"**It is in the released CLI since 0.9.0 — 0.8.x does not read any of it**",
 		"(project-claude-accounts.md)",
 		// The profile field.
 		"`profiles.<profile>.claude_accounts` in the project's local config",
@@ -442,7 +532,10 @@ func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
 		"brew upgrade dimipaun/tap/fugaro && fugaro upgrade",
 		"fugaro project policy publish --delete",
 		"fugaro image refresh",
-		"a project job runs the installation's base image, which can lag the CLI that published the policy",
+		// The shared jobs move last, per installation: image refresh never
+		// touches a project job (the review of PR #660).
+		"Move the shared jobs, **per installation**, on a machine where step 3 ran: `fugaro init --firebase <gcp-project>`",
+		"a project job runs the installation's base image, and only this re-apply of the installation moves it",
 		// And the one-line pointer in the optional pieces.
 		"**Named Claude accounts on a shared job (0.9.0):**",
 	} {
@@ -586,25 +679,24 @@ func TestDocsProjectClaudeAccountsSharedJobLimitsAreTrue(t *testing.T) {
 	}
 }
 
-// TestDocsProjectClaudeAccountsStayOutOfSiteNav: the page documents a release
-// that is not cut, and the site's hub is the public list of guides. A new
+// TestDocsProjectClaudeAccountsStayOutOfSiteNav: the page says it is not in
+// the site's hub, and the hub is the public list of guides. A new
 // docs/*.md file is not published by itself — website/content/*.md are the
 // generated documents and GUIDES in website/src/pages/docs.astro is the only
 // hand-kept list — so keeping the guide off the site is a fact of that list,
-// and it is what this test holds. When 0.9.0 ships, the entry and the page's
-// own "unreleased" label move together, in the change that cuts the release.
+// and it is what this test holds. 0.9.0 shipped without the entry; the change
+// that adds it rewrites the page's "kept out of the docs hub" sentence too.
 //
 // Mutation (verified, run and restored): add a `project-claude-accounts.md`
 // entry to GUIDES — this fails naming it.
 func TestDocsProjectClaudeAccountsStayOutOfSiteNav(t *testing.T) {
 	page := readDoc(t, "website/src/pages/docs.astro")
 	if strings.Contains(page, "project-claude-accounts") {
-		t.Errorf("website/src/pages/docs.astro lists %s: the page documents 0.9.0, which is not released, and the hub is the public list of guides", projectClaudeAccountsDoc)
+		t.Errorf("website/src/pages/docs.astro lists %s: the page says it is kept out of the hub, and the hub is the public list of guides", projectClaudeAccountsDoc)
 	}
 	doc := readDoc(t, projectClaudeAccountsDoc)
 	for _, want := range []string{
-		"kept out\nof the docs hub on the site until the release is cut",
-		"**0.9.0, unreleased.**",
+		"kept out\nof the docs hub on the site until the hub lists it",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s does not say %q: a page that is not in the hub has to say so itself, or a reader takes it for the released CLI's", projectClaudeAccountsDoc, want)

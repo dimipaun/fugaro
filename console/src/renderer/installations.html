@@ -20,6 +20,15 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
     />
+    <!--
+      The one stylesheet this document links (desktop-console plan Task 6.2;
+      design section 5.4): `./console.css`, the same file `index.html` and
+      `refusal.html` link, served from this same origin by the same handler and
+      admitted by the same `style-src 'self'`. The picker is a second page of
+      the same bundle and not a second policy, so it has no stylesheet of its
+      own and no inline style, style element or `'unsafe-inline'` either.
+    -->
+    <link rel="stylesheet" href="./console.css" />
     <title>Fugaro console — installations</title>
   </head>
   <body>
