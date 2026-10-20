@@ -735,3 +735,47 @@ func TestChecklistCheck68HardStopCountsAgree(t *testing.T) {
 		t.Errorf("Check 68's guard carries %d `Check 68 stopped:` refusals, and this check's belong stop is one of them: the guard is what keeps a live IAM check off the belong installation", stops)
 	}
 }
+
+// TestGcpSetupSaysWhyTheManagedGateIsClosed: the operator guide's disabled-mode
+// note carried the pre-redesign reason — the deployer's scoped role "is not an
+// IAM condition GCP accepts yet", with the redesign still ahead ("after the
+// fence is redesigned") — while the paragraph two above it, docs/release.md's
+// bullet and docs/design/managed-projects.md's 0.9.6 note all state the reason
+// this tree actually has: the redesign is written and in the tree, and what is
+// missing is the live measurement (Check 68, written and NOT RUN). An operator
+// reading the note is deciding whether the gate can be opened, so a reason the
+// branch itself removed sends them looking for a defect that is no longer there.
+//
+// Mutations (verified, run and restored): the old reason sentence put back into
+// the note, and "after the fence is redesigned" put back — both fail here.
+func TestGcpSetupSaysWhyTheManagedGateIsClosed(t *testing.T) {
+	const path = "docs/gcp-setup.md"
+	doc := readDoc(t, path)
+	const lead = "**Disabled since 0.8.6, and still off in 0.9.0.**"
+	i := strings.Index(doc, lead)
+	if i < 0 {
+		t.Fatalf("%s no longer has the managed-mode disabled note (%q): it is where the guide says why the gate is closed", path, lead)
+	}
+	note := doc[i:]
+	if end := strings.Index(note, "\n\n"); end >= 0 {
+		note = note[:end]
+	}
+	for _, want := range []string{
+		"measured live",
+		"Check 68",
+		"NOT RUN",
+		"0.9.6",
+	} {
+		if !strings.Contains(note, want) {
+			t.Errorf("%s's disabled note does not say %q: the gate is closed because the redesigned fence has not been measured live (Check 68 is written and NOT RUN), and the note is where an operator reads that", path, want)
+		}
+	}
+	for _, wrong := range []string{
+		"is not an IAM condition GCP accepts",
+		"after the fence is redesigned",
+	} {
+		if strings.Contains(note, wrong) {
+			t.Errorf("%s's disabled note still states %q: this branch lands the redesign (seven roles, one per service, one binding each, at most three logical operators), so the fence's old defect is history and the reason the gate is closed is the missing live measurement", path, wrong)
+		}
+	}
+}

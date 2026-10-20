@@ -872,3 +872,41 @@ func TestSetupSkillSaysManagedIsGatedOff(t *testing.T) {
 		}
 	}
 }
+
+// TestSetupSkillSaysWhyManagedIsGatedOff: reference/managed.md carried the
+// pre-redesign reason — the fence the binding carries "is not an IAM condition
+// GCP accepts yet", with the redesign still ahead ("once the fence is
+// redesigned") — while the branch lands exactly that redesign and corrects the
+// reason everywhere else it touches (docs/release.md's bullet,
+// docs/design/managed-projects.md's 0.9.6 note, deployer.tf's header). A skill
+// is what the user's agent repeats, so a reason the branch removed is a reason
+// the agent will state to its user.
+//
+// SKILL.md is not read here: it states the gate's state and the release, and
+// never carried the old reason. The pinned string
+// TestSetupSkillSaysManagedIsGatedOff holds ("planned for 0.9.6") is kept by
+// the reworded sentence.
+//
+// Mutations (verified, run and restored): the old reason sentence put back into
+// reference/managed.md, and "once the fence is redesigned" put back — both fail
+// here.
+func TestSetupSkillSaysWhyManagedIsGatedOff(t *testing.T) {
+	doc := setupFiles(t)["skills/setup/reference/managed.md"]
+	for _, want := range []string{
+		"measured live",
+		"Check 68",
+		"NOT RUN",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("reference/managed.md does not say %q: the gate is closed because the redesigned fence has not been measured live (Check 68 is written and NOT RUN), and the skill is where the agent reads why", want)
+		}
+	}
+	for _, wrong := range []string{
+		"is not an IAM condition GCP accepts",
+		"once the fence is redesigned",
+	} {
+		if strings.Contains(doc, wrong) {
+			t.Errorf("reference/managed.md still states %q: this branch lands the redesign (seven roles, one per service, one binding each), so the fence's old defect is history and the reason the gate is closed is the missing live measurement", wrong)
+		}
+	}
+}
