@@ -256,8 +256,10 @@ func rigorModesNumbered(t *testing.T, path, doc, what string, re *regexp.Regexp)
 // TestDocsRigorModesFindingsDecisionsAndItemsAreNumbered: every finding carries
 // a number and one of the five class words, every decision and every item is
 // numbered from 1 with no gap, and the UNVERIFIED table is numbered the same
-// way. The index states "F1–F41", "D1–D25" and "U1–U10", so the ranges it states
-// are exactly the ranges the documents carry.
+// way. This test reads the blocks' own numbers and counts nothing else, so a
+// summary of them stated anywhere in the folder is that other document's claim:
+// TestDocsRigorModesEveryBlockRangeIsCurrent is what holds every stated range —
+// and every cited number — to the block it summarises.
 func TestDocsRigorModesFindingsDecisionsAndItemsAreNumbered(t *testing.T) {
 	recon := readDoc(t, rigorModesRecon)
 

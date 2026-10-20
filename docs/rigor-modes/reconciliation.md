@@ -172,12 +172,14 @@ existing invariant the design must not break) and `Open` (a question the tree
 does not answer and the owner must).
 
 **F1 — A finding's severity is a free-form string with no enum and no
-consumer.** Class: **Wrong**.
+rule.** Class: **Wrong**.
 `runner.VerdictSchema` declares `severity` as `{"type":"string"}`; `runner.Finding`
-carries it as a plain `string`; nothing in the repository reads it — not
-`runner.Decide`, not `runner.prflow`'s `reviewsPart`, not `internal/cli/diagnose.go`,
-which prints it and stops. Consequence: the spec's premise "severity acts as an
-override" has no attachment point today. The score model arrives as new fields,
+carries it as a plain `string`; and **no rule branches on it** — §4's census
+counts **zero** sites that compare it to a value, `runner.Decide` never sees it,
+and `runner.prflow`'s `reviewsPart` does not print it. The places that do read it
+render it as a label and stop: `internal/runner/prompts.go` (into the fix prompt),
+`internal/runner/reviewmode.go` and `internal/cli/diagnose.go`. Consequence: the
+spec's premise "severity acts as an override" has no attachment point today. The score model arrives as new fields,
 and `severity` keeps its current role — a human-readable label on a row — rather
 than being promoted into a rule (D2, D3).
 
@@ -523,10 +525,12 @@ there; the base branch is read by `internal/runner/followup.go`'s
 `readBaseConfig` alone, which fetches `origin/<ref>` and calls `repo.ShowFile`
 for `fugaro.yaml`, `agent.instructions` and `agent.review`, and which a
 follow-up run and a review run call and a first run does not.
-`internal/runner/project.go` says why that read exists: a review never trusts a
-pull request's own `fugaro.yaml`. Consequence: `fugaro run --ref feature-x`
-resolves its mode from `feature-x`'s own `rigor:` block unless the design says
-otherwise, so a branch can set the rigor of the run that is about to review it.
+`internal/runner/followup.go`'s own doc comment says why that read exists — the
+base branch is read rather than the checked-out one because a review run "never
+trusts a reviewed pull request's own tree at all" — and `internal/runner/runner.go`'s
+`bootstrap` says the same of `fugaro.yaml` when a review run reads the working
+tree. Consequence: `fugaro run --ref feature-x` resolves its mode from
+`feature-x`'s own `rigor:` block unless the design says otherwise, so a branch can set the rigor of the run that is about to review it.
 The ruling makes this load-bearing rather than incidental — the mode now comes
 from configuration in three layers — and D25 is the decision it raises, with the
 floors (D18) as the backstop either way.
@@ -631,11 +635,11 @@ read to answer it).
 
 **F43 — A run cannot write into a repository other than its own.** Class: **Gap**. The installation token is narrowed to exactly one repository: `internal/gitprov/github/apptoken.go`'s `tokenSource.Token` mints with `{"repositories": []string{s.repo}, "permissions": perms}`, and `MintInstallationToken` refuses without an owner and a repository. The provider contract names no repository either: `internal/gitprov/gitprov.go`'s `PRSpec` carries `Number`, `Branch`, `Base`, `Title`, `Body`, `Draft`, `Labels` and `Reviewers`, so a pull request is always opened in the client's own repository. A run works in one checkout (`internal/runner/runner.go`'s `openCheckout`, `r.d.WorkDir`), pushes one branch and opens one pull request. The narrowing is a mint parameter rather than a permission — `internal/gitprov/github/apprepos.go` mints an installation token with a permissions map and **no** `repositories` list, which is how the App lists an installation's repositories — so it is liftable, at the price of a second token, a second checkout, a second push and a second pull request. Consequence: D29 cannot recommend that a run anywhere files into the designated repository; the designated repository holds the items filed **in** it, and a cross-repo filing is a task of its own rather than a line in the filing command.
 
-**F44 — Filing during a run writes into the branch under review.** Class: **Exists**. A run's writes are its branch's: `internal/runner/runner.go`'s `openCheckout` checks the branch out, `internal/runner/checkpoint.go`'s checkpoints commit as the run goes, and the push at the end carries all of it into the pull request. One path is refused outright, whatever the mode: `internal/runner/refused.go`'s `workflowGuard` (F12). Consequence: the item a run files arrives as a commit in the pull request it is about, which is the honest reading of the ruling rather than a problem. The pull request is where a reader meets the deferred leftover, `filed-in:` is a number the record already holds (`runstore.Record.PR`), and the write passes the same refusal every other write does — which is free, because the backlog lives under `docs/` and `.github/workflows/` is the only refused path.
+**F44 — Filing during a run writes into the branch under review.** Class: **Exists**. A run's writes are its branch's: `internal/runner/runner.go`'s `openCheckout` opens or clones the repository, `CheckoutNewBranch` then puts the task's ref's tree in that work directory, `internal/runner/checkpoint.go`'s checkpoints commit as the run goes, and the push at the end carries all of it into the pull request. One path is refused outright, whatever the mode: `internal/runner/refused.go`'s `workflowGuard` (F12). Consequence: the item a run files arrives as a commit in the pull request it is about, which is the honest reading of the ruling rather than a problem. The pull request is where a reader meets the deferred leftover, `filed-in:` is a number the record already holds (`runstore.Record.PR`), and the write passes the same refusal every other write does — which is free, because the backlog lives under `docs/` and `.github/workflows/` is the only refused path.
 
 **F45 — The generated-document pattern exists, and its one trap is already written down.** Class: **Exists**. `internal/clidoc` renders `website/content/cli-reference.md` from the command tree and is invoked by `go run ./internal/clidoc`: exactly the "a small tool regenerates it" shape the ruling asks for, with the header line that tells a reader not to edit it. `internal/pricing/catalog/gencatalog` (through `scripts/gen-price-catalog.sh`) shows the other half of the discipline — a required date, sorted rows and a determinism re-run — so the generator reads no wall clock. Two guards of different kinds hold the CLI reference: `internal/clidoc/cliref_test.go`'s `TestCliReferenceIsCurrent` regenerates and compares, and `internal/cli/docs_website_cliref_test.go` derives the same claim from the command tree instead of from the generator. The trap is named in `internal/cli/docs_website_security_test.go`'s own comment: a test written against the generator agrees with whatever the generator does, which is the one thing a drift test must not do. Consequence: the backlog's index needs both kinds of guard (D28), and its generator must take every date from the item rather than from the clock.
 
-**F46 — Deferrals are written in three places today, and none of them is a backlog.** Class: **Gap**. The `docs/plans` sections (`## Deferred review items`, `## Known follow-ups …`, and `## Accepted as deferred`; §4's census counts **three** at this commit); the pull request's own body, whose status section names what a run tolerated and no addressable item (F28); and the run record, where `runstore.ReviewSummary.Findings` is a **count** — the finding text survives only in the stored transcript, which `internal/cli/diagnose.go` reads back (F18). None of the three is a list a later reader can close one line of, and two of them die with the artifact that carries them: the pull request body is history the moment the pull request merges, and a review round's table is a snapshot of that round. Consequence: "one backlog and not two" is a change of practice as much as a format (D32), and the item file is the first carrier that outlives both the ephemeral job and the merged pull request.
+**F46 — Deferrals are written in three places today, and none of them is a backlog.** Class: **Gap**. The `docs/plans` sections — §4's census counts **three** of them at this commit, by their headings: `docs/plans/2026-10-13-project-secrets.md`'s `## Known follow-ups before implementation …` and its `## Deferred review items (2026-10-14 fix round)`, and `docs/plans/2026-10-18-project-named-oauth-tokens.md`'s `## Known follow-ups, deliberately not in this plan` (a fourth list states the practice under a heading the pattern does not match — `docs/plans/2026-10-14-project-centric.md`'s `## Accepted as deferred`, whose lower-case `d` is why it is outside the figure, and the reason this finding names the sections rather than only citing the count); the pull request's own body, whose status section names what a run tolerated and no addressable item (F28); and the run record, where `runstore.ReviewSummary.Findings` is a **count** — the finding text survives only in the stored transcript, which `internal/cli/diagnose.go` reads back (F18). None of the three is a list a later reader can close one line of, and two of them die with the artifact that carries them: the pull request body is history the moment the pull request merges, and a review round's table is a snapshot of that round. Consequence: "one backlog and not two" is a change of practice as much as a format (D32), and the item file is the first carrier that outlives both the ephemeral job and the merged pull request.
 
 **F47 — Every front-matter field the ruling names has a source in the record except the area.** Class: **Exists**. `runstore.Record.RunID`, `Record.PR` (`PRRef{Number, URL}`), `Record.FinishedAt`, `Record.Repo` and the launch's `LaunchedBy` (read back as `runview.Row.LaunchedBy`) give `filed-in`, `date`, `filed-by` and the repository with no new field at all; the resolved mode and the layer that won are D24's recorded value, from T1.2; and `id`, `title` and `status` are the filer's own words. The area is the one field a mixed run has no single answer for: D22's resolution names the areas that matched, and D23's rule — still **open** — is what turns them into one. Consequence: the front matter is cheap everywhere except `area:`, where D23 arrives in the file a reader meets it in.
 
@@ -670,7 +674,7 @@ folders' plus `internal/cli/docs_rigor_modes_test.go`.
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
 | Fields of `gitprov.PRSpec` whose name is a repository | 0 | `sed -n '/^type PRSpec struct {/,/^}/p' internal/gitprov/gitprov.go \| grep -ci repo` |
 | Sites that narrow an installation token to one repository | 1 | `git grep -hc '"repositories": \[\]string{s.repo}' internal/gitprov/github/apptoken.go` |
-| Sections in `docs/plans` that record deferred leftovers | 3 | `git grep -hE '^## .*(Deferred\|[Ff]ollow-ups)' -- docs/plans \| wc -l` |
+| `docs/plans` sections whose heading the deferral pattern matches | 3 | `git grep -hE '^## .*(Deferred\|[Ff]ollow-ups)' -- docs/plans \| wc -l` |
 | Item files under `docs/backlog/` | 0 | `ls docs/backlog/*.md 2>/dev/null \| wc -l` |
 
 Every one of those commands prints the number in the Count column and nothing
@@ -703,8 +707,9 @@ facts and their witnesses: **0** blocks of the project layer's `defaults:` name 
 repository and **0** fields of `gitprov.PRSpec` name one, while an installation
 token is narrowed to a single repository in exactly **one** place (F42, F43) —
 which is why D29 recommends a designated repository rather than a cross-repo
-write; **3** sections in `docs/plans` are the deferral practice the ruling
-replaces (F46); and **0** item files exist under `docs/backlog/`, which is this
+write; **3** `docs/plans` sections match the deferral headings (F46 names them,
+and names the fourth list whose lower-case heading keeps it out of the figure);
+and **0** item files exist under `docs/backlog/`, which is this
 amendment's own claim about itself: it changes documents and nothing else. A later
 slice that writes its own pin moves the pin-count row above in the same commit
 (the plan's T4.3 is the first that will).
@@ -1602,12 +1607,13 @@ D26 rejects, and which would make a link to an item depend on a lookup.
 
 **Recommended: the item is the one live backlog. Going forward, a deferral is
 filed as an item and no new `docs/plans/*-review-follow-ups.md` file of that shape
-is written; the practice sentence lands in `docs/dogfooding.md`; and the three
-existing deferral sections (§4's census) are converted in one mechanical pull
-request that states the number of converted rows in its own body, each converted
+is written; the practice sentence lands in `docs/dogfooding.md`; and the
+deferral sections F46 names — the three the census counts and the fourth its
+heading keeps out of the count — are converted in one mechanical pull request
+that states the number of converted rows in its own body, each converted
 section keeping its text with a one-line pointer to the items it became.**
 Reason: the ruling's words are "so there is one backlog and not two", and the
-three sections are not merely a precedent — they are a second live list until
+sections are not merely a precedent — they are a second live list until
 they are converted or explicitly frozen. Converting them is mechanical (a table
 row becomes a file, and the file's front matter comes from the section's date and
 the work it belongs to), and each section keeps its own words, because the prose

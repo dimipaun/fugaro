@@ -71,7 +71,7 @@ one of them is named so a reader can check the claim:
 | `internal/gitprov/gitprov.go` `PRSpec` | the provider call a filed item travels in, and the reason a cross-repo filing is a task and not a line | F43 |
 | `internal/clidoc`, and `internal/pricing/catalog/gencatalog` for the other half of the discipline | the generated-index pattern the backlog's index follows, and the trap its second guard answers | F45 |
 | `internal/runstore` `ReviewSummary`, and the stored transcript `fugaro diagnose` re-reads | what a deferred finding looks like today: a count on the record, its text in the transcript | F46, F47 |
-| `docs/plans/2026-10-17-managed-projects-review-follow-ups.md` (and the two sections beside it) | the deferral practice the backlog replaces, and what D32's sweep converts | F46 |
+| `docs/plans/2026-10-17-managed-projects-review-follow-ups.md`, and the four `docs/plans` lists F46 names | the deferral practice the backlog replaces, and what D32's sweep converts | F46 |
 
 ## 2. The slices, in one table
 
@@ -113,9 +113,12 @@ rule governs a collision, and this plan is written to it: **whichever of two ope
 claims merges second renumbers itself**, to the number free at its own merge, and
 updates the register's paragraph in the same commit. It never renumbers a number
 an earlier plan has already written, and a reserved number is never reused. The
-five numbers above 112 are claims rather than written sections, so if the
-voice-session branch were to yield any of them this plan does **not** move up
-into the gap: it keeps 119, which is free whichever way that collision falls. The
+six numbers above 112 — 113 to 118 — are claims rather than written sections:
+`docs/mobile/voice-session/` is merged at this plan's own base `1d325928` and its
+D219 sits in the tree there (the D-block paragraph below reads it), so the claim
+is written down and what is outstanding is the check sections themselves. Written
+or not, this plan does **not** move up into the gap: it keeps 119, which is free
+either way. The
 task that writes the check (T8.1) owns any renumbering and the register line in
 the same commit.
 
@@ -821,8 +824,8 @@ is already written.
 - **Files.** `docs/backlog/FORMAT.md` (the closing rule), the item a fixing pull
   request flips, `docs/dogfooding.md` (the practice sentence: a deferral is filed
   as an item, and nothing new is written in the shape F46 counts), and — if D32 is
-  answered for the sweep rather than the freeze — the three `docs/plans` sections,
-  each keeping its own text with a one-line pointer to the items it became.
+  answered for the sweep rather than the freeze — the `docs/plans` sections F46
+  names, each keeping its own text with a one-line pointer to the items it became.
 - **Tests.** A `closed` item with no `## Closed by` line naming the pull request
   fails the folder's pin; a `dropped` item with no reason fails it; and flipping
   `status` without regenerating the index fails T4.4's regenerate-and-compare pin,
