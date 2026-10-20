@@ -132,10 +132,14 @@ variable "enable_budget" {
 }
 
 variable "managed_deployer_scoped" {
-  # The managed deployer's scoped role and its conditioned binding: off by
-  # default, and fugaro init never sets it in 0.8.6 (the module's variable
-  # says why). An installation that does not name it plans exactly as before
-  # minus those two resources.
+  # The managed deployer's seven scoped roles and their seven conditioned
+  # bindings — the 0.9.6 redesign of the fence. Before 0.9.6 this flag created
+  # one scoped role under one condition, and that condition could not be
+  # expressed as a GCP IAM condition at all. Off by default, and fugaro init
+  # never sets it: the gate has never been flipped. An installation that does
+  # not name it plans exactly as before, minus those fourteen resources. The
+  # module's own variable (../../modules/installation/variables.tf) says why
+  # there are seven, and what the redesign changed.
   type     = bool
   default  = false
   nullable = false

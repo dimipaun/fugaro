@@ -4249,23 +4249,38 @@ RUNS_BUCKET=${RUNS_BUCKET:?the runs bucket of the sandbox installation itself, f
 C=$HOME/.config/fugaro/projects/${I:?}.yaml
 W="${XDG_STATE_HOME:-$HOME/.local/state}/fugaro/terraform/${I:?}/installation"
 CHK68_TMP=/tmp/chk68
+# The state bucket the sandbox installation's root was applied with: the
+# config's `terraform.state_bucket` when its `terraform:` block names one, else
+# `fugaro init`'s default `fugaro-tfstate-<gcp-project>`
+# (internal/cli/init.go's --state-bucket default). Read rather than assumed:
+# the plan below has to adopt the state the installation already lives under,
+# and that default name is only the default.
+STATE_BUCKET=$(sed -n '/^terraform:/,/^[^[:space:]#]/p' "$C" 2>/dev/null | sed -n 's/^[[:space:]]*state_bucket:[[:space:]]*//p' | head -1)
+STATE_BUCKET=${STATE_BUCKET:-fugaro-tfstate-${P:?}}
 # ${VAR:?} everywhere: an empty variable is a hard error, never an empty
 # argument gcloud resolves from its ambient configuration.
 [ -n "$P" ] && [ -n "$I" ] && [ -n "$L" ] && [ -n "$RUNS_BUCKET" ] && [ -n "$C" ] && [ -n "$W" ] \
   || { echo "Check 68 stopped: re-run the whole setup block (P='$P' I='$I' L='$L' RUNS_BUCKET='$RUNS_BUCKET' C='$C' W='$W')" >&2; exit 1; }
-# belong, as its own project.json records it ({"gcp_project":"edge-devel-dimi",
-# "name":"belong"}; that read is recorded below, in "Results of the fifth live
-# run (M9a)"). The stop is a comparison of PROJECT
-# IDS and of the installation's name — not a `fugaro doctor` line read out of
-# the checkout, which says only which installation the checkout is and is no
-# evidence at all about $P. Three things have to be proved, because this check
-# writes in three places: the project it acts in ($P), the installation whose
-# workdir tfvars it edits ($I, and $C is that installation's config), and the
-# project that config names.
-BELONG=edge-devel-dimi
-{ [ "$P" != "$BELONG" ] && [ "$I" != belong ] \
-    && [ "$(sed -n 's/^gcp_project: *//p' "$C" 2>/dev/null)" != "$BELONG" ]; } \
-  || { echo "Check 68 stopped: ${P}/${I} is the belong installation (project ${BELONG}), which no step of this check may touch" >&2; exit 1; }
+# belong, as the tree records it, and the reason this stop is a list rather
+# than one ID: the fifth live run read belong's project.json as
+# {"gcp_project":"edge-devel-dimi","name":"belong"} (that read is recorded
+# below, in "Results of the fifth live run (M9a)"), and on 2026-10-06 the
+# installation moved to the project `fugaro-belong`
+# (docs/design/adopt-firebase-root.md:7; D19 in
+# docs/design/m9-budget-and-dashboard.md). The OLD id stays a refusal — it is
+# still a live project this check must never write in — and so does ANY id
+# containing `belong`, which is what a third move would be called. The stop is
+# a comparison of PROJECT IDS and of the installation's name — not a
+# `fugaro doctor` line read out of the checkout, which says only which
+# installation the checkout is and is no evidence at all about $P. Three things
+# have to be proved, because this check writes in three places: the project it
+# acts in ($P), the installation whose workdir tfvars it edits ($I, and $C is
+# that installation's config), and the project that config names.
+belongs() { case "$1" in *belong*|edge-devel-dimi) return 0 ;; *) return 1 ;; esac; }
+BELONG_IDS="fugaro-belong, edge-devel-dimi, or any project id containing belong"
+{ [ "$I" != belong ] && ! belongs "$P" \
+    && ! belongs "$(sed -n 's/^gcp_project: *//p' "$C" 2>/dev/null)"; } \
+  || { echo "Check 68 stopped: ${P}/${I} is the belong installation (${BELONG_IDS}), which no step of this check may touch" >&2; exit 1; }
 [ -e "$C" ] && [ -d "$W/gcp/roots/installation" ] && [ -e "$W/terraformrc" ] \
   || { echo "Check 68 stopped: $C, $W/gcp/roots/installation or $W/terraformrc does not exist. This check edits the workdir's terraform.tfvars.json and plans the workdir's root, so the sandbox installation must already have been inited on this machine (fugaro init --project $I, converged to 'No changes'); C is the local config L and RUNS_BUCKET are read from." >&2; exit 1; }
 gcloud projects describe "${P:?}" --format='value(projectId)' >/dev/null 2>&1 \
@@ -4313,13 +4328,13 @@ grep -n 'managed_deployer_scoped' "$W/gcp/roots/installation/terraform.tfvars.js
 cd "$W/gcp/roots/installation"
 export TF_DATA_DIR="$W/.terraform" TF_CLI_CONFIG_FILE="$W/terraformrc"   # what the last fugaro run left; open a fresh shell or `unset` both when done
 terraform init -input=false -lockfile=readonly \
-  -backend-config=bucket=fugaro-tfstate-${P:?} -backend-config=prefix=fugaro/installation
+  -backend-config=bucket="${STATE_BUCKET:?}" -backend-config=prefix=fugaro/installation
 terraform plan -input=false -out="$CHK68_TMP/chk68.tfplan" | tee "$CHK68_TMP/plan.txt"
 grep -cE 'google_project_iam_custom_role\.fugaro_deployer_(storage|secret|account|apikey|repository|run_job|scheduler_job)\[' "$CHK68_TMP/plan.txt"
 grep -cE 'google_project_iam_member\.fugaro_deployer_(storage|secret|account|apikey|repository|run_job|scheduler_job)\[' "$CHK68_TMP/plan.txt"
 ```
 
-The backend is named rather than discovered: `bucket=fugaro-tfstate-<gcp-project>` is `fugaro init`'s default for this root (`internal/cli/init.go`; the local config's `terraform.state_bucket` would override it, and the `grep` above shows whether it does) and `prefix=fugaro/installation` is `StatePrefixInstallation` (`internal/infra/workdir.go`), the prefix the sandbox's own state already lives under — so this `init` adopts the state the installation was applied with rather than planning a second copy of it. **If the config names another bucket, or the installation was applied with `--state-bucket`, stop and use that name**: a plan against the wrong prefix would see every resource as new, and the counts below would be meaningless.
+The backend is the sandbox installation's own, and it is read rather than assumed: `STATE_BUCKET` is the config's `terraform.state_bucket` when its `terraform:` block names one and `fugaro init`'s default `fugaro-tfstate-<gcp-project>` otherwise (both read from `$C` in the setup block, whose `grep` prints that block as it stands; the default is `internal/cli/init.go`'s `--state-bucket`), and `prefix=fugaro/installation` is `StatePrefixInstallation` (`internal/infra/workdir.go`), the prefix the sandbox's own state already lives under — so this `init` adopts the state the installation was applied with rather than planning a second copy of it. **If the installation was applied with a `--state-bucket` the config does not record, stop and use that name**: a plan against the wrong bucket or prefix would see every resource as new, and the counts below would be meaningless.
 
 **FACT (on `${P:?}`):** the two counts — **seven and seven** when the plan carries the gate's half, and each address's own line. A plan that carries fewer, or that carries any of them without a `condition` block, stops the check: the apply below would create an unconditioned binding of a conditioned role, which is the one thing this fence may never be.
 
@@ -4386,14 +4401,24 @@ gcloud artifacts repositories update fmgd-chk68-repo --project="${P:?}" --locati
 # positive action unsatisfiable, and its denial would be read as a fence failure.
 gcloud services api-keys create --project="${P:?}" --key-id=fmgd-chk68-key --display-name="fmgd-chk68-key"
 gcloud services api-keys update fmgd-chk68-key --project="${P:?}" --display-name="fmgd-chk68-key (updated)" --impersonate-service-account="${DEPLOYER:?}"
-gcloud run jobs create fmgd-chk68-job --project="${P:?}" --region="${L:?}" --image=us-docker.pkg.dev/cloudrun/container/hello
+# --service-account, and it is the throwaway account this step created two
+# services above: a Cloud Run job update also needs
+# iam.serviceAccounts.actAs on the job's RUNTIME account, and a job created
+# without --service-account runs as the project's default compute account,
+# which the deployer holds no actAs on — its update would then be denied for a
+# reason that is not this service's condition at all. fmgd-chk68-sa is a name
+# the account clause's own condition admits, so the actAs this update needs is
+# the fence's grant, and what the update measures is the run job condition.
+gcloud run jobs create fmgd-chk68-job --project="${P:?}" --region="${L:?}" \
+  --image=us-docker.pkg.dev/cloudrun/container/hello \
+  --service-account="fmgd-chk68-sa@${P:?}.iam.gserviceaccount.com"
 gcloud run jobs update fmgd-chk68-job --project="${P:?}" --region="${L:?}" --update-env-vars=chk68=1 --impersonate-service-account="${DEPLOYER:?}"
 gcloud scheduler jobs create http fmgd-chk68-sched --project="${P:?}" --location="${L:?}" --schedule='0 3 * * *' --uri='https://example.invalid/chk68'
 gcloud scheduler jobs pause fmgd-chk68-sched --project="${P:?}" --location="${L:?}" --impersonate-service-account="${DEPLOYER:?}"
 set +x
 ```
 
-**FACT (on `${P:?}`), one line per service:** the service, the resource's own name, the action, the exit status and — where the action was denied — the verbatim message. **Success for all seven** is what the positive direction means; a denial here says the condition is too narrow for that service (the type term, the template, or the segment the prefix is tested against), and it is recorded as this service's answer rather than fixed in place. The API key's own name is `fmgd-chk68-key` **because the create chose it** (`--key-id`), so its positive action tests what the other six do — a name the fence admits — rather than a uid Google generated.
+**FACT (on `${P:?}`), one line per service:** the service, the resource's own name, the action, the exit status and — where the action was denied — the verbatim message. **Success for all seven** is what the positive direction means; a denial here says the condition is too narrow for that service (the type term, the template, or the segment the prefix is tested against), and it is recorded as this service's answer rather than fixed in place. **And a denial is read before it is recorded**: one that names `iam.serviceAccounts.actAs` is **not this service's answer** — that is a permission the update needs on the job's runtime account, which is outside the fence — and the Cloud Run line is measured again before anything about that service is written down, which is why the positive job above and step 5's near miss both run as the throwaway account this step creates. The API key's own name is `fmgd-chk68-key` **because the create chose it** (`--key-id`), so its positive action tests what the other six do — a name the fence admits — rather than a uid Google generated.
 
 ### 5. The negative direction, per service: the deployer may not touch Fugaro's own
 
@@ -4418,9 +4443,18 @@ gcloud storage buckets create "gs://xfmgd-chk68-bucket" --project="${P:?}" --loc
 gcloud storage cp "$CHK68_TMP/probe.txt" "gs://xfmgd-chk68-bucket/probe.txt" --project="${P:?}" --impersonate-service-account="${DEPLOYER:?}"
 gcloud secrets create xfmgd-chk68-secret --project="${P:?}" --replication-policy=automatic --data-file="$CHK68_TMP/probe.txt"
 gcloud secrets update xfmgd-chk68-secret --project="${P:?}" --update-labels=chk68=1 --impersonate-service-account="${DEPLOYER:?}"
+# The Cloud Run near miss, and it is the unambiguous one for that service: the
+# sandbox's own job may run as an account the deployer holds no actAs on, so
+# its denial can be about the runtime account rather than about the name. This
+# job runs as the throwaway account, which the fence admits, so the only thing
+# left that can deny the update is the name test.
+gcloud run jobs create xfmgd-chk68-job --project="${P:?}" --region="${L:?}" \
+  --image=us-docker.pkg.dev/cloudrun/container/hello \
+  --service-account="fmgd-chk68-sa@${P:?}.iam.gserviceaccount.com"
+gcloud run jobs update xfmgd-chk68-job --project="${P:?}" --region="${L:?}" --update-env-vars=chk68=1 --impersonate-service-account="${DEPLOYER:?}"
 ```
 
-**FACT (on `${P:?}`), one line per service and one for the near miss:** the resource, the action, the exit status, and the **verbatim** denial. Two readings of the denial are different answers and are recorded separately: *"Permission denied … with condition …"* (the fence held), and *"does not have permission"* with no condition named (the role is missing or the binding is unconditioned — the shape failed, not the fence).
+**FACT (on `${P:?}`), one line per service and one for each near miss — the bucket, the secret and the job:** the resource, the action, the exit status, and the **verbatim** denial. Two readings of the denial are different answers and are recorded separately: *"Permission denied … with condition …"* (the fence held), and *"does not have permission"* with no condition named (the role is missing or the binding is unconditioned — the shape failed, not the fence). **A third reading belongs in the line rather than in either of those**: a denial that names `iam.serviceAccounts.actAs` is **not this service's answer** — that permission is on the job's runtime account, which is outside the fence, and the sandbox's own Cloud Run job may run as an account the deployer holds no `actAs` on — so for that service the answer is the near-miss job's own denial, the one that runs as the throwaway account the fence admits.
 
 ### 6. The Secret Manager version read, and what it does not settle
 
@@ -4440,13 +4474,14 @@ gcloud secrets versions access latest --secret=fmgd-chk68-secret --project="${P:
 Put the sandbox back the way the gate found it: delete everything the check created, close the gate, and re-apply so the policy carries the fourteen addresses no longer.
 
 ```bash
-# The throwaway resources, and the near-miss pair.
+# The throwaway resources, and the near misses (the bucket, the secret and the
+# Cloud Run job).
 gcloud storage rm -r "gs://fmgd-chk68-bucket" "gs://xfmgd-chk68-bucket" --project="${P:?}"
 gcloud secrets delete fmgd-chk68-secret xfmgd-chk68-secret --project="${P:?}" --quiet
 gcloud iam service-accounts delete "fmgd-chk68-sa@${P:?}.iam.gserviceaccount.com" --project="${P:?}" --quiet
 gcloud artifacts repositories delete fmgd-chk68-repo --project="${P:?}" --location="${L:?}" --quiet
 gcloud services api-keys delete fmgd-chk68-key --project="${P:?}" --quiet
-gcloud run jobs delete fmgd-chk68-job --project="${P:?}" --region="${L:?}" --quiet
+gcloud run jobs delete fmgd-chk68-job xfmgd-chk68-job --project="${P:?}" --region="${L:?}" --quiet
 gcloud scheduler jobs delete fmgd-chk68-sched --project="${P:?}" --location="${L:?}" --quiet
 # The gate, back to false, and the fourteen addresses with it. The copy step 1
 # took goes back first — the next fugaro run would rewrite the file from the
@@ -4464,7 +4499,7 @@ rm -rf "$CHK68_TMP"
 
 **FACT (on `${P:?}`):** the binding count after the restore — **one**, the unconditioned role's, with the seven conditioned ones gone — and the tfvars file back to what it was. A restore that leaves a conditioned binding behind leaves a fence in place that nothing tests and nothing reads.
 
-**Passes when:** the plan carried seven roles and seven conditioned bindings; the apply was accepted; the policy read back carries all eight bindings, each conditioned one with `fugaro-managed-prefix` and the module's own expression; all seven positive actions succeeded as the deployer; all seven negative actions, and both near misses, were denied with the condition named; the Secret Manager version read was denied (a property of the roles' permission lists, not of a condition); and the restore left one binding and a closed gate.
+**Passes when:** the plan carried seven roles and seven conditioned bindings; the apply was accepted; the policy read back carries all eight bindings, each conditioned one with `fugaro-managed-prefix` and the module's own expression; all seven positive actions succeeded as the deployer; all seven negative actions, and all three near misses, were denied with the condition named; the Secret Manager version read was denied (a property of the roles' permission lists, not of a condition); and the restore left one binding and a closed gate.
 
 **C7 is not what a pass or a fail here decides.** The design's C7 — whether a name that misses an `extract` template fails closed — is settled by the documented semantics of `resource.name.extract` (a non-matching name extracts the empty string, which fails the prefix test, so the condition is false), modelled in the tree and pinned by `TestExtractSegmentModelsTheDocumentedSemantics`; what no live step can construct is a name of a conditioned type that misses that condition's own template (§ step 6). A pass here therefore says the shape applies and that `resource.name` is honoured per type — C3 — and it adds nothing to C7, which does not need it.
 

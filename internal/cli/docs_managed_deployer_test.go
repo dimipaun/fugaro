@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"bytes"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -124,18 +128,55 @@ func TestChecklistHasCheck68(t *testing.T) {
 	for _, want := range []string{
 		"CHK68_PROJECT:?",
 		"CHK68_INSTALLATION:?",
-		"BELONG=edge-devel-dimi",
-		`[ "$P" != "$BELONG" ]`,
+		// The belong stop, as the round-4 re-review required it: belong's OLD
+		// project id (the one the fifth live run read out of its project.json,
+		// kept as a refusal because that project is still live), the project it
+		// moved to on 2026-10-06 (`fugaro-belong`), and any id that merely
+		// contains `belong` — which is what a third move would be called. The
+		// installation's name and the project its config names are refused the
+		// same way, and TestChecklistCheck68GuardRefusesBelong runs the block to
+		// prove each one refuses.
+		"fugaro-belong",
+		"edge-devel-dimi",
+		"*belong*",
+		"belongs()",
 		`[ "$I" != belong ]`,
 		`sed -n 's/^gcp_project: *//p' "$C"`,
 		`$HOME/.config/fugaro/projects/${I:?}.yaml`,
 		"exit 1",
 		"--project=\"${P:?}\"",
 		"mkdir -p \"$CHK68_TMP\"; chmod 700 \"$CHK68_TMP\"",
+		// The state bucket, read from the installation's config instead of
+		// assumed: `fugaro-tfstate-<gcp-project>` is only the default, and this
+		// check has to init the backend the sandbox's own state lives under.
+		"STATE_BUCKET",
+		// The read itself, not just the variable: the bucket is the config's
+		// when the config names one, and a guard that assigned the default
+		// instead would plan against a bucket the sandbox's state may not be in.
+		`/^terraform:/,/^[^[:space:]#]/p`,
+		`s/^[[:space:]]*state_bucket:[[:space:]]*//p`,
 	} {
 		if !strings.Contains(guard, want) {
 			t.Errorf("Check 68's guard block does not carry %q", want)
 		}
+	}
+	// Every hard stop refuses: the message and its `exit 1` are one line, and a
+	// stop whose exit is turned into a no-op prints the same text and carries
+	// on. That mutation (D4 in the round-4 report) survived this test while it
+	// only read the text, so the pin is structural here and executed in
+	// TestChecklistCheck68GuardRefusesBelong below.
+	stops := 0
+	for _, line := range strings.Split(guard, "\n") {
+		if !strings.Contains(line, "Check 68 stopped:") {
+			continue
+		}
+		stops++
+		if !strings.Contains(line, "exit 1") {
+			t.Errorf("Check 68's stop does not refuse: %q", line)
+		}
+	}
+	if stops < 5 {
+		t.Errorf("Check 68's guard carries %d hard stops, and the check documents five", stops)
 	}
 	if strings.Contains(guard, "gcloud config get-value project") {
 		t.Error("Check 68's guard reads the project from gcloud's ambient configuration, which is the trap the check names")
@@ -178,6 +219,19 @@ func TestChecklistHasCheck68(t *testing.T) {
 	} else {
 		t.Errorf("Check 68 cites %q, and the checklist has no such section", belongEvidence)
 	}
+	// The other half of the citation, and it is what makes the new refusal
+	// evidence rather than a guess: belong moved on 2026-10-06, and the design
+	// that records the move names the project it moved to. A guard citing a
+	// document that does not say that is a guard citing nothing.
+	const moveEvidence = "docs/design/adopt-firebase-root.md"
+	if !strings.Contains(guardProse, moveEvidence) {
+		t.Errorf("Check 68's belong stop does not cite %q, where the 2026-10-06 move to fugaro-belong is recorded", moveEvidence)
+	}
+	if b, err := os.ReadFile("../../" + moveEvidence); err != nil {
+		t.Errorf("Check 68 cites %q, which does not read: %v", moveEvidence, err)
+	} else if moved := string(b); !strings.Contains(moved, "fugaro-belong") || !strings.Contains(moved, "2026-10-06") {
+		t.Errorf("Check 68 cites %q for belong's move to fugaro-belong, and that document records no such move", moveEvidence)
+	}
 	// The workdir and its backend, which is where the gate variable lives and
 	// where the plan is made. The checkout's root has neither a tfvars file nor a
 	// backend block, so a check that plans there cannot run at all.
@@ -185,7 +239,7 @@ func TestChecklistHasCheck68(t *testing.T) {
 		`XDG_STATE_HOME:-$HOME/.local/state`,
 		`/fugaro/terraform/${I:?}/installation`,
 		`TF_DATA_DIR="$W/.terraform" TF_CLI_CONFIG_FILE="$W/terraformrc"`,
-		"-backend-config=bucket=fugaro-tfstate-${P:?}",
+		`-backend-config=bucket="${STATE_BUCKET:?}"`,
 		"-backend-config=prefix=fugaro/installation",
 		`$W/gcp/roots/installation/terraform.tfvars.json`,
 		"managed_deployer_scoped: true",
@@ -228,7 +282,7 @@ func TestChecklistHasCheck68(t *testing.T) {
 		`--impersonate-service-account="${DEPLOYER:?}"`,
 		"fmgd-chk68-bucket", "fmgd-chk68-secret", "fmgd-chk68-sa", "fmgd-chk68-repo",
 		"fmgd-chk68-key", "fmgd-chk68-job", "fmgd-chk68-sched",
-		"xfmgd-chk68-bucket", "xfmgd-chk68-secret",
+		"xfmgd-chk68-bucket", "xfmgd-chk68-secret", "xfmgd-chk68-job",
 		"${RUNS_BUCKET:?}",
 		"${SANDBOX_SECRET:?", "${SANDBOX_SA:?", "${SANDBOX_REPO:?",
 		"${SANDBOX_KEY:?", "${SANDBOX_JOB:?", "${SANDBOX_SCHED:?",
@@ -264,6 +318,27 @@ func TestChecklistHasCheck68(t *testing.T) {
 		!strings.Contains(section, "--key-id=fmgd-chk68-key") {
 		t.Error("Check 68 creates the API key without --key-id, so its ID is server-generated and its positive action can never succeed")
 	}
+	// 3c. The Cloud Run job's runtime account, which is the third way a probe
+	// can be unsatisfiable whatever the fence does: updating a Cloud Run job
+	// needs `iam.serviceAccounts.actAs` on the job's RUNTIME account, so a job
+	// created without --service-account runs as the project's default compute
+	// account and the deployer's update is denied for a reason that is not this
+	// service's condition. Both the positive job and the near miss are created
+	// as the throwaway account this step creates (fmgd-chk68-sa), which the
+	// account clause's condition admits — so the actAs the update needs is the
+	// fence's own grant, and what the update measures is the run job condition.
+	const runJobAccount = `--service-account="fmgd-chk68-sa@${P:?}.iam.gserviceaccount.com"`
+	if n := strings.Count(section, runJobAccount); n < 2 {
+		t.Errorf("Check 68 creates %d Cloud Run jobs as the throwaway account, want the positive job and the near miss: a job left on the default compute account makes its probe's denial ambiguous", n)
+	}
+	// And the denial is read, not assumed: a denial naming actAs is recorded as
+	// not being this service's answer rather than as the condition being too
+	// narrow.
+	for _, want := range []string{"iam.serviceAccounts.actAs", "not this service's answer"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 68 does not carry %q: a Cloud Run denial has two possible causes and the FACT has to name which one it saw", want)
+		}
+	}
 
 	// 4. The fail-closed question: named, disowned, and answered elsewhere. The
 	// section has to say in as many words that this check does not settle C7 and
@@ -291,6 +366,10 @@ func TestChecklistHasCheck68(t *testing.T) {
 		"fail closed",
 		"managed_deployer_scoped",
 		"terraform apply -input=false -auto-approve",
+		// The Restore deletes everything the check created, the near miss
+		// included: a probe left behind is a resource the next run's plan and
+		// the next reader both have to account for.
+		"gcloud run jobs delete fmgd-chk68-job xfmgd-chk68-job",
 		"rm -rf \"$CHK68_TMP\"",
 		"**Passes when:**",
 		"**Fails when:**",
@@ -369,4 +448,160 @@ func TestManagedDeployerDocsCountTemplatePlaceholdersRight(t *testing.T) {
 	if checked < 3 {
 		t.Errorf("only %d template counts were read, want the C6 row's two and the §6 paragraph's and the managed-projects paragraph's: a doc that stops counting its templates stops being checked here", checked)
 	}
+}
+
+// TestChecklistCheck68GuardRefusesBelong runs Check 68's guard block rather
+// than reading it.
+//
+// The guard is the only thing between a live IAM check and the `belong`
+// installation, and the round-4 re-review killed two mutants of it that the
+// pins above could not see. One was the ID: the stop compared $P with belong's
+// OLD project (`edge-devel-dimi`, what the fifth live run read out of its
+// project.json) while belong moved to `fugaro-belong` on 2026-10-06
+// (docs/design/adopt-firebase-root.md:7), so CHK68_PROJECT=fugaro-belong passed
+// the guard and every write the check makes would have landed in belong's live
+// project. The other was the refusal itself: turning the stop's `exit 1` into
+// `true` printed the same message and carried on, and no test noticed, because
+// every pin read the block's text.
+//
+// So this test executes it. The block is written to a file and run under bash
+// with the environment the check documents — bash is what the check is written
+// in, and the guard is meant to be pasted into a shell — once per id the guard
+// has to refuse, once for the installation's name, once for the project the
+// installation's config names, and once for a sandbox that must not be refused
+// on belong's account.
+//
+// What proves a refusal here is WHICH stop fired: nothing past the belong stop
+// can run in this test (the workdir does not exist, and gcloud is not
+// installed), so a refused case must print exactly one `Check 68 stopped:` line
+// and it must be the belong one, and the safe case must stop at the next stop
+// with no belong line at all. A guard whose belong stop is turned into a no-op
+// prints the belong line and then the next one, and fails on the count.
+func TestChecklistCheck68GuardRefusesBelong(t *testing.T) {
+	// readDoc resolves the path against the repository root, so this is the
+	// repository-relative one.
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+	blocks := bashBlocks(section)
+	if len(blocks) == 0 {
+		t.Fatal("Check 68 has no bash blocks")
+	}
+	guard := strings.Join(blocks[0], "\n")
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+
+	cases := []struct {
+		name          string
+		project       string // CHK68_PROJECT
+		installation  string // CHK68_INSTALLATION
+		configProject string // the `gcp_project:` line of the installation's config; "" writes no config
+		refused       bool   // the belong stop is the one that must fire
+	}{
+		// belong's project as of the move, and its project before it: both are
+		// live projects this check may never write in, and the second is the
+		// one the fifth live run recorded.
+		{"belong's current project", "fugaro-belong", "sandbox", "", true},
+		{"belong's project before the 2026-10-06 move", "edge-devel-dimi", "sandbox", "", true},
+		// A third move, or a sandbox someone named after belong: the substring
+		// rule is what catches a project ID this check has never heard of.
+		{"a project id containing belong", "belong-sandbox-2026", "sandbox", "", true},
+		{"belong's old project with belong's name in it", "fugaro-belong-run", "sandbox", "", true},
+		// The installation's name, and the project its config names: the check
+		// edits the workdir tfvars of $I and the config is what names $I's
+		// project, so both are writes in belong's territory.
+		{"the installation is belong", "fugaro-sandbox-1", "belong", "", true},
+		{"the config names belong's project", "fugaro-sandbox-1", "sandbox", "fugaro-belong", true},
+		{"the config names belong's old project", "fugaro-sandbox-1", "sandbox", "edge-devel-dimi", true},
+		{"the config names a project containing belong", "fugaro-sandbox-1", "sandbox", "belong-sandbox-2026", true},
+		// The control: a sandbox that is not belong must get past the belong
+		// stop. It stops at the next hard stop, because this test has no workdir
+		// and no gcloud — and that is the point: the belong stop is not what
+		// stopped it.
+		{"a sandbox installation", "fugaro-sandbox-1", "sandbox", "fugaro-sandbox-1", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tc.configProject != "" {
+				dir := filepath.Join(home, ".config", "fugaro", "projects")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				body := "name: " + tc.installation + "\ngcp_project: " + tc.configProject + "\nregion: us-east5\nruns_bucket: sandbox-runs\n"
+				if err := os.WriteFile(filepath.Join(dir, tc.installation+".yaml"), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			script := filepath.Join(t.TempDir(), "chk68-guard.sh")
+			if err := os.WriteFile(script, []byte(guard+"\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(bash, script)
+			cmd.Env = []string{
+				"HOME=" + home,
+				"PATH=" + os.Getenv("PATH"),
+				"CHK68_PROJECT=" + tc.project,
+				"CHK68_INSTALLATION=" + tc.installation,
+				"L=us-east5",
+				"RUNS_BUCKET=sandbox-runs",
+			}
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			cmd.Stdout = io.Discard
+			runErr := cmd.Run()
+			code := 0
+			if ee, ok := runErr.(*exec.ExitError); ok {
+				code = ee.ExitCode()
+			} else if runErr != nil {
+				t.Fatalf("running the guard: %v", runErr)
+			}
+			out := stderr.String()
+			stops := strings.Count(out, "Check 68 stopped:")
+			if tc.refused {
+				if code == 0 {
+					t.Errorf("the guard exited 0 for %s/%s (config %q): the belong stop did not refuse", tc.project, tc.installation, tc.configProject)
+				}
+				if stops != 1 {
+					t.Errorf("the guard printed %d hard stops for %s/%s (config %q), want exactly the belong one: a stop that prints its message and carries on is not a stop\n%s", stops, tc.project, tc.installation, tc.configProject, out)
+				}
+				if !strings.Contains(out, "is the belong installation") {
+					t.Errorf("the guard refused %s/%s (config %q) for some other reason: %s", tc.project, tc.installation, tc.configProject, out)
+				}
+				return
+			}
+			if strings.Contains(out, "is the belong installation") {
+				t.Errorf("the guard refused the sandbox %s/%s as belong: %s", tc.project, tc.installation, out)
+			}
+			if stops != 1 || !strings.Contains(out, "does not exist") {
+				t.Errorf("the guard did not reach the workdir stop for the sandbox %s/%s (stops: %d): %s", tc.project, tc.installation, stops, out)
+			}
+		})
+	}
+
+	// And with nothing set at all, the guard refuses rather than running with
+	// an empty project: every variable is ${VAR:?}-guarded, and an empty one is
+	// a hard error rather than an argument gcloud resolves from its ambient
+	// configuration.
+	t.Run("no project set", func(t *testing.T) {
+		script := filepath.Join(t.TempDir(), "chk68-guard.sh")
+		if err := os.WriteFile(script, []byte(guard+"\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(bash, script)
+		cmd.Env = []string{"HOME=" + t.TempDir(), "PATH=" + os.Getenv("PATH")}
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		cmd.Stdout = io.Discard
+		runErr := cmd.Run()
+		if _, ok := runErr.(*exec.ExitError); !ok {
+			t.Fatalf("the guard ran with CHK68_PROJECT unset (%v): the project is the one variable that must never default", runErr)
+		}
+		if out := stderr.String(); !strings.Contains(out, "CHK68_PROJECT") {
+			t.Errorf("the guard stopped without naming CHK68_PROJECT: %s", out)
+		}
+	})
 }
