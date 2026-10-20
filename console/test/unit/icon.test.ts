@@ -107,10 +107,12 @@ function png(file: string): { width: number; height: number; colourType: number;
 /** decodePng is an 8-bit, non-interlaced PNG decoder -- IHDR to pixels, the
  * five filter types included -- so the comparison below can look at the
  * pictures rather than only at the files. It is here rather than in a
- * dependency for the reason every other tool in this tree is: the console's
- * dependency list is pinned to four exact devDependencies
- * (`test/unit/pinning.test.ts`) and an image library is a large tree for the
- * one thing this file needs. It throws on anything it does not implement
+ * dependency for the reason every other tool in this tree is: every entry of
+ * `console/package.json` is an exact version -- seven devDependencies, no
+ * runtime dependencies -- and all four dependency sections are pinned by
+ * `test/unit/pinning.test.ts`, so an image library would be a pin to argue for
+ * and a large tree for the one thing this file needs. It throws on anything it
+ * does not implement
  * (another bit depth, a palette, interlacing) rather than guessing. */
 function decodePng(file: string): { width: number; height: number; channels: number; pixels: Buffer } {
   const b = readFileSync(file)
@@ -199,9 +201,10 @@ describe('the console’s icon is the website’s mark', () => {
   it('is the app-icon master, byte for byte', () => {
     // The one source of truth: the file the console ships is the file the
     // brand's generator wrote, and there is no second drawing of the mark in
-    // this tree to keep in step. A regenerated master (a palette change moves
-    // the ground colour) fails here until the console's copy is refreshed from
-    // it, which is the point -- the README says how.
+    // this tree to keep in step. A regenerated master (the generator paints the
+    // ground colour whatever palette is in force, so re-running it after a
+    // palette change rewrites every icon) fails here until the console's copy is
+    // refreshed from it, which is the point -- the README says how.
     expect(existsSync(THE_MASTER), `${THE_MASTER} is missing: the site's icon set has no master`).toBe(true)
     const master = readFileSync(THE_MASTER)
     const shipped = readFileSync(CONSOLE_ICON)
@@ -209,10 +212,21 @@ describe('the console’s icon is the website’s mark', () => {
   })
 
   it('is a valid opaque 1024 x 1024 PNG', () => {
-    // 1024 rather than the 512 the site serves: the packager converts this file
-    // to the bundle's `.icns`, and every size in that icon -- 512, 256, 128,
-    // down to 16 -- is a downscale of it. The site's own 512 is the same mark, so
-    // nothing here is an upscale: the artwork is the master's, drawn at 1024.
+    // 1024 rather than the 512 the site serves, and **not because the artwork is
+    // natively that big**. It is not: the source logo's visible artwork (the
+    // alpha bbox of `brand/fugaro-logo.png` at the generator's own threshold,
+    // alpha > 8) is 548 x 371 pixels, so the generator's `fit(art, 1024, 0.80,
+    // ground)` scales it up by 1.4949 to about 819 x 555, and the site's 512 is
+    // the same artwork the other way at 0.7474. The 1024 master is therefore an
+    // ~1.5x interpolation of the mark, and so is this file: what it buys is the
+    // size the `.icns` needs (electron-builder refuses anything under 512 for
+    // icns, and every slot from 512 down to 16 is a downscale of this one), not
+    // detail the source does not have. The README says the same, with the
+    // measured figures and what a genuinely crisp 1024 would need.
+    //
+    // It remains the right file: it is the largest rendering the generator
+    // produces, and upscaling the site's 512 here with a second resampler would
+    // be a worse interpolation *and* a second derivation of the mark.
     const icon = png(CONSOLE_ICON)
     expect(icon.width).toBe(1024)
     expect(icon.height).toBe(1024)

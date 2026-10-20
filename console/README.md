@@ -3399,21 +3399,51 @@ byte-for-byte `brand/app-icon-1024.png`, the opaque app-icon master that
 `scripts/gen-brand-icons.py` writes from `brand/fugaro-logo.png` — the file
 `brand/README.md` and `website/README.md` both name as the source of truth for every icon
 the site serves. The website's own home-screen icon,
-`website/public/android-chrome-512x512.png`, is the same composition (the artwork cropped,
-centred on the palette's `--ground` at 80 % extent) at half the size, so the console and a
-visitor's browser tab are showing the same picture.
+`website/public/android-chrome-512x512.png`, is the same composition — the artwork cropped
+to its alpha bounding box, centred at 80 % extent on the opaque ground the generator paints
+(`--ground` of the palette in force when it last ran) — at half the size, so the console and
+a visitor's browser tab are showing the same picture.
 
-### 1024, and why that is not an upscale
+### 1024, and the artwork's real size
 
-The brief offered the site's 512 px icon as the fallback if that were the best artwork
-there is, with the instruction to say so rather than smooth a 512 up to 1024. It is not the
-best there is. `brand/app-icon-1024.png` is a genuine 1024 render of the same artwork from
-the same generator, written by the same `fit(art, size, 0.80, ground)` call the site's 512
-is, and the source logo is 1024 x 1024 to begin with. So the console takes the 1024 and
-nothing is resampled upwards. `test/unit/icon.test.ts` asserts the size, the opacity
-(colour type 2 — a `.icns` with holes in it shows the desktop through the mark) and the
-bytes; the PR records that the website's largest *served* file is 512 and that the console
-therefore went to the brand master for the 1024 rather than to `public/`.
+**The 1024 is a size the packager needs, not detail the source has.** The source logo is a
+1024 x 1024 *canvas*, but the mark on it is much smaller: the alpha bounding box of
+`brand/fugaro-logo.png` (alpha > 8, the generator's own `ALPHA_THRESHOLD`) is **548 x 371
+pixels**, with the rest transparent margin. `scripts/gen-brand-icons.py` crops to that box
+and then scales it per output, so the generator's own `fit(art, 1024, 0.80, ground)` —
+factor **1.4949**, artwork about 819 x 555 — is an **upscale of about 1.5x**, and the site's
+`android-chrome-512x512.png` (factor 0.7474, artwork about 410 x 277) is the same artwork
+*down*scaled. `brand/app-icon-1024.png` is therefore the largest rendering the generator
+produces rather than a native-resolution one, and the console's icon inherits exactly that.
+
+An earlier revision of this section said the master was "a genuine 1024 render" and that
+"nothing here is an upscale", and the first commit's message said the same. That was wrong,
+and the figures above are what corrects it: they were measured by decoding the committed
+files (the alpha bbox of the source, and the artwork's bbox in the 1024 master and in the
+site's 512) rather than read off the filenames.
+
+The **file choice stands**, for two reasons that do not depend on the artwork being
+oversized:
+
+- **the packager wants 1024.** electron-builder converts the PNG to the bundle's `.icns`
+  and refuses anything under 512 for that format; the `.icns` carries every slot from 1024
+  down to 16, and each one below 512 is a downscale of this file. Converting the site's 512
+  instead would leave the 1024 slot filled by a second resampler's guess at the file the
+  generator already wrote;
+- **one source of truth.** The site's 512 and this 1024 come from one artwork, one ground
+  and one generator call; upscaling the 512 here would be a *second* derivation of the mark
+  in the console's tree, which is the thing this task exists to avoid.
+
+**For a genuinely crisp 1024** the owner has to supply artwork that holds it: a
+`brand/fugaro-logo.png` whose visible mark is about 1024 px across (the canvas is already
+1024 x 1024 — the mark on it is not), or a redrawn master at that size. Then
+`python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-1024.png console/build/icon.png`
+is the whole change, and `website/test/brand.mjs` and `test/unit/icon.test.ts` are what
+check it. Nothing here smooths the 512 up and calls it a 1024.
+
+`test/unit/icon.test.ts` asserts the size, the opacity (colour type 2 — a `.icns` with holes
+in it shows the desktop through the mark) and the bytes; the PR records the same figures and
+the same limitation.
 
 ### Where the packager takes it, and where a running console does
 
@@ -3442,9 +3472,10 @@ therefore went to the brand master for the 1024 rather than to `public/`.
 
 ### Refresh, when the mark changes
 
-The copy is a copy, so a regenerated brand master (a palette change moves the ground
-colour, which is what re-running `scripts/gen-brand-icons.py` records) leaves the console's
-icon stale **until the equality test says so**:
+The copy is a copy, so a regenerated brand master — the generator paints the ground colour
+the palette in force gives it, so re-running it after a palette change rewrites every icon,
+and the committed ones' ground is in any case older than `tokens.css`'s current `--ground` —
+leaves the console's icon stale **until the equality test says so**:
 
 ```sh
 python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-1024.png console/build/icon.png
