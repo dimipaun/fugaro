@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Eleven checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Twelve checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **975,034 bytes in a checkout with no tags** and to **975,034 bytes with the
+  commit builds to **975,713 bytes in a checkout with no tags** and to **975,713 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -459,6 +459,21 @@ added or removed without this sentence moving fails there:
     four glyphs are shapes in the markup, and `test/home.mjs` reads each one back off the built
     page and refuses an icon that references a file or an origin. The words are the ones the
     section already carried, so the word ceiling did not move.
+  - **Getting Started's install options became one card per system** (the owner's draft of
+    2026-10-19, "Getting started, draft 2 (OS icons)"), and moved the site figure alone,
+    975,034 → **975,713**, by **679 bytes** net: two `<article class="install-card">` blocks,
+    each carrying its system's name, the note and the command the install file offers it, and
+    one inline `<svg>` glyph of the page's own — a laptop for macOS, a terminal for Linux — with
+    the rules that lay the cards out in a grid, box them and size the glyph, all of it inlined
+    into the one page that renders the section; and against that, the two `data-option` wrappers
+    and the option box's own rules, which the cards replace, and the console's heading, which
+    moved a level down to sit inside the macOS card. The page weight and the script did not
+    move: the heaviest page is the docs hub, which renders no install section, and nothing
+    outside Getting Started's own page and stylesheet changed. The page's own words fell with
+    the boxes they sat in, 250 → **247**, so the word ceiling did not move. The two rules the
+    cards are held to — no card for a system the file does not carry, one icon per card, and it
+    draws something — are `test/os-cards.mjs`'s, and the count of gates in this README moved with
+    it.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -485,7 +500,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,556 bytes. Three times 350,852: the heaviest page, the
     docs hub, at 280,681 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,656,379 bytes. Three times 1,218,793 (every file in `dist/`, 975,034
+  - **Whole site:** 3,658,926 bytes. Three times 1,219,642 (every file in `dist/`, 975,713
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -581,6 +596,22 @@ added or removed without this sentence moving fails there:
   refusals are kept the way the other gates keep theirs: a case writes a synthetic `dist` with
   each defect planted beside a page that keeps every rule, and each rule was mutation-proved by
   removing it from the function and watching that case fail.
+- `test/os-cards.mjs` — the install cards on Getting Started (the owner's draft of
+  2026-10-19, "Getting Started, draft 2 (OS icons)"). Two rules about the shape no other gate
+  can see: **no card names a system `data/install.yaml` does not carry** — the card's
+  `data-platform` is held to the file's platform list, its heading to the file's own name for
+  that system, and its path to the path the file offers that system *first*, so a card under a
+  system the file has never heard of, or under the Windows entry it marks `untested` (D94), or
+  carrying a route the file does not offer that system, is refused — and **every card is drawn
+  with exactly one icon**, `aria-hidden`, out of the tab order, drawing a shape, referencing
+  nothing, and distinct from every other card's. The empty drawing is the refusal no other gate
+  can make: an `<svg>` with no shape in it is an element that is present, named, decorated and
+  clean, and it renders as an empty box. The file the cards are held to is the site's own
+  reader of it (`content.ts`'s `loadInstallFacts()`), not a second parser in the gate. Its
+  refusals are kept with fixtures that plant one defect each beside a fixture page that keeps
+  every rule, and with two builds of a copy of the repository for the states the page's own
+  frontmatter refuses: a supported system with no path under it, and one this page has no glyph
+  for.
 - `test/meta.mjs` — the provenance-phrase gate (D186): a page must not explain why its own
   text exists, so D186's phrase list (`rendered from`, `generated rather than written`, …) is
   refused in the text a reader reads, on every built page. It is the one defect the other

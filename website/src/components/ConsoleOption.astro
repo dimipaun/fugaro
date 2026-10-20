@@ -1,13 +1,17 @@
 ---
 /**
  * website/src/components/ConsoleOption.astro — the console, offered on Getting Started
- * (the owner's changes spec of 2026-10-18, item 6).
+ * (the owner's changes spec of 2026-10-18, item 6; the owner's draft of 2026-10-19, "Getting
+ * started, draft 2 (OS icons)").
  *
- * Getting Started presents two ways to install Fugaro side by side: the CLI — the install
- * paths `website/data/install.yaml` carries, the Homebrew cask first, each command with its
- * copy control — and the desktop console. This component is the second option, and it is
- * the only place on that page the console is mentioned: a reader who wants the console can
- * install it from this page, and a reader who wants the CLI reads past it.
+ * Getting Started presents two ways to install Fugaro: the CLI — the install paths
+ * `website/data/install.yaml` carries, each command with its copy control — and the desktop
+ * console. This component is the second one, and it is the only place on that page the
+ * console is mentioned. It renders **inside the card of the system the console ships for**:
+ * the page draws a card per system `install.yaml` supports, the console's own data file names
+ * macOS on every asset it publishes, so the console's block sits in macOS's card and a reader
+ * who wants the CLI reads past it. A reader on Linux is not offered a download built for
+ * another system, and the page never says the console runs anywhere it does not.
  *
  * **It renders no link while the console is unreleased, and that is structural.** The two
  * states are one `if`: the download list is rendered from the release's own published names
@@ -23,9 +27,10 @@
  * the words a reader navigates by — the option's own heading and the words on the link to
  * the console page.
  *
- * The card this sits in — its border, radius and padding — is Getting Started's, written
- * once on the `#install` section's two option wrappers so that the CLI option and this one
- * are the same shape. What is here is what is inside the card.
+ * The card this sits in — its border, radius and padding — is Getting Started's, written once
+ * on the cards so that the system's own path and this block are the same shape. What is here
+ * is what is inside the card, under the card's `h3`, which is why the heading below is an
+ * `h4`: it is a section of the card rather than of the page.
  */
 interface DownloadFacts {
   /** What a reader sees on the button: the platform and the asset's extension. */
@@ -51,7 +56,7 @@ const { available, note, downloads }: Props = Astro.props
 const HEADING = 'Desktop console'
 ---
 
-<h3>{HEADING}</h3>
+<h4>{HEADING}</h4>
 
 {
   available ? (
