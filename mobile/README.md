@@ -36,6 +36,15 @@ environment variables) and `eas.json` (the `development`, `preview` and
 internal testing". **Nothing is built or submitted by any of this**: Check 89
 is owner-run, and no `eas` command has been run here.
 
+**The toolchain is declared too (added 2026-10-20).** `eas build --profile
+internal` could not detect an SDK, because the manifest declared no dependency
+at all; it now names **Expo SDK 58** and the four packages `index.js` imports,
+`package-lock.json` pins the tree `npm ci` installs, and `metro.config.cjs` adds
+the repository root to Metro's `watchFolders` so the app's `shared/` imports
+bundle. `npx expo export` builds a JavaScript bundle for both platforms; a
+native build is still owner-run — see "Building for internal testing" and "What
+is not verified here".
+
 **Two audio seams, and now one of them is wired.** P3.6 defined the one audio
 seam it needed -- `src/mailbox/speaker.js`, `speak(text)` answering whether the
 utterance was spoken, which is what the ack's rule is written against -- before
@@ -55,6 +64,15 @@ P3.5 does not own `src/mailbox/`. The secure store is **not** stubbed: P3.1's
 cd mobile && npm test          # node --test "src/**/*.test.js"
 ```
 
+**No install is needed to run them.** The app's runtime packages are declared in
+`package.json` (see "Building for internal testing") and no test imports one:
+every test reaches the platform through a fake, and `index.js` — the file that
+imports the real modules — is not tested (see "What is not verified here").
+`npm test` therefore runs in a fresh clone with no `node_modules`, and
+`npm install` is a prerequisite of *bundling* the app, not of testing it.
+`src/dependencies.test.js` is what keeps the declaration and the imports in
+step.
+
 Node 22 (`>=22 <23`) and npm 10, per the manifest's `engines`. The script is a
 **glob**, deliberately (implementation-plan §"files each task owns"): no later
 task has to edit this manifest to add a test file. The cost of a glob is that
@@ -71,9 +89,11 @@ module plugged in by `index.js` at the bottom of the tree.
 
 ## Demo mode: how to enter it, and how to leave it
 
-1. Start the app the way this file describes under "Running the tests" (the
-   Expo toolchain, which is not installed in the environment this was written
-   in). The first screen appears: "Try the demo".
+1. Start the app on a device or simulator with the Expo toolchain, declared in
+   `package.json` since this task (Expo SDK 58) and installed with
+   `npm install` — see "Building for internal testing". **No `expo start` has
+   been run in this environment** (see "What is not verified here"). The first
+   screen appears: "Try the demo".
 2. Tap **Try the demo**. There is nothing to set up first -- no account, no
    pairing, no sign-in and no network -- and the demo runs entirely on the
    phone, on fixed sample data.
@@ -96,7 +116,9 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 | Path | What it is |
 | --- | --- |
 | `index.js` | The entry. The one file that knows what a device is: it imports `expo`, `expo-secure-store`, `@react-native-async-storage/async-storage`, `react` and `react-native`, builds the two ports, the store and the demo controller, wires the two screens and registers the root. No decisions of its own, and no test (see "What is not verified"). |
-| `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. |
+| `package.json`, `package-lock.json` | The manifest and the tree `npm ci` installs. The dependencies are the packages `index.js` and `src/` actually import — `expo`, `react`, `react-native`, `expo-secure-store` and `@react-native-async-storage/async-storage` — and no more: `src/dependencies.test.js` fails on an undeclared import and on a manifest that lacks `expo`, `react` or `react-native`. |
+| `metro.config.cjs` | Metro's config, and the one entry in it that matters: `watchFolders` includes the **repository root**, because the app imports `shared/` (`../../../shared/confirm/index.js` and its siblings) and Metro's project root is `mobile/`. Without it the bundle fails to resolve them — `npx expo export` stops at `Unable to resolve module ../../../shared/confirm/index.js` — so it is not removable, and `src/dependencies.test.js` fails if it goes. `.cjs`, because `package.json` is `"type": "module"`. |
+| `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. Two fields are what SDK 58 needs: `plugins: ["expo-secure-store"]` (the module that holds D111's two items, whose config plugin is what configures it for a native build — `npx expo install` asks for it) and **no `edgeToEdgeEnabled` and no `newArchEnabled`**: `npx expo-doctor` reports each of the two as `Additional property "…" is not allowed` against the SDK 58 schema (one error per run, so removing the first is what makes the second visible — 19/20, then 19/20, then 20/20). Both flags ask for what SDK 58 builds anyway: edge-to-edge is mandatory from Android 16 (Expo's own `withEdgeToEdge` says so), and the new architecture is the only architecture. |
 | `app.config.js` | **The build-time config** (P4.4), and the one place the two release identities come from: it resolves `FUGARO_IOS_BUNDLE_ID` and `FUGARO_ANDROID_PACKAGE` from the environment over `app.json`'s `expo` object — see "Building for internal testing" and `src/app-config.ids.test.js`. |
 | `eas.json` | The EAS profiles: `development`, `preview` and `internal` (the store profile Check 89 builds and submits with). No credential path, no credential value and no identity value — see `src/eas-config.test.js`. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
@@ -109,6 +131,7 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 | `src/audio/` | The voice ports and their fakes (P3.4): the capture path (`audio-in.js`), transcription (`stt.js`), speech output (`tts.js`), the transcript-to-message rule (`message.js`) and the pipeline that wires them (`pipeline.js`). **No engine, no device, no SDK**: `index.js` is the one door, and its test scans the directory for exactly that. |
 | `src/voice/` | The voice screen (P3.5): the interrupt switch and the pure decision it gates (`interrupt.js`), the screen itself — the queue, P1.4's offline refusal, P1.2's lease and D122's microphone state (`screen.js`) — and the adapter that puts P3.4's pipeline behind P3.6's speaker port (`speaker.js`). **No engine, no device, no database**: `index.js` is the one door, and its test scans the directory for exactly that. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
+| `src/dependencies.test.js` | The scan that says **which packages the app is made of**: `expo`, `react` and `react-native` are declared, every bare import under `index.js` and `src/` is declared, and `package-lock.json` is the lockfile `npm ci` installs. It is what makes `eas build` able to find an SDK. |
 | `src/skeleton/` | The trivial module and test that proved the runner runs (P3.1's red step). |
 
 ## Building for internal testing
@@ -120,6 +143,18 @@ public release is not reversible in the way an internal one is (C8), and **no
 agent runs any of the commands below**: each needs the owner's Expo, Apple and
 Google accounts, and no Expo token, App Store Connect key or Play
 service-account key goes into an agent's session (D120, Global Constraint 9).
+
+**Prerequisites: run `npm install` in `mobile/` first; the SDK is Expo SDK 58.**
+The manifest declares the app's runtime packages (`expo` 58.x, `react-native`
+0.88, `react` 19.3, `expo-secure-store` 58.x and
+`@react-native-async-storage/async-storage` 2.2), the versions `npx expo
+install` picks for that SDK, and `package-lock.json` pins the tree `npm ci`
+installs. `metro.config.cjs` is the other half of a bundle: it adds the
+repository root to `watchFolders`, because the app imports `shared/`. What
+**is** verified here is that the JavaScript resolves — `npx expo export` for
+both platforms, see the pull request that added this paragraph — and what is
+**not** is a native build or a submission: those need the owner's accounts, and
+the list is at the end of this file ("What is not verified here").
 
 **The two identities, and where they are not.** The iOS bundle identifier and
 the Android package name are one public reverse-DNS name each — the same name
@@ -1313,19 +1348,41 @@ the two apart -- so it is written down here rather than claimed as a kill.
 
 ## What is not verified here
 
-* **The Expo/Metro toolchain.** It is not installed in the environment this was
-  written in, and nothing under `mobile/` declares a runtime dependency yet —
-  which is asserted, so the manifest cannot quietly grow one. There has been no
-  `expo start`, no `expo lint`, no `eas build` and no device or simulator run.
-  `package.json`'s `test` script is the whole of the verified surface.
+* **The toolchain: declared, and half of it run.** The manifest declared no
+  runtime dependency at all until the task that made this app buildable — which
+  is why `eas build --profile internal` could not detect an SDK — and now
+  declares the five the app imports. In the environment that ran that task
+  (Node 22.23.3, npm 10.9.9), three things were run and are the whole of the
+  verified surface beyond `package.json`'s `test` script:
+  `npx expo-doctor` (**20/20 checks pass**), and
+  `npx expo export --platform ios` and `--platform android`, both of which
+  bundle `index.js` and everything it reaches, `shared/` included, with no
+  unresolved import. That is a **JavaScript** proof: Metro resolved the graph
+  and produced a bundle.
+  **Still not run, and it is the larger half:** no `expo start`, no `expo lint`,
+  no `eas build`, no `expo prebuild`, no Xcode or Gradle run, no simulator and
+  no device. So a **native** iOS or Android build — the pods, the Gradle
+  modules, the config plugins, the signing — is unverified, and so is a
+  submission to either store: both need the owner's Expo, Apple and Google
+  accounts, and no agent runs them (D120, Check 89 is owner-run). The two
+  identities, too, are exercised only as values this repository validates: a
+  bundle was exported here with **test** values in the shell, and no build has
+  ever read the owner's real ones.
   **This includes P4.4's two files**: `app.config.js` is exercised as a
   function of a base config and an environment (which is what its tests call
-  it with), and **Expo's own loader has never read it** — the `({ config }) =>`
-  form and the ESM `export default` are what that loader does (`@expo/config`'s
-  `evalConfig` resolves `result.default` and then calls it with a request whose
-  `config` is the `app.json` `expo` object with Expo's defaults filled in,
-  `Config.ts`), but the shape was read off the loader's source and has not been
-  through a real `expo start`. `eas.json` is parsed and asserted as JSON; **no `eas` command
+  it with), and **Expo's own loader has read it — as of this task, and only with
+  the CLI's own reads**: with both variables exported in the shell,
+  `npx expo config --type public --json` returns
+  `ios.bundleIdentifier = com.example.testapp` and
+  `android.package = com.example.testapp` — the values the two variables held,
+  resolved through this file, which is what proves the `({ config }) =>` form
+  and the ESM `export default` are what `@expo/config`'s `evalConfig` calls (it
+  resolves `result.default` and calls it with the `app.json` `expo` object as
+  `config`, `Config.ts`). `npx expo export` reads the same file the same way.
+  What is still unverified is the rest of the path: **no `expo start` and no
+  `eas build`** have resolved it, and the value that has been through the loader
+  is a shell test value, never the owner's own identity.
+  `eas.json` is parsed and asserted as JSON; **no `eas` command
   has been run**, so the profiles are as correct as the register's text says
   they must be and not as correct as a build would show — including the two
   claims about `eas-cli` that the local build path rests on (that it resolves
@@ -1397,11 +1454,12 @@ the two apart -- so it is written down here rather than claimed as a kill.
   re-write* is asserted here only as the double's model of them.
 * **Metro, and the `shared/` imports.** `src/mailbox/` imports
   `../../../shared/mailbox-schema/index.js`, `../../../shared/presence/index.js`
-  and `../../../shared/digest/redact.js`; node resolves them (the tests run) and
-  the D119 boundary rule allows them, but **bundling `mobile/` and `shared/`
-  together needs a Metro `watchFolders` entry that no task has added yet.**
-  There has been no `expo start` here, so that wiring is unverified — see
-  `src/mailbox/README.md`.
+  and `../../../shared/digest/redact.js`; node resolves them (the tests run), the
+  D119 boundary rule allows them, and **Metro resolves them too** — that was the
+  missing half until this task added `metro.config.cjs`, whose `watchFolders`
+  entry is the repository root, and `npx expo export` now bundles `shared/` into
+  both platforms' bundles. There has still been no `expo start` here, so the
+  *dev server* is unverified — see `src/mailbox/README.md`.
 * **The Realtime Database itself (P3.2).** No database client is installed: the
   reader takes a port — `{ subscribe(path, { onValue, onError }) }` — and every
   test hands it a fake that records the paths it is asked for. So **no listener

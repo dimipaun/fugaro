@@ -5,13 +5,13 @@
     "version": "0.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "plugins": [
+      "expo-secure-store"
+    ],
     "ios": {
       "supportsTablet": false
     },
-    "android": {
-      "edgeToEdgeEnabled": true
-    },
+    "android": {},
     "extra": {
       "eas": {
         "projectId": "70e67d4a-77d3-4110-9db6-e600266db345"
