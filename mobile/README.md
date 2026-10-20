@@ -36,6 +36,15 @@ environment variables) and `eas.json` (the `development`, `preview` and
 internal testing". **Nothing is built or submitted by any of this**: Check 89
 is owner-run, and no `eas` command has been run here.
 
+**The toolchain is declared too (added 2026-10-20).** `eas build --profile
+internal` could not detect an SDK, because the manifest declared no dependency
+at all; it now names **Expo SDK 58** and the four packages `index.js` imports,
+`package-lock.json` pins the tree `npm ci` installs, and `metro.config.cjs` adds
+the repository root to Metro's `watchFolders` so the app's `shared/` imports
+bundle. `npx expo export` builds a JavaScript bundle for both platforms; a
+native build is still owner-run — see "Building for internal testing" and "What
+is not verified here".
+
 **Two audio seams, and now one of them is wired.** P3.6 defined the one audio
 seam it needed -- `src/mailbox/speaker.js`, `speak(text)` answering whether the
 utterance was spoken, which is what the ack's rule is written against -- before
