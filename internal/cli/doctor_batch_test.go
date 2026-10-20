@@ -328,6 +328,37 @@ func TestDoctorBatchReportsTheLauncherGrant(t *testing.T) {
 	}
 }
 
+// TestDoctorBatchReportsBothLauncherConditions: the two lists this check
+// builds are independent, so a project can hold one of each -- a launcher with
+// an unconditioned grant (a widening) and a launcher with no grant at all
+// (one that cannot start a run). Reporting only the first because it is
+// non-empty leaves the second a fact the operator never reads, and the missing
+// half is not visible in the policy the excess one is found in.
+//
+// Mutation (report misconditioned only when it is non-empty): the missing
+// launcher is not named and the assertion fails.
+func TestDoctorBatchReportsBothLauncherConditions(t *testing.T) {
+	const excess, absent = "user:a@example.com", "user:b@example.com"
+	r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
+	batchProvisioned(t, f)
+	r.withBatch(t, f, "terraform: { launchers: [\""+excess+"\", \""+absent+"\"] }\n")
+	r.crm.SetPolicy("proj-1234",
+		gcpfake.Binding{Role: "roles/batch.jobsEditor", Members: []string{excess}},
+		gcpfake.Binding{Role: "roles/owner", Members: []string{absent}},
+	)
+
+	c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-launcher-iam")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("check = %+v (%v), want a warning", c, ok)
+	}
+	if !strings.Contains(c.Problem, "without the compute module's condition") || !strings.Contains(c.Problem, excess) {
+		t.Errorf("the warning does not report the unconditioned grant: %s", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "do not hold a roles/batch.jobsEditor grant") || !strings.Contains(c.Problem, absent) {
+		t.Errorf("the warning drops the launcher that holds no grant at all: %s", c.Problem)
+	}
+}
+
 // TestDoctorBatchDoesNotRequireTheGrantOfOperators: the grant this check reads
 // is for_each over the compute root's own launchers (modules/compute/iam.tf,
 // roots/compute/main.tf passes var.launchers and var.operators separately), and

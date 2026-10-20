@@ -403,6 +403,18 @@ func doctorBatchLauncherIAM(ctx context.Context, lc *localcfg.Config, c *crm.Ser
 		}
 	}
 	switch {
+	case len(misconditioned) > 0 && len(missing) > 0:
+		// Both conditions, in one finding, because the two lists are
+		// independent: a launcher holding an unconditioned grant says nothing
+		// about whether another holds no grant at all, and the one that cannot
+		// start a run is the one an operator has to act on. Reporting the
+		// widening alone drops the second — a project where one launcher holds
+		// an unconditioned grant and another holds none is exactly that shape,
+		// and the missing half is not visible in the policy the excess one is
+		// read from.
+		return []doctorCheck{{ID: id, Severity: "warning",
+			Problem: fmt.Sprintf("%s hold roles/batch.jobsEditor in %s without the compute module's condition (%s): the grant is conditioned on Fugaro-shaped job names in this project and region, and an unconditioned one may start any job in the project. And %s do not hold a roles/batch.jobsEditor grant there with that condition at all, so they cannot start a Batch run (design compute-backend.md §3.7, §4.4)", strings.Join(misconditioned, ", "), lc.GCPProject, want, strings.Join(missing, ", ")),
+			Fix:     "run fugaro init in " + lc.GCPProject + ", which writes the conditioned grant for every launcher (or, if a grant was just written, rerun fugaro doctor once it propagates)"}}
 	case len(misconditioned) > 0:
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("%s hold roles/batch.jobsEditor in %s without the compute module's condition (%s): the grant is conditioned on Fugaro-shaped job names in this project and region, and an unconditioned one may start any job in the project (design compute-backend.md §3.7)", strings.Join(misconditioned, ", "), lc.GCPProject, want),
