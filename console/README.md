@@ -1798,13 +1798,19 @@ seam the renderer entry (Task 3.4a) needs to answer the dashboard's
 - **The dashboard's join, and the choose.** `src/source/source.ts` answers
   `installation.current` from an **optional** `installation` dep, defaulting to
   D13's "no installation has been chosen" state; since the merge with Task
-  3.4a, `src/main/index.ts` passes `picker.installation` in. A choose runs the
+  3.4a, `src/main/index.ts` passes an `installation` reader in — **amended
+  2026-10-20**: `installationState`, not `picker.installation`, because the
+  header draws the binary *this run resolved* (`withResolvedBinary`, unit-tested
+  in `test/unit/installations-store.test.ts`; `test/unit/startup.test.ts` pins
+  the wiring). A choose runs the
   handshake for that installation in the picker and hands the answer to
   `lifecycle.choose` (`src/main/window.ts`), which registers the surface if it
   was not yet and reopens the window through `openWindowFor`. The startup
-  handshake reads the stored active installation's binary — **that binary and
-  no other**: a stored binary that is missing or not executable is a refusal,
-  never a fall through to another `fugaro` on the machine — with its project,
+  handshake reads the stored active installation — **amended 2026-10-20**: rule
+  4 with that record's `binaryPath` as its first *candidate*, so a stored
+  override that is missing or not executable falls through to the well-known
+  locations rather than refusing, and the record of a console-written entry is
+  an id and a project with no path at all — with its project,
   and its answer is what `installation.current` and the picker's rows report
   (an installation nothing has read in this run says `unknown`, never `ok`).
   The dashboard draws one line from that read and no figure: the project, the
@@ -3721,6 +3727,19 @@ rule's last step and is exactly the "discoverable automatically" the ruling asks
 A candidate that exists but whose version cannot be read is refused rather than
 skipped, as before.
 
+**A stored override that has gone is not a refusal** (owner's ruling of 2026-10-20):
+the record's `binaryPath` is rule 4's first *candidate*, so the walk carries on to
+the well-known locations and the console drives whichever binary it resolved. The
+path it resolved is remembered **for the run and never written to the store**
+(`resolvedBinaries` in `src/main/index.ts`, keyed by project, written by the startup
+handshake and by a choose), and it is what the dashboard's header draws: a store that
+carries an id and a project and no path — the shape this console writes — still gets
+a line naming the binary the console is running. `withResolvedBinary` in
+`src/main/installations.ts` is that join, and it is unit-tested; the source bound to
+the installation still gives the store's override the first slot, so
+`InstallationRef.source` says `configured` only when the path that ran came from the
+record.
+
 ### The checkout is optional, and asked for late
 
 Nothing in the first run wants a repository. The one place a repository is genuinely
@@ -3760,7 +3779,10 @@ no new colour, no new font, no image, no remote content — and **the CSP does n
 change and nothing embeds the website**: the link is a button whose click the main
 process answers through `openExternalValidated`, and the picker's `openExternal` row
 takes **no arguments at all**, so a frame that sends a URL has sent a key no row
-declares and is refused before any handler runs. `will-navigate` and
+declares and is refused before any handler runs. Its **boolean is the answer**: a
+handover the platform declined is `openExternal: { ok: false }` with the console's own
+`the console could not open the link in the browser` (`OPEN_EXTERNAL_FAILED`), which
+the screen draws, rather than a success that drew nothing. `will-navigate` and
 `setWindowOpenHandler` still deny everything else.
 
 ### The mutations each guard was proved against
@@ -3778,10 +3800,14 @@ the failure is the red step, and each test goes red **by name**.
 | one character of `FUGARO_SETUP_COMMAND` changed | `onboarding.test.ts`, the setup-command and two-states cases |
 | `GETTING_STARTED_URL` pointed at another path or host | `onboarding.test.ts`, the link case |
 | a form rule put back in `screens.css` (`#picker-add { … }`) | `installations-view.test.ts`, "styles the containers this document declares, and no id it does not" |
+| the header/resolution join reversed (`active.binary ?? resolved`) | `installations-store.test.ts`, "names the binary this run resolved, and not the path the store remembers" |
+| the header read from the store alone (`installationState` dropping `resolvedBinaries`) | `startup.test.ts`, "answers the header from this run's resolution, and keeps the record for the source" |
+| the `openExternal` row's boolean ignored (`if (!opened)` removed) | `installations-ipc.test.ts`, "reports a handover the platform declined, rather than a success that drew nothing" |
+| the old refusal sentence restored ("give an absolute path…") | `spawn.test.ts`, the non-absolute configured path case |
 
 ### The verification, and what it did not cover
 
-`npx vitest run --dir test/unit` under Node 22 is green — **55 files, 2011 passed, 1
+`npx vitest run --dir test/unit` under Node 22 is green — **55 files, 2016 passed, 1
 skipped** (the console's own suite; the verify container runs this repository's Go
 build and test, so the console's tests are run locally and the pull request says so)
 — and `npx tsc --noEmit` is clean, which typechecks the Playwright specs too.
@@ -3790,7 +3816,15 @@ build and test, so the console's tests are run locally and the pull request says
 in**: Playwright's Electron launch needs a display and a GTK/NSS/glib stack the image
 does not have (`libglib-2.0.so.0` is missing and there is no root to install it), so
 `test/e2e/installations.spec.ts` is compiler-checked and reviewed rather than
-executed here. It is the one verification this branch could not complete.
+executed here. It is the one verification this branch could not complete. The same
+holds for the three specs the review of this branch asked for: `entry.spec.ts`'s
+rewritten B1 case (a stored override that has gone falls through, and the dashboard
+names the binary the spawn log shows it ran), its new no-override case (a record with
+an id and a project and no `binaryPath`, which is the shape this console writes —
+seeded through `seedActiveInstallation(project, null)`, which writes the field as
+absent), and `installations.spec.ts`'s rewrite. They are typechecked, and their
+claim that the header's line and the child's binary agree is the one the unit suite
+pins without a window.
 
 **The checkouts a row offers are the ones the CLI's document carries.** The contract
 is tolerant of the array's absence and of a malformed entry, so a `config list` that
