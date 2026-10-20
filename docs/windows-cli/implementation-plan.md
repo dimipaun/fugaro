@@ -273,8 +273,8 @@ a *read*: it is a create with `O_EXCL`, and the `other` half's comment must say
 that `O_EXCL` alone is what refuses a path something is already at. Commit:
 `the rest of the O_NOFOLLOW sites, one pair per package`.
 
-**T1.7 — `internal/image/selftest.go`'s `syscall.Stat_t` (C1's fourteenth
-site).** Files: `internal/image/selftest.go`, plus an
+**T1.7 — `internal/image/selftest.go`'s `syscall.Stat_t` (three of C1's
+fourteen sites).** Files: `internal/image/selftest.go`, plus an
 `internal/image/ownership_unix.go`/`ownership_other.go` pair for
 `dirWritableBy`. Red step: `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build
 -gcflags=-e ./internal/image` — three `undefined: syscall.Stat_t`
@@ -287,14 +287,18 @@ group, which Windows does not have. The `other` half has to decide what a
 nonzero uid means there, and the honest answer for a Windows binary is that the
 owner check is **skipped with its reason stated** (`fi.Sys()` has no owner on
 Windows; the image selftest only ever runs inside a Linux container anyway) —
-which makes this the one site of C1's fourteen whose Windows answer is a
-behaviour change rather than a flag swap, and the reason it is a task of its
-own. Commit: `image: the ownership checks only where there is an owner`.
+which makes this the largest of C1's two **behaviour** groups rather than a flag
+swap: the four `procgroup` sites of T1.2 are behaviour too, and between them the
+two are the reason C1's port is more than an alias. Commit:
+`image: the ownership checks only where there is an owner`.
 
 **T1.3 — the config directory (F5, D8).** Files:
 `internal/localcfg/localcfg.go` (`configDir`), `internal/localcfg/checkcache.go`
-(`cachePath`), `internal/updatecheck/updatecheck.go`, `internal/infra/workdir.go`
-(`workdir`), plus a new `internal/localcfg/platformdirs.go` holding the one
+(`cachePath`), `internal/updatecheck/updatecheck.go` (`Save`, through its own
+`cachePath`), `internal/infra/workdir.go`
+(`xdgDir`, which `InstallationWorkdir`, `FirebaseWorkdir`, `ManagedWorkdir` and
+`internal/infra/compute.go`'s `ComputeWorkdir` all build their paths through),
+plus a new `internal/localcfg/platformdirs.go` holding the one
 fallback function. Red step: a new table test — `internal/localcfg/platformdirs_test.go`'s
 `TestConfigDirFollowsThePlatform` — that fails today because the fallback does
 not exist; and `internal/localcfg/localcfg_test.go` gains the case where
@@ -382,8 +386,8 @@ pasting the string into `cmd.exe` and PowerShell. Verification:
 task should take the cheap one first: (a) make the quoting platform-aware
 (correct, and it means `Quote`'s callers must pass the platform down: a
 signature change at 15 call sites in 6 files, or the same effect for the 51
-that go through it by changing the one-line `quoteWord` alias at
-the one-line `quoteWord` alias in `internal/cli/init_repo_target.go`, which is the cheap shape of this
+that go through it by changing the one-line `quoteWord` alias in
+`internal/cli/init_repo_target.go`, which is the cheap shape of this
 option); or (b) keep POSIX quoting and reword the
 *prose* Fix strings that are not commands — "unset K" becomes "remove the
 variable K from this shell's environment" — which touches no signature and is
@@ -392,8 +396,9 @@ and leaves (a) as a follow-up named in the task's own commit message, unless
 the owner says otherwise. Commit: `doctor: advice that names the variable instead of assuming a POSIX shell`.
 
 **T2.3 — the ANSI gate (F16, D9).** Files: `cmd/fugaro/main.go` (or a small
-`internal/cli/console_windows.go` / `console_other.go` pair), the four files
-that emit escapes. Red step: none that is runnable on Linux — this is the one
+`internal/cli/console_windows.go` / `console_other.go` pair), the three files
+that emit escapes (`internal/cli/runs.go`, `internal/cli/watch.go`,
+`internal/watch/render.go`). Red step: none that is runnable on Linux — this is the one
 task whose red step is a **Windows** run (**U6**), and the task must say so
 rather than invent a Linux test for a Windows console. Verification:
 `go test ./internal/watch ./internal/cli -run 'Render|Runs' -count=1`, `[pins]`,

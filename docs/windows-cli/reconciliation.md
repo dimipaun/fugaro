@@ -80,10 +80,19 @@ internal/runner/session.go:150:52: undefined: syscall.O_NOFOLLOW
 internal/cli/config_init.go:62:72: undefined: syscall.O_NOFOLLOW
 ```
 
-Thirteen of the fourteen are the same two flags (`O_NOFOLLOW`, and
-`O_NONBLOCK` beside it) that `internal/pluginwire` already carries; the
-fourteenth is `image/selftest.go`'s `syscall.Stat_t`. The circle that produced
-the list matters for the plan: `pluginwire` fails first, then `procgroup`, and
+The fourteen are three groups, not one. **Seven are a flag** —
+`syscall.O_NOFOLLOW`, which Windows' `syscall` does not define: the census shows
+it seven times, once in `internal/pluginwire` and once in each of the six files
+T1.6 names. **Four are `internal/procgroup`'s process-group calls** (`Setpgid`
+and three `syscall.Kill`) and **three are `image/selftest.go`'s
+`syscall.Stat_t`** — and those two groups are **behaviour**, not a flag swap: a
+process group and a file's owner are things Windows answers differently, so
+T1.2 and T1.7 are ports with a stated loss rather than an alias.
+(`syscall.O_NONBLOCK`, the flag printed beside `O_NOFOLLOW` at five of the seven
+sites, is *defined* on Windows — `types_windows.go`'s `O_NONBLOCK = 0x00800` —
+which is why the census shows one undefined symbol per site and not two.) The
+circle that produced the list matters for the plan: `pluginwire` fails first,
+then `procgroup`, and
 the other seven files become visible only as the ones before them compile.
 Seven of the nine — `recipe/repofile.go`, `image/selftest.go`, `cache`'s two,
 `runner`'s two and `cli/config_init.go` — are in `cmd/fugaro`'s own dependency
@@ -188,7 +197,7 @@ finding that answers it.
 
 | Subject the brief named | The tree | Finding |
 |---|---|---|
-| syscall / `x/sys/unix` in the CLI's packages | **Nine non-test packages fail to build** — 14 sites, mostly the one `O_NOFOLLOW`/`O_NONBLOCK` pair (C1); `x/sys/unix` appears in **four test files and in no non-test file at all**, and all four are already invisible to a Windows build (two gated `//go:build darwin \|\| linux`, two `_linux`/`_darwin`-suffixed) | F1, F2, F14 |
+| syscall / `x/sys/unix` in the CLI's packages | **Nine non-test packages fail to build** — 14 sites: seven of them the one flag `syscall.O_NOFOLLOW`, four `procgroup`'s process-group calls, three `image`'s `syscall.Stat_t` (C1); `x/sys/unix` appears in **four test files and in no non-test file at all**, and all four are already invisible to a Windows build (two gated `//go:build darwin \|\| linux`, two `_linux`/`_darwin`-suffixed) | F1, F2, F14 |
 | `os.Chmod`, `0600`/`0700` and the checks that read them | Modes are *written*, never *checked*; on Windows a file is reported `0444` or `0666` whatever was passed | F8, F9 |
 | symlinks, `EvalSymlinks`, `Lstat` guards | The guards exist and degrade as the `_other.go` files already say; but `os.Symlink` is a **test** dependency, and Windows needs developer mode for it | F10, F11 |
 | `os.Rename` atomicity | `os.Rename` on Windows is `MoveFileEx(…, MOVEFILE_REPLACE_EXISTING)`, so the pattern holds — with two real limits | F3 |
@@ -198,7 +207,7 @@ finding that answers it.
 | PATH lookup, `.exe`, `.cmd` shims | `exec.LookPath` is the right call and finds `gcloud.cmd`; what it does *not* find is a test's fake named `terraform` | F13 |
 | shell quoting | `internal/shellword.Quote` emits POSIX single-quoting for commands printed to be pasted | F6 |
 | `/dev/tty`, raw mode, hidden prompts | `golang.org/x/term` only, which is cross-platform; no `/dev/tty` anywhere | F14 |
-| ANSI colour, cursor control, terminal width | Escapes in four non-test files; width comes from Bubble Tea, never from an ioctl | F16, F17 |
+| ANSI colour, cursor control, terminal width | Escapes in three non-test files, all written `\x1b[`; width comes from Bubble Tea, never from an ioctl | F16, F17 |
 | `$HOME`/`XDG_*` vs `%APPDATA%`/`%LOCALAPPDATA%` | Four sites read `HOME` and refuse when it is unset — which is the Windows default | F5 |
 | temp directories | Already platform-aware (`tempRoots`) | C2 |
 | path separators, drive letters, `checkoutProject`, git remotes | `git rev-parse --show-toplevel` and `filepath.Join`; `filepath.ToSlash`/`FromSlash` at 35 sites | F22 |
@@ -209,9 +218,9 @@ finding that answers it.
 | the version ldflags | Platform-independent | F32 |
 | `go install` | Works on Windows unchanged | Exists (§3) |
 | Authenticode, SmartScreen | Nothing signs Windows binaries; there is no Windows release step at all | F33 |
-| the tests | `internal/cli`'s 225 test files do **not** all type-check for windows/amd64 — four of them fail, and so do seven other packages' test files (F36); what is left after those five classes is behaviour, and it is enumerable | F35, F36, F37, F38 |
+| the tests | `internal/cli`'s 225 test files do **not** all type-check for windows/amd64 — four of them fail, and so do ten other packages' test files (F36); what is left after those five classes is behaviour, and it is enumerable | F35, F36, F37, F38 |
 | docs pin tests that name paths | The docs guards are text and file pins; none of them reads a platform | C3 |
-| external tools (`gcloud`, Terraform, Git, Docker, Claude Code) | `fugaro doctor` checks Terraform, Docker and cosign; it has **no git check and no gcloud-binary check at all** | F26, F27, F28 |
+| external tools (`gcloud`, Terraform, Git, Docker, Claude Code) | `fugaro doctor` checks Terraform and cosign only, and Docker is **deliberately not one of them** — `internal/cli/doctor.go` says why in place: `preflight.Docker` is meaningful only when a local base-image build is pending, so calling it today would always report ok; it has **no git check and no gcloud-binary check at all** | F26, F27, F28 |
 | the plugin and its skills | Skills only — there is no `hooks/` and no shell hook anywhere in `plugin/` | F34 |
 | WSL | Nothing detects WSL and nothing needs to; a Linux binary inside WSL is the Linux path exactly | F39 |
 | how the console follows | `docs/design/desktop-console.md` D10, "Later" | F40 |
@@ -271,7 +280,7 @@ loses stated in the comment — on Windows a job object is the equivalent of a
 process group, and the `_other.go` half must at minimum kill the direct child
 and say so, exactly as `internal/claudeplugin/procattr_other.go` already does.
 
-**F3 — `internal/verify/verify.go`, `Run`/`run`: `procgroup.Run(… Name:
+**F3 — `internal/verify/verify.go`, `Run`: `procgroup.Run(… Name:
 "sh", Args: []string{"-c", command}, …)`.** Class: **Gap**. `fugaro verify`
 does not run the repository's command directly: it hands it to `sh -c`. On
 Windows there is no `sh` unless Git for Windows is installed and on `PATH`,
@@ -307,7 +316,7 @@ F8 and F21.
 **F5 — `getenv("HOME")`, four sites, no Windows fallback.** Class: **Wrong**.
 `internal/localcfg/localcfg.go`'s `configDir`, `internal/localcfg/checkcache.go`'s
 `cachePath`, `internal/updatecheck/updatecheck.go` and
-`internal/infra/workdir.go`'s `workdir` all read `HOME` directly and return an
+`internal/infra/workdir.go`'s `xdgDir` all read `HOME` directly and return an
 error when it is empty:
 
 ```
@@ -320,8 +329,12 @@ Windows does not set `HOME`. It sets `USERPROFILE`, which is what
 three caches would be unreachable on a stock Windows shell, and the error a
 user sees names a variable that does not exist on their platform. The fix is
 not one line per site: `configDir` is the root of the project config path, so
-its answer decides where `fugaro config ls` looks *and* what
-`internal/localcfg/localcfg.go`'s `Save` writes. See D8.
+its answer decides where `fugaro config ls` looks *and* where
+`internal/cli/init.go`'s `writeLocalConfig` writes. The three caches are the
+same read of the same variable: `internal/localcfg/checkcache.go`'s `cachePath`,
+which `SaveNameCheck`, `SaveLayerCache`, `SaveRecipeCache` and
+`SaveSharedCache` all build their paths through. (`internal/updatecheck`'s own
+`Save` reads it once more, through its own `cachePath`.) See D8.
 
 **F6 — `internal/shellword.Quote`: POSIX single-quoting, printed for a user to
 paste.** Class: **Gap**. `Quote` is correct POSIX and is reached from every
@@ -433,7 +446,7 @@ through or read through a link in several places: `internal/pluginwire/fsx.go`'s
 rule, `internal/cli/init.go`'s `EvalSymlinks`, `internal/claudeplugin/plan.go`'s
 `EvalSymlinks`, `internal/cache/archive.go`'s `Lstat`/`Readlink` walk,
 `internal/config/readfile.go`'s `Lstat` + `SameFile`, `internal/pluginwire/wire.go`'s
-`sameFile`. The `_other.go` halves in C2 already say what is lost where
+`sameDir`. The `_other.go` halves in C2 already say what is lost where
 `O_NOFOLLOW` does not exist. What this finding adds is the Windows-specific
 third leg: creating a symlink on Windows needs Developer Mode or an elevated
 process, so the *guards* keep working on links that exist but the *tests*
@@ -470,7 +483,7 @@ not a rewrite of the callers. See D11.
 
 **F13 — `exec.LookPath`: right call, and one consequence the tests feel.**
 Class: **Exists**. Eleven non-test sites
-(`internal/basepin/cosign.go`'s `Find`, `internal/claudeplugin/claudeplugin.go`'s
+(`internal/basepin/cosign.go`'s `CosignPath`, `internal/claudeplugin/claudeplugin.go`'s
 `Find`, `internal/cli/doctor.go`'s `doctorLookPath`, `internal/cli/init.go`,
 `internal/cli/managed_apply.go`, `internal/cli/upgrade_plugin.go`,
 `internal/image/tools.go`, `internal/image/selftest.go` twice,
@@ -530,10 +543,15 @@ this one — the context cancels and `procgroup` is what escalates, so a
 Windows `procgroup` must implement the escalation or the CLI would leave the
 child running.
 
-**F16 — ANSI escapes in four non-test files, with no platform gate.** Class:
-**Gap**. `internal/cli/runs.go`, `internal/cli/watch.go`,
-`internal/watch/render.go` and `internal/runner/project.go` emit `\033[`
-sequences. Windows Terminal and current `conhost` render VT sequences once
+**F16 — ANSI escapes in three non-test files, with no platform gate.** Class:
+**Gap**. `internal/cli/runs.go`, `internal/cli/watch.go` and
+`internal/watch/render.go` emit `\x1b[` sequences — two console clears
+(`\x1b[H\x1b[2J`) and the colour wrappers that build `\x1b[` + code + `m`.
+`internal/runner/project.go` contains the same two characters once, in the
+comment at line 461, and only as a quotation of the escape a hostile host name
+could smuggle into a run's record; by this document's own rule (F4's
+comment-is-not-a-call) that is not an emitter, and the sanitiser beside it is
+the guard. Windows Terminal and current `conhost` render VT sequences once
 virtual-terminal processing is enabled on the console handle; a process that
 has not enabled it prints the escapes literally. Go's runtime does not enable
 it. Cost: a small decision with a cheap implementation — detect and disable,
@@ -667,8 +685,10 @@ names on every platform, or only document that the providers' own case rules
 apply. See O2; it is not on the critical path for a first Windows cut.
 
 **F24 — long paths.** Class: **Gap**. `internal/infra/workdir.go` builds the
-deepest paths in the tree: `$XDG_STATE_HOME/fugaro/terraform/<project>/…`
-(`PrepareWorkdir`, `installationDir`, `computeDir`, `repoDir`), by design
+deepest paths in the tree: `$XDG_STATE_HOME/fugaro/terraform/<project>/…` (`InstallationWorkdir`,
+`FirebaseWorkdir`, `ManagedWorkdir`, `internal/infra/compute.go`'s
+`ComputeWorkdir`, and `PrepareWorkdir` which materialises the one it is given),
+by design
 "outside the tree". On Windows `XDG_STATE_HOME` is unset, so F5's fix decides
 the base — and `%LOCALAPPDATA%\fugaro\terraform\<project>\…` is a long prefix
 before the Terraform module's own tree is added. Go applies its long-path
@@ -700,7 +720,7 @@ sees.** Class: **Gap**.
 | `terraform` | `init`, `managed`, `restore`, the installation apply | `internal/preflight/preflight.go`'s `Terraform`, which runs `terraform version -json` and refuses anything outside `>= 1.9.0, < 2.0.0` |
 | `docker` | `image build --local`, `image selftest` | `internal/preflight/preflight.go`'s `Docker`, only when a local build is asked for |
 | `gcloud` | `gcloud auth application-default login`, the Fix commands the CLI prints | **not detected as a binary**; only ADC's *file* is read (F28) |
-| `cosign` | verifying a base pin's signature | `internal/cli/doctor.go`'s cosign check and `internal/basepin/cosign.go`'s `Find` |
+| `cosign` | verifying a base pin's signature | `internal/cli/doctor.go`'s cosign check and `internal/basepin/cosign.go`'s `CosignPath` |
 | `claude` | the plugin's skills, `fugaro upgrade --plugin` | `internal/cli/upgrade_plugin.go`'s `claudeLookPath` |
 
 Cost: `fugaro doctor` is the command that exists to answer "is this machine
@@ -1113,7 +1133,7 @@ Windows user and the WSL user is a real source of confusion (F39).
 **Alternative: WSL-only, permanently.** Cost: two commands of documentation
 and nothing else — genuinely cheap — but the CLI's promise to a Windows user
 becomes "install a Linux distribution first", the desktop console stays
-macOS-and-Linux-only forever through F40, and the seven packages' worth of
+macOS-and-Linux-only forever through F40, and the five packages' worth of
 Windows awareness the tree already carries (C2) stays dead code. If the owner
 takes this, Slices 1–5 are cancelled and only Slice 0 and the console decision
 remain.
