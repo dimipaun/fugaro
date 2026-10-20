@@ -376,31 +376,55 @@ installed, nothing is fetched, and the entry point the phone loads imports nothi
 all. The tests are the plan's verification list (a missing
 id, a wrong type, an oversize body and an unknown field refused; a well-formed message
 accepted) plus the fail-closed families above and P6.3's kind, action, tag and
-canonical-byte cases: 51 tests in this module's test file.
+canonical-byte cases: 55 tests across the module's two test files — the 51 in
+`index.test.js`, and the four in `bounds.test.js`, which replays
+[`vectors.bounds.json`](vectors.bounds.json), the bound vectors **both** ends
+consume (`internal/mailbox`'s `TestTheSharedBoundVectorsHold` is the Go half).
 
-**Every guard is mutation-proved**, not merely covered — 78 guards over `index.js` and
-`mac.js`, one mutation each:
+**Every guard is mutation-proved**, not merely covered — 96 mutations over `index.js`
+and `mac.js`: one for most guards, and two for the bounds that can be missed in
+either direction — a comparison narrowed by a code unit, and the same one widened:
 
 ```sh
 shared/mailbox-schema/mutation-proof.sh
-# control       the pristine suite passes, 380 tests, 0 failures
+# control       the pristine suite passes, 480 tests, 0 failures
 # killed        control: refuse() always succeeds (must be killed)
 # killed        not-an-object guard (null/array/primitive)
-# ...                                                        (76 more)
-# --- control killed; 78 guards: 78 killed, 0 survived, 0 not applied
+# ...                                                        (95 more)
+# --- control killed; 96 guards: 96 killed, 0 survived, 0 not applied
 ```
 
-The script disables one guard at a time — the object check, the unknown-field check,
-each type check, each bound, each character rule, the surrogate and separator rules, the
-timestamp range, the ack's type check, the deep freeze and the copy, then P6.3's: the
-kind vocabulary and its (kind, field) table, the agent and option shapes, the action
-record's verbs and both target shapes, the argv alphabets and the head SHA, the required
-tag, the canonical serialisation — including the code-point sort and the strings it
-refuses — and, in `mac.js`, that the tag is computed over the canonical bytes and that
-`verifyMac` answers `false` rather than throwing. Two of the guards are about the
-**boundary** rather than a refusal: that `index.js` carries no import and no buffer
-type, because that is what keeps the schema importable by the phone and nothing else in
-the suite would notice it breaking.
+That block is the run's own output with the middle elided: the harness prints **97**
+`killed` lines — the negative control's, then one per guard — of which the two above
+are the first, so 95 follow. The script disables one guard at a time — the object check,
+the unknown-field check, each type check, each bound, each character rule, the surrogate
+and separator rules, the timestamp range, the ack's type check, the deep freeze and the
+copy, then P6.3's: the kind vocabulary and its (kind, field) table, the agent and
+option shapes, the action record's verbs and both target shapes, the argv alphabets and
+the head SHA, the required tag, the canonical serialisation — including the code-point
+sort and the strings it refuses — and, in `mac.js`, that the tag is computed over the
+canonical bytes and that `verifyMac` answers `false` rather than throwing.
+
+Section 6 is the group about the bounds. Most of its rows **move a comparison by
+one** — `> MAX` to `>= MAX`, and to `> MAX + 1` — because that, rather than a
+deleted check, is the mutation this module has actually been wrong about:
+thirteen of the eighteen do it. Four more drop a term of a rule instead — the
+carriage return from the line-break rule, DEL from each of the two character
+rules, and the second head-SHA length from the SHA rule, which is the same class
+of mistake one step further from the check's edge. The last does neither: it
+replaces the SHA rule's equality test with a range test (`action: the head SHA
+may be any length from SHA_MIN to SHA_MAX`), and a refusal of a head SHA between
+the two lengths is what kills it. `repo.length > TARGET_MAX` narrowed to
+`>= TARGET_MAX` refused a repository of exactly the bound, and widened to
+`> TARGET_MAX + 1` it accepted one a code unit past it, with every test in this
+package **and** every test on the Go side green. A bound that can be missed in
+either direction therefore takes two mutants here, and the row that kills each
+one lives in `bounds.test.js` (and in the Go replay), not in `vectors.json`: that
+file sits on exactly two lengths by accident and on no other bound.
+
+Two of the guards are about the **boundary** rather than a refusal: that `index.js`
+carries no import and no buffer type, because that is what keeps the schema importable
+by the phone and nothing else in the suite would notice it breaking.
 
 It runs `npm test`, and requires the suite to fail
 each time. It restores the files with `git checkout` after each one and refuses to run

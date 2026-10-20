@@ -1,0 +1,685 @@
+{
+  "format": "fugaro mailbox schema bound vectors",
+  "why": "The merged vectors.json pins the tag, the direction, and the refusals of values far past a bound. It happens to sit on TWO lengths, because every case carries a tag of exactly MAC_MAX (64) and every action case a head SHA of exactly SHA_MIN (40), and its replay therefore holds those two. Everything else a phone can press against is pinned by nothing: no case sits on a string bound, a list bound, a repository or run bound, the second head-SHA length, or the C0, DEL and carriage-return rules. A bound moved by one therefore survived on both ends \u2014 `> TARGET_MAX` -> `>= TARGET_MAX` refused a 200-code-unit repository in Go and in JavaScript with both suites green, and `> TARGET_MAX` -> `> TARGET_MAX + 1` accepted a 201-code-unit one. This file is that follow-up, and it adds only the rows the merged file does not already hold.",
+  "contract": "Every row here is asserted by BOTH ends: the JavaScript parity test (shared/mailbox-schema/bounds.test.js) validates it with validateMessage/validateHeartbeat, and the Go binding replays it in internal/mailbox (TestTheSharedBoundVectorsHold) through Decode and its own validators. A row either end disagrees with fails on the side that is wrong, which is the property vectors.json has and the reason this file is shaped like it.",
+  "past": "Every accepts row with a \"past\" entry is a BOUND row: the row is accepted, and the same row with one more code unit (or one more list entry) at \"at\" is refused with \"code\". That is what makes the row pin the bound exactly rather than approximately, and it is what tells a narrowed bound and a widened one apart on both ends. The rows without one are not about a bound \u2014 a carriage return in a body is a character rule, and the tag's length is held by the file as a whole rather than by a row of its own: every record here carries a tag of exactly MAC_MAX, which is the same reason the Go binding's own bound table gives for `mac` needing no row of its own. One row is here for symmetry with an end the merged file already holds \u2014 a head SHA of SHA_MIN, the length vectors.json's action cases all carry, so a reader comparing the two files finds both lengths named here \u2014 and the head SHA of SHA_MAX is the one end the merged file does not hold. An append row carries the entry it adds in \"add\", so the row tests the LIST bound and not the duplicate rule.",
+  "not_vectors_json": "This is a NEW file; vectors.json is untouched. The reason is recorded where the replay lives (internal/mailbox/message_test.go, TestTheRefusalCodesNoRefusalVectorCarries): vectors.json is a merged P6.3 contract, the plan this work belongs to edits no merged module (\u00a713/\u00a714), and a consumer adding to it is a contract change under a consumer's review. A file neither end owns, that both ends consume, reaches the same end \u2014 both sides held by shared vectors \u2014 without changing the artifact P6.3 owns. The rows that belong in vectors.json proper are proposed there to P6.3's follow-up.",
+  "record": "the record the value is judged as: \"message\" is validateMessage, \"heartbeat\" is validateHeartbeat",
+  "accepts": [
+    {
+      "name": "an id of exactly ID_MAX",
+      "why": "the bound itself is the largest accepted id: `> ID_MAX` narrowed to `>= ID_MAX` refuses it",
+      "record": "message",
+      "value": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "past": {
+        "mode": "grow",
+        "at": "id",
+        "code": "too-long"
+      }
+    },
+    {
+      "name": "a sender of exactly SENDER_MAX",
+      "why": "the largest sender a phone may write",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "past": {
+        "mode": "grow",
+        "at": "sender",
+        "code": "too-long"
+      }
+    },
+    {
+      "name": "a body of exactly TEXT_MAX",
+      "why": "the largest body, which is also the largest thing the tag covers",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "past": {
+        "mode": "grow",
+        "at": "text",
+        "code": "too-long"
+      }
+    },
+    {
+      "name": "a body carrying a carriage return",
+      "why": "a body is several lines, and CRLF is one of the ways a phone writes one: dropping 0x0d from the line-break set refuses a record the module accepts",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "a\r\nb",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      }
+    },
+    {
+      "name": "an option of exactly OPTION_MAX",
+      "why": "the option bound itself: an option label is bounded like the identity it is read out beside",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "prompt",
+        "options": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      },
+      "past": {
+        "mode": "grow",
+        "at": "options[0]",
+        "code": "too-long"
+      }
+    },
+    {
+      "name": "exactly OPTIONS_MAX options",
+      "why": "a prompt carries at most eight options, and eight is allowed",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "prompt",
+        "options": [
+          "option 0",
+          "option 1",
+          "option 2",
+          "option 3",
+          "option 4",
+          "option 5",
+          "option 6",
+          "option 7"
+        ]
+      },
+      "past": {
+        "mode": "append",
+        "at": "options",
+        "code": "too-many",
+        "add": "one more option"
+      }
+    },
+    {
+      "name": "a repository of exactly TARGET_MAX",
+      "why": "the repository bound itself: `> TARGET_MAX` narrowed to `>= TARGET_MAX` refuses it, and no case in either suite sat on it",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "merge the pull request",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0002",
+          "verb": "merge",
+          "target": {
+            "repo": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/b",
+            "pr": 532
+          },
+          "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "confirmation": {
+            "id": "c-0002",
+            "at": 1700000000000
+          }
+        }
+      },
+      "past": {
+        "mode": "grow",
+        "at": "action.target.repo",
+        "code": "too-long"
+      }
+    },
+    {
+      "name": "a run of exactly TARGET_MAX",
+      "why": "a run id reaches the registry bounded by TARGET_MAX, and the bound itself is accepted",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "merge the pull request",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0002",
+          "verb": "cancel",
+          "target": {
+            "run": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "confirmation": {
+            "id": "c-0002",
+            "at": 1700000000000
+          }
+        }
+      },
+      "past": {
+        "mode": "grow",
+        "at": "action.target.run",
+        "code": "too-long"
+      }
+    },
+    {
+      "name": "a head SHA of exactly SHA_MIN",
+      "why": "a head SHA is 40 or 64 hex characters: 40 is one of the two",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "merge the pull request",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0002",
+          "verb": "merge",
+          "target": {
+            "repo": "dimipaun/fugaro",
+            "pr": 532
+          },
+          "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "confirmation": {
+            "id": "c-0002",
+            "at": 1700000000000
+          }
+        }
+      },
+      "past": {
+        "mode": "grow",
+        "at": "action.head_sha",
+        "code": "bad-sha"
+      }
+    },
+    {
+      "name": "a head SHA of exactly SHA_MAX",
+      "why": "the 64-character length, which the merged vectors.json carries nowhere (every head_sha in it is 40 characters)",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "merge the pull request",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0002",
+          "verb": "merge",
+          "target": {
+            "repo": "dimipaun/fugaro",
+            "pr": 532
+          },
+          "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "confirmation": {
+            "id": "c-0002",
+            "at": 1700000000000
+          }
+        }
+      },
+      "past": {
+        "mode": "grow",
+        "at": "action.head_sha",
+        "code": "bad-sha"
+      }
+    },
+    {
+      "name": "a pull request numbered one",
+      "why": "pull requests are numbered from one, so one is the smallest number a merge may name",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "merge the pull request",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0002",
+          "verb": "merge",
+          "target": {
+            "repo": "dimipaun/fugaro",
+            "pr": 1
+          },
+          "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "confirmation": {
+            "id": "c-0002",
+            "at": 1700000000000
+          }
+        }
+      },
+      "past": {
+        "mode": "zero",
+        "at": "action.target.pr",
+        "code": "bad-target"
+      }
+    },
+    {
+      "name": "a boot of exactly BOOT_MAX",
+      "why": "the boot bound itself",
+      "record": "heartbeat",
+      "value": {
+        "at": 1700000000000,
+        "boot": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "agents": [
+          {
+            "id": "orchestrator",
+            "name": "Orchestrator"
+          }
+        ],
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "past": {
+        "mode": "grow",
+        "at": "boot",
+        "code": "too-long"
+      }
+    },
+    {
+      "name": "a spoken name of exactly AGENT_NAME_MAX",
+      "why": "a spoken name is bounded like the id beside it",
+      "record": "heartbeat",
+      "value": {
+        "at": 1700000000000,
+        "boot": "boot-01",
+        "agents": [
+          {
+            "id": "orchestrator",
+            "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "past": {
+        "mode": "grow",
+        "at": "agents[0].name",
+        "code": "too-long"
+      }
+    },
+    {
+      "name": "exactly AGENTS_MAX agents",
+      "why": "a heartbeat advertises at most 32 agents, and 32 is allowed",
+      "record": "heartbeat",
+      "value": {
+        "at": 1700000000000,
+        "boot": "boot-01",
+        "agents": [
+          {
+            "id": "agent-00",
+            "name": "Agent 0"
+          },
+          {
+            "id": "agent-01",
+            "name": "Agent 1"
+          },
+          {
+            "id": "agent-02",
+            "name": "Agent 2"
+          },
+          {
+            "id": "agent-03",
+            "name": "Agent 3"
+          },
+          {
+            "id": "agent-04",
+            "name": "Agent 4"
+          },
+          {
+            "id": "agent-05",
+            "name": "Agent 5"
+          },
+          {
+            "id": "agent-06",
+            "name": "Agent 6"
+          },
+          {
+            "id": "agent-07",
+            "name": "Agent 7"
+          },
+          {
+            "id": "agent-08",
+            "name": "Agent 8"
+          },
+          {
+            "id": "agent-09",
+            "name": "Agent 9"
+          },
+          {
+            "id": "agent-10",
+            "name": "Agent 10"
+          },
+          {
+            "id": "agent-11",
+            "name": "Agent 11"
+          },
+          {
+            "id": "agent-12",
+            "name": "Agent 12"
+          },
+          {
+            "id": "agent-13",
+            "name": "Agent 13"
+          },
+          {
+            "id": "agent-14",
+            "name": "Agent 14"
+          },
+          {
+            "id": "agent-15",
+            "name": "Agent 15"
+          },
+          {
+            "id": "agent-16",
+            "name": "Agent 16"
+          },
+          {
+            "id": "agent-17",
+            "name": "Agent 17"
+          },
+          {
+            "id": "agent-18",
+            "name": "Agent 18"
+          },
+          {
+            "id": "agent-19",
+            "name": "Agent 19"
+          },
+          {
+            "id": "agent-20",
+            "name": "Agent 20"
+          },
+          {
+            "id": "agent-21",
+            "name": "Agent 21"
+          },
+          {
+            "id": "agent-22",
+            "name": "Agent 22"
+          },
+          {
+            "id": "agent-23",
+            "name": "Agent 23"
+          },
+          {
+            "id": "agent-24",
+            "name": "Agent 24"
+          },
+          {
+            "id": "agent-25",
+            "name": "Agent 25"
+          },
+          {
+            "id": "agent-26",
+            "name": "Agent 26"
+          },
+          {
+            "id": "agent-27",
+            "name": "Agent 27"
+          },
+          {
+            "id": "agent-28",
+            "name": "Agent 28"
+          },
+          {
+            "id": "agent-29",
+            "name": "Agent 29"
+          },
+          {
+            "id": "agent-30",
+            "name": "Agent 30"
+          },
+          {
+            "id": "agent-31",
+            "name": "Agent 31"
+          }
+        ],
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "past": {
+        "mode": "append",
+        "at": "agents",
+        "code": "too-many",
+        "add": {
+          "id": "extra-01",
+          "name": "Extra"
+        }
+      }
+    }
+  ],
+  "refusals": [
+    {
+      "name": "a sender carrying U+001F",
+      "why": "U+001F is a C0 control character: `code < 0x20` narrowed to `code < 0x1f` accepts it, on both ends",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "pho\u001fne",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "bad-character",
+      "field": "sender"
+    },
+    {
+      "name": "a spoken name carrying U+001F",
+      "why": "the same C0 rule reached through the advertised list, so the rule is the rule and not one field's check",
+      "record": "heartbeat",
+      "value": {
+        "at": 1700000000000,
+        "boot": "boot-01",
+        "agents": [
+          {
+            "id": "orchestrator",
+            "name": "Orches\u001ftrator"
+          }
+        ],
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "bad-character",
+      "field": "agents[0].name"
+    },
+    {
+      "name": "an id carrying U+001F",
+      "why": "a database key refuses the C0 range as characters, not as one field of the message",
+      "record": "message",
+      "value": {
+        "id": "m\u001f1",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "bad-key",
+      "field": "id"
+    },
+    {
+      "name": "an id carrying DEL",
+      "why": "DEL is the other end of the control range and a key refuses it as a character; without this row, dropping that one comparison from the key rule survives the JavaScript parity test (index.test.js holds it, this artifact did not)",
+      "record": "message",
+      "value": {
+        "id": "m\u007f1",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "bad-key",
+      "field": "id"
+    },
+    {
+      "name": "a body carrying DEL",
+      "why": "DEL is the other end of the control range, and a body is a string like any other",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "a\u007fb",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "bad-character",
+      "field": "text"
+    },
+    {
+      "name": "a sender carrying a line break",
+      "why": "a sender is a single line: dropping the line-break guard makes a newline injectable into the name the phone speaks",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "pho\nne",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "bad-character",
+      "field": "sender"
+    },
+    {
+      "name": "an option carrying a line break",
+      "why": "an option label is read out beside the others, and a line break in one is the same injection",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "prompt",
+        "options": [
+          "merge\nit"
+        ]
+      },
+      "code": "bad-character",
+      "field": "options[0]"
+    },
+    {
+      "name": "a spoken name carrying a line break",
+      "why": "the advertised name is spoken, and the line-break rule is the display rule",
+      "record": "heartbeat",
+      "value": {
+        "at": 1700000000000,
+        "boot": "boot-01",
+        "agents": [
+          {
+            "id": "orchestrator",
+            "name": "Orches\ntrator"
+          }
+        ],
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "bad-character",
+      "field": "agents[0].name"
+    },
+    {
+      "name": "a repository one code unit past its bound",
+      "why": "201 code units: `> TARGET_MAX` widened to `> TARGET_MAX + 1` accepts it",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "merge the pull request",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0002",
+          "verb": "merge",
+          "target": {
+            "repo": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/b",
+            "pr": 532
+          },
+          "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "confirmation": {
+            "id": "c-0002",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "too-long",
+      "field": "action.target.repo"
+    },
+    {
+      "name": "a head SHA between the two lengths",
+      "why": "a head SHA is 40 or 64 characters and nothing between: a range check in place of the two lengths accepts an abbreviation the provider never returns",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "merge the pull request",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0002",
+          "verb": "merge",
+          "target": {
+            "repo": "dimipaun/fugaro",
+            "pr": 532
+          },
+          "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "confirmation": {
+            "id": "c-0002",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "bad-sha",
+      "field": "action.head_sha"
+    },
+    {
+      "name": "a head SHA of the wrong case",
+      "why": "hex has one spelling here, as the merged vectors already say of the tag",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "merge the pull request",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0002",
+          "verb": "merge",
+          "target": {
+            "repo": "dimipaun/fugaro",
+            "pr": 532
+          },
+          "head_sha": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+          "confirmation": {
+            "id": "c-0002",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "bad-sha",
+      "field": "action.head_sha"
+    }
+  ]
+}

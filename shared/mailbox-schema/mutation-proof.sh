@@ -6,7 +6,13 @@
 # at the end, in mac.js, the tag's own module — and every one of them must make
 # `npm test` fail. A guard whose mutation survives is a guard no test defends,
 # which for this module -- the protocol P1.1, P3.6 and P4.1 speak -- is the
-# difference between a fence and a comment.
+# difference between a fence and a comment. Section 6 is the group about the
+# bounds: thirteen of its eighteen rows move a comparison by one, which is the
+# mutation this module has actually been wrong about; four more narrow a rule by
+# removing one of its terms instead (the carriage return from the line-break
+# rule, DEL from the two character rules, and the second head-SHA length from the
+# SHA rule); and the last replaces an equality test with a range test, which is
+# neither.
 #
 #   shared/mailbox-schema/mutation-proof.sh
 #
@@ -413,7 +419,95 @@ run "canonicalBytes: -0 is refused" \
   "      if (!Number.isSafeInteger(value) || Object.is(value, -0)) {" "      if (!Number.isSafeInteger(value)) {"
 
 # ---------------------------------------------------------------------------
-# 6. mac.js, and the boundary that keeps the entry point loadable by the phone.
+# 6. The bounds, one step at a time.
+#
+# Every guard above is DISABLED: a check deleted, a pattern replaced by `false`.
+# None of them moves a comparison by one, and that is the mutation this module
+# was actually wrong about. Thirteen of the eighteen rows below move one
+# instead. Four more drop a term of a rule without moving anything: `string: a
+# body loses the carriage return` drops the `code === 0x0d` term of the
+# line-break rule, `string: DEL is no longer refused` and `id: DEL is no longer
+# refused` drop the `|| code === 0x7f` term of a character rule, and `action: the
+# second head-SHA length is dropped` drops the `&& value.length !== SHA_MAX`
+# conjunct of the SHA rule. The eighteenth does neither: `action: the head SHA
+# may be any length from SHA_MIN to SHA_MAX` replaces the SHA rule's equality
+# test with a range test, and what kills it is a refusal of a head SHA between
+# the two lengths — the module's own, and the shared file's. They are here for
+# the reason the group exists: a rule narrowed by one character or one length is
+# not what a mutant that deletes the whole check beside it measures. The mutation
+# this group was written for is the other one: `repo.length > TARGET_MAX`
+# narrowed to `>= TARGET_MAX` refused a repository of exactly the bound; widened
+# to `> TARGET_MAX + 1` it accepted one code unit past it. Both survived every
+# test in this package AND every test on the Go side, in both directions, until
+# the T1 follow-up of PR #715 added the rows that catch them.
+#
+# Those rows are not in vectors.json: that file sits on exactly two lengths by
+# accident (every case carries a tag of MAC_MAX and every action case a head SHA
+# of SHA_MIN) and on no other bound, which vectors.bounds.json states. They are
+# in bounds.test.js, the parity test for the shared artifact both ends consume,
+# and in internal/mailbox's TestTheSharedBoundVectorsHold on the Go side.
+#
+# So: add a bound to the schema, and it needs a row in vectors.bounds.json AND a
+# mutant here. A bound with a row and no mutant is a row that can be deleted by
+# an edit to bounds.test.js without this harness noticing.
+# ---------------------------------------------------------------------------
+run "id: the length bound, narrowed by one (the bound itself refused)" \
+  "  if (value.length > ID_MAX) return { bad: refuse(REFUSALS.TOO_LONG, field) };" \
+  "  if (value.length >= ID_MAX) return { bad: refuse(REFUSALS.TOO_LONG, field) };"
+run "string: the length bound, narrowed by one" \
+  "  if (value.length > max) return { bad: refuse(REFUSALS.TOO_LONG, field) };" \
+  "  if (value.length >= max) return { bad: refuse(REFUSALS.TOO_LONG, field) };"
+run "string: the control-character rule stops at U+001E" \
+  "    if ((code < 0x20 && !line) || code === 0x7f || isSeparator(value, i)) {" \
+  "    if ((code < 0x1f && !line) || code === 0x7f || isSeparator(value, i)) {"
+run "string: DEL is no longer refused" \
+  "    if ((code < 0x20 && !line) || code === 0x7f || isSeparator(value, i)) {" \
+  "    if ((code < 0x20 && !line) || isSeparator(value, i)) {"
+run "string: a body loses the carriage return" \
+  "  const line = lineBreaks && (code === 0x09 || code === 0x0a || code === 0x0d);" \
+  "  const line = lineBreaks && (code === 0x09 || code === 0x0a);"
+run "id: the database-key rule stops at U+001E" \
+  "    if (FORBIDDEN_KEY_CHARS.has(value[i]) || code < 0x20 || code === 0x7f || isSeparator(value, i)) {" \
+  "    if (FORBIDDEN_KEY_CHARS.has(value[i]) || code < 0x1f || code === 0x7f || isSeparator(value, i)) {"
+run "id: DEL is no longer refused" \
+  "    if (FORBIDDEN_KEY_CHARS.has(value[i]) || code < 0x20 || code === 0x7f || isSeparator(value, i)) {" \
+  "    if (FORBIDDEN_KEY_CHARS.has(value[i]) || code < 0x20 || isSeparator(value, i)) {"
+run "options: the count bound, narrowed by one" \
+  "  if (value.length > OPTIONS_MAX) return { bad: refuse(REFUSALS.TOO_MANY, 'options') };" \
+  "  if (value.length >= OPTIONS_MAX) return { bad: refuse(REFUSALS.TOO_MANY, 'options') };"
+run "options: the count bound, widened by one" \
+  "  if (value.length > OPTIONS_MAX) return { bad: refuse(REFUSALS.TOO_MANY, 'options') };" \
+  "  if (value.length > OPTIONS_MAX + 1) return { bad: refuse(REFUSALS.TOO_MANY, 'options') };"
+run "agents: the count bound, narrowed by one" \
+  "  if (value.length > AGENTS_MAX) return { bad: refuse(REFUSALS.TOO_MANY, 'agents') };" \
+  "  if (value.length >= AGENTS_MAX) return { bad: refuse(REFUSALS.TOO_MANY, 'agents') };"
+run "agents: the count bound, widened by one" \
+  "  if (value.length > AGENTS_MAX) return { bad: refuse(REFUSALS.TOO_MANY, 'agents') };" \
+  "  if (value.length > AGENTS_MAX + 1) return { bad: refuse(REFUSALS.TOO_MANY, 'agents') };"
+run "action: the run bound, narrowed by one" \
+  "    if (run.length > TARGET_MAX) return { bad: refuse(REFUSALS.TOO_LONG, 'action.target.run') };" \
+  "    if (run.length >= TARGET_MAX) return { bad: refuse(REFUSALS.TOO_LONG, 'action.target.run') };"
+run "action: the run bound, widened by one" \
+  "    if (run.length > TARGET_MAX) return { bad: refuse(REFUSALS.TOO_LONG, 'action.target.run') };" \
+  "    if (run.length > TARGET_MAX + 1) return { bad: refuse(REFUSALS.TOO_LONG, 'action.target.run') };"
+run "action: the repository bound, narrowed by one" \
+  "  if (repo.length > TARGET_MAX) return { bad: refuse(REFUSALS.TOO_LONG, 'action.target.repo') };" \
+  "  if (repo.length >= TARGET_MAX) return { bad: refuse(REFUSALS.TOO_LONG, 'action.target.repo') };"
+run "action: the repository bound, widened by one" \
+  "  if (repo.length > TARGET_MAX) return { bad: refuse(REFUSALS.TOO_LONG, 'action.target.repo') };" \
+  "  if (repo.length > TARGET_MAX + 1) return { bad: refuse(REFUSALS.TOO_LONG, 'action.target.repo') };"
+run "action: the head SHA may be any length from SHA_MIN to SHA_MAX" \
+  "  if (value.length !== SHA_MIN && value.length !== SHA_MAX) {" \
+  "  if (value.length < SHA_MIN || value.length > SHA_MAX) {"
+run "action: the second head-SHA length is dropped" \
+  "  if (value.length !== SHA_MIN && value.length !== SHA_MAX) {" \
+  "  if (value.length !== SHA_MIN) {"
+run "action: a pull request may be numbered nought" \
+  "  if (!Number.isSafeInteger(pr) || pr < 1) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target.pr') };" \
+  "  if (!Number.isSafeInteger(pr) || pr < 0) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target.pr') };"
+
+# ---------------------------------------------------------------------------
+# 7. mac.js, and the boundary that keeps the entry point loadable by the phone.
 #
 # macOf and verifyMac moved out of index.js in P6.3's review: a static import
 # of node's crypto in the entry point costs React Native far more than the tag

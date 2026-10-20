@@ -16,6 +16,29 @@
 // adds — so a decoder that keeps only the fields it knows would sign different
 // bytes than the phone did. That is why a message is a Record (a decoded JSON
 // object) first and a Message second.
+//
+// Only a handful of the values the schema accepts are argv-safe, and a later
+// task must not treat the others as if they were. The safe ones are `mac`
+// (exactly 64 characters of lowercase hex), `kind` (one of `message`, `prompt`,
+// `answer`, `action`), `action.verb` (one of `cancel`, `merge`, `confirm`) and
+// `at` (a non-negative safe integer); inside the action record, `target.pr` is a
+// bounded positive integer and `action.head_sha` a bounded hex object name; and
+// `action.target.run` and `action.target.repo` are the two alphabet-checked
+// values a program consumes, whose patterns keep them out of its flag and path
+// positions (runPattern and repoPattern refuse a leading `-` or `.` and a
+// `..`). Every other string the schema accepts is NOT argv-safe and NOT a safe
+// path segment: an `agent`, an advertised agent's id and a `boot` are drawn
+// from `[A-Za-z0-9._:-]`, so they may begin with `-` and may be `.` or `..`;
+// a key (`id`, `reply_to`, `action.id`,
+// `action.confirmation.id`) may begin with `-`, may be a single space, and may
+// carry `*`, `?`, `\`, quotes and format characters — the characters it
+// refuses are `% . $ # [ ] /`, the C0 range, DEL, U+2028, U+2029 and a lone
+// surrogate, and being non-empty and at most IDMax code units is a separate
+// question that the same field asks; and a display string (`sender`,
+// `text`, an option, an agent's spoken name) may carry bidi overrides and other
+// format characters, exactly as the merged module's does. The ledger must
+// therefore not use an id as a file name without encoding it, and no identity
+// or key may be passed to a program as argv or as a path segment.
 package mailbox
 
 import (
@@ -638,17 +661,30 @@ type Agent struct {
 //
 // It mirrors shared/mailbox-schema's validateMessage field for field and in the
 // same order, so that a value the module refuses is refused here with the same
-// code and the same field at fault: the field set first (the field set is the
-// version), then the five required fields, then each field's own rules, then
-// the (kind, field) table and the action record. A nil Record is the one
-// refusal the type cannot express, and it is refused not-an-object.
+// code — and the same field whenever ONE field is at fault: the field set first
+// (the field set is the version), then the five required fields, then each
+// field's own rules, then the (kind, field) table and the action record. A nil
+// Record is the one refusal the type cannot express, and it is refused
+// not-an-object.
+//
+// A record carrying MORE THAN ONE field the schema does not name is the one
+// refusal whose field the two ends need not agree on, and the honest statement
+// of the contract is the one above rather than "the same field at fault". Both
+// ends answer unknown-field and neither ever accepts the record; they may name
+// different fields, because the module visits Object.keys order — insertion
+// order, with the integer-like keys first — and a Go map has no insertion order
+// to visit, so this side visits byte order and answers with the first in it.
+// The difference is in the reason a log line carries, never in the verdict, and
+// it is pinned on this side by TestTwoUnknownFieldsAreNamedInByteOrder.
 func ValidateMessage(r Record) (*Message, *Refusal) {
 	if r == nil {
 		return nil, refuse(CodeNotAnObject, "")
 	}
 	// Unknown first: a field that is not in the set is refused before any of
 	// its neighbours is judged. The keys are visited in byte order rather than
-	// in the map's own order, so naming the field at fault is deterministic.
+	// in the map's own order, so naming the field at fault is deterministic —
+	// deterministic HERE, and not necessarily the key the module would name for
+	// a record with several unknown fields (see the doc comment above).
 	for _, key := range sortedKeys(r) {
 		if !contains(Fields, key) {
 			return nil, refuse(CodeUnknownField, key)

@@ -1,6 +1,7 @@
 package mailbox
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -265,6 +266,298 @@ func TestSchemaVectorRefusals(t *testing.T) {
 	}
 }
 
+// The second shared artifact both ends consume: bounds.test.js reads it on the
+// JavaScript side, this test on the Go side.
+const boundsVectorsPath = "../../shared/mailbox-schema/vectors.bounds.json"
+
+// TestTheSharedBoundVectorsHold replays shared/mailbox-schema/vectors.bounds.json.
+// The merged vectors.json sits on exactly two lengths by accident — every case
+// carries a tag of MACMax and every action case a head SHA of SHAMin, so its
+// replay holds those — and on no other bound, so a bound moved by one survived
+// on both ends: `> TargetMax` narrowed to `>= TargetMax` refused a 200-code-unit
+// repository here and in the module, and widened to `> TargetMax+1` accepted a
+// 201-code-unit one, with every Go test and all 51 node tests green. That file
+// is the fix, and this replay is the Go half of it.
+//
+// Every accepts row is judged TWICE: the row itself must be accepted, and — when
+// the file carries a "past" spec — the same row with one more code unit (or the
+// entry `add` on the list) at the path it names must be refused with the code it
+// names. That is what pins a bound rather than a region around one, and it is why
+// a narrowed bound fails the first half of a row and a widened bound fails the
+// second.
+func TestTheSharedBoundVectorsHold(t *testing.T) {
+	file := loadBoundVectors(t)
+	accepts := list(t, file["accepts"], "accepts")
+	refusals := list(t, file["refusals"], "refusals")
+	if len(accepts) != 14 || len(refusals) != 11 {
+		t.Fatalf("vectors.bounds.json carries %d accepts and %d refusals, not 14 and 11: the file, not the replay, is what changed",
+			len(accepts), len(refusals))
+	}
+
+	past := 0
+	for _, entry := range accepts {
+		vector := object(t, entry, "accept")
+		name := text(t, vector["name"], "name")
+		why := text(t, vector["why"], "why")
+		t.Run(name, func(t *testing.T) {
+			record := boundVectorRecord(t, vector["value"])
+			if refusal := boundVectorVerdict(t, vector, record); refusal != nil {
+				t.Errorf("the value at the bound itself is refused %s: %s", refusal, why)
+			}
+			spec, carried := vector["past"]
+			if !carried {
+				return
+			}
+			past++
+			grown, at, code := onePastTheBound(t, vector["value"], object(t, spec, "past"))
+			refusal := boundVectorVerdict(t, vector, grown)
+			if refusal == nil {
+				t.Errorf("a value one step past the bound at %s is accepted, and the file refuses it %s: %s", at, code, why)
+				return
+			}
+			if refusal.Code != code || refusal.Field != at {
+				t.Errorf("the value one step past the bound at %s is refused %s, and the file pins %s at %s: %s",
+					at, refusal, code, at, why)
+			}
+		})
+	}
+	if past != 13 {
+		t.Errorf("the file carries %d rows with a bound to walk, not 13: the file, not the replay, is what changed", past)
+	}
+
+	for _, entry := range refusals {
+		vector := object(t, entry, "refusal")
+		name := text(t, vector["name"], "name")
+		t.Run(name, func(t *testing.T) {
+			why := text(t, vector["why"], "why")
+			wantCode := Code(text(t, vector["code"], "code"))
+			wantField := text(t, vector["field"], "field")
+			refusal := boundVectorVerdict(t, vector, boundVectorRecord(t, vector["value"]))
+			if refusal == nil {
+				t.Fatalf("the value is accepted, and the vector file refuses it with %s (%s) (%s)", wantCode, wantField, why)
+			}
+			if refusal.Code != wantCode || refusal.Field != wantField {
+				t.Errorf("the refusal is %s, the vector file pins %s (%s) (%s)", refusal, wantCode, wantField, why)
+			}
+		})
+	}
+}
+
+// loadBoundVectors reads the bound vectors with the package's own decoder, the
+// same way the merged file is read.
+func loadBoundVectors(t *testing.T) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(boundsVectorsPath)
+	if err != nil {
+		t.Fatalf("reading %s: %v", boundsVectorsPath, err)
+	}
+	record, err := Decode(data)
+	if err != nil {
+		t.Fatalf("decoding %s: %v", boundsVectorsPath, err)
+	}
+	return record
+}
+
+// boundVectorRecord reads one row's value the way the wire would: through the
+// package's own decoder, so a row is judged as a decoded record and not as a Go
+// literal.
+func boundVectorRecord(t *testing.T, value any) Record {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshalling a vector value: %v", err)
+	}
+	record, err := Decode(data)
+	if err != nil {
+		t.Fatalf("decoding a vector value: %v", err)
+	}
+	return record
+}
+
+// boundVectorVerdict judges a row as the record its own "record" field names.
+func boundVectorVerdict(t *testing.T, vector map[string]any, record Record) *Refusal {
+	t.Helper()
+	if text(t, vector["record"], "record") == "heartbeat" {
+		_, refusal := ValidateHeartbeat(record)
+		return refusal
+	}
+	_, refusal := ValidateMessage(record)
+	return refusal
+}
+
+// onePastTheBound returns the row's value one step past its bound — one more
+// code unit at the path the spec names, the entry `add` on the list at that
+// path, or nought in the number there — with the path and the code the file says
+// the result must be refused with.
+func onePastTheBound(t *testing.T, value any, spec map[string]any) (Record, string, Code) {
+	t.Helper()
+	at := text(t, spec["at"], "past.at")
+	mode := text(t, spec["mode"], "past.mode")
+	code := Code(text(t, spec["code"], "past.code"))
+
+	copy := cloneVectorValue(t, value)
+	container, key, index, isIndex := vectorParent(t, copy, at)
+	switch mode {
+	case "grow":
+		got, ok := vectorAt(t, copy, at).(string)
+		if !ok {
+			t.Fatalf("the row's value at %s is not a string, so it has no code unit to add", at)
+		}
+		vectorSet(t, container, key, index, isIndex, got+"x")
+	case "zero":
+		vectorSet(t, container, key, index, isIndex, json.Number("0"))
+	case "append":
+		entries, ok := vectorAt(t, copy, at).([]any)
+		if !ok {
+			t.Fatalf("the row's value at %s is not a list, so it has no entry to add", at)
+		}
+		add, carried := spec["add"]
+		if !carried {
+			t.Fatalf("the append spec at %s does not say which entry it adds", at)
+		}
+		vectorSet(t, container, key, index, isIndex, append(entries, add))
+	default:
+		t.Fatalf("the spec's mode %q is not one this replay knows", mode)
+	}
+	return boundVectorRecord(t, copy), at, code
+}
+
+// cloneVectorValue is a deep copy through the decoder, so a mutation cannot
+// reach the fixture the next row reads.
+func cloneVectorValue(t *testing.T, value any) any {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshalling a vector value: %v", err)
+	}
+	var copy any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&copy); err != nil {
+		t.Fatalf("copying a vector value: %v", err)
+	}
+	return copy
+}
+
+// asVectorObject is the fixture's object shape: the file's top level is a Record
+// and everything under it a plain map.
+func asVectorObject(value any) (map[string]any, bool) {
+	switch object := value.(type) {
+	case Record:
+		return map[string]any(object), true
+	case map[string]any:
+		return object, true
+	}
+	return nil, false
+}
+
+// vectorStep splits one dotted path step — `agents[0]`, `repo` — into the name
+// and the indices after it.
+func vectorStep(t *testing.T, step string) (string, []int) {
+	t.Helper()
+	name := step
+	var indices []int
+	if open := strings.IndexByte(step, '['); open >= 0 {
+		name = step[:open]
+		rest := step[open:]
+		for rest != "" {
+			close := strings.IndexByte(rest, ']')
+			if !strings.HasPrefix(rest, "[") || close < 0 {
+				t.Fatalf("the path step %q has an index that does not close", step)
+			}
+			n, err := strconv.Atoi(rest[1:close])
+			if err != nil {
+				t.Fatalf("the path step %q has an index that is not a number: %v", step, err)
+			}
+			indices = append(indices, n)
+			rest = rest[close+1:]
+		}
+	}
+	return name, indices
+}
+
+// vectorAt walks a dotted path over the fixture's two shapes and returns what it
+// names, failing loudly rather than inventing a value.
+func vectorAt(t *testing.T, value any, path string) any {
+	t.Helper()
+	node := value
+	for _, step := range strings.Split(path, ".") {
+		name, indices := vectorStep(t, step)
+		if name != "" {
+			object, ok := asVectorObject(node)
+			if !ok {
+				t.Fatalf("the path %s walks into %T, which has no field %q", path, node, name)
+			}
+			got, carried := object[name]
+			if !carried {
+				t.Fatalf("the path %s names the field %q, which the fixture does not have", path, name)
+			}
+			node = got
+		}
+		for _, index := range indices {
+			entries, ok := node.([]any)
+			if !ok || index >= len(entries) {
+				t.Fatalf("the path %s walks into %T at [%d]", path, node, index)
+			}
+			node = entries[index]
+		}
+	}
+	return node
+}
+
+// vectorParent resolves a path to the container its last step lives in and the
+// key within it, which is what a writer needs.
+func vectorParent(t *testing.T, value any, path string) (any, string, int, bool) {
+	t.Helper()
+	parts := strings.Split(path, ".")
+	leaf := parts[len(parts)-1]
+	node := value
+	if len(parts) > 1 {
+		node = vectorAt(t, value, strings.Join(parts[:len(parts)-1], "."))
+	}
+	name, indices := vectorStep(t, leaf)
+	if name != "" {
+		if len(indices) == 0 {
+			return node, name, 0, false
+		}
+		object, ok := asVectorObject(node)
+		if !ok {
+			t.Fatalf("the path %s names %q under %T", path, name, node)
+		}
+		got, carried := object[name]
+		if !carried {
+			t.Fatalf("the path %s names the field %q, which the fixture does not have", path, name)
+		}
+		node = got
+	}
+	for _, index := range indices[:len(indices)-1] {
+		entries, ok := node.([]any)
+		if !ok || index >= len(entries) {
+			t.Fatalf("the path %s walks into %T at [%d]", path, node, index)
+		}
+		node = entries[index]
+	}
+	return node, "", indices[len(indices)-1], true
+}
+
+// vectorSet writes one value into the container vectorParent resolved.
+func vectorSet(t *testing.T, container any, key string, index int, isIndex bool, value any) {
+	t.Helper()
+	if !isIndex {
+		object, ok := asVectorObject(container)
+		if !ok {
+			t.Fatalf("the path's container is %T, which has no field %q to write", container, key)
+		}
+		object[key] = value
+		return
+	}
+	entries, ok := container.([]any)
+	if !ok || index >= len(entries) {
+		t.Fatalf("the path's container is %T, which has no [%d] to write", container, index)
+	}
+	entries[index] = value
+}
+
 // TestTheRefusalCodesNoRefusalVectorCarries is the other half of the replay
 // above, and it is here because a code with no vector is a code with no test
 // anywhere: TestSchemaVectorRefusals replays what the file carries, so a check
@@ -298,17 +591,6 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 		record := Record{
 			"id": "m-0001", "sender": "phone", "text": "run 42 finished",
 			"at": number("1700000000000"), "mac": strings.Repeat("f", MACMax),
-		}
-		for key, value := range over {
-			record[key] = value
-		}
-		return record
-	}
-	heartbeat := func(over Record) Record {
-		record := Record{
-			"at": number("1700000000000"), "boot": "boot-01",
-			"agents": []any{agent("orchestrator", "Orchestrator")},
-			"mac":    strings.Repeat("f", MACMax),
 		}
 		for key, value := range over {
 			record[key] = value
@@ -355,7 +637,7 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"a body of no characters says nothing"},
 		{"an empty option label", message(Record{"kind": "prompt", "options": []any{""}}), false, CodeEmptyString, "options[0]",
 			"an option with no label cannot be read aloud or answered"},
-		{"an empty agent name", heartbeat(Record{"agents": []any{agent("orchestrator", "")}}), true, CodeEmptyString, "agents[0].name",
+		{"an empty agent name", heartbeatRecord(Record{"agents": []any{agent("orchestrator", "")}}), true, CodeEmptyString, "agents[0].name",
 			"an agent with no spoken name cannot be named"},
 		{"an empty id", message(Record{"id": ""}), false, CodeEmptyString, "id",
 			"an id is how a message is deduped on (sender, id)"},
@@ -379,7 +661,7 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 		// says "none"; an empty list says the writer meant to fill one.
 		{"a prompt with no options", message(Record{"kind": "prompt", "options": []any{}}), false, CodeTooFew, "options",
 			"present but empty is not the same as absent"},
-		{"a heartbeat with no agents", heartbeat(Record{"agents": []any{}}), true, CodeTooFew, "agents",
+		{"a heartbeat with no agents", heartbeatRecord(Record{"agents": []any{}}), true, CodeTooFew, "agents",
 			"an empty list is offline, which a heartbeat says by carrying no list at all"},
 
 		// unknown-kind: the kind is a closed vocabulary of four.
@@ -389,7 +671,7 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 		// duplicate-entry: two identical entries are one entry with two answers.
 		{"two identical options", message(Record{"kind": "prompt", "options": []any{"merge it", "merge it"}}), false, CodeDuplicateEntry, "options[1]",
 			"the app answers a prompt by position, so two labels are two right answers"},
-		{"two agents under one id", heartbeat(Record{"agents": []any{
+		{"two agents under one id", heartbeatRecord(Record{"agents": []any{
 			agent("orchestrator", "Orchestrator"), agent("orchestrator", "Shadow")}}), true, CodeDuplicateEntry, "agents[1].id",
 			"two agents under one id make \"talk to <agent>\" ambiguous"},
 
@@ -401,7 +683,7 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"a dot opens a path in the database the message is stored in"},
 		{"a character a body cannot carry", message(Record{"text": "a\x01b"}), false, CodeBadCharacter, "text",
 			"a control character is not one the phone can display"},
-		{"an agent that is not an object", heartbeat(Record{"agents": []any{"orchestrator"}}), true, CodeNotAnObject, "agents[0]",
+		{"an agent that is not an object", heartbeatRecord(Record{"agents": []any{"orchestrator"}}), true, CodeNotAnObject, "agents[0]",
 			"an entry of the list is {id, name}, not a bare id"},
 		{"a merge whose target is a run", message(Record{"kind": "action", "action": merge(map[string]any{
 			"target": map[string]any{"run": "20261018-125859-d3c8"}})}), false, CodeBadTarget, "action.target",
@@ -430,6 +712,26 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"a separator in a database key is bad-key, as every other unencodable character is"},
 		{"an id carrying U+2029", message(Record{"id": "a b"}), false, CodeBadKey, "id",
 			"U+2029 in a key is the same refusal as U+2028"},
+		// The character classes at their own boundaries, which a mutant sweep
+		// found unheld: the control range is refused THROUGH U+001F (an id
+		// carrying only U+001F was accepted by `r < 0x1f`), DEL is refused in a
+		// key and in a value, and a line break is a character of a body and of
+		// nothing else — not of a sender, an option or an agent's spoken name,
+		// where it is log-line and read-aloud injection. Each of these is a
+		// check whose deletion or narrowing left the suite green.
+		{"an id carrying U+001F", message(Record{"id": "m\u001f1"}), false, CodeBadKey, "id",
+			"U+001F is a control character like U+0001: the range ends at the range's end, not a byte short of it"},
+		{"an id carrying DEL", message(Record{"id": "m\u007f1"}), false, CodeBadKey, "id",
+			"DEL is refused in a database key exactly as it is in a value"},
+		{"a sender carrying a line break", message(Record{"sender": "pho\nne"}), false, CodeBadCharacter, "sender",
+			"a sender names a mailbox on one line, and a newline in one is log-line injection"},
+		{"an option carrying a line break", message(Record{"kind": "prompt", "options": []any{"merge\nit"}}), false, CodeBadCharacter, "options[0]",
+			"an option is read aloud and answered by position, so a label is a single line like every other non-body string"},
+		{"an agent name carrying a line break", heartbeatRecord(Record{"agents": []any{agent("orchestrator", "Orches\ntrator")}}), true, CodeBadCharacter, "agents[0].name",
+			"a spoken name is a single line: a newline in one splits the sentence it is read out in"},
+		{"a body carrying DEL", message(Record{"text": "a\u007fb"}), false, CodeBadCharacter, "text",
+			"DEL is not a character the phone can display, in a body as anywhere else"},
+
 		{"a kind that is not a string", message(Record{"kind": true}), false, CodeWrongType, "kind",
 			"\"not a kind\" and \"not a string\" are different questions"},
 		{"an agent that is not a string", message(Record{"agent": number("1")}), false, CodeWrongType, "agent",
@@ -438,16 +740,16 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"an agent id is [A-Za-z0-9._:-] and nothing else"},
 		{"options that are not a list", message(Record{"kind": "prompt", "options": "merge it"}), false, CodeWrongType, "options",
 			"one option is not a list of options"},
-		{"agents that are not a list", heartbeat(Record{"agents": "orchestrator"}), true, CodeWrongType, "agents",
+		{"agents that are not a list", heartbeatRecord(Record{"agents": "orchestrator"}), true, CodeWrongType, "agents",
 			"an advertised list is a list, not one id"},
 
 		// A list's own bound and the entries it holds.
-		{"more agents than a heartbeat advertises", heartbeat(Record{"agents": manyAgents(AgentsMax + 1)}), true, CodeTooMany, "agents",
+		{"more agents than a heartbeat advertises", heartbeatRecord(Record{"agents": manyAgents(AgentsMax + 1)}), true, CodeTooMany, "agents",
 			"a heartbeat advertises at most AgentsMax agents"},
-		{"an advertised agent with a field the schema does not name", heartbeat(Record{"agents": []any{
+		{"an advertised agent with a field the schema does not name", heartbeatRecord(Record{"agents": []any{
 			map[string]any{"id": "orchestrator", "name": "Orchestrator", "role": "boss"}}}), true, CodeUnknownField, "agents[0].role",
 			"an advertised agent is {id, name}, exactly"},
-		{"an advertised agent with no name", heartbeat(Record{"agents": []any{
+		{"an advertised agent with no name", heartbeatRecord(Record{"agents": []any{
 			map[string]any{"id": "orchestrator"}}}), true, CodeMissingField, "agents[0].name",
 			"an agent the app cannot say aloud cannot be advertised"},
 
@@ -518,6 +820,9 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 		{"a repository longer than its bound", merged(map[string]any{"target": map[string]any{
 			"repo": strings.Repeat("a", TargetMax) + "/b", "pr": number("532")}}), false, CodeTooLong, "action.target.repo",
 			"a repository is bounded like every other string"},
+		{"a repository one code unit past its bound", merged(map[string]any{"target": map[string]any{
+			"repo": strings.Repeat("a", TargetMax-1) + "/b", "pr": number("532")}}), false, CodeTooLong, "action.target.repo",
+			"the bound itself is the largest accepted value: one code unit past it is too-long, not the second past it"},
 		{"a repository with a character a command line cannot carry", merged(map[string]any{"target": map[string]any{
 			"repo": repoName + ";rm", "pr": number("532")}}), false, CodeBadCharacter, "action.target.repo",
 			"a semicolon is not a character a repository is drawn from"},
@@ -554,6 +859,8 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"an epoch millisecond written as a string is not one"},
 		{"a head SHA that is not a string", merged(map[string]any{"head_sha": number("1")}), false, CodeBadSHA, "action.head_sha",
 			"an object name is a string of hex, not a number"},
+		{"a head SHA between the two lengths", merged(map[string]any{"head_sha": strings.Repeat("a", SHAMin+10)}), false, CodeBadSHA, "action.head_sha",
+			"the two lengths are the two lengths: an abbreviation of some other length names no object"},
 
 		// A time, and the flag the phone writes later.
 		{"a time before the epoch", message(Record{"at": number("-1")}), false, CodeBadTimestamp, "at",
@@ -564,11 +871,11 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"`acked` says whether the phone has read the message, and that is true or false"},
 
 		// The heartbeat's own three fields.
-		{"a heartbeat at a time before the epoch", heartbeat(Record{"at": number("-1")}), true, CodeBadTimestamp, "at",
+		{"a heartbeat at a time before the epoch", heartbeatRecord(Record{"at": number("-1")}), true, CodeBadTimestamp, "at",
 			"a heartbeat is stamped like every other record"},
-		{"a boot id drawn from outside its alphabet", heartbeat(Record{"boot": "boot/01"}), true, CodeBadCharacter, "boot",
+		{"a boot id drawn from outside its alphabet", heartbeatRecord(Record{"boot": "boot/01"}), true, CodeBadCharacter, "boot",
 			"a boot id is drawn from the same alphabet an agent id is"},
-		{"a heartbeat tag that is not hex", heartbeat(Record{"mac": strings.Repeat("F", MACMax)}), true, CodeBadMAC, "mac",
+		{"a heartbeat tag that is not hex", heartbeatRecord(Record{"mac": strings.Repeat("F", MACMax)}), true, CodeBadMAC, "mac",
 			"hex has one spelling here, so one tag has one string"},
 	}
 	for _, tc := range table {
@@ -683,6 +990,254 @@ func TestValidatedFields(t *testing.T) {
 	}
 }
 
+// TestTheBoundsThemselvesAreAccepted is the other half of the refusal table's
+// bound rows, and it is here because a bound test that only ever pushes past a
+// bound cannot tell `> max` from `>= max`: the refusal table's "one code unit
+// past its bound" rows are all still refused by a bound narrowed by one, and
+// the suite stayed green when the repository's bound and the key's bound were
+// each narrowed that way. The bound IS the largest accepted value — the merged
+// module's `.length` comparisons are inclusive in the same way — so the largest
+// accepted value is what the positive half has to walk, field by field.
+//
+// `mac` needs no row of its own: every record here carries one of exactly
+// MACMax, so the rows below pin that length between them. `head_sha` is
+// different — its length is neither bounded nor one exact value but a choice of
+// two — and the merged `vectors.json` the package replays carries only the
+// 40-character one, so the 64-character length is pinned by the two rows at the
+// end of the table and — since the T1 follow-up of PR #715 added
+// `vectors.bounds.json` — by that file's "a head SHA of exactly SHA_MAX" row and
+// its `past` spec as well: `TestTheSharedBoundVectorsHold` now refuses the same
+// narrowing this table does. The two rows stay because they are the direct
+// half — they walk the field with no fixture between the test and the validator,
+// and they name it in the failure — while the shared file is what holds the two
+// ends to one artifact.
+func TestTheBoundsThemselvesAreAccepted(t *testing.T) {
+	message := func(over Record) Record {
+		record := Record{
+			"id": "m-0001", "sender": "phone", "text": "run 42 finished",
+			"at": number("1700000000000"), "mac": strings.Repeat("a", MACMax),
+		}
+		for key, value := range over {
+			record[key] = value
+		}
+		return record
+	}
+	cancelled := func(over map[string]any) Record {
+		return message(Record{"kind": "action", "agent": "orchestrator", "action": action(map[string]any{
+			"id": "a-0001", "verb": "cancel",
+			"target":       map[string]any{"run": "20261018-125859-d3c8"},
+			"confirmation": map[string]any{"id": "c-0001", "at": number("1700000000000")},
+		}, over)})
+	}
+	merged := func(over map[string]any) Record {
+		return message(Record{"kind": "action", "agent": "orchestrator", "action": action(map[string]any{
+			"id": "a-0001", "verb": "merge",
+			"target":       map[string]any{"repo": "dimipaun/fugaro", "pr": number("532")},
+			"head_sha":     strings.Repeat("a", SHAMin),
+			"confirmation": map[string]any{"id": "c-0001", "at": number("1700000000000")},
+		}, over)})
+	}
+	// A repository of exactly TargetMax code units needs both of its halves:
+	// repoPattern wants an owner and a name, so the bound is reached with a
+	// short name and a long owner rather than with one long word.
+	longRepo := strings.Repeat("a", TargetMax-2) + "/b"
+	if len(longRepo) != TargetMax {
+		t.Fatalf("the boundary repository is %d code units, wanted TargetMax (%d)", len(longRepo), TargetMax)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		record    Record
+		heartbeat bool
+		why       string
+	}{
+		{"an id of exactly IDMax", message(Record{"id": strings.Repeat("a", IDMax)}), false,
+			"an id is at most IDMax code units, and the bound itself is one of them"},
+		{"an id of exactly IDMax code units of U+FFFF", message(Record{"id": strings.Repeat("￿", IDMax)}), false,
+			"U+FFFF is the BMP's last character and one UTF-16 code unit; every astral character above it is a PAIR of code units, which is where a count of code units and a count of characters part company"},
+		{"a pull request numbered one", merged(map[string]any{
+			"target": map[string]any{"repo": "dimipaun/fugaro", "pr": number("1")}}), false,
+			"pull requests are numbered from one, so one is the smallest number a merge may name (the refusal table holds nought)"},
+		{"a sender of exactly SenderMax", message(Record{"sender": strings.Repeat("a", SenderMax)}), false,
+			"a sender is bounded like every other string"},
+		{"a body of exactly TextMax", message(Record{"text": strings.Repeat("a", TextMax)}), false,
+			"4096 code units of body is the largest body the phone writes"},
+		{"an agent of exactly AgentMax", message(Record{"agent": strings.Repeat("a", AgentMax)}), false,
+			"an agent id is drawn from its alphabet AND bounded by AgentMax"},
+		{"an option of exactly OptionMax", message(Record{"kind": "prompt", "options": []any{strings.Repeat("a", OptionMax)}}), false,
+			"an option label is bounded like the identity it is read out beside"},
+		{"a reply_to of exactly IDMax", message(Record{"kind": "answer", "reply_to": strings.Repeat("a", IDMax)}), false,
+			"an answer's reply_to is a database key like an id"},
+		{"an action id of exactly IDMax", cancelled(map[string]any{"id": strings.Repeat("a", IDMax)}), false,
+			"the action id is a key, bounded by IDMax"},
+		{"a confirmation id of exactly IDMax", cancelled(map[string]any{
+			"confirmation": map[string]any{"id": strings.Repeat("a", IDMax), "at": number("1700000000000")}}), false,
+			"the confirmation id is a key, bounded by IDMax"},
+		{"a run of exactly TargetMax", cancelled(map[string]any{
+			"target": map[string]any{"run": strings.Repeat("a", TargetMax)}}), false,
+			"a run id reaches `fugaro cancel` bounded by TargetMax, and the bound itself is accepted"},
+		{"a repository of exactly TargetMax", merged(map[string]any{
+			"target": map[string]any{"repo": longRepo, "pr": number("532")}}), false,
+			"a repository reaches `gh pr merge --repo` bounded by TargetMax, and the bound itself is accepted"},
+		{"a boot of exactly BootMax", heartbeatRecord(Record{"boot": strings.Repeat("a", BootMax)}), true,
+			"a boot id is a boot id up to BootMax code units"},
+		{"an agent name of exactly AgentNameMax", heartbeatRecord(Record{"agents": []any{
+			agent("orchestrator", strings.Repeat("a", AgentNameMax))}}), true,
+			"a spoken name is bounded like the id beside it"},
+		{"exactly AgentsMax agents", heartbeatRecord(Record{"agents": manyAgents(AgentsMax)}), true,
+			"a heartbeat advertises at most AgentsMax agents, and AgentsMax is allowed"},
+		{"exactly OptionsMax options", message(Record{"kind": "prompt", "options": manyOptions(OptionsMax)}), false,
+			"a prompt offers at most OptionsMax options, and OptionsMax is allowed"},
+		{"a head SHA of exactly SHAMin", merged(map[string]any{
+			"head_sha": strings.Repeat("a", SHAMin)}), false,
+			"a head SHA is 40 or 64 hex characters, and 40 is one of the two"},
+		{"a head SHA of exactly SHAMax", merged(map[string]any{
+			"head_sha": strings.Repeat("a", SHAMax)}), false,
+			"64 is the other length a head SHA may be, and no vector in the file the package replays carries one"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var refusal *Refusal
+			if tc.heartbeat {
+				_, refusal = ValidateHeartbeat(tc.record)
+			} else {
+				_, refusal = ValidateMessage(tc.record)
+			}
+			if refusal != nil {
+				t.Errorf("the value at the bound itself is refused %s: %s", refusal, tc.why)
+			}
+		})
+	}
+}
+
+// TestTheDocSaysWhichValuesAreNotArgvSafe pins the package doc's claim about
+// the alphabets, and it is the test the five-minor follow-up owes m5: the doc
+// names the values that ARE argv-safe — `mac`, `kind`, `verb`, `at`, `target.pr`,
+// `action.head_sha`, and the two alphabet-checked targets whose patterns refuse a
+// leading flag character and a leading dot — and says that every other string is
+// not, because a key may be a single space and may begin with `-` while an
+// identity may be `.` or `..` or begin with `-`. The rows below are the two
+// alphabets that warning is about: a key, and an identity. A claim that says
+// "the validator accepts these and a later task must not pass them to a
+// program" is worth no more than the test
+// that holds it, because a task that TIGHTENED these alphabets would break the
+// merged module's contract, and a task that tightened the doc's warning away
+// would break nothing else.
+//
+// Every value below was checked against index.js as well as this package before
+// being written down: the two ends agree on each one.
+func TestTheDocSaysWhichValuesAreNotArgvSafe(t *testing.T) {
+	message := func(over Record) Record {
+		record := Record{
+			"id": "m-0001", "sender": "phone", "text": "run 42 finished",
+			"at": number("1700000000000"), "mac": strings.Repeat("a", MACMax),
+		}
+		for key, value := range over {
+			record[key] = value
+		}
+		return record
+	}
+	prompt := func(agent string) Record {
+		return message(Record{"kind": "prompt", "agent": agent, "options": []any{"merge it", "leave it"}})
+	}
+
+	for _, tc := range []struct {
+		name   string
+		record Record
+		why    string
+	}{
+		{"an id that is a single space", message(Record{"id": " "}),
+			"a space is not one of the seven characters a key refuses, and a key's alphabet is not an argv alphabet"},
+		{"an id that begins with a flag character", message(Record{"id": "--x"}),
+			"a key may begin with `-`: the leading-dash refusal belongs to the run and repository patterns, not to keyField"},
+		{"an id carrying glob and shell metacharacters", message(Record{"id": "* ?"}),
+			"`*` and `?` are ordinary characters to the database key rule"},
+		{"an id carrying a backslash and a quote", message(Record{"id": `a\b"c'd`}),
+			"quoting is the argv caller's problem, not this schema's"},
+		{"an id carrying a right-to-left override", message(Record{"id": "a‮b"}),
+			"U+202E is a format character and not a control character, and the merged module accepts it in a key"},
+		{"an id carrying a zero-width space and a byte order mark", message(Record{"id": "a\u200bb\xef\xbb\xbfc"}),
+			"U+200B and U+FEFF are the same class as U+202E"},
+		{"an id carrying an astral character", message(Record{"id": "x\U0001F600y"}),
+			"an astral character is two code units and stays inside the bound"},
+		{"a reply_to that is a single space", message(Record{"kind": "answer", "reply_to": " "}),
+			"every key field reaches keyField, so every key field admits what it admits"},
+		{"an action id that is a single space", message(Record{"kind": "action", "agent": "orchestrator", "action": action(map[string]any{
+			"id": " ", "verb": "cancel",
+			"target":       map[string]any{"run": "20261018-125859-d3c8"},
+			"confirmation": map[string]any{"id": "c-0001", "at": number("1700000000000")},
+		}, nil)}),
+			"the action id is a key like any other"},
+		{"a confirmation id that begins with a flag character", message(Record{"kind": "action", "agent": "orchestrator", "action": action(map[string]any{
+			"id": "a-0001", "verb": "cancel",
+			"target":       map[string]any{"run": "20261018-125859-d3c8"},
+			"confirmation": map[string]any{"id": "--x", "at": number("1700000000000")},
+		}, nil)}),
+			"a confirmation id is a key like any other"},
+
+		{"an agent that begins with a flag character", prompt("--help"),
+			"identityPattern is [A-Za-z0-9._:-], so `--help` is a well-formed agent id and must never be argv"},
+		{"an agent that is a single dot", prompt("."),
+			"the same alphabet admits `.`, which is a directory and not a program"},
+		{"an agent that is two dots", prompt(".."),
+			"and it admits `..`, which is the parent directory"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, refusal := ValidateMessage(tc.record); refusal != nil {
+				t.Errorf("the value is refused %s: %s", refusal, tc.why)
+			}
+		})
+	}
+
+	// The identities that are not a message's `agent`: a boot id and an
+	// advertised agent's id are the same alphabet in the same function.
+	for _, boot := range []string{"--help", ".", "..", "-", "a:b"} {
+		if _, refusal := ValidateHeartbeat(heartbeatRecord(Record{"boot": boot})); refusal != nil {
+			t.Errorf("the boot id %q is refused %s: a boot id is drawn from the same alphabet an agent id is", boot, refusal)
+		}
+		if _, refusal := ValidateHeartbeat(heartbeatRecord(Record{"agents": []any{agent(boot, "Orchestrator")}})); refusal != nil {
+			t.Errorf("the advertised agent id %q is refused %s: it is drawn from the same alphabet", boot, refusal)
+		}
+	}
+
+	// And what each alphabet DOES refuse, so the test cannot be satisfied by an
+	// alphabet that refuses nothing.
+	for _, id := range []string{"%", ".", "$", "#", "[", "]", "/", "a\u0001b", "a\u001fb", "a\u007fb", "a b", "a b"} {
+		_, refusal := ValidateMessage(message(Record{"id": id}))
+		if refusal == nil || refusal.Code != CodeBadKey {
+			t.Errorf("the id %q is refused %v, wanted %s: these are the characters a database key may not carry", id, refusal, CodeBadKey)
+		}
+	}
+	for _, identity := range []string{"orchestrator!", "a b", "a/b", "a+b", "\U0001F600", "aéb"} {
+		if _, refusal := ValidateMessage(prompt(identity)); refusal == nil || refusal.Code != CodeBadCharacter {
+			t.Errorf("the agent %q is refused %v, wanted %s: an identity is drawn from [A-Za-z0-9._:-] and nothing else", identity, refusal, CodeBadCharacter)
+		}
+	}
+}
+
+// heartbeatRecord is the refusal table's heartbeat builder, at package scope so
+// the boundary and alphabet tables can use it too.
+func heartbeatRecord(over Record) Record {
+	record := Record{
+		"at": number("1700000000000"), "boot": "boot-01",
+		"agents": []any{agent("orchestrator", "Orchestrator")},
+		"mac":    strings.Repeat("a", MACMax),
+	}
+	for key, value := range over {
+		record[key] = value
+	}
+	return record
+}
+
+// manyOptions is n distinct option labels, for the bound row: distinct, so that
+// the bound is the only thing that can refuse them.
+func manyOptions(n int) []any {
+	options := make([]any, 0, n)
+	for i := range n {
+		options = append(options, "option-"+strconv.Itoa(i))
+	}
+	return options
+}
+
 // TestDecodeKeepsTheKeyCase is the plan's Red step (a): fold `Text` into `text`
 // — a case-insensitive decode — and this test's refusal becomes an acceptance,
 // because a record whose only `text` came from folding validates perfectly.
@@ -784,6 +1339,63 @@ func TestKeysSortByByteOrder(t *testing.T) {
 	// first, and then U+FFFF (EF BF BF) before U+1F600 (F0 9F 98 80).
 	if want := "{\"direction\":\"outbox\",\"id\":\"m-0001\",\"￿\":1,\"😀\":2}"; string(got) != want {
 		t.Errorf("the keys are ordered %s, wanted %s", got, want)
+	}
+}
+
+// TestTwoUnknownFieldsAreNamedInByteOrder pins the half of ValidateMessage's
+// contract that is this side's alone to keep, and the half it cannot.
+//
+// A record carrying one field the schema does not name is refused
+// unknown-field at that field, in both languages. A record carrying several is
+// refused unknown-field at ONE of them on each side, and the two sides need not
+// agree on which: the module visits Object.keys order — insertion order, with
+// the integer-like keys first — and a Go map has no insertion order at all, so
+// this side visits the keys in byte order and answers with the first in that
+// order. Both are deterministic and both are unknown-field; the FIELD is the
+// one thing about a multi-unknown-field refusal that is not a shared answer.
+//
+// That is why ValidateMessage's doc says "the same code, and the same field
+// whenever one field is at fault" rather than "the same field at fault"
+// outright, and this test is what holds this side's half of the softened claim:
+// the same input answers the same field every time, and that field is the
+// first key in byte order.
+func TestTwoUnknownFieldsAreNamedInByteOrder(t *testing.T) {
+	// `text` and `at` are present so the refusal cannot come from a missing
+	// field, and the two unknown keys straddle the fields in byte order:
+	// "0landed_at" < "text" < "zz_extra".
+	record := Record{
+		"id": "m-0001", "sender": "phone", "text": "run 42 finished",
+		"at": number("1700000000000"), "mac": strings.Repeat("a", MACMax),
+		"zz_extra": int64(1), "0landed_at": int64(2),
+	}
+	for range 5 {
+		_, refusal := ValidateMessage(record)
+		if refusal == nil || refusal.Code != CodeUnknownField {
+			t.Fatalf("two unknown fields are refused %v, wanted %s: which of the two is named may differ, the code may not", refusal, CodeUnknownField)
+		}
+		if refusal.Field != "0landed_at" {
+			t.Errorf("the fields at fault are named %q, wanted the first in byte order (%q): the answer is deterministic here, and it is this side's own rule", refusal.Field, "0landed_at")
+		}
+	}
+
+	// And the code, not the field, is what the two ends share: the module's own
+	// ordering is unreachable from Go — a map has no insertion order — so the
+	// one Go-side property that can be asserted is that no unknown field is
+	// ever accepted, whatever order the two arrive in. Each row names a
+	// different number of unknown fields, because "the first in byte order" is
+	// only interesting when there is more than one of them; a Record cannot
+	// hold one key twice, so the repeated key this loop used to name was never
+	// the second unknown field it looked like — the decoder refuses that
+	// document instead (TestDecodeRefusesAmbiguousDocuments).
+	for _, order := range [][]string{{"aa", "bb"}, {"bb", "aa"}, {"zz_extra", "0landed_at"}, {"aa", "bb", "cc"}} {
+		candidate := Record{"id": "m-0001", "mac": strings.Repeat("a", MACMax)}
+		for _, key := range order {
+			candidate[key] = int64(1)
+		}
+		_, refusal := ValidateMessage(candidate)
+		if refusal == nil || refusal.Code != CodeUnknownField {
+			t.Errorf("a record carrying %v is refused %v, wanted %s", order, refusal, CodeUnknownField)
+		}
 	}
 }
 
@@ -1024,13 +1636,21 @@ func TestFloatsAreRefusedInBothHalves(t *testing.T) {
 	}
 }
 
-// TestAnythingValidatedCanBeCanonicalised is the property the two halves owe
-// each other: a record ValidateMessage accepts is a record CanonicalBytes can
-// serialise. Anything else is a record with two verdicts, and the second one
-// arrives only when the tag is made. Every numeric type this package accepts
-// goes into every position that takes a number, because a type accepted in one
-// field and refused in another is the same disagreement one field smaller.
-func TestAnythingValidatedCanBeCanonicalised(t *testing.T) {
+// TestAnythingValidatedCanBeCanonicalisedExceptNegativeZero is the property the
+// two halves owe each other: a record ValidateMessage accepts is a record
+// CanonicalBytes can serialise. Anything else is a record with two verdicts, and
+// the second one arrives only when the tag is made. Every numeric type this
+// package accepts goes into every position that takes a number, because a type
+// accepted in one field and refused in another is the same disagreement one
+// field smaller.
+//
+// The name carries the one exception, because the property as stated outright
+// is false and its exception is deliberate: `-0` in `at` or in a confirmation's
+// `at` validates on both ends and can be canonicalised on neither, which
+// TestNegativeZeroValidates pins and the merged module's README spells out. It
+// is fail-closed — T2's MAC step can never verify such a record — and it is not
+// one of the spellings this test walks: none of them is negative zero.
+func TestAnythingValidatedCanBeCanonicalisedExceptNegativeZero(t *testing.T) {
 	const max = int64(1)<<53 - 1
 	for _, spelling := range []struct {
 		name  string
@@ -1161,6 +1781,9 @@ func TestALoneSurrogateEscapeReachesTheValidator(t *testing.T) {
 	}{
 		{"in a body", "plain message", `"text":"run 42 finished"`, `"text":"a\uD800b"`, CodeBadCharacter, "text"},
 		{"a low half in a body", "plain message", `"text":"run 42 finished"`, `"text":"\uDE00"`, CodeBadCharacter, "text"},
+		{"a low half at the bottom of its range", "plain message", `"text":"run 42 finished"`, `"text":"\uDC00"`, CodeBadCharacter, "text"},
+		{"a high half at the top of its range", "plain message", `"text":"run 42 finished"`, `"text":"a\uDBFFb"`, CodeBadCharacter, "text"},
+		{"a low half at the top of its range", "plain message", `"text":"run 42 finished"`, `"text":"a\uDFFFb"`, CodeBadCharacter, "text"},
 		{"a high half at the end of a body", "plain message", `"text":"run 42 finished"`, `"text":"ab\uD83D"`, CodeBadCharacter, "text"},
 		{"a lone half spelled in lowercase hex", "plain message", `"text":"run 42 finished"`, `"text":"a\ud800b"`, CodeBadCharacter, "text"},
 		{"a lone half after a pair", "plain message", `"text":"run 42 finished"`, `"text":"\ud83d\ude00\ud800"`, CodeBadCharacter, "text"},
@@ -1267,6 +1890,13 @@ func TestALoneSurrogateEscapeReachesTheValidator(t *testing.T) {
 // counting fix rather than a second exception to the bound.
 func TestABoundCountsALoneSurrogateAsOneCodeUnit(t *testing.T) {
 	const lone = "\xed\xa0\x80" // U+D800 in WTF-8: one code unit, three bytes
+	// The other edge of the same range: U+DFFF is the LAST lone half, so it
+	// pins the two byte bounds inside isWTF8Surrogate (0xa0..0xbf and
+	// 0x80..0xbf) and the `len(s) >= 3` that reads the last three bytes of a
+	// string. Counted as three — which is what recognising none of it does —
+	// IDMax-1 characters plus this one came back too-long where the module
+	// answers bad-key.
+	const lowLone = "\xed\xbf\xbf" // U+DFFF in WTF-8
 	for _, tc := range []struct {
 		name  string
 		field string
@@ -1276,6 +1906,8 @@ func TestABoundCountsALoneSurrogateAsOneCodeUnit(t *testing.T) {
 		{"34 lone halves in an id are 34 code units", "id", strings.Repeat(lone, 34), CodeBadKey},
 		{"one lone half in an id", "id", "m-" + lone, CodeBadKey},
 		{"101 lone halves in an id are past the bound", "id", strings.Repeat(lone, IDMax+1), CodeTooLong},
+		{"IDMax lone halves in an id are exactly IDMax code units", "id", strings.Repeat(lone, IDMax), CodeBadKey},
+		{"an id of IDMax code units ending in a lone low half", "id", strings.Repeat("a", IDMax-1) + lowLone, CodeBadKey},
 		{"1366 lone halves in a body are 1366 code units", "text", strings.Repeat(lone, 1366), CodeBadCharacter},
 		{"4097 lone halves in a body are past the bound", "text", strings.Repeat(lone, TextMax+1), CodeTooLong},
 	} {
@@ -1316,6 +1948,14 @@ func TestTheUnquoterDecodesWhatItKeeps(t *testing.T) {
 	}{
 		{"a lone high half", `"\uD800"`, "\xed\xa0\x80"},
 		{"a lone low half", `"\udc00"`, "\xed\xb0\x80"},
+		{"a lone high half at the top of its range", `"\uDBFF"`, "\xed\xaf\xbf"},
+		{"a lone low half at the top of its range", `"\uDFFF"`, "\xed\xbf\xbf"},
+		{"the first character above the BMP", `"\uD800\uDC00"`, "\U00010000"},
+		{"the last character, at the top of both ranges", `"\uDBFF\uDFFF"`, "\U0010FFFF"},
+		{"a lowercase hex escape whose first digit is the a of a-f", `"\uabcd"`, "\uabcd"},
+		{"a lowercase hex escape carrying the last letter of a-f", `"\uf0f0"`, "\uf0f0"},
+		{"an uppercase hex escape carrying the last letter of A-F", `"\uF0F0"`, "\uF0F0"},
+		{"an uppercase hex escape whose first digit is the A of A-F", `"\uABCD"`, "\uABCD"},
 		{"a pair beside a lone half", `"\uD83D\uDE00\uD800"`, "\U0001F600\xed\xa0\x80"},
 		{"a lone half beside a pair", `"\uD800\uD83D\uDE00"`, "\xed\xa0\x80\U0001F600"},
 		{"a high half before an ordinary escape", `"\uD83D\u00e9"`, "\xed\xa0\xbd\xc3\xa9"},
@@ -1350,6 +1990,7 @@ func TestTheUnquoterDecodesWhatItKeeps(t *testing.T) {
 	}{
 		{`no quote at all`, "no opening quote"},
 		{`"a`, "no closing quote"},
+		{`"`, "no closing quote"}, // one quote, and nothing on either side of it
 		{`"a` + "\\", "no closing quote"},
 		{`"a` + "\\" + `"`, "lone backslash"},   // a backslash with only the closing quote after it
 		{`"a` + "\\" + `u00"`, "half-written"},  // half an escape
@@ -1374,6 +2015,112 @@ func TestTheUnquoterDecodesWhatItKeeps(t *testing.T) {
 				t.Errorf("%q failed with %q, wanted it to name %q", tc.literal, err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestTheSurrogateRangeEdgesSurviveTheWire is the decode-level half of the
+// same edges. The two classification functions are written twice —
+// hasLoneSurrogateEscape's switch and the unquoter's isHighSurrogate /
+// isLowSurrogate pair — and the edges are what an off-by-one moves.
+//
+// The first two cases are a well-formed pair at each end of the range, and what
+// they pin is the ordinary path: the JSON decoder combines the pair into one
+// character, the validator accepts the record, and the encoder writes that
+// character raw rather than as an escape. They do NOT reach the unquoter — a
+// document whose only escapes are well-formed pairs leaves
+// hasLoneSurrogateEscape answering false — so narrowing any of the unquoter's
+// four bounds by one leaves them green. The unquoter's own edge rows are in
+// TestTheUnquoterDecodesWhatItKeeps; the third group below brings the pair to
+// this level too.
+//
+// The third group is the one that reaches the unquoter: the same pair at each
+// edge with a lone half BESIDE it, in the same string, so hasLoneSurrogateEscape
+// answers true and unquoteKeepingLoneSurrogates reads the whole value. Narrow
+// any of the four isHighSurrogate / isLowSurrogate bounds by one and the pair
+// at that edge stops being a pair: the text decodes to the two halves' WTF-8
+// instead of the one character, and the decoded value below is what fails.
+func TestTheSurrogateRangeEdgesSurviveTheWire(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		escaped string
+		want    string
+	}{
+		{"the first character above the BMP", `\uD800\uDC00`, "\U00010000"},
+		{"the last character", `\uDBFF\uDFFF`, "\U0010FFFF"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			document := surrogateDocument(t, "plain message", `"text":"run 42 finished"`, `"text":"`+tc.escaped+`"`)
+			record, err := Decode(document)
+			if err != nil {
+				t.Fatalf("the decoder refused the document itself: %v", err)
+			}
+			if got, _ := record["text"].(string); got != tc.want {
+				t.Fatalf("the pair decoded to %q, wanted %q: it is one character, not two lone halves", got, tc.want)
+			}
+			if _, refusal := ValidateMessage(record); refusal != nil {
+				t.Errorf("the record is refused %s: the module accepts a well-formed pair, whatever code units it is spelled with", refusal)
+			}
+			bytes, err := CanonicalBytes(record, "inbox")
+			if err != nil {
+				t.Fatalf("CanonicalBytes: %v", err)
+			}
+			if !strings.Contains(string(bytes), tc.want) {
+				t.Errorf("the canonical bytes are %s, wanted them to carry %q raw", bytes, tc.want)
+			}
+		})
+	}
+
+	// The lone half is what makes the unquoter run. It is at the OTHER end of
+	// the range from the pair under test, so the edge bounds are the only thing
+	// that can spoil the pair: U+DFFF's WTF-8 is ED BF BF, U+D800's is ED A0 80.
+	for _, tc := range []struct {
+		name    string
+		escaped string
+		want    string
+	}{
+		{"the first character above the BMP beside a lone low half", `\uD800\uDC00\uDFFF`, "\U00010000\xed\xbf\xbf"},
+		{"the last character beside a lone high half", `\uDBFF\uDFFF\uD800`, "\U0010FFFF\xed\xa0\x80"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			document := surrogateDocument(t, "plain message", `"text":"run 42 finished"`, `"text":"`+tc.escaped+`"`)
+			record, err := Decode(document)
+			if err != nil {
+				t.Fatalf("the decoder refused the document itself: %v", err)
+			}
+			if got, _ := record["text"].(string); got != tc.want {
+				t.Fatalf("the text decoded to %q, wanted %q: the pair is one character and only the lone half is two halves", got, tc.want)
+			}
+			// The record is refused for the lone half and for nothing else, and
+			// the field is the one the lone half is in. A decoder that read the
+			// pair as two halves refuses this same record with this same code,
+			// so the decoded value above is the assertion that tells them apart.
+			_, refusal := ValidateMessage(record)
+			if refusal == nil || refusal.Code != CodeBadCharacter || refusal.Field != "text" {
+				t.Errorf("the record is answered %v, wanted the lone half refused as %s on text",
+					refusal, CodeBadCharacter)
+			}
+		})
+	}
+}
+
+// TestTheDepthBoundIsTheBoundItself is the decoder's own off-by-one: maxDepth
+// is the deepest document Decode accepts, and the module's own records are far
+// shallower, so nothing else in the suite walks the edge. Narrow the bound by
+// one (`depth > maxDepth` -> `depth >= maxDepth`) and a document nested exactly
+// maxDepth levels deep is refused by a decoder that used to read it.
+func TestTheDepthBoundIsTheBoundItself(t *testing.T) {
+	document := func(levels int) []byte {
+		return []byte(strings.Repeat(`{"a":`, levels) + "1" + strings.Repeat("}", levels))
+	}
+	if _, err := Decode(document(maxDepth)); err != nil {
+		t.Errorf("a document nested exactly maxDepth (%d) levels deep is refused: %v", maxDepth, err)
+	}
+	_, err := Decode(document(maxDepth + 1))
+	if err == nil {
+		t.Fatalf("a document nested maxDepth+1 levels deep is accepted, and the bound is %d", maxDepth)
+	}
+	if !strings.Contains(err.Error(), "nested deeper than") {
+		t.Errorf("the deeper document failed with %q, wanted the depth refusal", err)
 	}
 }
 
