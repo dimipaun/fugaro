@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Eleven checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Twelve checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -565,6 +565,32 @@ added or removed without this sentence moving fails there:
     **+7,187**, the 0.9.5 reference), and **987,954 bytes** for the whole site (972,362 on
     `main`, so **+15,592**). The script and the number of files did not move, and the
     clone figure moved by the same bytes.
+  - **The caps page's figures became labelled rows on a phone** (the owner's feedback of
+    2026-10-19: "these render terrible on mobile"), and moved the site figure alone,
+    973,619 → **974,846**, by **1,227 bytes**, on one page: below the site's 48 rem breakpoint
+    each row of both figures tables is a block, each cell a line the stylesheet labels with its
+    column's own header through `content: attr(data-label)`, and the wide layout's own fit —
+    the nowrap figures and the box that scrolled around them — moved inside a `min-width:
+    48rem` block, with the stacked figures set at `--font-size-base` rather than `base.css`'s
+    smaller table size. The page weight and the script did not move: the heaviest page is the
+    docs hub, which renders neither table, and the caps page's own growth is nowhere near it.
+    The clone figure moved by the same bytes. The shape is held by `test/caps-figures.mjs`
+    (above), whose reading run against the old component fails on every defect it is written for:
+    the cells unlabelled, the five stacking declarations missing, the head row left in the flow,
+    no label rule reaching the page's cells, the wide layout's nowrap figures and scroll box in
+    force at the phone's width, and the figures at the table's smaller type.
+  - **The console page was cut to its essentials** (the owner's feedback of 2026-10-19: "way
+    too much text, nobody cares"), and moved the site figure alone, 974,846 → **974,047**, by
+    **799 bytes off** one page. What a reader gets now is one sentence on what the console is,
+    the three properties with one line each, and the downloads: the page's facts come from
+    `content/downloads.json` and the four sentences there are shorter, and the page's own
+    markup is unchanged — the shorter sentences are the whole of the move. The numbers did not
+    move, and that is the check worth keeping: the two macOS artifacts, their published names,
+    their SHA-256 values and the tag they are derived from are the same values, and the page
+    still says in the data file's own words that Windows and Linux builds do not exist yet.
+    The page's words went 239 → **133** against the ceiling the budget states, which is the
+    room "Adding a console screenshot" below counts. The page weight and the script did not
+    move: the heaviest page is the docs hub, and the console page is not it.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -870,6 +896,36 @@ added or removed without this sentence moving fails there:
   and the three layered rules, and a case plants each defect — a header with no layer, a header
   a layer cannot apply to, a content block with a layer of its own — and watches the named
   refusal come back.
+- `test/caps-figures.mjs` — the caps page's figures survive a phone (the owner's feedback of
+  2026-10-19: "these render terrible on mobile", read on the page's right-hand part, the cost
+  figures). The page's two tables — what a job costs and the aggregation's per-recipe ranges —
+  were both read as tables at 360 px: the first inside an `overflow-x: auto` box, which is six
+  nowrap columns scrolling sideways inside their own box, and the second with no box at all,
+  whose minimum content width is what widened the document. Below the site's 48 rem breakpoint
+  each row is now a block, each cell a line labelled with its column's own header text through
+  `data-label`, and the label is printed by one rule (`content: attr(data-label)`) rather than
+  written into every cell; the wide table's own fit — the nowrap figures and the scroll box
+  around them — is scoped to `min-width: 48rem`, and the stacked figures are set at
+  `--font-size-base`, because `base.css` sets every `table` at the table's smaller type. The
+  gate reads the built page's own markup and stylesheet: every cell's `data-label` is its
+  column's head text in its column's order, each of the five elements a stacked table is made of
+  (the table, its body, its rows and both kinds of cell) is separately `display: block` at 360 and
+  at 390 px with the head out of the flow, the rule that prints the labels is matched against the
+  page's own cells — a `content: attr(data-label)` on a selector that reaches no cell prints
+  nothing, and reads exactly like the rule that works — nothing in force at those widths holds a
+  figure on one line or in a scroll box, no box is wider than `main`'s own content box at 360 px
+  (read out of the stylesheet, not typed), the figures are no smaller than the body, and the two
+  declarations the wide layout is made of are read again at 768 and at 1280 px, so a block that
+  was deleted or moved behind a wider query is refused rather than green on every phone width.
+  It reads the checkout's build and a copy built with a fixture `costs.json`, because the
+  per-recipe table is the one this checkout cannot render (D96); the fixture case also plants a
+  defect only that table's cells can show, so the second table is read rather than assumed. Its
+  refusals are kept the way the others keep theirs: the reading run against `main`'s own
+  `CapsCosts.astro` fails on every defect it is written for — every cell unlabelled, the five
+  stacking declarations missing, the head row left in the flow, no rule printing a label, the
+  nowrap figures and the scroll box in force at the phone's width, and the figures at the table's
+  smaller type — and every refusal has a case that plants the one thing it names in the
+  artifact's own bytes.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
@@ -1130,14 +1186,15 @@ Adding the first one is two edits:
 - **The console page's weight:** that page is a fraction of the page ceiling above, so it has
   room for the pictures it renders, and it is not the page the ceiling is derived from (the
   docs hub is).
-- **The page's words, and this is the tight one.** The console page stands at **239 of the 250
-  words** D188 allows it, and a row's words all count: the caption is text under the picture,
-  and the `alt` is counted too, because it is the text a reader gets when the picture does not
+- **The page's words.** The console page stands at **133 of the 949 words** the ceiling above
+  allows it, and a row's words all count: the caption is text under the picture, and the `alt`
+  is counted too, because it is the text a reader gets when the picture does not
   arrive (`test/budget.mjs`'s `visibleText` reads an `img`'s `alt`). The slider's own heading
-  takes one more. So **ten words across all the rows' `alt` and `caption` together** is the
-  whole of the room there is, and the first screenshot that needs more than that needs the page
-  ceiling raised in the same commit that adds it — D188's own rule: the number moves where the
-  need is, and a build that needs more fails until it moves.
+  takes one more. The page stood at 239 words against D188's 250 until the owner's cut of
+  2026-10-19 took its prose to the essentials, and the room that cut bought is the room the
+  screenshots land in: a page that needs more than the ceiling needs it raised in the same
+  commit that adds it — D188's own rule: the number moves where the need is, and a build that
+  needs more fails until it moves.
 
 The slider's own bytes do **not** move when a screenshot is added: the component's stylesheet is
 inlined into the console page whether or not the slider renders, which is the 1,115 bytes the
