@@ -31,9 +31,13 @@ conditions that can never be satisfied: every request against those types is
 denied, so those five roles grant nothing. That is fail-closed and it is the
 safe direction, but it is not a fence: **after the flag flips, the deployer is
 expected to be fenced for Cloud Storage (proved by Check 32) and for Secret
-Manager, and to hold five roles that do nothing.** The feature's own use of
-those services would then have to be reconsidered (§8 point 3), and no document
-here may claim more than that until Check 68 has run.
+Manager, and to hold five roles that do nothing** — and even the Secret Manager
+half is expected rather than proved: that service's name-prefix condition is
+Check 52's U3, which is **NOT RUN** (F5's table above). So the one form this
+repository has measured live is Cloud Storage's, and every other service's is
+expected at best. The feature's own use of those services would then have to be
+reconsidered (§8 point 3), and no document here may claim more than that until
+Check 68 has run.
 
 ## 1. The problem, as the tree records it
 
@@ -81,7 +85,7 @@ separate project, no deny policy.
 | --- | --- | --- |
 | a Cloud Storage `resource.name.startsWith("projects/_/buckets/<prefix>")` condition admits the prefix and refuses everything else | `docs/gcp-live-checklist.md` Check 32 | RUN 2026-10-14, PASSED |
 | a Secret Manager name-prefix condition | checklist Check 52, U3 | **NOT RUN** |
-| whether `resource.name` is honoured for an IAM service account, a Cloud Run job, a Cloud Scheduler job or an API key | `deployer.tf:70-76` names it as what "the plan's Check 68 has to measure" | **no check exists yet** (Checks 65-68 are unwritten; the highest written section is Check 58) |
+| whether `resource.name` is honoured for an IAM service account, a Cloud Run job, a Cloud Scheduler job, an Artifact Registry repository or an API key | checklist Check 68, steps 4 and 5, per service and in both directions | **written, owner-run, NOT RUN** |
 
 ## 2. Requirements the redesign has to meet
 
