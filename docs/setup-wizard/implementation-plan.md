@@ -403,6 +403,7 @@ where each answer is built, not what is still owed.
 | `internal/cli/init_firebase.go` | W2.1 (L2), W3.3 (L4), W5.1 (L7) |
 | `internal/cli/init_images.go` | W2.1 (L2), W5.1 (L7) |
 | `internal/cli/init_repo_gate.go`, `init_repo_target.go` | W2.1 (L2), W3.4 (L5) (`init_repo_gate.go` also W5.1 (L7)) |
+| `internal/cli/init_repo_gate_test.go` | W3.4 (L5), W5.1 (L7) — the second renames and inverts the row assertion W3.4 writes as today's value |
 | `internal/cli/init_inputs_test.go` | W3.1 (L4), W3.2 (L5) |
 | `internal/cli/billing_prompt.go`, `billing_prompt_test.go` (**new** at W4.3) | W4.3 (L9), W4.4 (L10) |
 | `internal/cli/setup_refusals_test.go` (**new** at W0.1) | W0.1 (L0), W5.1 (L7) |
@@ -472,9 +473,9 @@ W6.2 ← W4.4, W4.5 (owner; plus a release)
 | **L2** | W2.1 the `internal/cli` strings · W2.2 the strings outside `internal/cli` · W2.5 Terraform | standard · standard · standard | the 48 `internal/cli/*.go` of W2.1's list, the 67 `internal/cli/*_test.go` files naming the command, the three goldens · every non-test `.go` outside `internal/cli` that names the command (`internal/{infra,budget,runner,managed,config,localcfg,projectpolicy,preflight,gcpfake,gateway,imagecheck,mirror,basepin,backend/{gcp,backendtest}}/**`, minus `config/example.go`) · `deploy/terraform/**`, `schemas/`, `internal/config/example.{go,yaml}`, `images/verify-public.sh`, `images/history/Dockerfile` |
 | **L3** | W1.3 `setup` is the wizard · W2.3 live markdown, README and the skills | opus · standard | `internal/cli/{setup,init_stages,init_project}.go` · `README.md`, `docs/`, `plugin/skills/**`, `.claude/skills/new-release/SKILL.md` |
 | **L4** | W3.1 the id default · W3.3 `--firebase-project` · W2.4 the website and the generated reference | standard · standard · standard | `internal/cli/init_inputs.go` · `internal/cli/{init,init_firebase,init_project}.go` · `website/**` |
-| **L5** | W3.2 the region and the Firestore location · W3.4 the first-repository question · W2.6 the census emptied and the tail | standard · standard · standard | `internal/cli/init_inputs.go` · `internal/cli/{init_repo_gate,init_repo_target,setup}.go` · `internal/config/{example.yaml,example.go}`, `schemas/`, `images/verify-public.sh`, `docs/gcp-live-checklist.md`, `docs_live_init_census_test.go` |
-| **L6** | W3.5 the two-phase wizard stage | opus | `internal/cli/wizard_stage.go`, `init_inputs.go` |
-| **L7** | W5.1 `update`'s stage set, refusals and non-interactive contract | **opus + mandatory** | `internal/cli/{update,init_stages,init,init_firebase,init_images,init_repo_gate}.go` (the four D12 call sites: `confirmLocation`, `buildImages`, `confirmReplace`, `confirmRepo`), `internal/cli/setup_refusals_test.go`, `docs/gcp-setup.md` (its `update` section) — and `internal/initflow/stage.go`'s `runCovered` comment, which the answer makes false; the map itself is read unchanged |
+| **L5** | W3.2 the region and the Firestore location · W3.4 the first-repository question · W2.6 the census emptied and the tail | standard · standard · standard | `internal/cli/init_inputs.go` · `internal/cli/{init_repo_gate,init_repo_target,setup}.go`, `internal/cli/init_repo_gate_test.go` · `internal/config/{example.yaml,example.go}`, `schemas/`, `images/verify-public.sh`, `docs/gcp-live-checklist.md`, `docs_live_init_census_test.go` |
+| **L6** | W3.5 the two-phase wizard stage | opus | `internal/cli/wizard_stage.go` (**new**), `internal/cli/init_inputs.go`, `internal/cli/setup.go`, `internal/cli/init_stages.go` |
+| **L7** | W5.1 `update`'s stage set, refusals and non-interactive contract | **opus + mandatory** | `internal/cli/{update,init_stages,init,init_firebase,init_images,init_repo_gate}.go` (the four D12 call sites: `confirmLocation`, `buildImages`, `confirmReplace`, `confirmRepo`), `internal/cli/setup_refusals_test.go`, `internal/cli/init_repo_gate_test.go` (W3.4's onboarding row, inverted here), `docs/gcp-setup.md` (its `update` section) — and `internal/initflow/stage.go`'s `runCovered` comment, which the answer makes false; the map itself is read unchanged |
 | **L8** | W5.2 the e2e tests, renamed | standard | `internal/e2e/init_test.go` → `update_test.go` |
 | **L9** | W4.3 the picker prompt | **opus + mandatory** | `internal/cli/billing_prompt.go`, `init_project.go`, `init_inputs.go` |
 | **L10** | W4.4 the API-enable refusal · W4.5 the comments that become false | **opus + mandatory** · standard | `internal/cli/billing_prompt.go`, `internal/preflight/google.go` · `internal/cli/init_project.go`, `internal/infra/projectcreate.go` |
@@ -516,6 +517,7 @@ internal/cli/init_inputs.go           W2.1 (L2) → W3.1 (L4) → W3.2 (L5) → 
 internal/cli/init_firebase.go         W2.1 (L2) → W3.3 (L4) → W5.1 (L7)
 internal/cli/init_images.go           W2.1 (L2) → W5.1 (L7)
 internal/cli/init_repo_gate.go        W2.1 (L2) → W3.4 (L5) → W5.1 (L7)
+internal/cli/init_repo_gate_test.go   W3.4 (L5) → W5.1 (L7)   (the second, the onboarding row assertion only)
 internal/cli/init_repo_target.go      W2.1 (L2) → W3.4 (L5)
 internal/cli/billing_prompt.go        W4.3 (L9) → W4.4 (L10)
 internal/cli/billing_prompt_test.go   W4.3 (L9) → W4.4 (L10)
@@ -1440,20 +1442,35 @@ unknown-flag error names the new one).
 
 **Files.** `internal/cli/setup.go`, `internal/cli/init_repo_gate.go`
 (`checkoutNote`, `unknownDetail`), `internal/cli/init_repo_target.go`
-(`resolveRepoTarget`'s four refusal texts), and their tests.
+(`resolveRepoTarget`'s four refusal texts), and their tests — the row assertion
+below lives beside the gate it pins, in
+`internal/cli/init_repo_gate_test.go`, which W5.1 edits too.
 **What changes (F14, D5).** Inside a checkout, `setup` asks one extra question —
 "onboard `<owner/name>`?" — defaulting to yes, and uses the existing repository
 stage; outside a checkout it skips the question and prints one line saying how to
 enrol one later. `update` never enrols silently (W5.1 owns that side). The four
 `resolveRepoTarget` refusals keep their substance and change their verb — and
 one row moves: onboarding a repository the run was not told about is **covered
-by `--yes`** after D12, where it was `Typed` before, so this task asserts the
-new row and W5.1's matrix row is the same change seen from `update`'s side.
+by `--yes`** after D12, where it was `Typed` before. **The flip is W5.1's, and
+it does not arrive in this task.** D12's owner is W5.1, the rows that move are
+`internal/cli` call sites, and the one this row names is `init_repo_gate.go`'s
+`confirmRepo`; W0.1's matrix records it as `Typed` with `covered after W5.1`
+beside it, and W5.1's commit flips that row and this task's assertion in the same
+change. So the question this task adds **authorizes nothing on its own**: it is
+asked in the wizard and answered yes by default at a terminal, and under `--yes`
+the gate behind it is unchanged — `canConfirmRepo()` is still false there and the
+step is still `needs-you` with the opt-in line — until W5.1 relaxes the call
+site. This task therefore asserts the row **as it stands today**, and W5.1's
+commit renames and inverts the assertion below.
 **Tests.** `TestSetupAsksToOnboardTheCheckoutsRepository`,
 `TestSetupOutsideACheckoutSaysHowToEnrol` (the text names `fugaro setup`),
-`TestSetupOnboardsUnderYesWithoutATypedConfirmation` (**D12's answer**: an
-unlisted repository was `Typed` before 2026-10-20 and is covered now, in both
-front doors — W5.1 owns the row and flips it),
+`TestSetupStillTypesAnUnlistedRepositoryUnderYes` (**today's row, on purpose**:
+an unlisted repository is `Typed` before 2026-10-20 and stays so until W5.1
+lands at L7, so this test passes at this task's own commit — writing it as the
+post-D12 row would leave this task's verification red from L5 to L7. W5.1
+renames it to `TestSetupOnboardsUnderYesWithoutATypedConfirmation` and inverts
+it, which is D12's `setup` half: the answer covers the step in **both** front
+doors, so W5.1's flip of the call site is what flips this assertion too),
 `TestSetupOnboardingIsASeparateAnswerFromTheProjectQuestion`.
 **Red step.** `TestSetupAsksToOnboardTheCheckoutsRepository` first.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Repo|Checkout|Setup' -count=1`.
@@ -1640,7 +1657,9 @@ location), `internal/cli/init_images.go` (`confirmReplace`, a registry tag),
 `internal/cli/init_repo_gate.go` (`confirmRepo`, the typed owner/name),
 `internal/cli/init.go` (`buildImages`' Cloud Build confirmation, and the
 `errNoState` family's wording) — `internal/cli/setup_refusals_test.go` (W0.1's
-file: `update`'s column, and the call-site rows D12 moves are flipped here),
+file: `update`'s column, and the call-site rows D12 moves are flipped here) and
+`internal/cli/init_repo_gate_test.go` (W3.4's assertion for the `setup` side of
+the onboarding row, renamed and inverted here — the two files flip together),
 `docs/gcp-setup.md` (its `fugaro update` section), their tests, and
 **`internal/initflow/stage.go`'s `runCovered` doc comment — the comment only,
 and this is the whole of D12's footprint in `internal/initflow`**.
@@ -1735,13 +1754,18 @@ repository's onboarding with no typed confirmation, each asserted at its own
 call site rather than through `YesCovers`; **planting the bug** in either
 direction must fail it — covering a call site that must stay `Typed` in
 `setup`, and leaving one `Typed` in `update` that D12 covers — and the first of
-those fails W0.1's file too,
+those fails W0.1's file too; and
+**`TestSetupOnboardsUnderYesWithoutATypedConfirmation`** — W3.4's
+`TestSetupStillTypesAnUnlistedRepositoryUnderYes`, renamed and inverted in this
+commit. D12 covers this step in **both** front doors, so the one call-site
+change flips W3.4's assertion as well as W0.1's `setup`-side row, and leaving
+the old assertion in place at L7 would fail this task's own verification.
 `TestUpdateNonInteractiveWithoutYesPlansOnly`,
 `TestUpdateConvergesTwiceAndSaysNoChanges` (the second run's every stage is
 `done`/"No changes", which is Check 27's assertion in miniature),
 `TestUpdateNeverCreatesAnything` (the project-creation client is never reached).
 **Red step.** `TestUpdateRefusesCreateProjectAndLinkBilling` first.
-**Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Update' -count=1 && fugaro verify test`.
+**Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Update|SetupOnboard' -count=1 && fugaro verify test`.
 **Depends on.** W1.3 (its D1, D5 and **D12** answers are in hand, D12 in the
 form above). **Reviewer.** opus + **mandatory independent review** — it is the
 one task in this plan that relaxes a confirmation (Convention 7).
@@ -1864,7 +1888,9 @@ Each needs its own plan amendment and the owner's go.
   and, as with every other part of D12, the reach is at the **call sites**: W5.1
   relaxes `confirmLocation` (in `update` only),
   `buildImages`, `confirmReplace` and `confirmRepo`, W0.1's matrix has to be
-  flipped in the same commit, and W3.4's onboarding test changes with it. The
+  flipped in the same commit, and W3.4's onboarding assertion — written at L5 as
+  today's value, because the flip is this task's and not W3.4's — is renamed and
+  inverted with it, in `init_repo_gate_test.go`. The
   one place it writes in `internal/initflow` is `runCovered`'s doc comment,
   which its answer makes false — prose, not the map. Two of
   those four steps ride stages (`Firebase`, `Images`) whose `YesCovers` is
