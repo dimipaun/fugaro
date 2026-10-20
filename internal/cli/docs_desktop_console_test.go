@@ -6846,7 +6846,12 @@ func releaseLinuxCopyInSentences(t *testing.T) copyInSentences {
 		}
 	}
 	return copyInSentences{
-		opening: fencedBlockContaining(t, "docs/pending-workflows/README.md", section, "file is pending"),
+		// The marker is the count-free head of the opening-line block rather
+		// than a whole phrase of it: the block states a count ("One file is
+		// pending", "Two files are pending", ...), and a marker that spelled the
+		// count would have to be edited every time a file is staged or applied
+		// -- which is the edit the block itself exists to make in one place.
+		opening: fencedBlockContaining(t, "docs/pending-workflows/README.md", section, "pending: `shared-tests.yml`"),
 		site:    fencedBlockContaining(t, "docs/pending-workflows/README.md", section, "now holds"),
 	}
 }

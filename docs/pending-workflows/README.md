@@ -706,21 +706,23 @@ line and the last section of `website/README.md`, both of which count and name
 the files still pending here, and both of which are held to the directory
 (`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` and
 `website/test/readme.mjs`). With both of 2026-10-20's files applied and their
-staged copies removed, this directory holds one pending workflow again and the
+staged copies removed, this directory holds two pending workflows again and the
 two sentences become (again, each block is the exact text to write; the
 opening-line block stops at the end of its last sentence, and the
 "**Two other files stay staged here by design**" sentence that follows it is
 unchanged — `console-tests.yml` and `console-release.yml` do stay staged):
 
 ```
-**One file is pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
-P4.3; see `## shared-tests.yml` below).
+**Two files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below) **and `mobile-release.yml`** (the mobile app's iOS build
+and TestFlight submission, 2026-10-20; see `## mobile-release.yml` below).
 ```
 
 ```
-`docs/pending-workflows/` now holds one pending workflow,
+`docs/pending-workflows/` now holds two pending workflows,
 `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
-P4.3), which is not this site's:
+P4.3) — and `docs/pending-workflows/mobile-release.yml` — the mobile app's iOS build and
+TestFlight submission (2026-10-20), neither of which is this site's:
 ```
 
 **What cannot be checked here.** The linux job's steps run on a runner: this
@@ -737,9 +739,9 @@ this change says they do.
 
 **Status: `mobile-release.yml` is staged and pending.** The copy has not been
 made — there is no `.github/workflows/mobile-release.yml` — and this document's
-opening line says the same. `TestPendingWorkflowsMobileReleaseIsStagedAndPinned`
+opening line says the same. `TestDocsMobileReleaseWorkflowIsStagedAndPinned`
 (`internal/cli/docs_mobile_release_workflow_test.go`) reads the staged file, and
-`TestPendingWorkflowsMobileReleaseReadmeNamesTheCopyInAndTheSetup` reads this
+`TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn` reads this
 section, so the two cannot drift apart silently. (Those names are held to this
 document by that second test, so the paragraph cannot go on naming a check that
 was renamed or deleted.)
@@ -861,7 +863,7 @@ gh secret set EXPO_TOKEN --repo "$REPO" --env mobile-release
 and it is the only `secrets.` reference in the file: the App Store Connect API
 key and the signing certificate are EAS's (server-side, under the owner's
 account), which is why the submission needs no second credential here.
-`TestPendingWorkflowsMobileReleaseIsStagedAndPinned` asserts that the file names
+`TestDocsMobileReleaseWorkflowIsStagedAndPinned` asserts that the file names
 exactly that one secret and carries no literal that could be one.
 
 **Nothing is added to the repository for the store identity**, because the
@@ -926,7 +928,13 @@ does today, and `website/test/readme.mjs` reads the whole page rather than this
 sentence, so the rest of it needs no edit. It also reads the count as a word and
 compares it as a number, so `three` here is what the directory holds after this
 copy-in; the word `four` is the one this document's opening line carried while
-the file was pending.
+the file was pending. **The two copy-ins of 2026-10-20 can be made in either
+order**, and the two blocks above are the pair for the order this tree is in
+(`mobile-release.yml` applied, the console's two files still staged). If the
+console's files have been copied in first, this copy-in leaves one pending file
+rather than three, and the pair to write is the one in
+`## console-release-linux.yml` above with `mobile-release.yml` dropped — read the
+count and the names off the directory, which is what both sentences are held to.
 
 ### Not verified
 
@@ -937,7 +945,7 @@ available or permitted in the run that wrote it, and no agent runs `eas build`,
 Global Constraint 9, D120). Check 89 (`docs/gcp-live-checklist.md`) is the
 owner-run check for the store path, and it is **NOT RUN**.
 
-What *is* asserted offline, by `TestPendingWorkflowsMobileReleaseIsStagedAndPinned`,
+What *is* asserted offline, by `TestDocsMobileReleaseWorkflowIsStagedAndPinned`,
 is the file's text: its two triggers and the absence of any third; `contents:
 read` as the whole permission and no job-level widening; the `mobile-release`
 environment on both jobs; the single `secrets.EXPO_TOKEN` reference and no

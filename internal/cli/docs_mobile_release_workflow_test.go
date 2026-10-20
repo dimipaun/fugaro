@@ -21,7 +21,7 @@ package cli
 // here are the ones that make the file safe to run on a public repository with
 // a store credential in reach:
 //
-//   - TestPendingWorkflowsMobileReleaseIsStagedAndPinned: the triggers are a
+//   - TestDocsMobileReleaseWorkflowIsStagedAndPinned: the triggers are a
 //     `v*` tag push and a manual dispatch and nothing else; the permissions are
 //     `contents: read` and no more; both jobs wait at the `mobile-release`
 //     environment; the file names exactly one secret (`EXPO_TOKEN`) and carries
@@ -33,7 +33,7 @@ package cli
 //     Android job is disabled behind the repository variable; and **neither the
 //     store identity's variable names nor a reverse-DNS-shaped value appears
 //     anywhere in the file**.
-//   - TestPendingWorkflowsMobileReleaseReadmeNamesTheCopyInAndTheSetup: the
+//   - TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn: the
 //     section beside the staged file has to carry what a human cannot guess --
 //     the environment's name and its required reviewer, the secret's name, the
 //     copy-in command, and the two follow-up edits a copy-in needs.
@@ -91,8 +91,8 @@ const (
 	// checks this file adds. The document beside the staged file has to name
 	// both, so the paragraph that tells a reader what is verified cannot outlive
 	// the names it prints.
-	mobileReleasePinTestName    = "TestPendingWorkflowsMobileReleaseIsStagedAndPinned"
-	mobileReleaseReadmeTestName = "TestPendingWorkflowsMobileReleaseReadmeNamesTheCopyInAndTheSetup"
+	mobileReleasePinTestName    = "TestDocsMobileReleaseWorkflowIsStagedAndPinned"
+	mobileReleaseReadmeTestName = "TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn"
 )
 
 // mobileReleaseWorkflow is docs/pending-workflows/mobile-release.yml, decoded
@@ -174,7 +174,7 @@ func readMobileReleaseWorkflow(t *testing.T) (mobileReleaseWorkflow, []byte, str
 
 // readMobileReleaseWorkflowAt is the read above with its two paths as arguments
 // and its verdicts returned rather than reported, so that
-// TestReadMobileReleaseWorkflowFallsBackOnlyWhilePending can pin every mode
+// TestReadDocsMobileReleaseWorkflowFallsBackOnlyWhilePending can pin every mode
 // against temp files independently of what this repository currently holds --
 // the same shape images/base_workflow_test.go's readWorkflow and
 // docs_shared_tests_workflow_test.go's readSharedTestsWorkflowAt use.
@@ -257,11 +257,11 @@ var mobileReleaseAllowedDotted = []string{
 // place a job can put it.
 var mobileReleaseSummaryRE = regexp.MustCompile(`GITHUB_STEP_SUMMARY`)
 
-// TestPendingWorkflowsMobileReleaseIsStagedAndPinned: the staged release
+// TestDocsMobileReleaseWorkflowIsStagedAndPinned: the staged release
 // workflow is safe to copy in. Every assertion below is a property a later edit
 // could silently drop, and each was planted and seen red while this test was
 // written.
-func TestPendingWorkflowsMobileReleaseIsStagedAndPinned(t *testing.T) {
+func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	wf, raw, path := readMobileReleaseWorkflow(t)
 	text := string(raw)
 
@@ -572,7 +572,7 @@ func workflowJobUses(job mobileReleaseJob) []string {
 // the shape of the store identity and is not one of the few the file may carry:
 // two or more lowercase labels whose last one is not a file extension this
 // repository uses. It is a function rather than an inline loop so that
-// TestMobileReleaseIdentityShapedTokensSeeAnIdentity can pin it against
+// TestDocsMobileReleaseIdentityShapedTokensSeeAnIdentity can pin it against
 // fixtures: the check above passes on a clean file, and a check that passes is
 // not a proof that it could fail.
 func mobileReleaseIdentityShapedTokens(text string) []string {
@@ -599,11 +599,11 @@ func mobileReleaseIdentityShapedTokens(text string) []string {
 	return out
 }
 
-// TestMobileReleaseIdentityShapedTokensSeeAnIdentity pins the check above
+// TestDocsMobileReleaseIdentityShapedTokensSeeAnIdentity pins the check above
 // against fixtures: an identity is reported, a version comment, a runner image
 // and the file names this repository uses are not, and the short allow-list is
 // what lets the three field names through.
-func TestMobileReleaseIdentityShapedTokensSeeAnIdentity(t *testing.T) {
+func TestDocsMobileReleaseIdentityShapedTokensSeeAnIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name, text string
 		want       []string
@@ -644,7 +644,7 @@ func mobileReleaseReadmeSection(t *testing.T) string {
 	return rest
 }
 
-// TestPendingWorkflowsMobileReleaseReadmeNamesTheCopyInAndTheSetup: the staged
+// TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn: the staged
 // file cannot create a GitHub environment or a secret, so the section beside it
 // is where the owner reads what to make and what to run. Everything a human
 // cannot guess from the file is asserted here: the environment's name and its
@@ -652,7 +652,7 @@ func mobileReleaseReadmeSection(t *testing.T) string {
 // turns the Android job on, the two follow-up edits a copy-in needs, and the
 // name of the check that pins the file -- so a rename cannot leave the document
 // pointing at a test that is gone.
-func TestPendingWorkflowsMobileReleaseReadmeNamesTheCopyInAndTheSetup(t *testing.T) {
+func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 	section := mobileReleaseReadmeSection(t)
 
 	for _, want := range []struct{ needle, why string }{
@@ -693,13 +693,13 @@ func TestPendingWorkflowsMobileReleaseReadmeNamesTheCopyInAndTheSetup(t *testing
 	}
 }
 
-// TestReadMobileReleaseWorkflowFallsBackOnlyWhilePending pins every mode of the
+// TestReadDocsMobileReleaseWorkflowFallsBackOnlyWhilePending pins every mode of the
 // read above against temp files, so the rules stay checkable whatever state this
 // repository is in -- the staged copy here, the copied-in file there, or both.
 // It is what makes the copy-in procedure safe rather than a hope, and the
 // applied state is one this repository is never in while an agent is working:
 // writing `.github/workflows/mobile-release.yml` is the owner's step.
-func TestReadMobileReleaseWorkflowFallsBackOnlyWhilePending(t *testing.T) {
+func TestReadDocsMobileReleaseWorkflowFallsBackOnlyWhilePending(t *testing.T) {
 	dir := t.TempDir()
 	staged := filepath.Join(dir, "pending.yml")
 	applied := filepath.Join(dir, "applied.yml")
