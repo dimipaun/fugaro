@@ -3562,6 +3562,11 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 	if !strings.Contains(code, "service_account = google_service_account.credentials[0].email") {
 		t.Errorf("%s: the service must run as its own account", path)
 	}
+	// IAM is required, stated rather than implied: this is the fence every
+	// caller passes through before the container runs.
+	if !strings.Contains(squash(code), "invoker_iam_disabled = false") {
+		t.Errorf("%s: the service must set invoker_iam_disabled = false explicitly, so a change of the provider's default cannot open it silently", path)
+	}
 }
 
 // TestModelSecretEnvsMatchTheCredentialsService pins the three literals in

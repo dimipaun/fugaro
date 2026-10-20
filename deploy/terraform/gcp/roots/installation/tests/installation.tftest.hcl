@@ -1920,6 +1920,10 @@ run "credentials_service_on" {
     error_message = "the ingress is ALL because the caller is a Cloud Run job of this project, which reaches the service over its public run.app URL; the fence is the IAM check, not the network"
   }
   assert {
+    condition     = google_cloud_run_v2_service.credentials[0].invoker_iam_disabled == false
+    error_message = "the service must require IAM: invoker_iam_disabled false is stated rather than implied, so a change of the provider's default cannot open the service silently"
+  }
+  assert {
     condition     = google_cloud_run_v2_service.credentials[0].deletion_protection == false
     error_message = "the service holds no data of its own: the bundle container is what must survive, and it carries prevent_destroy"
   }

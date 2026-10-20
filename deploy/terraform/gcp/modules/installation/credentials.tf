@@ -97,13 +97,14 @@ resource "google_secret_manager_secret_iam_member" "credentials_bundle" {
 }
 
 # The service itself. It requires IAM: nothing here grants roles/run.invoker to
-# allUsers or allAuthenticatedUsers, and the provider's invoker_iam_disabled
-# stays at its default (false), so an unauthenticated request is refused by the
-# front end before the container runs. The ingress is ALL because the caller is
-# a Cloud Run *job* of this project, which reaches the service over its public
-# run.app URL (a job is not on a VPC network); the fence is the IAM check, not
-# the network — the only member is each job account's own invoker grant
-# (modules/workflow/sa.tf).
+# allUsers or allAuthenticatedUsers, and invoker_iam_disabled is set to false
+# explicitly rather than left to the provider's default, so the front end
+# refuses an unauthenticated request before the container runs and a later
+# change of that default cannot open the service silently. The ingress is ALL
+# because the caller is a Cloud Run *job* of this project, which reaches the
+# service over its public run.app URL (a job is not on a VPC network); the
+# fence is the IAM check, not the network — the only member is each job
+# account's own invoker grant (modules/workflow/sa.tf).
 #
 # The image is a variable (C1.20's init stage fills it with the released
 # image's reference, as it fills var.history.image), and no command or args are
@@ -121,6 +122,11 @@ resource "google_cloud_run_v2_service" "credentials" {
     fugaro_role = "credentials"
   }
   ingress = "INGRESS_TRAFFIC_ALL"
+
+  # IAM is required, stated rather than implied: this is the fence every
+  # caller passes through, and the service's own ID-token check (Q6) is
+  # layered on top of it, never instead of it.
+  invoker_iam_disabled = false
 
   # The service holds no data: the one thing worth keeping is the bundle
   # container, and that one carries prevent_destroy above. Turning the opt-in
