@@ -15,16 +15,21 @@ citation in this plan can be read without opening the other document. Where a
 task cites a decision, the task is written to the *recommended* option and
 states what changes if the owner answers differently.
 
-**The shape of the whole thing, in one paragraph.** The tree already compiles
-for Windows in every package the CLI is made of except two (**C1**), it
-already carries five documented `unix`/`other` splits and a CRLF-aware YAML
-writer and a Windows-aware temp-root list (**C2**), and `internal/cli`'s 224
-test files already type-check for windows/amd64 (**F36**). So this is a port
-of two packages, four platform lookups, one shell choice, one test harness and
-a release matrix — not a rewrite. What makes it *substantial* anyway is that
-none of it can be verified inside this repository's CI until a Windows runner
-exists, and that four of the things a user notices first (`doctor`'s advice,
-the mode claims, the goldens, the TUI) are behaviour, not compilation.
+**The shape of the whole thing, in one paragraph.** The tree is close to
+compiling for Windows but not as close as one `go build ./...` suggests: the
+toolchain stops at the first failing package, so the honest count — one package
+at a time, `-gcflags=-e`, the loop repeated as fixes land (**C1**) — is **14
+non-test sites in nine packages**, two of which are the packages this plan's
+Slice 1 is named after. It already carries five documented `unix`/`other`
+splits and a CRLF-aware YAML writer and a Windows-aware temp-root list
+(**C2**), and `internal/cli`'s 225 test files are **not** all type-checking for
+windows/amd64: four of them and ten other packages' test files do not
+(**F36**). So this is a port of nine packages, four platform lookups, one shell
+choice, one test harness and a release matrix — close to a rewrite in *count*
+even though each site is one construct repeated. What makes it *substantial* is
+that none of it can be verified inside this repository's CI until a Windows
+runner exists, and that four of the things a user notices first (`doctor`'s
+advice, the mode claims, the goldens, the TUI) are behaviour, not compilation.
 
 ---
 
@@ -40,7 +45,21 @@ Each task has:
 - **Verification** — the exact command an agent runs. Two of them are used
   constantly and are abbreviated afterwards:
   - **`[pins]`** = `GOFLAGS=-p=2 go test ./internal/cli ./internal/clidoc -run 'Docs|Lint|CliRef' -count=1 -timeout 40m`
-  - **`[cross]`** = `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./... && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./...`
+  - **`[cross]`** = cross-compile for Windows **one package at a time, with
+    every error reported**, the way
+    [reconciliation.md](reconciliation.md) C1 states and for the reason it
+    gives:
+    `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-p=2 go list ./... > /tmp/pkgs.txt`,
+    then `while read -r p; do GOOS=windows GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-p=2 go build -gcflags=-e "$p"; done < /tmp/pkgs.txt`;
+    green means every package exits 0. The one-command form
+    `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./...` is **not**
+    `[cross]` and must not be quoted as one: it stops at the first failing
+    package and reports that package alone, which is how the first version of
+    this plan came to size Slice 1 at two packages instead of nine. The test
+    half of the same loop —
+    `go test -c -o /dev/null -gcflags=-e "$p"` in place of `go build` — is
+    green only at the end of Slice 3 (F36), so a slice before that runs it and
+    reports the count rather than requiring green.
 - **Tier** — who can review it:
   - **Tier A** — an owner or agent with no Windows machine: the change is
     source-readable and verifiable by cross-compilation, a `[pins]` run, or a
@@ -115,9 +134,13 @@ third-party product (Docker Desktop, Terraform) rather than Fugaro's code.
 ## 2. The minimum viable first cut
 
 **Slice 0 and Slice 1, reviewed together.** Slice 0 is a document. Slice 1 is
-94 lines-ish across five files and two new ones, and it is the whole distance
-between `fugaro.exe` not existing and `fugaro.exe --version` printing a
-version on Windows. Everything after it is behaviour.
+the non-test build fix — 14 sites across nine files (**C1**) — plus the
+config-directory fix and the ADC path, and it is the whole distance between
+`fugaro.exe` not existing and `fugaro.exe --version` printing a version on
+Windows. It is **seven tasks, not five**, and the two that are new since the
+first version of this plan exist because a single `go build ./...` reports one
+failing package and hides the rest: T1.1 and T1.2 are the two visible ones and
+T1.6 and T1.7 are the nine sites behind them.
 
 **What the first cut does *not* do**, said plainly, because the temptation is
 to call it "the CLI works on Windows" and it is not: `fugaro doctor` still
@@ -130,10 +153,11 @@ is "it builds, it starts, and the config it reads is the right file".
 
 **Why that is the right first cut rather than a bigger one.** It is the
 largest change whose correctness an owner with no Windows machine can accept
-from a Linux box: `[cross]` proves the two packages compile, and the config-dir
-and ADC-path changes are ordinary Go with unit tests that run everywhere. It is
-also the change that makes every later slice testable on a runner, because a
-runner cannot run a binary that does not build.
+from a Linux box: the per-package cross-compile loop of C1 proves every
+non-test package compiles, and the config-dir and ADC-path changes are ordinary
+Go with unit tests that run everywhere. It is also the change that makes every
+later slice testable on a runner, because a runner cannot run a binary that
+does not build — and until T1.6 and T1.7 land, `fugaro.exe` does not exist.
 
 ---
 
@@ -191,7 +215,7 @@ reviewable as a unit.
 
 ### Slice 1 — Compile, start, and read the right files
 
-*Goal: `fugaro.exe --version` runs on Windows, `fugaro config ls` reads the
+*Goal: `fugaro.exe --version` runs on Windows, `fugaro config list` reads the
 file the user's other tools would read, and `fugaro doctor` sees the ADC the
 user actually has.*
 
@@ -224,6 +248,48 @@ object, `windows.CreateJobObject` + `AssignProcessToJobObject` through
 `golang.org/x/sys/windows`) is **not** in this task and is not in this plan
 until **U9** says the direct-child kill is not enough. Commit:
 `procgroup: a process group where there is one, the direct child where there is not`.
+
+**T1.6 — the six other `O_NOFOLLOW` files (F1's construct, C1's residue).**
+Files: `internal/recipe/repofile.go`, `internal/cache/archive.go`,
+`internal/cache/key.go`, `internal/runner/followup.go`,
+`internal/runner/session.go`, `internal/cli/config_init.go` (one site each,
+nine of C1's fourteen between this task and T1.7). Red step: `[cross]` run
+after T1.1 and T1.2 — the report still names non-test failures, and this task's
+list is what stays; or, per file, `GOOS=windows GOARCH=amd64 CGO_ENABLED=0
+go build -gcflags=-e <pkg>`, which fails with `undefined:
+syscall.O_NOFOLLOW`/`O_NONBLOCK` today. Verification: `[cross]` green, then
+`go test ./internal/recipe ./internal/cache ./internal/runner ./internal/cli`,
+then `[pins]`. Tier A. Depends on: T1.1, T1.2 (each package's own errors are
+visible only once nothing it imports fails first). **This is why Slice 1 is
+nine packages and not two**: none of these six files appears in a one-command
+`go build ./...`, because `internal/recipe` fails before any of them is
+reached. The fix is T1.1's repeated — the `openfile_unix.go`/`openfile_other.go`
+pair, per package, with the loss stated in each `other` half; two of the six
+packages (`runner`, `cache`) already have such a pair for another purpose
+(`internal/runner/openfile_other.go`'s `oNoFollow` is the precedent to reuse,
+and `internal/cache/archive.go` and `key.go` share one package, so they share
+one pair). `internal/cli/config_init.go` is the one that is not `O_NOFOLLOW` on
+a *read*: it is a create with `O_EXCL`, and the `other` half's comment must say
+that `O_EXCL` alone is what refuses a path something is already at. Commit:
+`the rest of the O_NOFOLLOW sites, one pair per package`.
+
+**T1.7 — `internal/image/selftest.go`'s `syscall.Stat_t` (C1's fourteenth
+site).** Files: `internal/image/selftest.go`, plus an
+`internal/image/ownership_unix.go`/`ownership_other.go` pair for
+`dirWritableBy`. Red step: `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build
+-gcflags=-e ./internal/image` — three `undefined: syscall.Stat_t`
+(`checkManagedSettingsDir`, `dirWritableBy`, `checkMiseCacheDir`).
+Verification: that command passes, then `[cross]` green, then
+`go test ./internal/image`. Tier A to review; the checks are image-build
+assertions that only run in a container. Depends on: T1.1, T1.2. This one is
+not a flag: `syscall.Stat_t` is how the check reads a directory's owner and
+group, which Windows does not have. The `other` half has to decide what a
+nonzero uid means there, and the honest answer for a Windows binary is that the
+owner check is **skipped with its reason stated** (`fi.Sys()` has no owner on
+Windows; the image selftest only ever runs inside a Linux container anyway) —
+which makes this the one site of C1's fourteen whose Windows answer is a
+behaviour change rather than a flag swap, and the reason it is a task of its
+own. Commit: `image: the ownership checks only where there is an owner`.
 
 **T1.3 — the config directory (F5, D8).** Files:
 `internal/localcfg/localcfg.go` (`configDir`), `internal/localcfg/checkcache.go`
@@ -271,7 +337,11 @@ index states against the documents' own counts, so a headline figure tightened
 without the document that carries it fails it — tighten the figure in the guard
 first and watch it fail. This is a documentation task whose subject is the
 first cut's own numbers. Verification: `[cross]` must be clean from a Linux
-checkout, and the commit message records the command and its output. Tier A. Depends on: T1.1–T1.4. **Do not add
+checkout, and **the binary itself must exist** —
+`GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/fugaro.exe ./cmd/fugaro`
+must exit 0 and leave the file — because that, and not `[cross]`, is the claim
+the headline makes; the commit message records both commands and their output.
+Tier A. Depends on: T1.1–T1.4, T1.6, T1.7. **Do not add
 `GOOS=windows` to `fugaro.yaml`'s `commands.build` here**: that would make
 every contributor's `fugaro verify build` cross-compile, which is a different
 decision (it is Slice 6's, and it costs every Linux build a Windows build's
@@ -348,10 +418,10 @@ Linux (**U12**). Commit: `cli: refuse a project name Windows reserves, and repor
 
 ---
 
-### Slice 3 — The test suite's four Windows classes
+### Slice 3 — The test suite's five Windows classes
 
 *Goal: a Windows checkout's `go test ./internal/cli` fails for reasons that
-are about the change under test, and not for four platform reasons that drown
+are about the change under test, and not for five platform reasons that drown
 it out.*
 
 **T3.1 — `.gitattributes` (F20).** Files: `.gitattributes` (new). Red step:
@@ -407,16 +477,25 @@ the four call sites' port a no-op — the same reason `internal/cli/tempxdg.go`
 and the `blobx` pair are shaped the way they are (C2). Commit:
 `testutil: a fake command that a Windows PATH can find`.
 
-**T3.5 — the `syscall` tests outside `internal/cli` (F36).** Files:
-`internal/budget/rules/harness_test.go`, `internal/gitops/gitops_test.go`,
-`internal/procgroup/procgroup_test.go`, `internal/testutil/git_test.go`,
-`scripts/release_test.go`, `internal/updatecheck/updatecheck_test.go`.
-Red step: `[cross]` — today these are three of the five vet failures, and
-each is a `syscall.Kill`/`Setpgid`/`Mkfifo` that becomes a `unix`-gated test
-file (a `_unix_test.go` rename or a `//go:build unix` line) with the reason
-stated. Verification: `[cross]` clean, then `[pins]`, then the five packages'
-own tests on Linux. Tier A. Depends on: T1.2 (the `procgroup` split is what
-`procgroup_test.go` and `release_test.go` are testing). Commit:
+**T3.5 — the `syscall` tests (F36's fifth class).** Files, measured with the
+test half of `[cross]`'s loop and not guessed: `internal/image/selftest_test.go`
+(2), `internal/procgroup/procgroup_test.go` (1), `internal/testutil/git_test.go`
+(2), `scripts/release_test.go` (4), `internal/updatecheck/updatecheck_test.go`
+(1), `internal/gitops/gitops_test.go` (2), `internal/config/readfile_test.go`
+(2), `internal/cache/keyfile_test.go` (2), `internal/runner/keyfile_test.go`
+(1), `internal/watch/acks_test.go` (2) — 19 of F36's 24 sites in ten files; the
+other five sites are in `internal/cli`'s four files and belong to T3.2–T3.4. Red step: the test half of
+`[cross]` — `while read -r p; do GOOS=windows GOARCH=amd64 CGO_ENABLED=0
+GOFLAGS=-p=2 go test -c -o /dev/null -gcflags=-e "$p"; done < pkgs.txt` — which
+names every site below today, because the earlier form of this list came from
+`go vet ./...` and named only the first failure per package. Each site becomes a
+`unix`-gated test file (a `_unix_test.go` rename or a `//go:build unix` line)
+with the reason stated, and **not** a skip that hides the assertion on Windows
+where the assertion is about Windows. Verification: the same loop green, then
+`[pins]`, then the ten packages' own tests on Linux. Tier A. Depends on: T1.2
+(the `procgroup` split is what `procgroup_test.go` and `release_test.go` are
+testing) and T1.6/T1.7 (their packages' test files cannot compile until the
+non-test half does). Commit:
 `tests: the process-group and fifo tests, where those exist`.
 
 ---
@@ -555,7 +634,7 @@ named a test that does not exist), so a
 new row without its name in the right places fails them. Verification:
 `[pins]`, plus a YAML parse of the staged file. Tier A to write, **Tier C to
 install** (`.github/workflows/` is owner-only). Depends on: Slice 3 (a job
-that runs before the four known classes are fixed only ever fails) and **D5**
+that runs before the five known classes are fixed only ever fails) and **D5**
 (advisory or gating). Content: `runs-on: windows-latest`, `actions/setup-go`
 pinned to the toolchain `mise.toml` and `go.mod` name, `go build ./...`,
 `go vet ./...`, and the suite **minus** the packages `fugaro.yaml` already
@@ -599,38 +678,41 @@ moved earlier than the evidence.
 | 5 | T1.2 procgroup split | — | 0 |
 | 6 | T1.3 config directories | — | 0 |
 | 7 | T1.4 ADC path | T1.3 | 1 |
-| 8 | T1.5 first-cut guard | T1.1–T1.4 | 2 |
-| 9 | T2.1 doctor's two tools | T1.4 | 2 |
-| 10 | T2.2 platform prose | — | 0 |
-| 11 | T2.3 ANSI gate | T1.1, T1.2 | 1 |
-| 12 | T2.4 reserved names, long path | T2.1 | 3 |
-| 13 | T3.1 `.gitattributes` | — | 0 |
-| 14 | T3.2 mode assertions | T3.1 | 1 |
-| 15 | T3.3 symlink helper | T3.1 | 1 |
-| 16 | T3.4 fake-command harness | T3.1, T3.3 | 2 |
-| 17 | T3.5 syscall tests | T1.2 | 1 |
-| 18 | T4.1 verify's shell | T1.2 | 2 |
-| 19 | T4.2 hidden prompt | T2.3 | 2 |
-| 20 | T4.3 wizard and init | T1.3, T1.4, T3.2, T3.3 | 3 |
-| 21 | T4.4 run and attach | T4.1–T4.3 | 4 |
-| 22 | T5.1 windows in the build | Slice 1 | 2 |
-| 23 | T5.2 three-file platform claim | T5.1 | 3 |
-| 24 | T5.3 Scoop | T5.1 | 3 |
-| 25 | T5.4 unblock text | T5.2 | 4 |
-| 26 | T5.5 Authenticode | D4, T5.1 | 3 |
-| 27 | T6.1 staged Windows job | Slice 3, D5 | 3 |
-| 28 | T6.2 the flip | T6.1, U9 | 5 |
-| 29 | T6.3 the status line | all | 6 |
+| 8 | T1.5 first-cut guard | T1.1–T1.4, T1.6, T1.7 | 2 |
+| 9 | T1.6 the six other `O_NOFOLLOW` files | T1.1, T1.2 | 1 |
+| 10 | T1.7 image's `Stat_t` | T1.1, T1.2 | 1 |
+| 11 | T2.1 doctor's two tools | T1.4 | 2 |
+| 12 | T2.2 platform prose | — | 0 |
+| 13 | T2.3 ANSI gate | T1.1, T1.2 | 1 |
+| 14 | T2.4 reserved names, long path | T2.1 | 3 |
+| 15 | T3.1 `.gitattributes` | — | 0 |
+| 16 | T3.2 mode assertions | T3.1 | 1 |
+| 17 | T3.3 symlink helper | T3.1 | 1 |
+| 18 | T3.4 fake-command harness | T3.1, T3.3 | 2 |
+| 19 | T3.5 syscall tests | T1.2, T1.6, T1.7 | 1 |
+| 20 | T4.1 verify's shell | T1.2 | 2 |
+| 21 | T4.2 hidden prompt | T2.3 | 2 |
+| 22 | T4.3 wizard and init | T1.3, T1.4, T3.2, T3.3 | 3 |
+| 23 | T4.4 run and attach | T4.1–T4.3 | 4 |
+| 24 | T5.1 windows in the build | Slice 1 | 2 |
+| 25 | T5.2 three-file platform claim | T5.1 | 3 |
+| 26 | T5.3 Scoop | T5.1 | 3 |
+| 27 | T5.4 unblock text | T5.2 | 4 |
+| 28 | T5.5 Authenticode | D4, T5.1 | 3 |
+| 29 | T6.1 staged Windows job | Slice 3, D5 | 3 |
+| 30 | T6.2 the flip | T6.1, U9 | 5 |
+| 31 | T6.3 the status line | all | 6 |
 
 **Level 0 is five tasks and they are genuinely independent**: T0.1 (a
-document), T1.1 and T1.2 (the two compiler failures, two different packages),
-T1.3 (the config directories) and T2.2 (the prose). **All five are Tier A** and
-can be read and merged without a Windows machine; T2.2 is the one whose
-*acceptance* is Tier B (a printed command is only proven by pasting it into a
-real shell), which is why §5 counts it as B.
+document), T1.1 and T1.2 (two of the nine packages C1 counts, in two different
+packages), T1.3 (the config directories) and T2.2 (the prose). **All five are
+Tier A** and can be read and merged without a Windows machine; T2.2 is the one
+whose *acceptance* is Tier B (a printed command is only proven by pasting it
+into a real shell), which is why §5 counts it as B.
 
-**The critical path is T1.1 → T3.x → T4.3 → T4.4**, and the reason is worth
-stating: nothing runs on Windows until T1.1 and T1.2 are both in, the four
+**The critical path is T1.1 → T1.6/T1.7 → T3.x → T4.3 → T4.4**, and the reason
+is worth stating: nothing runs on Windows until all of Slice 1's build tasks
+are in — `fugaro.exe` does not exist after T1.1 and T1.2 alone (C1) — the five
 test classes have to be cleared before a Windows run says anything, and the
 wizard is the last thing that depends on all of it. Slice 5 and Slice 6 hang
 off the side — T5.1 needs only Slice 1, so **a release could publish a Windows
@@ -665,29 +747,29 @@ rather than "who can read the diff".
 | Slice | Tasks | Tier A | Tier B | Tier C |
 |---|---|---|---|---|
 | 0 — say what works today | 3 | 3 | — | — |
-| 1 — compile, start, right files | 5 | 5 | — | — |
+| 1 — compile, start, right files | 7 | 7 | — | — |
 | 2 — read-only tells the truth | 4 | 2 | 2 | — |
-| 3 — the test suite's four classes | 5 | 3 | 2 | — |
+| 3 — the test suite's five classes | 5 | 3 | 2 | — |
 | 4 — setup and launch | 4 | — | 3 | 1 (owner-run) |
 | 5 — release and distribution | 5 | 3 | — | 2 |
 | 6 — CI and the gate | 3 | 1 | — | 2 |
-| **Total** | **29** | **17** | **7** | **5** |
+| **Total** | **31** | **19** | **7** | **5** |
 
 The split tasks, named so the count can be checked: Slice 2's T2.2 (Tier B to
 accept), Slice 3's T3.1 and T3.4, Slice 4's T4.1 — plus T4.4, which is Tier B
 *and* owner-run, and is counted once, as C.
 
-**Seventeen tasks need no Windows machine to accept.** Seven need a Windows
+**Nineteen tasks need no Windows machine to accept.** Seven need a Windows
 machine or a runner. Five are owner-only — T4.4, T5.3, T5.5, T6.1 and T6.2 —
 and three of those five are decided purely by D3, D4 and D5, which is the
-honest summary of this plan: the code is seventeen tasks, and the
+honest summary of this plan: the code is nineteen tasks, and the
 *distribution* questions are where the owner's time actually goes.
 
-**The smallest useful answer is 8 tasks** (Slice 0 and Slice 1) and it makes
-`fugaro.exe --version` work. **The smallest *defensible* answer is 24** — every
-slice except the release: Slices 0–4 (21 tasks) plus Slice 6's Windows job (3
+**The smallest useful answer is 10 tasks** (Slice 0 and Slice 1) and it makes
+`fugaro.exe --version` work. **The smallest *defensible* answer is 26** — every
+slice except the release: Slices 0–4 (23 tasks) plus Slice 6's Windows job (3
 tasks), which is a native binary that builds, starts, reads the right files and
-has a CI job watching it, with nothing published. **The whole thing is 29.**
+has a CI job watching it, with nothing published. **The whole thing is 31.**
 
 ---
 

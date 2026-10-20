@@ -33,13 +33,35 @@ is a check someone has to run — see §6.
 **C1 — "the CLI has no Windows build" is true of the release, not of the
 tree.** The sentence in [spec.md](spec.md) is right about what ships: no
 Windows archive is published and no Windows platform is supported. It is not
-right about the source. Cross-compiling the whole module for Windows today:
+right about the source — but a single `go build ./...` is not the census it
+looks like. The Go toolchain stops at the first package that fails, and every
+package that depends on it is reported with the *dependency's* error: its own
+errors are never compiled at all. Cross-compiling the whole module in one
+command therefore names one failing package, not the set:
 
 ```sh
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./...
 ```
 
-fails in **exactly two packages**, with five errors:
+The honest method is **one package at a time**, with the compiler's own
+`-gcflags=-e` so a package reports every error it has rather than the first,
+and the loop repeated as each round of fixes lands — because only a
+**non-test** failure masks anything (test files are never imported by another
+package, so a broken test file hides nothing but itself):
+
+```sh
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-p=2 go list ./... > pkgs.txt
+while read -r p; do
+  echo "=== $p"
+  GOOS=windows GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-p=2 go build -gcflags=-e "$p"
+done < pkgs.txt
+```
+
+Run that way on `54cb02a8`'s tree, the Windows build needs **14 fixes in nine
+non-test files**, not two — and the list below is the *last* round's, which is
+what makes it the true one: each file's errors are visible only once its
+dependencies compile, and by the end of the iteration every non-test package
+in the module builds for windows/amd64.
 
 ```
 internal/pluginwire/fsx.go:71:50: undefined: syscall.O_NOFOLLOW
@@ -47,22 +69,40 @@ internal/procgroup/procgroup.go:57:41: unknown field Setpgid in struct literal o
 internal/procgroup/procgroup.go:126:15: undefined: syscall.Kill
 internal/procgroup/procgroup.go:130:16: undefined: syscall.Kill
 internal/procgroup/procgroup.go:135:14: undefined: syscall.Kill
+internal/recipe/repofile.go:42:90: undefined: syscall.O_NOFOLLOW
+internal/image/selftest.go:564:31: undefined: syscall.Stat_t
+internal/image/selftest.go:598:48: undefined: syscall.Stat_t
+internal/image/selftest.go:639:31: undefined: syscall.Stat_t
+internal/cache/archive.go:242:51: undefined: syscall.O_NOFOLLOW
+internal/cache/key.go:121:50: undefined: syscall.O_NOFOLLOW
+internal/runner/followup.go:390:87: undefined: syscall.O_NOFOLLOW
+internal/runner/session.go:150:52: undefined: syscall.O_NOFOLLOW
+internal/cli/config_init.go:62:72: undefined: syscall.O_NOFOLLOW
 ```
 
-The same command with `go vet` (which also type-checks every test file) adds
-**three more packages**, all of them test-only:
+Thirteen of the fourteen are the same two flags (`O_NOFOLLOW`, and
+`O_NONBLOCK` beside it) that `internal/pluginwire` already carries; the
+fourteenth is `image/selftest.go`'s `syscall.Stat_t`. The circle that produced
+the list matters for the plan: `pluginwire` fails first, then `procgroup`, and
+the other seven files become visible only as the ones before them compile.
+Seven of the nine — `recipe/repofile.go`, `image/selftest.go`, `cache`'s two,
+`runner`'s two and `cli/config_init.go` — are in `cmd/fugaro`'s own dependency
+set, so **after T1.1 and T1.2 the binary still does not build**. The first cut
+is a port of nine packages, not two.
 
-```
-internal/testutil/git_test.go:41:16: undefined: syscall.Kill
-internal/updatecheck/updatecheck_test.go:175:20: undefined: syscall.Mkfifo
-scripts/release_test.go:745:41: unknown field Setpgid in struct literal of type syscall.SysProcAttr
-```
-
-**Consequence.** The first, smallest, most valuable cut of this work is a
-port, not a rewrite: unblock two packages, then measure behaviour. It also
-means the estimate in [implementation-plan.md](implementation-plan.md) is
-*smaller* than the brief's framing implies, and that the plan must say why the
-work is still substantial despite the tree compiling — see C2 and §3.
+**Consequence.** The first, smallest, most valuable cut of this work is still a
+*port* rather than a rewrite — nine files, one construct repeated, no new
+design — but it is **nine packages and fourteen sites**, and the first version
+of this document under-stated the count by a factor of seven because it read
+`go build ./...` as a census. The same command's `go vet` form (which also
+type-checks every test file) is wrong in the same way and for the same reason;
+F36 carries the test files' own per-package census. Everything in this folder
+that came from the one-command reading has been re-derived with the loop above:
+§2's headline row, F36's table, and
+[implementation-plan.md](implementation-plan.md)'s Slice 1, its task count and
+its effort arithmetic. The plan must still say why the work is substantial
+despite the tree compiling — see C2 and §3 — but the reason is no longer "the
+tree nearly compiles".
 
 **C2 — the tree is already partly Windows-aware, on purpose.** Five
 `_unix.go`/`_other.go` pairs sit behind `//go:build unix` and `//go:build
@@ -148,7 +188,7 @@ finding that answers it.
 
 | Subject the brief named | The tree | Finding |
 |---|---|---|
-| syscall / `x/sys/unix` in the CLI's packages | Two non-test packages fail to build; `x/sys/unix` appears in **four test files and in no non-test file at all**, and all four are already invisible to a Windows build (two gated `//go:build darwin \|\| linux`, two `_linux`/`_darwin`-suffixed) | F1, F2, F14 |
+| syscall / `x/sys/unix` in the CLI's packages | **Nine non-test packages fail to build** — 14 sites, mostly the one `O_NOFOLLOW`/`O_NONBLOCK` pair (C1); `x/sys/unix` appears in **four test files and in no non-test file at all**, and all four are already invisible to a Windows build (two gated `//go:build darwin \|\| linux`, two `_linux`/`_darwin`-suffixed) | F1, F2, F14 |
 | `os.Chmod`, `0600`/`0700` and the checks that read them | Modes are *written*, never *checked*; on Windows a file is reported `0444` or `0666` whatever was passed | F8, F9 |
 | symlinks, `EvalSymlinks`, `Lstat` guards | The guards exist and degrade as the `_other.go` files already say; but `os.Symlink` is a **test** dependency, and Windows needs developer mode for it | F10, F11 |
 | `os.Rename` atomicity | `os.Rename` on Windows is `MoveFileEx(…, MOVEFILE_REPLACE_EXISTING)`, so the pattern holds — with two real limits | F3 |
@@ -169,7 +209,7 @@ finding that answers it.
 | the version ldflags | Platform-independent | F32 |
 | `go install` | Works on Windows unchanged | Exists (§3) |
 | Authenticode, SmartScreen | Nothing signs Windows binaries; there is no Windows release step at all | F33 |
-| the tests | `internal/cli`'s 224 test files type-check for windows/amd64 today; what fails is behaviour, and it is enumerable | F35, F36, F37, F38 |
+| the tests | `internal/cli`'s 225 test files do **not** all type-check for windows/amd64 — four of them fail, and so do seven other packages' test files (F36); what is left after those five classes is behaviour, and it is enumerable | F35, F36, F37, F38 |
 | docs pin tests that name paths | The docs guards are text and file pins; none of them reads a platform | C3 |
 | external tools (`gcloud`, Terraform, Git, Docker, Claude Code) | `fugaro doctor` checks Terraform, Docker and cosign; it has **no git check and no gcloud-binary check at all** | F26, F27, F28 |
 | the plugin and its skills | Skills only — there is no `hooks/` and no shell hook anywhere in `plugin/` | F34 |
@@ -189,11 +229,13 @@ records what it guarantees. **Gap** means something is missing.
 SECURITY.md, a design document). **Open** means the tree cannot answer it and
 the answer is a decision.
 
-### The two packages that do not build
+### The packages that do not build
 
 **F1 — `internal/pluginwire/fsx.go`, `readFile`: `os.OpenFile(path,
 os.O_RDONLY|syscall.O_NOFOLLOW, 0)`.** Class: **Wrong**. This one expression
-is why the CLI does not build for Windows. `internal/pluginwire` is imported
+is one of the fourteen expressions that stop the CLI building for Windows
+(C1 gives the other thirteen and the command that finds them).
+`internal/pluginwire` is imported
 by roughly fifty files under `internal/cli/` (`go list -deps ./cmd/fugaro`
 reaches it through the config readers, `doctor`, `init`, `secrets`, `upgrade`,
 `validate` and more), so it is not a leaf: it is the package every config
@@ -241,9 +283,20 @@ options, and D7 asks the owner to pick. Note also that
 nothing in the schema is Unix-specific today.
 
 **F4 — there is no file locking in the CLI.** Class: **Exists**. The brief
-asked about it, and the honest answer is that there is nothing to port:
-`rg -n 'Flock|LOCK_EX' --glob '!*_test.go'` over the module finds one hit,
-`internal/infra/statebucket.go`'s comment about a Terraform `*.tflock` object.
+asked about it, and the honest answer is that there is nothing to port. The
+construct to grep for is not the one the brief names, though: `rg -n
+'Flock|LOCK_EX' internal/ cmd/ scripts/` returns **nothing at all**, and the
+lock the tree does name is Terraform's, spelled lowercase —
+
+```sh
+rg -n -i 'flock' --glob '!*_test.go' internal/ cmd/ scripts/   # one hit
+```
+
+— which is `internal/infra/statebucket.go`'s comment about a Terraform
+`*.tflock` object: a Terraform state lock, not a `flock` call. (The earlier
+form of this command, `rg -n 'Flock|LOCK_EX' --glob '!*_test.go'` over the whole
+module, matched only this document's own quoting of it, which is why the
+command above spells the construct in lower case and is scoped to the source.)
 `internal/lock` is the names of things, not a lock — it holds the notion of a
 run lock, not a `flock`. The real cross-process mutual exclusion the CLI
 relies on is `O_EXCL` (`internal/pluginwire/fsx.go`'s `replaceFile`,
@@ -446,13 +499,24 @@ times and `term.GetState` once (`internal/cli/initsecrets.go`,
 (`internal/cli/secrets.go`). `x/term` implements all five on Windows through
 the console API. There is **no `/dev/tty`** anywhere
 in the module, and the pty dependency (`github.com/creack/pty`, in `go.mod`
-marked "tests only: the hidden-prompt test needs a pseudo-terminal") is used
-by three test files: `internal/cli/secrets_pty_test.go`,
-`internal/cli/initsecrets_pty_test.go`, `internal/cli/docs_console_boundary_test.go`
-(and `internal/e2e/init_test.go`). `creack/pty` has no Windows support.
-Cost: the pty tests are gated `//go:build darwin || linux` already — the
-pattern is in the tree, and the plan extends it rather than inventing
-one.
+marked "tests only: the hidden-prompt test needs a pseudo-terminal") is
+*opened* by **two** test files — `internal/cli/secrets_pty_test.go`'s `newTTY`
+fixture and `internal/e2e/init_test.go`'s `fugaroInitTyped`, both calling
+`pty.Open()` — and both are worth naming precisely, because three files whose
+text mentions the package do something else with it:
+`internal/cli/docs_console_boundary_test.go` only pins `go.mod`'s dependency
+line as a string, and the four other `internal/cli` test files that use a pty
+(`initsecrets_pty_test.go`, `initsecrets_review_test.go`, `initsecrets_gate_test.go`
+and `init_gate_pty_test.go`) consume that one `newTTY` fixture rather than
+opening one of their own. `creack/pty` does **not** fail to compile on Windows —
+it ships `pty_unsupported.go` for every platform it has no code for, and
+`pty.Open()` returns `ErrUnsupported` at run time — so the pty tests are a
+*run-time skip* rather than a build failure, and both call sites already write
+it that way (`t.Skipf("no pty: %v", err)`). Cost: the five `internal/cli` pty
+files are gated `//go:build darwin || linux` already — the pattern is in the
+tree, and the plan extends it rather than inventing one — while
+`internal/e2e`'s call site compiles on Windows and takes the skip without a
+gate.
 
 **F15 — signals: one call site, and the two signals Windows does not have.**
 Class: **Exists**. `cmd/fugaro/main.go`'s `signalContext` is
@@ -838,27 +902,75 @@ and one guard test; a change that touches the matrix and not the prose is
 caught, which is the point.
 
 **F36 — the test suite's Windows census.** Class: **Gap**. The counting
-commands and their answers, all run at `54cb02a8`:
+commands and their answers. The two per-package rows are one package at a time
+with `-gcflags=-e`, the way C1 states and for the reason C1 states — a single
+`go build ./...` or `go vet ./...` reports one failing package and hides every
+package behind it — and their answers are the ones after the 14 non-test fixes
+of C1, because until those compile no test file of a package that imports the
+broken one is compiled either:
 
 | What | Command | Answer |
 |---|---|---|
-| packages that fail `go build` for windows | `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./...` | 2 |
-| packages that fail `go vet` (test files included) | `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./...` | 5 |
-| test files in the module | `find . -name '*_test.go' \| wc -l` | 680 |
-| test files in `internal/cli` | `ls internal/cli/*_test.go \| wc -l` | 224 |
-| `internal/cli` test files that fail `go vet` for windows | — | **0** |
+| packages whose **non-test** files fail `go build` for windows | per-package loop, C1 | **9**, 14 sites |
+| packages whose **test** files fail to compile for windows | same loop with `go test -c -o /dev/null -gcflags=-e "$p"` | **11**, 24 sites in 14 files |
+| test files in the module | `find . -name '*_test.go' \| wc -l` | 681 (680 at `54cb02a8`: this folder's own guard is the 681st) |
+| test files in `internal/cli` | `ls internal/cli/*_test.go \| wc -l` | 225 (224 at `54cb02a8`) |
+| `internal/cli` test files that fail to compile for windows | the same per-package loop | **4 files, 5 sites** — not zero |
 | exact-mode assertions | `grep -rn --include='*_test.go' -E 'Perm\(\) *(==\|!=\|&) *0o?[0-7]{3}' internal/ cmd/ scripts/ \| wc -l` | 28 (18 files) |
 | `os.Symlink` in `internal/cli` tests | `grep -rn --include='*_test.go' 'os\.Symlink' internal/cli \| wc -l` | 19 (11 files) |
 | `syscall.` in `internal/cli` tests | `grep -rn --include='*_test.go' 'syscall\.' internal/cli \| wc -l` | 24 (9 files) |
 | `#!/bin/sh` bodies in `internal/cli` tests | `grep -rn --include='*_test.go' '/bin/sh' internal/cli \| wc -l` | 5 (4 files) |
 | test files behind a `go:build` tag, module-wide | `grep -rl 'go:build' --include='*_test.go' internal/ cmd/ \| wc -l` | 24 |
 
-**The important number is the sixth row's neighbour: zero.** `internal/cli`'s
-224 test files — the CLI's whole suite — type-check for windows/amd64 at
-`54cb02a8`. What fails is behaviour, and the failures are the four classes in
-F9, F11, F12 and F20. Cost: this is why the plan can promise that main stays
-green on Linux and macOS while the port proceeds, and why it can be honest
-that the Windows job will be red for a while.
+The `syscall.` row is the one that predicted this: 24 hits in `internal/cli`'s
+tests, of which **five, in four files, do not compile for windows**. The other
+nineteen are a mix that a grep cannot separate and a per-package compile can:
+some are in files a build tag already excludes (`initsecrets_review_test.go`,
+`init_project_unix_test.go`), and the rest are constructs Windows really does
+have — `syscall.WaitStatus`, `syscall.ENOTDIR`, `syscall.SIGTERM` — or, in one
+case, a documentation pin quoting the entry point's own source text. The
+failures are these:
+
+```
+internal/cli/config_cmd_test.go:573:17: undefined: syscall.Umask
+internal/cli/config_cmd_test.go:574:16: undefined: syscall.Umask
+internal/cli/layer_resolve_test.go:658:20: undefined: syscall.Mkfifo
+internal/cli/readyaml_test.go:35:20: undefined: syscall.Mkfifo
+internal/cli/recipes_test.go:535:20: undefined: syscall.Mkfifo
+internal/config/readfile_test.go:31:20: undefined: syscall.Mkfifo
+internal/config/readfile_test.go:91:20: undefined: syscall.Mkfifo
+internal/gitops/gitops_test.go:555:16: undefined: syscall.Kill
+internal/gitops/gitops_test.go:574:20: undefined: syscall.Kill
+internal/cache/keyfile_test.go:19:62: undefined: syscall.Mkfifo
+internal/cache/keyfile_test.go:57:18: undefined: syscall.Mkfifo
+internal/image/selftest_test.go:557:27: undefined: syscall.Stat_t
+internal/image/selftest_test.go:819:31: undefined: syscall.Stat_t
+internal/procgroup/procgroup_test.go:80:21: undefined: syscall.Kill
+internal/runner/keyfile_test.go:75:20: undefined: syscall.Mkfifo
+internal/testutil/git_test.go:41:16: undefined: syscall.Kill
+internal/testutil/git_test.go:60:20: undefined: syscall.Kill
+internal/updatecheck/updatecheck_test.go:175:20: undefined: syscall.Mkfifo
+internal/watch/acks_test.go:129:17: undefined: syscall.Umask
+internal/watch/acks_test.go:130:16: undefined: syscall.Umask
+scripts/release_test.go:745:41: unknown field Setpgid in struct literal of type syscall.SysProcAttr
+scripts/release_test.go:759:16: undefined: syscall.Kill
+scripts/release_test.go:774:21: undefined: syscall.Kill
+scripts/release_test.go:792:15: undefined: syscall.Kill
+```
+
+**The `syscall` tests are five classes, not four.** The earlier version of this
+row said `internal/cli`'s test files all type-check, which was an artifact of
+the toolchain short-circuiting the way C1 describes, and the plan's Slice 3 was
+sized from it. The honest set is a fifth class beside F9's modes, F11's
+symlinks, F12's fake commands and F20's CRLF: the fourteen test files above (the
+last one, `scripts/release_test.go`, outside the other four classes' packages
+entirely), each a `syscall.Kill`, `Umask`, `Mkfifo`, `Stat_t` or `Setpgid` that
+needs a `unix` gate or a non-Unix stand-in and the reason stated. Cost: the plan
+gains a task (T3.5, resized to this list) and one `internal/cli` file's worth of
+work moves out of T3.2–T3.4; what does *not* change is the promise that main
+stays green on Linux and macOS while the port proceeds, and the honesty that the
+Windows job will be red for a while — there is more that is red than this
+document first said.
 
 **F37 — the copy-count caveat.** Class: **Rule**. Every count above is
 volatile state: a committed test changes it. The commands are recorded with the figures so that
@@ -917,7 +1029,7 @@ does — and the runner is the one thing the brief puts out of scope. A Windows
 build would ship this command, and it should stay hidden and stay unused: the
 plan says so and adds no work for it. `internal/runner` is the only package
 in the CLI binary's dependency set that is explicitly Linux-and-only-Linux,
-and F1/F2 are the two packages that fail to compile *around* it.
+and the packages of C1 are the ones that fail to compile *around* it.
 
 **F42 — `fugaro image build --local` needs Docker and runs on Windows through
 Docker Desktop.** Class: **Open**. `internal/image/local.go` execs `docker
@@ -966,8 +1078,8 @@ document a figure without its command is an unreproducible claim.
 | `getenv("HOME")` | 4 | 4 | as above |
 | `os.TempDir` | 2 | 8 | as above |
 | `os.UserHomeDir` | 7 | 7 | as above |
-| `golang.org/x/term` | 12 | 12 | as above |
-| `golang.org/x/sys/unix` | **0** | 7 (four test files: `internal/cli/initsecrets_pty_test.go` and `internal/cli/secrets_pty_test.go`, both gated by a build tag that names darwin and linux, and `internal/cli/termios_linux_test.go` and `internal/cli/termios_darwin_test.go`, both filename-gated) | as above |
+| `golang.org/x/term` | 12 | 12 | `grep -rn --include='*.go' '\bterm\.[A-Z]' $PKGS` — the *calls*; `grep -rn --include='*.go' 'golang.org/x/term' $PKGS` answers 6 and counts the import lines |
+| `golang.org/x/sys/unix` | **0** | 7 (four test files: `internal/cli/initsecrets_pty_test.go` and `internal/cli/secrets_pty_test.go`, both gated by a build tag that names darwin and linux, and `internal/cli/termios_linux_test.go` and `internal/cli/termios_darwin_test.go`, both filename-gated) | `grep -rn --include='*.go' '\bunix\.[A-Z]' $PKGS` — the *calls*; `grep -rn --include='*.go' 'golang.org/x/sys/unix' $PKGS` answers 4 and counts the four files that import it |
 | `os.DevNull` | 2 | 7 | as above |
 | `"/dev/` | **0** | 10 | as above |
 | `shellword.Quote(` | 15 | 17 | as above |
@@ -1282,8 +1394,8 @@ not cover.
 
 **Recommend: Slice 0 and Slice 1 only, reviewed together, before anything
 touches `.goreleaser.yaml`.** The reason: Slice 0 is documentation and the
-WSL route (D1) and changes no code; Slice 1 is the two-package build fix (F1,
-F2) plus the config-directory fix (F5) and the ADC-path fix (F29), which
+WSL route (D1) and changes no code; Slice 1 is the non-test build fix (F1,
+F2 and the seven files of C1 that follow them) plus the config-directory fix (F5) and the ADC-path fix (F29), which
 together are the whole difference between "does not compile" and "starts and
 prints its version". Both are verifiable from a Linux machine (the
 cross-compile command in C1 is the verification for Slice 1's first half), so
@@ -1335,14 +1447,29 @@ file and is cleared by the *user* unblocking the file, not by the installer.
 
 **O6 — the D-number namespace.** This document's D1–D16 and
 `docs/setup-wizard/reconciliation.md`'s D1–D12 are numerically the same range,
-distinguished only by their folder. That is the convention the two existing
-folders have followed, and `docs/credentials-service` did not: it took a global
-block (D130–D159). The cost of the local convention is that two open decisions
-called "D4" exist in the repository at once, which is a real ambiguity for
-anyone reading a citation that does not name its folder. Recommendation: keep
-the local namespace (a citation always names the folder) unless the owner would
-rather have one sequence, in which case this work moves to the next free global
-block and **nothing but the numbers changes**.
+distinguished only by their folder. The register is
+[docs/coordinator/README.md](../coordinator/README.md) §"The numbers this work
+holds", which reads every block from the one table that allocates them
+(`docs/mobile/README.md`'s owner's allocation of 2026-10-16); it records
+`docs/credentials-service` holding a global block (D130–D159), the block
+**D180–D192** as proposed, **D79–D89** as deliberately unused — *"an unused
+number is not a free number"* — and **D193 onward as free**. It also records
+that the two works sitting nearest this one took no D-block at all:
+`docs/in-job-review` answered its owner's questions as **Q1–Q17** with no
+decisions, and the coordinator itself allocated nothing. So there are three
+precedents in the tree, not two: take a **folder-local** block (setup-wizard's
+D1–D12 and this document's D1–D16 do), take a **global** block from the
+register (the credentials service did), or **take no D-number** and put the
+questions to the owner in another series (what the two most recent folders
+did). The cost of the local convention is that two open decisions called "D4"
+exist in the repository at once, which is a real ambiguity for anyone reading a
+citation that does not name its folder — and the cost of the global convention
+is that the number tells a reader nothing about which document to open.
+Recommendation: keep the local namespace (a citation always names the folder)
+unless the owner would rather have one sequence, in which case this work moves
+to the **next free global block, D193 onward**, as the register records it, and
+**nothing but the numbers changes**; the renumbering is mechanical, and this
+document's own D-numbers appear only in this folder's four documents.
 
 ---
 
@@ -1362,7 +1489,7 @@ of any kind. Each is a check for §6 of the plan.
 | U6 | That the ANSI escapes print literally under a console with VT processing off (F16) | `fugaro runs ls` in a fresh `cmd.exe` |
 | U7 | That a stock Git for Windows clone really does rewrite the 12 goldens to CRLF (F20) | clone on Windows with the installer's default and run `go test ./internal/cli -run Golden` |
 | U8 | That an unsigned `fugaro.exe` from a GitHub release shows SmartScreen's interstitial and how it reads (F33) | download the archive on a stock Windows 11 machine |
-| U9 | That the 224 `internal/cli` test files' *behaviour* fails only in the four classes F36 enumerates — i.e. that after the mode, symlink, harness and CRLF work there is no fifth class | run the suite on a `windows-latest` runner and read the whole failure list once |
+| U9 | That the 225 `internal/cli` test files' *behaviour* fails only in the classes F36 enumerates — i.e. that after the mode, symlink, harness, CRLF and `syscall` work there is no sixth class | run the suite on a `windows-latest` runner and read the whole failure list once |
 | U10 | That `fugaro image build --local` works against Docker Desktop (F42) | run it on Windows with Docker Desktop's WSL 2 backend |
 | U11 | That `%APPDATA%\gcloud` is where a Windows gcloud puts ADC, for the version the repository's docs pin | `gcloud info --format='value(config.paths.global_config_dir)'` on Windows |
 | U12 | That a Terraform working directory under `%LOCALAPPDATA%` stays inside the long-path limit for a realistically-named project (F24) | create it on Windows and measure |
