@@ -62,6 +62,33 @@ export const CONSOLE_WINDOW_TITLE = 'Fugaro console'
 export const CONSOLE_WINDOW_SIZE = { width: 1180, height: 780 } as const
 
 /**
+ * CONSOLE_WINDOW_BACKGROUND is the colour the window paints **before the
+ * document does**: `backgroundColor` in the options below, which is what the
+ * platform shows in the frame between the window being created and the
+ * stylesheet's first paint. Without it that frame is the platform's default --
+ * white -- and the console's own ground arrives a moment later as a flash
+ * (design section 4.1).
+ *
+ * **It is `--ground`, and it is a duplicate of it.** The main process cannot
+ * read the stylesheet: `--ground` is declared in
+ * `src/renderer/theme/palette.css` and this module has no way to resolve a
+ * custom property, so the value is written out here and the equality is held by
+ * a test rather than by the compiler -- `test/unit/theme-tokens.test.ts` reads
+ * this literal out of `consoleWindowOptions()` and fails, by name, when the two
+ * drift apart (design sections 4.1 and 6.3).
+ *
+ * **One literal, because one value set ships.** The owner's Q1 ruling of
+ * 2026-10-19 settled that the console is dark-only (design section 3.6), so
+ * there is exactly one ground for this to equal and no `nativeTheme` read and no
+ * `updated` listener comes with it. The two-set design would have needed one
+ * literal per set and the OS to choose between them -- and a single pinned
+ * literal would then have flashed **dark** on a light machine, which is the very
+ * flash this colour exists to remove; with one set that objection is gone, and
+ * a later task that ships a light set has to come back to this constant.
+ */
+export const CONSOLE_WINDOW_BACKGROUND = '#0A0E16'
+
+/**
  * consoleWebPreferences is design section 5.1 rule 1, flag by flag:
  *
  *   - `contextIsolation: true` -- the renderer's world and the preload's world
@@ -141,6 +168,11 @@ export function dashboardWebPreferences(preloadPath: string): WebPreferences {
  * 3.4a): every caller that does not ask for the dashboard's preload gets exactly
  * what this function always built, and the dashboard's caller asks for it through
  * `dashboardWebPreferences`, which is the one place the extra key is added.
+ *
+ * `backgroundColor` is Task 6.5's (design section 4.1) and it is
+ * `CONSOLE_WINDOW_BACKGROUND`, whose comment says why it is a literal this
+ * module cannot resolve from the stylesheet and which test holds it equal to
+ * `--ground`.
  */
 export function consoleWindowOptions(
   compatibility: CliCompatibility | null = null,
@@ -150,6 +182,7 @@ export function consoleWindowOptions(
     width: CONSOLE_WINDOW_SIZE.width,
     height: CONSOLE_WINDOW_SIZE.height,
     show: false,
+    backgroundColor: CONSOLE_WINDOW_BACKGROUND,
     title: consoleWindowTitle(compatibility),
     webPreferences,
   }

@@ -483,7 +483,7 @@ func doctorManagedDeployer() *doctorCheck {
 		return nil
 	}
 	return &doctorCheck{ID: "managed-deployer-disabled", Severity: "info",
-		Problem: "the managed deployer's scoped role is disabled in this release, so its absence is expected: its fmgd- prefix fence is not an IAM condition GCP accepts yet, so the role and its binding are not created, and managed projects (fugaro init --create-project --managed, fugaro managed apply, fugaro restore) are refused until 0.9.0",
+		Problem: "the managed deployer's scoped role is disabled in this release, so its absence is expected: its fmgd- prefix fence is not an IAM condition GCP accepts yet, so the role and its binding are not created, and managed projects (fugaro init --create-project --managed, fugaro managed apply, fugaro restore) are refused until 0.9.5",
 		Fix:     "nothing to do: an installation and a project created without --managed are unaffected (docs/design/managed-projects.md)"}
 }
 

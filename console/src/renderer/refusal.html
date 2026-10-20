@@ -15,6 +15,15 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
     />
+    <!--
+      The one stylesheet this document links (desktop-console plan Task 6.2;
+      design section 5.4), and the refusal document is **included** on purpose:
+      the one page a console below the floor ever shows must not be the unstyled
+      one. It is `./console.css`, from this origin, under the same `style-src
+      'self'` as the dashboard's -- and, like `index.html`, this document gains
+      no inline style, no style element and no `'unsafe-inline'` with it.
+    -->
+    <link rel="stylesheet" href="./console.css" />
     <title>Fugaro console</title>
   </head>
   <body>

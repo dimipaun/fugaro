@@ -1801,14 +1801,18 @@ seam the renderer entry (Task 3.4a) needs to answer the dashboard's
   the documents the handler serves, as the bundler's copies of
   `src/renderer/index.html`, `src/renderer/refusal.html` and
   `src/renderer/installations.html` in `dist/bundle/`; the two bundles,
-  `dist/bundle/console.js` and `dist/bundle/installations.js`; the two preloads
-  a window loads by absolute path, `dist/preload/index.js` and
+  `dist/bundle/console.js` and `dist/bundle/installations.js`; **the served
+  stylesheet, `dist/bundle/console.css`** (Task 6.2 — every document links it,
+  so an app packaged without it opens a window with no style at all); the two
+  preloads a window loads by absolute path, `dist/preload/index.js` and
   `dist/preload/installations.js`; and the compiled main process, shared and
   source modules under `dist/**` except the two Task 4.1 excludes by name.
   `test/unit/build-files.test.ts` reads that list off the tree rather than
   repeating it, so a third document or a third preload is covered when it is
   added, and a file that works here but is missing from the shipped bundle
-  fails a named test instead of shipping.
+  fails a named test instead of shipping — the stylesheet is the one
+  `bundlerOutputs` names by hand, and that is why a `build.files` that dropped
+  it fails by name.
 - **The picker's bundle entry** is the bundler's second entry
   (`pickerBundlePaths` in `tools/bundle-renderer/index.ts`): `npm run build`
   writes `dist/bundle/installations.js` beside `console.js`, each bundle step
@@ -2202,14 +2206,14 @@ rather than moving it: `build.files` is
 ```json
 ["dist/main/**/*.js", "!dist/main/fuses.js", "dist/preload/index.js",
  "dist/preload/installations.js", "dist/shared/**/*.js", "dist/source/**/*.js",
- "!dist/source/fixture.js", "dist/bundle/console.js", "dist/bundle/index.html",
- "dist/bundle/installations.html", "dist/bundle/installations.js",
- "dist/bundle/refusal.html"]
+ "!dist/source/fixture.js", "dist/bundle/console.css", "dist/bundle/console.js",
+ "dist/bundle/index.html", "dist/bundle/installations.html",
+ "dist/bundle/installations.js", "dist/bundle/refusal.html"]
 ```
 
-(as amended when Task 3.4a moved the served root to `dist/bundle/` and Task
-3.4b added the picker's document, script and preload; the paragraph below is
-Task 4.1's record of its own first list)
+(as amended when Task 3.4a moved the served root to `dist/bundle/`, Task 3.4b
+added the picker's document, script and preload, and Task 6.2 added the served
+stylesheet; the paragraph below is Task 4.1's record of its own first list)
 
 — the compiled main process, preload, shared and source modules, the document
 the window actually loads, and nothing else. Two compiled files are excluded by
@@ -2245,9 +2249,12 @@ identity Gatekeeper and the notary record keep.
 - **Automatic updates.** `build.publish` is `null`, the script passes
   `--publish never`, there is no feed, and `electron-updater` is not a
   dependency: Task 4.4 is the auto-update task and brings all of that with it.
-- **An icon.** There is no `build/icon.icns`, so the bundle carries Electron's
-  default icon. It is a packaging wart, not a security property, and it needs an
-  asset file that no task has produced.
+- **An icon** — *filled in on 2026-10-19, by the icon task at the end of this
+  document.* This bullet used to read that there is no `build/icon.icns`, so the
+  bundle carries Electron's default icon, and that it is a packaging wart rather
+  than a security property needing an asset file no task had produced. The asset
+  file now exists: `build.mac.icon` names `console/build/icon.png`, the
+  website's own mark, and a packaged bundle carries it.
 - **Any signed build.** No bundle has been signed or notarised here; one
   unsigned universal pack was run (above). The signed build is Check 59a's job,
   and design §12 item 4 stays open until it has run.
@@ -2686,3 +2693,949 @@ a scratch copy of the staged file and turned the named test red:
 | the `ditto -c -k --keepParent` zip of the bundle dropped | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on that line; and `TestDocsConsoleNotarizeAndStapleScript`, on the calls the fake `xcrun` and `ditto` log |
 | the script left non-executable | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on its file mode (the signing step runs it directly) |
 | the "Re-copy required" note deleted from `docs/pending-workflows/README.md` while the staged and applied files differ | `TestDocsConsoleReleaseStagedChangeSaysItNeedsACopyIn`: the owner is the one who has to copy the file in, and that section is where they read it |
+
+## The theme's tokens, and the palette they are painted in (Task 6.1)
+
+`src/renderer/theme/` holds the console's styling, in the files the plan's File Structure
+tree promised and the design's section 3.1 lays out — the directory's whole contents, which
+is what `THEME_STYLESHEETS` names. Every one of them exists as of Task 6.4, and the column
+below names the task that wrote each — which is also the phase's order, and the order the
+bundler concatenates them in:
+
+| File | Holds | Written by |
+|---|---|---|
+| `src/renderer/theme/tokens.css` | the **vocabulary**: spacing, radii, type sizes, leading, weights, the two row heights, the focus ring's width and offset, and the two motion values. **No colour.** | Task 6.1 (this section) |
+| `src/renderer/theme/palette.css` | the **value set**: every colour token the console paints, each written once. **No size, no spacing, no motion.** | Task 6.1 (this section) |
+| `src/renderer/theme/base.css` | the reset, the document, the three bands, the nav, focus, the responsive layers and the chrome's forced-colors block | Task 6.3 (the section at the foot of this file) |
+| `src/renderer/theme/screens.css` | the per-screen rules, in the order the design's section 2 lists the screens | Task 6.4 (the section at the foot of this file) |
+
+**As of Task 6.2 the theme's stylesheets are read, served and linked, and the paragraph
+that follows is the record of the stage before that.** Each is named by `THEME_STYLESHEETS` in
+`tools/bundle-renderer/index.ts`, the bundler's stylesheet step concatenates them (in list
+order) into `dist/bundle/console.css`, `/console.css` is one of the entries `SERVED_FILES`
+names — the list `test/unit/bundle.test.ts` holds the served root to, not a filter the
+handler consults — and each of the three documents links it — see the section at the foot of
+this file.
+`test/unit/bundle.test.ts` fails if a stylesheet `THEME_STYLESHEETS` names still says in its
+own prose that nothing reads it, which is the sentence this paragraph used to open with and
+the reason it was rewritten rather than left standing.
+
+> **What this paragraph said at Task 6.1, kept as the record of that state.** "Nothing reads
+> these two files yet … They are inert until Task 6.2 lands the bundler's stylesheet step,
+> the `/console.css` entry in `SERVED_FILES`, the three `<link>` elements and the unit tests
+> that pin them: a merge of this file pair alone changes nothing on screen. When 6.2 lands,
+> the files become **one** served artifact, `dist/bundle/console.css`, concatenated in
+> the design's order (vocabulary, values, then the rules that read them) — and the
+> packaged-file list in this README and in `package.json`'s `build.files` has to name it,
+> which `test/unit/build-files.test.ts` holds (`bundlerOutputs` gains it in that task's
+> commit, so an app that ships without its stylesheet fails a test rather than drawing an
+> unstyled window)." Every one of those consequences is what 6.2 did.
+
+### Dark only, which is the owner's ruling of 2026-10-19
+
+The design's Q1 asked whether the console ships a light theme and recommended light and
+dark with the OS deciding. **The owner ruled dark only**: the console ships one value set,
+matching the `CONSOLE_THEME` its screens are drawn with today, and the light set is
+deferred — the design's section 3.3 table stays as the record of it, for whichever later
+task the owner hands it to. So `palette.css` sets `color-scheme: dark` outright, and no
+theme file uses `light-dark()`, reads `prefers-color-scheme`, declares the OS-driven
+`light dark` pair or keys a block on `data-theme='light'`. Each of those four spellings is
+the way a light theme could arrive without a task owning it, and
+`test/unit/theme-tokens.test.ts` fails by name on every one of them.
+
+### The colour contract is a test, and it reads the file rather than a copy of it
+
+`test/unit/theme-tokens.test.ts` parses `palette.css`'s hex literals out of the stylesheet
+itself and computes every pair the design's section 3.4 tabulates — 4.5:1 for body-size
+text and the five state colours on all three surfaces, 3:1 for the accent and the control
+border as UI colours, 4.5:1 for a label on a filled control — with WCAG 2.1's
+relative-luminance definition, the same arithmetic `website/test/a11y.mjs` uses. It also
+holds the value set to the design's section 3.2 table name by name and literal by literal,
+keeps `--border` below 3:1 (it is a decorative hairline, never a control's extent), keeps
+the five state colours at least 50° apart in hue, and refuses a colour in the vocabulary.
+The red step is kept as a case: a deliberately failing fixture, `#646464` on `#14141F`,
+must print `--text-muted on --surface is 3.1:1, needs 4.5:1` — one decimal, because that is
+the line `a11y.mjs`'s own committed fixture prints.
+
+**The design's section 6.3 names three cases beyond Task 6.1's palette cases, and all three
+are accounted for**: the **two that read a file other than `palette.css` are both in the file
+now** — each arrived in the task that writes what it reads — and the third is *replaced*
+rather than deferred:
+
+- the **"vocabulary complete and identical in both sets"** case is *replaced*: under the
+  owner's dark-only ruling there is one value set, so it would compare a set with itself.
+  What catches what it was written for is here instead — the vocabulary is declared
+  **exactly** (every token of the design's section 3.1 table is present, and no name
+  outside it), no colour is spelled in `tokens.css`, and no step is spelled in
+  `palette.css`. It is the one of the three that is still not in the file, and its reason is
+  the ruling rather than a later task;
+- the **`--border`-is-decorative scan** of `base.css` and `screens.css` was Task 6.4's,
+  because both files are created later than Task 6.1 — the case landed in the task that
+  writes what it reads, and it is in the file since Task 6.4;
+- the **window-background comparison** against `consoleWindowOptions` was Task 6.5's, for
+  the same reason: `backgroundColor` is a key that task added to `src/main/window.ts`, and
+  the case reads the literal out of the options the window is built with — under the ruling
+  one literal, `#0A0E16`, checked against the one `--ground`. It is in the file since
+  Task 6.5.
+
+## The wiring: the stylesheet is bundled, served and linked (Task 6.2)
+
+Task 6.1 wrote the theme's tokens and palette and nothing read them. This task makes them a
+file the console **serves** and every document **links**, and it is the SECURITY-SENSITIVE
+one of the phase, because the thing it touches is the served root and the policy that
+governs it. What it does, in four pieces:
+
+| Where | What changed |
+|---|---|
+| `tools/bundle-renderer/index.ts` | a **stylesheet step**: `THEME_STYLESHEETS`, the refusals below, and `dist/bundle/console.css` |
+| `src/main/protocol.ts` | **one** new `SERVED_FILES` entry, `/console.css` — six where there were five |
+| `src/renderer/{index,installations,refusal}.html` | **one** `<link rel="stylesheet" href="./console.css">` in each `<head>`, beside the CSP `<meta>` |
+| `package.json`, this file | `build.files` and the served-files list gain `dist/bundle/console.css` |
+
+### One file, in cascade order, and the list is the directory's whole contents
+
+The theme is a set of source files under `src/renderer/theme/` and the served root is a flat
+allow-list, so they are emitted as **one** file. `THEME_STYLESHEETS` is the list, and
+it is **the directory's whole contents**, which is what makes both of its refusals hold:
+
+- a `.css` file in the theme directory that is **not** on the list is a `BundleRefusal`,
+  so a stylesheet nobody reviewed cannot be served;
+- a listed file that is **missing** is a `BundleRefusal`, so a rename fails the build
+  rather than silently dropping a layer of the cascade — and, equally, so the list cannot
+  run ahead of the files it names.
+
+**That second refusal is why the list is introduced with the files the directory already
+holds, and each later task appends its own.** A task that named a file before the file exists
+would turn `npm run build` red the moment it merged, so `THEME_STYLESHEETS` names the files
+Task 6.1 wrote — Task 6.2 introduces the list, and the bundler step with it — and each later
+task appends the file it creates in the commit that creates it: every intermediate state is a
+real build of the files that exist. `test/unit/bundle.test.ts` reads the list rather than
+hard-coded names, so its case is true of the directory as it stands and stays true as each
+task appends its file.
+
+The step also refuses four things in any theme file, and the first is what makes the
+other three hold: a **backslash**, an **`@import`**, a **quoted string that names a URL**
+and a **remote `url()`**. The bundle is one file and the console is offline
+(`connect-src 'none'`), so an import would either fail at runtime or be a request the CSP
+forbids — and CSS reads `\` as the start of an **escape**, so `@\69mport "./base.css";` is
+an `@import`, `u\72l(...)` is a `url(...)` and `"\68ttp://…"` is a remote URL. Every scan in
+this tool is a scan and not a parse (the reason a *comment* that mentions `@import` is
+refused for it), so none of them unescapes, and the escape itself is what is refused.
+Neither theme file holds one, and a file that wants an escaped character writes the
+character — a scan that tried to tell the harmless escapes from the load-bearing ones would
+be the parser this tool does not have. `test/unit/bundle.test.ts` plants all four spellings
+of an escaped rule, `content: "\2014"` among them, which is the case that makes the rule a
+rule rather than a list of three shapes.
+
+The quoted-string scan is separate from the `url()` one because `image-set()` and
+`-webkit-image-set()` take a **bare string** as a URL, which is a remote load that never
+writes `url(`: `image-set("https://cdn.example/x.png" 1x)` is a request the `url()` scan and
+the at-rule scan both miss. Both scans read a target the same way — a scheme that leaves
+this machine, or the protocol-relative `//` — and the `url()` scan runs first, so a quoted
+`url('http://…')` is refused as the call that made the request. A quoted `<string>` may hold
+the *other* mark inside it, because CSS allows it — `image-set("https://cdn.example/a'b.png"
+1x)` is a valid URL — and the scan reads it as one.
+
+The target test is **anchored at the start of the string**, which is what keeps the cost
+narrow: a string that merely *mentions* a URL is not a URL, so `content: "see the design's
+notes, https://…"` passes. What is refused is a string that *begins* as a URL and is not one
+— `content: "Note: hello"` reads as the scheme `Note:` — and the fix is to reword the string.
+That is the whole of the false-positive surface, and it is the direction the tool errs in
+everywhere else.
+
+Both scans read the target **as the URL parser would read it**, and not as the bytes are
+written: ASCII tab and newline are removed wherever they are, and the leading and trailing C0
+controls and spaces are stripped, before the scheme test. So `url(" https://…")` and
+`image-set("\thttps://…" 1x)` are remote loads with the scheme behind a byte the test used to
+require at character 0, and both are refused now. The refusal still quotes the call **as it is
+written**, so the message names the bytes to change. One spelling is not reached and is stated
+rather than solved: a raw LF *inside* a quoted string, which `QUOTED_STRING_RE`'s body cannot
+cross — the section below carries the measurement that settles why the body stays bounded,
+and the `url()` scan, whose quoted body does cross lines, refuses that spelling.
+
+`url(./mark.png)` and `url(data:...)` are admitted — a path on this origin, and a byte
+string rather than a request (`img-src 'self' data:` allows the second). Two asymmetries
+are admitted with them and are stated rather than solved, because neither weakens anything:
+`data:` is allowed by `img-src` and by **no** other directive, so an `@font-face
+src: url(data:…)` would pass the build and be blocked when it is painted (`font-src 'self'`);
+and `blob:` is admitted by the same reading of `REMOTE_SCHEME_RE` while **no** directive
+allows it at all. Both are a silent failure mode — a rule that builds and does not paint —
+and not a hole: the CSP refuses the load either way.
+
+The `@import` scan is **ASCII case-insensitive**, matching `CSS_URL_RE` and
+`REMOTE_SCHEME_RE` beside it and matching CSS itself, where at-rule names are
+case-insensitive: `@IMPORT url("./base.css");` is the same rule, and it is the spelling that
+would otherwise slip through — its target is relative, so the remote-URL refusal does not
+see it, and the emitted `console.css` would carry an import at a path that is not in
+`dist/bundle/` and drop that layer out of the cascade with nothing failing.
+`test/unit/bundle.test.ts` plants `@import`, `@IMPORT` and `@Import`, and controls with the
+word spelled without its `@`. The stray-`.css` refusal beside these is case-insensitive too:
+`stray.CSS` is a stylesheet, and which checkout made the bundle should not decide whether
+the list is the directory's whole contents.
+
+**No CSS is parsed, minified, autoprefixed or rewritten.** The bytes on disk are the bytes
+served, which is what makes `theme-tokens.test.ts`'s contrast arithmetic meaningful: it
+reads the same literals the window paints. The only bytes added are comment banners — one
+naming the build, one per layer so a reader can see the seam — and a layer that does not end
+in a newline gains exactly one before the next layer's banner, so the seam is always a line
+of its own (`test/unit/bundle.test.ts` plants an unterminated stylesheet for it; neither real
+file reaches that arm).
+
+**A listed stylesheet may not say in its own prose that nothing reads it.**
+`test/unit/bundle.test.ts` scans every file `THEME_STYLESHEETS` names for the wording its
+Task 6.1 stage used — `inert`, "nothing reads", "no task reads", "not read by anything",
+"nothing links" — and fails on it. That is what rewrote `tokens.css`'s opening paragraph in
+this task: the sentence was true of a tree where nothing read the directory and is false of
+one where the bundler reads it, the served root serves it and every document links it. The
+scan is over the **list** and not the directory, so a stylesheet the list does not name is
+left to the stray-`.css` refusal that owns it, and the case is proved on a planted tree in
+both directions.
+
+### The CSP is unchanged, and the stylesheet is admitted by a directive that was always there
+
+`style-src 'self'` is the **third directive** of `CONTENT_SECURITY_POLICY` and has been
+since Task 1.1. A `<link rel="stylesheet">` to `app://console/console.css` is a stylesheet
+from this origin, so `'self'` admits it. `default-src 'none'` is not consulted for it;
+`font-src 'self'` is not consulted (no web font is loaded — the font stack opens with
+`system-ui`); `connect-src 'none'` is not consulted (a `<link>` is not a fetch
+`connect-src` governs, and no script fetches the CSS). **No directive is added, none is
+loosened, and there is no inline style, no `<style>` element and no `'unsafe-inline'`
+anywhere.** `mediaTypeFor` already mapped `.css`, so the protocol handler's change is the
+`SERVED_FILES` entry and nothing else — **and that entry is a list the handler never
+reads**: `resolveBundleRequest` serves any file under the root a URL names, deliberately
+(`protocol.ts` says so itself: `SERVED_FILES` is "deliberately not a second filter"), so the
+entry is the *test-held mirror* of `dist/bundle/` and not a runtime allow-list. The
+enforcement is the directory's contents, which the build decides; the list is how a reader
+and `test/unit/bundle.test.ts` see what the build decided.
+
+Four things hold that, and each is a test rather than a promise:
+
+- `csp-document.test.ts` reads `style-src` on its own and refuses `'unsafe-inline'`,
+  `'unsafe-eval'`, `'unsafe-hashes'`, `*`, `http:` and `https:` in it; it asserts **one**
+  `<link>` per document, `rel="stylesheet"`, `href="./console.css"`, with no `media`, no
+  `onload`, no `integrity` and no `crossorigin`; and it serves the file through the real
+  `serveAppRequest` and holds the response to `text/css; charset=utf-8`, `nosniff` and the
+  CSP header;
+- `window.test.ts` holds the whole policy string to the design's wording and
+  `APP_SCHEME_PRIVILEGES` to having no `bypassCSP`, unchanged by this task;
+- `screen-literals.test.ts` gains a scan over **every** module under `src/renderer`: a
+  `.style` property write (computed keys included) and `setAttribute('style', …)` are
+  offences with no vocabulary behind them, because `style-src 'self'` backs no inline style
+  at all;
+- `bundle.test.ts` holds `dist/bundle/` equal to `SERVED_FILES` in both directions, so a
+  file that appears beside the bundle — or a name dropped from the list — fails rather
+  than being served by a handler that would happily serve it.
+
+### The mutations this task is proved against
+
+Each was planted for real, run, and removed. The red step is the failure, not the diff.
+
+| Mutation | What fails |
+|---|---|
+| a stray `.css` planted in `src/renderer/theme/` | `npm run build`, with `… holds stray.css, which THEME_STYLESHEETS does not list` |
+| a listed stylesheet deleted from the theme directory | `npm run build`, with `THEME_STYLESHEETS names tokens.css, which … does not hold` |
+| `@import` added to a theme file | `npm run build`, with `… holds an @import` |
+| the same rule spelled `@IMPORT` | `bundle.test.ts`, on the case-insensitive scan — the mutant was planted (the `i` flag dropped) and the case observed failing |
+| `url(https://…)` added to a theme file | `npm run build`, with `… loads url(https://…) from another origin` |
+| `/console.css` dropped from `SERVED_FILES` | `bundle.test.ts`, on the directory equality |
+| a `<link>`'s `href` changed in one document | `csp-document.test.ts`, on that document's one stylesheet |
+| the `<link>` removed from one document | `csp-document.test.ts`, on the count |
+| `'unsafe-inline'` added to `style-src` | `csp-document.test.ts` and `window.test.ts` |
+| `style="…"` in a served document | `csp-document.test.ts`, on the inline-style scan |
+| `el.style.color` written in `entry.ts` | `screen-literals.test.ts`, on the renderer-wide scan |
+| `dist/bundle/console.css` removed from `build.files` | `build-files.test.ts` (`bundlerOutputs`) and `fuses.test.ts` |
+| "Nothing reads this file yet" put back into a listed theme file | `bundle.test.ts`, on the unwired-claim pin — planted in `tokens.css` and observed failing, then reworded |
+| the newline append removed from `stylesheetText` | `bundle.test.ts`, on the planted unterminated stylesheet — the mutant was planted (`source.css` without the `${…}\n` arm) and the case observed failing on the `a { color: red; }/* palette.css */` seam |
+
+### The follow-up's own mutations (review of #694, 2026-10-19)
+
+The independent review of the merged task left four minors and three nits, and each fix
+landed with a case that was mutated first. Each mutant below was planted in
+`tools/bundle-renderer/index.ts`, run, and reverted; in every run exactly the cases named
+failed and no other case did.
+
+| Mutation | What fails |
+|---|---|
+| the backslash refusal removed | `bundle.test.ts`, "refuses a backslash, which CSS reads as an escape" — the four escaped spellings, `@\69mport` first |
+| the quoted-string refusal removed | `bundle.test.ts`, "refuses a quoted string that names a URL" — `image-set("https://…")` is admitted with it gone |
+| the `isFile()` check on a listed theme file removed (`statSync` in its place) | `bundle.test.ts`, "refuses a listed theme file that is a symlink" |
+| `buildConsole` put back to the old order (stylesheet before the foreign-file refusal) | `bundle.test.ts`, "refuses a foreign file in the served root before it writes anything" — the refusal still lands, but `console.css` is already there |
+| `refuseSymlinkedOutput` dropped from either writer | `bundle.test.ts`, "refuses to write the stylesheet through a symlink" (and "…its bundle through a symlink") |
+| `THEME_STYLESHEETS`' first two entries swapped | `bundle.test.ts`, "names the cascade in the design's order" — **and nothing else**, which is the finding: before that case, this mutant left the whole suite green |
+| the stray-file extension test made case-sensitive again | `bundle.test.ts`, "refuses a .css the list does not name whatever its extension's case is" |
+
+**A second pass over those fixes** (same review, 2026-10-19) closed two gaps the cases
+above left, each reproduced against the compiled tool before it was fixed and mutated
+after, and one overclaim in the prose:
+
+| Mutation | What fails |
+|---|---|
+| the three `refuseSymlinkedDirectory` calls removed | `bundle.test.ts`, both "…into a symlinked directory" cases and the `buildConsole` half of "refuses a foreign file in the served root before it writes anything" |
+| `QUOTED_STRING_RE`'s body narrowed to `[^"'\n]*` (excluding both marks, as it first shipped) | `bundle.test.ts`, "refuses a quoted string that names a URL" and the probe case — `image-set("https://…/a'b.png" 1x)` is admitted by the narrow body |
+
+The directory half was the one that mattered: with the file check alone, `dist/bundle` as a
+symlink to a directory outside the tree built **cleanly** and left `console.css` outside the
+served root. Two of these shapes a case can only reach by planting the link itself, which is
+what those cases do. A symlink *above* the output directory is still followed, and that is
+stated in `refuseSymlinkedDirectory` rather than left to be discovered: resolving the whole
+chain would refuse `/var`-style paths the platform ships (`os.tmpdir()` is under `/var` on
+macOS), and `dist/` is gitignored, so this shape needs a tampered working tree rather than a
+reviewed commit.
+
+### The two leftovers #701 left open (2026-10-19)
+
+The review of the follow-up above left two non-structural findings open, on the owner's
+merge-then-follow-up rule. Each was reproduced against the compiled tool before it was
+fixed, and each mutant below was planted in `tools/bundle-renderer/index.ts`, run, and
+reverted; in every run exactly the cases named failed and no other case did.
+
+| Mutation | What fails |
+|---|---|
+| the pre-write `refuseSymlinkedOutput` pass removed from `buildConsole` | `bundle.test.ts`, "refuses a symlinked output before it writes anything" — the refusal still lands inside `bundleRenderer`, with `console.css` already written, and for the document with `console.js` too |
+| the pre-write `moduleClosure` pass removed from `buildConsole` | `bundle.test.ts`, "refuses a module the walk will not bundle before it writes anything" — `require('electron')` is refused one writer later, with `console.css` already written |
+| `isRemoteTarget` put back to the raw `startsWith('//') \|\| REMOTE_SCHEME_RE` test | `bundle.test.ts`, "refuses a url() on another origin…", "refuses a quoted string that names a URL…" and the probe case — `url(" https://…")` and `image-set("\thttps://…" 1x)` are admitted |
+| `URL_STRIPPED_RE`'s replace dropped, the edge strip kept | `bundle.test.ts`, the same two cases, on `url("/\t/x.png")` alone — the "tab and newline are removed *wherever* they are" half of the parser's rule |
+
+**The one byte left open, and the measurement that settles it.** A raw LF *inside* a quoted
+string is still not refused by the quoted-string scan, because `QUOTED_STRING_RE`'s body is
+bounded by the newline. Widening the body to `[\s\S]` was tried, observed and reverted: it
+buys `image-set("\nhttps://…" 1x)` — a `<bad-string-token>` the tokenizer drops before any
+URL is resolved — and pays for it with `image-set('http://cdn.example/x.png' 1x)` and
+`-webkit-image-set('//cdn.example/a"b.png' 2x)`, which both stop being refused the moment an
+*unbalanced* quote precedes them in the same file. The theme files hold an apostrophe in
+their prose, so those two cases failed on the widened body and passed on the narrow one. The
+`url()` scan, whose quoted body is not bounded by the newline, refuses the LF spelling;
+`bundle.test.ts`'s probe asserts both halves so the asymmetry is a decision rather than an
+accident.
+
+### What this task does not own
+
+`base.css` and `screens.css` are Tasks 6.3 and 6.4, and each appends its own file to
+`THEME_STYLESHEETS` in the commit that creates it. The golden frames are re-recorded by
+Task 6.6, which is owner-run, and the goldens stay held until then — held, not unchanged.
+
+**The frames have already moved, and this task is one of the things that moved them.** An
+earlier draft of this paragraph offered "a stylesheet that paints nothing yet is not a
+picture change" as the reason the goldens need no re-record before 6.6. That is false twice
+over. The shipped `palette.css` declares `color-scheme: dark` on `:root`, and its own
+comment says what that does: the picker and the refusal document — neither of which reads the
+theme the entry chose — paint dark rather than in the platform's default, and the canvas's
+own background follows it. A frame taken now differs from the same frame taken before this
+task, before a single layout rule exists. And Task 6.3's rules and 6.4's screens move the
+picture again, far more than this.
+
+So the honest reason the goldens wait is 6.6's own: **every frame recorded before the last
+stylesheet lands is a picture of an intermediate tree, and the next task invalidates it** —
+which is exactly the regression 6.6 exists to stop, because a baseline re-recorded mid-phase
+is a baseline nobody reviewed. What holds them is two things already in the tree, and neither
+is this README: `playwright.config.ts`'s `updateSnapshots: 'none'` (`test/unit/playwright.test.ts`
+pins it), so a run with no baseline **fails** rather than writing one, and each golden spec's
+`test.skip(SKIP_GOLDENS, …)` on `FUGARO_CONSOLE_GOLDENS=skip`, which the staged
+console-tests workflow sets. No golden PNG is committed yet, and none is until Task 6.6
+records all eight at once, on each platform.
+
+This task re-records nothing, and no frame is compared or written by it: the golden tests
+are among the ones the skip covers, and the eight baselines are Task 6.6's single recording
+act.
+
+The `--border`-is-decorative scan was Task 6.4's and the window-background comparison was
+Task 6.5's, both for the reasons Task 6.1's section above gives, and both are in
+`theme-tokens.test.ts` now.
+
+## The layout, and the installation rail (Task 6.3)
+
+Task 6.1 wrote the vocabulary and Task 6.2 made the stylesheet a file the console serves and
+every document links; nothing painted yet. This task is `base.css`, the layer that paints
+first: the reset, the document as a two-column grid, the rules for the
+chrome, the focus ring, the responsive layers, and the chrome's `@media (forced-colors:
+active)` block. It is also the task that **draws the installation rail** — the canvas's one
+structural addition, which the owner approved on 2026-10-19.
+
+| Where | What changed |
+|---|---|
+| `src/renderer/theme/base.css` | **new**: the reset, the grid, the chrome, focus, responsive, forced colors — 567 lines, no colour literal of its own |
+| `src/renderer/entry.ts` | **the rail's elements**: twelve exported class hooks, `drawRail`, and the three places the dashboard tells it something (`setState`, `setSpend`) |
+| `tools/bundle-renderer/index.ts` | `THEME_STYLESHEETS` gains `'base.css'`, in the commit that creates the file |
+| `test/unit/theme-selectors.test.ts` | **new**: the §2-inventory selector scan over `base.css` |
+| `test/e2e/entry.spec.ts` | the forced-colors smoke's chrome half, the rail's rows, and the body-children assertion the rail moves |
+| `docs/design/console-styling.md` | §2.1's tables gain `data-collapsed` and `data-state`, and the banner row's order — hooks this task's rules select, added in the PR that wanted them |
+| this file | the section you are reading |
+
+### The document is a two-column grid, and the banner's row can be empty
+
+`body` is `grid-template-columns: auto minmax(0, 1fr)` and `grid-template-rows: auto auto auto
+minmax(0, 1fr)`. The five places are: row 1 spanning both columns for `section.console-skew`,
+row 2 for the rail (column 1) and the installation line (column 2), row 3 for the nav, row 4
+for the panel — the one row that takes what is left, and the one region that scrolls
+(`overflow-y: auto`, with `min-height: 0` so a dense screen does not push the window open).
+
+The banner is drawn only when the mode is not `ok`, so the trick is the **empty row**: an
+`auto` row with no items sizes to nothing, and the four rows below keep their places whether
+the banner is there or not. In **refused** mode the banner is the body's only child and takes
+the whole window, which is `:only-child { grid-row: 1 / -1 }` — a structural pseudo-class,
+not a hook invented for the occasion. The rail spans `2 / -1`, so it is full height under the
+banner and full height without it.
+
+**The rail's 216 px and 56 px are two literals and not tokens.** Like `CONSOLE_WINDOW_SIZE`'s
+1180 x 780 they are facts about this window rather than values a screen reads, so no §3.1
+table gains a row for them. The first column is `auto` and the rail carries its own width, so
+the collapsed state is one rule on the rail rather than a second grid definition.
+
+### Narrow windows: what a layer drops, and what it keeps announcing
+
+Design §4.2's layers are written in `em` against the root size, so an operator who has raised
+their default text size gets the narrow layout at the same measure of text rather than at the
+same pixel width. This file carries the **chrome's** share of them — the nav wraps and the
+installation line drops to project · mode at 48.75em, and the chrome's padding tightens at
+35em; the tables' and the panels' share is `screens.css`'s and lands with Task 6.4.
+
+**The one cell this task's layer takes out of the layout is the binary path, and it is taken
+out of the layout only.** It is clipped to a 1 px box exactly as the rail's collapse clips its
+spans (design §4.1) — never `display: none`, which would take it out of the accessibility tree
+as well as out of sight. §4.2's rule for a dropped column ("a dropped column is one whose value
+is repeated in a `title`") is read here as the same rule for a dropped line: a value this
+console drops from sight is not a value it stops announcing. The first cut of this rule said
+`display: none` and justified it with a `title` the entry does not write, which a review of the
+branch caught: the path was dropped with nothing left to reach it, and the comment was the only
+thing claiming otherwise.
+
+### The rail: twelve hooks on thirteen elements, and the entry draws them
+
+`aside.console-rail` holds a head (`console-rail-head`, with the `console-rail-title` and the
+`console-rail-collapse` control), the list (`console-rail-list`, with `id="console-rail-list"`
+for the collapse control's `aria-controls`), the foot row (`div.console-rail-add` and the
+`button.console-rail-add` inside it — **one class, two elements**, which is why the count is
+twelve hooks on thirteen elements) and the hint (`p.console-rail-hint`). A row is a
+`button.console-rail-row` carrying `span.console-rail-name`, `span.console-rail-project`,
+`span.console-rail-state` and `span.console-rail-spend`.
+
+**The elements are drawn by `entry.ts` because the rules that select them are this task's.**
+That is §2's licence rule read the other way: a hook nothing emits is not a hook, and a rule
+written against a class a screen declares cannot be reviewed against a class nobody draws.
+The same rule is why §2.1's tables gained `data-collapsed` and `data-state` **in this PR**:
+the collapse rule selects the first and the state's tone selects the second, and a rule that
+wants a hook adds it to the inventory first.
+
+The row's state is the rail's own mark and not a field of any read: the rail knows whether
+the console is reading this installation now, so it opens at `running` and goes `silent` when
+the Live read was refused or the feed has gone quiet. The span carries the **glyph and the
+word** (`● running`, `▲ silent`, `○ idle`) plus `data-state`, so the tone is a second channel
+and never the only one (design §3.5) — which is also the whole of what §4.4's rule 1 asks for
+when the system takes the colours away.
+
+**The selected row's rule is here before the attribute is.**
+`button.console-rail-row[aria-selected='true']` draws the raised surface and the 3 px
+`--accent` left border, and the row reserves that border at the selected width
+(`border-left: 3px solid transparent`) so selecting a row moves no text. The attribute itself
+— with `role="tablist"`, `role="tab"` and the keys — was Task 6.5's, which is the design's
+split: the border is this task's and the mark that turns it on arrived with the tablist
+behaviour.
+
+The collapse control is this task's, so its behaviour is too: it flips the rail's
+`data-collapsed` — the one attribute the 216 px and 56 px rules are selected by — and keeps
+`aria-expanded`, its own `aria-label` and its glyph in step with what it drew. The collapse is
+**name-preserving**: `clip-path: inset(50%)` and a 1 px box rather than `display: none`, so
+the row's accessible name is still the whole of what it draws and the state span keeps its
+glyph visible while its word is clipped away. Nothing the collapsed rail removes from sight
+is a fact it stops announcing.
+
+### What the rail reads: nothing
+
+`installation.current` is the only installation read this document has, it takes no argument
+and names no id, and its answer is the installation the operator chose — so the rail draws
+**one row per installation the dashboard can read, which is one row**, and a console with
+nothing chosen or a store that could not be read draws **no row** rather than an invented
+one. A row per *stored* installation would need a bounded list read on the dashboard's
+bridge, which the design withholds (§4.1, §11) and this task adds no operation for.
+
+So the rail makes **no read of its own**, and that is a test rather than a promise: the
+entry spec's spawn-log case holds a healthy console to exactly two spawns (`version`,
+`watch --json --project P`), and a read at mount would be a third. The two figures the row
+carries come from reads the console was already making:
+
+- the **state** from the Live feed (`rail.setState`), which is the same read the panel draws;
+- the **spend** from the console's own `budget.show` reads — the Spend and Projects paths —
+  through `rail.setSpend`, so the rail shows `n/a` with the caps panel's own sentence
+  (`no budget show document was read`) until one of those screens has been opened.
+
+`setSpend` clears the span's `title` before it writes the reading. The rail is the one
+drawing in this file that is **updated in place** rather than redrawn, and `putReading` writes
+a `title` only for a reading with no value — so without that line the `n/a`'s reason would
+sit under a figure that is now measured. It is a mutation in the table below.
+
+### `+ Add installation` is drawn and not wired, and that is the honest state
+
+The foot row is the design's control and it is drawn where the design draws it, with the label
+the design gives it. The click is the one thing this task cannot add: `+ Add installation`
+opens the add-installation flow, which is the **picker window**, and the dashboard cannot open
+it. The picker is reached from the application menu's `Installations…` item (ruling C9), the
+dashboard's bridge has fourteen operations and none of them opens a window
+(`denyWindowOpen`), and both the design (§11: no Phase-6 task owns the preload or the IPC
+allow-list) and this task's Files keep it that way. So the control is drawn with no handler
+rather than with one that does nothing, and `drawRail`'s docstring says so at the place a
+reader would look. **The console stays read only, and the CSP is unchanged**: no directive is
+added, no `style` attribute is written anywhere, and `screen-literals.test.ts` refuses a
+`.style` write under `src/renderer/` as it did before this task.
+
+### The tests
+
+- `test/unit/theme-selectors.test.ts` is the **§2-inventory selector scan**, and it reads the
+  inventory **out of the design document** rather than keeping a second copy of §2's tables
+  here: every backticked token of every table row in `docs/design/console-styling.md`'s §2 is
+  a hook, every `.name` and `[name` in `base.css` (comments stripped, so the file's own long
+  header is not read as a selector) is checked against it, and two further cases pin the rail
+  at **twelve hooks and no thirteenth** and pin `SCANNED` against `THEME_STYLESHEETS` so a
+  later task cannot add a stylesheet and leave it unscanned.
+- `test/unit/entry-wiring.test.ts`'s rail cases: one row for the readable installation (name,
+  project, `● running`, `data-state`, the `n/a` spend with its reason, and
+  `calls.map(name) === ['subscribeLive']` — no read of the rail's own); **no row** for
+  `{ok: false}`, for `{chosen: false}` and for an unreadable shape, with the rail itself still
+  drawn; the collapse control's `aria-controls`, `aria-expanded` and label in both states; and
+  the two ways the rail goes `silent` (a refused Live read, a stale feed).
+- `test/unit/bundle.test.ts`'s body-children case now reads the rail first, and the planted
+  stray stylesheet is `screens.css` — the file that is still unlisted, since `base.css` is
+  listed now.
+- `test/e2e/entry.spec.ts` gains the **forced-colors smoke's chrome half** and the rail's
+  rows. **Neither could be run in this container**: Electron does not start here
+  (`libglib-2.0.so.0: cannot open shared object file`), so every e2e case in the file fails at
+  launch, this task's included. They are written and typechecked, their expected values are
+  the ones the unit cases above already pin, and they are listed in the pull request as
+  unverified. The smoke is a **smoke and not a golden**: forced-colors rendering is the
+  platform's, and what is asserted is what §4.4 promises — the current view still marked, the
+  chrome's boundary still a boundary (a width that is not `0px`, a colour that is not
+  transparent), and the rail's rows read with them, word and glyph together. The screens' half
+  is Task 6.4's, in each screen's own spec.
+
+### The mutations this task is proved against
+
+Each was planted for real, run, and removed; the failure is the red step.
+
+| Mutation | What fails |
+|---|---|
+| `readable` ignores `chosen` (a row drawn for an unreadable installation) | `entry-wiring.test.ts`, the no-row case — 1 failed |
+| the state span draws the word without its glyph | `entry-wiring.test.ts`, 3 cases |
+| `setSpend` returns without writing (the rail never fills its spend) | `entry-wiring.test.ts`, the spend case — 1 failed |
+| the feed's staleness never reaches the rail | `entry-wiring.test.ts`, the stale-feed case — 1 failed |
+| the collapse control stops announcing (`aria-expanded`/label left alone) | `entry-wiring.test.ts`, the collapse case — 1 failed |
+| the stale `title` is left on the spend span | `entry-wiring.test.ts`, the spend case — 1 failed |
+| `.console-rail-badge` added to `base.css` | `theme-selectors.test.ts`, the unknown-class case — 2 failed |
+| `[data-badge]` selected in `base.css` | `theme-selectors.test.ts`, the unknown-attribute case — 1 failed |
+| a thirteenth `console-rail-*` hook in `base.css` | `theme-selectors.test.ts`, the twelve-and-no-thirteenth case — 2 failed |
+| `span.console-rail-project` dropped from §2.1's table | `theme-selectors.test.ts`, 2 cases |
+| `console-skew` dropped from §2.1's table | `theme-selectors.test.ts`, the unknown-class case — 1 failed |
+| every `data-collapsed` in §2 renamed | `theme-selectors.test.ts`, 2 cases |
+| `base.css` left unlisted in `THEME_STYLESHEETS` | `npm run build`, with `… holds base.css, which THEME_STYLESHEETS does not list` — observed while this task was being written |
+| the stray-`.css` case still planting `base.css` | `bundle.test.ts`, on the planted file — it is listed now, so the case was moved to `screens.css` |
+| the newline-append case destructuring exactly two names | `bundle.test.ts`, on `screens.css` — the case is generic over the list now |
+
+### What this task does not own
+
+`screens.css` is Task 6.4's, and the rows' and badges' `@media (forced-colors: active)` block
+with it — each stylesheet carries the block for the rules it writes. The `--border`-is-
+decorative scan was 6.4's, the rows' `role`/`aria-selected`, the keys and the
+window-background comparison were 6.5's — all three are in the tree since it — and the
+eight golden frames are 6.6's, which is owner-run. **The goldens are held, not unchanged**: this task's layout is exactly the kind of
+change 6.6 exists to record once, at the end, rather than mid-phase.
+
+## The screens (Task 6.4)
+
+Task 6.3 drew the layout and the rail, and nothing had yet styled a screen: the four screens,
+the degraded and unavailable screens, the refusal document and the picker were drawing into a
+document whose reset, grid and chrome were painted and whose contents were not. This task is
+the last layer, `src/renderer/theme/screens.css`, plus the **one code change the
+whole styling work makes** — the fifth number hook.
+
+| Where | What changed |
+|---|---|
+| `src/renderer/theme/screens.css` | **new**: the per-screen rules, in the design's §2 order, ending with the rows' and badges' forced-colors block |
+| `src/renderer/screens/degraded.ts` | `numberCell` prepends `degraded-num`, which is the class §2.10 says this task adds |
+| `tools/bundle-renderer/index.ts` | `THEME_STYLESHEETS` gains `'screens.css'`, in the commit that creates the file — the list is now the theme directory's whole contents and stays still |
+| `test/unit/theme-selectors.test.ts` | the scan covers `screens.css`, and reads §2 **whole** rather than its tables; two more cases check every element-qualified selector against the tags the console draws, and every attribute-qualified one against the attributes it sets |
+| `test/unit/theme-tokens.test.ts` | the `--border`-is-decorative scan of `base.css` and `screens.css`, and the case that pins `--ok` to the readings §3.5 rule 4 licenses |
+| `test/unit/degraded.test.ts` | every figure the degraded and unavailable screens draw carries `degraded-num`, and no cell that draws a document string does |
+| `test/unit/bundle.test.ts` | the planted-tree case's unlisted file moves out of the theme directory, because after this task there is no unlisted file in it |
+| `test/e2e/{live,spend,projects,run,degraded}.spec.ts` | the forced-colors smoke's per-screen half |
+| this file | the section you are reading |
+
+### The five number hooks, and the one that did not exist
+
+Design §2.10 is the licence for the only code change here: Live, Spend, Projects and Run each
+have a `numberCell` that prepends `live-num`, `spend-num`, `projects-number` or `run-number`,
+and the degraded screen's prepended **nothing** — so its feed age, its counts and its money
+were the only figures in the console with no tabular-figures and no right-align hook. It
+prepends `degraded-num` now, `screens.css` carries one rule for all five, and two cases in
+`degraded.test.ts` fail if the prepend is removed (one of them reads `span`s only, because
+§2.7 gives the `ol` region and the count span the same class).
+
+### The selector scan reads §2 whole, and expands its shorthand
+
+`theme-selectors.test.ts` was narrowed to §2's **tables** in Task 6.3, which is where every
+hook of the four screens and of the chrome is listed. §2.7 and §2.8 have **no tables at all**
+and name the degraded, unavailable and refusal hooks in their prose, and §2.4's `data-*` list
+is a prose line under its table — so a scan left as it was would refuse `section.degraded`,
+`div.unavailable-body` and `[data-panel]` while claiming the design does not name hooks it
+names two paragraphs further down. The reading is widened, not loosened: `HOOK` keeps only
+tokens shaped like a hook, and `NOT_A_LICENCE` keeps out the two attributes §2 names **in
+order to refuse them** (`data-hidden`, `data-skew`).
+
+§2.7 also abbreviates: `(degraded-run-id, -repo, -status, …, -total)` and `degraded-since` +
+`-word`/`-at`/`-age`. Two conventions in one paragraph — the suffix replaces the last segment
+in the first and is appended in the second — so the scan expands **both** readings. A licence
+that names a hook too many is harmless; one that names a hook too few refuses a rule the
+design asked for.
+
+**`section.run` is deliberately not in `screens.css`.** §2.6's table starts at `run-header`
+and names no class for the Run screen's root, so a rule spelled `section.run` would select a
+hook §2 does not name — and the licence is the licence. Nothing is lost: the reset gives a
+`section` its own block box and `base.css` sets the document's colour.
+
+### The tags the rules name, and the eleven that named the wrong one
+
+§2's licence is about hooks and says nothing about the element in front of one, and §2.8 is
+where the design warns what that costs: "**The tags are the code's and they matter** … a rule
+spelled `pre.unavailable-install-command` styles nothing at all". A rule with the right class
+and the wrong tag passes the selector scan, because the class *is* a hook §2 names — and then
+matches nothing.
+
+Eleven rules here were written that way, and the tag scan is what found them. It reads the
+`tag.class` pairs out of the code that draws them — the four emitter helpers (`make`, `cell`,
+`textCell`, `numberCell`) with their spread class lists, the raw `factory.create` +
+`setAttribute('class', …)` shape of `entry.ts` (a literal, a module constant such as
+`RAIL_ROW_CLASS`, or the class a local helper was handed at its call sites), and the two roots
+`degraded.ts` picks with a conditional class — and refuses a selector whose pair is not among
+them. `src/shared/version.ts`'s skew section is read too, because `base.css` selects it.
+
+What the eleven were: `p.run-halt-detail` (a `span`), `p.unavailable-searched` (a `div`, as
+§2.8 spells it), `span.projects-enrolled-repo`/`-seen-repo` and `span.run-log-tail-line`
+(`li`s), `span.run-report-path`/`span.run-comments-path` (the containers are `p`s — the
+`-value` hooks their rules meant already have their own mono rule), `span.run-id` (an `h1`),
+and `span.run-ledger-model`/`-compute`/`-total` (the labels are `p`s, in both the ledger rule
+and the forced-colors list). Each kept its rule's intent: the tail line moved beside
+`run-log-message`, its cousin in the log list, and the two diagnosis containers moved to the
+prose rule.
+
+### The attributes that were on another element, and a tone that could not be right
+
+The tag scan has a sibling, and the review that found the eleven tags is why it exists: a rule
+may name a class the code draws **and** an attribute §2 lists, and still select nothing,
+because the attribute is on a **different element**. The new case reads which attributes the
+code sets on which elements — walking each file in source order, because a screen reuses
+`element` in every function it has — and refuses a compound selector whose class does not
+carry the attribute it qualifies the class with. It found four rules:
+
+- `span.spend-partial[data-partial='true']` — §2.4 puts `data-partial` (and `data-hollow`) on
+  `li.spend-point`, `li.spend-row` and `div.spend-totals`; the marker span inside them holds
+  the text `(partial)` and no attribute, so a partial day never got the `--warn` tone the
+  rule intended. The tone is on the three elements that know it now.
+- `span.spend-persons-state[data-state='off']` — the knob writes `on`/`off` as the span's
+  **text** and `data-enabled` on the `div.spend-persons` (§2.4's "person view withheld"), so
+  the span had no rule at all. It carries the type now and the parent's rule carries the tone.
+- `div.projects-kill-row[data-killed='true']`, in the rule and in its forced-colors entry —
+  the attribute is the **banner's** (§2.5's `data-*` line and §3.5's states table: "the
+  attribute is on the banner, and on Live's repository block itself"), so the row's own mark
+  was never drawn. The row is selected by `div.projects-kill-row:has(div.projects-kill)`,
+  which is the one selector that can see the banner inside.
+- `button.console-rail-row[aria-selected='true']` is the **fourth**, and it is deliberate:
+  `base.css`'s header records Task 6.3 writing the design's own rule (§4.1) before the
+  attribute §2.1 handed to Task 6.5. **Task 6.5 arrived and emptied the list**: the tablist
+  behaviour writes `aria-selected`, so the case reads the write off the code like any other
+  compound selector's, and `AHEAD_OF_THE_CODE` is an empty list rather than a one-entry one.
+  An entry there would be a rule ahead of its attribute, which is this design's own split,
+  and a second one would be a rule nothing emits.
+
+**And one tone.** `span.run-stage-passed` was painted `--ok` for both of the stage's words:
+the class holds `passed` **or** `failed` with no attribute (§2.6), so the rule read a failed
+stage green — and `--ok` is reserved for measured-and-inside-cap and the rail's running
+(§3.5 rule 4). No tone can be right for a class that carries two states, so the stage's name,
+word and deadline are labels; the failure's alarm is the diagnosis panel's `run-failed-word`,
+the element that knows which it is. A new case in `theme-tokens.test.ts` pins `--ok` to its
+two licensed readings (a `measured` sparkline bar, the rail's `running` row), which is what
+that mistake would have to get past.
+
+**That case held a third entry, and the follow-up to this task removed it.** The list of
+licensed selectors carried `section.projects-panel[data-state='read']` — the rule that painted
+a read Projects panel's left border `--ok` — so the case whose whole purpose is to keep `--ok`
+to the readings §3.5 rule 4 names accepted a reading the design licenses nowhere: a read panel
+is not "measured and inside the cap" and is not the rail's `running` row, and §6.1 rule 3
+forbids the tone decoratively. The list had been transcribed from the stylesheet rather than
+read off the design, which is exactly how a guard stops guarding. Both ends moved: the panel's
+rule draws `--accent` (a rule is **structure**, which is §3.2's role cell for that token, and
+§4.1 draws the rail's selected row's own 3 px left border in it), and the entry left the list —
+so the list and the stylesheet still hold each other in both directions, and a reading added
+to §3.5 rule 4 means amending the design in the same edit and adding its selector here.
+
+**The ink token has the mirror case, added with the same follow-up.** `--accent-ink` is the
+accent **as text** (§3.2's role cell: "links, an accent heading") and `--accent` is the accent
+as structure, so a rule that paints a border, an outline or a fill with the ink token has used
+the text tone for structure — which `li.live-run-queued`'s left border did, and which is why
+it draws `--accent` now. The case reads every declaration of `base.css` and `screens.css`
+rather than a list of selectors, so a border added later is caught without anyone remembering
+to name it, and it is proved against a planted `--accent-ink` border that is refused and the
+same border in `--accent` that is not.
+
+### The `--border`-is-decorative scan, and the clause that had to be a box
+
+Design §6.3 places this case in this task because it reads `base.css` and `screens.css`, and
+both exist now. Three clauses: `--border` in an `outline`; `--border` at any width other than
+`--rule-width` (§3.4: "1 px hairlines only"); and `--border` drawing a **box** on a control,
+whose extent is `--border-strong`.
+
+The third clause is a box and not any border, and the rail is why: its rows are
+`button.console-rail-row` and the design draws the hairline **between** them with
+`border-bottom` on that button. Read as "no border on a control", the scan would refuse the
+rail Task 6.3 drew and the design specifies. A one-sided border is a rule; only an all-sides
+one is an extent.
+
+### Two figures the canvas draws that a stylesheet cannot compute
+
+The cap bar's fill (`data-fill`, `"12.5%"` or `"n/a"`) and a sparkline bar's height
+(`data-height`) are **strings in a `data-*` attribute**: CSS cannot read one as a length, and
+the console writes no inline style (`style-src 'self'`, and `screen-literals.test.ts` refuses
+a `.style` write anywhere under `src/renderer/`). So the cap is drawn as its percentage with a
+state-coloured rule beneath it — the number and the tone, which is the two channels §3.5 rule
+3 requires of exactly that reading — and the burn window is drawn as a row of ticks whose tone
+says measured or gap, with the rate in each bar's `title`. Neither figure is dropped and
+neither is invented; what is lost is the *length* of a bar, which is a drawing the code does
+not publish as a number a stylesheet could use.
+
+### Narrow windows: what the screens' layer does, and the rule that outranks it
+
+§4.2's first row would have the widest tables drop their least load-bearing columns. **This
+file wraps instead, and says why**: a dropped column is allowed only when its value is
+repeated in a `title`, and the cells a Log, Jobs or `spend-rows` table would drop — tokens in
+and out, a job's model and compute — carry a value with no `title` behind it, because
+`putReading` writes one only for a reading with no number. Hiding them would be the console
+lying about spend, which §6.1 rule 1 forbids more strongly than any layout does. What the
+layer does do is §4.2's own: the three-column figure groups become two at 48.75em and stack at
+35em, and the burn window narrows at 62.5em.
+
+### What this task does not own
+
+The eight golden frames are Task 6.6's, which is owner-run and records once at the end of the
+phase; the computed-background assertion belongs with that recording, for the reason Task 6.3
+gives. The rail's `role`/`aria-selected`, the keys and the window background were Task 6.5's,
+and all three are in the tree since it.
+
+**The five forced-colors cases are written but not run in the container this task was
+implemented in**: Playwright's Electron launch needs a display and a GTK/NSS/glib stack the
+image does not have. `npm run test:unit` is green there and `tsc --noEmit` typechecks the
+specs; the e2e suite is the one verification this branch could not complete, and the pull
+request says so.
+
+## The window's ground, and the keyboard (Task 6.5)
+
+Task 6.4 was the last stylesheet, so this task paints nothing: it is the two things the
+design's section 4.1 asks of the **code** — the colour the window paints *before* the
+document does, and the keyboard the canvas's two tablists and the rail's shortcut keys need.
+It is also the task the owner's Q1 ruling of 2026-10-19 lands in, which is why what it adds
+is smaller than the task it was written as: **one** value set ships, dark, so `CONSOLE_THEME`
+stays the literal `'dark'`, no `matchMedia` read and no `nativeTheme` query comes with it, and
+the window paints **one** background literal against the one `--ground`.
+
+| Where | What changed |
+|---|---|
+| `src/main/window.ts` | **new**: `CONSOLE_WINDOW_BACKGROUND` (`#0A0E16`) and the `backgroundColor` key in `consoleWindowOptions` |
+| `src/renderer/entry.ts` | **the keyboard**: the view navigation and the rail's list as tablists (`role`, `aria-selected`, a roving `tabindex`, each on its own axis, Home and End, Enter on the rail, the focus following the move), `isMacPlatform`, and the rail's shortcut keys on the document |
+| `src/renderer/theme/base.css` | the header's account of the selected row's rule, which now selects an attribute the code writes |
+| `test/unit/theme-tokens.test.ts` | three cases: the window background against `consoleWindowOptions`, the focus ring's one `:focus-visible` rule, and the collapsed rail's names |
+| `test/unit/entry-wiring.test.ts`, `test/support/fakeDom.ts` | the keyboard's cases, and the fake's `press`/`focus` and its two key fields |
+| `test/unit/theme-selectors.test.ts` | `drawnAttributes` reads a tablist's write made in a loop over a container the drawing filled — which is what retires `AHEAD_OF_THE_CODE`'s one entry |
+| `test/unit/window.test.ts` | the options list gains the one ground literal |
+| `docs/coordinator/reconciliation.md` | the two `window.ts` citations follow the line they name |
+| this file | the section you are reading |
+
+### The window paints the ground before the document draws, and the duplicate is a case
+
+`backgroundColor` is what the platform fills the window with in the frame between the window
+existing and the stylesheet's first paint, so a console without it flashes the platform's
+default white on every launch — a defect no screenshot of a **painted** window can see, which
+is why the guard is the only place it can be. The value is `--ground`, and it is written out
+in `src/main/window.ts` **as a literal rather than read from the stylesheet**: the main
+process has no way to resolve a custom property, so the equality is held by a test instead of
+by the compiler — `theme-tokens.test.ts` reads the literal **out of the options the window is
+built with** (not out of the exported constant, so a `backgroundColor` dropped from
+`consoleWindowOptions` fails the same case as one that drifted) and fails by name when the
+two differ. One literal and one direction, because one set ships: the two-set design's second
+literal and its `nativeTheme` read are the record of the question the ruling answered.
+
+### The keyboard: two tablists, and the shortcut keys are the document's
+
+The design's section 4.3 gives the WAI-ARIA tablist pattern to the view navigation **and** to
+the rail's list (section 4.1), and they are two tablists with two axes: the navigation is a
+row of buttons driven with Left and Right, the rail's list is a column of rows driven with
+Arrow Up and Arrow Down, and Home and End are on both. The arrows move the focus **and** the
+roving `tabindex` together, and the rail's Enter selects the row — the pattern's
+manual-activation form, since what a selection means on this rail is its own mark rather than
+a read the document could make. `tabStop` is one function both tablists write through,
+because the rail's list holds one row today: a rail whose write stopped roving would still
+draw exactly one tab stop, so the rule is held where a case can drive it rather than where it
+would be unobservable.
+
+The rail's **shortcut keys** are the document's and not the row's, which is what section 4.3
+means by "without walking the tab order at all": the key reaches a row from wherever the
+operator is standing. The design grants **Command-1 to Command-3** on macOS and
+**Control-1 to Control-3** elsewhere — the first three rows the rail draws, which is the
+hint's own sentence — so the mapping answers `null` above the third (and the key is then
+neither selected nor prevented: the window keeps it), answers `null` for the modifier the
+platform does not use, and reads the **physical** key (`event.code`): on AZERTY the unshifted
+`1` key produces `&`, and a mapping that read the character the layout produces would do
+nothing to the very keystroke the hint asks that operator for. `Numpad1` is a different
+physical key and is not a second spelling of `Digit1` — the design grants the number row and
+names no keypad key.
+
+### The mutations this task is proved against
+
+Each was planted in the shipped code, run, and removed; the failure is the red step. The first
+three are Task 6.5's own and the last three were planted by the follow-up of 2026-10-20, which
+is the PR that moved the mapping onto the physical key and bounded it to three rows.
+
+| Mutation | What fails |
+|---|---|
+| `CONSOLE_WINDOW_BACKGROUND` drifted from `--ground` (`#FFFFFF`) | `theme-tokens.test.ts`, the window-background case, and `window.test.ts`'s options case — 2 failed |
+| `backgroundColor` dropped from `consoleWindowOptions` | the same two cases — 2 failed |
+| `tabStop` answers `'0'` for both states | `entry-wiring.test.ts`, 3 cases — the navigation's two and the rule's own |
+| `shortcutRow` reads `event.key` again, so the layout decides | `entry-wiring.test.ts`, the physical-key case and the rail's wiring case — 2 failed |
+| the three-row bound dropped, so `Digit4` to `Digit9` select again | `entry-wiring.test.ts`, 3 cases — the three-row case, the physical-key case and the rail's wiring case |
+| `Numpad` admitted as a second spelling of the number row | `entry-wiring.test.ts`, the physical-key case and the rail's wiring case — 2 failed |
+
+### What this task does not own
+
+The eight golden frames are Task 6.6's, which is owner-run and records once at the end of the
+phase — **and this task moved the picture once**: `base.css` has drawn the selected rail row's
+raised surface and 3 px `--accent` border since Task 6.3, and the `aria-selected` that turns
+them on is written here, so a frame taken now differs from the same frame taken before it. The
+reason the goldens wait is still Task 6.6's own. The theme switch this task was named for is
+**not** deferred work: the owner's Q1 ruling removed it, and a later task that wants it needs
+a light set to switch to and a new ruling to ship it (plan Task 6.5's record, design section
+3.6). No token, no rule and no served file is this
+task's: `THEME_STYLESHEETS`, `SERVED_FILES` and the CSP are exactly what Task 6.4 left, and
+`ElementLike` needed no widening — `role`, `aria-*` and `tabindex` are attributes, and
+`event.code` is a read of an event rather than a write to the DOM.
+
+**The e2e suite was not run in the container this task was implemented in** (Playwright's
+Electron launch needs a display and a GTK/NSS/glib stack the image does not have);
+`npm run test:unit` and `tsc --noEmit` are the two verifications that ran, and the pull
+request says so.
+
+## The application icon: the website's mark (the owner's brief of 2026-10-19)
+
+The console's icon is the **website's own mark**, not a second drawing of it, and there is
+one file on disk rather than two to keep in step: `console/build/icon.png` is
+byte-for-byte `brand/app-icon-1024.png`, the opaque app-icon master that
+`scripts/gen-brand-icons.py` writes from `brand/fugaro-logo.png` — the file
+`brand/README.md` and `website/README.md` both name as the source of truth for every icon
+the site serves. The website's own home-screen icon,
+`website/public/android-chrome-512x512.png`, is the same composition — the artwork cropped
+to its alpha bounding box, centred at 80 % extent on the opaque ground the generator paints
+(`--ground` of the palette in force when it last ran) — at half the size, so the console and
+a visitor's browser tab are showing the same picture.
+
+### 1024, and the artwork's real size
+
+**The 1024 is a size the packager needs, not detail the source has.** The source logo is a
+1024 x 1024 *canvas*, but the mark on it is much smaller: the alpha bounding box of
+`brand/fugaro-logo.png` (alpha > 8, the generator's own `ALPHA_THRESHOLD`) is **548 x 371
+pixels**, with the rest transparent margin. `scripts/gen-brand-icons.py` crops to that box
+and then scales it per output, so the generator's own `fit(art, 1024, 0.80, ground)` —
+factor **1.4949**, artwork about 819 x 555 — is an **upscale of about 1.5x**, and the site's
+`android-chrome-512x512.png` (factor 0.7474, artwork about 410 x 277) is the same artwork
+*down*scaled. `brand/app-icon-1024.png` is therefore the largest rendering the generator
+produces rather than a native-resolution one, and the console's icon inherits exactly that.
+
+An earlier revision of this section said the master was "a genuine 1024 render" and that
+"nothing here is an upscale", and the first commit's message said the same. That was wrong,
+and the figures above are what corrects it: they were measured by decoding the committed
+files (the alpha bbox of the source, and the artwork's bbox in the 1024 master and in the
+site's 512) rather than read off the filenames.
+
+The **file choice stands**, for two reasons that do not depend on the artwork being
+oversized:
+
+- **the packager wants 1024.** electron-builder converts the PNG to the bundle's `.icns`
+  and refuses anything under 512 for that format; the `.icns` carries every slot from 1024
+  down to 16, and each one below 512 is a downscale of this file. Converting the site's 512
+  instead would leave the 1024 slot filled by a second resampler's guess at the file the
+  generator already wrote;
+- **one source of truth.** The site's 512 and this 1024 come from one artwork, one ground
+  and one generator call; upscaling the 512 here would be a *second* derivation of the mark
+  in the console's tree, which is the thing this task exists to avoid.
+
+**For a genuinely crisp 1024** the owner has to supply artwork that holds it: a
+`brand/fugaro-logo.png` whose visible mark is about 1024 px across (the canvas is already
+1024 x 1024 — the mark on it is not), or a redrawn master at that size. Then
+`python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-1024.png console/build/icon.png`
+is the whole change, and `website/test/brand.mjs` and `test/unit/icon.test.ts` are what
+check it. Nothing here smooths the 512 up and calls it a 1024.
+
+`test/unit/icon.test.ts` asserts the size, the opacity (colour type 2 — a `.icns` with holes
+in it shows the desktop through the mark) and the bytes; the PR records the same figures and
+the same limitation.
+
+### Where the packager takes it, and where a running console does
+
+- **The bundle.** `build.mac.icon` in `console/package.json` names
+  `build/icon.png` — the string `CONSOLE_ICON_RELATIVE_PATH` writes once, in
+  `src/main/icon.ts` — and electron-builder converts the 1024 PNG to the bundle's `.icns`
+  on the macOS release runner (`docs/pending-workflows/console-release.yml` runs
+  `npm run package` on `macos-15`). **No `.icns` is committed**: it is a derived binary
+  only the packing step needs, and committing one would be a second copy of the artwork to
+  regenerate by hand. The icon is deliberately *not* in `build.files`: it goes into the
+  bundle as the application's icon, not into the asar as an asset, and `fuses.test.ts`'s
+  exact-list test still holds every pattern there to `.js`, `.html` or `.css`.
+- **The dock, while unpackaged.** `npm run build && npx electron .` — what a developer
+  does, and what `test/e2e/` launches — has no bundle, so the dock would show Electron's
+  own icon. `installDevDockIcon` (`src/main/icon.ts`) gives the process the console's icon
+  through `app.dock.setIcon`, and `src/main/index.ts` calls it as the first thing `main()`
+  does, before any window exists. It answers `false` — and touches nothing — in three
+  cases, each a real one rather than a defensive check: not macOS (`app.dock` is
+  `undefined`), already packaged (the bundle carries the icon), and no dock handed in.
+- **`BrowserWindow`'s `icon` option is not used, and that is deliberate.** macOS ignores
+  it: a window's chrome and the dock take the *application's* icon, which on macOS is the
+  bundle's. A key that does nothing on the only platform this console runs on would be
+  worse than absent, and pointing it at a file the packaged app does not carry is exactly
+  the broken pointer the `<link>` rule in this document refuses. The dev-time dock icon is
+  macOS's own door for the same job.
+
+### Refresh, when the mark changes
+
+The copy is a copy, so a regenerated brand master — the generator paints the ground colour
+the palette in force gives it, so re-running it after a palette change rewrites every icon,
+and the committed ones' ground is in any case older than `tokens.css`'s current `--ground` —
+leaves the console's icon stale **until the equality test says so**:
+
+```sh
+python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-1024.png console/build/icon.png
+```
+
+That is the whole sync. It is a byte copy rather than a build step on purpose: electron's
+packing runs on a macOS runner that has no Pillow, `build/icon.png` is a committed file the
+dev-time dock reads from the checkout, and a derivation script would be a second
+implementation of the generator's own decision to keep in step.
+
+### The tests, and the mutations each one was run against
+
+`test/unit/icon.test.ts` (9 tests), and every one of them was seen red against a planted
+change before it was committed:
+
+| Claim | Mutation it was run against |
+|---|---|
+| the bytes are the master's | a 1024 x 1024 RGB PNG of the ground colour alone planted as `build/icon.png` — "is the app-icon master, byte for byte" red |
+| the picture is the site's | the same planted file: "is the picture the website serves…" red, naming block 421 at 218.06 against a tolerance of 8. The site's *maskable* icon, a different composition of the same mark, measures 218.87 the same way; the site's 512 measures **3.96**, which is what the tolerance is set from (see the test) |
+| it is a 1024, opaque PNG | the site's 512 icon planted in its place — the size assertion red ("expected 512 to be 1024"); that file is opaque too, so the colour-type half of the test is what the `logo.png` in `public/` would fail |
+| the packaging config names it | `build.mac.icon` pointed at `build/icon.icns` — "is the icon the packaging config names…" red |
+| the dock icon is set on macOS, unpackaged | `deps.packaged` dropped from `installDevDockIcon`'s guard — "does nothing once packaged" red; `deps.platform` dropped — "does nothing off macOS" red |
+| the entry point wires it | `packaged: app.isPackaged` in `src/main/index.ts` replaced with `packaged: true` — "is the icon the entry point actually installs" red |
+
+The last row is a source scan, the same shape as `startup.test.ts`'s: `src/main/index.ts`
+imports Electron's *runtime* and cannot be imported under vitest, so "the entry point
+installs it" is read off the file's text.
+
+### What this task does not own
+
+Nothing under `.github/workflows/` — the release workflow is staged in
+`docs/pending-workflows/` and is the owner's to copy in, so the PNG-to-`.icns` conversion
+is asserted as *what that file's `npm run package` will do*, not as something this branch
+ran. Apple's icon shape: macOS draws its own rounded-rect mask over a full-bleed icon, and
+the mark is not redrawn, recoloured or inset to anticipate it — that would be editing the
+website's artwork. And any signed or notarised build: unchanged from Task 4.1's record
+above.

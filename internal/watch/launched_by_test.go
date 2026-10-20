@@ -115,7 +115,7 @@ func TestPlainShowsTheLauncherShortForm(t *testing.T) {
 }
 
 // TestPlainLauncherIsADashWhenNotRecorded: a run whose launch.json recorded no
-// launcher (every run launched before the launcher was recorded) shows a dash,
+// launcher (a backfill, a local run, or `fugaro logs`'s synthetic launch) shows a dash,
 // in both tables — a fact, not a blank cell and not an invented name.
 // Mutation caught: falling back to another identity, or leaving the cell
 // empty.
@@ -258,7 +258,7 @@ func TestJSONLauncherIsTheFullRecordedIdentity(t *testing.T) {
 
 // TestJSONLauncherKeyIsAbsentWhenNotRecorded: no launcher, no key — never "",
 // never an invented value. The console's contract says the key is absent for a
-// run from before the launcher was recorded, and a key that were always there
+// run whose launch recorded no launcher, and a key that were always there
 // would make that indistinguishable from an empty identity.
 func TestJSONLauncherKeyIsAbsentWhenNotRecorded(t *testing.T) {
 	doc := BuildJSON("aurora", launcherView(""))

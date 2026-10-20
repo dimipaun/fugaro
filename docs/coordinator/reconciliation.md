@@ -117,7 +117,7 @@ request timeout. A concurrency setting has no precedent anywhere. → **Q1**.
 
 **#3 — "Part of project init's existing Terraform" is the right shape with the wrong noun, and the plan gate is an allowlist that a new service breaks. — Wrong (the noun) / Rule (the gate).**
 `fugaro init` applies the **installation** root (`internal/cli/init.go:1626 installRoot`,
-`:1720 t.Plan`, `:1748 t.Apply`). There is a Terraform module called `project`
+`:1736 t.Plan`, `:1770 t.Apply`). There is a Terraform module called `project`
 (`deploy/terraform/gcp/modules/project/`) — but it is the *shared project jobs* module: it
 creates one Cloud Run job and one job service account per (profile, provider, account)
 (`modules/project/job.tf:10`, `modules/project/sa.tf:5`) and nothing else. It creates no
@@ -542,7 +542,7 @@ follows it: `console/src/renderer/app.ts` writes through `element.textContent`
 (`:124,138,159,174`), never `innerHTML`; the sanitizers are
 `console/src/shared/sanitize.ts` (`sanitizeText:2208`, `sanitizeRefusal:2445`,
 `safeUrl:2477`); navigation and window-open are denied
-(`console/src/main/window.ts:198 denyNavigation`, `:209 denyWindowOpen`), and there is
+(`console/src/main/window.ts:231 denyNavigation`, `:242 denyWindowOpen`), and there is
 exactly one validated `shell.openExternal`.
 A coordinator answering *"what's holding up the payments release?"* produces free text that
 a model wrote from untrusted inputs. If that text were rendered as markdown with live links,

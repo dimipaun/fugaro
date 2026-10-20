@@ -1,10 +1,15 @@
 {
   "version": 1,
-  "available": false,
+  "available": true,
   "name": "The Fugaro desktop console",
   "what": {
     "text": "A desktop application that is a graphical fugaro watch: live run monitoring and spending graphs. It has no backend, no service account, no database client and no credential of its own — the CLI is the data plane.",
     "source": "docs/design/desktop-console.md D1"
+  },
+  "released": {
+    "text": "The console ships for macOS only, as one universal disk image and one archive, signed with a Developer ID certificate and notarised by Apple. Install the CLI first: the CLI is the data plane, and the console runs its read-only commands. The SHA-256 the release published is printed beside each download, and the command below prints the same line for the file you downloaded.",
+    "verify": "shasum -a 256 Fugaro.Console-*",
+    "source": "docs/design/desktop-console.md D1 D4"
   },
   "not_released": {
     "text": "Not released yet. The console is built for macOS and has not been published: this section carries no download link until its own release exists.",
@@ -33,19 +38,21 @@
   ],
   "release": {
     "tag_prefix": "console-v",
-    "version": "0.8.5",
+    "version": "0.9.0",
     "source": "docs/release.md"
   },
   "downloads": [
     {
       "id": "macos-dmg",
       "platform": "macOS",
-      "file": "Fugaro Console-{version}-universal.dmg"
+      "file": "Fugaro Console-{version}-universal.dmg",
+      "sha256": "3bde68eae6542886e5243c74f7137d58a05b8a6b349987c412bb42ba681abbfb"
     },
     {
       "id": "macos-zip",
       "platform": "macOS",
-      "file": "Fugaro Console-{version}-universal-mac.zip"
+      "file": "Fugaro Console-{version}-universal-mac.zip",
+      "sha256": "af86fb8bd01464e63395e9473b0adea4b9f8eae610542d691f31bf2f13117f8a"
     }
   ]
 }

@@ -407,8 +407,9 @@ describe('the packaging configuration the fuses belong to', () => {
     // opens a window with no page in it. The preloads are named exactly: the
     // dashboard window loads `dist/preload/index.js` and the picker's window
     // `dist/preload/installations.js` (Task 3.4b), and nothing else under that
-    // directory ships. Only `.js` and the two documents are shipped, so no
-    // source map is; `dist/renderer` is the bundler's input, not served, so it
+    // directory ships. Only `.js`, the documents and the served stylesheet
+    // (Task 6.2, which every document links) are shipped, so no source map is;
+    // `dist/renderer` is the bundler's input, not served, so it
     // is not shipped; and the two compiled files the app never loads -- the
     // packing hook (it needs a devDependency) and the fixture loader (tests and
     // the recorder) -- are excluded by name.
@@ -420,6 +421,7 @@ describe('the packaging configuration the fuses belong to', () => {
       'dist/shared/**/*.js',
       'dist/source/**/*.js',
       '!dist/source/fixture.js',
+      'dist/bundle/console.css',
       'dist/bundle/console.js',
       'dist/bundle/index.html',
       'dist/bundle/installations.html',
@@ -438,7 +440,7 @@ describe('the packaging configuration the fuses belong to', () => {
     const patterns = build.files ?? []
     for (const pattern of patterns) {
       expect(pattern, `${pattern} is not a shape this test can read`).toMatch(
-        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z]+\.(?:js|html))$/,
+        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z]+\.(?:js|html|css))$/,
       )
     }
     const ships = (file: string): boolean => {
@@ -489,9 +491,10 @@ describe('the packaging configuration the fuses belong to', () => {
   it('ships no source map', () => {
     // The build emits them (tsconfig.build.json sets sourceMap), and a map in
     // the asar is a full copy of the sources with a pointer to it. Every
-    // include in the list ends in `.js` or names one of the `.html`
-    // documents, so no map matches.
-    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html)$/)
+    // include in the list ends in `.js`, names one of the `.html` documents, or
+    // is the served `.css` (Task 6.2) -- so no include names a `.map`, and a
+    // pattern that started to would fail here.
+    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html|css)$/)
   })
 
   it('publishes nowhere: publish is null, not merely absent', () => {
@@ -531,8 +534,15 @@ describe('the packaging configuration the fuses belong to', () => {
   })
 
   it('has exactly the mac keys this task decided', () => {
+    // `icon` joined the list with the icon task (the owner's brief of
+    // 2026-10-19): the bundle's application icon, from `build/icon.png`, which
+    // is the website's own mark. It adds nothing to what ships -- the file
+    // becomes the bundle's `icon.icns` and is not packed into the asar -- and
+    // `test/unit/icon.test.ts` is where that reading is asserted; the list is
+    // still pinned here so that a second icon key, or a *different* one, is a
+    // red test rather than a quiet line.
     expect(Object.keys(build.mac ?? {}).toSorted()).toEqual(
-      ['entitlements', 'entitlementsInherit', 'hardenedRuntime', 'target'].toSorted(),
+      ['entitlements', 'entitlementsInherit', 'hardenedRuntime', 'icon', 'target'].toSorted(),
     )
     for (const widening of ['asarUnpack', 'extraResources', 'extraFiles', 'binaries', 'identity']) {
       expect(build.mac, `build.mac.${widening} must be absent`).not.toHaveProperty(widening)

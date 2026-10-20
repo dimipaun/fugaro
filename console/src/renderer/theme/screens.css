@@ -1,0 +1,1455 @@
+/* console/src/renderer/theme/screens.css — the console's SCREENS (desktop-console
+ * plan Task 6.4; design section 2's inventory, with sections 3.5, 3.7, 3.8, 4.2
+ * and 4.4 as the rules it keeps).
+ *
+ * This is the last layer of the one stylesheet the three documents
+ * link: `tokens.css` is the vocabulary, `palette.css` the value set, `base.css`
+ * the reset, the document and the chrome, and this file is the per-screen rules
+ * — Live, Spend, Projects, Run detail, the degraded and unavailable screens, the
+ * refusal document and the installation picker, in the order section 2
+ * inventories them.
+ *
+ * **It is wired, and Task 6.2 is what wired the layer it joins.** The bundler
+ * names this file in `THEME_STYLESHEETS` in the same commit that created it —
+ * the step refuses a listed file that is missing *and* a `.css` the list does
+ * not name, so the file and its entry move together — `dist/bundle/console.css`
+ * is served at `/console.css`, and each document links it. After this task the
+ * list is the theme directory's whole contents and stays still.
+ *
+ * **No inline style, and the CSP is not touched.** `style-src 'self'` admits
+ * this file because it is served from this origin; nothing here needs a `<style>`
+ * element, a `style` attribute or `'unsafe-inline'`, and
+ * `test/unit/screen-literals.test.ts` refuses a `.style` write anywhere under
+ * `src/renderer/` (design section 5.5).
+ *
+ * **Every hook here is one the design's section 2 names**, which is the licence
+ * the whole theme is written under ("a rule may only select a hook this table
+ * names"). `test/unit/theme-selectors.test.ts` reads section 2 out of the design
+ * and fails by name on a selector that names anything else — including a class
+ * nothing emits.
+ *
+ * **No state is carried by colour alone** (design section 3.5). Every rule below
+ * that paints a state paints it *beside* a word, a mark or a number the code
+ * already emits: `KILLED by`, `HALTED`, `silent`, `lost`, `near deadline`,
+ * `queued`, `stuck`, the em dash of a gap, `n/a` with its reason in `title`, the
+ * `NOTIONAL~` / `est.` marks, `(partial)`, `degraded`, `polling`, and the cap's
+ * own percentage. A reader who sees no hue difference at all still reads every
+ * state.
+ *
+ * **Two figures the canvas draws that CSS cannot compute, said here rather than
+ * left to be found.** The cap bar's fill (`data-fill`, `"12.5%"` or `"n/a"`) and
+ * a sparkline bar's height (`data-height`) are *strings in a `data-*`
+ * attribute*: a stylesheet cannot read one as a length, and the console writes
+ * no inline style (the CSP forbids one). So the cap is drawn as the percentage
+ * with a state-coloured rule beneath it — the number and the tone are the two
+ * channels section 3.5 rule 3 requires of exactly this reading — and the burn
+ * window is drawn as a row of ticks whose tone says measured or gap, with the
+ * rate in each bar's `title`. Neither figure is dropped, and neither is
+ * invented: what is lost is the *length* of a bar, which is a drawing the code
+ * does not publish as a number a stylesheet could use.
+ */
+
+/* ---- The screen in the panel ---------------------------------------------
+ *
+ * A screen's own root is the panel's only child (design section 4.1), so a rule
+ * may be written `section.live` or `.live` and never `div.console-panel .live`:
+ * the panel is chrome and the screen is content. Each root also carries the
+ * screen's `data-theme`, which no rule below reads — one value set ships, and it
+ * is declared once in `palette.css` (the owner's Q1 ruling of 2026-10-19).
+ */
+
+section.live,
+section.spend,
+section.projects,
+section.degraded,
+section.console-unavailable {
+  display: block;
+  color: var(--text);
+}
+
+/* **The Run screen's root is not here, and that is §2's doing rather than an
+ * omission.** §2.6's table starts at `run-header` and names no class for the
+ * screen root itself -- §2.7 opens with `section.degraded` for the degraded
+ * screen, §2.6 does not open with `section.run` -- so a rule spelled
+ * `section.run` would select a hook §2 does not name, which is the one thing
+ * this theme's rules may not do. Nothing is lost: the reset gives a `section`
+ * its own block box, and `base.css` sets the document's colour on `body`. */
+
+/* A screen's `h1` block has `--space-md` below it and nothing above it
+ * (design section 3.8). */
+h1.live-project,
+h1.spend-project,
+h1.projects-project,
+h1.run-id,
+h1.degraded-project,
+h1.unavailable-headline {
+  margin: 0 0 var(--space-md);
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-semibold);
+}
+
+/* A panel's title is the medium step, a table's header the small one
+ * (design section 3.7). */
+h2.spend-account-title,
+h2.projects-title,
+h2.run-panel-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-semibold);
+}
+
+span.projects-repos-label,
+span.degraded-mode-word,
+span.spend-persons-word,
+span.run-replay-window-word {
+  font-size: var(--font-size-xs);
+  font-weight: var(--weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+/* Prose is the base size and never mono (design section 3.7), and it is the
+ * screens' own sentences -- a note, a warning, a reason a panel is empty. */
+p.live-note,
+p.spend-note,
+p.spend-warning,
+p.spend-persons-note,
+p.spend-notice,
+p.projects-because,
+p.projects-note,
+p.projects-jobs-note,
+p.projects-accounts-note,
+p.projects-warning,
+p.run-warning,
+p.run-log-note,
+p.run-log-refused,
+p.run-log-link-note,
+p.run-pr-reason,
+p.run-replay-note,
+p.run-report-path,
+p.run-comments-path,
+span.run-halt-detail,
+p.degraded-notice,
+p.degraded-warning,
+p.unavailable-reason,
+p.unavailable-sentence,
+div.unavailable-searched,
+p.run-agent-message,
+p.run-reported-warning,
+p.run-pin-warning,
+p.run-draft-note,
+p.run-follow-up {
+  margin-block: var(--space-2xs);
+  font-size: var(--font-size-base);
+}
+
+/* ---- The five number hooks, and the alignment rule ------------------------
+ *
+ * Section 6.1 rule 2: density as the default, tabular figures, right-aligned
+ * numerics, and no whitespace padding between related figures. One rule carries
+ * all of it, and it names **five** hooks because five screens exist: Live,
+ * Spend, Projects and Run each prepend their own in their own `numberCell`, and
+ * the degraded screen's `numberCell` prepends none -- which is why Task 6.4 adds
+ * `degraded-num` to that one helper (`src/renderer/screens/degraded.ts`), the
+ * only code change in the styling work (design section 2.10). Without it the
+ * feed age, the counts and the money of the degraded and unavailable screens
+ * would be the only figures in the console with no alignment hook at all.
+ *
+ * `min-width` is in `ch` and stated here rather than as a token: like the rail's
+ * two widths it is a fact about the drawing, and section 3.1's vocabulary is
+ * closed -- the token test asserts `tokens.css` is exactly that table, so a task
+ * that wants a step it does not name is a task that has not read section 3.1.
+ */
+
+.live-num,
+.spend-num,
+.projects-number,
+.run-number,
+.degraded-num {
+  min-width: 6ch;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-sm);
+  text-align: right;
+}
+
+/* ---- Rows, regions and the hairline between them --------------------------
+ *
+ * Section 3.8's density rules: a table row is `--row-height` with `--space-2xs`
+ * vertical padding and one hairline between rows; a panel is separated from the
+ * next by `--space-lg` and carries `--space-sm` of its own padding. The rows
+ * wrap rather than clip: a figure is never hidden to make a layout fit (section
+ * 4.2), so a narrow window costs a line and never a reading.
+ */
+
+li.live-repo,
+li.live-run,
+li.spend-row,
+li.spend-point,
+li.spend-cap-repo,
+li.projects-cap,
+li.projects-job,
+li.projects-secret,
+li.projects-account,
+li.degraded-run,
+li.run-stage,
+li.run-log-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  min-height: var(--row-height);
+  padding-block: var(--space-2xs);
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+div.live-total,
+ol.live-repos,
+ol.live-orphans,
+ol.live-runs,
+ol.spend-rows,
+ol.spend-series,
+ol.spend-switch,
+ol.spend-picker,
+ol.spend-cap-repos,
+ol.projects-cap-list,
+ol.projects-job-list,
+ol.projects-secret-list,
+ul.projects-enrolled-list,
+ul.projects-seen-list,
+ul.projects-account-list,
+ol.degraded-runs,
+ol.run-stage-list,
+ol.run-log-list,
+ol.run-log-tail,
+div.spend-accounts,
+div.spend-totals,
+section.spend-caps,
+section.projects-panel,
+section.run-ledger,
+section.run-stages,
+section.run-pr,
+section.run-logs,
+section.run-diagnosis,
+section.run-replay,
+div.degraded-caps,
+div.degraded-totals {
+  margin-bottom: var(--space-lg);
+  padding: var(--space-sm);
+  background: var(--surface);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* A repository's block is the raised surface inside the panel, and its runs sit
+ * on the panel's own ground, one step apart (design section 3.2's three
+ * surfaces). */
+li.live-repo {
+  margin-bottom: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--surface-alt);
+  border-radius: var(--radius-sm);
+}
+
+li.live-run {
+  background: var(--surface);
+}
+
+/* ---- Identity: an id, a repository, a slug, a path, a timestamp ------------
+ *
+ * Mono, because their value is that they can be compared character by character
+ * (design section 3.7). Prose never is.
+ */
+
+span.live-run-id,
+h1.run-id,
+span.run-repo,
+span.run-workflow,
+span.live-repo-name,
+span.projects-job-repo,
+span.projects-job-run,
+span.projects-job-workflow,
+span.projects-job-created,
+li.projects-enrolled-repo,
+li.projects-seen-repo,
+span.projects-only-seen-repo,
+span.projects-only-enrolled-repo,
+span.projects-secret-name,
+span.projects-accounts-repo,
+span.projects-cap-repo,
+span.projects-kill-repo,
+span.projects-job-model,
+span.run-log-time,
+span.run-log-stage,
+span.run-stage-name,
+span.run-finding-file,
+span.run-follow-up-pr,
+span.run-replay-from,
+span.run-replay-to,
+span.run-replay-at,
+span.spend-point-key,
+span.spend-key,
+span.spend-model,
+span.spend-cap-repo-name,
+span.degraded-run-id,
+span.degraded-run-repo,
+span.degraded-run-created,
+span.degraded-since-at,
+span.live-since-at,
+span.live-kill-at,
+span.spend-kill-at,
+span.projects-kill-at,
+span.run-halt-at,
+p.installation-binary,
+code.unavailable-install-command {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-sm);
+}
+
+/* ---- Live ----------------------------------------------------------------- */
+
+header.live-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+span.live-mode,
+span.live-day,
+span.live-connection,
+span.live-connection-age,
+span.live-connection-reason {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* The connection cell's own word, and its own tone: the cell draws the CLI's
+ * connection state, and a state the console could not read is `n/a` with its
+ * reason in `title`. `data-stale-by-age` is the second channel and never the
+ * only one -- the age beside it is the reading. */
+span.live-connection[data-stale-by-age='true'] {
+  color: var(--warn);
+}
+
+p.live-since,
+div.live-stale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* The stale banner says so in words and carries the tone beside them (design
+ * section 3.5: the sentence names the 45 s threshold). The left rule is the
+ * drawn mark and the sentence is the mark that survives forced colors. */
+div.live-stale {
+  margin-top: var(--space-2xs);
+  padding-left: var(--space-xs);
+  border-left: 3px solid var(--stale);
+}
+
+span.live-stale-word {
+  color: var(--stale);
+}
+
+/* `data-state` on a *bar* is a reading's availability, and `--ok` is for
+ * measured and inside the cap (design section 3.2's role cell and section 3.5
+ * rule 4). The `data-state` on the connection cell is **the word the cell drew**
+ * and not an availability at all (design section 2.3), which is why nothing
+ * above paints `[data-state]` generically: a rule that did would paint a cell
+ * for a value that is not a state. */
+div.live-bar {
+  min-width: 6ch;
+  padding-inline: var(--space-2xs);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-sm);
+  text-align: right;
+  color: var(--text);
+  border-bottom: 3px solid var(--surface-alt);
+}
+
+div.live-bar[data-state='measured'] {
+  border-bottom-color: var(--ok);
+}
+
+div.live-bar[data-state='unavailable'] {
+  color: var(--text-muted);
+  border-bottom-color: var(--stale);
+}
+
+p.live-note {
+  color: var(--text-muted);
+}
+
+/* The total block: three figures read together, so they sit together (design
+ * section 3.8's last bullet). */
+div.live-total {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2xs) var(--space-sm);
+  align-items: baseline;
+}
+
+/* The burn window: one tick per sample, the tone saying whether the sample is
+ * plottable, and the rate in each bar's `title`. */
+ol.live-burn {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: var(--row-height);
+}
+
+li.live-burn-bar {
+  flex: 1 1 0;
+  max-width: 12px;
+  height: 100%;
+  overflow: hidden;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  background: var(--accent);
+}
+
+li.live-burn-bar[data-state='gap'] {
+  background: none;
+  border-top: var(--rule-width) solid var(--border);
+}
+
+span.live-burn-unit {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+ol.live-runs {
+  margin-top: var(--space-2xs);
+  padding: var(--space-2xs);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+}
+
+/* A run row's flags: the word is the mark and the tone is the second channel.
+ * `--warn` is attention, `--error` is failed or lost (design section 3.2). */
+span.live-run-flag[data-tone='amber'] {
+  color: var(--warn);
+}
+
+span.live-run-flag[data-tone='alarm'] {
+  color: var(--error);
+}
+
+span.live-run-flag {
+  font-size: var(--font-size-xs);
+}
+
+/* Queued and stuck carry the flag's word *and* the all-caps row treatment
+ * (design section 3.5's table), so the tone is never the only carrier. */
+li.live-run-queued .live-run-flag,
+li.live-run-stuck .live-run-flag {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* The queued row's left border is a **rule**, so it takes `--accent`: section
+ * 3.2's role cell gives that token the rules ("structure: rules, the focus ring,
+ * a filled control, the cap bar below its threshold"), and the rail's selected
+ * row draws its own 3 px left border in it (section 4.1). It is **not**
+ * `--accent-ink`, whose cell is "the accent **as text** -- links, an accent
+ * heading": that is the tone for text, and a border is not text. `queued` is not
+ * one of the five state colours either, so the structural tone is the one the
+ * design leaves for it, and `test/unit/theme-tokens.test.ts` holds
+ * `--accent-ink` to text. */
+li.live-run-queued {
+  border-left: 3px solid var(--accent);
+}
+
+li.live-run-stuck {
+  border-left: 3px solid var(--error);
+}
+
+span.live-run-title {
+  font-size: var(--font-size-base);
+}
+
+span.live-run-stage,
+span.live-run-round,
+span.live-run-verify,
+span.live-run-models,
+span.live-run-recipe,
+span.live-run-auth,
+span.live-run-requester,
+span.live-run-workflow,
+span.live-run-contradiction {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* The kill banner, on both shapes the code emits it in: the repository block
+ * carries `data-killed` itself and the banner is appended inside it (design
+ * section 2.9), while `div.live-total` appends the banner and carries no
+ * attribute. `--halted` is a DELIBERATE STOP and not a failure, which is why it
+ * is not `--error`. */
+div.live-kill,
+div.spend-kill,
+div.projects-kill,
+div.run-halt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  margin-top: var(--space-2xs);
+  padding: var(--space-2xs) var(--space-xs);
+  background: var(--surface-alt);
+  border-left: 3px solid var(--halted);
+  border-radius: var(--radius-sm);
+}
+
+span.live-kill-word,
+span.spend-kill-word,
+span.projects-kill-word,
+span.run-halt-word {
+  color: var(--halted);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+li.live-repo[data-killed='true'] {
+  border-left: 3px solid var(--halted);
+}
+
+/* ---- Spend ---------------------------------------------------------------- */
+
+header.spend-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+span.spend-source,
+span.spend-since,
+span.spend-until,
+span.spend-weeks,
+span.spend-caps-project,
+span.spend-caps-day,
+span.spend-totals-word {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* The range picker and the breakdown switch are control rows: the button that
+ * carries `data-current='true'` is the chosen window or dimension, and the
+ * marker is an attribute rather than a tone alone. */
+ol.spend-picker,
+ol.spend-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  padding: var(--space-2xs);
+  background: var(--surface);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+li.spend-window,
+li.spend-dim,
+li.spend-dim-unknown {
+  padding: var(--space-2xs) var(--space-xs);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+li.spend-window[data-current='true'],
+li.spend-dim[data-current='true'] {
+  color: var(--accent-ink);
+  font-weight: var(--weight-medium);
+  border-color: var(--accent);
+}
+
+/* A dimension word this console does not know is drawn as the word it was
+ * (`data-dimension='unknown'`), and the switch says so above it. */
+li.spend-dim-unknown[data-dimension='unknown'] {
+  color: var(--warn);
+  border-left: 3px solid var(--warn);
+}
+
+/* The person view withheld: the knob is off, the state text says `off`, and the
+ * sentence is the note's own text (design section 2.4). */
+div.spend-persons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+div.spend-persons[data-enabled='false'] {
+  color: var(--text-muted);
+}
+
+/* The knob's own word -- `on` or `off`, and the word is the state (design
+ * section 3.5). `data-enabled` is on the `div.spend-persons` and not on this
+ * span, so the **tone** is the parent's rule above (which mutes the whole block
+ * while the person view is withheld, §2.4's "person view withheld
+ * (`div.spend-persons` with `data-enabled="false"`, the state text `off`")),
+ * and this rule is the span's own type. */
+span.spend-persons-state {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* Degraded: the word `degraded` beside the tone (design section 3.5). */
+span.spend-degraded {
+  color: var(--text-muted);
+}
+
+span.spend-degraded[data-degraded='true'] {
+  color: var(--warn);
+  font-size: var(--font-size-xs);
+}
+
+/* The three account charts. A point is a figure like any other: mono, tabular,
+ * and the tone of the account whose column it reads -- measured, notional or
+ * estimated (design section 2.9). The mark that carries the state is the
+ * `NOTIONAL~` / `est.` prefix inside the number itself. */
+div.spend-account {
+  margin-bottom: var(--space-sm);
+}
+
+ol.spend-series {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2xs);
+  padding: var(--space-2xs) 0;
+}
+
+li.spend-point {
+  flex-direction: column;
+  align-items: flex-end;
+  min-height: var(--row-height-compact);
+}
+
+li.spend-point[data-state='gap'] {
+  color: var(--stale);
+}
+
+li.spend-point[data-state='notional'],
+li.spend-point[data-state='estimated'] {
+  color: var(--text-muted);
+}
+
+span.spend-point-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* `(partial)` and `hollow` are Spend's own honesty states, and both carry the
+ * marker text (design section 3.5).
+ *
+ * **The attributes are on the row, not on the marker.** §2.4 puts
+ * `data-partial` on the points, the rows and `div.spend-totals`, and
+ * `data-hollow` on the points and the rows; `span.spend-partial` inside them
+ * holds the text `(partial)` and carries no attribute at all, so a rule
+ * spelling it `span.spend-partial[data-partial='true']` selects nothing -- the
+ * tone has to be on the element that knows. */
+li.spend-point[data-partial='true'],
+li.spend-row[data-partial='true'],
+div.spend-totals[data-partial='true'],
+li.spend-point[data-hollow='true'],
+li.spend-row[data-hollow='true'] {
+  color: var(--warn);
+}
+
+span.spend-peak {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* The caps panel: the binding scope, then the limits, then the per-repository
+ * overrides. A cap the console could not read draws `n/a` and says so in one
+ * sentence -- never `$0.00` (design section 6.3). */
+span.spend-scope,
+span.spend-cap-word {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+section.spend-caps[data-available='false'] {
+  color: var(--text-muted);
+}
+
+div.spend-cap-limit[data-limit='max_reserve'] {
+  border-left: 3px solid var(--accent);
+  padding-left: var(--space-xs);
+}
+
+li.spend-cap-repo[data-key] {
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+/* ---- Projects -------------------------------------------------------------
+ *
+ * Eight panels, each `section.projects-panel` with `data-panel` and a
+ * `data-state` of `read`, `unavailable` or `not-built` (design section 2.5).
+ * A panel in any state but `read` has no body at all, so a rule that painted an
+ * empty body would paint nothing; what it has is the panel's own sentence.
+ */
+
+header.projects-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+span.projects-mode,
+span.projects-day,
+span.projects-source,
+span.projects-count,
+span.projects-cap-scope,
+span.projects-cap-source,
+span.projects-kill-scope,
+span.projects-jobs-total-of,
+span.projects-secret-scope,
+span.projects-secret-latest,
+span.projects-secret-label,
+span.projects-secret-label-key,
+span.projects-secret-label-value,
+span.projects-secret-allowed,
+span.projects-job-status,
+span.projects-job-stage,
+span.projects-job-by,
+span.projects-cap-repo,
+span.projects-accounts-repo,
+span.projects-only-seen-repo,
+span.projects-only-enrolled-repo,
+span.projects-kill-repo {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* A panel that is not `read` is not an empty region: it draws its state and the
+ * sentence that explains it (`projects-because`), and `not-built` is the
+ * design's own honesty rule in the DOM. */
+section.projects-panel[data-state='unavailable'] {
+  color: var(--text-muted);
+  border-left: 3px solid var(--stale);
+}
+
+section.projects-panel[data-state='not-built'] {
+  color: var(--text-muted);
+  border-left: 3px solid var(--warn);
+}
+
+/* A panel the CLI could `read` is the normal panel, and its left rule is
+ * **structure**, so it takes `--accent` -- the token section 3.2's role cell
+ * gives the rules to, and the one the rail's selected row draws its own 3 px
+ * left border in (section 4.1). It is **not** `--ok`: section 3.5 rule 4
+ * licenses that tone for exactly two readings -- measured-and-inside-the-cap,
+ * and the rail's `running` row -- and a panel the CLI read is neither of them,
+ * so painting it `--ok` is the decorative use section 6.1 rule 3 forbids. Adding
+ * a reading to that rule means amending the rule and section 3.2's role cell in
+ * the same edit, which is how the rail's `running` arrived; a tone whose stated
+ * role it does not have is a rule an implementer cannot justify against the
+ * design. */
+section.projects-panel[data-state='read'] {
+  border-left: 3px solid var(--accent);
+}
+
+/* The kill panel and a killed repository: `KILLED by <who> <when> "<reason>"`,
+ * the word and the tone together.
+ *
+ * **The row is marked by the banner it holds.** `data-killed` is the
+ * **banner's** attribute and not the row's (§2.5's `data-*` line, and §3.5's
+ * states table: "the attribute is on the banner, and on Live's repository
+ * block itself" -- Live's `li.live-repo` carries it, Projects' row does not),
+ * so a rule spelling the row's own border `div.projects-kill-row[data-killed]`
+ * selects nothing. `:has()` is the one selector that can see the banner inside,
+ * and a row that *has* one is exactly a killed repository: the row without a
+ * kill holds the words `not killed` instead. */
+div.projects-kill-row:has(div.projects-kill) {
+  border-left: 3px solid var(--halted);
+}
+
+span.projects-kill-none {
+  color: var(--text-muted);
+}
+
+/* An enrolled repository that is only seen, and a seen repository that is only
+ * enrolled: two lists and the sentence that says which is which. */
+p.projects-only-seen,
+p.projects-only-enrolled {
+  margin-top: var(--space-2xs);
+  color: var(--warn);
+  font-size: var(--font-size-base);
+}
+
+/* ---- Run detail ----------------------------------------------------------- */
+
+header.run-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+span.run-status,
+span.run-outcome,
+span.run-stage,
+span.run-branch,
+span.run-requested-by,
+span.run-flags,
+span.run-settled,
+span.run-stale,
+span.run-follow-up {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* A settled or stale run says so in words; the tone is the second channel and
+ * `--stale` is the last-known-values colour, which is exactly what a stale
+ * draft is. */
+span.run-stale {
+  color: var(--stale);
+}
+
+span.run-settled,
+span.run-follow-up {
+  color: var(--accent-ink);
+}
+
+/* The ledger is three figures read together (design section 3.8). */
+section.run-ledger {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2xs) var(--space-sm);
+  align-items: baseline;
+}
+
+section.run-ledger p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+}
+
+p.run-ledger-model,
+p.run-ledger-compute,
+p.run-ledger-total {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* Stages: the stage's name, its word and its deadline -- each with its word
+ * (design section 2.6 and 3.5).
+ *
+ * **`run-stage-passed` is not coloured, and cannot be**: it holds either
+ * `passed` or `failed` in one class with no attribute (§2.6's states: "stage
+ * passed/failed (`run-stage-passed` with `passed`/`failed`)"), so any tone a
+ * rule gives it is right for one of the two words and wrong for the other --
+ * and painting it `--ok`, which is what this rule did, reads a failed stage
+ * green. `--ok` is reserved for measured-and-inside-cap and the rail's running
+ * (§3.5 rule 4), and a stage is neither. The two words are the state, and the
+ * failure's alarm tone is the diagnosis panel's `run-failed-word`, the element
+ * that knows which it is. */
+span.run-stage-name,
+span.run-stage-passed,
+span.run-stage-deadline {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* The pull request is drawn as text with **no link at all**: `run.link` is
+ * typed `null` and `PR_NO_LINK_REASON` explains why (design section 2.6), so
+ * there is no anchor here to style. The one anchor the screen can draw is a log
+ * link, and its URL goes to `data-href` and never to its navigating attribute --
+ * which is the code's rule, and this rule only paints it. */
+a.run-log-link {
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
+
+/* The log is the densest table in the console: mono, one line per line, and the
+ * severity word rather than a colour alone. */
+li.run-log-line {
+  gap: var(--space-xs);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-sm);
+}
+
+span.run-log-severity,
+span.run-log-message,
+li.run-log-tail-line {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+span.run-log-severity {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+ol.run-log-tail {
+  padding: var(--space-2xs) var(--space-xs);
+  background: var(--surface-alt);
+  border-radius: var(--radius-sm);
+}
+
+/* Diagnosis: the failure, the flaky pair, the findings, the agent's own
+ * message, the report and the comments -- every one a word with its tone. */
+span.run-failed-word,
+span.run-flaky-word {
+  color: var(--error);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+span.run-agent-word,
+span.run-report-word,
+span.run-comments-word,
+span.run-charged-word,
+span.run-follow-up-word,
+span.run-follow-up-comments-word {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+span.run-finding-severity {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+span.run-finding-summary,
+span.run-agent-text {
+  font-size: var(--font-size-base);
+}
+
+span.run-reported-usd,
+span.run-charge-usd,
+span.run-route-usd,
+span.run-model-usd,
+span.run-report-value,
+span.run-comments-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+span.run-route-name,
+span.run-model-name {
+  color: var(--text-muted);
+}
+
+/* The replay line: how many records the frame carries, over what window, from
+ * when to when, and whether it was scrubbed. */
+p.run-replay-span {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-sm);
+}
+
+p.run-replay-scrubbed {
+  color: var(--warn);
+  font-size: var(--font-size-sm);
+}
+
+/* ---- Degraded and unavailable --------------------------------------------
+ *
+ * The design's section 6.3 rule made visible: caps read `n/a`, the kill
+ * affordance is absent, and a figure that is a lower bound says so. Nothing
+ * here draws a zero in place of a reading the console could not take.
+ */
+
+header.degraded-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+span.degraded-mode[data-state='polling'] {
+  color: var(--warn);
+}
+
+span.degraded-since-word,
+span.degraded-since-at,
+span.degraded-since-age,
+span.degraded-caps-word,
+span.degraded-compute-word {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+span.degraded-cap[data-state='unavailable'] {
+  color: var(--text-muted);
+}
+
+div.degraded-caps,
+div.degraded-totals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+}
+
+/* The unavailable screens: no binary, or a read the CLI refused. The install
+ * command is a `code` and both leads are `span`s -- the tags are the code's, so
+ * a rule spelled `pre.unavailable-install-command` would style nothing. */
+div.unavailable-body {
+  display: block;
+}
+
+code.unavailable-install-command {
+  display: inline-block;
+  padding: var(--space-2xs) var(--space-xs);
+  background: var(--surface-alt);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+
+span.unavailable-install-lead,
+span.unavailable-picker-lead,
+span.unavailable-searched-lead,
+span.unavailable-configured,
+span.unavailable-operation,
+span.unavailable-searched-count {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+section.console-unavailable[data-kind='refused'] {
+  border-left: 3px solid var(--warn);
+}
+
+/* ---- The refusal document and the picker ---------------------------------
+ *
+ * Two documents of the same bundle, and neither draws a screen: `refusal.html`
+ * is script-free and shows a heading and one sentence (design section 2.8), and
+ * the picker is hand-written HTML whose hooks are **ids, not classes**
+ * (design section 2.2), which is why the rules below are id-scoped.
+ */
+
+main {
+  display: block;
+  padding: var(--space-lg);
+  color: var(--text);
+}
+
+main h1 {
+  margin: 0 0 var(--space-md);
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-semibold);
+}
+
+main p {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--font-size-base);
+}
+
+#picker-status {
+  margin-bottom: var(--space-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-base);
+}
+
+#picker-list {
+  margin-bottom: var(--space-md);
+}
+
+#picker-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs);
+  min-height: var(--row-height);
+  padding-block: var(--space-2xs);
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+#picker-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  background: var(--surface);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+#picker-add label {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+#picker-project {
+  padding: var(--space-2xs) var(--space-xs);
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-alt);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* Every control of the picker is a button, and a button's boundary is
+ * `--border-strong`: `--border` is a decorative hairline and may never mark a
+ * control's extent (design section 3.2's role table, and the
+ * `--border`-is-decorative case in `test/unit/theme-tokens.test.ts`). */
+#picker-pick-binary,
+#picker-pick-config,
+#picker-pick-checkout,
+#picker-add-submit {
+  padding: var(--space-2xs) var(--space-xs);
+  color: var(--text);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+#picker-add-submit {
+  color: var(--ink-on-fill);
+  background: var(--accent);
+}
+
+#picker-pick-binary:hover,
+#picker-pick-config:hover,
+#picker-pick-checkout:hover,
+#picker-add-submit:hover {
+  color: var(--accent-ink);
+}
+
+#picker-add-submit:hover {
+  color: var(--ink-on-fill);
+}
+
+/* A control waiting on a request is `disabled` (design section 4.3): the
+ * system's own grey, and it keeps its ring and its label. */
+#picker-add button:disabled,
+#picker-add input:disabled {
+  color: var(--text-muted);
+  border-style: dashed;
+}
+
+/* ---- Narrow windows (design section 4.2, the screens' share) -------------
+ *
+ * The chrome's share of the three layers is `base.css`'s; these are the
+ * subjects the screens own. The layers are in `em` against the root size (the
+ * document sets none, so 1000 px is 62.5em at the 16 px default), and the rail
+ * is 216 px of what is left, so each layer fires with the content column 216 px
+ * narrower than the width it names.
+ *
+ * **And the rule that outranks all three: a figure is never hidden to make a
+ * layout fit.** The widest tables therefore *wrap* rather than drop a column,
+ * which is where this file departs from section 4.2's first row read as an
+ * instruction to hide one: a dropped column is allowed only when its value is
+ * repeated in a `title`, and the cells a Log, Jobs or `spend-rows` table would
+ * drop -- tokens in and out, a job's model and compute -- carry a value with no
+ * `title` behind it, because `putReading` writes one only for a reading with no
+ * number. Hiding them would be the console lying about spend, which section 6.1
+ * rule 1 forbids more strongly than any layout does.
+ */
+
+@media (max-width: 62.5em) {
+  /* The burn window narrows before a figure does. */
+  ol.live-burn {
+    flex: 0 1 auto;
+    max-width: 50%;
+  }
+
+  li.live-run,
+  li.spend-row,
+  li.projects-job,
+  li.run-log-line {
+    gap: var(--space-2xs) var(--space-xs);
+  }
+}
+
+@media (max-width: 48.75em) {
+  /* Any three-column figure group becomes two. */
+  div.live-total,
+  div.spend-totals,
+  section.run-ledger {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 35em) {
+  /* The ledger, the caps panel and the panels' source lines stack. */
+  div.live-total,
+  div.spend-totals,
+  section.run-ledger {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  section.spend-caps,
+  section.projects-panel {
+    padding-inline: var(--space-xs);
+  }
+
+  span.projects-source,
+  span.spend-source {
+    flex-basis: 100%;
+  }
+}
+
+/* ---- Forced colors (design section 4.4, the screens' share) --------------
+ *
+ * `base.css` carries the chrome's block and this file the rows' and badges':
+ * the system paints the backgrounds and the text, the two marks that were a
+ * fill are mapped to a system colour, and a panel keeps a border -- because a
+ * table drawn in hairlines alone becomes structureless the moment the author's
+ * colours go away. **Rule 1 of section 4.4 is the one that matters most and it
+ * is not written here**: every state below keeps its word in the DOM, so a
+ * reader still reads `KILLED by`, `silent`, `lost`, `queued`, `n/a` and `—`
+ * when every colour this file names is gone.
+ */
+
+@media (forced-colors: active) {
+  section.live,
+  section.spend,
+  section.projects,
+  section.degraded,
+  section.console-unavailable,
+  li.live-repo,
+  li.projects-secret,
+  li.projects-account,
+  li.live-run,
+  ol.live-runs,
+  li.spend-row,
+  li.spend-point,
+  li.projects-cap,
+  li.projects-job,
+  li.degraded-run,
+  li.run-stage,
+  li.run-log-line,
+  div.unavailable-body,
+  #picker-add,
+  #picker-list li {
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  div.live-kill,
+  div.spend-kill,
+  div.projects-kill,
+  div.run-halt,
+  div.live-stale,
+  li.live-run-queued,
+  li.live-run-stuck,
+  span.run-stage-passed,
+  span.run-stage-deadline,
+  span.live-run-flag,
+  span.live-connection,
+  span.degraded-mode,
+  span.spend-degraded,
+  span.projects-kill-word,
+  span.live-kill-word,
+  span.spend-kill-word,
+  span.run-halt-word,
+  span.run-failed-word,
+  span.run-flaky-word,
+  span.run-settled,
+  span.run-follow-up,
+  span.run-stale,
+  span.spend-partial,
+  span.live-stale-word,
+  span.live-burn-unit,
+  span.live-repo-name,
+  span.projects-mode,
+  span.projects-day,
+  span.projects-source,
+  span.projects-count,
+  span.spend-source,
+  span.spend-since,
+  span.spend-until,
+  span.spend-weeks,
+  span.spend-scope,
+  span.spend-cap-word,
+  span.degraded-since-word,
+  span.degraded-since-at,
+  span.degraded-since-age,
+  span.degraded-caps-word,
+  span.degraded-compute-word,
+  span.degraded-cap,
+  span.unavailable-install-lead,
+  span.unavailable-picker-lead,
+  span.unavailable-searched-lead,
+  span.unavailable-configured,
+  span.unavailable-operation,
+  span.unavailable-searched-count,
+  span.live-run-title,
+  span.live-run-stage,
+  span.live-run-round,
+  span.live-run-verify,
+  span.live-run-models,
+  span.live-run-recipe,
+  span.live-run-auth,
+  span.live-run-requester,
+  span.live-run-workflow,
+  span.live-run-contradiction,
+  span.run-status,
+  span.run-outcome,
+  span.run-branch,
+  span.run-requested-by,
+  span.run-flags,
+  span.run-log-severity,
+  span.run-route-name,
+  span.run-model-name,
+  span.run-agent-word,
+  span.run-report-word,
+  span.run-comments-word,
+  span.run-charged-word,
+  span.run-follow-up-word,
+  span.run-follow-up-comments-word,
+  span.run-finding-severity,
+  p.run-ledger-model,
+  p.run-ledger-compute,
+  p.run-ledger-total,
+  span.projects-cap-scope,
+  span.projects-cap-source,
+  span.projects-kill-scope,
+  span.projects-jobs-total-of,
+  span.projects-secret-scope,
+  span.projects-secret-latest,
+  span.projects-secret-label,
+  span.projects-secret-label-key,
+  span.projects-secret-label-value,
+  span.projects-secret-allowed,
+  span.projects-job-status,
+  span.projects-job-stage,
+  span.projects-job-by,
+  span.projects-cap-repo,
+  span.projects-accounts-repo,
+  span.projects-only-seen-repo,
+  span.projects-only-enrolled-repo,
+  span.projects-kill-repo,
+  span.spend-persons-state,
+  span.spend-persons-word,
+  span.spend-point-value,
+  span.spend-peak,
+  p.live-note,
+  p.spend-note,
+  p.spend-warning,
+  p.spend-persons-note,
+  p.spend-notice,
+  p.projects-because,
+  p.projects-note,
+  p.projects-jobs-note,
+  p.projects-accounts-note,
+  p.projects-warning,
+  p.projects-only-seen,
+  p.projects-only-enrolled,
+  p.run-warning,
+  p.run-log-note,
+  p.run-log-refused,
+  p.run-log-link-note,
+  p.run-pr-reason,
+  p.run-replay-note,
+  p.run-replay-scrubbed,
+  span.run-halt-detail,
+  p.degraded-notice,
+  p.degraded-warning,
+  p.unavailable-reason,
+  p.unavailable-sentence,
+  div.unavailable-searched {
+    color: CanvasText;
+  }
+
+  /* A figure that was a fill keeps a system colour that says it is not the
+   * text: `GrayText` is the system's own "not the primary reading". */
+  div.live-bar[data-state='measured'] {
+    border-bottom-color: Highlight;
+  }
+
+  div.live-bar[data-state='unavailable'],
+  li.live-burn-bar[data-state='gap'],
+  li.spend-point[data-state='gap'] {
+    border-color: GrayText;
+  }
+
+  li.live-burn-bar {
+    background: GrayText;
+  }
+
+  /* The link the console may draw is a link, and the system names it. */
+  a.run-log-link {
+    color: LinkText;
+  }
+
+  /* A panel keeps a boundary: a table drawn in hairlines alone has none left
+   * once the author's colours are gone. */
+  section.projects-panel,
+  section.spend-caps,
+  div.live-total,
+  ol.live-repos,
+  ol.live-runs,
+  ol.spend-rows,
+  ol.spend-series,
+  section.run-ledger,
+  section.run-stages,
+  section.run-pr,
+  section.run-logs,
+  section.run-diagnosis,
+  section.run-replay,
+  div.degraded-caps,
+  div.degraded-totals,
+  code.unavailable-install-command {
+    border: var(--rule-width) solid CanvasText;
+  }
+
+  li.live-repo,
+  li.live-run,
+  li.spend-row,
+  li.spend-point,
+  li.projects-cap,
+  li.projects-job,
+  li.projects-secret,
+  li.projects-account,
+  li.degraded-run,
+  li.run-stage,
+  li.run-log-line,
+  div.live-kill,
+  div.spend-kill,
+  div.projects-kill,
+  div.run-halt,
+  li.live-run-queued,
+  li.live-run-stuck,
+  div.live-stale,
+  li.live-repo[data-killed='true'],
+  section.projects-panel[data-state='read'],
+  section.projects-panel[data-state='unavailable'],
+  section.projects-panel[data-state='not-built'],
+  div.projects-kill-row:has(div.projects-kill),
+  li.spend-dim-unknown[data-dimension='unknown'],
+  div.spend-cap-limit[data-limit='max_reserve'],
+  section.console-unavailable[data-kind='refused'],
+  #picker-list li,
+  #picker-project,
+  #picker-pick-binary,
+  #picker-pick-config,
+  #picker-pick-checkout,
+  #picker-add-submit {
+    border-color: CanvasText;
+  }
+
+  #picker-add-submit {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+}

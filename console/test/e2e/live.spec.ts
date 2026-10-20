@@ -511,4 +511,50 @@ test.describe('the Live screen', () => {
     )
     for (const file of present) expect(file).toMatch(new RegExp(`^live-(${LIVE_THEMES.join('|')})-(darwin|linux)\\.png$`))
   })
+
+  test('keeps its state words and its row boundary under forced colors (design section 6.4)', async () => {
+    // Section 4.4's three promises, read from inside a page the system is painting in
+    // forced colors: every state keeps its **word**, the row structure still has a
+    // visible boundary, and the figures keep the alignment hook that is the whole point
+    // of `--num` (section 2.10). A **smoke, not a golden** (section 6.4): the pixels under
+    // forced colors are the platform's and are not this console's to pin.
+    //
+    // The chrome's half of this is `entry.spec.ts`'s (the current view is still marked,
+    // and the rail's rows with it); this is the Live screen's own, and it lands here
+    // because the rules it tests are in `screens.css`.
+    await mount(withAKill(), 'light')
+    await page.emulateMedia({ forcedColors: 'active', colorScheme: 'light' })
+    expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true)
+
+    const forced = await page.evaluate(() => {
+      const scope: ParentNode = document.getElementById('live-mount') ?? document.createDocumentFragment()
+      const row = scope.querySelector('li.live-run')
+      const computed = row === null ? null : getComputedStyle(row)
+      const number = scope.querySelector('.live-num')
+      return {
+        words: document.getElementById('live-mount')?.textContent ?? '',
+        rowVisibility: computed?.visibility ?? null,
+        rowWidth: computed?.borderBottomWidth ?? null,
+        rowColour: computed?.borderBottomColor ?? null,
+        tabular: number === null ? null : getComputedStyle(number).fontVariantNumeric,
+      }
+    })
+
+    // Rule 1, and the reason it is first: the words are the DOM's, so the system taking
+    // every author colour away cannot take a state away with them.
+    expect(forced.words, 'the killed repository lost its word').toContain('KILLED by')
+    expect(forced.words, 'the queued run lost its word').toContain('queued')
+    expect(forced.words, 'the unreadable figure lost its mark').toContain('n/a')
+    // The row boundary is still a boundary: the system forces a border to one of its own
+    // colours, and a width of zero would not be one.
+    expect(forced.rowVisibility).toBe('visible')
+    expect(forced.rowWidth, 'the run row’s boundary collapsed under forced colors').not.toBe('0px')
+    expect(forced.rowColour).not.toBe('rgba(0, 0, 0, 0)')
+    // And the alignment hook is not a colour: tabular figures survive a forced palette,
+    // because the rule that sets them is outside the forced-colors block.
+    expect(forced.tabular, 'the numbers lost their tabular figures').toContain('tabular-nums')
+
+    // Left as it was found, so a case appended after this one reads the page it expects.
+    await page.emulateMedia({ forcedColors: 'none' })
+  })
 })

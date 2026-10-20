@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Eight checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Eleven checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -142,28 +142,46 @@ added or removed without this sentence moving fails there:
   **The build the three numbers are derived from is the build the gates make themselves**, and
   that is the correction of 2026-10-19 (this section's figures are re-derived below it). It is
   *not* `website/dist`, which is what the derivation named until then: the site's own build
-  depends on the git state of the checkout the gates run in. The changelog renders each release
-  file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **845,103 bytes in a checkout with no
+  depended on the git state of the checkout the gates run in. The changelog rendered each
+  release file's **"not yet released"** state wherever `git tag --list` found no tag
+  (`src/lib/changelog.mjs`), so the same commit built to two site figures a changelog page's
+  own bytes apart — the larger in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **843,588 bytes with the tags this repository's own clone carries**,
-  the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
-  of those two builds is refused by the other, which is what happened: the gate could not
-  measure the build the README named and `website-preview` could not deploy. So the derivation
-  is read over **the gates' own build of the site**: a copy of the repository in a temp
-  directory, built with the site's installed Astro by `test/lib/build.mjs`'s `buildCopy`, which
-  carries no `.git` at all and so gives every checkout the same three numbers. The site's own
-  `dist/` — whichever of the two shapes it takes — is held to the ceilings below like any other
-  artifact, and being the *smaller* of the two builds it passes.
+  deployed site is — and the smaller with the tags this repository's own clone carries, the
+  changelog page's own "not yet released" labels being the whole of the difference. A figure
+  derived from one of those two builds was refused by the other, which is what happened: the
+  gate could not measure the build the README named and `website-preview` could not deploy. So
+  the derivation is read over **the gates' own build of the site**: a copy of the repository in
+  a temp directory, built with the site's installed Astro by `test/lib/build.mjs`'s `buildCopy`,
+  which carries no `.git` at all and so gives every checkout the same three numbers. The site's
+  own `dist/` is held to the ceilings below like any other artifact.
 
-  **What each cause really moves**, measured on that build rather than argued:
+  **No page of the site depends on the checkout's git state any more** (the owner's brief of
+  2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
+  version rather than from a tag, so the two checkout shapes above are one build now — the same
+  commit builds to **975,034 bytes in a checkout with no tags** and to **975,034 bytes with the
+  tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
+  nowhere else** (a figure copied into the gate's own comments or another document is a second
+  place to forget, and this pair was once copied in two, which is how a clone figure came to sit
+  a round's bytes behind) and refuses it unless the two are one figure. The derivation stays
+  where it is all the same — a copy of the repository built by the gates is the artifact the
+  gates can measure in every environment, `dist/` or no `dist/`.
 
-  - the **1,515 bytes** between the two shapes of the site build are the changelog page's own
-    "not yet released" labels, which a checkout with no tags prints for every release file;
-  - flipping **`features.console_downloads`** — the flag `test/console-option.mjs` flips to
-    prove the released console is safe — moves the **site figure by 536 bytes**, the console
-    option's own markup on the two pages that render it, and moves the **page weight not at
-    all**: the heaviest page is the docs hub, which renders no install option;
+  **What each cause really moves**, measured on that build rather than argued — and stated as a
+  rule rather than as a figure, because a figure here is a figure that has to be re-derived every
+  time the build moves: the numbers the causes produce are the ones above and in this
+  paragraph, which `test/budget.mjs` reads and holds to the build it makes itself, and the
+  unreleased build's own size is measured by `test/console-option.mjs`:
+
+  - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
+    flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
+    moves the **site figure up** by the console option's own markup on the three pages that
+    render it: the console page's downloads section (each artifact's checksum beside its link,
+    and the verification command), Getting Started's option and the homepage's call to action. It
+    moves the **page weight not at all**: the heaviest page is the docs hub, which renders no
+    install option, no download and no hero. The copy the gates build of the unreleased state is
+    therefore the smaller of the two, and that is the direction a reader of this list needs:
+    the flag's round is the one that added the bytes;
   - the script and the pages that follow are the figures' own subject, and each moved them in
     the commit that shipped it (D192).
 
@@ -189,31 +207,260 @@ added or removed without this sentence moving fails there:
     the diagram, the install paths — changes spec item 4), the run animation (P7), the How It
     Works flow (P8) and the long-page cuts (P4), with the changes spec's items 2 and 3 over
     all of it.
+  - `main`'s picture: the owner's `fugaro watch` capture and its transcription, placed on the
+    homepage by #655.
+  - this branch's two changes from the owner's brief of 2026-10-19: the menu's drawer replaced
+    by the three group labels in the header's row (item 1), and the console's link in the
+    homepage's call to action (item 6), which renders from the console's flag.
+  - the console's release (W3.1): `features.console_downloads` and the data file's
+    `available` turned on together, which puts the console page's downloads, Getting Started's
+    console option and the hero's link to the console into this build.
 
   Each half moved these figures in its own commits and re-derived them there — the script's
-  six corrections in `main`'s, the redesign's five fix rounds in this branch's — and they are
-  re-derived once more here, because the merge is where the two halves first weigh together.
-  **The figures below are the build this branch ships** (2026-10-19), derived over the merged
-  tree: the fix round after the merge moved the chat above the diagram, drew its turns as
-  alternating bubbles, took three of the four cyan edges off the flow's cards and shortened
-  the footer's link label, and every one of those was measured over the build in the same
-  commit that moved it. The review of that round's changes then took the install section's own
-  top padding off — the flow above it already carries the gap between the two blocks — which
-  is the whole-site figure 54 bytes lower and the page weight where it was, the heaviest page
-  being the docs hub, which renders neither block. The round after that moved both figures
-  **up**: the two declarations that make a command wrap (`white-space: pre-wrap; overflow-wrap:
-  anywhere`) moved from the homepage's own `.home-install-command` onto `base.css`'s
-  `.command-block > pre`, because the copy control now shares the command's row and every
-  command on the site gives up the control's width, and the base stylesheet is inlined into
-  every page — ten of the eleven grew by those 44 bytes and the homepage did not, the
-  declarations having left one of its own rules for the base one. That is the whole-site figure
-  440 bytes higher, and the page weight 44, because the page it is derived from — the heaviest
-  one, the docs hub — carries the same inlined rule. That is the same rule every time (D192),
-  and it is also why **the page and the site move with the script**: a script every page
-  loads is a page's weight as well as its JavaScript.
+  six corrections in `main`'s, the redesign's fix rounds in this branch's. The last rounds are
+  where this build's three numbers come from, and each was measured over two builds rather than
+  argued; the arithmetic itself is the gate's, in `test/budget.mjs`:
 
-  - **JavaScript per page:** 149,172 bytes. Three times 49,724: the one script the site ships,
-    `public/scripts/site.js` (39,779 bytes), plus 25 %. What the file carries is the copy
+  - **This branch's own fix rounds**, each re-derived in the commit that moved it: the round
+    after the merge moved the chat above the diagram, drew its turns as alternating bubbles,
+    took three of the four cyan edges off the flow's cards and shortened the footer's link
+    label; the round after that took the install section's own top padding off, because the
+    flow above it already carries the gap between the two blocks, which moved the site figure
+    alone, with the page weight where it was, the heaviest page being the docs hub, which
+    renders neither block; and the round after *that* moved both figures up by the two
+    declarations that make a command wrap (`white-space: pre-wrap; overflow-wrap: anywhere`)
+    moving onto `base.css`'s `.command-block > pre`, which every page inlines. That last round
+    is also why **the page and the site move with the script**: a script every page loads is a
+    page's weight as well as its JavaScript.
+  - **The `fugaro watch` screenshot landed on the homepage** (`main`'s #655) and moved the
+    site figure alone. The owner's capture and its transcription
+    (`public/images/fugaro-watch.png` and `fugaro-watch.txt`) are served by `public/` and are in
+    every build's `dist/`, and the derivation the figure named before them predated the assets:
+    those assets, plus the homepage markup that put the picture in its slot, are the whole of
+    the move. The page weight does not move with it, and that is the check worth keeping: the
+    picture lands on the homepage, and the homepage is not the heaviest page — the docs hub is.
+    The JavaScript is untouched.
+  - **This branch's menu (item 1), and the review round after it**, measured against that
+    build file by file. Taking the drawer out — the `Menu` toggle, the panel it opened and the
+    sibling combinator that showed it — leaves each of the eleven pages **278 bytes lighter**,
+    the base stylesheet every one of them inlines being that much shorter, and takes **181
+    bytes off the script**. The review round then put the script's own comments back in step
+    with the menu, three of them still describing the retired drawer, which is **290 bytes onto
+    the script** — comments are part of the file the browser fetches. So the script is 39,779 →
+    **39,888** (the two rounds together: −181 and +290) and the site figure 979,298 →
+    976,349, the eleven pages' 3,058 and the script's 109. The page weight moves with the
+    script and the stylesheet both, 267,095 → **266,926**: the docs hub inlines the stylesheet
+    (−278) and fetches the script (+109). Nothing else in the artifact moved in that round —
+    the console's link was behind a flag that build had off.
+  - **The console's release turned the flag on** (W3.1), and moved the site figure alone: the
+    console page's downloads section, Getting Started's console option and the hero's link to
+    the console. The page weight and the script did not move: the heaviest page is the docs hub,
+    which renders none of the three. The bytes are the ones the three figures below are derived
+    from, and `test/budget.mjs` measures them; the rule is what this list carries.
+
+  - **Getting Started's three bands** (the owner's feedback of 2026-10-19) moved the site
+    figure alone, 977,921 → **979,575**, by the **1,654 bytes** the rework costs: the install
+    section shows the quick path above the fold with the console option beside it, the page
+    carries a "Set up your installation" list of its own, and the other install paths and the
+    platform list moved into a Details section below them. The page weight does not move: the
+    heaviest page is still the docs hub, which renders none of it, and the page that grew is
+    Getting Started's, at 25,871 bytes.
+
+  - **The 0.9.0 integration branch merged into `main`** (#697) and moved the page weight and
+    the site figure, with the script where it was: it regenerated
+    `website/content/cli-reference.md` for the 0.9.0 CLI and extended `content/security.md`.
+    The docs hub renders the whole CLI reference, so the heaviest page went 266,926 →
+    **280,604** (+13,678), and the site figure 979,575 → **1,019,827** (+40,252: the docs hub
+    and the security page). Getting Started's rework above was derived on a branch cut before
+    that merge, which is why the figures it wrote named a build `main` no longer makes; this
+    re-derivation is the commit that moves them. The clone figure moved by the same bytes, the
+    changelog page between the two shapes being unchanged.
+
+  - **The console's screenshot slider** (the owner's feedback of 2026-10-19) moved the site
+    figure alone, 1,019,827 → **1,020,942**, by its **1,115 bytes**: the component's
+    stylesheet, which Astro inlines into the console page. It is inlined whether or not the
+    slider renders, because the page imports the component — so the bytes are there while
+    the data file is empty and while it is not, and the figure does not move again when the
+    owner adds a screenshot (a picture's own bytes are served from `public/` and are the one
+    thing that will move it then). The page weight and the script did not move: the console
+    page is not the heaviest page, and the slider ships no script at all. The clone figure
+    moved by the same bytes.
+
+  - **The run under the picture became one vertical timeline** (the owner's feedback of
+    2026-10-19), and moved the site figure alone, 1,020,942 → **1,021,991**, by **1,049
+    bytes**. The five steps were a `repeat(auto-fit, minmax(18rem, 1fr))` grid of cards — three beside two on a desktop,
+    two-by-two on a tablet — and the owner read the section and said it "does not look good".
+    They are now one column at every width, each step a numbered marker on a rail joined by a
+    one-pixel line, with the step's name and its line beside it: the page that renders them
+    grows by the rail, the connector, the rule that stops it at the last step and the markup
+    that places them, and the other ten pages, which render no run, are unmoved. The page weight
+    and the script did not move either: the heaviest page is still the docs hub. The shape is
+    held by `test/base-styles.mjs`'s `runTimelineFailures`, which reads the layout in force at
+    360, 768 and 1280, the connector's own extent and width, and every width or `nowrap` in the
+    section against the phone's content box. The clone figure moved by the same bytes.
+
+  - **The caps-and-costs rework** (the owner's brief of 2026-10-19) moved the site figure
+    alone, 1,021,991 → **1,023,326**, by **1,335 bytes**, on one page: the table of what a job
+    costs and its provenance note, rendered from `website/data/typical-costs.yaml`, against the
+    per-command scope sentences the page no longer carries and the `<details>` the commands now
+    sit behind — and then the review of that rework, which added the scroll box the table's
+    nowrap columns need on a phone and the page's own rule for its lead. The page weight and the
+    script did not move: the heaviest page is the docs hub, and the caps page is not it. The
+    clone figure moved by the same bytes.
+
+  - **The changelog's own round** (the owner's brief of 2026-10-19) moved the site figure
+    alone, 1,023,326 → **1,028,085**, by **4,759 bytes** net, and its causes are the page's own:
+    each release now carries its product summary line and wraps the release file's own
+    Highlights in a `<details>` block, so a summary and a notes label per release arrive, and
+    the page no longer prints a "not yet released" label for every release in the checkout with
+    no tags (which releases are published is the plugin's version now) or the "newest releases"
+    block the summaries replaced. The page weight and the script did not move: the changelog
+    page is not the heaviest page, and nothing outside it changed. It is also the round that
+    made the clone figure the no-tags figure (above).
+
+  - **The homepage's prompt line** (the owner's feedback of 2026-10-19) moved the site
+    figure alone, 1,028,085 → **1,028,787**, by **702 bytes**: the request the hero renders under
+    the headline, the `>` mark in front of it and the two rules that draw it as the chat's own
+    bubble — the homepage's inline stylesheet and its HTML. Nothing outside the homepage moved,
+    because the three files that changed all render on that one page, so the page weight and
+    the script stand where they stood.
+  - **The benefits** (the same feedback) moved the site figure alone again,
+    1,028,787 → **1,030,935**, by **2,148 bytes**: the section's four names and four lines, its
+    heading and its grid, and the scoped stylesheet rules that draw it — all of it on the
+    homepage, which is the one page that renders it. The page weight and the script did not
+    move: the heaviest page is the docs hub, and it carries no benefits. The words the section
+    costs the homepage are what moved the word ceiling above, in the same commit.
+  - **The pull request's caption** (the same feedback) moved the site figure alone again,
+    1,030,935 → **1,031,001**, by **66 bytes**: the caption's own line and the `data-source` it
+    cites with it, `docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)` in place of
+    `README.md#How it works`, on the two pages that render the flow — the homepage and How It
+    Works. The page weight and the script did not move: the heaviest page is the docs hub,
+    which renders no flow. The caption is two words shorter than the one it replaces, which the
+    homepage's word count below carries.
+  - **The benefits' block rule** (the review of round 6) moved the site figure alone,
+    1,031,001 → **1,031,084**, by **83 bytes**: the section's gutter and the room below it are now
+    declared in the component that renders the section, where they were declared on the page and
+    reached nothing — Astro scopes a page's selector to the elements the page renders, so the
+    section, rendered by `Benefits.astro`, never carried the page's scope. The page's rule now
+    names the two blocks the page renders and the section's rule writes the three declarations
+    out again, which is the whole of the 83 bytes. The page weight and the script did not move:
+    the heaviest page is the docs hub, which renders none of this, and it is one page's inline
+    stylesheet either way. The clone figure moved by the same bytes as each of these rounds.
+
+  - **The privacy statement gained its software part** (the owner's request of 2026-10-19),
+    and moved the site figure alone, 1,031,084 → **1,033,358**, by the **2,274 bytes** of that
+    page's own markup, and the words ceiling below with it, 250 → **622**. The page is the one
+    the App Store and Play listings link as a privacy policy, so it now carries two named
+    parts — "The website", which is what it always said, and "The software", which covers the
+    CLI, the console and the phone app — and the words the second part needs are what re-derive
+    the ceiling. The page weight and the script did not move: the heaviest page is still the
+    docs hub, and `public/scripts/site.js` is untouched.
+  - **The phone app's reporting was written into that part** (the owner's request of the same
+    day), and moved the site figure again, 1,033,358 → **1,034,706**, by the **1,348 bytes** those
+    paragraphs add, with the words ceiling re-derived in the same commit, 622 → **842**: the
+    page names Firebase Crashlytics and Firebase Analytics, states what is collected and what
+    is never sent, the opt-in default and the way back, holds Google as the processor for the
+    Fugaro project under Google's own policy (linked, not restated), and says that earlier
+    builds send nothing. The page weight, the script and the number of files did not move.
+  - **The deletion section was carved out from under it** (the same round, on review), and the
+    page moved again, 1,034,706 → **1,035,063**, by the **357 bytes** the carve-out adds: the
+    section that said "everything the software holds lives in your own accounts … removing the
+    installation removes it" was contradicted by the reports above it, so it now names the
+    reports as the exception, says nothing about them is the reader's to delete, says how the
+    sending is stopped and where to ask about a report already sent — and the words ceiling was
+    re-derived with it, 842 → **919**. The page weight, the script and the number of files did
+    not move. The clone figure moved by the same bytes as each of these rounds.
+
+  - **The security page was cut to three things** (the owner's brief of 2026-10-19), and it is
+    the round this build's site figure comes from. The page rendered `SECURITY.md` byte for
+    byte; it now renders three things and nothing else, and all three are the document's own:
+    the policy's *In short* section as the page's summary, its *Reporting a vulnerability*
+    section, and a link to the policy — which `website/test/security.mjs` holds it to, bullet
+    for bullet and word for word. The summary is rendered and not written on the page, which is
+    what D189 asks of every long page and what the first cut of this page did not do:
+    re-deriving it from `SECURITY.md`'s own section moved the page to **18,183 bytes**, which
+    is **62,524 bytes** below the 80,707 it weighed on `main` once the 0.9.0 merge had extended
+    the policy, so the site figure falls 1,035,063 → **972,539**. The bullets after it name the rest of this build's figure. The
+    page weight and the script did not move: the page renders neither the script's behaviour nor
+    the docs hub, which is still the heaviest page.
+  - **The new spacing gate found a row glued together** (`test/spacing.mjs`, added by the same
+    review round), and the fix is the last 2 bytes of this build's site figure. The console
+    page's download row puts each artifact's published name in a link and its SHA-256 in a
+    `<code>` beside it, and the two are inline elements on two source lines — so the whitespace
+    text node between them is what Astro's compression drops, and the row read "macOS
+    .dmga434f3…". The space is written into the component now, one byte for each of the two
+    assets, and the site figure is 972,539 → **972,541**. The gate reads every built page and
+    takes a class the page's own stylesheet lays out as a block — the docs hub's `.path` — and a
+    child of a container it lays out as flex or grid, which blockifies its children — the
+    homepage's `.hero-actions` row — as a
+    boundary a reader sees, so the seams the design makes on purpose are not refused; `test/spacing.mjs`
+    measures that count over the artifact, and this list does not keep it.
+  - **A cross-reference the document has no heading for renders as its own text** (the same
+    review round). Every cross-reference in `SECURITY.md`'s "In short" is rewritten to a link
+    into the document at the section it names, and one of them — `[Money](#money)` — names a
+    bold lead in a bullet rather than a heading. Rendered as a link it read like every other
+    cross-reference on the page and landed at the top of the file, a section away from what it
+    named, so the page now renders that one as plain text: **71 bytes off the security page**,
+    18,183 → **18,112**, and off the site figure, 972,541 → **972,470**. The page weight and the
+    script did not move: the page changes no file every page loads, and the docs hub is still the
+    heaviest page.
+  - **A cross-reference into a section the page renders itself links the page** (round 5 of the
+    same review). `SECURITY.md`'s summary points at "Reporting a vulnerability", and `/security/`
+    renders that very section under that very id — but the page resolved every fragment against
+    the document, so the one reference whose section is on the page sent the reader to GitHub for
+    it, and the page's own `reporting-a-vulnerability` anchor was linked from nowhere. The page
+    resolves a fragment it renders to its own anchor now: **56 bytes off the security page**,
+    18,112 → **18,056**, and off the site figure, 972,470 → **972,414** (the document URL is 82
+    bytes, the page's own anchor 26). The page weight and the script did not move.
+  - **The spacing gate found a second row glued together once `main` came in** (the merge of
+    `main`'s Getting Started rework into this branch): the "Set up your installation" step
+    rendered "fugaro initin your own terminal.", the link ending one source line and the
+    sentence starting the next. The space is written into the line now, **1 byte**, and the
+    site figure is 972,414 → **972,415**. The page weight and the script did not move. The
+    clone figure moved by the same bytes as each of the security page's rounds.
+  - **The header was put on a layer of its own** (the owner's reading of 2026-10-19: "How it
+    works: menu hidden by the blocks on mobile"), and moved **every page by the same 77
+    bytes**: 972,415 → **973,262** at the site figure and 280,604 → **280,681** at the page
+    weight. The whole of the move is the stylesheet every one of the eleven pages inlines — the
+    scale's two tokens, the header's `z-index`, and the skip link's and the banner's moved onto
+    the scale's names — and the script is untouched, because the fix is CSS and the script was
+    not what covered the menu. That the eleven pages move by the same bytes is the check worth
+    keeping: this round is the chrome, and the chrome is on every page. The clone figure moved by
+    the same bytes.
+
+  - **The console's own release moved to `console-v0.9.0`** (the owner's ruling of 2026-10-19,
+    below): `docs/releases/v0.9.0.md` names the console's own release now, and that line is part
+    of the changelog entry the page renders — the site figure is 973,262 → **973,481** (219
+    bytes), and the two checkout shapes move together as one figure. The page weight and the
+    script did not move: the heaviest page is the docs hub, which renders no changelog entry.
+  - **The app's reporting is always on, and the app has no switch** (the owner's ruling of
+    2026-10-19), and it moved the page once more. The phone app's paragraph
+    said collection was off until the reader turned it on in the app's settings, and the deletion
+    section said turning that switch off stopped the sending. The ruling leaves no switch: the
+    versions that carry the reports send them, and the page says so — no switch inside the app to
+    turn them off, uninstall the app or do not install it, and the command line tool and the
+    console unaffected because they carry none of these reports — and the deletion section now
+    says uninstalling the app stops the sending. That clause names the two tools and not the
+    website on purpose: the site's own measurement is the page's first part, under the consent
+    that part states, so a software-part sentence calling the website unmeasured would be the
+    page contradicting itself, and the flag that decides that part is not this list's to read.
+    That is **138 bytes onto the page's own markup**, 973,481 → **973,619**, and the
+    words ceiling re-derived with it, 919 → **949** (the page's own 759 words plus 25 %, below).
+    The page weight, the script and the number of files did not move: the heaviest page is still
+    the docs hub, which renders none of this, and the clone figure moved by the same bytes.
+  - **The benefits' points got their icons and a step up the type scale** (the owner's feedback
+    of 2026-10-19: "make them bigger, bolder, use an icon for each point"), and it moved the
+    site figure alone, 973,619 → **975,034**, by **1,415 bytes**: one inline `<svg>` per point —
+    four glyphs, drawn with `stroke="currentColor"` and the presentation attributes that go with
+    it — and the rules that size and place them, and the section's heading, its point names and
+    their one line each a step up the type scale. All of it is on the homepage, which is the one
+    page that renders the section, so the page weight and the script did not move: the heaviest
+    page is the docs hub, and it carries no benefits. Nothing was fetched for any of it — the
+    four glyphs are shapes in the markup, and `test/home.mjs` reads each one back off the built
+    page and refuses an icon that references a file or an origin. The words are the ones the
+    section already carried, so the word ceiling did not move.
+  - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
+    `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
     to: the hover behaviour is bound only where `matchMedia` says the device's pointer hovers
     and only for a pointer that says it is a mouse or a pen — a tap sends a pointer of its
@@ -235,12 +482,12 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,001,607 bytes. Three times 333,869: the heaviest page, the
-    docs hub, at 267,095 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 1,052,556 bytes. Three times 350,852: the heaviest page, the
+    docs hub, at 280,681 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,169,137 bytes. Three times 1,056,379 (every file in `dist/`, 845,103
-    bytes across 21 files, plus 25 %) — the gates' own build of the site, which is the build
-    with no tags, 1,515 bytes above the one a full clone makes (above).
+  - **Whole site:** 3,656,379 bytes. Three times 1,218,793 (every file in `dist/`, 975,034
+    bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
+    now builds alike, tags or no tags (above).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
   principle is "the gist above the fold on every page with very few words", which no byte
@@ -258,19 +505,21 @@ added or removed without this sentence moving fails there:
     commands and its chat between the hero and the flow's first step heading, they were 24
     words from that container and 134 from the plan's region, and the stricter one is the
     one enforced). On the homepage today the first `h2` is the chat's own *Through your
-    agent* — the chat is the first block under the promise — and the region is the promise
-    and its two calls to action: 14 words. A page that carries blocks between its `h1` and
+    agent* — the chat is the first block under the promise — and the region is the request
+    the hero renders under the headline, the promise and its two calls to action: 23 words. A
+    page that carries blocks between its `h1` and
     its first `h2` is a page whose lead those blocks are part of, so the fix for a long lead
     is a shorter lead or an earlier first `h2`, never a reader that looks somewhere else. A page
     with no `h2` at all has no such region, and its lead is the paragraphs that follow its
     `h1`. A page whose `h1` is followed straight by its first `h2` has no lead region
     either, and 0 words is inside the ceiling: `/security/` is shaped that way (its `h1` is
-    the rendered document's own title, and the page's lead line comes before it) and so is
+    the page's own title and its first `h2` is the model summary's, with nothing between them)
+    and so is
     `/changelog/` (whose summary is its first section, under the heading that names it).
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 250 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 949 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -279,11 +528,39 @@ added or removed without this sentence moving fails there:
     `hidden` elements, the skip link and the consent banner, sit outside it — so that rule
     is what stops a page that starts hiding a control from being counted for words nobody
     sees. `/docs/`, `/security/`
-    and `/changelog/` are exempt, which is D188's own list: each renders a document of this
-    repository rather than a page of the site, and the brief allows those to stay long.
-    The ceiling is set against the site as it was measured before the redesign
-    (`docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
-    getting-started 431, privacy 277, community 268 — every one of them over it).
+    and `/changelog/` are exempt, which is D188's own list: `/docs/` and `/changelog/` render a
+    document of this repository, and `/security/` renders two sections of the policy document
+    and links to the rest of it, so the three carry text the repository wrote rather
+    than a page of the site, and the brief allows those to stay long. The exemption is the
+    owner's and this change did not touch it: the page is much shorter than the document it
+    used to render whole and is still well over this ceiling, so it stays on the list — and
+    `test/security.mjs` holds it to a ceiling of its own. How many words the page carries is
+    `budget.mjs`'s own reader's to say, over the built artifact; this list does not keep the
+    count, and the figure it kept here once did not match what the reader measures.
+    **The number is no longer D188's own, and it is derived rather than picked.** The
+    privacy statement is the page the App Store and Play listings link as a privacy policy,
+    so it carries the software as well as the site and is the one page that is not the
+    site's pitch; the number is that page's own count on the gates' own build — **759
+    words** — plus 25 %, rounded up, which is **949**. `budget.mjs`'s
+    `wordsCeilingFailures` holds the derivation to the built page the way the same file
+    holds the byte budgets to theirs, so a sentence added there re-derives this line in the
+    commit that adds it. **The raise is that page's and nobody else's**: every other page of
+    the site stays within D188's own number, and the same function holds them there, so this
+    number is a ceiling one page reaches and not a licence the rest can grow into. (D188's
+    number was itself set against the site as it was measured before the redesign —
+    `docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
+    getting-started 431, privacy 277, community 268, every one of them over it — and the
+    redesign brought every one of those pages but the privacy statement inside it.)
+    **D188's number was 250, and the owner's feedback of 2026-10-19 is what moved it to
+    300.** That brief asks the homepage for a Benefits section, which is a fourth required
+    block on the one page that already carried the three the briefs before it require — the
+    promise, the chat (changes spec item 3) and the flow (item 4) — and the four together
+    measure 294 words. D188's number is therefore the smallest round ceiling above the page
+    that carries every block its briefs require, and it is still a ceiling rather than a
+    target: the highest of the pages that gained nothing from that brief is Getting Started at
+    250 words, and a page that wants the extra 50 has to carry a brief's own block for them.
+    That raise is recorded as a reading in `docs/website/redesign/README.md`, the way every
+    number the briefs do not spell out is.
 - `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
   word ceilings' business, and no test here sees a viewport (D187). The ordering underneath it
@@ -296,7 +573,11 @@ added or removed without this sentence moving fails there:
   Getting Started's install section opens with its commands, with the
   sentence about them still there after the paths; and on every route that prints a command —
   three of the eleven today, and the other eight are skipped rather than asserted about — the
-  first `h2` precedes the first `pre`. The whole gate is one function over one `dist`, so its
+  first `h2` precedes the first `pre`. Its fourth rule is the owner's feedback of 2026-10-19:
+  Getting Started is three bands in the order a reader reads them — `#install` (the command
+  and the console), `#setup` (what a real installation needs, an `ol` whose every step names
+  the document behind it), `#details` (everything else) — so the two things a reader came for
+  cannot drift back down a page that grows. The whole gate is one function over one `dist`, so its
   refusals are kept the way the other gates keep theirs: a case writes a synthetic `dist` with
   each defect planted beside a page that keeps every rule, and each rule was mutation-proved by
   removing it from the function and watching that case fail.
@@ -333,6 +614,30 @@ added or removed without this sentence moving fails there:
   the item's ruling rather than a miss: the tagline change reaches the CLI's help, the
   generated reference and the three plugin skills that carry it (`routing`, `working` and
   `parallelism`) in 0.9.0, not here.
+- `test/spacing.mjs` — the site's words are separated by spaces (round 3 of the security page
+  review). Astro's HTML compression drops a text node that is nothing but whitespace, so an
+  inline element written at the start of a source line sits flush against the word before it and
+  a reader gets `back andfugaro secrets` where the page meant `back and` + `fugaro secrets` —
+  a defect the source does not show and a reader cannot report without the word being quoted
+  back. The gate reads every built page the way a browser does, through the shared
+  `runTogether()`/`verbatimText()` in `test/lib/html.mjs`: each direct text child is its own run,
+  nothing is invented between two neighbours, and a run ending in a letter directly against one
+  starting with a letter is one word, in either case (`back andfugaro secrets` and `see
+  thePrivacy` are the same defect). What counts as a boundary a reader sees is read from the
+  artifact rather than listed by name: a block element, any class the page's own inlined
+  stylesheet lays out with a block-level `display` (the docs hub's `.path` under a guide's title
+  does today), and any element inside a container that stylesheet lays out as flex or grid,
+  which blockifies its children (the homepage's `.hero-actions` row does today) — because without
+  them the gate would refuse the seams the design makes on purpose, and a gate that cries wolf is
+  a gate somebody turns off. How many
+  seams the design makes and how many the rule refuses are `test/spacing.mjs`'s to measure over
+  the artifact; this list does not keep the count. It
+  found one real defect when it landed: the console's download row put each artifact's published
+  name and its SHA-256 in two inline siblings on two source lines, so the row read
+  "macOS .dmga434f3…"; the space is in `src/components/Downloads.astro` now. The refusal is
+  mutation-proved both ways, and the last cases prove each boundary is read from the page: a
+  seam the stylesheet lays apart is not refused, and the same seam is refused the moment the
+  stylesheet lays it out inline, for the block class and for the flex row alike.
 - `test/nav-hover.mjs` — the menu's hover behaviour (the owner's brief of 2026-10-18, item 1).
   A `<details>` hides its own closed content in a way author CSS cannot portably override, so
   opening a group on hover is the script's work and not the stylesheet's: the gate runs the
@@ -378,6 +683,87 @@ added or removed without this sentence moving fails there:
   the stylesheet, and watches the named refusal come back.
   Each of those rules was then mutation-proved the other way: removed from the function, with the
   refusal it names watched failing.
+- `test/privacy.mjs` — the privacy statement's software part, and the seven rules that keep it
+  honest (the owner's request of 2026-10-19; the app's reporting is always on by the owner's
+  ruling of the same day, with no switch inside the app). The page is the one the App Store and Play
+  listings link as a privacy policy, so it now says what the CLI, the console and the phone app
+  do as well as what the site does, and this file holds each of those sentences to the thing
+  that makes it true rather than to a copy of the sentence:
+  - **the two parts** — "The website" and "The software" as the page's two `h2`s, in that order,
+    because the store reviewer's part is a part of the page and not a subsection of the site's —
+    **and as siblings at the same level**, since a part nested inside the other is a page whose
+    two scopes cannot be read, which `consent.mjs`'s own site-part reader refuses for the same
+    reason;
+  - **the app's reporting, held in both directions** — the page names Firebase Crashlytics and
+    Firebase Analytics, so the file refuses that naming unless the repository holds the plan for
+    it (`docs/plans/2026-10-19-mobile-telemetry.md`) or `mobile/package.json` already carries the
+    two packages, and it refuses either package being declared while the page stays silent. A
+    page that names a reporter and says nothing about which version of the app carries it is
+    refused while the reports are still only planned, which is why the paragraph ends on
+    "Earlier builds of the app send nothing at all." — the sentence a later task replaces with
+    the plan's existence. The paragraphs' claims are each a sentence the file looks for: what is
+    collected, the ban list, the app's versions carrying the reports and their having no switch
+    to turn them off, what a reader can do instead — uninstall the app or not install it — the
+    command line tool and the console carrying none of these reports (the clause names those two
+    and not the website, whose own measurement is the part above it and is the flag's to state),
+    Google as the holder, and the link to Google's own Firebase policy rather than a restatement of it — and
+    so is the section a reader deletes an app to find. **"Deleting your data" is read on its own**
+    (from its heading to the next one) and has to say that the reports are the exception: the
+    Fugaro project, not the reader, holds them, deleting the app does not take them out,
+    uninstalling stops the sending, and the issue tracker is where to ask about a report already sent.
+    Without that, the page said both "everything the software holds lives in your own accounts"
+    and that the app reports to a project the Fugaro project operates, and nothing held the two
+    apart;
+  - **no advertising identifier, and no undisclosed reporter** — every executable file, manifest
+    and lockfile under `mobile/` is scanned for the analytics, crash-reporting and advertising
+    SDKs and for the platform's advertising-identifier APIs, all of them named in the test. The
+    app's own two reporters are admitted by name rather than left in the scan's list, so the page
+    and the scan agree about what the app carries; a task that added a third fails the sentence
+    rather than letting it quietly become false;
+  - **the phone's two credentials and where they live** — `SECRET_ITEMS` in
+    `mobile/src/accounts/secret.js` must be D111's `idToken` and `macKey` and no more, the page
+    must name those two, secure storage, the Keychain and the Keystore, and the tuple field
+    `firebaseProjectId` is what makes "your own Firebase project" true;
+  - **the update check** — read from `internal/updatecheck` (GitHub's public "latest release"
+    endpoint for THIS repository, a 24-hour cache) and from the two switches `internal/cli` and
+    `internal/localcfg` define, so a page that stops naming a switch, a check pointed at another
+    repository or a shorter cache each fails;
+  - **the host the project operates** — no production source under `cmd/`, `internal/`,
+    `console/src/`, `mobile/src/` or `shared/` may name the site's canonical host, since the page
+    says the software talks "to nothing the Fugaro project operates" (the one file that names it
+    is a Go test whose fixtures test the boundary rule itself, recorded in the test so the
+    exception stays visible);
+  - **the contact route and no address** — the contact section links the issue tracker and
+    `SECURITY.md`'s reporting route and nothing else, and the page carries no e-mail address, by
+    the owner's ruling that there is no address to publish; and
+  - **no terms page** — no built page links to `/terms`, and no sitemap the build produced names
+    one, which is the owner's ruling of the same day written where the link would have gone.
+
+  Each rule is one exported function with its own case, and each has a second case that plants
+  the defect it refuses — a lost part, a part nested under the other, a dependency that collects,
+  a reporter the page does not name, a page naming a reporter nothing in the tree holds, a third
+  secret, an endpoint pointed elsewhere, a source naming the host, a third contact route, an
+  address, a `/terms` link — and watches the named refusal come back. The word ceiling's own derivation — the
+  privacy statement's own count plus 25 %, the number `website/README.md` states, and every
+  other page of the site still inside D188's 250 — is `budget.mjs`'s, beside the reader that
+  measures it and the byte figures it is a sibling of.
+- `test/stacking.mjs` — the header paints above the page's blocks (the owner's reading of
+  2026-10-19: "How it works: menu hidden by the blocks on mobile"). `tokens.css` names the
+  site's two layers — `--z-header` for the header's row and the panel a group hangs below it,
+  `--z-chrome` for the reader's own chrome above the page — and this gate reads them out of the
+  **built** stylesheets: the header is positioned and carries the header's layer, which is what
+  makes it a stacking context; the skip link and the consent banner carry the chrome's layer
+  and nothing else does; and **no other rule declares a `z-index` at all**, which is the only
+  thing a content component would need to paint over an open menu. The defect it was written
+  for is the diagram: `ArchitectureDiagram.astro`'s steps are `position: relative` — that is
+  what their arrows are placed against — and a positioned box with no `z-index` paints with
+  every other such box in tree order, where the header is the first and a block drawn after it
+  covers the menu on the two pages that carry the drawing. `base.css` gives `.site-header` the
+  header's layer instead, in one rule rather than one per component, and this gate keeps it
+  there. Its refusals are kept the way the others keep theirs: a fixture page carries the scale
+  and the three layered rules, and a case plants each defect — a header with no layer, a header
+  a layer cannot apply to, a content block with a layer of its own — and watches the named
+  refusal come back.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
@@ -426,7 +812,7 @@ check until this document says the same thing.
 | `content/cli-reference.md` | the command tree, `internal/cli.NewRootCmd` | `go run ./internal/clidoc` |
 | `content/security.md` | `SECURITY.md`, byte for byte below the title | `go run ./internal/clidoc` |
 | `content/costs.json` | `fugaro stats runs --project <installation> --json`, and it is the aggregation's output verbatim | owner-run: `fugaro stats runs --project <installation> --json > website/content/costs.json` |
-| `content/downloads.json` | hand-kept, not generated: the console's facts and the release's own published names, with `{version}` where the version goes — the URLs are derived from them (below), and `available: false` until the console ships | none: hand-kept |
+| `content/downloads.json` | hand-kept, not generated: the console's facts and the release's own published names, with `{version}` where the version goes — the URLs are derived from them (below), and `available` follows `site.yaml`'s `features.console_downloads` | none: hand-kept |
 
 Three things about those commands are worth stating rather than leaving to the table:
 
@@ -446,15 +832,55 @@ Three things about those commands are worth stating rather than leaving to the t
   fact in the repository, then the value here, in one commit. `site.yaml`'s
   `features.console_downloads` is held to the hand-kept `content/downloads.json`'s
   `available` by the build itself, which refuses the two disagreeing (below).
+  `console-screens.yaml` is the third, and it is the owner's own list rather than a fact
+  another file states: it ships empty, and the build renders whatever rows it carries (below).
+- **`website/data/typical-costs.yaml` is the owner's own measurement, and the page renders
+  it or nothing.** It carries what a job costs on this project's own development runs — one
+  entry per kind of run, each with the sample behind it, over a window whose last day is the
+  day the figures were taken — and the caps-and-costs page leads with it (the owner's brief
+  of 2026-10-19). `src/content.ts` reads it, validates it (a version, a window of at least
+  `site.yaml`'s `min_runs` runs, an ascending middle half, no duplicate id) and refuses it by
+  name, and `test/caps-and-costs.mjs` holds the built page to it **in both directions**: every
+  field the file carries is rendered in its own column, and no figure on the page is one the
+  file does not carry. So a refresh is an edit to this file and never to a page, and a field
+  added to it with no column to land in fails the build rather than going unrendered.
+- **`website/data/console-sha256sums.txt` is the release's, copied rather than written.** It is
+  the `console-sha256sums.txt` asset of the console's `console-vX.Y.Z` release, byte for byte —
+  one `<64 hex>  <published name>` line per artifact, the shape `sha256sum` writes and
+  `shasum -a 256 -c` reads. It is what the `sha256` values in `content/downloads.json` are held
+  to: a checksum is a fact about bytes, so no build can compute it and a well-formed value is no
+  evidence of anything. The file arrives with the console's release and the version bump beside
+  it (below).
 
 ## The changelog is built, never committed
 
 There is no changelog page file and no changelog JSON in this tree: `src/lib/changelog.mjs`
 reads `docs/releases/vX.Y.Z.md` **during the build** and the changelog page (W1.9) renders
-what it returns. Nothing is written to disk, so a Highlights file that lands on `main`
-before its tag exists leaves no stale copy behind — and no date is taken from a tag,
+what it returns, with each release's product summary read from `data/release-summaries.yaml`
+through the content pipeline beside it. Nothing is written to disk, so a file that lands on
+`main` before its release leaves no stale copy behind — and no date is taken from a tag,
 because a shallow checkout has no tags and the newest entry a reader sees has none yet
-(D100). `website/test/changelog.mjs` holds that.
+(D100).
+
+**Which releases are published is a file in this repository, not a property of the
+checkout** (the owner's brief of 2026-10-19: *"Changelog: why do I see not yet released?"*).
+A release file is published when its version is at or below the version in
+`plugin/.claude-plugin/plugin.json`. The bump lands on `main` before the tag does, so on
+`main` the manifest names the newest released version and everything up to it reads as
+released; a release file written ahead of its bump carries the "not yet released" marker, and
+it is the only thing on the page that says so. `git tag --list` was the rule until this
+change, and the deploy build checks out without tags, which printed the marker under every
+release.
+
+**The release files stay the operator's document.** Their Highlights bullets are written for
+whoever runs Fugaro, so they are rendered as they are, inside a `<details>` block that opens
+with no script (D183); the summary above them is the site's own line for that release, and a
+release file with no entry in `data/release-summaries.yaml` stops the build naming the file
+rather than rendering an entry with nothing under its heading. `website/test/changelog.mjs`
+holds the generator to the files, and `website/test/changelog-page.mjs` holds the page to
+both sources: every release file has a summary entry and none is empty, the page renders the
+entry a release's own summary carries, and the page writes no sentence that is neither a
+release file's nor a summary's.
 
 ## The console's downloads are derived, never written down
 
@@ -468,54 +894,155 @@ file therefore carries the release's *published names* rather than a URL: `relea
 (`console-vX.Y.Z`, cut from the CLI's own `vX.Y.Z` tag) and from `site.yaml`'s `repository` —
 that module is the one reader of the file, and each page renders what it returns.
 
-Two pages offer the console from those facts: the console page's own Downloads section (W1.6)
-and Getting Started's console option, beside the CLI (the owner's changes spec of 2026-10-18,
-item 6). In both, the unreleased state is **structural rather than editorial**: the download
-list is rendered from `available`'s branch and nothing else, so an unreleased console has no
-link to follow even though its assets' names are already in the data file — and the option's
-only link is the way to `/console/`. `website/test/console.mjs` holds the console page to that,
-and `website/test/console-option.mjs` holds Getting Started to it in **both** states: the
-shipped one, read off the built page, and the released one, read off a build of a copy with the
-flag flipped. That second case also runs the budget gate over the flag-on build
-(`FUGARO_GATES_DIST`), because the two-option page costs words and Getting Started sits at
-D188's 250-word ceiling — the owner's flip has to be the whole change and may not be the change
-that breaks the ceiling. A data file that says the console has shipped while the flag says it
+Three places offer the console from those facts: the console page's own Downloads section
+(W1.6), Getting Started's console option beside the CLI (the owner's changes spec of
+2026-10-18, item 6), and the homepage's call to action (the owner's brief of 2026-10-19, item
+6: the hero action row carries a `Desktop console` link to `/console/`, and nothing about the
+console at all, rendered from `features.console_downloads`). In all three, the unreleased state
+is **structural rather than editorial**: the download list is rendered from `available`'s
+branch and nothing else, and the hero's link is rendered from the flag, so an unreleased
+console has no link to follow even though its assets' names are already in the data file — and
+the option's only link is the way to `/console/`, which is where the hero's link goes too.
+`website/test/console.mjs` holds the console page to that, `website/test/home.mjs` holds the
+homepage's call to action to the flag-off half (the row is exactly the two links it carried
+before, and mentions the console nowhere), and `website/test/console-option.mjs` holds Getting
+Started to it in **both** states: the shipped one, read off the built page, and the released
+one, read off a build of a copy with the flag flipped. That second case also runs the budget gate over the flag-on build
+(`FUGARO_GATES_DIST`), because the two-option page costs words and Getting Started was at the
+ceiling D188 set when the console shipped — 250 words then, 300 since the owner's feedback
+of 2026-10-19 moved it (above) — and the owner's flip has to be the whole change and may not be the
+change that breaks the ceiling. A data file that says the console has shipped while the flag says it
 has not stops the build, naming both files: they are one fact.
 
-**The flip, in the site's own data, is three values:** `site.yaml`'s
-`features.console_downloads: true`, `downloads.json`'s `available: true`, and `release.version`
-bumped to the CLI tag the console was built from. The download list does not change — it already
-carries the release's published names — so no URL is typed anywhere and every button, label and
-URL follows from those three.
+**The flip, in the site's own data, is four values:** `site.yaml`'s
+`features.console_downloads: true`, `downloads.json`'s `available: true`, `release.version`
+bumped to the CLI tag the console was built from, and each entry's `sha256` set to the value the
+release's own sums file records for its published name. The download list itself does not change —
+it already carries the release's published names — so no URL is typed anywhere and every button,
+label and URL follows from those.
 
-**It is not a one-line change, and four checks are written to say so.** Each exists to keep the
-unreleased state true, so each refuses the flip until the commit that makes it extends it — and
-following the three values alone leaves both `npm run check` and `go test ./...` red:
+**A later console release moves two of those four again, and it has happened once:** on
+2026-10-19 the console's own release moved to `console-v0.9.0` (the owner's ruling that
+the site's console downloads follow the console's own release), so `release.version` and both
+`sha256` values moved with it and `data/console-sha256sums.txt` was replaced by the published
+`console-v0.9.0` asset, byte for byte. Nothing else about the section changed: the same two
+artifacts, the same signing and notarisation, and the same derived URLs.
 
-- `internal/cli/docs_website_boundary_test.go`'s `TestWebsiteLinksNoConsoleWhileTheFlagIsOff`
-  fails on a true flag (`t.Fatalf`, *"this test has not been extended"*). The flip's commit
-  extends it to hold every release-asset URL under `website/` against an asset of a **tag that
-  exists** (W1.6 step 2, plan Task W3.1) — that is the check nothing offline can make, and the
-  one the owner runs against the published release.
-- The same file's `TestWebsiteFactsMatchTheRepository` refuses a true flag too, and the same
-  commit relaxes that pin: the file is one writer per level in the plan, and W3.1's row names it.
+**The tag's prefix is checked in the build, not only in the gates.** `src/lib/console-downloads.mjs`
+reads `CONSOLE_TAG="<prefix>$VERSION"` out of `.github/workflows/console-release.yml` and refuses a
+`release.tag_prefix` the workflow does not compose (`website/test/console.mjs` plants the
+disagreement and requires the refusal). A prefix of the right *shape* that no run composes is a tag
+no release carries, and every button would 404 — the one failure the checksums, the documented names
+and `console/README.md` all agree with a build that made it.
+
+**It was not a one-line change, and four checks were written to say so** — each keeping the
+unreleased state true, and each refusing the flip until the commit that made it extended it. That
+commit is the one that turned the links on (2026-10-19), and it extended all four rather than
+retiring any of them, so each refusal is still alive in the state the site now ships:
+
+- `internal/cli/docs_website_boundary_test.go`'s `TestWebsiteLinksNoConsoleWhileTheFlagIsOff` used
+  to fail on a true flag (`t.Fatalf`, *"this test has not been extended"*). It now scans in **both**
+  states: while the flag is off no file under `website/` may carry a download URL, and while it is
+  on the URLs the pages render are held by `TestWebsiteConsoleReleaseFactsAreComplete`, which
+  checks the tag prefix against the workflow's own `CONSOLE_TAG="` line, the version against a
+  release note that exists, each published name against `console/README.md` and against the
+  release's sums file, and each checksum against that file's value. The URL's *reachability* is
+  the one thing nothing offline can check, and it stays the owner's live check (69a).
+- The same file's `TestWebsiteFactsMatchTheRepository` used to refuse a true flag; it now holds
+  `site.yaml`'s `features.console_downloads` and `downloads.json`'s `available` to each other,
+  which is the agreement the build refuses too.
 - `website/test/console.mjs` guards its unreleased-state case with an assertion that `site.yaml`
-  says `false` — the case is *about* the unreleased console, so the flip's commit retires it
-  rather than leaving it failing.
-- `website/test/console-option.mjs` carries the same guard for the same reason, and the same
-  commit retires that one with it.
+  says `false`. The case is *about* the unreleased console, so it keeps its refusals alive on a
+  **fixture**: it builds a copy whose flag and `available` are flipped back off and holds that
+  build to the unreleased page, while the shipped-state cases read the real build.
+- `website/test/console-option.mjs` does the same for Getting Started's console option, and its
+  flag-disagreement case now flips whichever of the two facts the checkout does not state, so the
+  test is about the disagreement rather than about a direction.
 
-One more thing the flip does **not** have to touch, and this is the point of deriving the URLs:
-nothing under `website/src/` or `website/content/` changes beyond the two values and the version,
-and no test needs a new expectation, because the released-state cases hold the built page to the
+One more thing the flip did **not** have to touch, and this is the point of deriving the URLs:
+nothing under `website/src/` or `website/content/` changed beyond those values, and no test needed
+a new expectation, because the released-state cases hold the built page to the
 release's own documentation (`console/README.md`) and to the workflow that cuts its tag rather
-than to a URL the test composed the way the build does.
+than to a URL the test composed the way the build does. What the commit *did* add under `data/`
+is the release's sums file, because a checksum is the one fact the release's names cannot imply.
 
 The console is built for macOS and nothing else (`console/README.md`,
 `.github/workflows/console-release.yml`: one universal `.dmg` and one `.zip`), which is why the
 platform, and not an invented second one, is the word each button carries. Its release is a
 **draft until the owner publishes it** (the workflow creates `console-vX.Y.Z` with `--draft`),
 so the buttons land with the published release and not with the draft.
+
+## Adding a console screenshot
+
+The console page opens with a screenshot slider (the owner's feedback of 2026-10-19: *"Console:
+we need a screenshot slider at the top"*). It is **data-driven and ships empty**:
+`src/components/ScreenshotSlider.astro` renders the rows of `data/console-screens.yaml` and
+nothing else, and that file's list is empty, so the page a reader gets today carries no slider,
+no heading and no placeholder — the page as it was before the component existed. Nothing in the
+build can make a screenshot: the owner takes them from the released console, on their own Mac
+(D190), and **no screenshot is committed**.
+
+Adding the first one is two edits:
+
+1. **The file**, under `public/images/console/`. Create that directory with the first file:
+   git carries no empty directory, and a placeholder in it would be a file the site serves and
+   the budget counts. The name is letters, digits, dots, dashes and underscores; the extension
+   is one the slider serves — `png`, `jpg`, `jpeg`, `webp` or `avif`. A capture from macOS's own
+   `screencapture` is a PNG and is served as it comes; a WebP or an AVIF of the same picture is
+   fewer bytes for the same pixels, which is the whole of the choice. An SVG is refused: it is a
+   document that can carry script and references, and the site renders pictures.
+2. **The row**, in `data/console-screens.yaml`, in the order the slider shows them:
+
+   ```yaml
+   screens:
+     - file: runs-list.png
+       alt: A list of runs with their stage, age and spend.
+       caption: Every run, with what it is doing and what it has cost.
+       width: 1440
+       height: 900
+   ```
+
+   `file` is the file's **name** and not a path or a URL: the site path is derived from it at
+   build time, so no file under `website/` carries a URL (Global Constraint 9). `alt` and
+   `caption` are both required and neither may be empty: `alt` is what a reader gets when the
+   picture does not arrive and what a screen reader reads instead of it, and the caption is the
+   line under the picture. `width` and `height` are the file's own pixels, which is what lets
+   the browser reserve the box before the file lands. `src/content.ts`'s `loadConsoleScreens()`
+   refuses a name that is a path or a URL, a name with no extension at all, a format the slider
+   does not serve, an empty `alt` or caption, a size that is not a positive whole number, and
+   any key no reader reads — at the document's root or in a row, which is what keeps a URL out
+   of the data file's own `src` line as well as out of `file`; every refusal names the row it
+   refused, and the build stops.
+
+**What a screenshot costs, against the three numbers the budget above states:**
+
+- **The whole site:** the file is served from `public/`, so its bytes are in `dist/` and count
+  once against the site ceiling the gates above state — several times the size of the build it
+  is derived from, so a screenshot's size is a thing to keep an eye on rather than the thing
+  that decides; `test/budget.mjs` holds the new build to that ceiling and asks for the figure to
+  be re-derived in the commit that adds the file.
+- **The console page's weight:** that page is a fraction of the page ceiling above, so it has
+  room for the pictures it renders, and it is not the page the ceiling is derived from (the
+  docs hub is).
+- **The page's words, and this is the tight one.** The console page stands at **239 of the 250
+  words** D188 allows it, and a row's words all count: the caption is text under the picture,
+  and the `alt` is counted too, because it is the text a reader gets when the picture does not
+  arrive (`test/budget.mjs`'s `visibleText` reads an `img`'s `alt`). The slider's own heading
+  takes one more. So **ten words across all the rows' `alt` and `caption` together** is the
+  whole of the room there is, and the first screenshot that needs more than that needs the page
+  ceiling raised in the same commit that adds it — D188's own rule: the number moves where the
+  need is, and a build that needs more fails until it moves.
+
+The slider's own bytes do **not** move when a screenshot is added: the component's stylesheet is
+inlined into the console page whether or not the slider renders, which is the 1,115 bytes the
+site figure's last round names. What moves the site figure then is the picture's own bytes.
+
+`website/test/console-screens.mjs` holds both states: the empty one this checkout ships — no
+element marked `data-slot="console-screens"`, no track, no dots and no `<img>` in the page's own
+article — and a two-slide one, built from a copy of the repository whose data file carries two
+fixture rows. The fixture build writes no image bytes at all, because a test may not commit a
+picture either: it asserts the `src` the loader derives from the row's file name, and the `alt`,
+the caption, the size and the dot that each row produces.
 
 ## The rule this directory is written to
 
@@ -562,8 +1089,12 @@ them there.
 website/
   package.json, package-lock.json, astro.config.mjs, tsconfig.json
   data/install.yaml, site.yaml     # hand-written facts, pinned by Go tests
+  data/release-summaries.yaml      # each release's product summary, pinned by test/changelog-page.mjs
+  data/typical-costs.yaml          # the owner's own measurement of what a job costs, pinned by test/caps-and-costs.mjs
+  data/console-screens.yaml        # the console page's slides: hand-written, ships empty
+  data/console-sha256sums.txt      # the console release's own sums file, copied verbatim
   content/                         # generated, do not edit (see the table above)
-  src/lib/changelog.mjs            # reads docs/releases/ at build time
+  src/lib/changelog.mjs            # reads docs/releases/ and the plugin's version at build time
   src/layouts/, src/components/, src/pages/, src/styles/   # W1.2-W1.12
   public/                          # icons, logo.png, site.webmanifest (scripts/gen-brand-icons.py)
   test/*.mjs                       # every one of them runs under `npm run check`
@@ -652,9 +1183,11 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` now holds no pending workflow: the website's two manual
+change `.github/workflows/`. `docs/pending-workflows/` now holds one pending workflow,
+`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+P4.3), which is not this site's: the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
-owner, and no deploy workflow is staged. The only workflow files left there are the desktop
+owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
 console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:
 their staged copies stay by design, because the console's docs tests assert each one is
 byte-identical to its copy under `.github/workflows/`, so neither is pending.
