@@ -51,7 +51,9 @@ flag), `internal/cli/testdata/init_review.golden` (`TestReviewScreenGolden`,
   `docs/website/**` and **`docs/setup-wizard/**` itself** keep the old name
   (D9, F20). The rename's guard test enforces the line, and this folder is on
   the exempt side of it: its four documents are where the retirement is
-  described, so they name the retired command **75 times** by necessity.
+  described, so they name the retired command throughout (the count is volatile
+  — every edit to these documents changes it — so it is the command, not a
+  figure: `git grep -o -c 'fugaro init' -- docs/setup-wizard`).
 - **No fourth verb** (O1): `setup`, `update`, `upgrade`, the hidden `init`
   tombstone, and `fugaro config init` left alone.
 - **No `fugaro upgrade` change beyond its text.** D1 (recommended) keeps the two
@@ -70,7 +72,7 @@ flag), `internal/cli/testdata/init_review.golden` (`TestReviewScreenGolden`,
 | The interactive inputs: `gatherInputs`, `prompt`, `canAsk`, `firstRunMissing`, `suggestGCPProject`, `sanitiseName`/`suggestName`, `installationName`/`readInstallationName`, `const defaultRegion` | `internal/cli/init_inputs.go` | W3.1, W3.2, W3.5 |
 | The project stage and its three typed banners: `projectStage`, `typed`, `canType`, `checkCreateProject`, `guided`, `billingHelp`, `existingNote`, `sanitized` | `internal/cli/init_project.go` | W1.3, W4.3, W4.4, W4.5 |
 | The typed Firestore location and the billable build | `internal/cli/init_firebase.go`, `init_images.go`, `init_review.go` | W0.1, W3.2 |
-| The repository stage and its gates: `newRepositoryStage`, `authorize`, `resolveRepoTarget`, `checkoutProject`, `checkoutNote`, `unknownDetail` | `internal/cli/init_repo_stage.go`, `init_repo_gate.go`, `init_repo_target.go` | W3.4 |
+| The repository stage and its gates: `newRepositoryStage`, `authorize`, `resolveRepoTarget`, `checkoutNote`, `unknownDetail` | `internal/cli/init_repo_stage.go`, `init_repo_gate.go`, `init_repo_target.go`; `checkoutProject` is `internal/cli/project.go` | W3.4 |
 | The Cloud Billing fake: `SetBilling`, `UseCRM`, `SetSuspended`, `accounts`, `Link` | `internal/gcpfake/billing.go` | W4.2, W4.3 |
 | The billing preflight: `Billing(...)`, "the Cloud Billing API is disabled on <quota>, the quota project of your credentials" | `internal/preflight/google.go` | W4.4 |
 | The honest UNVERIFIED list against the real services | `internal/infra/projectcreate.go` | W4.1, W4.5 |
@@ -94,7 +96,7 @@ flag), `internal/cli/testdata/init_review.golden` (`TestReviewScreenGolden`,
 | **3 — The wizard's questions** | The id default, the region kept apart from the Firestore location, `--firebase-project`, the first-repository question, and the two-phase input | W3.1–W3.5 | Yes — each leaves a working wizard with one more question answered | After Slice 1 |
 | **4 — The billing picker** | The Cloud Billing client, the gcloud fallback, the picker, the API-enable refusal, and the comments the reversal falsifies | W4.1–W4.5 | Yes — with the picker absent or refused, today's `guided()` line is what runs | After W3.5 |
 | **5 — `fugaro update`** | Its stage set, its refusals, its non-interactive contract, and the e2e tests renamed | W5.1–W5.2 | Yes | After Slice 1 |
-| **6 — The checks** | Check 27 rewritten for `setup`, Check 111 for the picker's failure modes | W6.1–W6.2 | Owner-run; no commit but the recorded result | After a release |
+| **6 — The checks** | Check 27 rewritten for `setup` — its commands renamed and the wizard's sequence in front, with every probe it already carries kept — and Check 111 for the picker's failure modes | W6.1–W6.2 | Owner-run; no commit but the recorded result | After a release |
 | **7 — Later, unscheduled** | A deprecated alias, a second installation on one machine, an interrupted wizard, a picker preview | — | — | — |
 
 ---
@@ -114,11 +116,23 @@ the next free number**, and it is taken here.
 
 | # | The check | Written by | Run at | Where |
 |---|---|---|---|---|
-| **27** (rewritten) | **`fugaro setup` end to end.** From an empty shell on a throwaway project: the wizard asks in order; Enter accepts the id `fugaro-<name>`; the created project types its ID; the billing picker lists the owner's open accounts by number; the link types the account's ID; the Firestore location types `us-east5`; the first image build types its confirmation; installation, Firebase and the first repository converge; then `fugaro update` **twice**, the second run asserting "No changes" for every stage | W0.3 | W6.1 | Installation `fugaro`, sandbox repository, throwaway project |
+| **27** (rewritten) | **`fugaro setup` end to end, and everything Check 27 already proves.** New: from an empty shell on a throwaway project the wizard asks in order; Enter accepts the id `fugaro-<name>`; the created project types its ID; the billing picker lists the owner's open accounts by number; the link types the account's ID; the Firestore location types `us-east5`; the first image build types its confirmation; installation, Firebase and the first repository converge; then `fugaro update` **twice**, the second run asserting "No changes" for every stage. **Kept, with their commands renamed**: the plugin wiring and the four Claude Code spikes (V1–V4), the image mirror against real ghcr.io and Artifact Registry, hidden secret prompts and their refusals, the **hostile-clone gate**, `doctor` and `update-skills`, the teammate's adopt run, `/fugaro:setup`, and the **prompt-injection probe** | W0.3 | W6.1 | Installation `fugaro`, sandbox repository, throwaway project |
 | **111** (new) | **The picker's failure modes.** API disabled on the quota project; a user without `billing.accounts.list`; no TTY; `--json`; an agent session — each asserting the guided `gcloud billing projects link` line, that nothing was enabled, and that no account list appears in any output | W0.3 | W6.2 | Installation `fugaro` |
 
-Check 27's old text is **replaced, not supplemented**; a number whose subject was
-rewritten stays the same number and is not reused elsewhere.
+Check 27 keeps its number — a number whose subject was rewritten stays the same
+number and is not reused elsewhere — but its text is **rewritten in place, and
+nothing it already proves is dropped**. Two things move: the command lines and
+flags are renamed (`fugaro init` → `fugaro setup`, and the converge-again steps
+→ `fugaro update`), and the wizard's question order replaces the old step order
+at the front. The **probes stay**, because the register has no other home for
+them: `grep -n 'injection\|hostile' docs/gcp-live-checklist.md` names Check 27's
+row and its section and nothing else, so deleting them would be the hole in the
+register that D10's alternative was rejected for. The same holds for the four
+Claude Code spikes (V1–V4), the mirror against the real registries, `doctor`,
+`update-skills`, the teammate's adopt run and `/fugaro:setup`: they are NOT RUN,
+and no other check names them. W0.3's rule is therefore **rename
+the commands, keep the probes** — and its summary row above is the list it must
+not lose.
 
 ---
 
@@ -381,10 +395,12 @@ once per file it writes.
 internal/cli/init_inputs.go        W3.1 (L4) → W3.2 (L5) → W3.5 (L6) → W4.3 (L9)
 internal/cli/init_project.go       W1.3 (L3) → W3.3 (L4) → W4.3 (L9) → W4.5 (L10)
 internal/cli/init.go               W1.2 (L1) → W2.1 (L2) → W3.3 (L4) → W5.1 (L7)
-internal/cli/init_stages.go        W1.2 (L1) → W1.3 (L3) → W5.1 (L7)
-internal/cli/setup.go              W1.2 (L1) → W1.3 (L3) → W3.4 (L5)
+internal/cli/init_stages.go        W1.2 (L1) → W1.3 (L3) → W3.5 (L6) → W5.1 (L7)
+internal/cli/setup.go              W1.2 (L1) → W1.3 (L3) → W3.4 (L5) → W3.5 (L6)
 internal/cli/update.go             W1.2 (L1) → W5.1 (L7)
 internal/cli/billing_prompt.go     W4.3 (L9) → W4.4 (L10)
+internal/cli/billing_prompt_test.go W4.3 (L9) → W4.4 (L10)
+internal/cli/init_inputs_test.go   W3.1 (L4) → W3.2 (L5)
 internal/preflight/google.go       W2.2 (L2) → W4.4 (L10)
 internal/infra/projectcreate.go    W2.2 (L2) → W4.5 (L10)
 internal/config/example.go         W2.5 (L2) → W2.6 (L5)
@@ -399,6 +415,11 @@ docs/gcp-setup.md                  W2.3 (L3) → W5.1 (L7)
 
 every internal/cli/*.go            ← W1.2 (L1) · W2.1 (L2) · W1.3 and later (L3+)
 ```
+
+One lane is conditional and is named here so the claim above stays checkable:
+**`internal/initflow/stage.go` — W1.1 (L0) → W5.1 (L7)**, and it exists only if
+the owner answers **D12** against the recommendation; as written, W5.1 reads
+`runCovered` there and does not change it.
 
 W2.1's line is a **sweep**, not a single file: it rewrites every
 `internal/cli/*.go` that names the command, so it sits between W1.2 (L1) and
@@ -537,9 +558,10 @@ and that is where the pin bites.
 
 ### Task W0.3: Checks 27 and 111, written into the register — docs
 
-**Files.** `docs/gcp-live-checklist.md` (Check 27's section replaced in place;
-Check 111's register row and section added; the paragraph that records reserved
-numbers gains 111's claim).
+**Files.** `docs/gcp-live-checklist.md` (Check 27's section rewritten in place —
+its commands renamed and the wizard's sequence put in front, **with every probe
+it already carries kept**; Check 111's register row and section added; the
+paragraph that records reserved numbers gains 111's claim).
 **What the owner types.** Check 27: the hard-coded project guard (`${P:?}` on
 every `gcloud`, installation `fugaro` only, **never `belong`**, a throwaway
 project and a sandbox repository); the commands in the summary's table above,
@@ -549,7 +571,19 @@ and the second `fugaro update`'s "No changes"; then the Restore (delete the
 throwaway project, the bucket, the repository's jobs) whose final assertion
 reads `0`. Check 111: the five modes, the guided line each prints, and a `FACT:`
 line that nothing was enabled and no account list was printed.
-**Tests.** None (a document). **Red step.** n/a (docs).
+**Rename the commands, keep the probes.** The rewrite is not a deletion: the
+four Claude Code spikes (V1–V4), the image mirror against the real registries,
+the hidden secret prompts and their refusals, the hostile-clone gate, `doctor`
+and `update-skills`, the teammate's adopt run, `/fugaro:setup` and the
+prompt-injection probe all stay in Check 27 with their commands renamed, and the
+section's own `FACT:`/expected table keeps its rows. The reason is in the
+register itself: `grep -n 'injection\|hostile' docs/gcp-live-checklist.md`
+matches Check 27 and nothing else, so nothing else would run those two probes.
+The red step for this task is that grep plus a count of the steps the old text
+carries — the new section must have at least as many.
+**Tests.** None (a document). **Red step.** The two greps above: the numbered
+steps of the old Check 27, and `grep -n 'injection\|hostile'
+docs/gcp-live-checklist.md` — the new section must carry every one of them.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Checklist' -count=1`.
 **Depends on.** **D10's answer** — the task *is* D10's recommendation (rewrite
 Check 27 in place, take 111), so writing it takes the decision rather than
@@ -726,8 +760,12 @@ internal/basepin/**
 ```
 
 `grep -rl 'fugaro init' internal/ --include='*.go' | grep -v _test.go | grep -v
-'^internal/cli/'` is the exact command; if it names a package not listed here,
-this list is what is wrong. Named examples of the user-facing ones:
+'^internal/cli/' | grep -v '^internal/initflow/' | grep -v
+'^internal/config/example.go$'` is the exact command — the last two filters are
+the two exclusions below, and without them it names `internal/initflow/loop.go`,
+`internal/initflow/stage.go` and `internal/config/example.go`, which are not
+this task's; if it names a package not listed above, this list is what is wrong.
+Named examples of the user-facing ones:
 `internal/infra/{discover,discover_firebase,firebase,firebasedb,hardening,installation,projectcreate,projectjobs,readiness,checkjob,tf/env,tf/managed_cover}.go`,
 `internal/budget/{rollover,registry,session}.go`,
 `internal/runner/{project,projectpolicy,projectjob,halt,gateway,budget_session}.go`,
@@ -772,7 +810,9 @@ it are `docs/releases/v*`, which the six roots exempt),
 `plugin/skills/setup/reference/**`, `plugin/skills/working/reference/status.md`,
 `.claude/skills/new-release/SKILL.md`; and the pins updated in the same commit:
 `plugin/readme_test.go`'s `TestReadmeGettingStartedIsTwoSteps` (step 1,
-"`fugaro init` again"), `plugin/setup_skill_test.go`'s five tests,
+"`fugaro init` again"), `plugin/setup_skill_test.go`'s
+`TestSetupSkillMentionsDoctorFirst`, `TestSetupSkillNeverAppliesInit`,
+`TestSetupSkillContent` and `TestSetupSkillHandlesSeveralProjects`,
 `plugin/skills_lint_test.go`'s `userRunsAllowed` list and its `--yes` rule,
 `internal/cli/docs_project_wide_git_test.go` (the literal "Init's prompts (step
 9) have no `--repo` to pass"), `internal/cli/docs_upgrade_test.go`,
@@ -831,9 +871,13 @@ the generator is rerun after W1.2's cobra changes, and its diff is the review.
 
 ### Task W2.5: Terraform, the schema and the example config — standard
 
-**Files.** 29 of the tree's 58 `deploy/terraform/**/*.tf` files — those whose
-variable and output
-`description`s naming the command, e.g.
+**Files.** 29 of the tree's 58 `deploy/terraform/**/*.tf` files — every `.tf`
+file that names the command (`grep -rl 'fugaro init' deploy/terraform
+--include='*.tf' | wc -l`). The mentions are mixed, and the task's rule is
+"rename the mention, move nothing": **15 `description = …` attributes** on
+variables and outputs (`grep -rn 'description' deploy/terraform --include='*.tf'
+| grep -c 'fugaro init'`), **8 `error_message`s** in `validation` blocks, and the
+rest comments — e.g.
 `deploy/terraform/gcp/modules/repo/variables.tf`, `modules/installation/*.tf`,
 `modules/firebase/*.tf`, `modules/workflow/*.tf`, `modules/project/job.tf`,
 `roots/*/{main,variables,outputs}.tf`), `deploy/terraform/terraform.go`'s
@@ -856,7 +900,7 @@ byte-compares a `description`; the red step finds out.
 **Tests.** `GOFLAGS=-p=2 go test ./deploy/... ./schemas/... ./internal/config/... -count=1`
 (the Terraform golden and schema-corpus tests) and
 `internal/cli/docs_project_layer_test.go` / `validate_test.go` for the example.
-**Red step.** `GOFLAGS=-p=2 go test ./deploy/... ./internal/config/... -count=1` before the edit — any failure names a compared description, which is then changed on purpose.
+**Red step.** `GOFLAGS=-p=2 go test ./deploy/... ./internal/config/... -count=1` before the edit — any failure names a compared description, which is then changed on purpose. The 15 `description` lines are the ones a test could byte-compare; the 8 `error_message`s and the comments are text no test reads, and the golden tests are what would say otherwise.
 **Verification.** As the red step, after the edit; plus
 `terraform fmt -check -recursive deploy/terraform` (a description edit must not
 reflow).
@@ -884,7 +928,8 @@ The exempt roots are **exactly W0.2's six, no more and no fewer** —
 `docs/website/` and `docs/setup-wizard/` — and this task does not restate them
 from memory: the guard's `datedRecords` is one constant, and W0.2 is where it is
 written. `docs/setup-wizard/` is among them because it is where the retirement
-is described (75 occurrences, four documents). `docs/website/redesign/**` is
+is described (four documents, every one of them; the count is volatile, so the
+command: `git grep -o -c 'fugaro init' -- docs/setup-wizard`). `docs/website/redesign/**` is
 **not** on the list, and that is deliberate: it names the command **zero**
 times, and an exemption for a root with no occurrences is exactly the "wrong in
 one direction" Global Constraint 7 forbids. The root that does name it,
@@ -1181,7 +1226,11 @@ to* is never printed — the half of the old rule that survives).
 
 **Files.** `internal/cli/update.go`, `internal/cli/init_stages.go` (the stages
 `update` registers, and the `runCovered` row that says whether `--yes` may
-cover them — the map lives in `internal/initflow/stage.go`),
+cover them — the map itself lives in `internal/initflow/stage.go`, which this
+task **reads and does not change**, because D12's recommendation is that
+`update`'s covered set stay identical to `setup`'s; if the owner answers D12 the
+other way, this task adds the row there and the lane
+`internal/initflow/stage.go W1.1 (L0) → W5.1 (L7)` applies),
 `internal/cli/setup_refusals_test.go` (W0.1's matrix gains `update`'s column),
 `internal/cli/init.go` (the
 `errNoState` family's wording), `docs/gcp-setup.md` (its `fugaro update`
@@ -1276,7 +1325,7 @@ binary, so a release is a hidden step before each.*
 ### Task W6.1: Check 27 — OWNER-RUN
 
 **Files.** None; the owner records the `FACT:` lines in `docs/gcp-live-checklist.md`.
-**Depends on.** W2.7, W3.5, W4.5, W5.2, and a release. **Verification.** The
+**Depends on.** W2.7, W3.5, W5.1, W5.2, W4.5, and a release. **Verification.** The
 owner runs the rewritten Check 27 on installation `fugaro` — throwaway project,
 sandbox repository only, **never `belong`**, `belong` untouched — the Restore's
 final assertion reads `0`, and the result is recorded. **Reviewer.** owner.

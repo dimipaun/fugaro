@@ -79,10 +79,14 @@ The flag's usage text today (`internal/cli/init.go`, `f.StringVar(&o.firebase,
 **C3. The count of "places that name `fugaro init`" is the real estimate.** In
 Go: 410 non-test lines and 378 test lines, across 107 non-test files, including
 7 `selfCommand() + " init"` sites. In markdown: 111 files outside this folder
-(115 with it — `docs/setup-wizard/` names the command **75 times across its four
-documents** and is exempt, §3 F20), 158 mentions in
-`docs/gcp-live-checklist.md` alone and 113 in `docs/gcp-setup.md`. Plus 29
-Terraform files whose variable `description`s name the command, and
+(115 with it — `docs/setup-wizard/` names the command throughout its four
+documents and is exempt, §3 F20; the figure is volatile because these documents
+are edited by the work they describe, so here is the command rather than a
+number: `git grep -o -c 'fugaro init' -- docs/setup-wizard`), 158 mentions in
+`docs/gcp-live-checklist.md` alone (`grep -c 'fugaro init'
+docs/gcp-live-checklist.md`) and 113 in `docs/gcp-setup.md` (`grep -c`). Plus 29
+Terraform files that name the command (see §4 for what kind of line each
+mention is), and
 `website/content/cli-reference.md` (generated) and `website/data/install.yaml`
 (pinned byte-for-byte). See F20 for where the line between "rename" and "leave
 alone" has to be drawn.
@@ -308,7 +312,8 @@ creates anything, and needs no owner permissions. Its cloud step *defers* to
 `init --repo` in several places: `upgrade_cloud.go`'s `checkJobCopyCaveat`,
 `jobConfigCopyNote`, `jobConfigCopyMountNote`, `jobConfigCopyPolicyNote` all say
 "run `fugaro init --repo .` in your own terminal (never run automatically)", and
-`upgradeCheckout` says "set it up with `fugaro init` and `/fugaro:setup` first".
+`internal/cli/upgrade.go`'s `upgradeCheckout` (defined at `upgrade.go:273`) says
+"set it up with `fugaro init` and `/fugaro:setup` first".
 
 **Consequence.** The rename has to rewrite these strings, and the merge question
 (D1) is a real one: the two commands overlap on the repository's jobs and
@@ -317,7 +322,8 @@ images, and only the installation half is unique to `update`.
 ### F14 — The first-repository step already works from a checkout · **Exists**
 
 `init_repo_stage.go`'s `newRepositoryStage` is stage 9; `init_repo_target.go`'s
-`resolveRepoTarget`/`checkoutProject` pick the checkout's repository and its
+`resolveRepoTarget` and `project.go`'s `checkoutProject` (defined at
+`project.go:30`) pick the checkout's repository and its
 project; `init_repo_gate.go`'s `checkoutNote`/`unknownDetail` handle the
 unlisted-repository case; `authorize` asks for the GitHub App ID once;
 `--onboard-repo <owner/name>` exists for a repository that is not the checkout's.
@@ -328,8 +334,10 @@ repository?") and otherwise needs no new code. See D5.
 
 ### F15 — Budget mode exists with a default · **Exists**
 
-`--budget-mode` is `off|observe|enforce`; `internal/cli/init.go` seeds an absent
-one as `observe`; `--budget-admin` goes with it. `init_project.go`'s refusal
+`--budget-mode` is `off|observe|enforce`; `internal/cli/init.go` registers the
+flag and documents the seed, and the seed itself is
+`internal/infra/firebasedb.go:214` (an absent mode becomes `budget.ModeObserve`);
+`--budget-admin` goes with it. `init_project.go`'s refusal
 for a managed project requires an explicit monthly budget *with no default and
 no suggestion taken for you* ("`TestManagedBudgetHasNoDefault`" in
 `init_budget_test.go`).
@@ -357,7 +365,7 @@ first".
 `plugin/skills/setup/SKILL.md` is the `/fugaro:setup` skill: ten steps, a
 twelve-topic question list, which the README's Getting started says to run
 **after** `fugaro init`. It carries `fugaro init --repo --plan-only` as its
-read-only plan and `fugaro init --repo --retire`. Four tests pin the current
+read-only plan and `fugaro init --repo --retire`. Six pins hold the current
 order and wording: `plugin/readme_test.go`'s
 `TestReadmeGettingStartedIsTwoSteps` (README's `## Getting started` is exactly
 two numbered steps, step 1 containing `` `fugaro init` `` and step 2
@@ -430,7 +438,7 @@ the checklist:
 | Pin | What it holds |
 |---|---|
 | `plugin/readme_test.go` — `TestReadmeGettingStartedIsTwoSteps` | README's Getting started: exactly 2 steps, step 1 names the CLI command, step 2 `/fugaro:setup`, and the section says "merge", "`fugaro init` again", "`.claude/settings.json`", "install" |
-| `plugin/setup_skill_test.go` — five tests | the skill's steps, its question list, `doctor` first, never applies init, several projects |
+| `plugin/setup_skill_test.go` — `TestSetupSkillMentionsDoctorFirst`, `TestSetupSkillNeverAppliesInit`, `TestSetupSkillContent`, `TestSetupSkillHandlesSeveralProjects` (the file's own count is not a fact worth quoting: `grep -c '^func Test' plugin/setup_skill_test.go`) | the skill's steps, its question list, `doctor` first, never applies init, several projects |
 | `plugin/skills_lint_test.go` — nine tests | `userRunsAllowed` (contains `"fugaro init"`), `--yes` never near init, owner commands however written |
 | `internal/cli/docs_project_wide_git_test.go` | the literal "Init's prompts (step 9) have no `--repo` to pass" in the skill and its `reference/decisions.md` |
 | `internal/cli/docs_upgrade_test.go` | `fugaro upgrade` and its flags named in README, `docs/gcp-setup.md`, `docs/release.md`, `.claude/skills/new-release/SKILL.md`, `docs/design/v1.md`; the literal sentence "`/fugaro:upgrade` does the local half and hands you the rest"; `brew upgrade dimipaun/tap/fugaro && fugaro upgrade` in three files |
@@ -440,7 +448,7 @@ the checklist:
 | `internal/cli/docs_*_test.go` (≈40 files) | each holds sentences and check numbers in `docs/gcp-setup.md`, `docs/gcp-live-checklist.md`, the design docs |
 | `internal/config/example.go`'s `exampleProjectLines` | `internal/config/example.yaml`, validated by `validate_test.go` and `docs_project_layer_test.go` |
 | `schemas/fugaro.schema.json` | a `description` naming `fugaro init`, "never guessed from the project name" |
-| 29 `deploy/terraform/**/*.tf` files (of 58 in the tree) | variable `description`s naming the command, shown in `terraform plan` |
+| 29 `deploy/terraform/**/*.tf` files (of 58 in the tree) | 15 `description` lines naming the command, shown in `terraform plan`; 8 `error_message`s; the rest comments |
 
 **Consequence.** Two rules, and they need an owner decision because they are
 judgement: (a) **live user-facing text is renamed** — everything a user or an
@@ -552,7 +560,9 @@ red step.
 `TestUpdate*`/`TestSetup*` and move), `internal/cli/init*_test.go`,
 `internal/initflow/loop_test.go`, and assertion helpers in ~40 other packages.
 
-**Markdown — 111 files** outside this folder (115 with it). Live (renamed):
+**Markdown — 111 files** outside this folder (115 with it) — counted, not
+remembered: `grep -rl 'fugaro init' --include='*.md' . | grep -vc
+'^docs/setup-wizard/'`. Live (renamed):
 `README.md` (16), `CONTRIBUTING.md`,
 `docs/gcp-setup.md` (113 — its title is `# GCP setup with \`fugaro init\``),
 `docs/gcp-live-checklist.md` (158), `docs/project-layer.md`,
@@ -568,17 +578,23 @@ Dated (left alone): `docs/plans/**`, `docs/releases/v*`,
 `docs/design/**`, `docs/credentials-service/**`, `docs/website/**` (another
 artifact's plan record — 3 mentions between `implementation-plan.md` and
 `reconciliation.md`; `docs/website/redesign/**` names the command zero times) and
-`docs/setup-wizard/**` (this folder: 75 occurrences over four documents, and its
+`docs/setup-wizard/**` (this folder: its four documents name the command
+throughout — `git grep -o -c 'fugaro init' -- docs/setup-wizard` — and its
 prose is *about* the retirement).
 
-**Terraform — 29 files.** Variable and output `description`s saying what `fugaro
-init` writes, e.g. `deploy/terraform/gcp/modules/repo/variables.tf` ("Every name
-arrives from `fugaro init --repo`'s terraform.tfvars.json"),
+**Terraform — 29 of the tree's 58 `.tf` files.** They name the command on 54
+lines, and the mechanism is mixed: **15 are `description = …` attributes** on
+variables and outputs (what `terraform plan` shows), **8 are `error_message`**
+in `validation` blocks, and the rest are comments. `grep -rl 'fugaro init'
+deploy/terraform --include='*.tf' | wc -l` is the file count, `grep -rn
+'description' deploy/terraform --include='*.tf' | grep -c 'fugaro init'` the
+`description` lines. Examples: `deploy/terraform/gcp/modules/repo/variables.tf`
+("Every name arrives from `fugaro init --repo`'s terraform.tfvars.json"),
 `roots/repo/tests/testdata/README.md`, and the four
 `gcp/roots/{compute,firebase,installation,repo}/tests/*.tftest.hcl` files whose
 header comments say the names are "the ones `fugaro init` writes". Rename, but
-in its own commit: these are `terraform plan` output, not fugaro's own text, and
-a description edit is independently reviewable.
+in its own commit: these are `terraform plan` output and comments, not fugaro's
+own text, and an edit is independently reviewable.
 
 **Website.** `website/data/install.yaml` (pinned, 2 mentions),
 `website/src/pages/getting-started.astro` (hand-kept, 3 mentions, two anchor
@@ -787,6 +803,20 @@ produce the guided line rather than a crash), the typed billing link, the typed
 Firestore location, the first image build, installation, Firebase, and the first
 repository — then `fugaro update` on the same installation **twice**, asserting
 "No changes" the second time.
+
+**It must also keep everything the check proves today**, with the commands
+renamed: the plugin wiring and the four Claude Code spikes (V1–V4), the image
+mirror against the real ghcr.io and Artifact Registry, the hidden secret prompts
+and their refusals, the **hostile-clone gate**, `doctor` and `update-skills`, the
+teammate's adopt run, `/fugaro:setup`, and the **prompt-injection probe**. The
+two security probes are the reason this is a requirement and not a preference:
+`grep -n 'injection\|hostile' docs/gcp-live-checklist.md` returns Check 27's
+register row and its section and nothing else in the whole register, so a
+rewrite that replaced the text instead of re-fronting it would delete the only
+live coverage of either — the "register with a hole in it" this decision's
+alternative was rejected for. So the rewrite is **rename the commands, keep the
+probes**: the wizard's sequence goes in front, and every step that probes
+something stays.
 
 **Check 111** covers the picker's failure modes only: API disabled on the quota
 project, a user with no `billing.accounts.list`, no TTY, `--json`, and an agent

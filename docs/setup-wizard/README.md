@@ -17,7 +17,7 @@
 | Block | State |
 |---|---|
 | **D1–D12** | this work's decisions, all written and **all open** |
-| **Check 27** | rewritten in place: M11's simple setup was NOT RUN and its steps have moved under it; the new text covers `fugaro setup` end to end and then `fugaro update` twice |
+| **Check 27** | rewritten in place: same number, same **NOT RUN**; the command lines and flags are renamed and the wizard's sequence goes in front, while every probe the check already carries — the four Claude Code spikes, the mirror against the real registries, `doctor`/`update-skills`, the teammate's adopt run, `/fugaro:setup`, the hostile-clone gate and the prompt-injection probe — is **kept**, because no other check in the register names any of them |
 | **Check 111** | new: the billing picker's five failure modes (API disabled, no permission, no TTY, `--json`, an agent session) |
 | **110** | claimed by an open pull request; the register's rule is that whichever of two open claims merges second renumbers itself, so this plan takes **111** |
 
