@@ -28,7 +28,16 @@ const SharedMaxBytes = 64 << 10
 // machine's choice to silence the nag is its own operator's, not something
 // a launcher writing the shared file should be able to flip for everyone),
 // and each repo's base_branch, which the checkout's reviewed fugaro.yaml
-// names. The receiver is not modified. The
+// names. **batch: is published**, for the opposite reason: it is the
+// installation's own facts (design docs/design/compute-backend.md §4.4, plan
+// 2026-10-19-compute-backend.md Task 8 step 2) — the image a run's job runs,
+// the machine type, the network and subnetwork its VMs are placed in, the
+// account they run as, the socket gid — and a machine that onboarded before
+// the compute root was applied must not have to write them to run somewhere
+// else's jobs. Every one of its values that names a cloud resource is held to
+// the anchor's GCP project when the file is read back
+// (internal/cli's ParseShared), like registry_host, base_images, log_view and
+// budget.firebase_project. The receiver is not modified. The
 // copy is shallow except for repos: its other maps, slices and pointers
 // alias the receiver's, which is safe because the result is only
 // marshalled, and Marshal only reads.
@@ -108,6 +117,17 @@ func MergeShared(published, local *Config) *Config {
 	if out.Build == (Build{}) {
 		out.Build = published.Build
 		out.Build.ServiceAccount = ""
+	}
+	if out.Batch == nil {
+		// The batch block is the installation's facts, not one machine's (the
+		// image a run's job runs, the machine type, the network and subnetwork
+		// its VMs are placed in, the account they run as, the socket gid), so
+		// it is published and it is a pointer like budget: and watch:. A
+		// publisher whose own config has no batch: block is a machine that did
+		// not apply the compute root; taking its nil over the published one
+		// would erase what another machine onboarded, silently, in the only
+		// place the installation's copy lives.
+		out.Batch = published.Batch
 	}
 	if out.Budget == nil {
 		out.Budget = published.Budget

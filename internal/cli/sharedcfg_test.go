@@ -449,7 +449,14 @@ func TestPublishSharedSelfCheck(t *testing.T) {
 			lc.Budget = &localcfg.Budget{Mode: "observe", RTDBURL: "https://my-fp1-default-rtdb.firebaseio.com", FirebaseProject: "my-fp1", TokenSigner: "fugaro-token-signer@my-fp1.iam.gserviceaccount.com"}
 		}, "separate Firebase project"},
 		"registry host of another region": {func(lc *localcfg.Config) { lc.RegistryHost = "us-west1-docker.pkg.dev/proj-1234" }, "registry_host"},
-		"non-default runs bucket":         {func(lc *localcfg.Config) { lc.RunsBucket = "my-own-runs" }, "default runs bucket name"},
+		// The batch block is published, so the self-check is what keeps a
+		// machine whose own block points elsewhere from writing it for
+		// everyone: the publisher runs ParseShared on the exact bytes, and
+		// this is that refusal arriving as a warning instead of a write.
+		"batch image of another project": {func(lc *localcfg.Config) {
+			lc.Batch = &localcfg.Batch{Image: "us-east5-docker.pkg.dev/evil-proj/fugaro/fugaro:1"}
+		}, "batch.image"},
+		"non-default runs bucket": {func(lc *localcfg.Config) { lc.RunsBucket = "my-own-runs" }, "default runs bucket name"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newCloudFixture(t)
