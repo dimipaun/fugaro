@@ -194,6 +194,9 @@ func TestSwitchHeaderRoundTrip(t *testing.T) {
 		"no reason":    {To: "anthropic-key"},
 		"no target":    {From: "acct-one", Reason: ReasonExhausted},
 		"a bad target": {To: "anthropic key", Reason: ReasonExhausted},
+		"a bad source": {From: "acct one", To: "anthropic-key", Reason: ReasonExhausted},
+		"a source with a newline": {From: "acct-one\nX-Evil: 1", To: "anthropic-key",
+			Reason: ReasonExhausted},
 	}
 	for name, s := range refused {
 		t.Run(name, func(t *testing.T) {
