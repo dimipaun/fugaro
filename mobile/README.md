@@ -262,6 +262,13 @@ than passed through, so the file stays the single site for them. The file reads
 the two variables and the two switches, and **nothing else in the environment
 reaches the config**: it holds no credential, and it cannot.
 
+**The export-compliance answer is declared, not asked again.** `app.config.js`
+merges `ios.infoPlist.ITSAppUsesNonExemptEncryption: false` into every
+resolution — the owner's declaration of **2026-10-20** ("write it, it's OK":
+the app uses only standard/exempt encryption), made after `eas build` printed
+that it cannot write that key into a dynamic config — while **the owner answers
+Apple's other export questions in App Store Connect**.
+
 ## The mailbox client, and the app's write set
 
 `src/mailbox/` is where the app talks to the database, and it is the only place

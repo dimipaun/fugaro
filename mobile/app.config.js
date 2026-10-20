@@ -68,6 +68,25 @@
 // filled in) -- which is why the same file serves both. That shape was read
 // off the loader's source; **it has not been run against a real `expo start`
 // here** (README, "What is not verified here").
+//
+// **The export-compliance answer (the owner's declaration of 2026-10-20).**
+// `eas build` printed that it cannot write `ITSAppUsesNonExemptEncryption` into
+// a **dynamic** config -- this file is a function, so there is no object in it
+// for the CLI to edit -- and asked for
+// `{"ios": {"infoPlist": {"ITSAppUsesNonExemptEncryption": false}}}` in
+// `app.config.js` or `app.json` by hand. The owner ruled on 2026-10-20: "write
+// it, it's OK" -- the app uses only standard/exempt encryption, so the answer is
+// declared here, in the config the build reads, and the submission no longer
+// stops on the question. It is the same answer for every copy of the app and
+// nobody's secret, so it is a constant below rather than a third EAS
+// environment variable, and it is applied in **every** state -- a
+// build and a dev/lint run alike -- because it is a fact about the app rather
+// than about the environment this file resolves in (`eas-cli` resolves the file
+// locally, see `resolveConfig`). **The owner answers Apple's other export
+// questions in App Store Connect**; nothing here answers anything else, and
+// `README.md` ("Building for internal testing") says whose ruling this is and
+// dated when. The merge into `ios.infoPlist` is a merge and not an assignment:
+// see `declaring`.
 
 /** The two variables, by platform. The names are this task's, and a rename is deliberate. */
 export const ID_VARIABLES = Object.freeze({
@@ -118,6 +137,19 @@ const FIELDS = Object.freeze({
       'letters (either case), digits and underscores in at least two dot-separated segments, ' +
       'each starting with a letter (Play allows no hyphen, and no segment may start with a digit)',
   },
+});
+
+/**
+ * The export-compliance answer: the plist key Apple asks about and the answer
+ * the owner ruled on (2026-10-20), as the pair the merge below writes. The
+ * value is the **boolean** `false` -- not the string `'false'`, which is a
+ * different plist value and a different answer -- and the key is spelled as
+ * Apple spells it, because a plist key is read by name and a near miss is a
+ * question that stays open.
+ */
+export const EXPORT_COMPLIANCE = Object.freeze({
+  field: 'ITSAppUsesNonExemptEncryption',
+  value: false,
 });
 
 /**
@@ -208,6 +240,33 @@ function optionalSection(platform, section, env) {
 }
 
 /**
+ * `section` with the export-compliance declaration merged into its `infoPlist`.
+ *
+ * **A merge, not an assignment**, and that is the whole of the function:
+ * `infoPlist` is a shared object -- the base config may set keys in it, and an
+ * Expo config plugin writes its own into it at prebuild time -- so replacing
+ * the object on the way to adding one key would drop somebody else's, and the
+ * drop would show up as a missing usage description or a missing capability in
+ * a built app rather than as anything a reader could see here. The section may
+ * be absent (a config that names no `ios` at all), which is why the spread
+ * reads `section?.infoPlist ?? {}`.
+ *
+ * It runs in **both** states (`resolveConfig` calls it on both arms): the
+ * declaration is a fact about the app, not about the environment the config is
+ * resolved in, and `eas-cli` resolves this file locally -- in the dev/lint
+ * state -- before it uploads a build.
+ */
+function declaring(section) {
+  return {
+    ...section,
+    infoPlist: {
+      ...(section?.infoPlist ?? {}),
+      [EXPORT_COMPLIANCE.field]: EXPORT_COMPLIANCE.value,
+    },
+  };
+}
+
+/**
  * The resolved config: Expo's dynamic-config function, as a function of its
  * `env` so that the tests can call it with a fake one and a named mutation can
  * make each refusal red.
@@ -236,14 +295,14 @@ export function resolveConfig(config, env = process.env) {
     // from.
     return {
       ...config,
-      ios: optionalSection('ios', config.ios, env),
+      ios: declaring(optionalSection('ios', config.ios, env)),
       android: optionalSection('android', config.android, env),
     };
   }
 
   return {
     ...config,
-    ios: { ...(config.ios ?? {}), [FIELDS.ios.field]: read('ios', env) },
+    ios: declaring({ ...(config.ios ?? {}), [FIELDS.ios.field]: read('ios', env) }),
     android: { ...(config.android ?? {}), [FIELDS.android.field]: read('android', env) },
   };
 }
