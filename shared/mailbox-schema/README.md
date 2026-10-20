@@ -390,16 +390,19 @@ shared/mailbox-schema/mutation-proof.sh
 # control       the pristine suite passes, 480 tests, 0 failures
 # killed        control: refuse() always succeeds (must be killed)
 # killed        not-an-object guard (null/array/primitive)
-# ...                                                        (94 more)
+# ...                                                        (95 more)
 # --- control killed; 96 guards: 96 killed, 0 survived, 0 not applied
 ```
 
-The script disables one guard at a time — the object check, the unknown-field check,
-each type check, each bound, each character rule, the surrogate and separator rules, the
-timestamp range, the ack's type check, the deep freeze and the copy, then P6.3's: the
-kind vocabulary and its (kind, field) table, the agent and option shapes, the action
-record's verbs and both target shapes, the argv alphabets and the head SHA, the required
-tag, the canonical serialisation — including the code-point sort and the strings it
+That block is the run's own output with the middle elided: the harness prints **97**
+`killed` lines — the negative control's, then one per guard — of which the two above
+are the first, so 95 follow. The script disables one guard at a time — the object check,
+the unknown-field check, each type check, each bound, each character rule, the surrogate
+and separator rules, the timestamp range, the ack's type check, the deep freeze and the
+copy, then P6.3's: the kind vocabulary and its (kind, field) table, the agent and
+option shapes, the action record's verbs and both target shapes, the argv alphabets and
+the head SHA, the required tag, the canonical serialisation — including the code-point
+sort and the strings it
 refuses — and, in `mac.js`, that the tag is computed over the canonical bytes and that
 `verifyMac` answers `false` rather than throwing.
 
