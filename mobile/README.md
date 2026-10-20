@@ -34,7 +34,11 @@ build-time config that resolves the two release identities from EAS
 environment variables) and `eas.json` (the `development`, `preview` and
 `internal` profiles) are in the tree, with their tests — see "Building for
 internal testing". **Nothing is built or submitted by any of this**: Check 89
-is owner-run, and no `eas` command has been run here.
+is owner-run, and no `eas` command has been run here. (The owner's own first
+iOS submission, on **2026-10-20**, did succeed — EAS created the App Store
+Connect app record and printed its `ASC App ID`, which `eas.json` now records so
+EAS never asks for it again — but that was the owner's terminal, not this
+repository.)
 
 **The toolchain is declared too (added 2026-10-20).** `eas build --profile
 internal` could not detect an SDK, because the manifest declared no dependency
@@ -120,7 +124,7 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 | `metro.config.cjs` | Metro's config, and the one entry in it that matters: `watchFolders` includes the **repository root**, because the app imports `shared/` (`../../../shared/confirm/index.js` and its siblings) and Metro's project root is `mobile/`. Without it the bundle fails to resolve them — `npx expo export` stops at `Unable to resolve module ../../../shared/confirm/index.js` — so it is not removable, and `src/dependencies.test.js` fails if it goes. `.cjs`, because `package.json` is `"type": "module"`. |
 | `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. Two fields are what SDK 58 needs: `plugins: ["expo-secure-store"]` (the module that holds D111's two items, whose config plugin is what configures it for a native build — `npx expo install` asks for it) and **no `edgeToEdgeEnabled` and no `newArchEnabled`**: `npx expo-doctor` reports each of the two as `Additional property "…" is not allowed` against the SDK 58 schema (one error per run, so removing the first is what makes the second visible — 19/20, then 19/20, then 20/20). Both flags ask for what SDK 58 builds anyway: edge-to-edge is mandatory from Android 16 (Expo's own `withEdgeToEdge` says so), and the new architecture is the only architecture. |
 | `app.config.js` | **The build-time config** (P4.4), and the one place the two release identities come from: it resolves `FUGARO_IOS_BUNDLE_ID` and `FUGARO_ANDROID_PACKAGE` from the environment over `app.json`'s `expo` object — see "Building for internal testing" and `src/app-config.ids.test.js`. |
-| `eas.json` | The EAS profiles: `development`, `preview` and `internal` (the store profile Check 89 builds and submits with). No credential path, no credential value and no identity value — see `src/eas-config.test.js`. |
+| `eas.json` | The EAS profiles: `development`, `preview` and `internal` (the store profile Check 89 builds and submits with). It carries exactly one thing about the stores — `ascAppId`, the App Store Connect app record's own public number, so EAS is never asked for it — and no credential path, no credential value and no identity value — see `src/eas-config.test.js`. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from; while demo mode is on it draws the banner and the way out on **every** screen, above whatever the screen holds. |
 | `src/app/first-screen.js` | The first screen: what the app is waiting for, the "Try the demo" control, and the slot (`pairingScreen`) where P6.8's pairing screen goes -- above the demo control, never instead of it. |
@@ -220,7 +224,16 @@ eas submit --platform android --profile internal --latest
 `internal` is the store profile: `distribution: store`, an Android
 `app-bundle` (the Play app-signing path) and `submit.internal.android.track`
 **exactly `internal`** — C8's whole content is that one value. The iOS submit
-side names nothing at all: EAS prompts for it. `cli.appVersionSource` is
+side names **exactly one** thing, and it is the app's own record on Apple's
+side: `submit.internal.ios.ascAppId` is the App Store Connect app id EAS printed
+when it created that record — `ASC App ID: 6824584935`, from the owner's first
+submission of **2026-10-20** — so EAS is never asked for it again. It is a
+**public number** on Apple's side of the submission and not a credential and not
+one of the two identities: `src/eas-config.test.js` admits that one key, with
+the digits Apple's record carries, and refuses every other entry of the section
+— the bundle identifier, the Android package, the Apple ID, the team id and an
+App Store Connect API key id included, whether it arrives as the name of an
+entry or as the value of that one key. `cli.appVersionSource` is
 `remote`, and what that puts on the project is the **build number** —
 `expo.ios.buildNumber` and `expo.android.versionCode`: EAS holds it, so no file
 here carries one. Remote means *stored* remotely, not *moved*: the `internal`
@@ -246,6 +259,66 @@ names the EAS environment it builds with (`development`, `preview`, and
 `production` for `internal`), which is why the variables are created in all
 three above: a profile that named none would resolve EAS's default environment
 instead.
+
+**The submit step, on your own machine.** `eas build` uploads nothing to a
+store: the submission is `eas submit`, and **it needs the two identities in that
+shell as well**. `eas submit` resolves `app.config.js` in its own process, where
+`EAS_BUILD` is unset (above), and on your machine it reads no EAS environment at
+all — the `internal` profile's variables live in the EAS project's `production`
+environment, which EAS loads for a *build job* and not for a local command. So
+without them the submit stops before it uploads anything, with
+`Specify ios.bundleIdentifier`; the owner's first submission (2026-10-20) hit
+exactly that. Two ways to run it, and they are the same command:
+
+```sh
+# --- as the owner, at your own terminal: the submit, two ways ---
+FUGARO_IOS_BUNDLE_ID=<the reverse-DNS identity> \
+FUGARO_ANDROID_PACKAGE=<the reverse-DNS identity> \
+  eas submit --profile internal --platform ios            # ... and --platform android
+# or, with the environment the profile names loaded into this one command:
+eas env:exec production 'eas submit --profile internal --platform ios'
+```
+
+`--latest` (as in the block above) submits the profile's most recent finished
+build instead of asking which build. **Neither form has been run from this
+repository**, and no agent runs either: the submission is the owner's (D120,
+Check 89). The two commands above are the ones the owner's own machine needs;
+what follows is what the stores do with the upload.
+
+**After the iOS upload: TestFlight.** The submission is not the install — Apple
+processes the build first, and the owner does four things:
+
+1. **Apple processes the build** (about 5 to 10 minutes) and sends an email when
+   it is done; in App Store Connect the build goes *Processing* → *Ready to
+   test*. Nothing is installable until then.
+2. **App Store Connect → TestFlight → the build → add yourself as an internal
+   tester.** Internal testers need **no Apple review** — that is the whole
+   reason this first release is an internal one (C8) — so the build is testable
+   as soon as it is processed.
+3. **Answer the export-compliance question, if the console asks it.** The build
+   already carries the answer: `app.config.js` merges
+   `ios.infoPlist.ITSAppUsesNonExemptEncryption: false` (the owner's declaration
+   of 2026-10-20, above), which is why the question is normally not put at all;
+   if App Store Connect shows it anyway, the answer is the declared one.
+4. **Install through the TestFlight app** on the device — the console hands out
+   no build by itself. This is Check 89 step 4's install, and what it records is
+   the version the app reports against the release's tag (C6).
+
+**The Android equivalent.** `eas submit --profile internal --platform android`
+uploads the **AAB** to Play's **internal testing** track — `eas.json`'s
+`submit.internal.android.track` is exactly `internal` (C8's one value) and the
+AAB is the signed app bundle the Play app-signing path takes (Check 89 step 2's
+FACT) — and then the release is handed to the testers the same way TestFlight's
+is: the console shows it on the internal testing track, testers are added to
+that track there, and the app installs from the Play internal-testing link.
+**One prerequisite is Google's and not EAS's, and nothing here has verified
+it**: a brand-new Play app's **first** upload has to be made once through the
+Play Console's own UI, because neither the Play API nor `eas submit` can create
+an app's first release; `eas submit` publishes the ones after it. No Play
+command has been run from this repository — that step, the console's exact
+wording and whether the internal-testing track needs anything else are read off
+Google's documentation and from the owner's console, **not observed here**, and
+they are on the unverified list below with the rest of the store path.
 
 **What `app.config.js` refuses, and what it does not ask for.** Under a build —
 `EAS_BUILD` is set on EAS's build servers, or the owner asks for the same check
@@ -1394,8 +1467,14 @@ the two apart -- so it is written down here rather than claimed as a kill.
   they must be and not as correct as a build would show — including the two
   claims about `eas-cli` that the local build path rests on (that it resolves
   `app.config.js` in its own process before uploading, and that a profile's
-  `environment` is the environment its build job reads): both are read off
-  Expo's documentation and neither has been observed here.
+  `environment` is the environment its build job reads). The first of the two
+  **was observed on 2026-10-20**, by the owner's first submission: `eas submit`
+  stopped with `Specify ios.bundleIdentifier` until the two variables were in the
+  shell, which is the CLI resolving the config locally with `EAS_BUILD` unset
+  ("the submit step", above) — the values, the builds and the submission itself
+  are still the owner's, and none of that ran here. The second (a profile's
+  `environment` reaches its build job) is read off Expo's documentation and has
+  not been observed anywhere.
 * **The SDKs themselves.** `expo`, `expo-secure-store`,
   `@react-native-async-storage/async-storage`, `react` and `react-native` are
   faked in every test that touches them: what is tested is the shape of the
