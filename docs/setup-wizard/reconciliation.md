@@ -50,6 +50,7 @@ no defaults for two of the three inputs, and no billing list.
 | Region defaults to "the one we use" | `defaultRegion = "us-east5"` in `init_inputs.go`; **a second, independent** `us-east5` for the Firestore location in `internal/infra/firestore.go` | **Wrong** |
 | List billing accounts to choose from | deliberately **refused**: `projectcreate.go` and `init_project.go` say init never lists them | **Rule** |
 | `init` for creation *and* update | true today: one command, one flag apart | **Exists** |
+| The wizard creates the project | creation is opt-in (`--create-project`); a bare run adopts | **Gap** (F24) |
 
 Two findings dominate the cost of this work, and they are not the wizard:
 **the billing list reverses a written rule** (§3 F5) and **the rename touches
@@ -338,7 +339,7 @@ repository it was not asked to (`update` converges *enrolled* repositories), and
 keep every refusal in F8. `errNoState`'s wording becomes "run `fugaro setup`
 first".
 
-### F17 — The plugin skill runs *before* the wizard today, and the owner's answer reverses that · **Rule**
+### F17 — The plugin skill still runs *after* the wizard; only the CLI name it hands the user changes · **Rule**
 
 `plugin/skills/setup/SKILL.md` is the `/fugaro:setup` skill: ten steps, a
 twelve-topic question list, which the README's Getting started says to run
@@ -470,6 +471,25 @@ newInitCmd` and defines `commandBoundaryRE`/`docFlagToken`.
 **Consequence.** Renaming a command or a flag in code without renaming it in
 docs is a **test failure, by design** — the pins are the specification of this
 rename. The plan's tasks should each name the pin that turns red.
+
+### F24 — Creation is opt-in today; the wizard makes it the default path · **Gap**
+
+`init_stages.go` registers `newProjectStage(e)` **only** under `--create-project`,
+and `init_project.go`'s `checkCreateProject()` only runs under it: today a bare
+`fugaro init` *adopts* and never creates. The brief's example command carries
+`--create-project`, and the owner's wizard is "the interactive first-time
+wizard (project, billing, …)" — so in `fugaro setup` the project stage is
+always registered and the first question decides what it does: create
+`fugaro-<name>`, or adopt a project that already exists. The typed banner (F7)
+is unchanged either way.
+
+Two consequences the plan must carry. First `--create-project` becomes
+redundant in `setup` (kept for a scripted run, which must still work: every
+question has a flag). Second, `setup` run against an installation that already
+exists must not create anything — `installationExists` / `loadInitConfig` and
+`errNoState` already answer "is there an installation here", so the wizard's
+recommendation is to say so in one line and converge as `update` would, rather
+than refusing outright. See D11.
 
 ---
 
@@ -730,6 +750,25 @@ session — each asserting the guided fallback and that nothing was enabled.
 Both are owner-run, sandbox only, and stay NOT RUN until the owner runs them.
 
 *Alternative:* one new check and retire 27. Cost: a register with a hole in it.
+
+### D11 — Does `fugaro setup` create by default, or adopt (F24)?
+
+**Recommend: create by default, and degrade to `update` on an installation that
+already exists.** `setup` is the first-time wizard; its first question is "the
+project id — `fugaro-<name>` (new), or an existing project to adopt?", with
+creation as the default answer and adoption as the second. The typed banner for
+creation is unchanged, and a scripted run passes `--create-project` explicitly
+because `setup` without it is ambiguous. When the installation already exists
+(`installationExists`, `loadInitConfig`), `setup` prints one line — "this
+installation is already set up" — keeps the existing project, and converges as
+`update` does rather than offering to create a second one; creating a *second*
+installation on one machine is `fugaro init`'s old ambiguity and is out of
+scope here.
+
+*Alternative:* keep creation strictly opt-in (`--create-project` required, as
+today) and make the wizard adopt-only unless told otherwise. Cost: the brief's
+own example command has to keep its flag, and the first-time user — who has no
+project to adopt — is refused by the wizard that exists to set them up.
 
 ---
 
