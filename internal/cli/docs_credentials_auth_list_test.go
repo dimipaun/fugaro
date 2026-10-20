@@ -7,23 +7,24 @@ import (
 
 // TestDocsCredentialsAuthListNamesCascade: agent.auth gained a fourth value
 // (config.AuthCascade, plan Task C1.1), and the sweep that updated the code's
-// copies of the list left three prose copies behind — the credentials bundle's
-// own reconciliation, whose §1.2 declared the list "three values, not four";
-// the README's fugaro.yaml example; and the setup skill's decisions. Each is a
-// place a reader meets the list, and each contradicted the validator after
-// this branch: a reader following them would not know the value exists at all,
-// or would read the document that wins over spec.md and believe a cascade file
-// is refused.
+// copies of the list left prose copies behind — the credentials bundle's own
+// reconciliation, whose §1.2 declared the list "three values, not four"; the
+// README's fugaro.yaml example; the setup skill's decisions; and the CLI's own
+// printed template (internal/config/example.yaml). Each is a place a reader
+// meets the list, and each contradicted the validator after this branch: a
+// reader following them would not know the value exists at all, or would read
+// the document that wins over spec.md and believe a cascade file is refused.
 //
 // The list is read from config.AgentAuths (internal/config/defaults.go) — the
 // one list the validator, the layer's own defaults.agent.auth key and the
 // launcher's check of a run's spec all read — rather than spelled out here, so
-// a fifth value fails this test in all three documents at once rather than
+// a fifth value fails this test in all four documents at once rather than
 // leaving them to be found by eye.
 //
 // Mutation (run, restored): drop "cascade" from README.md's auth comment, from
-// the setup skill's decision line, or restore §1.2's "has three values, not
-// four" heading — each fails, naming the document it reads.
+// the setup skill's decision line, from internal/config/example.yaml's comment,
+// or restore §1.2's "has three values, not four" heading — each fails, naming
+// the document it reads.
 func TestDocsCredentialsAuthListNamesCascade(t *testing.T) {
 	auths := quoted(sourceValues(t, "internal/config/defaults.go", readDoc(t, "internal/config/defaults.go"),
 		`AgentAuths = \[\]string\{([^}]*)\}`)[0])
@@ -34,17 +35,17 @@ func TestDocsCredentialsAuthListNamesCascade(t *testing.T) {
 	// 1. README.md's fugaro.yaml example: the comment after `auth:` is the list
 	// a reader copying the example reads.
 	readme := readDoc(t, "README.md")
-	var example string
+	var readmeLine string
 	for _, line := range strings.Split(readme, "\n") {
 		if strings.Contains(line, "auth: oauth") && strings.Contains(line, "#") {
-			example = line
+			readmeLine = line
 			break
 		}
 	}
-	if example == "" {
+	if readmeLine == "" {
 		t.Fatal("README.md's fugaro.yaml example carries no `auth: oauth` comment line: the list moved and this scan no longer reads it")
 	}
-	namesEveryAuth(t, "README.md's fugaro.yaml example", example, auths)
+	namesEveryAuth(t, "README.md's fugaro.yaml example", readmeLine, auths)
 
 	// 2. The setup skill's own decision list, which is what the skill asks the
 	// user to choose between.
@@ -83,12 +84,30 @@ func TestDocsCredentialsAuthListNamesCascade(t *testing.T) {
 		t.Fatal("docs/credentials-service/reconciliation.md's §1.2 no longer says what the validator accepts: the sentence moved and this scan no longer reads it")
 	}
 	namesEveryAuth(t, "docs/credentials-service/reconciliation.md's §1.2", body, auths)
+
+	// 4. The CLI's own printed template, internal/config/example.yaml (embedded
+	// as config.Example and printed by `fugaro config example`). It is the copy
+	// of the list a reader meets when they create a config at all: error
+	// messages send them here ("create it with /fugaro:setup or fugaro config
+	// example"), so it is the one document that has to be right the first time.
+	example := readDoc(t, "internal/config/example.yaml")
+	var templateLine string
+	for _, line := range strings.Split(example, "\n") {
+		if strings.Contains(line, "auth: vertex") && strings.Contains(line, "#") {
+			templateLine = line
+			break
+		}
+	}
+	if templateLine == "" {
+		t.Fatal("internal/config/example.yaml carries no `auth: vertex` comment line: the template moved and this scan no longer reads it")
+	}
+	namesEveryAuth(t, "internal/config/example.yaml's agent.auth comment", templateLine, auths)
 }
 
 // namesEveryAuth requires text to carry every value of the auth list. It is a
-// contains check per value rather than a parse of the enumeration: the three
-// documents spell the list three ways (a YAML comment, a decision line, a
-// sentence), and what this guard is for is the value left OUT, which is what
+// contains check per value rather than a parse of the enumeration: the
+// documents spell the list four ways (a YAML comment in two files, a decision
+// line, a sentence), and what this guard is for is the value left OUT, which
 // it names.
 func namesEveryAuth(t *testing.T, where, text string, auths []string) {
 	t.Helper()
