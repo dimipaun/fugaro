@@ -2,12 +2,15 @@ package cli
 
 import (
 	"encoding/json"
+	"maps"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -518,6 +521,157 @@ func TestPolicyAdmissionsAreTightenedBeforeTheSharedNode(t *testing.T) {
 			t.Errorf("the failure does not name what it narrowed (%q missing): %v", want, err)
 		}
 	}
+}
+
+// policyRetryThenBreak is policyConflictOnce one attempt further on: the other
+// operator's publish lands on the shared node just before this publish's first
+// write — which is the tightening patch, since that phase runs before the
+// shared node's compare-and-set — so that compare-and-set is refused and the
+// loop reads the node again. breakRetry runs once, inside the RoundTrip of the
+// second attempt's first request, so what it breaks is the attempt the loop's
+// own retry began, after the first attempt's narrowing has already landed.
+//
+// That is what makes the second attempt's failure the only place the narrowing
+// is reported: the loop drops the lines the first attempt returned, and the
+// next publish finds the child already narrowed and says nothing about it.
+type policyRetryThenBreak struct {
+	rt         http.RoundTripper
+	db         *gcpfake.RTDB
+	val        any    // what the other publish left on the shared node
+	breakRetry func() // what breaks the second attempt, run once
+	wrote      bool
+	broke      bool
+}
+
+func (c *policyRetryThenBreak) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method != http.MethodGet {
+		if !c.wrote {
+			c.wrote = true
+			c.db.Set(projectpolicy.PathShared(), c.val)
+		}
+		return c.rt.RoundTrip(r)
+	}
+	if c.wrote && !c.broke {
+		c.broke = true
+		c.breakRetry()
+	}
+	return c.rt.RoundTrip(r)
+}
+
+// otherPolicyNode is what the other operator's publish left on the shared node:
+// this fixture's node with a different per-run ceiling, so the compare-and-set
+// this publish makes against the node it read is refused.
+func otherPolicyNode(t *testing.T, f *projectFixture) map[string]any {
+	t.Helper()
+	node, ok := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	if !ok {
+		t.Fatalf("no policy node at %s to copy", projectpolicy.PathShared())
+	}
+	other := maps.Clone(node)
+	other["budget"] = map[string]any{"mode": "observe", "per_run_usd": 9}
+	return other
+}
+
+// publishNarrowedOnARetry drives the publish this file's three retry tests are
+// about and hands back its failure. The project's acme/app child admits ops and
+// spare, the config then drops spare, and the shared node is taken by another
+// publish just before this one's tightening patch reaches it: the first attempt
+// narrows the child to ops and lands that write, then loses the
+// compare-and-set; breakRetry then breaks the second attempt in whatever way
+// the caller names.
+//
+// It asserts the two halves every one of those tests rests on — the narrowing
+// landed, and the failure reports it — because the note is the only place it is
+// reported (narrowedNote's own reason: the next publish finds the child already
+// narrowed). The phrase asserted is the note's, not the word "narrowed": the
+// refusal to run over an unreadable child carries that word on its own, and an
+// assertion that a message merely says "narrowed" would pass with no note at
+// all.
+func publishNarrowedOnARetry(t *testing.T, breakRetry func(f *projectFixture)) (*projectFixture, error) {
+	t.Helper()
+	f := newProjectFixture(t, accountAdmissionsYAML)
+	if out, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("the first publish: %v\n%s", err, out)
+	}
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The config drops spare: only ops admits acme/app any more, so the next
+	// publish's first attempt takes spare away from the child and writes it.
+	rewriteProjectExtra(t, f, accountAdmissionsYAML, oneAccountYAML)
+	c := &policyRetryThenBreak{rt: http.DefaultTransport, db: f.db, val: otherPolicyNode(t, f)}
+	c.breakRetry = func() { breakRetry(f) }
+	budgetTransport = c
+	t.Cleanup(func() {
+		budgetTransport = nil
+		f.db.DenyRead("")
+	})
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("the publish succeeded although its second attempt was broken:\n%s", out)
+	}
+	if !c.broke {
+		t.Fatal("the publish never retried: the first attempt has to narrow the child and then lose the compare-and-set")
+	}
+	b, _ := json.Marshal(f.db.Value(projectpolicy.PathRepo(slug)))
+	if got, want := string(b), `{"credentials":{"accounts":["ops"]}}`; got != want {
+		t.Errorf("after the failed publish %s is %s, want %s: the first attempt's narrowing landed and nothing undid it", projectpolicy.PathRepo(slug), got, want)
+	}
+	for _, want := range []string{"a narrowing is not undone by this failure", slug, "spare"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the failure does not name what already landed (%q missing): %v", want, err)
+		}
+	}
+	return f, err
+}
+
+// TestPolicyPublishSaysWhatLandedWhenTheRetryCannotReadTheNode: the second
+// attempt cannot read the shared node at all, so it writes nothing — and the
+// narrowing the attempt before it landed is still there, which this message is
+// the only place to say.
+//
+// Mutation (verified, run and restored): drop the note from that return
+// (project_cmd.go, readPolicyNode's failure) — the message assertion fails.
+func TestPolicyPublishSaysWhatLandedWhenTheRetryCannotReadTheNode(t *testing.T) {
+	publishNarrowedOnARetry(t, func(f *projectFixture) {
+		f.db.DenyRead(projectpolicy.PathShared())
+	})
+}
+
+// TestPolicyPublishSaysWhatLandedWhenTheRetryCannotReadTheAdmissions: the
+// second attempt reads the shared node and then cannot read the admissions
+// children. Nothing of this attempt was written either, and the revocation the
+// first attempt landed has to be named — otherwise the one write this command
+// must never lose track of is reported by nothing at all.
+//
+// Mutation (verified, run and restored): drop the note from that return
+// (project_cmd.go, the projectpolicy.PathRepos read) — the message assertion
+// fails.
+func TestPolicyPublishSaysWhatLandedWhenTheRetryCannotReadTheAdmissions(t *testing.T) {
+	publishNarrowedOnARetry(t, func(f *projectFixture) {
+		f.db.DenyRead(projectpolicy.PathRepos())
+	})
+}
+
+// TestPolicyPublishSaysWhatLandedWhenTheRetryCannotNarrow: the second attempt
+// gets as far as the tightening phase and refuses to run over a child it cannot
+// read — a node somebody wrote by hand between the two attempts, at acme/other's
+// slug, which is not the child this test's narrowing is about. The refusal names
+// the node it will not touch, and it has to name the narrowing of the attempt
+// before it as well.
+//
+// Mutation (verified, run and restored): drop the note from that return
+// (project_cmd.go, tightenAdmissions' failure) — the message assertion fails.
+func TestPolicyPublishSaysWhatLandedWhenTheRetryCannotNarrow(t *testing.T) {
+	publishNarrowedOnARetry(t, func(f *projectFixture) {
+		otherSlug, err := task.Slug("bitbucket", "acme/other")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// DecodeRepo refuses a child whose credentials block admits nothing.
+		f.db.Set(projectpolicy.PathRepo(otherSlug), map[string]any{"credentials": map[string]any{"accounts": []any{}}})
+	})
 }
 
 // TestPolicyAdmissionsAreNotWidenedBeforeTheSharedNode is the other direction,
