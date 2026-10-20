@@ -1203,7 +1203,12 @@ relaxes `init_firebase.go`'s `confirmLocation` (in `update` only),
 every row covered, its stage table keeps the five covered and three `noYes`
 stages exactly as they are, and its call-site table carries the four steps
 above; "no row may be relaxed" becomes "**these three rows may never be
-relaxed, in either front door**".
+relaxed, in either front door**". The one assertion outside W0.1's file that
+this row reaches is W3.4's: the `setup`-side onboarding test is written at L5
+**as today's value** — the question W3.4 adds authorizes nothing by itself, so
+under `--yes` the gate is unchanged — and W5.1's commit renames and inverts it
+in `internal/cli/init_repo_gate_test.go`, in the same change that flips W0.1's
+row, because this step is covered in both front doors.
 
 *Alternative:* give `update` a way to cover the billable and permanent steps
 non-interactively — a `--rebuild` or `--accept-billable` flag, or refusing those
