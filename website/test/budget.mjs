@@ -11,7 +11,7 @@
 // The README's numbers are DELIBERATELY LOOSE (owner's ruling, 2026-10-17: "ignore them for
 // now and optimize later"): each is three times the tight derivation below, until a later
 // optimisation pass tightens them back towards these figures. The tight derivation is the
-// build of 2026-10-19 — THE MERGED ONE, and this is one account of it rather than the two the
+// build of 2026-10-20 — THE MERGED ONE, and this is one account of it rather than the two the
 // figures arrived by: `main`'s site, which ships the one script (P6's copy control, P3's
 // menu, W3.2's consent gate and analytics bootstrap in that same file, and the menu's
 // hover-open on a pointer that hovers — the owner's brief of 2026-10-18, item 1 — with the
@@ -24,9 +24,14 @@
 // which turned that flag on and so put the link, the console's downloads and Getting Started's
 // console option into this build — and, from the same brief, the security page's cut to three
 // things (the policy document's own *In short* section, its own reporting section and a link to
-// the document), which is the round this build's site figure comes from and the one named in the
-// list below, together with the 2 bytes the new spacing gate's own find cost the console page —
-// plus 25 %, which is D192's rule and the rule the README's
+// the document), together with the 2 bytes the new spacing gate's own find cost the console
+// page — and, last, the two rounds of 2026-10-19/20 this reading re-derived the figures for:
+// the CLI's bare `--repo` usage strings, which moved the CLI reference and caps-and-costs by
+// 1,126 bytes and which the round that made them left un-derived, and the owner's 2048 px logo,
+// which regenerated every icon the site serves and so moved the site figure down by 9,219 and
+// the page weight up by 1,132. **The logo round is the one this build's two byte figures come
+// from** (the script is unchanged, so its figure is the one the round before set), and every
+// round is named in the list below — plus 25 %, which is D192's rule and the rule the README's
 // loose figures are three times.
 //
 // The count below is read off **the gates' own build of the site**, which is the artifact the
@@ -103,8 +108,12 @@
 // statement's software part, the phone app's reporting written into
 // it and the deletion section carved out from under it; the app's reporting made always-on, with
 // no switch in the app (the owner's ruling of 2026-10-19); the security page cut to three
-// things, with its review rounds; and the header put on a layer of its own — each re-derived
-// in the commit that moved it (D192). None of those figures is
+// things, with its review rounds; the header put on a layer of its own; the CLI's bare `--repo`
+// usage strings reaching the reference and the caps-and-costs page; and the owner's 2048 px logo
+// with every icon regenerated from it — each re-derived
+// in the commit that moved it (D192). The last two share one re-derivation, because the CLI
+// round was merged with its figures left un-derived and the round after it re-derived from the
+// figures rather than from the build. None of those figures is
 // repeated here, because a figure in a comment is a figure that moves with
 // nothing when the build moves, which is what happened to the copy that used to be in this one;
 // the case below reads the README's figures and holds them to the build it makes itself.
