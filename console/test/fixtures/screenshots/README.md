@@ -24,8 +24,13 @@ run against anything but this CLI.
 | `log-url.txt` | the one line `fugaro logs RUN --url` prints | the same |
 | `installations.seed.json` | the three installations the picker draws — **id and project only**, because the binary path is the fake the run itself installs in its own scratch tree, which is a different path on every run | `console/src/main/installations.ts` |
 
-The feed's shape is the **e2e suite's** own (`../synthetic.ndjson`,
-`../normal.ndjson` are the same seven keys), and the tool reuses that suite's
+The feed's shape is the **e2e suite's** own: every frame in `live.json` carries the same
+**ten** keys as the documents in `../synthetic.ndjson` (`connection`, `day`, `finished`,
+`mode`, `now`, `project`, `ready`, `repos`, `runs`, `total`), and
+`test/unit/screenshots.test.ts` holds the two sets equal. `../normal.ndjson`'s one document
+carries an eleventh, `queued_note` — the single live key the schema may leave out
+(`omitempty`, `src/shared/schema.ts`), so this directory follows the synthetic recording,
+which is the shape without it. The tool reuses that suite's
 code rather than a copy of it: `console/test/support/launch.ts` is how the
 window is opened, and the store the console reads is the console's own
 (`console/src/main/installations.ts`). What this directory adds is only the

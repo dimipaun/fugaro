@@ -293,6 +293,41 @@ describe('the fixtures are documents the console accepts', () => {
     })
   })
 
+  it('carries the e2e suite’s own keys, and no more', () => {
+    // This directory's README said the frames carried "the same seven keys" as
+    // the e2e suite's recordings while they carried ten (review of 2026-10-20,
+    // low finding). The count is held here to the recording that sentence names,
+    // so the two cannot drift apart again: this directory exists to be the
+    // *same shape* as a `watch --json` document with better values, and a frame
+    // with a key the e2e suite's documents do not have is a shape the console's
+    // own decoder never meets in the suite.
+    const keys = Object.keys(frames()[0] as object).sort()
+    expect(keys).toEqual([
+      'connection',
+      'day',
+      'finished',
+      'mode',
+      'now',
+      'project',
+      'ready',
+      'repos',
+      'runs',
+      'total',
+    ])
+    for (const frame of frames()) expect(Object.keys(frame as object).sort()).toEqual(keys)
+    // `../synthetic.ndjson` is the suite's recording of that shape: a header
+    // line, then one `{at, document}` per record.
+    const recorded = readFileSync(join(CONSOLE_ROOT, 'test/fixtures', 'synthetic.ndjson'), 'utf8')
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => JSON.parse(line) as { document?: Record<string, unknown> })
+      .filter((record) => record.document !== undefined)
+    expect(recorded.length).toBeGreaterThan(1)
+    for (const record of recorded) {
+      expect(Object.keys(record.document ?? {}).sort()).toEqual(keys)
+    }
+  })
+
   /** spendModel is the Spend screen's own model built from the two fixtures the
    * screen draws: `report --json` is the curve and the rows, `budget show
    * --json` is the caps panel. */
