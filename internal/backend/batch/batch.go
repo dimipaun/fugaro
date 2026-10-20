@@ -259,23 +259,7 @@ type Backend struct {
 // New connects to Cloud Batch and Cloud Logging with Application Default
 // Credentials (gcloud auth application-default login) unless NoAuth.
 func New(ctx context.Context, o Options) (*Backend, error) {
-	switch {
-	case o.GCPProject == "" || o.Region == "":
-		return nil, errors.New("the Batch backend needs a GCP project and a region")
-	case o.FugaroProject == "":
-		return nil, errors.New("the Batch backend needs the Fugaro project's name (the job env's FUGARO_PROJECT)")
-	case o.Image == "":
-		return nil, errors.New("the Batch backend needs the image a run's job runs")
-	case o.Timeouts == nil:
-		return nil, errors.New("the Batch backend needs a source for the workflow timeouts")
-	}
-	if err := checkServiceAccount(o.ServiceAccount); err != nil {
-		return nil, err
-	}
-	if err := checkSecrets(o.Secrets); err != nil {
-		return nil, err
-	}
-	if err := checkVM(&o); err != nil {
+	if err := CheckOptions(&o); err != nil {
 		return nil, err
 	}
 	if o.Warn == nil {
@@ -293,6 +277,35 @@ func New(ctx context.Context, o Options) (*Backend, error) {
 		return nil, fmt.Errorf("connecting to Cloud Logging: %w", err)
 	}
 	return &Backend{o: o, batch: bs, logs: ls, codec: backend.BatchCodec(), now: time.Now, region: o.Region, listPageSize: 100}, nil
+}
+
+// CheckOptions refuses an Options this backend cannot build a run's job from,
+// and fills the VM defaults in (see checkVM). It is the whole of New's
+// validation, as one function, because there are two callers: New, which
+// builds a client behind it, and `fugaro doctor`, which reports the same
+// refusals against an installation's recorded facts before anything is read
+// from the project (design compute-backend.md §4.4's doctor half: "the job
+// JSON's network and subnetwork named"). A doctor that had to construct a
+// backend to learn this would open a Batch and a Logging client to answer a
+// question that is about the local config alone.
+func CheckOptions(o *Options) error {
+	switch {
+	case o.GCPProject == "" || o.Region == "":
+		return errors.New("the Batch backend needs a GCP project and a region")
+	case o.FugaroProject == "":
+		return errors.New("the Batch backend needs the Fugaro project's name (the job env's FUGARO_PROJECT)")
+	case o.Image == "":
+		return errors.New("the Batch backend needs the image a run's job runs")
+	case o.Timeouts == nil:
+		return errors.New("the Batch backend needs a source for the workflow timeouts")
+	}
+	if err := checkServiceAccount(o.ServiceAccount); err != nil {
+		return err
+	}
+	if err := checkSecrets(o.Secrets); err != nil {
+		return err
+	}
+	return checkVM(o)
 }
 
 // defaultComputeServiceAccountRE is the default Compute Engine service

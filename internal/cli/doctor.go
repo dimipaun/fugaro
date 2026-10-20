@@ -380,6 +380,12 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	}
 	o.Checks = append(o.Checks, doctorRunsBucketIAM(ctx, lc, crmSvc)...)
 	o.Checks = append(o.Checks, doctorLauncherReach(ctx, lc)...)
+	// The Batch backend's live checks (plan 2026-10-19-compute-backend.md Task
+	// 8 step 5, design §4.4). They return nothing for an installation with no
+	// batch block: the backend's own name is refused by internal/localcfg until
+	// the enable task, so the block is the one signal that an operator intends
+	// this backend, and Task 10 is what turns these into the enable's gate.
+	o.Checks = append(o.Checks, doctorBatchChecks(ctx, lc, crmSvc)...)
 	o.Checks = append(o.Checks, doctorPolicyChecks(ctx, lc, doctorRoutingLayerOf(ctx, rf))...)
 
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {

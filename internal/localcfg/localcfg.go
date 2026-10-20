@@ -566,6 +566,15 @@ type Endpoints struct {
 	// Engine root is not a CLI client's endpoint, it is the reaper job's
 	// (internal/backend/batch/reap.go's Endpoints).
 	Batch string `yaml:"batch,omitempty"`
+	// Compute is the Compute Engine API root, read by `fugaro doctor`'s
+	// checks for an installation that carries a batch block (the preload
+	// image family, and the network and subnetwork a run's VMs are placed
+	// in: design compute-backend.md §4.4). Empty is the real endpoint, as
+	// for every other field here. It is not the reaper's root: the reaper
+	// runs as its own job with its own env (internal/backend/batch's
+	// Endpoints), and this one is a client the operator's own doctor run
+	// reads with.
+	Compute string `yaml:"compute,omitempty"`
 	// The APIs only fugaro init calls: bucket and IAM policy reads and
 	// writes, service accounts, registries, the project's number, and the
 	// enable of Cloud Resource Manager.
@@ -1082,6 +1091,12 @@ func (c *Config) validate() error {
 		// Every sibling is refused here for that reason, and this one is no
 		// different.
 		{"batch", c.Endpoints.Batch},
+		// The Compute Engine root `fugaro doctor` reads a Batch
+		// installation's own facts through (the preload image family, the
+		// network, the subnetwork). Same kind of value as `batch` above and
+		// refused for the same reason: doctor attaches the operator's ADC to
+		// it.
+		{"compute", c.Endpoints.Compute},
 	} {
 		if ep.url == "" {
 			continue
