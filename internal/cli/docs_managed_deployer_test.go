@@ -66,14 +66,18 @@ func TestChecklistHasCheck68(t *testing.T) {
 		// 17). A row that says "one operator at the most" states a number no
 		// test produces and no IAM refusal is about.
 		"three logical operators at the most",
-		// The throwaway resources, which are TEN and not the plan's fourteen
-		// addresses: step 4 creates seven (one per service) and step 5 three
-		// near misses (the bucket, the secret and the job), and the Restore
-		// deletes those ten. The fourteen are the plan's addresses — seven
-		// roles and seven bindings — and a row that conflates the two counts
-		// the resources an owner has to find and delete wrongly.
-		"ten throwaway resources",
-		"the seven per-service probes of step 4 and the three near misses of step 5",
+		// The throwaway resources, which are SIXTEEN and not the plan's
+		// fourteen addresses: step 4 creates seven (one per service), step 5
+		// three near misses (the bucket, the secret and the job) and step 5's
+		// negative direction six more (`chk68-neg-*`, one per service — the
+		// runs bucket is the installation's own and is read, not created) —
+		// and the trap and the Restore delete all sixteen. The fourteen are
+		// the plan's addresses — seven roles and seven bindings — and a row
+		// that conflates the two counts the resources an owner has to find and
+		// delete wrongly.
+		"sixteen throwaway resources",
+		"the seven per-service probes of step 4, the three near misses and the six negative probes of step 5",
+		"chk68-neg-*",
 	} {
 		if !strings.Contains(row, want) {
 			t.Errorf("the `| 68 |` row does not carry %q", want)
@@ -310,20 +314,28 @@ func TestChecklistHasCheck68(t *testing.T) {
 
 	// 3. The two directions, per service, as the deployer: the impersonation
 	// flag is what makes a denial a fact about the fence rather than about the
-	// operator, and each of the seven services is acted on both ways.
+	// operator, and each of the seven services is acted on both ways. The
+	// negative direction acts on resources the check creates itself
+	// (`chk68-neg-*`), never on the sandbox installation's own: a probe that
+	// fails must change nothing anyone else depends on, and a name the check
+	// chose measures the same clause, because the conditions test
+	// `resource.name`.
 	for _, want := range []string{
 		`--impersonate-service-account="${DEPLOYER:?}"`,
 		"fmgd-chk68-bucket", "fmgd-chk68-secret", "fmgd-chk68-sa", "fmgd-chk68-repo",
 		"fmgd-chk68-key", "fmgd-chk68-job", "fmgd-chk68-sched",
 		"xfmgd-chk68-bucket", "xfmgd-chk68-secret", "xfmgd-chk68-job",
+		"chk68-neg-secret", "chk68-neg-sa", "chk68-neg-repo",
+		"chk68-neg-key", "chk68-neg-job", "chk68-neg-sched",
 		"${RUNS_BUCKET:?}",
-		"${SANDBOX_SECRET:?", "${SANDBOX_SA:?", "${SANDBOX_REPO:?",
-		"${SANDBOX_KEY:?", "${SANDBOX_JOB:?", "${SANDBOX_SCHED:?",
 		"permission",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 68 does not carry %q", want)
 		}
+	}
+	if strings.Contains(section, "${SANDBOX_") {
+		t.Error("Check 68 still reads a ${SANDBOX_*:?} name: the negative direction acted on the sandbox installation's own resources, and a fence that fails changes them with no undo")
 	}
 	if n := strings.Count(section, "--impersonate-service-account=\"${DEPLOYER:?}\""); n < 14 {
 		t.Errorf("Check 68 impersonates the deployer %d times, want the seven positive actions, the seven negative ones and the near misses", n)
@@ -952,94 +964,148 @@ func TestGcpSetupSaysWhyTheManagedGateIsClosed(t *testing.T) {
 	}
 }
 
-// TestChecklistCheck68NegativeDirectionNamesAgree: step 0's instruction said to
-// "Record the two names the negative direction uses", and the block under it
-// lists six resource kinds while step 5 acts on seven resources — those six plus
-// the runs bucket the guard block holds as ${RUNS_BUCKET:?}. "Two" was a leftover
-// from an earlier draft of the check, and an owner who followed it recorded two
-// names and then stopped at the first unset ${SANDBOX_*:?} guard in step 5. The
-// count is stated three ways — the instruction, the read-only block, and the
-// actions of step 5 — so this reads all three and requires one number, the way
-// the hard-stop count above is held.
+// TestChecklistCheck68NegativeDirectionNamesAgree: the negative direction acted
+// on the sandbox installation's own resources — its secret, its service account,
+// its repository, its API key, its Cloud Run job, its scheduler job, and a write
+// into its runs bucket — so a fence that FAILED changed all seven with no undo:
+// a paused scheduler job, a job's environment, a display name, a description,
+// labels, and a file left in the runs bucket. The failure this check exists to
+// find was the one case in which it damaged the installation it was measuring.
 //
-// Mutations (verified, run and restored): "six names" back to "two names" → FAIL;
-// a list command dropped from step 0's block → FAIL; a seventh ${SANDBOX_*:?}
-// added to step 5 with no reader in step 0 → FAIL; the runs bucket dropped from
-// the instruction → FAIL.
+// Every negative probe now acts on a resource the check creates itself and the
+// Restore deletes (`chk68-neg-*`, a name no condition admits — deliberately
+// without the `fmgd-` prefix, and not a near miss of it either, since a near miss
+// contains the prefix), except the runs bucket, which is read and not written:
+// `storage.objects.list` is in the conditioned storage role alone, so the read is
+// a real test of a condition, and it changes nothing if the fence fails. A trap
+// in the guard block deletes the check's own resources when the shell exits, so a
+// failed probe leaves nothing behind, and it says that it does not close the
+// gate. This holds the three statements of that invariant together: step 5 acts
+// only on the check's own names, the trap and the Restore both name every one of
+// them, and no `${SANDBOX_*}` name survives anywhere in the section.
+//
+// Mutations (verified, run and restored): a negative probe put back on the
+// sandbox's own resource → FAIL; the runs-bucket read turned back into a write
+// (`storage cp`) → FAIL; a created resource dropped from the trap → FAIL; a
+// created resource dropped from the Restore → FAIL; the trap moved above the
+// hard stops → FAIL; the trap's "it does not close the gate" line dropped →
+// FAIL; the trap removed → FAIL.
 func TestChecklistCheck68NegativeDirectionNamesAgree(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
 	section := docSection(t, path, doc, "## Check 68:")
 
-	// What step 0's read-only block lists, one command per name.
-	const once = "# === Check 68: the sandbox installation's own resources, read-only. Run ONCE. ==="
-	i := strings.Index(section, once)
-	if i < 0 {
-		t.Fatalf("%s's Check 68 has no read-only block (%q): it is where the owner records the names step 5 acts on", path, once)
+	// The check's own names, as step 4 and step 5 create them. The negative
+	// direction's six, plus the runs bucket, which is read and never written.
+	created := []string{
+		"fmgd-chk68-bucket", "fmgd-chk68-secret", "fmgd-chk68-sa",
+		"fmgd-chk68-repo", "fmgd-chk68-key", "fmgd-chk68-job", "fmgd-chk68-sched",
+		"xfmgd-chk68-bucket", "xfmgd-chk68-secret", "xfmgd-chk68-job",
+		"chk68-neg-secret", "chk68-neg-sa", "chk68-neg-repo",
+		"chk68-neg-key", "chk68-neg-job", "chk68-neg-sched",
 	}
-	block := section[i:]
-	if end := strings.Index(block, "\n```"); end >= 0 {
-		block = block[:end]
-	}
-	var listed []string
-	for _, line := range strings.Split(block, "\n") {
-		if strings.HasPrefix(line, "gcloud ") {
-			listed = append(listed, line)
-		}
-	}
-	if len(listed) == 0 {
-		t.Fatalf("%s's Check 68 read-only block lists no resources: step 5's names come from here", path)
+	negatives := []string{
+		"chk68-neg-secret", "chk68-neg-sa", "chk68-neg-repo",
+		"chk68-neg-key", "chk68-neg-job", "chk68-neg-sched",
 	}
 
-	// What step 5 acts on, and which of those names step 0 recorded.
+	// 1. No sandbox name anywhere: the section used to carry six ${SANDBOX_*:?}
+	// guards, and the whole point of the rewrite is that they are gone.
+	if i := strings.Index(section, "${SANDBOX_"); i >= 0 {
+		t.Errorf("%s's Check 68 still reads a ${SANDBOX_*:?} name (%q): the negative direction must act on a resource the check creates itself, because a probe that acts on the installation's own changes it when the fence fails, and nothing undoes that", path, section[i:i+20])
+	}
+
+	// 2. Step 5's first block: seven actions, one per service, each on a name the
+	// check owns — and the one action on the installation's own resource is a
+	// read.
 	step5 := docSection(t, path, section, "### 5. The negative direction")
 	if end := strings.Index(step5, "**Then the near miss"); end >= 0 {
 		step5 = step5[:end]
 	}
-	acts := regexp.MustCompile(`(?m)^gcloud `).FindAllString(step5, -1)
-	sandbox := map[string]bool{}
-	for _, m := range regexp.MustCompile(`\$\{(SANDBOX_[A-Z0-9_]+):\?`).FindAllStringSubmatch(step5, -1) {
-		sandbox[m[1]] = true
+	var acts, creates, asDeployer []string
+	for _, line := range strings.Split(step5, "\n") {
+		s := strings.TrimSpace(line)
+		if !strings.HasPrefix(s, "gcloud ") {
+			continue
+		}
+		acts = append(acts, s)
+		if strings.Contains(s, " create ") {
+			creates = append(creates, s)
+		}
+		if strings.Contains(s, `--impersonate-service-account="${DEPLOYER:?}"`) {
+			asDeployer = append(asDeployer, s)
+		}
 	}
-	usesBucket := strings.Contains(step5, "${RUNS_BUCKET:?")
+	// The seven actions are the ones taken as the deployer; the six creates are
+	// the owner's own identity, and they are what makes the probes the check's.
+	if len(asDeployer) != 7 {
+		t.Fatalf("%s's Check 68 step 5 takes %d actions as the deployer, want one per service (seven): %v", path, len(asDeployer), asDeployer)
+	}
+	if len(creates) != 6 {
+		t.Errorf("%s's Check 68 step 5 creates %d resources, want the six the negative probes act on (the runs bucket is the installation's own and is read): %v", path, len(creates), creates)
+	}
+	for _, a := range creates {
+		if !strings.Contains(a, "chk68-neg-") {
+			t.Errorf("%s's Check 68 step 5 creates %q: every resource the negative direction creates is named chk68-neg-*, a name no condition admits; a create under the fmgd- prefix would be a positive probe, and a create under a near miss of it would test the prefix rather than the probe", path, a)
+		}
+	}
+	for _, a := range acts {
+		own := false
+		for _, name := range created {
+			if strings.Contains(a, name) {
+				own = true
+			}
+		}
+		if strings.Contains(a, "${RUNS_BUCKET:?}") {
+			if !strings.HasPrefix(a, "gcloud storage ls ") {
+				t.Errorf("%s's Check 68 step 5 acts on the runs bucket with %q: the bucket is the installation's own, and the one probe against it has to be a read — `gcloud storage ls` — which changes nothing if the fence fails and still tests the conditioned storage role, whose storage.objects.list is in no other deployer role", path, a)
+			}
+			own = true
+		}
+		if !own {
+			t.Errorf("%s's Check 68 step 5 acts on %q, which is neither a resource the check creates (fmgd-chk68-*, xfmgd-chk68-*, chk68-neg-*) nor the runs bucket: every negative probe acts on the check's own, because a fence that fails must change nothing anyone else depends on", path, a)
+		}
+	}
+	// The seven services, one action each, as the deployer.
+	for _, want := range []string{"secrets update", "service-accounts update", "repositories update", "api-keys update", "run jobs update", "scheduler jobs pause", "storage ls"} {
+		found := false
+		for _, a := range acts {
+			if strings.Contains(a, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s's Check 68 step 5 has no %q action: the negative direction is one action per service, and the seven are the design's seven roles", path, want)
+		}
+	}
 
-	// The instruction, and the number it states.
-	words := map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8}
-	re := regexp.MustCompile(`Record the (\w+) names the negative direction uses`)
-	mi := re.FindStringSubmatchIndex(section)
-	if mi == nil {
-		t.Fatalf("%s's Check 68 no longer says \"Record the N names the negative direction uses\": that sentence is what this test holds to the block under it", path)
+	// 3. The trap in the guard block: it deletes every resource the check
+	// created, it is set after the hard stops, and it says what it does not do.
+	guard := chk68GuardBlock(t)
+	if !strings.Contains(guard, "trap cleanup_chk68 EXIT") {
+		t.Error("Check 68's guard block has no `trap cleanup_chk68 EXIT`: a probe that fails, or a step that stops the check, must not leave the check's own bucket, secret, job or service account behind for the next reader to account for")
 	}
-	stated := section[mi[2]:mi[3]]
-	want, ok := words[stated]
-	if !ok {
-		t.Fatalf("%s's Check 68 says to record the %q names, which is not a number this test reads: write the count as a word", path, stated)
+	for _, name := range created {
+		if !strings.Contains(guard, name) {
+			t.Errorf("Check 68's cleanup_chk68 trap does not delete %q: every resource the check creates has to be one the trap removes, or a failed run leaves it behind", name)
+		}
 	}
-	if want != len(listed) {
-		t.Errorf("%s's Check 68 says to record the %s names the negative direction uses, and the read-only block under it lists %d resources: an owner who records %d stops at the first unset ${SANDBOX_*:?} guard in step 5", path, stated, len(listed), want)
+	if !strings.Contains(guard, "run step 7 (Restore)") {
+		t.Error("Check 68's cleanup_chk68 trap does not say that it leaves the gate open and the seven bindings in place: a trap that fired is a reason to run the Restore, not a reason to think the project is as it was")
 	}
-	if len(sandbox) != len(listed) {
-		t.Errorf("%s's Check 68 reads %d ${SANDBOX_*:?} names in step 5 and its read-only block lists %d resources: every name step 5 acts on has to be one step 0 reads", path, len(sandbox), len(listed))
+	lastStop := strings.LastIndex(guard, "Check 68 stopped:")
+	trap := strings.Index(guard, "trap cleanup_chk68 EXIT")
+	if lastStop < 0 || trap < lastStop {
+		t.Error("Check 68's cleanup_chk68 trap is installed before the guard's hard stops: a stop that fires before anything is created has nothing to clean up, and a trap armed above them would run the cleanup for a check that never started")
 	}
-	if len(acts) != len(sandbox)+1 || !usesBucket {
-		t.Errorf("%s's Check 68 step 5 makes %d actions over %d recorded names and uses the runs bucket: %v; the negative direction is one action per service, and the seventh resource is the runs bucket the guard block holds", path, len(acts), len(sandbox), usesBucket)
-	}
-	// And the instruction itself has to say where the seventh name comes from,
-	// since the block it introduces does not list it. Read from the paragraph
-	// the sentence sits in, not from the section: the guard block above sets
-	// ${RUNS_BUCKET:?} for its own use, and that is not the instruction.
-	start := strings.LastIndex(section[:mi[0]], "\n\n")
-	if start < 0 {
-		start = 0
-	} else {
-		start += 2
-	}
-	para := section[start:]
-	if end := strings.Index(section[mi[1]:], "\n\n"); end >= 0 {
-		para = section[start : mi[1]+end]
-	}
-	if !strings.Contains(para, "RUNS_BUCKET") {
-		t.Errorf("%s's Check 68 instruction does not name ${RUNS_BUCKET:?}: the block it introduces lists %d resources and step 5 acts on %d, so the seventh name's home has to be said rather than left to the reader", path, len(listed), len(acts))
+
+	// 4. The Restore deletes them too, so the check does not depend on the trap
+	// having fired — and it says the same thing about the six negative probes.
+	restore := docSection(t, path, section, "### 7. Restore")
+	for _, name := range negatives {
+		if !strings.Contains(restore, name) {
+			t.Errorf("Check 68's Restore does not delete %q: the negative direction's resources are the check's own, and the Restore is what deletes them", name)
+		}
 	}
 }
 
