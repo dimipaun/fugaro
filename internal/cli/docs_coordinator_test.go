@@ -503,21 +503,43 @@ func TestDocsCoordinatorSpecIsVerbatim(t *testing.T) {
 // coordinatorAllocationRowRE matches a decision-allocation table row: a row
 // whose FIRST cell is exactly one decision number, `| **D193** | ... |`. It is
 // deliberately anchored on the closing `|` of the first cell, so the index's
-// range rows (`| **D1–D192** |`, `| **D193 onward** |`) are not matches: those
-// report the allocation, they do not take a number from it.
+// range rows are not matches -- neither the closed block (`| **D1–D192** |`,
+// the row the README carries today) nor the open one (`| **D201 onward** |`):
+// those report the allocation, they do not take a number from it. The examples
+// name the numbers the README carries as this is written; what the anchor turns
+// on is the shape, so the row moving to the next free block does not make this
+// comment wrong.
 var coordinatorAllocationRowRE = regexp.MustCompile(`(?m)^\|\s*\*{0,2}D[0-9]+[a-z]?\*{0,2}\s*\|`)
+
+// coordinatorNextFreeD is the number after the last one any block in
+// coordinatorDecisionBlocks claims. It is DERIVED from that table rather than
+// written down, because the number this file used to name in prose — "D193
+// onward" — went stale the moment the telemetry plan took D193–D200, and the
+// failure message that named it then told a reader about a block that was no
+// longer free. The table itself is pinned to the documents that allocate each
+// block, so this reads the allocation instead of remembering it.
+func coordinatorNextFreeD() int {
+	next := 1
+	for _, b := range coordinatorDecisionBlocks {
+		if _, hi, ok := coordinatorBlockExtent(b.block); ok && hi >= next {
+			next = hi + 1
+		}
+	}
+	return next
+}
 
 // TestDocsCoordinatorTakesNoDecisionNumber: this work allocates no decision
 // number. Its open items are questions Q1-Q16, and the owner's answer to one is
 // what would turn it into a decision -- which is exactly what the spec's own
 // "the plan waits for the owner's answers" means. A D-number appearing here
-// would take a number out of the block the repository's allocation records
-// (D193 onward is the next free one) without the owner having given it.
+// would take a number out of the block the repository's allocation records as
+// free (the number after the last claimed block, read from the table below)
+// without the owner having given it.
 func TestDocsCoordinatorTakesNoDecisionNumber(t *testing.T) {
 	for _, path := range []string{coordinatorReadme, coordinatorReconciled} {
 		doc := readDoc(t, path)
 		if m := coordinatorAllocationRowRE.FindString(doc); m != "" {
-			t.Errorf("%s allocates a decision number: %q. This work's open items are Q1-Q16; the next free D block is D193 onward and is not this work's to take", path, strings.TrimSpace(m))
+			t.Errorf("%s allocates a decision number: %q. This work's open items are Q1-Q16; the next free D block is D%d onward and is not this work's to take", path, strings.TrimSpace(m), coordinatorNextFreeD())
 		}
 	}
 	// Both documents have to SAY it, not merely avoid it: a reader who finds
@@ -529,6 +551,28 @@ func TestDocsCoordinatorTakesNoDecisionNumber(t *testing.T) {
 		if !strings.Contains(readDoc(t, tc.path), tc.want) {
 			t.Errorf("%s does not say that this work allocates no decision number: it lacks %q", tc.path, tc.want)
 		}
+	}
+}
+
+// TestDocsCoordinatorFreeRowIsTheNumberAfterTheLastClaim ties the index's free
+// row to the block table above it, in both directions. The row used to read
+// "D193 onward" while the telemetry plan was taking D193-D200, and nothing in
+// this file noticed: the number was prose, not a reading. Read from the table,
+// the row is checked the same way every other block in it is -- and
+// coordinatorNextFreeD, which the failure message above uses, is exercised here
+// rather than only on the day someone writes a D-number into this work.
+func TestDocsCoordinatorFreeRowIsTheNumberAfterTheLastClaim(t *testing.T) {
+	doc := readDoc(t, coordinatorReadme)
+	all := telemetryOnwardRE.FindAllStringSubmatch(doc, -1)
+	if len(all) != 1 {
+		t.Fatalf("%s carries %d \"**D<n> onward**\" rows: the index has to state exactly one free block, and this test reads that row", coordinatorReadme, len(all))
+	}
+	got, err := strconv.Atoi(all[0][1])
+	if err != nil {
+		t.Fatalf("%s's free row does not carry a number: %q", coordinatorReadme, all[0][0])
+	}
+	if want := coordinatorNextFreeD(); got != want {
+		t.Errorf("%s's free row reads \"D%d onward\" and the block table above it ends at D%d: a row that calls a claimed block free is the reading the next writer takes a number from", coordinatorReadme, got, want-1)
 	}
 }
 
@@ -1248,6 +1292,18 @@ var coordinatorDecisionBlocks = []coordinatorNumberBlock{
 	{"D160–D179", coordinatorMobileReadme, "| **D160–D179** | **the functional spec v0.1**", "**D160–D179** the mobile functional spec"},
 	{"D180–D192", "docs/website/redesign/README.md", "**`D180`–`D192`**, the first", "**D180–D192** the website redesign, proposed"},
 	{"D79–D89", "docs/website/redesign/implementation-plan.md", "`D79`–`D89` is a deliberately unused gap", "**D79–D89** is **deliberately unused**"},
+	// Added 2026-10-19, with the block itself: the website redesign's row above is the
+	// precedent — the most recent work to take a block registered it here, in the one table
+	// in this repository that lists every work's block, and the telemetry plan does the same.
+	// The row that read "**D193 onward** — free" now reads "**D201 onward**": the block it
+	// gave away is taken, and leaving it where it was would have made this table claim the
+	// block twice. **The rule below is not what would have caught that**, and a comment here
+	// saying it would was simply wrong: it reads dash ranges (`coordinatorDRangeRE` is
+	// `D([0-9]+)[a-z]?–D?([0-9]+)`), so a row reading "D193 onward" does not match it at all
+	// and the rule never runs. The rule that does catch it is the telemetry plan's own block
+	// walk (docs_mobile_telemetry_test.go), which reads an onward row as unbounded and would
+	// have reported a second block covering D193–D200.
+	{"D193–D200", coordinatorMobileReadme, "| **D193–D200** | **the telemetry plan**", "**D193–D200** the telemetry plan's, taken **2026-10-19**"},
 }
 
 // coordinatorCheckBlocks is the checks row: the register's own blocks, and the two documents
