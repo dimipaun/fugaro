@@ -14,6 +14,18 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
+// noTerminal makes stdin look like a pipe for this test, and restores the real
+// check afterwards. stdinIsTerminal is a package-level var: a test that left it
+// false would have every later prompt-taking test in this package skip its
+// prompt, which is how the pty tests of the init gate broke (their stdin is a
+// real terminal, and they fake nothing).
+func noTerminal(t *testing.T) {
+	t.Helper()
+	old := stdinIsTerminal
+	stdinIsTerminal = func(io.Reader) bool { return false }
+	t.Cleanup(func() { stdinIsTerminal = old })
+}
+
 // executeStdinReader is executeStdin for a reader of the test's own: it is how
 // a test acts at the exact moment the command reads the confirmation — after
 // the read it decided on and before the write it makes.
@@ -455,7 +467,7 @@ func TestAccountsClearMark(t *testing.T) {
 		"state": "exhausted", "until": now.Add(time.Hour).Format(time.RFC3339Nano)})
 
 	// No terminal and no --yes: refused, and nothing written.
-	stdinIsTerminal = func(io.Reader) bool { return false }
+	noTerminal(t)
 	if _, _, err := execute(t, "accounts", "clear", "acme-personal"); err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a user error refusing without a confirmation", err)
 	}
@@ -491,7 +503,7 @@ func TestAccountsClearMark(t *testing.T) {
 
 	// An exhausted mark is the other state an operator clears, and --yes needs
 	// no terminal.
-	stdinIsTerminal = func(io.Reader) bool { return false }
+	noTerminal(t)
 	if _, _, err := execute(t, "accounts", "clear", "acme-overflow", "--yes"); err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +535,7 @@ func TestAccountsClearOnlyNamedAccount(t *testing.T) {
 	// refuses the clear — not the absence of a mark, which the refusal below
 	// would otherwise be about — and the node stays exactly as it was.
 	f.db.Set(credsMarkPath("acme-other"), map[string]any{"state": "broken", "since": since})
-	stdinIsTerminal = func(io.Reader) bool { return false }
+	noTerminal(t)
 
 	if _, _, err := execute(t, "accounts", "clear", "acme-other", "--yes"); err == nil || ExitCode(err) != ExitUserError ||
 		!strings.Contains(err.Error(), "claude_accounts") {
@@ -561,7 +573,7 @@ func TestAccountsClearOnlyNamedAccount(t *testing.T) {
 func TestAccountsClearRefusesStatesItMustNotClear(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.appendConfig(t, claudeAccountsConfig)
-	stdinIsTerminal = func(io.Reader) bool { return false }
+	noTerminal(t)
 	for state, want := range map[string]string{
 		"backed_off": "probe",
 		"quota_hold": "does not know",
@@ -586,7 +598,7 @@ func TestAccountsClearNeverPrintsAValue(t *testing.T) {
 	f.appendConfig(t, claudeAccountsConfig)
 	f.db.Set(credsMarkPath("acme-personal"), map[string]any{
 		"state": "broken", "since": time.Now().UTC().Truncate(time.Second).Format(time.RFC3339Nano)})
-	stdinIsTerminal = func(io.Reader) bool { return false }
+	noTerminal(t)
 	out, errOut, err := execute(t, "accounts", "clear", "acme-personal", "--yes")
 	if err != nil {
 		t.Fatal(err)

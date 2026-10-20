@@ -2537,7 +2537,7 @@ func doctorCredsBroken(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		broken[i] = pluginwire.Printable(n)
 	}
 	return []doctorCheck{{ID: "creds-broken", Severity: "warning",
-		Problem: fmt.Sprintf("%d admitted Claude account(s) are broken — the service saw a 401 on the token, and the cascade routes no work to them until an operator clears the mark: %s", len(broken), strings.Join(broken, ", ")),
+		Problem: fmt.Sprintf("%d Claude account(s) are broken — the service saw a 401 on the token, and the cascade routes no work to them until an operator clears the mark: %s (a mark exists only for an account the cascade has selected, so these are accounts an admission let it use; doctor reads the marks, not every repository's admissions)", len(broken), strings.Join(broken, ", ")),
 		Fix:     "replace each account's token, then clear its mark: 'fugaro accounts clear NAME' ('fugaro accounts ls' shows the state of every account)"}}
 }
 
