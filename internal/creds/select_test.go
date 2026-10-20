@@ -445,6 +445,64 @@ func TestWaitOrSwitchAtTheTierBoundary(t *testing.T) {
 	}
 }
 
+// The wait-or-switch boundary at its exact value: a wait EQUAL to the threshold
+// waits, and the paid tier is not spent. spec.md's rule is a credential that
+// "resets within a threshold" and C1.11's is a wait "under the threshold"; the
+// code takes the spec's inclusive reading, and this is the case that says so —
+// without it, either comparison could be flipped to a strict one and the whole
+// suite would still pass.
+func TestWaitOrSwitchAtTheThresholdExactly(t *testing.T) {
+	st := newFakeStore()
+	threshold := 15 * time.Minute
+	st.setMark(a1.Name, Mark{State: StateExhausted, Since: now, Until: now.Add(threshold)})
+
+	set := noWindow()
+	set.WaitThreshold = threshold
+	set.Fallback = Auto
+
+	_, wait, err := selector(st, set).Select(ctx, run, []Credential{a1, b1})
+	var eu *ExhaustedUntil
+	if !errors.As(err, &eu) || wait != threshold {
+		t.Fatalf("a wait of exactly the %s threshold = %s, %v; want the wait", threshold, wait, err)
+	}
+	if !eu.At.Equal(now.Add(threshold)) {
+		t.Fatalf("the answer's time = %s; want the reset %s", eu.At, now.Add(threshold))
+	}
+	// The run idles rather than spending: nothing was selected, so nothing was
+	// placed on the paid key.
+	if len(st.leases) != 0 || len(st.current) != 0 {
+		t.Fatalf("the paid key was taken for a wait of exactly the threshold: %d leases, %d placements", len(st.leases), len(st.current))
+	}
+
+	// One second past it, the same fixture fails over — the boundary is the
+	// threshold and not a little more.
+	st.setMark(a1.Name, Mark{State: StateExhausted, Since: now, Until: now.Add(threshold + time.Second)})
+	c, _, err := selector(st, set).Select(ctx, run, []Credential{a1, b1})
+	if err != nil || c.Name != b1.Name {
+		t.Fatalf("a wait one second past the threshold = %q, %v; want the paid key", c.Name, err)
+	}
+}
+
+// A probe is due at the exact instant a backed-off mark's wait ends, not one
+// tick later: NeedsProbe's comparison is inclusive, and its other form would
+// delay every probe by an instant. Review finding: this equality had no test.
+func TestAProbeIsDueExactlyAtTheMarksWait(t *testing.T) {
+	st := newFakeStore()
+	st.setMark(a1.Name, Mark{State: StateBackedOff, Until: now, Backoff: 15 * time.Minute, Since: now.Add(-15 * time.Minute)})
+
+	_, _, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
+	var eu *ExhaustedUntil
+	if !errors.As(err, &eu) {
+		t.Fatalf("a backed-off mark whose wait ends exactly now = %v; want an ExhaustedUntil answer", err)
+	}
+	if !eu.Probe {
+		t.Fatal("a mark whose wait ends exactly now was not handed off for a probe: the comparison is inclusive")
+	}
+	if eu.Wait != 0 || !eu.At.Equal(now) {
+		t.Fatalf("the answer = %s until %s; want no wait, at now", eu.Wait, eu.At)
+	}
+}
+
 // D152 is a rule about spending, and it has to hold on every path out of
 // Select — not only where the wait-or-switch threshold is applied. A dead
 // subscription token is exactly the case it exists for: the platform refuses
@@ -523,6 +581,54 @@ func TestAnUnusablePaidKeyIsNotAPolicyRefusal(t *testing.T) {
 	_, _, err := selector(st, Settings{}).Select(ctx, run, []Credential{a1, b1})
 	if !errors.Is(err, ErrFallbackForbidden) {
 		t.Fatalf("with a usable paid key under oauth-only the selection = %v; want ErrFallbackForbidden", err)
+	}
+}
+
+// ExhaustedUntil.Error() is the message C1.10 puts on the wire and C1.13 writes
+// to the audit line, and it renders the two facts by value: the wait, and the
+// time it ends at. Both forms are asserted, because a reworded or broken message
+// would otherwise pass the whole suite — and the Probe form is the one an
+// earlier review round had to correct for claiming the opposite of what D142's
+// control does (a probe is due, and the credential can still have a real wait).
+func TestTheExhaustedUntilMessageRendersTheAnswer(t *testing.T) {
+	at := now.Add(30 * time.Minute)
+
+	waited := (&ExhaustedUntil{At: at, Wait: 30 * time.Minute}).Error()
+	for _, want := range []string{"30m0s", at.UTC().Format(time.RFC3339)} {
+		if !strings.Contains(waited, want) {
+			t.Fatalf("the wait message %q does not carry %q", waited, want)
+		}
+	}
+	if strings.Contains(waited, "probe") {
+		t.Fatalf("the message for a real wait mentions a probe: %q", waited)
+	}
+
+	probed := (&ExhaustedUntil{At: at, Wait: 30 * time.Minute, Probe: true}).Error()
+	for _, want := range []string{"probe", "30m0s", at.UTC().Format(time.RFC3339)} {
+		if !strings.Contains(probed, want) {
+			t.Fatalf("the probe message %q does not carry %q", probed, want)
+		}
+	}
+	if !strings.Contains(probed, "serve work in") {
+		t.Fatalf("the probe message does not say when the credential can serve work: %q", probed)
+	}
+	// A zero wait renders as one too, rather than as an absence: "0s" is the
+	// answer that says the probe is all that is owed.
+	if zero := (&ExhaustedUntil{At: now, Probe: true}).Error(); !strings.Contains(zero, "0s") {
+		t.Fatalf("a probe message with no wait = %q; want it to render 0s", zero)
+	}
+}
+
+// ErrNoCredential's message is what an operator reads while diagnosing, and the
+// code answers it for three shapes, not one: a broken mark, a mark held with no
+// time to wait for, and a cap that admits nobody. The message names all three,
+// and this pins that it does — the sibling ErrFallbackForbidden is careful about
+// the same kind of distinction.
+func TestNoCredentialSaysWhatTheCodeDoes(t *testing.T) {
+	for _, want := range []string{"broken", "no time", "cap"} {
+		if !strings.Contains(ErrNoCredential.Error(), want) {
+			t.Fatalf("ErrNoCredential %q does not name %q, which is one of the shapes it is returned for", ErrNoCredential, want)
+		}
 	}
 }
 
@@ -1013,6 +1119,30 @@ func TestSelectRefusesARunWithNoIdentity(t *testing.T) {
 	}
 	if len(st.leases) != 0 || len(st.current) != 0 {
 		t.Fatalf("a refused selection wrote %d leases and %d current nodes", len(st.leases), len(st.current))
+	}
+}
+
+// The two fail-closed refusals of a candidate this release does not model: an
+// unknown tier (a tier a newer release or a hand-built list carries) and a
+// candidate with no name. Neither may be skipped quietly — a skipped candidate
+// is a call served from a credential nobody admitted, and an unnamed one has no
+// mark and no node to record one under. Review finding: neither branch had a
+// test, so neither was ever executed by the suite.
+func TestSelectRefusesAnUnmodelledCandidate(t *testing.T) {
+	st := newFakeStore()
+	s := selector(st, noWindow())
+
+	_, _, err := s.Select(ctx, run, []Credential{{Name: "third-party", Tier: Tier("d")}})
+	if err == nil || !strings.Contains(err.Error(), "not a tier this Fugaro knows") || !strings.Contains(err.Error(), "third-party") {
+		t.Fatalf("a candidate of an unknown tier = %v; want the refusal that names the tier rule", err)
+	}
+	_, _, err = s.Select(ctx, run, []Credential{{Tier: TierA}})
+	if err == nil || !strings.Contains(err.Error(), "has no name") {
+		t.Fatalf("a candidate with no name = %v; want the refusal that says so", err)
+	}
+	// Nothing was taken for either refusal: a refused list is not a selection.
+	if len(st.leases) != 0 || len(st.current) != 0 || len(st.marks) != 0 {
+		t.Fatalf("a refused candidate list wrote something: %d leases, %d placements, %d marks", len(st.leases), len(st.current), len(st.marks))
 	}
 }
 

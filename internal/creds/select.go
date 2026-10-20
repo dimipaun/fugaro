@@ -67,9 +67,10 @@ type Selector struct {
 //     becomes usable at `wait`: answer the typed refusal (C1.10) and let the
 //     runner wait (C1.17), or, when Probe is set, probe first (C1.12).
 //   - ("", 0, ErrNoCredential) — nothing can be used and nothing becomes usable:
-//     every admitted candidate is broken and clearing one is the operator's
-//     (C1.21). The caller refuses; it never falls back to something else
-//     (D143).
+//     every admitted candidate is broken (clearing one is the operator's,
+//     C1.21), holds a mark with no time to wait for, or is refused by a
+//     concurrency cap that no lapse frees. The caller refuses; it never falls
+//     back to something else (D143).
 //   - ("", 0, ErrFallbackForbidden) — the credentials that can serve the call —
 //     now, or after the wait a mark names — are all of a tier this policy does
 //     not admit (tier B under `oauth-only`, D152). A refusal, and a different
@@ -184,10 +185,24 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 		// tier in this loop — and so nothing to switch to — which is the whole
 		// of the threshold's being "ignored" under that policy: the wait is
 		// returned whatever its length.
+		//
+		// A wait exactly equal to the threshold WAITS, and the comparison below
+		// is the one place that says so. The two documents are not the same word
+		// at the boundary: spec.md's rule is that a credential which "resets
+		// within a threshold (default 15 minutes)" is waited for — within
+		// including the bound — while C1.11 says the typed answer is for a wait
+		// "under the threshold". The spec's reading is the one this code takes,
+		// because the threshold is a bound on how long a run may idle and a wait
+		// of exactly the threshold idles no longer than a run is allowed to, and
+		// because the other reading makes the threshold's own value a wait the
+		// run refuses to wait out. It is stated here, and pinned by
+		// TestWaitOrSwitchAtTheThresholdExactly, so that a later reader does not
+		// have to infer which word "under" was meant to be.
 		at, probe, ok := earliest(group, marks, leases, run, now, set)
 		if !ok {
-			// Every credential of this tier is broken: there is no wait to
-			// answer with, and the next tier may still serve the call.
+			// No credential of this tier has a time it could serve work at:
+			// there is no wait to answer with, and the next tier may still serve
+			// the call.
 			continue
 		}
 		if wait := waitUntil(now, at); wait <= set.WaitThreshold {

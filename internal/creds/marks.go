@@ -79,6 +79,13 @@ func (m Mark) Usable(now time.Time, set Settings) bool {
 // routed to it again: a backed-off mark whose wait has passed (C1.12). It is
 // never true for a broken credential — a probe is not what clears one — and
 // never true for an exhausted one, whose reset is a time, not a question.
+//
+// "Passed" includes the instant the wait ends: a mark whose Until is exactly now
+// holds no longer (Ready says the same — it answers a time that is not after
+// now), so the probe is owed at that instant rather than one tick later.
+// TestAProbeIsDueExactlyAtTheMarksWait pins it, because flipping the comparison
+// to a strict one would delay every probe by an instant no other test would
+// notice.
 func (m Mark) NeedsProbe(now time.Time) bool {
 	return m.State == StateBackedOff && !now.Before(m.Until)
 }

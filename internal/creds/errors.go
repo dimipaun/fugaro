@@ -61,10 +61,22 @@ func (e *ExhaustedUntil) Error() string {
 }
 
 // ErrNoCredential is what a selection answers when no candidate can be used and
-// none becomes usable by waiting: every candidate is broken, and clearing a
-// broken mark is the operator's, not a run's (C1.21). It is a refusal, never a
-// fallback: the caller answers it typed and issues no credential (D143).
-var ErrNoCredential = errors.New("creds: no candidate is usable and none becomes usable: every candidate is broken (clearing a broken mark is the operator's)")
+// none becomes usable by waiting. Three shapes of that, and the message names
+// all three because the message is what an operator reads while diagnosing —
+// the code answers it for any of them, not only for the first:
+//
+//   - every candidate is broken: a 401, or a token that was replaced (D139).
+//     Clearing a broken mark is the operator's, not a run's (C1.21);
+//   - a candidate's mark holds it with no time to wait for at all (Ready answers
+//     no time): a node this release cannot read as a hold, which fails closed
+//     rather than being served;
+//   - a candidate is refused by the concurrency cap with no lapse that frees it:
+//     a non-positive limit, which the policy itself refuses and only a
+//     hand-built setting produces (Free reads a negative as no room at all).
+//
+// It is a refusal, never a fallback: the caller answers it typed and issues no
+// credential (D143).
+var ErrNoCredential = errors.New("creds: no candidate is usable and none becomes usable by waiting: every candidate is broken (the operator clears one, C1.21), holds a mark with no time to wait for, or is refused by a concurrency cap no lapse frees")
 
 // ErrFallbackForbidden is what a selection answers when no shared subscription
 // credential can serve the call and the caller offered one that the
