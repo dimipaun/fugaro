@@ -39,6 +39,12 @@ type Options struct {
 	// Out receives the human-readable account (the plan view and the
 	// closing lines); with --json the CLI points it at stderr.
 	Out io.Writer
+	// Program is the command the run's own lines name: the front door the
+	// caller is running ("fugaro setup", "fugaro update"). The loop is
+	// behind both and cannot know which one it is, so it never names a
+	// command of its own. Empty names the program alone ("fugaro"), which
+	// is all a caller that does not name itself gets.
+	Program string
 	// Project, GCPProject and Region head the plan view.
 	Project, GCPProject, Region string
 	// Redact lists values (a secret the process holds) that must never
@@ -163,6 +169,19 @@ type loop struct {
 	o           Options
 	res         *Result
 	interactive bool
+}
+
+// defaultProgram is what the run's lines name when the caller names no
+// program: the binary, because the loop cannot know the verb.
+const defaultProgram = "fugaro"
+
+// program is the name the run's own lines use: the caller's Program, or the
+// program alone when it did not name one.
+func (l *loop) program() string {
+	if l.o.Program == "" {
+		return defaultProgram
+	}
+	return l.o.Program
 }
 
 func (l *loop) redact(s string) string {
@@ -295,7 +314,7 @@ func (l *loop) env(stage string) Env {
 
 // fail records a failed stage and blocks what follows it.
 func (l *loop) fail(stage string, err error) {
-	f := &Failure{Stage: stage, Error: l.redact(oneLine(err.Error())), Fix: "fix what the error says and rerun fugaro init: it resumes at " + stage}
+	f := &Failure{Stage: stage, Error: l.redact(oneLine(err.Error())), Fix: "fix what the error says and rerun " + l.program() + ": it resumes at " + stage}
 	var se *StageError
 	if errors.As(err, &se) && se.Fix != "" {
 		f.Fix = l.redact(oneLine(se.Fix))
@@ -438,7 +457,7 @@ var stateLabel = map[State]string{
 // view prints the plan view: one line per stage.
 func (l *loop) view(rs []StageResult) {
 	if l.o.Project != "" {
-		fmt.Fprintf(l.o.Out, "fugaro init: project %s (GCP %s, %s)\n", l.o.Project, l.o.GCPProject, l.o.Region)
+		fmt.Fprintf(l.o.Out, "%s: project %s (GCP %s, %s)\n", l.program(), l.o.Project, l.o.GCPProject, l.o.Region)
 	}
 	for _, r := range rs {
 		line := fmt.Sprintf("  %-12s %-16s", "["+stateLabel[r.State]+"]", r.Name)
@@ -462,7 +481,7 @@ func (l *loop) finish() {
 			fmt.Fprintln(l.o.Out, l.res.Note)
 		}
 	} else {
-		fmt.Fprintln(l.o.Out, "fugaro init: result")
+		fmt.Fprintf(l.o.Out, "%s: result\n", l.program())
 		l.view(l.res.Stages)
 	}
 	for _, lf := range l.res.Left {
@@ -498,7 +517,7 @@ func (l *loop) redactedCause(err error) error {
 // to run, so nothing after it starts.
 func (l *loop) cancelled(ctx context.Context, stage string) bool {
 	if err := ctx.Err(); err != nil {
-		l.fail(stage, &StageError{Err: fmt.Errorf("cancelled: %w", err), Fix: "rerun fugaro init: it resumes at " + stage})
+		l.fail(stage, &StageError{Err: fmt.Errorf("cancelled: %w", err), Fix: "rerun " + l.program() + ": it resumes at " + stage})
 		return true
 	}
 	return false

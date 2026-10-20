@@ -1,16 +1,17 @@
-// Package initflow is the converge loop behind fugaro init (design doc
-// m11-setup-and-skills.md §3.1): an ordered list of stages, each with a
-// read-only check and plan, a confirmed apply and a verify; a loop that
-// applies the first stage that is not done, stops at the first stage that
-// needs the user or fails, and runs nothing after it; and the plan view and
-// the JSON result that report where the run stands.
+// Package initflow is the converge loop behind the installation commands
+// (design doc m11-setup-and-skills.md §3.1): an ordered list of stages, each
+// with a read-only check and plan, a confirmed apply and a verify; a loop
+// that applies the first stage that is not done, stops at the first stage
+// that needs the user or fails, and runs nothing after it; and the plan view
+// and the JSON result that report where the run stands.
 //
 // The package knows nothing about Google, Terraform or the CLI: the stages
-// that exist (and the fakes the tests use) plug in through Stage. What a
-// stage must never be able to do is enforced here, not in the stage: --yes
-// does not reach a stage that creates a project, links billing or takes a
-// secret, no stage runs before the ones ahead of it are done, and a run
-// that cannot prompt never prompts.
+// that exist (and the fakes the tests use) plug in through Stage. It does not
+// know which command called it either — the lines it prints name the caller's
+// Options.Program, never a verb of its own. What a stage must never be able to
+// do is enforced here, not in the stage: --yes does not reach a stage that
+// creates a project, links billing or takes a secret, no stage runs before
+// the ones ahead of it are done, and a run that cannot prompt never prompts.
 package initflow
 
 import (
