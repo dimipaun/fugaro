@@ -503,6 +503,44 @@ func TestConfigListReportsACheckoutOfAnotherRepository(t *testing.T) {
 	}
 }
 
+// TestConfigListValidatesAgainstTheOriginsProvider: the read derives a path's
+// provider the way the recording did — from the host its origin is on
+// (checkoutProvider) — so a directory whose fugaro.yaml says bitbucket over a
+// github.com origin is the github checkout it was recorded as, and a path this
+// machine remembers under bitbucket/... is another repository than that
+// directory is, rather than a repository no provider serves.
+//
+// Mutation (run, restore): read co.Provider first in checkoutProvider, as the
+// code did before the review, and the first path below is reported
+// other_repository although its origin is the very one it was recorded under.
+func TestConfigListValidatesAgainstTheOriginsProvider(t *testing.T) {
+	dir := checkoutsFixture(t)
+	// The file says bitbucket, the origin is github.com: a copied config, or
+	// a checkout re-pointed at another forge.
+	const saysBitbucket = "version: 1\nproject: aurora\ngit: { provider: bitbucket, base_branch: main }\n"
+	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), saysBitbucket, "https://github.com/acme/app.git")
+	checkoutsRemember(t, "aurora", co, "https://github.com/acme/app.git")
+	// A second path remembered under the file's provider, which no origin
+	// here gives: hand-written state, or state an older fugaro wrote.
+	other := checkoutsAt(t, filepath.Join(dir, "src", "other"), saysBitbucket, "https://github.com/acme/other.git")
+	if err := localcfg.RecordCheckout(os.Getenv, "aurora",
+		localcfg.CheckoutIdentity{Provider: "bitbucket", Repo: "acme/other"}, other, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, _ := configListJSON(t)
+	got := map[string]configListCheckout{}
+	for _, c := range configListCheckoutsOf(t, doc, "aurora") {
+		got[c.Repository] = c
+	}
+	if c, ok := got["github/acme/app"]; !ok || !c.Valid || c.Reason != "" {
+		t.Errorf("github/acme/app = %+v (present %v), want valid with no reason: its origin is the one it was recorded under", c, ok)
+	}
+	if c, ok := got["bitbucket/acme/other"]; !ok || c.Valid || c.Reason != checkoutOtherRepository {
+		t.Errorf("bitbucket/acme/other = %+v (present %v), want valid false and reason %q: its origin is on no provider's host", c, ok, checkoutOtherRepository)
+	}
+}
+
 // TestConfigListReportsASymlinkLoop: a path that resolves to nothing — a
 // symlink loop, a broken link, a dangling mount — is a path that is not
 // there, and the read has to say so rather than fail.

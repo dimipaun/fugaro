@@ -640,6 +640,23 @@ be read (not JSON, another version, over its size bound) is a warning naming
 it and `checkouts: []` for every installation — never a silent "there are
 none", and never a listing that fails.
 
+**`<provider>` in `repository` is the one the origin's host gives, never the
+one the checkout's own `fugaro.yaml` claims.** A checkout is remembered and
+re-validated under the provider whose host its git origin is on (`github.com` →
+`github`, `bitbucket.org` → `bitbucket`), so a `fugaro.yaml` that says
+`bitbucket` over a `github.com` origin appears as `github/owner/name` — a
+copied config or a re-pointed checkout is not a `bitbucket/...` repository that
+no provider serves. Only for a host no provider lives on — a GitHub Enterprise
+or self-hosted Bitbucket box — is the file's `git.provider` used, because it is
+then the only thing that names one; a host and a file that both name none are
+not recorded at all. This is the rule a repository is *known* by (a provider
+knows a repository only when that provider's host is its origin's host), and it
+is what makes the pair safe to build a provider-host link from (design §5.1
+rule 2): a link built from the file's claim would point at the wrong host, on a
+name the operator does not own. The run path holds the two sources to agreement
+and fails the run when they disagree (`docs/git-providers.md`); a checkout is
+remembered best effort, where the origin is the source that decides.
+
 **The rows are strings off this machine's disk**, so every one of them is
 escaped and bounded like the rest of this contract: a repository identity or a
 path carrying a control character, a bidi override or 400 bytes of padding

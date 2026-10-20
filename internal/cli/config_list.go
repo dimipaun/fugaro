@@ -7,13 +7,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
@@ -299,13 +297,11 @@ func validateCheckoutPath(ctx context.Context, path, project string, id localcfg
 	if !ok || oi.Rewritten {
 		return false, checkoutOtherRepository
 	}
-	provider := co.Provider
-	if !slices.Contains(config.Providers, provider) {
-		provider = ""
-	}
-	if provider == "" {
-		provider = providerForHost(oi.Host)
-	}
+	// The provider is the origin's, not the file's, exactly as it is where
+	// the checkout was recorded (checkoutProvider): a path whose directory
+	// says bitbucket over a github.com origin is a github checkout here, and
+	// one remembered as bitbucket/... is another repository than this one.
+	provider := checkoutProvider(co, oi.Host)
 	// sameRepo, not a string compare: owner/name is the same repository
 	// whichever case it is written in, and task.CanonicalRepo is the rule
 	// the rest of the tree compares repository names by.

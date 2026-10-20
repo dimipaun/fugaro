@@ -124,6 +124,76 @@ func TestACommandInACheckoutRecordsIt(t *testing.T) {
 	}
 }
 
+// TestACheckoutIsRememberedUnderItsOriginsProvider: the provider a repository
+// is remembered by is the one whose host its origin is on, never the one its
+// own fugaro.yaml claims. A file that says bitbucket over a github.com origin
+// is a copied config, or a checkout re-pointed at another forge: remembering
+// it as bitbucket/acme/app would put a name in the state file that no
+// provider serves, and one the console rebuilds provider-host links from
+// (design §5.1 rule 2), so the link would point at the wrong host. It is the
+// same rule repoKnown already holds a repository to.
+//
+// The file's provider is kept for a host no provider lives on — a GitHub
+// Enterprise or self-hosted Bitbucket box — where it is the only thing that
+// names one, and dropped entirely when neither names one.
+//
+// Mutation (run, restore): read co.Provider first in checkoutProvider, as the
+// code did before the review, and this fails with the state file holding
+// bitbucket/acme/app.
+func TestACheckoutIsRememberedUnderItsOriginsProvider(t *testing.T) {
+	t.Run("the origin's host wins over the file", func(t *testing.T) {
+		dir := checkoutsFixture(t)
+		co := checkoutsAt(t, filepath.Join(dir, "src", "app"),
+			"version: 1\nproject: aurora\ngit: { provider: bitbucket, base_branch: main }\n",
+			"https://github.com/acme/app.git")
+		if _, err := checkoutProject(context.Background(), co); err != nil {
+			t.Fatal(err)
+		}
+		known, err := localcfg.LoadCheckouts(os.Getenv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := known.Projects["aurora"]["github/acme/app"]; !ok {
+			t.Errorf("aurora's checkouts = %v, want the origin's identity github/acme/app", known.Projects)
+		}
+		if _, ok := known.Projects["aurora"]["bitbucket/acme/app"]; ok {
+			t.Errorf("aurora's checkouts = %v, want nothing under the file's provider", known.Projects)
+		}
+	})
+	t.Run("the file's provider is kept where no provider's host is", func(t *testing.T) {
+		dir := checkoutsFixture(t)
+		co := checkoutsAt(t, filepath.Join(dir, "src", "app"),
+			"version: 1\nproject: aurora\ngit: { provider: bitbucket, base_branch: main }\n",
+			"https://git.acme.example/acme/app.git")
+		if _, err := checkoutProject(context.Background(), co); err != nil {
+			t.Fatal(err)
+		}
+		known, err := localcfg.LoadCheckouts(os.Getenv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := known.Projects["aurora"]["bitbucket/acme/app"]; !ok {
+			t.Errorf("aurora's checkouts = %v, want the file's provider for a host no provider lives on", known.Projects)
+		}
+	})
+	t.Run("a host and a file that name no provider record nothing", func(t *testing.T) {
+		dir := checkoutsFixture(t)
+		co := checkoutsAt(t, filepath.Join(dir, "src", "app"),
+			checkoutsProjectYAML("aurora"),
+			"https://git.acme.example/acme/app.git")
+		if _, err := checkoutProject(context.Background(), co); err != nil {
+			t.Fatal(err)
+		}
+		known, err := localcfg.LoadCheckouts(os.Getenv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(known.Projects["aurora"]) != 0 {
+			t.Errorf("aurora's checkouts = %v, want none: nothing names a provider for this origin", known.Projects)
+		}
+	})
+}
+
 // TestConsoleAllowListedReadsWriteNothing: every command the design's §5.1
 // exact-argv allow-list lets the console spawn is a READ, and a read the
 // console spawns changes nothing — so none of them remembers the checkout it

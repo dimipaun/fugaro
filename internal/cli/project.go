@@ -116,22 +116,45 @@ func recordCheckout(ctx context.Context, co *localcfg.Checkout) {
 	if !ok || oi.Rewritten {
 		return
 	}
-	// The provider the checkout's own fugaro.yaml names wins; a file that
-	// names none (or names one this build does not carry) falls back to the
-	// provider whose host the origin is on, which is the same pair
-	// localcfg.ProviderHosts holds and repoKnown already trusts.
-	provider := co.Provider
-	if !slices.Contains(config.Providers, provider) {
-		provider = ""
-	}
-	if provider == "" {
-		provider = providerForHost(oi.Host)
-	}
+	// The provider is the origin's, not the file's: see checkoutProvider.
+	provider := checkoutProvider(co, oi.Host)
 	if provider == "" {
 		return
 	}
 	_ = localcfg.RecordCheckout(os.Getenv, co.Project,
 		localcfg.CheckoutIdentity{Provider: provider, Repo: oi.Repo}, co.Root, time.Now())
+}
+
+// checkoutProvider is the provider a checkout's repository is named by, given
+// the host its origin is on: the provider whose host that is (providerForHost,
+// localcfg.ProviderHosts inverted) — and, only for a host no provider lives
+// on, a GitHub Enterprise or self-hosted Bitbucket box, the provider the
+// checkout's own fugaro.yaml names, which is then the only thing that names
+// one. "" when neither names one.
+//
+// **The origin decides, never the file.** A repository is known to a provider
+// only when that provider's host is the origin's host (repoKnown's rule,
+// localcfg.ProviderHosts), and the console rebuilds provider-host links from
+// this pair (design §5.1 rule 2), so a fugaro.yaml that says bitbucket over a
+// github.com origin — a copied config, a checkout re-pointed at another
+// forge — must not make this machine remember "bitbucket/owner/name": a name
+// no provider serves, and one the console would turn into a link on the wrong
+// host.
+//
+// It is also the rule the rest of the tree holds a provider to: the run path
+// requires every source that names one — git.provider, the origin URL's host,
+// --provider — to agree, and fails the run with infra_error when they do not
+// (docs/git-providers.md). Remembering a checkout is best effort and cannot
+// fail the command it rides on, so the disagreement is resolved the only way
+// that leaves a name some provider actually serves: the origin's host.
+func checkoutProvider(co *localcfg.Checkout, host string) string {
+	if p := providerForHost(host); p != "" {
+		return p
+	}
+	if slices.Contains(config.Providers, co.Provider) {
+		return co.Provider
+	}
+	return ""
 }
 
 // providerForHost is the provider whose repositories live on host
