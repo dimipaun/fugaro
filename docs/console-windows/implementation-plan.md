@@ -30,8 +30,11 @@ Each task has:
   no red step it is a `Rule` task: it exists to keep something true, and its verification is the guard
   that already owns it.
 - **Verification** — the exact command an agent runs. Five recur and are abbreviated afterwards:
-  - **`[unit]`** = `cd console && npm run test:unit` (vitest, 75 files). A task's own run is
-    `npm run test:unit -- <file>`.
+  - **`[unit]`** = `cd console && npm run test:unit` — `vitest run --dir test/unit`, over the
+    **55** `.ts` files under `console/test/unit`, **53** of them `*.test.ts` (the other two are
+    `stub.ts` and `synthetic.ts`; the count is `find console/test/unit -name '*.ts' | wc -l`, and
+    the 75 `find console/test -name '*.ts'` returns is the whole `test/` tree, e2e and fixtures
+    included). A task's own run is `npm run test:unit -- <file>`.
   - **`[types]`** = `cd console && npm run typecheck`.
   - **`[pins]`** = `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint|Console' -count=1 -timeout 40m`
     — the Go guards over this folder, `docs/pending-workflows/` and `console/README.md`.
@@ -653,10 +656,17 @@ triggers, the pins, the artifact), `TestWindowsConsoleStagingTellsTheOwnerWhatTo
 README's section and the site's sentence), `TestDocsWindowsConsoleReconciliationRecordsTheOwnerAnswers`
 and `TestDocsWindowsConsolePlanIsReleaseTimeOnly` (the reconciliation's answer record and this plan's
 own re-cut). Each is mutation-proven by the edit named in its own comment.
-The file itself is `console-linux.yml` with **four** differences: `runs-on: windows-latest`, the pack
-step is `npm run package:win`, the artifact assertion counts exactly one `*.exe`, and — the D7(c)
-difference — the triggers are `on: push: tags: ["v[0-9]+.[0-9]+.[0-9]+"]` and `workflow_dispatch`,
-**with no `pull_request` trigger and no `paths:` filter**. `permissions: contents: read`, actions pinned
+The file itself is `console-linux.yml` with **four differences D7(c) and the runner force**:
+`runs-on: windows-latest`, the pack step is `npm run package:win`, the artifact assertion counts
+exactly one `*.exe`, and — the D7(c) difference — the triggers are
+`on: push: tags: ["v[0-9]+.[0-9]+.[0-9]+"]` and `workflow_dispatch`, **with no `pull_request` trigger
+and no `paths:` filter**. It carries **five more, because this job's second subject is the console's
+suite on Windows and a Windows runner's default shell is PowerShell**: `defaults.run.shell: bash`
+(named once rather than rewriting four POSIX steps in PowerShell), `timeout-minutes: 45` against the
+Linux job's 30, a `typecheck` step, a `run the unit suite` step — the two that make this the only
+place the console's suite ever runs on Windows — and the artifact's own name with a
+`retention-days: 90` against the Linux job's 7. Anything else that differs between the two files is
+a comment, and the two are meant to be comparable by eye. `permissions: contents: read`, actions pinned
 by 40-hex SHA, `--publish never` in the script rather than the line, no secrets, and the header's first
 paragraph says **in those words** that it must not be copied in until Parts B and C have landed, because
 before that the packer refuses and the suite is red — and that it is a release-time job, so nothing on a
@@ -700,6 +710,15 @@ Red step: `[pins]` — the guards that pin `docs/release.md`'s console paragraph
 together. The one this work adds for it is `TestDocsWindowsConsoleReleaseDocsCarryTheDryRun`
 (`internal/cli/docs_windows_console_test.go`), which fails until the checklist carries the dry run and
 the console paragraph says the installer is not a release asset.
+**Edits 1 and 2 below are already written, by the staging pull request of 2026-10-20**: the owner
+asked for the by-hand dry run to exist before the pack does, so `docs/release.md`'s console
+paragraph and its "Before you tag" checklist carry the release-time note, the unsigned sentence, the
+not-an-asset sentence and the dry run now. T-H3 therefore **completes 3 and 4 and re-reads 1 and 2**
+rather than rewriting them — and it is why the paragraph says the build is *planned and staged*
+rather than shipped: the ruling is a plan, nothing on Windows has been built, and
+`docs/design/desktop-console.md` and `console/README.md` still carry the older, narrower sentence
+until this task lands (O7).
+
 Four edits, each a **dated note rather than a rewrite** (O7, F43):
 1. `docs/release.md`'s console paragraphs gain the Windows sentence: the pack runs **at release time
    only** (a tag or a manual dispatch, **never on a pull request**), it produces an **unsigned**

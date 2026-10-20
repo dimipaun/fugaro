@@ -61,8 +61,9 @@ const (
 // is satisfied by a sentence *about* the answers, so a cell could be emptied or
 // flipped with the test still green. Every row is compared, in order, by key.
 //
-// The mutations that prove it: empty D6's answer cell, and change D7's "(c)" to
-// "(a)". Each fails by naming the row.
+// The mutations that prove it: empty D6's answer cell, change D7's "(c)" to
+// "(a)", and put the status line's "no decision in §4 is answered" back. Each
+// fails by naming the row -- or, for the status line, by naming the sentence.
 func TestDocsWindowsConsoleReconciliationRecordsTheOwnerAnswers(t *testing.T) {
 	const path = "docs/console-windows/reconciliation.md"
 	doc := readDoc(t, path)
@@ -142,6 +143,24 @@ func TestDocsWindowsConsoleReconciliationRecordsTheOwnerAnswers(t *testing.T) {
 			t.Errorf("%s's D7 section no longer carries %q: D7 is the one decision the owner ruled against the recommendation, so its section has to say what the ruling is, in whose words, what it accepts and what it leaves where it was", path, want)
 		}
 	}
+
+	// The status line, which is the sentence a reader cites and the one place a
+	// summary can contradict the table under it: it said "no decision in §4 is
+	// answered" while §4 recorded all twelve. Read as its own paragraph, so the
+	// answer table below cannot satisfy it.
+	status := flattenDoc(windowsConsoleBlock(t, path, doc, "**Status:", "\n\n"))
+	for _, want := range []string{
+		"The twelve decisions in §4 are answered",
+		"answering a decision is not approving the build",
+		"OWNER APPROVAL GATE is still not passed",
+	} {
+		if !strings.Contains(status, want) {
+			t.Errorf("%s's status line no longer carries %q: §4 answers all twelve decisions, and the summary has to say so and say that an answer is not an approval", path, want)
+		}
+	}
+	if strings.Contains(status, "no decision in §4 is answered") {
+		t.Errorf("%s's status line says no decision in §4 is answered, and §4's table records all twelve: the summary contradicting the table is exactly what this test is for", path)
+	}
 }
 
 // TestDocsWindowsConsolePlanIsReleaseTimeOnly pins the plan's half of the D7
@@ -218,6 +237,42 @@ func TestDocsWindowsConsolePlanIsReleaseTimeOnly(t *testing.T) {
 		if !strings.Contains(gateFlat, "D"+strconv.Itoa(i)) {
 			t.Errorf("%s's OWNER APPROVAL GATE no longer names D%d: the gate is where a reader checks which decisions are answered and which are not", path, i)
 		}
+	}
+
+	// The `[unit]` abbreviation and T-H1's difference list are claims about the
+	// console's suite and about the file this one is derived from, and both were
+	// wrong before this pass: the unit suite was given as 75 files, which is every
+	// `.ts` file under `test/` (e2e and fixtures included) rather than what
+	// `vitest run --dir test/unit` runs, and the staged job was called
+	// `console-linux.yml` "with four differences" while it also carries a named
+	// shell, a longer timeout, the two steps that are its second subject, and its
+	// own artifact name and retention.
+	unit := flattenDoc(windowsConsoleBlock(t, path, doc, "**`[unit]`**", "\n  - **`[types]`**"))
+	for _, want := range []string{"55", "53", "test/unit"} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("%s's `[unit]` abbreviation no longer carries %q: the suite is `vitest run --dir test/unit`, and a figure with the command beside it is the only kind this repository trusts", path, want)
+		}
+	}
+	if strings.Contains(unit, "75 files") {
+		t.Errorf("%s's `[unit]` abbreviation is back to \"75 files\": 75 is every `.ts` file under `test/`, and a task that trusts it goes looking for twenty tests the suite it runs does not have", path)
+	}
+	th1 := flattenDoc(windowsConsoleBlock(t, path, doc, "**T-H1 — ", "\n**T-H2 — "))
+	for _, want := range []string{
+		"four differences D7(c) and the runner force",
+		"defaults.run.shell: bash",
+		"timeout-minutes: 45",
+		"retention-days: 90",
+		"run the unit suite",
+	} {
+		if !strings.Contains(th1, want) {
+			t.Errorf("%s's T-H1 no longer carries %q: the staged file is not `console-linux.yml` with four differences, and the differences it carries besides those four are what make it a Windows job", path, want)
+		}
+	}
+	// And the release document's note is this work's, not T-H3's to write from
+	// scratch: the owner asked for the dry run to exist before the pack does.
+	th3 := flattenDoc(windowsConsoleBlock(t, path, doc, "**T-H3 — ", "\n**T-H4 — "))
+	if !strings.Contains(th3, "already written") {
+		t.Errorf("%s's T-H3 no longer says the release document's note is already written: docs/release.md carries it today, and a task that rewrote it from scratch would undo the dated note it has", path)
 	}
 }
 
@@ -485,6 +540,145 @@ func TestDocsWindowsConsoleReleaseDocsCarryTheDryRun(t *testing.T) {
 	// `console-vX.Y.Z`, so a sentence claiming a third asset would be false.
 	if !strings.Contains(flattenDoc(doc), "the Windows installer is not an asset of `console-vX.Y.Z`") {
 		t.Errorf("%s no longer says the Windows installer is not an asset of `console-vX.Y.Z`: D7 answers where and when the pack runs, and whether its artifact joins the console release is a separate decision nothing has taken", path)
+	}
+}
+
+// TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue checks the claims these
+// documents make *about other files in this repository* against those files.
+// Every one of them was wrong in this work's first draft, and every one was
+// wrong the same way: the claim was written from memory rather than read back.
+//
+//   - The index said the CLI track's `reconciliation.md` **§4 U13** hands the
+//     console's own Windows question to this folder. U13 is in that document's
+//     **§7 (UNVERIFIED)** and puts "anything about the desktop console on
+//     Windows" *out of the CLI track's scope*, assigning it to
+//     `docs/design/desktop-console.md` D10 -- so the folder's stated provenance
+//     was false, and a reader following it would look for a hand-off that does
+//     not exist.
+//   - Three places cited `SECURITY.md` for a POSIX-only mode caveat it does not
+//     contain: that file carries no Windows, POSIX, `chmod` or `0600`/`0700`
+//     sentence at all, and the sibling document says the statement is still
+//     **owed**.
+//   - The index claimed to write out "everything outside this directory that
+//     this work touches" while leaving `docs/release.md` out, and claimed there
+//     was "no change to an existing test" while changing one.
+//   - The staging README told the owner that the sentences its copy-in needs are
+//     the ones the `## console-linux.yml` section already gives, and they are
+//     not: that copy-in deletes the very file those sentences name.
+//   - `docs/release.md` said the console *has* a Windows build, which nothing
+//     has built, while two other documents still say Windows stays out.
+//
+// The mutations that prove it: put "§4 U13" back; put "`SECURITY.md` already
+// says" back; drop `docs/release.md` from the surface list; put the
+// "already describes" sentence back; and say "the console has a Windows build".
+// Each fails here.
+func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
+	const index = "docs/console-windows/README.md"
+	idx := flattenDoc(readDoc(t, index))
+
+	// 1. The provenance: where the console's Windows question is actually
+	// settled, and the section of the sibling document it is written in.
+	for _, want := range []string{
+		"U13, in that document's §7",
+		"`docs/design/desktop-console.md` D10 owns it",
+	} {
+		if !strings.Contains(idx, want) {
+			t.Errorf("%s no longer carries %q: U13 is in docs/windows-cli/reconciliation.md's §7 and assigns the console's Windows question to docs/design/desktop-console.md D10, so a citation of it has to say that", index, want)
+		}
+	}
+	if strings.Contains(idx, "§4 U13") {
+		t.Errorf("%s cites \"§4 U13\" again: that section of the sibling document is the decisions, and U13 is in its §7 -- the citation is the whole provenance claim this folder has", index)
+	}
+
+	// 2. The surface list: the file it left out, and the sentence that claimed
+	// nothing existing changed. Read as the list itself, because `docs/release.md`
+	// and the test file are named elsewhere in this README too -- a file-wide
+	// search would be satisfied by the "Related" section and by O7.
+	surface := flattenDoc(windowsConsoleBlock(t, index, idx,
+		"1. **`docs/pending-workflows/console-windows.yml`**", "**No production file changes**"))
+	for _, want := range []string{
+		"`docs/release.md`",
+		"a change to an existing test file",
+		"`internal/cli/docs_desktop_console_test.go`",
+	} {
+		if !strings.Contains(surface, want) {
+			t.Errorf("%s's surface list no longer carries %q: the list is the claim, and docs/release.md and the marker change in an existing test file are both part of it", index, want)
+		}
+	}
+	if strings.Contains(surface, "no change to an existing test") {
+		t.Errorf("%s claims \"no change to an existing test\" again, and internal/cli/docs_desktop_console_test.go is changed: a surface list that is wrong about its own contents is worse than none", index)
+	}
+
+	// 3. SECURITY.md, in the index and in the reconciliation: the caveat is not
+	// there, and the documents have to say so rather than cite it.
+	for _, want := range []string{
+		"carries no Windows, POSIX",
+		"is **owed**",
+	} {
+		if !strings.Contains(idx, want) {
+			t.Errorf("%s no longer carries %q about SECURITY.md: that file says nothing about Windows or POSIX modes, and windows-cli D12 leaves the statement owed", index, want)
+		}
+	}
+	if strings.Contains(idx, "the mode guarantee is POSIX-only, and the credential boundary") {
+		t.Errorf("%s cites SECURITY.md for a POSIX-only mode caveat again: the file contains no Windows, POSIX, `chmod` or `0600`/`0700` sentence at all", index)
+	}
+	recon := flattenDoc(readDoc(t, "docs/console-windows/reconciliation.md"))
+	for _, want := range []string{
+		"`SECURITY.md` says none of that today",
+		"is **owed**",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("docs/console-windows/reconciliation.md no longer carries %q about SECURITY.md: F45's consequence is that the POSIX-only statement is owed, not written, and a citation of it would send the reader to a sentence that does not exist", want)
+		}
+	}
+	for _, forbidden := range []string{"SECURITY.md` already says", "SECURITY.md`'s mode caveat", "SECURITY.md`'s existing answer"} {
+		if strings.Contains(recon, forbidden) {
+			t.Errorf("docs/console-windows/reconciliation.md says %q again: SECURITY.md carries no Windows sentence, and the sibling document's F8/D12 are where the POSIX-only limit is recorded and owed", forbidden)
+		}
+	}
+
+	// 4. The staging README's own instruction: the sentences its copy-in needs
+	// are the ones for the state it creates, and both orderings are given
+	// because this file cannot fix the order the owner applies the three in.
+	staging := flattenDoc(consoleReadmeSection(t, readDoc(t, "docs/pending-workflows/README.md"), "## `console-windows.yml`"))
+	for _, want := range []string{
+		"**One file is pending: `shared-tests.yml`**",
+		"**Three files are pending: `shared-tests.yml`**",
+		"the Linux pair has already been copied in",
+	} {
+		if !strings.Contains(staging, want) {
+			t.Errorf("docs/pending-workflows/README.md's `console-windows.yml` section no longer carries %q: applying this file deletes a file the `console-linux.yml` section's sentences name, so this section has to give the sentences for the states its own copy-in creates", want)
+		}
+	}
+	if strings.Contains(staging, "already describes") {
+		t.Errorf("docs/pending-workflows/README.md's `console-windows.yml` section says its copy-in leaves the state the `console-linux.yml` section \"already describes\" again: those sentences name console-windows.yml, which this copy-in deletes, and omit console-linux.yml, which it leaves staged -- following them leaves website/test/readme.mjs red on main")
+	}
+
+	// 5. The release document: a plan, not a shipped build.
+	release := flattenDoc(readDoc(t, "docs/release.md"))
+	for _, want := range []string{
+		"planned and staged, not shipped",
+		"nothing on Windows has been built",
+	} {
+		if !strings.Contains(release, want) {
+			t.Errorf("docs/release.md no longer carries %q: the Windows build is the plan's Part H work and nothing has been built, so the release document must not read as if 0.10.0 had one", want)
+		}
+	}
+	if strings.Contains(release, "the console has a Windows build") {
+		t.Errorf("docs/release.md says the console has a Windows build again: the plan is not approved, the pack is red until its Parts B and C land, and docs/design/desktop-console.md and the console's own README still say Windows stays out")
+	}
+
+	// 6. And the figure the suite's size is given as, in the two other places it
+	// is written: `vitest run --dir test/unit`, not the whole `test/` tree. (The
+	// number itself cannot be counted from here: this package's one-entry
+	// console boundary allow-list is what stops a Go file in it reading the
+	// console tree, which is why the command travels beside the figure.)
+	text, wfPath := consoleWorkflowText(t, windowsConsoleWorkflowPath, appliedConsoleWindowsPath)
+	if !strings.Contains(text, "55 `.ts` files") || !strings.Contains(text, "53") {
+		t.Errorf("%s no longer gives the unit suite's size as 55 `.ts` files, 53 of them `*.test.ts`: 75 is every `.ts` file under `test/`, e2e and fixtures included, and it is the figure a reader will otherwise carry", wfPath)
+	}
+	if !strings.Contains(recon, "55 `.ts` files") {
+		t.Errorf("docs/console-windows/reconciliation.md's U3 no longer gives the unit suite's size as 55 `.ts` files: the census rule is that a figure travels with the command that returns it, and this is the figure U3 is about")
 	}
 }
 

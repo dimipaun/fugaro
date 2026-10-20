@@ -882,19 +882,61 @@ git rm docs/pending-workflows/console-windows.yml
 git commit -m "console: pack the Windows installer at release time"
 ```
 
-**Three follow-up edits belong in that commit**, because three sentences in this
-repository count the files still pending in this directory and all three are
-held to the directory: the last section of `website/README.md` (which
-`website/test/readme.mjs` reads in both directions, count and names), **this
-README's own opening line** (which
+**Two follow-up edits belong in that commit** — the last section of
+`website/README.md` (which `website/test/readme.mjs` reads in both directions,
+count and names) and **this README's own opening line** (which
 `TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` holds to the same
-directory), and the pair of fenced replacement-sentence blocks under
-`## console-release-linux.yml` above — which are read by
-`TestStagedLinuxFilesSurviveTheCopyIn` and describe the state this copy-in
-creates, so a copy-in that leaves them stale is a copy-in the suite runs against
-the wrong text. Applying this file leaves `console-linux.yml`,
-`console-release-linux.yml` and `shared-tests.yml` pending, which is the state
-the `## console-linux.yml` section's own pair of blocks already describes.
+directory). **The pair of fenced blocks under `## console-release-linux.yml`
+above is *not* this commit's**: those are read by
+`TestStagedLinuxFilesSurviveTheCopyIn`, which splices them into a copy of the tree
+with the **Linux** copy-in applied, so they describe *that* state — two files
+pending, `shared-tests.yml` and this one. Applying *this* file is a different
+state, and it is not the one the `## console-linux.yml` section's blocks
+describe either: those name this file, which this commit deletes, and omit
+`console-linux.yml`, which it leaves staged.
+
+**Which state this copy-in creates depends on the order the owner applies the
+three in**, and this file cannot fix that order: the Linux pair and this file
+belong to two different runs, and this file's own plan puts it last in *its*
+work (Part H, after Parts B and C) without ordering it against theirs. So the
+sentences are given for both. **If the Linux pair has already been copied in**,
+this copy-in leaves one file pending:
+
+```
+**One file is pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below).
+```
+
+```
+`docs/pending-workflows/` now holds one pending workflow,
+`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+P4.3). None is this site's:
+```
+
+**If it has not**, this copy-in leaves three — `shared-tests.yml`,
+`console-linux.yml` and `console-release-linux.yml` — and the sentences are:
+
+```
+**Three files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below), **`console-linux.yml`** (the console's Linux build check,
+2026-10-20; see `## console-linux.yml` below) **and `console-release-linux.yml`** (the console's
+signing pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged
+`console-release.yml`; see `## console-release-linux.yml` below).
+```
+
+```
+`docs/pending-workflows/` now holds three pending workflows,
+`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+P4.3) — `docs/pending-workflows/console-linux.yml` — the console's Linux build check, which is
+packed on every pull request and holds no secret — and
+`docs/pending-workflows/console-release-linux.yml` — the console's signing pipeline with the
+Linux legs added, which supersedes the staged `console-release.yml` and so is copied over it as
+well as into `.github/workflows/`. None is this site's:
+```
+
+**No count word needs adding to `website/test/readme.mjs` for either state**: its map already
+carries `one`, `two`, `three` and `four`, and `TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`
+reads the names back against this directory, so a sentence that names the wrong set fails there.
 
 **What cannot be checked here, and what nothing checks yet.** This file's steps
 run on a runner: the staged copies in this directory are read by tests on a

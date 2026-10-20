@@ -10,18 +10,30 @@ that ruling and nothing else: it writes no production Go, no TypeScript, no `pac
 workflow under `.github/workflows/` and no live action. Everything it asks for starts at the plan's
 OWNER APPROVAL GATE.
 
-**The one thing outside this directory that this work touches** is the set of sentences three tests
-hold to `docs/pending-workflows/`: staging `console-windows.yml` moves this repository's counts of
-the files still pending there, and a count left behind is `main` red. So the same pull request also
-edits `docs/pending-workflows/README.md`, `website/README.md`, `website/test/readme.mjs` (its words
-map gains `four`) and one marker in `internal/cli/docs_desktop_console_test.go` — the marker the
-copy-in test finds the replacement sentence by, moved from `file is pending` to `files are pending`
-so that it stops depending on the count. **And it adds one test file of its own**,
-`internal/cli/docs_windows_console_test.go`, because a document is a claim and every other folder's
-documents in this repository are held to theirs by a Go guard: the twelve answers, this plan's re-cut
-around the D7 ruling, the staged job's triggers, the two sentences outside this folder that describe
-it, and the release checklist's by-hand dry run. That is the whole of the code-adjacent surface: no
-production file, and no change to an existing test.
+**Everything outside this directory that this work touches, in full** — seven files, and the list is
+the claim, so it is written out rather than summarized:
+
+1. **`docs/pending-workflows/console-windows.yml`** — the staged release-time pack job itself.
+2. **`docs/pending-workflows/README.md`** — the section that describes it, plus the repository's
+   counts of the files still pending there, which staging this file moves: a count left behind is
+   `main` red.
+3. **`website/README.md`** — the same count and the same names, on the site's page.
+4. **`website/test/readme.mjs`** — its words map gains `four`, because the sentence counts in words.
+5. **`internal/cli/docs_desktop_console_test.go`** — one marker moved from `file is pending` to
+   `files are pending` so that it stops depending on the count. This is **a change to an existing
+   test file**, deliberately, and it is the only one.
+6. **`internal/cli/docs_windows_console_test.go`** (new) — this folder's own guard, because a
+   document is a claim and every other folder's documents in this repository are held to theirs by a
+   Go guard. It pins the twelve answers, this plan's re-cut around the D7 ruling, the staged job's
+   triggers, the two sentences outside this folder that describe it, and the release checklist's
+   by-hand dry run.
+7. **`docs/release.md`** — the release-time text and the by-hand dry run the release checklist
+   gains, which the owner asked for in so many words: with the pack at release time, the dispatch
+   before the tag is the only dry run there is.
+
+**No production file changes** — no Go outside these two test files, no TypeScript, no
+`package.json`, no workflow under `.github/workflows/` — **and `docs/design/desktop-console.md` and
+`console/README.md` are not touched**: their dated notes are Part H's (O7, below).
 
 **Owner:** the Fugaro owner (`dimipaun`). **Date:** 2026-10-20. **Base:** `main` at `ccc406b2`
 (`console: a Linux build (AppImage and .deb, unsigned) for 0.10.0 (#758)`).
@@ -84,15 +96,27 @@ because they are about *these* documents rather than about the code:
   [console/README.md](../../console/README.md)'s Linux section all end with a sentence that Windows
   stays out of 0.10.0. The owner's ruling of 2026-10-20 changes the console's Windows *build*, not
   the *signing* answer D10 gave, so each of those sentences needs a dated note rather than a
-  rewrite — and **this directory writes none of them**, because the brief is docs-only under
-  `docs/console-windows/`. **Part H** of the plan is where they land (F43, C4).
+  rewrite. **One of the three is written by this pull request**: `docs/release.md`'s console
+  paragraph and its "Before you tag" checklist carry the release-time note and the by-hand dry run,
+  which the owner asked for here, and the paragraph says the build is *planned and staged* rather
+  than shipped, so it does not claim a Windows build 0.10.0 does not have. **The other two —
+  [docs/design/desktop-console.md](../design/desktop-console.md) §4.2, §7.6's rule 3, the owner-run
+  table's signing row and D10's row, and [console/README.md](../../console/README.md)'s Linux
+  section — are still untouched and still say Windows stays out.** They are **Part H**'s (T-H3), and
+  until Part H lands the two are the older, narrower sentence rather than a contradiction: the
+  ruling is a plan, the plan is not approved, and nothing on Windows has shipped (F43, C4).
 
 ## Related
 
 - [docs/windows-cli/](../windows-cli/README.md) — the **other track**: the CLI on native Windows.
   Its `wsl.md` is the authority for the WSL route this work drives (the install steps, the three
-  traps, and the F40 line this work **supersedes for the console**), and its
-  `reconciliation.md` §4 U13 hands the console's own Windows question to this folder.
+  traps, and the F40 line this work **supersedes for the console**). Its `reconciliation.md` does
+  **not** hand the console's own Windows question to this folder: **U13, in that document's §7
+  (UNVERIFIED) and not its §4, puts "anything about the desktop console on Windows" out of the CLI
+  track's scope and says `docs/design/desktop-console.md` D10 owns it.** What this folder is
+  written against is the owner's ruling of 2026-10-20 and that ruling's brief, not a hand-off from
+  the CLI track — and the console's Windows *build* is the part of D10 the ruling moved, which is
+  why D10 and this folder's §4 meet in Part H (O7, T-H3).
 - [docs/design/desktop-console.md](../design/desktop-console.md) — the console's design: §3.4's
   rules 4, 5 and 7 (binary resolution, the fixed environment and working directory, the
   `~/.config/fugaro` refusal), §4.2 (what is out, including Windows as a *packaged* deliverable),
@@ -107,9 +131,13 @@ because they are about *these* documents rather than about the code:
   typechecks, runs the unit suite and packs the unsigned NSIS installer, **at release time only** (the
   release tag or a manual dispatch before it, and **never on a pull request**) and outside the release
   gate — and its header says in its first paragraph what must land in `console/` before the copy-in.
-- [SECURITY.md](../../SECURITY.md) — the claims the Windows leg must not repeat as Windows claims:
-  the mode guarantee is POSIX-only, and the credential boundary this work must preserve is stated
-  there in the terms the console already meets.
+- [SECURITY.md](../../SECURITY.md) — the claims the Windows leg must not repeat as Windows claims.
+  The credential boundary this work must preserve is stated there in the terms the console already
+  meets (F21). **The mode guarantee is not**: `SECURITY.md` carries no Windows, POSIX, `chmod` or
+  `0600`/`0700` sentence at all, so there is no POSIX-only caveat in it to cite — its mode claims
+  are POSIX claims (windows-cli F8) and the statement that they are POSIX-only is **owed**
+  (windows-cli D12), which is why this folder says the limit itself rather than pointing at a
+  document that does not say it (F45, U12).
 - [docs/mobile/](../mobile/README.md) and [docs/coordinator/README.md](../coordinator/README.md) —
   the register of every D-block and check block, and the folder shape this one follows: README index
   with a status line, `reconciliation.md` with F/D/O/U numbers, `implementation-plan.md` with parts,
