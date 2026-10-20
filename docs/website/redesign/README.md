@@ -915,7 +915,7 @@ changes are cited as the feedback's own.
 ## The 2026-10-19 benefits feedback: an icon each, and a step up the type scale
 
 A third comment the same day, on the design canvas rather than on a page: **"make them bigger,
-bolder, use an icon for each point"**, under the four Benefits. Every reading it does not spell
+bolder, use an icon for each point"**, under the four benefits. Every reading it does not spell
 out is recorded here, as the two sections above record theirs. It changes the section's
 presentation and **not one word of it**: the four names and the four lines are still
 `README.md`'s `## Why Fugaro` reasons, held to their own reason's paragraph by the component's
@@ -1118,13 +1118,16 @@ in the commit that made it.
   install block is the page's **last** section, which is where the draft puts it: the commands
   are no longer under the promise.
 - **One slider with three tabs, and all three panels in the HTML.** `HomeSlider.astro` renders
-  `.home-slider`, a row of three fragment links — "Easy to use", "Benefits", "See it" — and the
+  `.home-slider`, a row of three fragment links — "Easy to use", "Why Fugaro?", "See it" — and the
   three panels they open. *Easy to use* is the draft's own three lines (you tell your agent,
   Fugaro runs it in your cloud, you get a draft pull request), each with one inline SVG and the
   repository's sentence about it under it, held to README.md's sections at build time and read
-  again by `website/test/slider.mjs`'s `stepFailures`. *Benefits* is `Benefits.astro`
+  again by `website/test/slider.mjs`'s `stepFailures`. *Why Fugaro?* is `Benefits.astro`
   unchanged, rendered into the panel (`inPanel`), because the README's four reasons and their
-  icons were already the thing this panel is for. *See it* is the owner's real `fugaro watch`
+  icons were already the thing this panel is for; the middle tab and the section's own heading
+  are that one string since the owner's ruling of 2026-10-20, which read "Benefits" as the
+  block's shape rather than as the question its four points answer (the reading at the foot of
+  this file). *See it* is the owner's real `fugaro watch`
   capture above the command, and under the command the panel's caption: `fugaro watch` is the
   live screen of spend, repositories and running agents. — `plugin/skills/working/SKILL.md`'s own
   line, which `home.mjs` reads back to that file. The picture and its transcription are the
@@ -1172,3 +1175,60 @@ in the commit that made it.
   build in the commit that moved them (D192). **Whether the page looks like the owner's draft
   is the owner's check** (70a–70c, P9, D190): no gate here can see an image, and no screenshot
   is committed.
+
+## The owner's ruling of 2026-10-20: the benefits section is headed "Why Fugaro?"
+
+The owner's ruling of 2026-10-20 renames the homepage's "Benefits" heading to exactly `Why
+Fugaro?` — capital W and F, question mark — and the slider's middle tab with it. Nothing else
+about the section moves.
+
+- **What the ruling settles.** The section renders README.md's `## Why Fugaro`: the four names
+  that document gives its reasons, and for each one a sentence of the paragraph it argues it
+  in. The block was headed "Benefits", which named the *shape* of the list rather than what the
+  list is for, and "Benefits" is not a word README.md uses for it. The heading is now the
+  question the four points answer, which is the reading the section's own provenance already
+  carried: `data-source="README.md#Why Fugaro"` has cited that heading since the section
+  landed.
+- **What changed, and what did not.** `src/components/Benefits.astro`'s `<h2>` reads "Why
+  Fugaro?", and `src/components/HomeSlider.astro`'s `TABS` middle entry carries the same
+  string as its label. The component's and the file's names, the section's `id`
+  (`benefits-title`), its `class` (`home-benefits`), the panel's `id`
+  (`home-panel-benefits`) and the `aria-labelledby` that ties the heading to the section are
+  all where they were: they are the element's name in the markup, which the stylesheet and the
+  accessibility tree read, and none of them is a label a reader sees. **The four points are
+  not touched** — neither the README's own names nor the sentences drawn from its paragraphs —
+  because they are the answer the new heading asks for, and a rename is not a licence to
+  reword them.
+- **The two gates that pin the string, and the ones that do not.** `website/test/home.mjs`
+  reads the built page's `benefits-title` and refuses anything but the exact string, so the
+  question mark is held as well as the words: its case plants the owner's own phrase without
+  the question mark, and a second plants the label the section carried before the ruling.
+  `website/test/slider.mjs` already held each panel's own `h2` equal to the label of the tab
+  that opens it — a reader who arrives on a panel reads the label of the tab that opens it —
+  so the tab and the heading are one name by construction, and a rename that reached only one
+  of the two stops the build. The other gates named in the brief pin no string of this
+  section: `a11y.mjs` reads the section as a named landmark and its `h3`s as headings under
+  one `h2` and never the words; `copy.mjs` reads no heading of the homepage; and
+  `stacking.mjs` reads the blocks' order and their rule, not their text. Nothing there moved.
+- **The figures, re-derived rather than argued.** The site figure moved by the **6 bytes** the
+  longer string costs in the built page — "Why Fugaro?" is three characters longer than
+  "Benefits" and the string is written twice, once in the `<h2>` and once in the tab — so
+  `website/README.md`'s byte budget is re-derived in the same commit, 988,253 → **988,259**
+  bytes across the same 23 files, with the whole-site ceiling following it, 3,705,951 →
+  **3,705,972**. One more byte lands on the same branch after it, from the second item of the
+  review of 2026-10-20 — the security page's boundary drawing grows the two cards whose last
+  line was drawn below the inset they declare, and the gateway card's height goes from two
+  digits to three (`96` → `120`) — so **the branch's own figures are 988,260 bytes across the
+  same 23 files and a 3,705,975-byte whole-site ceiling**, and those are the pair
+  `website/README.md` states. The page's own word count moves by two (the heading and the tab
+  are each a word longer, which is what the shipped tab label costs the lead region too, 29 →
+  **30** words), and **neither word ceiling moves**: the ceiling of 949 words is `privacy`'s own
+  page plus a quarter, and the homepage stays well inside D188's 300. No file was added, no
+  stylesheet rule was touched, and the one script is the same 39,888 bytes.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round, no screenshot is committed, and this run cannot see one.
+  What was read is the built artifact — the two strings out of `dist/index.html`, the site
+  figure and the page's words and lead from the gates' own measurement of it, and
+  `(cd website && npm run check)` green over all fourteen gates. **Whether the renamed
+  heading looks right in the section's own type step is the owner's check** (70a–70c, P9,
+  D190): the ruling names a string, and no gate here can see a page.

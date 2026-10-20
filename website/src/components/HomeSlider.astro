@@ -28,7 +28,7 @@
  * whose selection is scripted: the roles promise a relationship (`aria-selected`,
  * `aria-controls`, the panel that follows the selected tab) that a stylesheet cannot keep and
  * only JavaScript can. The markup says what it is instead — a list of three links named "Easy
- * to use", "Benefits" and "See it", each pointing at the panel it opens — which is a shape
+ * to use", "Why Fugaro?" and "See it", each pointing at the panel it opens — which is a shape
  * screen readers already know, and the panel a link opens is the element the address names.
  * `website/test/a11y.mjs` reads the links the way it reads every other link on the site.
  *
@@ -36,7 +36,7 @@
  * each: tell your agent, Fugaro runs it in your cloud, you get a draft pull request — the
  * draft's own three lines, each with the repository's sentence about it under it, held to
  * README.md at build time the way the flow's captions are held to theirs (Global Constraint
- * 6). *Benefits* is `Benefits.astro` unchanged: the README's four reasons, with their icons,
+ * 6). *Why Fugaro?* is `Benefits.astro` unchanged: the README's four reasons, with their icons,
  * in the order the README argues them. *See it* is the real `fugaro watch` capture — the
  * owner's own screenshot of the screen running on their installation — with the one command
  * the reader is asked for under it.
@@ -65,9 +65,8 @@ import Benefits from './Benefits.astro'
 
 /**
  * A string with its markdown markers and its whitespace removed: how a caption and the section
- * it claims to come from are compared — the reading the retired flow's component used, so the
- * build and `website/test/slider.mjs` and `website/test/home.mjs` resolve a quotation the same
- * way.
+ * it claims to come from are compared. The same reading `ArchitectureDiagram.astro` uses, so
+ * the build and `website/test/home.mjs` resolve a quotation the same way.
  */
 function comparable(document: string): string {
   return document.replace(/[`*]/g, '').replace(/\s+/g, '')
@@ -156,7 +155,7 @@ const GLYPHS: { [name: string]: string } = {
  *  so the tab, the link and the panel are one name rather than three that have to agree. */
 const TABS = [
   { id: 'easy', label: 'Easy to use' },
-  { id: 'benefits', label: 'Benefits' },
+  { id: 'benefits', label: 'Why Fugaro?' },
   { id: 'see', label: 'See it' },
 ]
 
