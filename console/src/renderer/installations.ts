@@ -92,8 +92,24 @@ const NO_ONBOARD: OnboardingState = Object.freeze({ kind: 'none' })
 
 /** NO_INSTALLATION_STATUS is the line the list carries when the CLI listed
  * nothing and the console has nothing recorded: the choice is not the operator's
- * to make yet, which is what the first-installation screen beside it says. */
+ * to make yet, which is what the first-installation screen beside it says. It is
+ * the **empty** state and nothing else -- see `NO_CHOICE_STATUS` for the state
+ * that has rows. */
 export const NO_INSTALLATION_STATUS = 'No installations yet.'
+
+/**
+ * NO_CHOICE_STATUS is the line for the ordinary first run of a console whose CLI
+ * lists installations and which has chosen none: the choice **is** the
+ * operator's, and this is what to do about it.
+ *
+ * It is a separate constant from `NO_INSTALLATION_STATUS` because the two are
+ * different situations, and drawing one for the other is a screen that lies: a
+ * list with rows is not a machine with nothing installed, and "No installations
+ * yet." directly above the installations the operator can open is exactly that
+ * lie. `viewOf` decides between them on `rows.length`, which is also what the
+ * main process gates the first-installation screen on (`listReply`).
+ */
+export const NO_CHOICE_STATUS = 'No installation is chosen. Choose one below.'
 
 /**
  * viewOf turns one reply into the view.
@@ -156,7 +172,14 @@ export function viewOf(reply: InstallationReply): InstallationView {
       onboard,
     }
   }
-  return { status: NO_INSTALLATION_STATUS, rows, warnings, onboard }
+  // Nothing active, and the two ways that happens are not the same screen. With
+  // rows, this is the ordinary first run: the CLI listed installations, the
+  // console holds no record of them (`saved: false`) and none is chosen, so the
+  // line says what to do. With no rows there is nothing to choose, which is the
+  // empty state -- and, because `listReply` draws the first-installation screen
+  // for exactly that case, this branch answers a document the console did not
+  // send: a stub's, or a test's. It still gets the honest sentence.
+  return { status: rows.length === 0 ? NO_INSTALLATION_STATUS : NO_CHOICE_STATUS, rows, warnings, onboard }
 }
 
 /** UNDRAWABLE is what this view draws where the sanitizer refuses a string. It

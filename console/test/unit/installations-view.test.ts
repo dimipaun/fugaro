@@ -41,6 +41,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import {
+  NO_CHOICE_STATUS,
   NO_INSTALLATION_STATUS,
   ONBOARDING_COPY,
   UNDRAWABLE,
@@ -342,8 +343,19 @@ describe('the picker’s document and its view', () => {
   })
 
   it('draws the status the main process answered with', async () => {
-    const none = await mount({ rows: [row()] })
-    expect(none.element('picker-status').textContent).toBe(NO_INSTALLATION_STATUS)
+    // Review of this branch: a console whose CLI lists installations and which
+    // has chosen none is the **ordinary first run** this PR exists to build, and
+    // it is not the empty state. `NO_INSTALLATION_STATUS` ("No installations
+    // yet.") belongs to the list with nothing in it -- the state the
+    // first-installation screen is drawn for -- and drawing it over rows told the
+    // operator there was nothing while showing them the installations they could
+    // open.
+    const listed = await mount({ rows: [row()] })
+    expect(listed.element('picker-status').textContent).toBe(NO_CHOICE_STATUS)
+    expect(NO_CHOICE_STATUS).not.toBe(NO_INSTALLATION_STATUS)
+
+    const empty = await mount({ rows: [] })
+    expect(empty.element('picker-status').textContent).toBe(NO_INSTALLATION_STATUS)
 
     const active = await mount({ rows: [row({ active: true, mode: 'reduced' })] })
     expect(active.element('picker-status').textContent).toBe('fugaro is the installation this console is showing (reduced).')
@@ -615,8 +627,18 @@ describe('the view as a function of one reply', () => {
     ({ ok: true, data: { onboard: { kind: 'none' }, rows: [], warnings: [], path: DEFAULT_PATH, ...over } } as InstallationReply)
 
   it('is the list, the two screens, and the refusal, and nothing else', () => {
+    // Rows with nothing active: the ordinary first run, and its own sentence.
     const list: InstallationView = viewOf(answer({ rows: [row()] }))
-    expect(list).toEqual({ status: NO_INSTALLATION_STATUS, rows: [row()], warnings: [], onboard: { kind: 'none' } })
+    expect(list).toEqual({ status: NO_CHOICE_STATUS, rows: [row()], warnings: [], onboard: { kind: 'none' } })
+
+    // No rows at all: the empty state, which is what "No installations yet."
+    // means. The two are different lines because they are different situations.
+    expect(viewOf(answer({}))).toEqual({
+      status: NO_INSTALLATION_STATUS,
+      rows: [],
+      warnings: [],
+      onboard: { kind: 'none' },
+    })
 
     const first = viewOf(answer({ onboard: ONBOARD_FIRST }))
     expect(first.onboard).toEqual(ONBOARD_FIRST)

@@ -242,7 +242,12 @@ onboarding screens are one of them; the form's id-scoped rules left
 
 States, all in the status line: **error/refusal** (`reply.reason`, which is the
 CLI's sentence when the CLI would not list), **file unreadable** (`"<path> could
-not be read: <refusal>"`), **empty** ("No installations yet."), **ready/chosen**
+not be read: <refusal>"`), **empty** ("No installations yet." — the list has no
+rows at all, which is the state the first-installation screen is drawn for),
+**nothing chosen** ("No installation is chosen. Choose one below." — the list has
+rows and none of them is active: the ordinary first run of a console whose CLI
+lists installations, and *not* the empty state, which would tell the operator
+there is nothing while showing them what to open), **ready/chosen**
 ("`<project>` is the installation this console is showing (`<mode>`)."), and
 **blank** while an onboarding screen is drawn — the screen is the whole of what
 the window has to say, and a second sentence over it would be a second voice.
