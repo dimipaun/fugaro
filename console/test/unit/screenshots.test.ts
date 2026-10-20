@@ -1297,6 +1297,45 @@ describe('what the run’s own documents promise about it', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// 8. The selectors, held to the renderers that have to have them.
+// ---------------------------------------------------------------------------
+
+describe('the selectors the run waits for', () => {
+  it('are the renderer’s own class names, not this run’s invention', () => {
+    // The finding this holds: the four `drawn` selectors were strings in this
+    // tool that nothing agreed with -- a renderer that renamed `.live-run` would
+    // have turned the run into a `waitForSelector` timeout on the owner's Mac
+    // (or, worse, a capture of a skeleton that never drew) instead of a failing
+    // test here (review of 2026-10-20, low finding).
+    const screens = [...SCREENS, PICKER_SCREEN]
+    expect(screens.map((screen) => screen.file)).toEqual([
+      'console-live.png',
+      'console-run.png',
+      'console-spend.png',
+      'console-installations.png',
+    ])
+    for (const screen of screens) {
+      const source = readFileSync(join(CONSOLE_ROOT, screen.drawnBy), 'utf8')
+      // Every class or id in the selector -- `.live-run`, `#picker-list` -- is
+      // looked for as a *quoted literal* in the file named beside it, because
+      // that is how each renderer writes one: `const classes = ['live-run']`
+      // (`live.ts`), `cell(list, factory, 'li', 'run-log-line')` (`run.ts`),
+      // `make(factory, 'li', 'spend-point')` (`spend.ts`), and
+      // `<ul id="picker-list">` (`installations.html`).
+      const tokens = screen.drawn.match(/[.#][A-Za-z0-9_-]+/g) ?? []
+      expect(tokens.length, `${screen.file}'s selector names no class and no id`).toBeGreaterThan(0)
+      for (const token of tokens) {
+        const name = token.slice(1)
+        expect(
+          source.includes(`'${name}'`) || source.includes(`"${name}"`),
+          `${screen.drawnBy} does not name ${name}, which ${screen.file} waits for`,
+        ).toBe(true)
+      }
+    }
+  })
+})
+
 describe('the one scratch tree a run owns', () => {
   it('is fresh per run, under a temporary directory, and holds the five directories', () => {
     const first = newIsolation()

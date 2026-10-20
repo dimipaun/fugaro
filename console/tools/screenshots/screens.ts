@@ -31,6 +31,14 @@ export interface OneScreen {
   readonly file: string
   readonly alt: string
   readonly drawn: string
+  /** drawnBy is the renderer source that draws `drawn`'s own class or id,
+   * relative to the console's root. It is here because a selector is this run's
+   * own invention until the renderer that has to have it agrees: the unit suite
+   * reads this file and refuses a `drawn` whose class or id is not a quoted
+   * literal in it, so a screen whose renderer is renamed turns the run red
+   * rather than turning into a `waitForSelector` timeout on the owner's Mac
+   * (review of 2026-10-20, low finding). */
+  readonly drawnBy: string
 }
 
 /** SCREENS is the captures of the dashboard's launch, in the order they are
@@ -50,6 +58,7 @@ export interface OneScreen {
 export const LIVE_SCREEN: OneScreen = Object.freeze({
   file: 'console-live.png',
   drawn: '.live-run',
+  drawnBy: 'src/renderer/screens/live.ts',
   alt: "The console's Live screen for a fictional acme-platform installation: three runs -- one implementing the second round of a scheduler port, one in review and close to its deadline, one queued -- two repositories, and the day's spend at 34.85% of a $120 daily cap.",
 })
 
@@ -59,6 +68,7 @@ export const LIVE_SCREEN: OneScreen = Object.freeze({
 export const RUN_SCREEN: OneScreen = Object.freeze({
   file: 'console-run.png',
   drawn: '.run-log-line',
+  drawnBy: 'src/renderer/screens/run.ts',
   alt: 'The run-detail screen for run 20261020-103045-aa01 (acme/platform-core): its stage ledger, its build, test and lint verification, three findings and the tail of its log.',
 })
 
@@ -68,6 +78,7 @@ export const RUN_SCREEN: OneScreen = Object.freeze({
 export const SPEND_SCREEN: OneScreen = Object.freeze({
   file: 'console-spend.png',
   drawn: '.spend-point',
+  drawnBy: 'src/renderer/screens/spend.ts',
   alt: 'The Spend screen for a fictional acme-platform installation: thirty days of daily spend, the account totals, and the per-repository and default daily and per-run caps.',
 })
 
@@ -96,6 +107,7 @@ export const SCREENS: readonly OneScreen[] = Object.freeze([LIVE_SCREEN, RUN_SCR
 export const PICKER_SCREEN: OneScreen = Object.freeze({
   file: 'console-installations.png',
   drawn: '#picker-list li',
+  drawnBy: 'src/renderer/installations.html',
   alt: 'The installation picker on a console that has three installations -- acme-platform, acme-web and acme-data -- each naming the fixture CLI binary this run installed in its own temporary directory; acme-platform is the one this console is showing and the other two have not been read.',
 })
 
