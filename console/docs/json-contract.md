@@ -606,23 +606,73 @@ and one entry of `installations`:
 | `region` | string | never | never | `""` when the config could not be read |
 | `shared_merged` | bool | never | never | whether this machine holds the installation's published shared config |
 | `shared_checked_at` | string | never | **yes** | RFC 3339 UTC; null exactly when `shared_merged` is false |
+| `checkouts` | array | **yes** (an older CLI) | never | the repositories of this project this machine remembers a checkout of, one entry per path; `[]` when none is remembered |
+
+and one entry of `installations[].checkouts`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `repository` | string | never | never | `<provider>/<owner>/<name>`, the identity the path was recorded under |
+| `path` | string | never | never | the absolute path, made printable and bounded (control and format characters escaped, at most 200 runes) |
+| `valid` | bool | never | never | whether the path is still a checkout of this project and this repository, as of this read |
+| `reason` | string | **yes** | never | why it is not, one of `missing`, `not_a_checkout`, `unreadable`, `other_project`, `other_repository`; **absent exactly when `valid` is true** |
+
+**`checkouts` is what makes the first run zero-configuration** (v1 design D13
+and §3.4 rule 7; console v2 plan V2.1.1): the installation list and the local
+checkouts of each installation arrive in one document, so the picker and the
+checkouts cannot disagree about which installation is which. The rows are
+**local state and nothing else** — the paths are never published to the runs
+bucket, never merged into the shared config, and never printed by any other
+command. They come from a machine-local state file
+(`$XDG_CONFIG_HOME/fugaro/checkouts.json`, beside the project configs and not
+among them), written best effort by the commands that already resolve a
+checkout's project (`fugaro validate`, `fugaro run`, `fugaro init --repo` and
+the rest), bounded to 20 repositories per project and 5 paths per repository.
+
+**Every path is re-validated on this read, and the read never writes.** A path
+that has moved or been deleted, that is no longer a git checkout's own root,
+whose `fugaro.yaml` names another project, or whose origin is another
+repository is reported with `valid: false` and its `reason` — never dropped,
+because the write path is what prunes and a directory that comes back is a
+checkout again. **The console must render an invalid row and never act on it**:
+the path is where the checkout was, not where it is. A state file that cannot
+be read (not JSON, another version, over its size bound) is a warning naming
+it and `checkouts: []` for every installation — never a silent "there are
+none", and never a listing that fails.
+
+**The rows are strings off this machine's disk**, so every one of them is
+escaped and bounded like the rest of this contract: a repository identity or a
+path carrying a control character, a bidi override or 400 bytes of padding
+arrives escaped and marked. A reader renders them as text and nothing else —
+**no path in this document is ever a path the console joins, opens or passes
+back as a flag** (§3.4 rule 7).
 
 **An installation whose config cannot be read is still listed, by name, with a
 warning** — a picker that offered a name and then failed silently is worse than
-one that says what it could not read.
+one that says what it could not read. **Its `checkouts` are listed anyway**:
+which directory holds this project's checkout is a fact of this machine, not of
+the file that could not be parsed, and it is the one thing a reader can still
+act on.
 
 **The document is a named set of fields and it is deliberately not a marshalled
 `localcfg.Config`.** That struct carries the operator's providers and their base
 URLs, the named Claude accounts, the reserved project secrets, the Terraform
 block and the whole repository list — none of which the picker needs, and all of
 which would join this document the day a field is added to the struct. A test
-fails if a field outside the five above reaches the output, and if either type
+fails if a field outside the six above reaches the output, and if either type
 ever becomes (or embeds) `localcfg.Config`.
 
 **Version skew.** The command is new, so an older CLI does not have it at all:
 the spawn fails and the console shows its "this CLI cannot list installations"
 state, which is the form D13 accepted for v1. The handshake (§6.7) is what tells
-the console which case it is in.
+the console which case it is in. **`checkouts` is newer than the command**: a
+CLI that lists installations and emits no `checkouts` key at all is a CLI that
+does not know about checkouts, and the console shows the installation without
+them (its checkout directory stays whatever the operator stored in D13's
+form) — an empty array means this CLI knows, and this machine remembers none.
+The two are not the same state and the reader must not conflate them. There is
+no version field to bump: this document is read whole, and the key's absence is
+the signal.
 
 ### 6.9 `fugaro plan graph --json`
 
@@ -793,8 +843,10 @@ the closing here.
 | 6 | **No PR field on a run that has not finished** | `JSONRun` carries `repo` and no `pr_url`/`pr_number`; they exist only on `JSONFinished`; `runview.Row` spells the pair `pr_url` + `pr` | A live row shows no link; the detail screen takes it from `diagnose RUN --json`'s `row` |
 | 7 | **No provider a console can build a link from** | `runview.Row` and `diagnose`'s row carry no provider, and `doctor --json`'s `doctorOutput` reports none. `JSONRun` and `JSONFinished` now do carry `provider` (phase 3, Task 3.5), and it is the right answer for the runs that have one — a shared project job's profile pins the provider its runs clone from — but it is **absent on every per-repository job**, which in phase 3 is every Bitbucket repository and every baked workflow. The kinds are `github`/`bitbucket`/`fake` (`internal/task/task.go`'s `Slug`, which hashes provider and repository together **one way**, so a slug cannot be inverted) | **No PR link at all** (design §5.1 rule 2): repository, number and `pr_url` shown as text, never handed to `openExternal`. A GitHub-shaped guess is wrong for `edgeappinc/fugarosandbox`, which is Bitbucket — and that run is exactly one of the runs whose `provider` is absent |
 
-**And no shape anywhere has a `repository` field** — the repository is `repo`
-on every one of them. **`watch --json`'s run and finished rows carry a
+**And no shape that describes a run has a `repository` field** — the repository
+is `repo` on every one of them. (§6.8's `checkouts` rows are the one place this
+contract spells the word: there it names a repository identity, not a run's
+repository, and nothing builds a link from it.) **`watch --json`'s run and finished rows carry a
 `provider`; nothing else does, and it is the job profile's, not a stamp for
 every repository.** So a link rebuilt as `https://github.com/<repo>/pull/<n>`
 is still not merely useless but wrong (design §5.1 rule 2), and **gap 7 stays

@@ -866,8 +866,19 @@ This command has no subcommands.
 List the Fugaro installations this machine has
 
 List the project configs under $XDG_CONFIG_HOME/fugaro/projects (else
-~/.config/fugaro/projects), with the GCP project and region of each and what
-is known about its published shared config.
+~/.config/fugaro/projects), with the GCP project and region of each, what
+is known about its published shared config, and the checkouts of its
+repositories this machine remembers.
+
+The checkouts are remembered by the commands that already run in one
+(fugaro init --repo, fugaro run, fugaro validate and every other command
+that resolves a checkout's project), in a machine-local state file beside
+the project configs. Every path is re-validated on this read: a path that
+was moved or deleted, that is no longer a git checkout, or whose
+fugaro.yaml no longer names this project and this repository is reported
+with "valid": false and a reason, and is never silently dropped. The
+paths are local state: they are never published to the runs bucket, to
+the shared config or to any log.
 
 This is a local read: it opens no bucket and needs no project selected, so it
 works outside a checkout and with no config at all (an empty list).
@@ -1765,50 +1776,10 @@ Flags:
 
 Subcommands:
 
-- `fugaro project ls` -- List this machine's Fugaro installations and their known checkouts
 - `fugaro project policy` -- The project's published policy (config/policy/shared)
 - `fugaro project repos` -- The project's allow-list: which repositories may run
 - `fugaro project show` -- Show the effective project: caps, policy, allow-list, repositories running now
 - `fugaro project sync` -- Offer the GitHub App's installed repositories that the allow-list does not admit
-
-## `fugaro project ls`
-
-List this machine's Fugaro installations and their known checkouts
-
-List every project config on this machine — the installations — with the GCP
-project, the region and the installation's name of each, and, per
-installation, the repositories this machine remembers a checkout of and
-where each checkout is.
-
-This is a local, read-only, offline read: it opens no bucket and calls no
-cloud API, needs no project selected and no credentials, and works outside a
-checkout and with no config at all (an empty list). A config that cannot be
-parsed is still listed, with the reason in its "error" field, and never stops
-the rest of the listing.
-
-The checkouts are remembered by the commands that already run in one (fugaro
-init --repo, fugaro run, fugaro validate and every other command that resolves
-a checkout's project), in a machine-local state file beside the project
-configs. Every path is re-validated on this read: a path that was moved or
-deleted, that is no longer a git checkout, or whose fugaro.yaml no longer
-names this project and this repository is reported with "valid": false and a
-reason, and is never silently dropped here. The paths are local state: they
-are never published to the runs bucket, to the shared config or to any log.
-
-With --json it prints one versioned document instead of a table.
-
-Usage: `fugaro project ls`
-
-Flags:
-
-| Flag | Type | Default | Required | Description |
-| --- | --- | --- | --- | --- |
-| `-h`, `--help` | bool | `false` | no | help for ls |
-| `--json` | bool | `false` | no | print machine-readable output |
-
-Subcommands:
-
-This command has no subcommands.
 
 ## `fugaro project policy`
 

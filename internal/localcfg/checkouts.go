@@ -17,13 +17,13 @@ import (
 // repository a project enrolls.
 //
 // It is a machine-local convenience for the desktop console's first run
-// (docs/design/desktop-console.md D13 and §3.4 rule 7): `fugaro project ls`
-// reads it and the console, which never reads ~/.config/fugaro itself, gets
-// each installation's repositories and where they are checked out from that
-// command's document. A path is therefore local state and nothing else — it
-// is never published to the runs bucket, never merged into the shared config
-// (Shared drops it by not knowing about it) and never printed by a command
-// other than `project ls` itself.
+// (docs/design/desktop-console.md D13 and §3.4 rule 7): `fugaro config list
+// --json` reads it and the console, which never reads ~/.config/fugaro
+// itself, gets each installation's repositories and where they are checked
+// out from that command's document. A path is therefore local state and
+// nothing else — it is never published to the runs bucket, never merged into
+// the shared config (Shared drops it by not knowing about it) and never
+// printed by a command other than `config list` itself.
 //
 // It is a file of its own, not a key in <project>.yaml, for the reason the
 // project config is a *document the operator owns*: `fugaro init` rewrites
@@ -33,7 +33,7 @@ import (
 // their own tooling. So this is state: it is best effort (a write that fails
 // never fails the command that would have recorded it), it is dropped and
 // rebuilt without ceremony, and its reader never trusts it — see
-// `fugaro project ls`, which re-validates every path it reads.
+// `fugaro config list --json`, which re-validates every path it reads.
 
 // CheckoutsVersion is the version of the checkouts document. A file whose
 // version is not this one is refused rather than read as this version's (and

@@ -26,10 +26,10 @@ import (
 // that resolves a checkout's project has: the checkout is remembered for
 // that project (recordCheckout), best effort.
 //
-// The split exists for the readers that must not write: `fugaro project ls`
-// re-validates the checkouts it reads and records nothing, so it calls
-// resolveCheckout. Everything else wants the checkout remembered and calls
-// this one.
+// The split exists for the readers that must not write: `fugaro config list
+// --json` re-validates the checkouts it reads and records nothing, so it
+// calls resolveCheckout. Everything else wants the checkout remembered and
+// calls this one.
 func checkoutProject(ctx context.Context, dir string) (*localcfg.Checkout, error) {
 	co, err := resolveCheckout(ctx, dir)
 	if err != nil || co == nil {
@@ -100,7 +100,7 @@ func resolveCheckout(ctx context.Context, dir string) (*localcfg.Checkout, error
 // on, a checkout path the state file refuses — none of them is an error, and
 // none of them is printed. Nothing here can fail the command that runs it,
 // and the path never reaches stdout, stderr or a log line: it is local state
-// for `fugaro project ls` and nothing else.
+// for `fugaro config list --json` and nothing else.
 func recordCheckout(ctx context.Context, co *localcfg.Checkout) {
 	if consoleRead(ctx) {
 		// A read the desktop console spawns changes nothing (see
@@ -419,11 +419,10 @@ func selectedProjectConfigErr(ctx context.Context) (*localcfg.Config, error) {
 // config say update_check: false" (updateCheckDisabled, reached from
 // NewRootCmd's PersistentPreRun). Recording there would make every command
 // that runs in a checkout write the remembered checkouts — `fugaro config
-// list` and `fugaro project ls` among them, and those two are reads the
-// console spawns under a rule of their own, that a read the console spawns
-// changes nothing (TestConsoleV2ReadsWriteNothing). A command that resolves
-// the checkout for its own work still records it, because it calls
-// checkoutProject.
+// list` among them, and that one is a read the console spawns under a rule
+// of its own, that a read the console spawns changes nothing
+// (TestConsoleV2ReadsWriteNothing). A command that resolves the checkout for
+// its own work still records it, because it calls checkoutProject.
 func selectedProjectConfigReadOnly(ctx context.Context) *localcfg.Config {
 	lc, _ := selectedProjectErr(ctx, resolveCheckout)
 	return lc

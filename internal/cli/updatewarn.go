@@ -160,10 +160,9 @@ func updateCheckDisabled(cmd *cobra.Command) bool {
 	// on every command's PersistentPreRun, before the command has done
 	// anything, and recording the checkout it looks at would make every
 	// command in a checkout write the remembered checkouts — `fugaro config
-	// list` and `fugaro project ls` included, which are reads the console
-	// spawns under the rule that a read changes nothing. The question here
-	// ("does this project's config say update_check: false") has the same
-	// answer either way.
+	// list` included, which is a read the console spawns under the rule that
+	// a read changes nothing. The question here ("does this project's config
+	// say update_check: false") has the same answer either way.
 	if lc := selectedProjectConfigReadOnly(cmd.Context()); lc != nil {
 		return !lc.UpdateCheckEnabled()
 	}
