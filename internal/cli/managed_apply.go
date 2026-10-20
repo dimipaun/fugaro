@@ -565,6 +565,19 @@ func writeImpersonationFile(impersonationURL string) (string, func(), error) {
 	if err != nil {
 		return "", none, err
 	}
+	// The modes below are the POSIX half of what protects this file, and 0600
+	// and 0700 are deliberately not claimed to protect it anywhere else: on
+	// Windows there are no POSIX modes, Go's os.Chmod there sets the read-only
+	// attribute and nothing more, so what keeps another local user out of this
+	// file is the ACL %TEMP% carries and the fact that it is removed when the
+	// apply ends. That is weaker than the Linux answer, and it is not a
+	// weakening this branch may decide: **D12 (file modes) is open** in
+	// docs/windows-cli/reconciliation.md, the Windows CLI gets its release in
+	// **Slice 5**, and docs/windows-cli/README.md records that a Windows
+	// release must not ship without that decision. The file is the operator's
+	// refresh token wrapped for the deployer — the one secret this command
+	// writes — and no code path may grow a second copy of it on Windows before
+	// D12 is answered.
 	dir, err := os.MkdirTemp(credentialDir, "fugaro-deployer-")
 	if err != nil {
 		return "", none, userErr("making the credential file's directory: %v", safetext.FieldErr(err))

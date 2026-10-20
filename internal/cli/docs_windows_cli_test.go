@@ -51,6 +51,17 @@ const (
 	// that licenses the move.
 	windowsCLIFirstCut        = "**The first cut builds.**"
 	windowsCLIFirstCutCommand = "GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/fugaro.exe ./cmd/fugaro"
+
+	// windowsCLIPermsDeferral is the index's record of the one security
+	// question this slice leaves open: the operator's refresh-token file
+	// managed apply writes under %TEMP% is protected by os.Chmod(0600/0700),
+	// which does nothing on Windows. D12 (file modes) is open, so the answer
+	// is not this branch's to take — what is this branch's is that the
+	// deferral is written down where the release slices are planned, because
+	// Slice 5 is a Windows release and it must not ship without the answer.
+	// The sentence names both, so a later edit that drops either one is red
+	// here rather than discovered on a Windows machine.
+	windowsCLIPermsDeferral = "**A Windows release must not ship without D12.**"
 )
 
 // windowsCLIRevision is the commit the reconciliation was read at. A later run
@@ -91,6 +102,7 @@ func TestDocsWindowsCLIIsWritten(t *testing.T) {
 		windowsCLIStatus,
 		windowsCLIFirstCut,
 		windowsCLIFirstCutCommand,
+		windowsCLIPermsDeferral,
 		"**Owner:** the Fugaro owner",
 		windowsCLIRevision,
 		// The ranges the index states, so its own summary can be counted.

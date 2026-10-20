@@ -90,6 +90,23 @@ there would make every contributor's `fugaro verify build` cross-compile, which
 is Slice 6's decision and costs every Linux build a Windows build's worth of
 time (T1.5).
 
+## The one security deferral this slice leaves open
+
+**A Windows release must not ship without D12.** `fugaro managed apply` writes
+the operator's own refresh token — wrapped for the deployer account — into a
+directory of its own under the system's temporary directory
+(`internal/cli/managed_apply.go`, `writeImpersonationFile`): the file `0600`,
+its directory `0700`. On Windows neither mode is what keeps another local user
+out: there are no POSIX modes there, and Go's `os.Chmod` sets the read-only
+attribute and nothing more, so what protects the file is the ACL `%TEMP%`
+carries and the removal that follows every apply. That is weaker than the Linux
+answer, and the answer is not this slice's to take — **D12 (file modes)** is
+open in [reconciliation.md](reconciliation.md) §5, the code site says so in
+place, and **Slice 5** is the slice that releases a Windows binary, so it is
+the last one that can decide it before a user's token is on disk. Slice 1 did
+not change this file's permissions; what it does is write the question down
+where the release is planned.
+
 The status line at the top of this file is the plan's own promise about the
 folder and moves where the plan says it does — T0.3 and then T6.3, each with
 the evidence that licenses the move — so it still reads as it did; what Slice 1
