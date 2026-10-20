@@ -96,7 +96,7 @@ variable "project_number" {
 }
 
 variable "manage_apis" {
-  description = "Whether this root enables the two APIs. Off, the project is left to be managed elsewhere (init --skip-apis)."
+  description = "Whether this root enables the two APIs. Off, the project is left to be managed elsewhere (fugaro update --skip-apis)."
   type        = bool
   default     = true
 }

@@ -241,7 +241,7 @@ func TestTagMoverRoleIsTagsDeleteOnly(t *testing.T) {
 	}
 }
 
-// The base images are copied into fugaro-base by init, as the person running
+// The base images are copied into fugaro-base by fugaro update, as the person running
 // it (design m11 §3.3): a build account must never be able to write that
 // registry, since the image every repository's credential step runs comes
 // from it. So the only grant on the base registry that is not a reader's is
@@ -1012,7 +1012,7 @@ func TestNoFirestoreDatabaseResource(t *testing.T) {
 		code := stripComments(string(b))
 		for _, bad := range []string{`"google_firestore_database"`, `"google_firebase_rules_`, `"google_firestore_`} {
 			if strings.Contains(code, bad) {
-				t.Errorf("%s declares %s: the database and its rules are init --firebase's REST steps", path, bad)
+				t.Errorf("%s declares %s: the database and its rules are fugaro update's REST steps", path, bad)
 			}
 		}
 	})
@@ -1321,7 +1321,7 @@ func TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant(t *testing.T
 				t.Errorf("%s: %s does not name the deployer account as the literal %s: a grant whose account is computed is a grant nobody can check, and this is the account an operator is impersonating", path, blk.name, account)
 			}
 			if !hasAttr(blk.body, "for_each", "toset(var.operators)") {
-				t.Errorf("%s: %s is not for var.operators, the people the owner names at init", path, blk.name)
+				t.Errorf("%s: %s is not for var.operators, the people the owner names at setup", path, blk.name)
 			}
 			if !hasAttr(blk.body, "member", "each.value") {
 				t.Errorf("%s: %s does not grant the role to each.value", path, blk.name)

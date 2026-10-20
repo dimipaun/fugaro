@@ -114,7 +114,7 @@ variable "budget_admins" {
 }
 
 variable "history_account" {
-  description = "The email of the history job's account, which the installation root created (the first of init --firebase's three applies) so it exists before it is granted anything. It sweeps the RTDB registry and deletes expired run users."
+  description = "The email of the history job's account, which the installation root created (the first of fugaro update's three applies) so it exists before it is granted anything. It sweeps the RTDB registry and deletes expired run users."
   type        = string
 
   validation {

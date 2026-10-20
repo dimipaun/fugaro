@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestHistoryImageSmoke builds the history image the way init and CI do and
+// TestHistoryImageSmoke builds the history image the way fugaro update and CI do and
 // runs images/smoke-history.sh against it.
 func TestHistoryImageSmoke(t *testing.T) {
 	const image = "fugaro-history:test"
