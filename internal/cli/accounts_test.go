@@ -616,6 +616,41 @@ func TestAccountsClearNeverPrintsAValue(t *testing.T) {
 	}
 }
 
+// A budget.rtdb_url pointing at another project's database is refused rather
+// than read or written: the states of one project's cascade are not another
+// project's, and this command's write must land in the operator's own
+// installation (checkDBProject, the check every other reader and writer makes).
+func TestAccountsRefuseAnotherProjectsDatabase(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.appendConfig(t, claudeAccountsConfig)
+	f.db.Set("fugaro/project", "birch") // the database belongs to a different project
+	now := time.Now().UTC().Truncate(time.Second)
+	f.db.Set(credsMarkPath("acme-personal"), map[string]any{
+		"state": "broken", "since": now.Add(-time.Minute).Format(time.RFC3339Nano)})
+
+	// The read: the names are local and stay right, but no state is claimed.
+	out, _, err := execute(t, "accounts", "ls", "--repo", "acme/other", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc accountsListDoc
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("unmarshal %q: %v", out, err)
+	}
+	if doc.States != nil || !strings.Contains(doc.StateNote, "birch") {
+		t.Fatalf("states = %v, state_note = %q, want no states and a note naming the other project", doc.States, doc.StateNote)
+	}
+
+	// The write: refused, and the mark is untouched.
+	noTerminal(t)
+	if _, _, err := execute(t, "accounts", "clear", "acme-personal", "--yes"); err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error for another project's database", err)
+	}
+	if m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any); m["state"] != "broken" {
+		t.Fatalf("mark = %v, want it untouched", m)
+	}
+}
+
 // markFlip is the operator's terminal in the test below: the first time the
 // command reads the confirmation, it changes the stored mark — exactly where
 // the service marking the credential at that same moment would — and then

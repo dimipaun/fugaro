@@ -211,6 +211,13 @@ func accountsStates(ctx context.Context, lc *localcfg.Config, names []string, se
 	if err != nil {
 		return nil, fmt.Sprintf("no credential state could be read: %v", err)
 	}
+	// The database must be this project's own (the check every other reader and
+	// writer makes): a budget.rtdb_url pointing at another project's database
+	// would otherwise have this command print that project's marks as this
+	// project's states, which is a wrong answer rather than a missing one.
+	if err := checkDBProject(ctx, db, lc); err != nil {
+		return nil, fmt.Sprintf("no credential state could be read: %v", err)
+	}
 	marks, err := (&creds.RTDBStore{DB: db}).Marks(ctx)
 	if err != nil {
 		return nil, fmt.Sprintf("no credential state could be read: %v", err)
@@ -375,6 +382,13 @@ func accountsClear(cmd *cobra.Command, o accountsClearOptions, name string) erro
 	}
 	_, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
+		return err
+	}
+	// This writes, so the database must be this project's own — the check
+	// `fugaro budget set` and `fugaro budget kill` make before they write: a
+	// budget.rtdb_url pointing at another project's database would otherwise
+	// have the operator clear a mark in an installation that is not theirs.
+	if err := checkDBProject(ctx, db, lc); err != nil {
 		return err
 	}
 	store := &creds.RTDBStore{DB: db}
