@@ -29,15 +29,18 @@ import (
 // that names its own --recipe -- including one that would produce artifacts --
 // is judged by the launch's gate, run.go's checkArtifactLaunch, which asks the
 // same artifactOnBatchRefusal with the recipe the launch resolves: the text a
-// project or catalog recipe carries in the task, or, for a repository recipe
-// (named, or the one agent.recipe names), the file in this launcher's working
-// tree. The runner reads a repository recipe at the task's ref -- the
-// repository's base branch unless the launch names another -- so neither arm
-// sees the recipe the runner will read when the two differ: that residual is
-// recorded in the plan's Task 10 step 5 inventory, which must close it before
-// the name is selectable, and TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef
-// pins it. A boundary enforced only here would be a hole the moment the name
-// is selectable, which is exactly what Global Constraint 13 exists to prevent.
+// project or catalog recipe carries in the task -- and, for that one, the
+// repository layer the ref holds of the same name, which is the recipe that
+// actually runs (TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch)
+// -- or, for a repository recipe (named, or the one agent.recipe names), the
+// file in this launcher's working tree. The runner reads a repository recipe at
+// the task's ref -- the repository's base branch unless the launch names
+// another -- so neither arm sees the recipe the runner will read when the two
+// differ: that residual is recorded in the plan's Task 10 step 5 inventory,
+// which must close it before the name is selectable, and
+// TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins it. A boundary
+// enforced only here would be a hole the moment the name is selectable, which
+// is exactly what Global Constraint 13 exists to prevent.
 //
 // NOT written here, and why, so a reader of Task 8's step 4 does not have to
 // reconstruct it: design §4.4's item 2 (docker: true requires a Docker-capable
@@ -140,8 +143,9 @@ func batchValidateProblems(lc *localcfg.Config, cfg *config.Config, rcp *recipe.
 // installation would be exactly that, and the launch's gate is where the
 // recipe the launch names is resolved. Resolved as this launcher can: a
 // repository recipe is read from its working tree, not at the task's ref the
-// runner reads, and that difference is the residual the plan's Task 10 must
-// close (see the file comment above).
+// runner reads -- the residual the plan's Task 10 must close, see the file
+// comment above -- and a recipe whose text the task carries is judged against
+// the ref's own file of that name, which is what runs.
 func artifactOnBatchRefusal(backendName string, rcp *recipe.Recipe) (string, bool) {
 	if backendName != backend.CloudBatch || rcp == nil || rcp.Mode != recipe.ModeArtifact {
 		return "", false
@@ -172,7 +176,30 @@ const artifactOnBatchMessage = "an artifact-producing run is never launched on c
 // plainly: a Batch launch from outside the repository's own checkout is refused
 // until the recipe can be read there, and the Fix says so.
 func artifactUnreadOnBatchRefusal(repo string) string {
-	return fmt.Sprintf("a run on cloud-batch whose recipe this launcher cannot read is refused: the recipe of %s is not readable from this directory (a repository recipe is read from a checkout whose origin is %s, and a first run's recipe is the one that checkout's agent.recipe names), so nothing on this path can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/design/artifact-runs.md §8.5 and D11). Run this launch from a checkout of %s, or name a recipe whose text the task carries, and it is judged on its own mode", repo, repo, repo)
+	return fmt.Sprintf("a run on cloud-batch whose recipe this launcher cannot read is refused: the recipe of %s is not readable from this directory (a repository recipe is read from a checkout whose origin is %s, and a first run's recipe is the one that checkout's agent.recipe names), so nothing on this path can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/design/artifact-runs.md §8.5 and D11). Run this launch from a checkout of %s that holds the ref it launches, and it is judged on the recipe the run reads there", repo, repo, repo)
+}
+
+// artifactShadowedOnBatchRefusal is the launch's third shape of the same
+// boundary (Global Constraint 13): on cloud-batch, a launch whose task carries
+// its own recipe text and whose repository layer at the ref this launcher
+// cannot read.
+//
+// The hole it closes is the boundary reading the wrong document. A recipe's
+// text travels in the task for a project or catalog recipe, and the task's
+// record of where it came from does not decide anything: the runner reads the
+// repository layer at the task's ref FIRST and only falls back to the task's
+// copy (internal/runner/recipe.go's resolveRecipe, TestRecipeRepoLayerWins), so
+// a .fugaro/recipes/<name>.yaml at the ref is the recipe that runs, mode
+// included. `fugaro run --recipe <a project or catalog name>` from a directory
+// that is not a checkout of the run's repository is that launch: the task
+// carries text this launcher can read perfectly well, and a base branch whose
+// same-named file is mode: artifact would run it on a Batch VM. The launcher
+// therefore asks the ref for the name, exactly as the runner does, and refuses
+// when it cannot -- the fail-closed direction, at the cost stated plainly: a
+// launch carrying a project or catalog recipe is refused unless this
+// directory's checkout holds the ref it launches.
+func artifactShadowedOnBatchRefusal(name, repo, ref string) string {
+	return fmt.Sprintf("a run on cloud-batch whose recipe this launcher cannot resolve is refused: the recipe %s travels in this task as text, but a run does not necessarily read it -- the repository layer at %s is read first, so a .fugaro/recipes/%s.yaml at %s is the recipe that runs, its mode included, whatever text the task carries. Nothing here can read %s's repository layer (%s is read from a checkout of its own; this directory has none that holds the ref), so nothing on this path can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/design/artifact-runs.md §8.5 and D11). Run this launch from a checkout of %s that holds %s, and the recipe the run reads there is the one judged", name, ref, name, ref, repo, ref, repo, ref)
 }
 
 // isSelectableBackend reports whether name is one of the backends

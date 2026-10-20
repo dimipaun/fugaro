@@ -1297,23 +1297,34 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 // while the other keeps it.
 //
 // What it judges is the recipe as recipeForLaunch resolves it, and that is not
-// always the recipe the runner reads: a project or catalog recipe's text
-// travels in the task and is exact, but a repository recipe (named, or the one
-// agent.recipe names) is read from this launcher's working tree, while the
-// runner reads it at the task's ref -- the repository's base branch unless the
-// launch names another. A working tree whose recipe is not mode: artifact
-// passes this gate for a ref whose recipe is. That residual is recorded in the
-// plan's Task 10 step 5 inventory, which closes it before the name is
-// selectable, and TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins
-// it.
+// always the recipe the runner reads, because the runner resolves the
+// repository layer at the task's ref FIRST (internal/runner/recipe.go's
+// resolveRecipe, TestRecipeRepoLayerWins):
 //
-// It has two shapes of its own, because a launch can arrive without a recipe
+//   - a project or catalog recipe's text travels in the task, but a file of
+//     that name at the ref is the recipe that runs, mode included, whatever
+//     text the task carries. So the ref is asked for that name as the runner
+//     asks it (carriedRecipeAtRef, recipeAtRef), and a ref this checkout has
+//     none of is refused fail-closed (artifactShadowedOnBatchRefusal) -- the
+//     text a task carries says nothing about what the base branch holds beside
+//     it. TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch
+//     pins both halves.
+//   - a repository recipe (named, or the one agent.recipe names) is read from
+//     this launcher's working tree, while the runner reads it at the task's
+//     ref -- the repository's base branch unless the launch names another. A
+//     working tree whose recipe is not mode: artifact therefore passes this
+//     gate for a ref whose recipe is. That residual is recorded in the plan's
+//     Task 10 step 5 inventory, which closes it before the name is selectable,
+//     and TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins it.
+//
+// It has three shapes of its own, because a launch can arrive without a recipe
 // this launcher can read at all: the refusal for a recipe known to be mode:
 // artifact, and -- on cloud-batch only -- the refusal for a recipe that could
-// not be resolved here, since nothing on this path can then say the run is not
-// an artifact one (artifactUnreadOnBatchRefusal). Both are asked before
-// anything about this launch is written, so neither leaves a task or an
-// execution behind.
+// not be resolved here (artifactUnreadOnBatchRefusal) and for a carried recipe
+// whose repository layer at the ref could not be read
+// (artifactShadowedOnBatchRefusal), since nothing on this path can then say the
+// run is not an artifact one. All are asked before anything about this launch
+// is written, so none leaves a task or an execution behind.
 func checkArtifactLaunch(ctx context.Context, env *cloudEnv, spec *task.Spec) error {
 	cfg := checkoutConfig(ctx, spec.Repo)
 	// The boundary is asked here, before the checkout can bail out below and
@@ -1344,6 +1355,25 @@ func checkArtifactLaunch(ctx context.Context, env *cloudEnv, spec *task.Spec) er
 		// cloud-batch an unread recipe is refused rather than passed on.
 		return userErr("%s", artifactUnreadOnBatchRefusal(spec.Repo))
 	}
+	if launchBackend(env.be) == backend.CloudBatch && spec.Recipe != nil && spec.Recipe.YAML != "" {
+		// A recipe whose text the task carries is not the run's recipe either,
+		// and for the same reason: the runner reads the repository layer at the
+		// task's ref FIRST and only falls back to the task's copy
+		// (internal/runner/recipe.go's resolveRecipe, TestRecipeRepoLayerWins),
+		// so a file of that name at the ref is the recipe that runs, its mode
+		// included. So the ref is asked for that name, as the runner asks it:
+		// the file it finds (if any) is judged on its own mode, and a ref this
+		// checkout has none of is refused fail-closed -- a project or catalog
+		// recipe's text says nothing about what the repository's base branch
+		// holds beside it.
+		refRcp, err := carriedRecipeAtRef(ctx, spec)
+		if err != nil {
+			return userErr("%s", artifactShadowedOnBatchRefusal(spec.Recipe.Name, spec.Repo, spec.Ref))
+		}
+		if msg, ok := artifactOnBatchRefusal(backend.CloudBatch, refRcp); ok {
+			return userErr("%s", msg)
+		}
+	}
 	if cfg == nil {
 		return nil
 	}
@@ -1362,6 +1392,79 @@ func checkArtifactLaunch(ctx context.Context, env *cloudEnv, spec *task.Spec) er
 		return nil
 	}
 	return userErr("recipe %s: %s", rcp.Name, strings.Join(msgs, "; "))
+}
+
+// carriedRecipeAtRef is the recipe the runner will use for a launch whose task
+// carries its own recipe text: the repository layer at the task's ref when the
+// ref has a file of that name -- which resolveRecipe reads FIRST and which wins
+// over the task's copy, mode included (internal/runner/recipe.go,
+// TestRecipeRepoLayerWins) -- else the text the task carries.
+//
+// err is non-nil whenever the ref's answer cannot be had at all: no checkout of
+// the run's repository in this directory, a checkout that does not hold
+// spec.Ref, or a file at the ref this launcher cannot parse. The caller refuses
+// on it, because then nothing here can say whether the run is an artifact one.
+func carriedRecipeAtRef(ctx context.Context, spec *task.Spec) (*recipe.Recipe, error) {
+	root := checkoutRoot(ctx, spec.Repo)
+	data, found, err := recipeAtRef(ctx, root, spec.Ref, spec.Recipe.Name)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		data = []byte(spec.Recipe.YAML)
+	}
+	rcp, ps := recipe.Parse(data)
+	if len(ps) > 0 {
+		return nil, fmt.Errorf("recipe %s at %s is invalid: %s", spec.Recipe.Name, spec.Ref, recipe.ProblemsText(ps))
+	}
+	if rcp.Name != spec.Recipe.Name {
+		return nil, fmt.Errorf("recipe %s at %s names itself %q; the file name and the name must agree", spec.Recipe.Name, spec.Ref, rcp.Name)
+	}
+	return rcp, nil
+}
+
+// recipeAtRef reads .fugaro/recipes/<name>.yaml at ref out of this checkout's
+// own object database -- git cat-file, never the network and never the working
+// tree -- the file the runner resolves first (internal/runner/recipe.go's
+// readRepoRecipe). found is false when the ref has no such file; err when the
+// answer cannot be had at all (no checkout root, a ref this checkout does not
+// hold, a path that is not a blob).
+//
+// The refs are tried the way checkoutFugaroYAMLAtRef tries them, and for its
+// reason: refs/remotes/origin/<ref> first, because that is the ref the run
+// clones, and the plain ref as the fallback for a checkout that has the branch
+// but no remote-tracking ref of it. Nothing is fetched here -- a fetch is a
+// network write into a repository this command does not own.
+func recipeAtRef(ctx context.Context, root, ref, name string) (data []byte, found bool, err error) {
+	if root == "" {
+		return nil, false, errors.New("this directory is not a checkout of the run's repository")
+	}
+	if ref == "" {
+		return nil, false, errors.New("the launch names no ref")
+	}
+	at := ""
+	for _, candidate := range []string{"refs/remotes/origin/" + ref, ref} {
+		sha, err := gitRead(ctx, root, "rev-parse", "--verify", "--quiet", "--end-of-options", candidate+"^{commit}")
+		if err == nil && sha != "" {
+			at = candidate
+			break
+		}
+	}
+	if at == "" {
+		return nil, false, fmt.Errorf("this checkout holds no %s ref (fetch it, or check it out)", ref)
+	}
+	rel := recipe.RepoPath(name)
+	if _, err := gitRead(ctx, root, "rev-parse", "--verify", "--quiet", "--end-of-options", at+":"+rel); err != nil {
+		return nil, false, nil
+	}
+	data, err = gitCmd(ctx, root, "cat-file", "blob", at+":"+rel).Output()
+	if err != nil {
+		return nil, false, fmt.Errorf("%s at %s is not a readable file", rel, at)
+	}
+	if len(data) > recipe.MaxBytes {
+		return nil, false, fmt.Errorf("%s at %s is %d bytes, over the 16 KiB limit", rel, at, len(data))
+	}
+	return data, true, nil
 }
 
 // recipeForLaunch is the recipe this launch will run, parsed: the task's own
