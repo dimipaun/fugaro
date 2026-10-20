@@ -640,9 +640,13 @@ func TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited(t *testi
 
 // TestDocsDesktopConsoleContractNamesTheFlagInventory: the spawn contract's
 // one flag fact (design section 3.4 rule 3) must be the cobra commands', not
-// the document's word for it. Every command the console spawns except the
+// the document's word for it. Every command the dashboard spawns except the
 // version handshake carries --project and --config; version takes no flags at
 // all, so a console that appended --project to it would fail on every machine.
+// The map is the dashboard's commands, and deliberately not the picker's own
+// read: `config list --json` takes neither flag (it prints the installations,
+// so there is no project to name), which is why this inventory -- an inventory
+// of the flags a project read carries -- must not gain it (§5.1 rule 6).
 func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
