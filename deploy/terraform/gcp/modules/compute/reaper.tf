@@ -34,6 +34,17 @@
 # run, anything outside this project and region) -- and the account holds
 # nothing that can create anything, so a mistake here ends resources rather
 # than starting them.
+#
+# The APIs: this is the module's FIRST Cloud Run resource (its only other
+# scheduled resource, preload.tf's rebuild, is a Scheduler job), so it is the
+# one place the module leans on `run.googleapis.com` -- and on
+# `cloudscheduler.googleapis.com`, which preload.tf already leaned on -- being
+# enabled in the project. Neither is in this module's apis.tf, which names the
+# two APIs of the backend itself (compute and batch) and is deliberate about
+# what it adds: this root is applied to the installation's own project, whose
+# root enables both (modules/installation/apis.tf), so the dependency is
+# satisfied by the installation the module is for. It is written down here
+# rather than assumed because apis.tf is not this task's file to change.
 
 locals {
   # The job's name and the Scheduler job's. Neither starts with `fugaro-`, for
