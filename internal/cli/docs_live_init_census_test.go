@@ -34,11 +34,12 @@ package cli
 // not a failure, because the rename has to touch that file either way; what
 // the list freezes is which files the rename reaches.
 //
-// A third list is not an exemption but a boundary: `censusOutputDirs` is the
-// ignored build outputs and dependency trees both walks step over, because a
-// built page renders a source file that IS on the list -- website/dist/ holds
-// the rendered cli-reference page, whose source markdown is on
-// `pendingRename` -- and a rendered copy is regenerated, not renamed.
+// A third thing is not an exemption but a boundary: `censusOutputDirs`,
+// `censusOutputNames` and `censusOutputMarkers` are the ignored outputs and
+// dependency trees both walks step over, because a built page renders a source
+// file that IS on the list -- the site's build directory holds the rendered
+// cli-reference page, whose source markdown is on `pendingRename` -- and a
+// rendered copy is regenerated, not renamed.
 //
 // Mentions are matched over flattened text -- line-comment markers dropped,
 // whitespace collapsed, the normalisation docs_base_test.go's flattenDoc
@@ -163,9 +164,12 @@ const censusRoot = "../.."
 // command, sorted, taken on main at 1d325928 -- this branch's base, and the
 // tree every count below was read from. It is 312 files -- 118 non-test Go
 // files, 117 test files, 34 markdown files, 29 Terraform files, the four
-// `.tftest.hcl` fixtures beside them, the two goldens and the eight files the
-// website, the schema and the images scripts keep. Each task that renames a
-// string takes the file off this list in the same commit, and W2.6 empties it.
+// `.tftest.hcl` fixtures beside them, the two goldens, and the eight that fall
+// in none of those groups: the website's four (its install data, its two pages
+// and its test script), the two under images/ (a Dockerfile and a shell
+// script), the published schema, and internal/config/example.yaml, the sample
+// config internal/config/example.go embeds. Each task that renames a string
+// takes the file off this list in the same commit, and W2.6 empties it.
 var pendingRename = []string{
 	".claude/skills/new-release/SKILL.md",
 	"CONTRIBUTING.md",
@@ -492,33 +496,48 @@ func censusExempt(rel string) bool {
 	return slices.Contains(retirementText, rel)
 }
 
-// censusOutputDirs is the third thing the census steps over, and it is not an
-// exemption: these are the build outputs and dependency trees this repository's
-// own .gitignore files declare, so they are not source text and no rename
-// reaches them. They matter because they are *rendered* copies: `npm run build`
-// writes website/dist/ from website/src/ and website/content/, so a built
-// cli-reference page carries the `fugaro init` its source markdown carries --
-// and both of those sources are on `pendingRename`. A census that read the
-// build output would fail a developer who ran the build the README documents,
-// with a remedy nobody can carry out: a rendered page is regenerated, not
-// renamed, and node_modules/ is not this repository's text at all.
+// censusOutputDirs, censusOutputNames and censusOutputMarkers are the third
+// thing the census steps over, and they are not an exemption: these are the
+// build outputs and dependency trees this repository's own .gitignore files
+// declare, so they are not source text and no rename reaches them. They matter
+// because they are *rendered* copies: `npm run build` writes the site's build
+// directory from website/src/ and website/content/, so a built cli-reference
+// page carries the `fugaro init` its source markdown carries -- and both of
+// those sources are on `pendingRename`. A census that read the build output
+// would fail a developer who ran the build the README documents, with a remedy
+// nobody can carry out: a rendered page is regenerated, not renamed, and an
+// installed dependency tree is not this repository's text at all.
 //
-// websiteBuildDir ("website/dist", docs_website_boundary_test.go) is the
-// constant this package already keeps for the first of them, and the reason is
-// that file's own: a built copy is a copy the build makes, not a second source
-// of the fact. This list is that rule widened to every ignored output the two
-// walks can reach, including the root's own (dist/, secrets/ and .firebase/,
-// which .gitignore keeps for the owner's local state). Each entry is written
-// the way its .gitignore writes it.
+// The three lists are the three shapes those .gitignore files write, and
+// between them they cover every line of every .gitignore either walk can
+// arrive at -- TestCensusOutputCoversEveryIgnoredPathTheWalksReach reads those
+// files and holds them to it, so a new ignored output cannot appear without
+// being classified here:
 //
-// The binaries a build leaves at the root -- /fugaro, /clidoc -- are
-// deliberately not here. They are files rather than directories, and
-// censusNamesInit's binary sniff is what steps over them, which keeps the rule
-// in one place: this list is about what a build *renders*, that sniff is about
-// what a compiler *links*.
+//   - censusOutputDirs: a tree a .gitignore names in full, matched as a path
+//     prefix. websiteBuildDir ("website/dist", docs_website_boundary_test.go)
+//     is the constant this package already keeps for the first of them, and the
+//     reason is that file's own: a built copy is a copy the build makes, not a
+//     second source of the fact.
+//   - censusOutputNames: a name that is ignored wherever it appears, because
+//     six .gitignore files here declare a node_modules/ -- the root's
+//     dependency trees are not the only ones a checkout can grow -- and
+//     terraform's own provider tree is terraform's wherever a local init wrote
+//     it.
+//   - censusOutputMarkers: a file whose *name* carries a marker, which is how
+//     the .gitignore files write their file patterns: a swap file, a terraform
+//     state and the `.tfstate.*` backup beside it, a log, a screenshot. Each is
+//     a copy of something else's text -- the file an editor had open, the
+//     resource values a local apply recorded, the run that wrote the log -- so
+//     it can carry a mention the census must not read as repository text.
+//
+// One class of ignored path is deliberately not here. The binaries a build
+// leaves at the root -- /fugaro, /clidoc -- are files, and censusNamesInit's
+// binary sniff is what steps over them, which keeps the rule in one place:
+// these lists are about what a build or a local run *writes*, that sniff is
+// about what a compiler *links*.
 var censusOutputDirs = []string{
 	// website/.gitignore
-	"website/node_modules",
 	websiteBuildDir,
 	"website/.astro",
 	// The console's own .gitignore, spelled through consoleDirName rather than
@@ -527,7 +546,6 @@ var censusOutputDirs = []string{
 	// comments included, and this file names the directory to step over it
 	// rather than to reach into it. consoleDirName is the package's one
 	// spelling of it, which is the rule that file states for itself.
-	consoleDirName + "/node_modules",
 	consoleDirName + "/dist",
 	consoleDirName + "/release",
 	consoleDirName + "/test-results",
@@ -535,21 +553,83 @@ var censusOutputDirs = []string{
 	consoleDirName + "/.record-fixture",
 	consoleDirName + "/.bundle-renderer",
 	// mobile/.gitignore
-	"mobile/node_modules",
 	"mobile/dist",
 	"mobile/web-build",
 	"mobile/.expo",
-	// .gitignore
+	// testdata/fixture-repo/.gitignore: a fixture repository's own build
+	// directory, which the second walk reaches because testdata/ is not a live
+	// root.
+	"testdata/fixture-repo/build",
+	// .gitignore: the root's own build output, and the two trees it keeps for
+	// the owner's local state -- the Firebase CLI's cache, and the folder
+	// signing material lives in.
 	"dist",
 	".firebase",
 	"secrets",
 }
 
+// censusOutputNames are ignored by name at any depth.
+var censusOutputNames = []string{
+	// website/.gitignore, the console's, mobile/.gitignore,
+	// deploy/sandbox/.gitignore, internal/budget/rules/emulator/.gitignore and
+	// testdata/fixture-repo/.gitignore all declare it, and the reason is the
+	// same under each: `npm ci` writes a tree nobody reviews from a lockfile
+	// that already pins it.
+	"node_modules",
+	// .gitignore's /deploy/terraform/**/.terraform/: terraform's provider tree,
+	// ignored at whatever depth the module that ran init sits. The match is the
+	// whole segment, so the committed .terraform.lock.hcl beside it stays
+	// repository text.
+	".terraform",
+	// deploy/sandbox/.gitignore's junit.xml: a test runner's report, which
+	// records the names of the tests it ran -- the console's test-results/
+	// writes one too.
+	"junit.xml",
+}
+
+// censusOutputMarkers are matched against a file's base name, because the
+// .gitignore patterns behind them are an ending, a beginning, or both sides of
+// a stem, and a marker in the name covers all three without a fourth shape.
+var censusOutputMarkers = []string{
+	// .gitignore's /deploy/terraform/**/*.tfstate and *.tfstate.*: a local
+	// terraform run's state, which records the resource values that were
+	// applied, at a path the `**/` puts wherever the module that wrote it sits.
+	".tfstate",
+	// .gitignore's *.swp: the editor's copy of the file being edited, which
+	// carries that file's text -- a live file's mentions included.
+	".swp",
+	// .gitignore's /docs/website/redesign/{current,after}/*.jpg: the redesign's
+	// screenshots, which docs/website/redesign/capture-screenshots.mjs
+	// regenerates.
+	".jpg",
+	// mobile/.gitignore's *.log and .metro-health-check*: the app's own log, and
+	// the health-check file a Metro run leaves at the app's root.
+	".log",
+	".metro-health-check",
+}
+
 // censusOutput reports whether a repository-relative path is one of the ignored
-// outputs above: the directory itself, or anything under it.
+// outputs above: a tree on censusOutputDirs (the directory itself, or anything
+// under it), a path with a censusOutputNames segment, or a file whose name
+// carries a censusOutputMarkers marker.
 func censusOutput(rel string) bool {
+	if rel == "" {
+		return false
+	}
 	for _, dir := range censusOutputDirs {
 		if rel == dir || strings.HasPrefix(rel, dir+"/") {
+			return true
+		}
+	}
+	segs := strings.Split(rel, "/")
+	for _, seg := range segs {
+		if slices.Contains(censusOutputNames, seg) {
+			return true
+		}
+	}
+	base := segs[len(segs)-1]
+	for _, marker := range censusOutputMarkers {
+		if strings.Contains(base, marker) {
 			return true
 		}
 	}
@@ -701,6 +781,282 @@ func TestCensusNamesInitReadsPastTheHead(t *testing.T) {
 				t.Errorf("censusNamesInit(%s) = %v, want %v", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestCensusOutputAndExemptArePinned holds the two rules both walks ask before
+// they object, on paths written out here rather than through the tree -- for the
+// reason TestCensusNamesInitReadsPastTheHead exists. Nothing in a clean checkout
+// *is* an ignored output or a dated record, so the tree cannot hold either rule:
+// every test above passes with censusOutput stubbed to `return false` and with
+// datedRecords emptied, and that is the state the census exists to make
+// impossible. The first walk would then report a built page as a file to rename,
+// and the second would hand a dated record the two remedies it hands a file it
+// cannot place -- rename it, or add its directory to liveRoots, which would make
+// the first walk demand the rename.
+//
+// The cases hold the three shapes apart on purpose. A prefix is a path boundary,
+// not a string: website/dist-notes.md and distx/ are repository text. A name is a
+// whole segment: the committed .terraform.lock.hcl is not the ignored provider
+// tree beside it. And the two rules answer different questions, so neither may
+// absorb the other: a dated record is not an output, and an output is not exempt.
+//
+// The last check is the one a widened rule can break: no entry of `pendingRename`
+// may be an ignored output. A rule broad enough to swallow a frozen file would
+// leave the census reading less than it lists, which is the one failure this
+// file's two tests cannot see for themselves.
+//
+// Mutation (run, restore): stub censusOutput to `return false` -- every case that
+// wants true fails; drop websiteBuildDir from censusOutputDirs -- its two cases
+// fail; match the directory prefix with strings.Contains instead of a boundary --
+// the sibling cases fail; drop "docs/plans/" from datedRecords -- the dated-root
+// cases fail; make censusExempt a prefix match over retirementText -- the
+// retired.go.md case fails.
+func TestCensusOutputAndExemptArePinned(t *testing.T) {
+	output := []struct {
+		path string
+		want bool
+	}{
+		// Every entry of censusOutputDirs: the tree itself, and a file under it.
+		{"website/dist", true},
+		{"website/dist/index.html", true},
+		{"website/.astro/types.d.ts", true},
+		{consoleDirName + "/dist/renderer/index.html", true},
+		{consoleDirName + "/release/fugaro-console.AppImage", true},
+		{consoleDirName + "/test-results/results.xml", true},
+		{consoleDirName + "/playwright-report/index.html", true},
+		{consoleDirName + "/.record-fixture/fixture.json", true},
+		{consoleDirName + "/.bundle-renderer/bundle.js", true},
+		{"mobile/dist/index.html", true},
+		{"mobile/web-build/index.html", true},
+		{"mobile/.expo/cache/state.json", true},
+		{"testdata/fixture-repo/build/out.txt", true},
+		{"dist/fugaro", true},
+		{".firebase/hosting.json", true},
+		{"secrets/signing.json", true},
+		// Every name on censusOutputNames, wherever it appears.
+		{"website/node_modules/react/index.js", true},
+		{consoleDirName + "/node_modules/electron/index.js", true},
+		{"deploy/sandbox/node_modules/tfjs/index.js", true},
+		{"internal/budget/rules/emulator/node_modules/x/index.js", true},
+		{"testdata/fixture-repo/node_modules/x/index.js", true},
+		{"deploy/terraform/prod/.terraform/providers/x/terraform-provider-google", true},
+		{"deploy/sandbox/junit.xml", true},
+		// Every marker on censusOutputMarkers.
+		{"deploy/terraform/prod/terraform.tfstate", true},
+		{"deploy/terraform/prod/terraform.tfstate.backup", true},
+		{"internal/cli/.init.go.swp", true},
+		{"mobile/app.log", true},
+		{"mobile/.metro-health-check.json", true},
+		{"docs/website/redesign/after/home.jpg", true},
+		{"docs/website/redesign/current/home.jpg", true},
+		// A prefix is a path boundary, not a string; a name is a whole segment.
+		{"website/dist-notes.md", false},
+		{"website/distx/index.html", false},
+		{"distx/fugaro", false},
+		{"secrets.md", false},
+		{"deploy/terraform/prod/.terraform.lock.hcl", false},
+		// Repository text, and the trees the walks do descend.
+		{"website/src/pages/getting-started.astro", false},
+		{"website/content/cli-reference.md", false},
+		{"internal/cli/init.go", false},
+		{"mobile/README.md", false},
+		{"testdata/fixture-repo/README.md", false},
+		{"images/history/Dockerfile", false},
+		// An exemption is not an output, and an output is not an exemption.
+		{"docs/plans/setup-wizard.md", false},
+		{"", false},
+	}
+	for _, tc := range output {
+		if got := censusOutput(tc.path); got != tc.want {
+			t.Errorf("censusOutput(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+
+	exempt := []struct {
+		path string
+		want bool
+	}{
+		// Every dated root, and the three retirement statements.
+		{"docs/plans/setup-wizard/implementation-plan.md", true},
+		{"docs/releases/v0.9.0.md", true},
+		{"docs/design/x.md", true},
+		{"docs/credentials-service/x.md", true},
+		{"docs/website/x.md", true},
+		{"docs/setup-wizard/implementation-plan.md", true},
+		{"internal/cli/retired.go", true},
+		{"internal/cli/retired_test.go", true},
+		{"internal/cli/docs_live_init_census_test.go", true},
+		// The releases index beside the records stays live, and a prefix that
+		// stops at a slash is not a prefix that stops mid-word.
+		{"docs/releases/README.md", false},
+		{"docs/plansx/x.md", false},
+		{"docs/checkout.md", false},
+		{"internal/cli/docs_checkout_test.go", false},
+		// The retirement class is a list of paths, not a prefix.
+		{"internal/cli/retired.go.md", false},
+		{"", false},
+	}
+	for _, tc := range exempt {
+		if got := censusExempt(tc.path); got != tc.want {
+			t.Errorf("censusExempt(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+
+	// The lists themselves: a clean repository-relative path each, so the prefix
+	// match reads what its .gitignore reads, and no entry twice.
+	var all []string
+	all = append(all, censusOutputDirs...)
+	all = append(all, censusOutputNames...)
+	all = append(all, censusOutputMarkers...)
+	for _, e := range all {
+		if e == "" || strings.HasPrefix(e, "/") || strings.HasSuffix(e, "/") || strings.HasPrefix(e, "./") || strings.Contains(e, "//") {
+			t.Errorf("the census output lists carry %q, which is not a clean repository-relative path: an absolute, empty or trailing-slash entry matches nothing the walk hands it", e)
+		}
+	}
+	if dup := duplicatePaths(all); len(dup) > 0 {
+		t.Errorf("the census output lists name %s twice: one entry per ignored thing, so taking one off is a one-line diff to review", strings.Join(dup, ", "))
+	}
+
+	// The two halves of the line must not overlap.
+	for _, p := range pendingRename {
+		if censusOutput(p) {
+			t.Errorf("pendingRename lists %s, which censusOutput steps over: a rule wide enough to swallow a frozen file would leave the census reading less than it lists, and nothing else here would say so", p)
+		}
+	}
+}
+
+// censusIgnored is every line of every .gitignore a walk can arrive at, each with
+// a repository-relative path that line ignores. It is the provenance of the three
+// lists above, written down where a reader can check it: those lists are not a
+// summary of what a build happens to write, they are these lines.
+//
+// bySniff marks the two root binaries, which are the one class of ignored path
+// the three lists do not cover: censusNamesInit's binary sniff steps over them
+// instead, and TestCensusNamesInitReadsPastTheHead's "binary head" case is that
+// rule.
+var censusIgnored = []struct {
+	ignore  string // the .gitignore file, repository-relative
+	pattern string // the line in it
+	sample  string // a path that line ignores
+	bySniff bool   // covered by the binary sniff rather than by censusOutput
+}{
+	{".gitignore", "/dist/", "dist/fugaro", false},
+	{".gitignore", "/fugaro", "fugaro", true},
+	{".gitignore", "/clidoc", "clidoc", true},
+	{".gitignore", "/deploy/terraform/**/.terraform/", "deploy/terraform/prod/.terraform/providers/registry.terraform.io/hashicorp/google/6.0.0/linux_amd64/terraform-provider-google", false},
+	{".gitignore", "/deploy/terraform/**/*.tfstate", "deploy/terraform/prod/terraform.tfstate", false},
+	{".gitignore", "/deploy/terraform/**/*.tfstate.*", "deploy/terraform/prod/terraform.tfstate.backup", false},
+	{".gitignore", "*.swp", "internal/cli/.init.go.swp", false},
+	{".gitignore", "/docs/website/redesign/current/*.jpg", "docs/website/redesign/current/home.jpg", false},
+	{".gitignore", "/docs/website/redesign/after/*.jpg", "docs/website/redesign/after/home.jpg", false},
+	{".gitignore", "/.firebase/", ".firebase/hosting.json", false},
+	{".gitignore", "/secrets/", "secrets/owner.json", false},
+	{"website/.gitignore", "node_modules/", "website/node_modules/react/index.js", false},
+	{"website/.gitignore", "dist/", "website/dist/index.html", false},
+	{"website/.gitignore", ".astro/", "website/.astro/types.d.ts", false},
+	{consoleDirName + "/.gitignore", "node_modules/", consoleDirName + "/node_modules/electron/index.js", false},
+	{consoleDirName + "/.gitignore", "dist/", consoleDirName + "/dist/renderer/index.html", false},
+	{consoleDirName + "/.gitignore", "release/", consoleDirName + "/release/fugaro-console.AppImage", false},
+	{consoleDirName + "/.gitignore", "test-results/", consoleDirName + "/test-results/results.xml", false},
+	{consoleDirName + "/.gitignore", "playwright-report/", consoleDirName + "/playwright-report/index.html", false},
+	{consoleDirName + "/.gitignore", ".record-fixture/", consoleDirName + "/.record-fixture/fixture.json", false},
+	{consoleDirName + "/.gitignore", ".bundle-renderer/", consoleDirName + "/.bundle-renderer/bundle.js", false},
+	{"mobile/.gitignore", "node_modules/", "mobile/node_modules/expo/index.js", false},
+	{"mobile/.gitignore", ".expo/", "mobile/.expo/cache/state.json", false},
+	{"mobile/.gitignore", ".metro-health-check*", "mobile/.metro-health-check.json", false},
+	{"mobile/.gitignore", "dist/", "mobile/dist/index.html", false},
+	{"mobile/.gitignore", "web-build/", "mobile/web-build/index.html", false},
+	{"mobile/.gitignore", "*.log", "mobile/app.log", false},
+	{"deploy/sandbox/.gitignore", "node_modules/", "deploy/sandbox/node_modules/tfjs/index.js", false},
+	{"deploy/sandbox/.gitignore", "junit.xml", "deploy/sandbox/junit.xml", false},
+	{"internal/budget/rules/emulator/.gitignore", "node_modules/", "internal/budget/rules/emulator/node_modules/x/index.js", false},
+	{"testdata/fixture-repo/.gitignore", "build/", "testdata/fixture-repo/build/out.txt", false},
+	{"testdata/fixture-repo/.gitignore", "node_modules/", "testdata/fixture-repo/node_modules/x/index.js", false},
+}
+
+// TestCensusOutputCoversEveryIgnoredPathTheWalksReach holds the claim the three
+// lists make about themselves -- that between them they cover every ignored
+// output the two walks can reach -- to the files that justify it. It reads every
+// .gitignore in the tree (a dependency tree's own .gitignore is not one of them:
+// it does not govern this repository), requires every line of each to be
+// classified in censusIgnored, and then asks censusOutput about the path that
+// line ignores.
+//
+// The claim is prose until this test runs, and it was prose that was false. The
+// root .gitignore alone declares eleven things and the list that cited it carried
+// five: a local terraform run's state file under deploy/terraform/ -- which
+// records the resource values that were applied, a copy of what the .tf files
+// beside it say -- or an editor's swap file for a file that names the command
+// would have failed the census with a remedy nobody can carry out, which is the
+// failure the build outputs were put on the list to prevent. A new ignored output
+// is now a failing test rather than a quiet hole.
+//
+// Mutation (run, restore): drop a line from censusIgnored -- the walk finds that
+// line unclassified and fails; drop ".tfstate" from censusOutputMarkers -- the
+// state cases fail; drop a .gitignore file from censusIgnored -- the file count
+// disagrees with the walk.
+func TestCensusOutputCoversEveryIgnoredPathTheWalksReach(t *testing.T) {
+	classified := map[string]bool{}
+	files := map[string]bool{}
+	for _, c := range censusIgnored {
+		classified[c.ignore+"\t"+c.pattern] = true
+		files[c.ignore] = true
+	}
+	if len(files) == 0 {
+		t.Fatal("censusIgnored classifies no .gitignore at all")
+	}
+
+	found := 0
+	err := filepath.WalkDir(censusRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(censusRoot, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			if rel == ".git" || censusOutput(rel) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if d.Name() != ".gitignore" {
+			return nil
+		}
+		found++
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if !classified[rel+"\t"+line] {
+				t.Errorf("%s:%d declares %q, and no censusOutput entry classifies it: an ignored output either walk can reach has to be on one of the three lists, or a local run of the tool that writes it fails the census with a remedy nobody can carry out", rel, i+1, line)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found != len(files) {
+		t.Errorf("the walk found %d .gitignore files and censusIgnored classifies %d: every one the walks can arrive at has to be classified, or its lines are unchecked", found, len(files))
+	}
+
+	for _, c := range censusIgnored {
+		if got := censusOutput(c.sample); got != !c.bySniff {
+			if c.bySniff {
+				t.Errorf("%s ignores %s, and censusOutput claims %s: the root binaries are the binary sniff's business, not these lists'", c.ignore, c.pattern, c.sample)
+				continue
+			}
+			t.Errorf("%s ignores %s (e.g. %s), but censusOutput reads it as repository text: a local run that writes it fails the census with a remedy nobody can carry out", c.ignore, c.pattern, c.sample)
+		}
 	}
 }
 
