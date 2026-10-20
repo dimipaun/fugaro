@@ -45,12 +45,16 @@
 #             1 when one did not (or a hard stop ended the run).
 #
 # CHECK91_IDLE_SECONDS, CHECK91_BODY_SIZES, CHECK91_PROBE_SECONDS,
-# CHECK91_LONG_SECONDS and CHECK91_DRY_RUN exist for this script's own test:
-# they shorten waits and sizes, and none of them can point the check at another
-# project, another region or another service. (The long stream's LENGTH is the
-# relay's own SSE_MINUTES, which the check sets to 59 with the service update
-# it runs for that step; CHECK91_LONG_SECONDS is only the curl-side cap that
-# keeps that one request from outliving the run — --timeout is 3600.)
+# CHECK91_LONG_SECONDS, CHECK91_CURL_SECONDS and CHECK91_DRY_RUN exist for this
+# script's own test: they shorten waits and sizes, and none of them can point
+# the check at another project, another region or another service. (The long
+# stream's LENGTH is the relay's own SSE_MINUTES, which the check sets to 59
+# with the service update it runs for that step; CHECK91_LONG_SECONDS is only
+# the curl-side cap that keeps that one request from outliving the run —
+# --timeout is 3600. CHECK91_CURL_SECONDS is the cap every OTHER request
+# carries: a request with no cap of its own is waited on for as long as the
+# front end keeps the socket open, and a Ctrl-C would then be the only thing
+# that ends it.)
 #
 # The identity token is never on a command line: it is minted fresh for each
 # request and written into an 0600 curl config file inside the scratch
@@ -63,7 +67,14 @@
 # into a staging bucket and leaves it there. This run gives that upload a
 # PREFIX OF ITS OWN inside the installation's staging bucket and the Restore
 # deletes exactly that prefix, so what this check put in the owner's bucket is
-# removed by the check rather than left to a bucket lifecycle rule.
+# removed by the check rather than left to a bucket lifecycle rule. That
+# bucket has to be there and readable BEFORE the build: `gcloud builds submit`
+# CREATES gs://<project>_cloudbuild when it is missing, and a bucket is the
+# installation's (Terraform-managed), not this check's — this run would have
+# no record of having made it and no Restore that could remove it. So an
+# unreadable staging bucket is a STOP before the build, never a fallback to
+# gcloud's default staging directory (which would also leave the tarball
+# unnameable, for a lifecycle rule to sweep away).
 #
 # The HTTP/2 capability of this machine's curl is checked BEFORE anything is
 # created or spent: the body table's second row is meaningless without it, and
@@ -88,6 +99,18 @@ P=fugaro-dev
 L=us-east5
 SVC=fugaro-chk91
 IMG="${L}-docker.pkg.dev/${P}/${SVC}/${SVC}:chk91"
+
+# Every request carries a cap of its own (--max-time), including the ones that
+# are not stream probes: a curl with no cap is waited on for as long as the
+# front end keeps the socket open, so an hour-long run can end with a request
+# that outlives it and a Ctrl-C that has nothing to end. The stream probes have
+# their own (CHECK91_PROBE_SECONDS, CHECK91_LONG_SECONDS); these are the two
+# the rest use.
+CURL_SECONDS=${CHECK91_CURL_SECONDS:-300}
+# The cold-start probe IS the measurement, so it is given more room than an
+# ordinary request: a cold start is seconds, but the figure is worthless if
+# this check's own cap is what ended it.
+COLD_PROBE_SECONDS=600
 
 # stop REASON: records a FAILed fact, ends the run. The EXIT trap prints the
 # block, runs the Restore for whatever this run created, and cleans up.
@@ -135,12 +158,17 @@ PRINTED=""
 # build's staged source (see step_build_deploy and the Restore).
 AUTH_CONF=""
 WAIT_PID=""
-# The per-run prefix this run staged the build's source under, the flag that
-# says a build was attempted at all (the Restore removes the staged source only
-# then), and what the build's command line was told to stage the source into.
+# The per-run prefix this run staged the build's source under and what the
+# build's command line was told to stage the source into (the two go together:
+# a build is only ever started when the prefix could be given), and the flag
+# that says a build was attempted at all — the Restore removes the staged
+# source only then.
 STAGING_PREFIX=""
 STAGING_ARG=""
 BUILD_ATTEMPTED=no
+# The cleanup flag finish sets: a second Ctrl-C while the Restore is running
+# must not kill the shell that is running it (see finish).
+CLEANUP_RUNNING=no
 
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk91.XXXXXXXX") || die "Check 91 cannot make a scratch directory"
@@ -213,7 +241,9 @@ restore_run() {
   # The staged source (m11): the build uploaded the scratch directory as a tar
   # under this run's own prefix, and that tar is this check's litter in the
   # installation's bucket. Removed only when a build was attempted and only
-  # under the prefix this run chose — never a bucket-wide delete.
+  # under the prefix this run chose — never a bucket-wide delete. A build is
+  # only ever attempted with that prefix (an unreadable bucket stops the run
+  # before the build), so an attempted build always has one to remove.
   if [ "$BUILD_ATTEMPTED" = yes ] && [ -n "$STAGING_ARG" ]; then
     gcloud storage rm -r "$STAGING_PREFIX" >&2 || true
     # `gcloud storage ls` on a prefix with nothing under it exits non-zero and
@@ -231,7 +261,11 @@ restore_run() {
       fact "restore-staged-source" FAIL "whether the staged source at ${STAGING_PREFIX} is still there cannot be read (the list exited ${st_rc} for a reason other than an empty prefix), so nothing is claimed about it: check it by hand with gcloud storage ls ${STAGING_PREFIX} and remove it with gcloud storage rm -r ${STAGING_PREFIX} if it is there"
     fi
   elif [ "$BUILD_ATTEMPTED" = yes ]; then
-    fact "restore-staged-source" INFO "no build was staged under a prefix of this run's own (see the build-staging fact), so there is no prefix for the Restore to delete; the tarball is in gcloud's default staging directory and the bucket's own lifecycle rule removes it"
+    # Not reachable through this script's own path — the build is given its
+    # prefix or the run stops before it — and kept as the Restore's own guard:
+    # a build attempted with no prefix of this run's is exactly the case whose
+    # tarball could not be named, and it must be said rather than assumed away.
+    fact "restore-staged-source" FAIL "a build was attempted without a staging prefix of this run's own, so the source tarball this run uploaded cannot be named and cannot be removed by this Restore: look for it under gcloud's default staging directory in gs://${P}_cloudbuild and remove it by hand"
   fi
 
   # Each count is guarded: a count query is how this run REPORTS, and one that exits
@@ -297,7 +331,16 @@ cleanup() {
 
 finish() {
   local status=$?
-  trap - EXIT INT TERM
+  trap - EXIT
+  # INT, TERM and HUP are NOT reset here, and that is the point: cleanup is
+  # about to run the Restore, which deletes a service and an image this check
+  # created in the owner's project — and a second Ctrl-C during it would kill
+  # this shell with the deletes half done, leaving a billed service, an image
+  # or a repository behind, with the RESULT block never printed. So the
+  # signals stay trapped for the whole of cleanup; `on_signal` says one line
+  # and returns, and the Restore goes on. (The first Ctrl-C is already
+  # accounted for: it came through `interrupted`, which ended the run at 130.)
+  CLEANUP_RUNNING=yes
   cleanup
   local facts=$FACTS_CAPTURED
   if [ -z "$facts" ]; then facts="aborted|FAIL|the run stopped before it recorded anything"; fi
@@ -557,18 +600,21 @@ step_build_deploy() {
   say "building ${IMG} (gcloud builds submit). If it offers to CREATE anything — the staging bucket, an API, a grant — say NO, stop, and report it: those are the installation's and are not this check's to accept"
   # Give the source upload a prefix of this run's own, so the Restore can name
   # and remove exactly what this check put in the installation's staging bucket
-  # (m11). It is used only if that bucket is really there and readable: a
-  # staging directory gcloud cannot write to would fail the build for no
-  # measurement, so an unreadable bucket falls back to the default staging
-  # directory — said out loud in a fact, because then the tarball cannot be
-  # named afterwards and stays for the bucket's own lifecycle rule to remove.
-  if gcloud storage ls "gs://${P}_cloudbuild/" >/dev/null 2>&1; then
-    STAGING_ARG="--gcs-source-staging-dir=${STAGING_PREFIX}"
-    fact "build-staging" PASS "this run stages the build's source under ${STAGING_PREFIX}, inside the installation's own staging bucket, and its Restore deletes that prefix again"
-  else
-    STAGING_ARG=""
-    fact "build-staging" INFO "gs://${P}_cloudbuild/ could not be listed, so the build uses gcloud's default staging directory and the source tarball this run uploads cannot be named afterwards: it stays in that bucket until the bucket's own lifecycle rule removes it. Nothing was created by this check to make it list"
+  # (m11). The bucket must be there and readable FIRST, and an unreadable one
+  # is a STOP rather than a fallback: `gcloud builds submit` CREATES
+  # gs://<project>_cloudbuild when it is missing, and that bucket is the
+  # installation's own (it is in the project's Terraform, not this check's). A
+  # run that let gcloud make it would have created a project-level resource
+  # with no ownership record and no Restore that could delete it — and it
+  # would still have left the source tarball unnameable, for a lifecycle rule
+  # to sweep away. Nothing is guarded more narrowly than this: the check's rule
+  # is that it creates only what it deletes.
+  if ! gcloud storage ls "gs://${P}_cloudbuild/" >/dev/null 2>&1; then
+    fact "build-staging" FAIL "gs://${P}_cloudbuild/ could not be listed here (it is not there, or this account cannot read it), so the build was NOT started: 'gcloud builds submit' would create that staging bucket for this run's source, and the bucket is the installation's — this check creates only what its own Restore deletes. Nothing was created, built or deployed"
+    stop "gs://${P}_cloudbuild/ cannot be listed, and 'gcloud builds submit' would CREATE it to stage this run's source: a bucket is the installation's own (Terraform-managed, not this check's), so this check never creates one and has no record by which to remove it. Create it as the installation's own, in the region Cloud Build uses for it (gcloud storage buckets create gs://${P}_cloudbuild --project=${P} --location=${L}), or give your account read access to it (gcloud storage buckets add-iam-policy-binding gs://${P}_cloudbuild --member=user:YOU --role=roles/storage.objectViewer), then run again. Nothing was created, built or deployed by this run"
   fi
+  STAGING_ARG="--gcs-source-staging-dir=${STAGING_PREFIX}"
+  fact "build-staging" PASS "this run stages the build's source under ${STAGING_PREFIX}, inside the installation's own staging bucket (which was listed before the build, so gcloud creates nothing), and its Restore deletes that prefix again"
   BUILD_ATTEMPTED=yes
   # Unquoted on purpose: STAGING_ARG is one word or nothing, and an empty
   # argument must not reach gcloud as an empty string.
@@ -600,7 +646,7 @@ step_build_deploy() {
   # An unauthenticated call must be refused: that is what says the service is
   # not wide open, and it is the register's own assertion.
   local code
-  code=$(curl -sS -o /dev/null -w '%{http_code}' "${URL}/" 2>/dev/null || true)
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$CURL_SECONDS" "${URL}/" 2>/dev/null || true)
   case "$code" in
   401 | 403) fact "unauthenticated-request" PASS "an unauthenticated GET / was refused with ${code}" ;;
   *) fact "unauthenticated-request" FAIL "an unauthenticated GET / answered ${code:-nothing}, so the service does not refuse unauthenticated calls — stop and fix the deployment before trusting anything else here" ;;
@@ -612,7 +658,7 @@ step_cold_start() {
   local idle_seconds=${CHECK91_IDLE_SECONDS:-2100}
   local before cold warm
   mint_idt || stop "no identity token can be minted here, so the relay cannot be asked anything"
-  before=$(curl -sS --config "$AUTH_CONF" "${URL}/" | sed -n 's/^started=//p')
+  before=$(curl -sS --max-time "$CURL_SECONDS" --config "$AUTH_CONF" "${URL}/" | sed -n 's/^started=//p')
   [ -n "$before" ] || stop "the relay's / body carries no started= line, so this is not this check's image"
   say "instance now: started=${before}; waiting ${idle_seconds}s for it to be released"
   # Backgrounded and waited on, not slept in the foreground: bash runs a
@@ -626,8 +672,8 @@ step_cold_start() {
   local cold_rc=0 warm_rc=0
   : >"$SCRATCH/cold.out"
   mint_idt || stop "no identity token can be minted here, so the cold-start probes cannot be made"
-  cold=$(curl -sS -o "$SCRATCH/cold.out" -w '%{time_starttransfer}|%{time_total}' --config "$AUTH_CONF" "${URL}/" 2>/dev/null) || cold_rc=$?
-  warm=$(curl -sS -o /dev/null -w '%{time_starttransfer}|%{time_total}' --config "$AUTH_CONF" "${URL}/" 2>/dev/null) || warm_rc=$?
+  cold=$(curl -sS -o "$SCRATCH/cold.out" -w '%{time_starttransfer}|%{time_total}' --max-time "$COLD_PROBE_SECONDS" --config "$AUTH_CONF" "${URL}/" 2>/dev/null) || cold_rc=$?
+  warm=$(curl -sS -o /dev/null -w '%{time_starttransfer}|%{time_total}' --max-time "$CURL_SECONDS" --config "$AUTH_CONF" "${URL}/" 2>/dev/null) || warm_rc=$?
   local after
   after=$(sed -n 's/^started=//p' "$SCRATCH/cold.out")
   local detail="waited ${idle_seconds}s; cold: first byte ${cold%%|*}s, total ${cold##*|}s; warm: first byte ${warm%%|*}s, total ${warm##*|}s; started= before=${before} after=${after}; --min-instances=0 --max-instances=1"
@@ -713,12 +759,12 @@ step_body_limit() {
     : >"$SCRATCH/echo.out"
     h1rc=0
     h1=$(curl -sS --http1.1 -o "$SCRATCH/echo.out" -w '%{http_code} %{size_upload} over HTTP/%{http_version}' \
-      --config "$AUTH_CONF" -X POST --data-binary @"$SCRATCH/body.bin" "${URL}/echo" 2>/dev/null) || h1rc=$?
+      --max-time "$CURL_SECONDS" --config "$AUTH_CONF" -X POST --data-binary @"$SCRATCH/body.bin" "${URL}/echo" 2>/dev/null) || h1rc=$?
     h1="${h1} (curl exit ${h1rc}), relay said: $(tr -d '\n' <"$SCRATCH/echo.out")"
     : >"$SCRATCH/echo.out"
     h2rc=0
     h2=$(curl -sS --http2 -o "$SCRATCH/echo.out" -w '%{http_code} %{size_upload} over HTTP/%{http_version}' \
-      --config "$AUTH_CONF" -X POST --data-binary @"$SCRATCH/body.bin" "${URL}/echo" 2>/dev/null) || h2rc=$?
+      --max-time "$CURL_SECONDS" --config "$AUTH_CONF" -X POST --data-binary @"$SCRATCH/body.bin" "${URL}/echo" 2>/dev/null) || h2rc=$?
     h2="${h2} (curl exit ${h2rc}), relay said: $(tr -d '\n' <"$SCRATCH/echo.out")"
     table="${table}${n}: HTTP/1.1 ${h1} | HTTP/2-to-front-end ${h2}"$'\n'
     case "$h1" in 200*) h1_big="$n: $h1" ;; esac
@@ -832,6 +878,23 @@ interrupted() {
   exit 130
 }
 
+# on_signal: the ONE signal handler, armed for the whole run and never
+# disarmed — including through the cleanup, which is where its second answer
+# matters. A second Ctrl-C during the Restore (or a Ctrl-C during a signal
+# handler, or a closing terminal's SIGHUP) would otherwise kill this shell
+# mid-cleanup: the service can be deleted while the image and the repository
+# are not, the three counts are never read, and the RESULT block that says
+# what was left behind is never printed. So while cleanup runs the handler
+# says one line and returns; before it, the signal is the interrupt it always
+# was.
+on_signal() {
+  if [ "$CLEANUP_RUNNING" = yes ]; then
+    owner "cleanup is running, do not press Ctrl-C again"
+    return 0
+  fi
+  interrupted
+}
+
 trap finish EXIT
-trap interrupted INT TERM
+trap on_signal INT TERM HUP
 main "$@"

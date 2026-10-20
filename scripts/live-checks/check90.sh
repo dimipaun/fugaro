@@ -44,11 +44,14 @@
 #             failed says nothing about the swap).
 #
 # CHECK90_UPSTREAM, CHECK90_DELAY, CHECK90_CALL_TIMEOUT, CHECK90_TOTAL_SECONDS,
-# CHECK90_MAX_DROPS and CHECK90_MANAGED_SETTINGS_DIR exist for this script's own
-# test: CHECK90_UPSTREAM may only name a loopback address (the test's fake
-# upstream), so no environment can send the token anywhere but Anthropic's
-# endpoint, and CHECK90_MANAGED_SETTINGS_DIR names a directory the guard still
-# READS, never one it skips.
+# CHECK90_MAX_DROPS, CHECK90_MANAGED_SETTINGS_DIR and
+# CHECK90_MANAGED_SETTINGS_DIRS exist for this script's own test:
+# CHECK90_UPSTREAM may only name a loopback address (the test's fake upstream),
+# so no environment can send the token anywhere but Anthropic's endpoint, and
+# the two managed-settings names directories the guard still READS, never ones
+# it skips. Setting either REPLACES the two directories the guard looks at on a
+# real machine, so a test never reads this machine's own managed settings (a
+# runner here has one, and it would decide the run instead of the test).
 # -E (errtrace) is what makes the ERR trap below fire for a failure INSIDE a
 # function or a command substitution too, which is where an internal error is
 # most likely to happen; without it the trap only sees top-level failures.
@@ -162,9 +165,17 @@ SCRATCH=""
 SCRATCH_MARKER=".chk90-mine"
 PROXY_PID=""
 TOKEN_FILE=""
+# The 0600 file the run's placeholder lives in, handed to the proxy by NAME so
+# the value is never in that process's argv (see start_proxy and the proxy's
+# own docstring).
+PLACEHOLDER_FILE=""
 SCRATCH_REMOVED=no
 TOKEN_REMOVED=no
 PRINTED=""
+# Set by finish before cleanup runs: a second Ctrl-C while the token file is
+# being wiped and the scratch directory removed must not kill this shell (see
+# on_signal).
+CLEANUP_RUNNING=no
 
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk90.XXXXXXXX") || die "Check 90 cannot make a scratch directory"
@@ -173,6 +184,7 @@ scratch_up() {
   FACTS_FILE="$SCRATCH/facts"
   : >"$FACTS_FILE"
   TOKEN_FILE="$SCRATCH/token"
+  PLACEHOLDER_FILE="$SCRATCH/placeholder"
   if (cd "$SCRATCH" && git rev-parse --show-toplevel >/dev/null 2>&1); then
     die "Check 90 stopped: $SCRATCH is inside a git work tree, so what it writes could be committed by accident — set TMPDIR outside every repository and run again"
   fi
@@ -195,6 +207,10 @@ cleanup() {
   # over one that survived.
   rm -f "$TOKEN_FILE" 2>/dev/null || true
   if [ ! -e "$TOKEN_FILE" ]; then TOKEN_REMOVED=yes; fi
+  # The placeholder file goes with it, and for the same reason this line is not
+  # left to the scratch directory's removal: the directory is KEPT when a count
+  # is not 0, and a per-run secret has no business surviving a run in it.
+  rm -f "$PLACEHOLDER_FILE" 2>/dev/null || true
   keep_logs
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
   remove_scratch
@@ -255,7 +271,16 @@ stop_proxy() {
 
 finish() {
   local status=$?
-  trap - EXIT INT TERM ERR
+  # INT, TERM and HUP are NOT disarmed here, and that is the point: cleanup is
+  # about to wipe the token file and remove the scratch directory, and a second
+  # Ctrl-C during it would kill this shell with the token file still on disk —
+  # in a directory the run's own record then says was removed. So the signals
+  # stay trapped for the whole of cleanup and `on_signal` answers with one line
+  # instead of ending the run (the first Ctrl-C already came through it and
+  # exited 130). The ERR trap goes: from here on, a failing command is cleanup
+  # bookkeeping, which is guarded at each step, not an internal error to record.
+  trap - EXIT ERR
+  CLEANUP_RUNNING=yes
   cleanup
   local facts=$FACTS_CAPTURED
   if ! printf '%s' "$facts" | grep -q '^tier-a|' && [ "$status" = 2 ]; then
@@ -327,9 +352,16 @@ guard_xtrace() {
 }
 
 # The same names, removed from the child's environment: a variable the guard
-# refused in this shell must not be able to reach the call either.
+# refused in this shell must not be able to reach the call either. ANTHROPIC_LOG
+# and DEBUG are removed for a different reason and are NOT refused in this
+# shell: neither routes the call nor its credential, so their presence is the
+# owner's business — but both change what the client prints (ANTHROPIC_LOG even
+# writes request bodies to a file of its choosing), and this child's output is
+# captured into a file this check reads and pastes back. A debug log of a call
+# carrying CLAUDE_CODE_OAUTH_TOKEN is exactly the surface this check exists to
+# keep the token off.
 ENV_UNSET=()
-for v in "${GUARD_VARS[@]}"; do ENV_UNSET+=(-u "$v"); done
+for v in "${GUARD_VARS[@]}" ANTHROPIC_LOG DEBUG; do ENV_UNSET+=(-u "$v"); done
 
 # settings_keys FILE: the routing key NAMES a settings file sets, nothing else.
 # Non-zero when the file is not settings JSON this check can read.
@@ -345,17 +377,42 @@ guard_settings() {
   if [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ -f "$CLAUDE_CONFIG_DIR/settings.json" ]; then
     files+=("$CLAUDE_CONFIG_DIR/settings.json")
   fi
-  # The directory Claude Code keeps its managed settings in, one level deep.
-  # CHECK90_MANAGED_SETTINGS_DIR exists so this script's own test can run on a
-  # machine that has one; nothing else should set it, and a value names a
-  # directory that is then READ, never one that is skipped.
-  local managed=${CHECK90_MANAGED_SETTINGS_DIR:-/etc/claude-code}
-  if [ -d "$managed" ]; then
-    while IFS= read -r f; do files+=("$f"); done < <(find "$managed" -maxdepth 1 -type f 2>/dev/null)
-    fact "managed-settings-dir" PASS "$managed is there and was read"
+  # The directories Claude Code keeps its managed settings in, one level deep,
+  # BOTH of them: the Linux one the runner itself writes
+  # (`internal/agent/settings.go`'s ManagedSettingsPath) and the one the client
+  # reads on macOS. Reading only the Linux path left the guard blind on a Mac —
+  # the one machine this check is most likely to be run from — so a managed
+  # settings file there could route the call with the FACT saying no managed
+  # settings were read at all. CHECK90_MANAGED_SETTINGS_DIR (one directory) and
+  # CHECK90_MANAGED_SETTINGS_DIRS (a colon-separated list) exist so this script's
+  # own test is hermetic on a machine that has a real one; nothing else should
+  # set them. Either REPLACES the two defaults below — a value names directories
+  # that are then READ, never ones that are skipped, and when neither is set this
+  # reads both of the real locations.
+  local dirs=() managed
+  if [ -n "${CHECK90_MANAGED_SETTINGS_DIRS:-}" ]; then
+    IFS=: read -r -a dirs <<<"$CHECK90_MANAGED_SETTINGS_DIRS"
+  elif [ -n "${CHECK90_MANAGED_SETTINGS_DIR:-}" ]; then
+    dirs=("$CHECK90_MANAGED_SETTINGS_DIR")
+  else
+    dirs=(/etc/claude-code "/Library/Application Support/ClaudeCode")
+  fi
+  local read_dirs=() absent_dirs=() f
+  for managed in ${dirs[@]+"${dirs[@]}"}; do
+    if [ -d "$managed" ]; then
+      while IFS= read -r f; do files+=("$f"); done < <(find "$managed" -maxdepth 1 -type f 2>/dev/null)
+      read_dirs+=("$managed")
+    else
+      absent_dirs+=("$managed")
+    fi
+  done
+  if [ ${#read_dirs[@]} -gt 0 ]; then
+    local detail="read: ${read_dirs[*]}"
+    if [ ${#absent_dirs[@]} -gt 0 ]; then detail="${detail} — not on this machine: ${absent_dirs[*]}"; fi
+    fact "managed-settings-dir" PASS "$detail"
   else
     fact "managed-settings-dir" PASS \
-      "no $managed on this machine, so no managed settings file was read — if Claude Code keeps one elsewhere here, this check did NOT look at it"
+      "none of ${dirs[*]} is on this machine, so no managed settings file was read — if Claude Code keeps one somewhere else here, this check did NOT look at it"
   fi
   local found=()
   for f in ${files[@]+"${files[@]}"}; do
@@ -430,11 +487,18 @@ timings.
 
 Two requests are refused with 403 and never forwarded, because loopback is
 reachable from any page a browser loads. One whose Host is not this listener.
-And, when --require-credential is given (every swapped phase): one whose
+And, when --require-credential-file names one (every swapped phase): one whose
 Authorization is not the per-run placeholder the check generated, so a request
 this run did not make can never have the real token attached to it -- a
 cross-origin "simple" POST carries no such header. --no-swap is exempt: there
 the client's own credential, the real one, is exactly what has to pass through.
+
+The placeholder comes from a FILE, never from this proxy's own command line:
+`ps` shows a process's argv to every user on the machine, and this proxy lives
+for the whole of a phase -- minutes, on the delayed one. It is a per-run secret
+that any process on this machine could replay at the listener, so it is read
+from the 0600 file the check wrote it into, and the file goes with the scratch
+directory.
 """
 import argparse, http.client, http.server, json, time
 
@@ -594,8 +658,9 @@ def main():
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--token-file", help="the token attached in place of the client's own")
     ap.add_argument("--no-swap", action="store_true")
-    ap.add_argument("--require-credential", default="",
-                    help="refuse a request whose Authorization is not this placeholder")
+    ap.add_argument("--require-credential-file", default="",
+                    help="a file holding the placeholder: refuse a request whose"
+                         " Authorization is not it (argv is world-readable in ps)")
     ap.add_argument("--upstream", default="api.anthropic.com")
     ap.add_argument("--upstream-scheme", default="https", choices=("https", "http"))
     ap.add_argument("--delay", type=float, default=0.0)
@@ -605,6 +670,16 @@ def main():
     ARGS = ap.parse_args()
     if not ARGS.no_swap and not ARGS.token_file:
         ap.error("--token-file is required unless --no-swap is given")
+    # The placeholder is read here, once, from the 0600 file: it never appears
+    # on this proxy's command line, where every user of the machine could read
+    # it out of `ps` for as long as the proxy lives.
+    ARGS.require_credential = ""
+    if ARGS.require_credential_file:
+        try:
+            with open(ARGS.require_credential_file) as fh:
+                ARGS.require_credential = fh.read().strip()
+        except OSError as exc:
+            ap.error("--require-credential-file %s: %s" % (ARGS.require_credential_file, exc))
     if not ARGS.no_swap:
         TOKEN = open(ARGS.token_file, "rb").read().strip().decode()
     DROP = {d.lower() for d in ARGS.drop}
@@ -648,10 +723,12 @@ start_proxy() { # start_proxy LOGFILE [extra args...]
   local log=$1
   shift
   stop_proxy
-  # --require-credential is passed on EVERY phase; the proxy ignores it under
-  # --no-swap, where the client's own (real) credential is what must pass.
+  # --require-credential-file is passed on EVERY phase; the proxy ignores it
+  # under --no-swap, where the client's own (real) credential is what must
+  # pass. The FILE is named, never the placeholder: this proxy's argv is
+  # readable by every user of the machine for as long as the phase lasts.
   python3 "$SCRATCH/proxy.py" --port "$PORT" --upstream "$UPSTREAM" \
-    --upstream-scheme "$UPSTREAM_SCHEME" --require-credential "$PLACEHOLDER" "$@" >"$log" 2>&1 &
+    --upstream-scheme "$UPSTREAM_SCHEME" --require-credential-file "$PLACEHOLDER_FILE" "$@" >"$log" 2>&1 &
   PROXY_PID=$!
   local i=0
   while [ "$i" -lt 50 ]; do
@@ -726,20 +803,31 @@ random_placeholder() {
 # would put the value in `env`'s own argv, which /proc/<pid>/cmdline shows to
 # every process on the machine for as long as it lives.
 #
-# Two things about the child, both of them the review's M1: it runs in the
-# SCRATCH DIRECTORY, not in whatever directory the owner launched the check
-# from, and Claude Code is told to start no hook and no MCP server. Every
-# settings source Claude Code loads is discovered from its working directory
-# (the project's .claude/ above all), and every hook, plugin hook and MCP server
-# it starts is a CHILD of `claude` that inherits its environment — the
+# Three things about the child, the first two of them the review's M1: it runs
+# in the SCRATCH DIRECTORY, not in whatever directory the owner launched the
+# check from; Claude Code is told to start no hook and no MCP server; and it is
+# given NO TOOLS and NO SESSION FILE of its own. Every settings source Claude
+# Code loads is discovered from its working directory (the project's .claude/
+# above all), and every hook, plugin hook, MCP server or TOOL CALL it starts is
+# a CHILD of `claude` that inherits its environment — the
 # CLAUDE_CODE_OAUTH_TOKEN in this one included. The token is in the environment
 # of this child by necessity (that is how the client is given its credential at
 # all), so the check has to make sure nothing else is started to inherit it:
-# --settings '{"disableAllHooks":true}' turns the hooks off and
-# --strict-mcp-config refuses every MCP server the machine's configs name.
+# --settings '{"disableAllHooks":true}' turns the hooks off,
+# --strict-mcp-config refuses every MCP server the machine's configs name, and
+# --tools "" removes the built-in set entirely — a prompt in this check asks
+# for a sentence or for numbers, so no tool is needed for it, and a tool call
+# is a process the client starts on its own with the token in its environment.
+# --no-session-persistence then keeps the client from writing a session file
+# beside the scratch directory's records, which would outlive the run in the
+# owner's own transcript store. All three were checked against the installed
+# client's `claude --help` (`--tools` accepts "" to disable every tool;
+# --no-session-persistence needs --print, which every call here passes) and
+# the script's own test fails if it passes a flag that help does not list.
 # --bare is not the answer: it refuses OAuth, which is the credential under
 # test. What still can inherit it is a process `claude` itself decides to start
-# (a tool call, an agent), and that is named in the register rather than hidden.
+# (an agent, a background fetch), and that is named in the register rather than
+# hidden.
 # shellcheck disable=SC2016 # the child's own text: nothing here expands in this shell
 CRED_CHILD='
 case "$CHK90_CRED_SOURCE" in
@@ -751,7 +839,7 @@ export CLAUDE_CODE_OAUTH_TOKEN
 unset CHK90_CRED_SOURCE
 cd "$CHK90_CWD" || exit 1
 unset CHK90_CWD
-exec claude --settings "{\"disableAllHooks\":true}" --strict-mcp-config "$@"'
+exec claude --settings "{\"disableAllHooks\":true}" --strict-mcp-config --tools "" --no-session-persistence "$@"'
 
 # claude_call BASE_URL CRED_SOURCE OUT CALL_TIMEOUT "$@" — runs claude with
 # nothing in its environment but the credential and the base URL this check
@@ -1089,14 +1177,23 @@ main() {
   esac
 
   # The per-run placeholder the proxy requires on every request it swaps. It is
-  # generated here, before the first proxy starts, and is never written to a
-  # file: a fixed string could be replayed at the listener by anything else on
-  # this machine, and a per-run secret cannot (the review's m1).
+  # generated here, before the first proxy starts: a fixed string could be
+  # replayed at the listener by anything else on this machine, and a per-run
+  # secret cannot (the review's m1). It is written into a 0600 file inside the
+  # scratch directory and handed to the proxy by NAME — `ps` shows a process's
+  # argv to every user on the machine for as long as it lives, and the delayed
+  # phase's proxy lives for minutes. The file goes with the scratch directory.
   PLACEHOLDER=$(random_placeholder) || stop "cannot generate this run's placeholder"
   [ -n "$PLACEHOLDER" ] || stop "cannot generate this run's placeholder"
 
   need_tools
   scratch_up
+  # Into the 0600 file the proxy is pointed at, and nowhere else: the value
+  # reaches the proxy by NAME and never through its argv.
+  (umask 077 && printf '%s' "$PLACEHOLDER" >"$PLACEHOLDER_FILE") \
+    || stop "cannot write this run's placeholder into the scratch directory"
+  chmod 600 "$PLACEHOLDER_FILE" \
+    || stop "cannot make the placeholder file readable by this user only"
   write_files
   # ONE `claude --version`, and under a cap of its own (the review's m4): a
   # client that hangs on startup must not hold the whole run, and the version is
@@ -1161,8 +1258,23 @@ main() {
   return "$rc"
 }
 
+# on_signal: the ONE signal handler, armed for the whole run and never
+# disarmed — including through the cleanup, which is where its second answer
+# matters. A Ctrl-C before cleanup ends the run at once; a Ctrl-C DURING
+# cleanup (or a closing terminal's SIGHUP) would otherwise kill this shell with
+# the token file still in the scratch directory, and with no RESULT block
+# printed to say so. So while cleanup runs it says one line and returns.
+on_signal() {
+  if [ "$CLEANUP_RUNNING" = yes ]; then
+    owner "cleanup is running, do not press Ctrl-C again"
+    return 0
+  fi
+  owner "interrupted"
+  exit 130
+}
+
 trap finish EXIT
-trap 'owner "interrupted"; exit 130' INT TERM
+trap on_signal INT TERM HUP
 trap on_error ERR
 # No `|| ...` around this call, for the reason spelled out where main turns the
 # trap off before its verdict: an || list would switch errexit off inside main.

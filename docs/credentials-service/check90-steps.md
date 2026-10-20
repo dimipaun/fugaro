@@ -55,12 +55,16 @@ done
 #
 # Which files: the two in the directory you run from, your user settings, the
 # same file under $CLAUDE_CONFIG_DIR when that is set, and every regular file
-# in Claude Code's managed settings directory — /etc/claude-code, the directory
-# `internal/agent/settings.go`'s ManagedSettingsPath names. That is the list
-# `agent.SettingsFiles` builds, which is what the runner itself reads. On a
-# machine where Claude Code keeps its managed settings somewhere else (a macOS
-# install, for instance), this guard does not read that file: say so in the
-# FACT rather than assuming it was checked.
+# in Claude Code's managed settings directories — /etc/claude-code, the
+# directory `internal/agent/settings.go`'s ManagedSettingsPath names, AND the
+# directory a macOS install of the client reads, /Library/Application
+# Support/ClaudeCode. Both are read, one level deep each: the Linux path alone
+# left the guard blind on the Mac this check is most likely to be run from, and
+# a managed settings file there could route the call while the FACT said no
+# managed settings had been read at all. `agent.SettingsFiles` is what the
+# runner reads and it names the Linux path only; the script reads that path too
+# and adds the macOS one. A machine that has neither prints both as absent in
+# the FACT, rather than claiming the check looked somewhere it did not.
 routing_keys() {   # $1: a settings file. Prints the routing key NAMES it sets.
   jq -r '
     (["ANTHROPIC_BASE_URL","ANTHROPIC_VERTEX_BASE_URL","ANTHROPIC_BEDROCK_BASE_URL",
@@ -396,6 +400,8 @@ cd "$SCRATCH" && CLAUDE_CODE_OAUTH_TOKEN="$(cat "$TOKEN_FILE")" \
 ```
 
 **Two flags and a directory, and all three matter.** `claude` reads its settings from the directory it is started in and starts the hooks and MCP servers those settings name as CHILD processes, which inherit its environment — and this call's environment holds the real token. Started from your home directory, that is your own hooks and your own MCP servers holding a copy of the token for as long as they run. So every call below that carries the **real** token is run from the scratch directory, with `--settings '{"disableAllHooks":true}'` turning hooks off and `--strict-mcp-config` refusing every server a config file names. (The calls that carry the placeholder need neither: a placeholder is not a credential. `--bare` is not the answer here — it refuses the OAuth token this check exists to measure.)
+
+**The script's own child carries two more flags than these steps do, and its environment is stripped of two more names.** `--tools ""` removes the built-in tool set (a prompt here asks for a sentence or for numbers, so no tool is needed, and a tool call is a process `claude` starts on its own with the token in its environment), and `--no-session-persistence` keeps the call from writing a session file into your own store; `ANTHROPIC_LOG` and `DEBUG` are unset for that child, because neither routes the call but both change what it prints or writes and its output is captured into a file the check reads. The flags are ones the installed client's `claude --help` lists, and the script's test fails if it ever passes one that help does not.
 
 **That call produces no `FACT credential-header` line, because no proxy is in its path** — nothing observed it, and a line cannot be read off a call nothing observed. What it settles is the token: it works or it does not. **Which credential the client sends with this environment is the next call's business**, and it is the same token and the same environment: the **observed control**, through the proxy in `--no-swap` mode, which replaces no header and attaches no credential, so the client's own credential is the one the API sees and the proxy's `FACT credential-header` line names what the client sent.
 

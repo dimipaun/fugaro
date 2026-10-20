@@ -184,6 +184,21 @@ if args[:2] == ["run", "services"] and args[2:3] == ["list"]:
     sys.exit(0)
 
 if args[:2] == ["run", "services"] and args[2:3] == ["delete"]:
+    # FAKE_GCLOUD_MARK names a file this call touches as it starts, and
+    # FAKE_GCLOUD_DELETE_SLEEP makes it take its time over the delete: both are
+    # how the test finds the run in the middle of its CLEANUP and sends the
+    # second signal there. The state is removed after the sleep, so a test that
+    # interrupts the deletion sees a delete that really did happen.
+    mark = os.environ.get("FAKE_GCLOUD_MARK")
+    if mark:
+        # A LINE, not an empty file: the test waits for this file to be
+        # non-empty, so a zero-byte touch would never be seen and the wait would
+        # run to its full budget instead of breaking the moment the delete
+        # starts.
+        with open(mark, "a") as fh:
+            fh.write("delete\n")
+    if os.environ.get("FAKE_GCLOUD_DELETE_SLEEP"):
+        time.sleep(float(os.environ["FAKE_GCLOUD_DELETE_SLEEP"]))
     rm("service")
     sys.exit(0)
 
@@ -768,19 +783,128 @@ test_staged_source_is_removed() {
 }
 
 # The installation's staging bucket may not be readable here (it is not this
-# check's, and it is not created by it). Then the build uses gcloud's default
-# staging directory, the fact says so out loud, and the Restore does not try to
-# delete a prefix that was never used.
-test_unreadable_staging_bucket_falls_back_and_says_so() {
+# check's, and it is not created by it). Then the run STOPS before the build:
+# `gcloud builds submit` would CREATE that bucket to stage the source, and a
+# bucket is the installation's — Terraform-managed, with no ownership record
+# this check could write and no Restore that could delete it. The fallback to
+# gcloud's default staging directory is gone for the same reason it was always
+# wrong: the tarball then cannot be named afterwards either.
+test_unreadable_staging_bucket_stops_before_the_build() {
   local dir=$work/nobucket
   prepare "$dir"
   run91 "$dir" FAKE_GCLOUD_NO_STAGING_BUCKET=yes
-  expect_status "$status" 0 "unreadable staging bucket: the run"
-  expect_contains "$out" "FACT build-staging: INFO" "unreadable staging bucket: the fallback is recorded"
-  expect_absent "$(cat "$dir/logs/gcloud.calls")" "--gcs-source-staging-dir" \
-    "unreadable staging bucket: no staging prefix is passed"
-  expect_absent "$(cat "$dir/logs/gcloud.calls")" "storage rm" "unreadable staging bucket: nothing is deleted from a bucket this run did not write to"
-  expect_contains "$out" "FACT restore-staged-source: INFO" "unreadable staging bucket: the Restore says there is no prefix of its own"
+  expect_status "$status" 1 "unreadable staging bucket: the run stops"
+  expect_contains "$out" "FACT build-staging: FAIL" "unreadable staging bucket: the fact says the build did not start"
+  expect_contains "$err" "would CREATE it to stage this run's source" "unreadable staging bucket: the stop says what gcloud would do"
+  expect_contains "$err" "Nothing was created, built or deployed by this run" "unreadable staging bucket: the stop says nothing was spent"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_absent "$calls" "builds submit" "unreadable staging bucket: nothing is built"
+  expect_absent "$calls" "run deploy" "unreadable staging bucket: nothing is deployed"
+  expect_absent "$calls" "storage rm" "unreadable staging bucket: nothing is deleted from a bucket this run did not write to"
+  expect_absent "$calls" "storage buckets create" "unreadable staging bucket: this check never creates the installation's bucket"
+  # The repository it created before the stop is still deleted: a stop is not a
+  # reason to leave something of this check's in the project.
+  expect_contains "$calls" "repositories delete fugaro-chk91" "unreadable staging bucket: the repository this run made is deleted"
+  expect_contains "$out" "FACT restore: PASS" "unreadable staging bucket: the Restore ran"
+  if [ -d "$scratch" ]; then fail "unreadable staging bucket: the scratch directory survived"; fi
+}
+
+# Every request carries a cap of its own. A curl with none is waited on for as
+# long as the front end keeps the socket open, so a request can outlive the run
+# it belongs to and a Ctrl-C has nothing to end. The fake curl logs the argv it
+# was handed, so this reads the whole run's requests.
+test_every_curl_carries_a_cap() {
+  local dir=$work/curlcaps
+  prepare "$dir"
+  run91 "$dir"
+  expect_status "$status" 0 "curl caps: the run"
+  local line n=0
+  while IFS= read -r line; do
+    case "$line" in
+    "curl config "*) continue ;;
+    "curl -V"*) continue ;; # the capability probe: no request, nothing to cap
+    curl\ *) ;;
+    *) continue ;;
+    esac
+    n=$((n + 1))
+    expect_contains "$line" "--max-time " "curl caps: this request has no cap of its own"
+  done <"$dir/logs/curl.calls"
+  [ "$n" -ge 6 ] || fail "curl caps: only $n request(s) were logged, the run changed shape"
+}
+
+# A second Ctrl-C DURING the cleanup must not kill the shell that is running it.
+# The first one is already accounted for; what cleanup is doing is deleting the
+# service, the image and the repository this run created in fugaro-dev, and a
+# shell killed halfway through that leaves a billed service (or an image, or a
+# repository) behind with the RESULT block that would have named it never
+# printed. The fake gcloud says when the delete starts and takes its time over
+# it, so the signal lands inside the cleanup rather than before it.
+test_second_interrupt_during_cleanup_does_not_kill_it() {
+  local dir=$work/secondint
+  prepare "$dir"
+  # The fake curl logs its argv into $dir/logs and the fake gcloud keeps its
+  # state in $dir/state: without them the fakes fail on their first call and the
+  # run stops long before its cleanup (run91 makes these; this test does not
+  # go through run91).
+  mkdir -p "$dir/logs" "$dir/state"
+  rm -f "$dir/delete.mark"
+  local st=0
+  set -m # a background job of a non-interactive shell starts with SIGINT ignored
+  env PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" FAKE_CURL_STATE="$dir/state" \
+    FAKE_GCLOUD_MARK="$dir/delete.mark" FAKE_GCLOUD_DELETE_SLEEP=4 \
+    CHECK91_IDLE_SECONDS=0 CHECK91_PROBE_SECONDS=3 \
+    CHECK91_BODY_SIZES="1048576 2097152" \
+    bash "$script" >"$dir/out" 2>"$dir/err" &
+  local pid=$!
+  # A run takes a while to reach its cleanup (the probes and the body sizes
+  # above), so this waits past that; it stops early if the run is already gone,
+  # which is a failure below rather than something to wait for.
+  local i=0
+  while [ "$i" -lt 900 ] && kill -0 "$pid" 2>/dev/null; do
+    [ -s "$dir/delete.mark" ] && break
+    sleep 0.2
+    i=$((i + 1))
+  done
+  if [ ! -s "$dir/delete.mark" ]; then
+    kill -KILL "$pid" 2>/dev/null || true
+    set +m
+    wait "$pid" 2>/dev/null || true
+    fail "second interrupt: the run never reached its cleanup (no delete started), so this test proved nothing: $(tail -n 2 "$dir/err" | tr '\n' ' ')"
+    return 0
+  fi
+  kill -INT "$pid" 2>/dev/null || true
+  local j=0
+  while kill -0 "$pid" 2>/dev/null && [ "$j" -lt 600 ]; do
+    sleep 0.2
+    j=$((j + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+    set +m
+    fail "second interrupt: the run did not end after the second signal"
+    wait "$pid" 2>/dev/null || true
+    return 0
+  fi
+  wait "$pid" || st=$?
+  set +m
+  # The verdict is the run's own: the happy path measured what it measured, and
+  # the signal during the cleanup may not change that or the block.
+  expect_status "$st" 0 "second interrupt: the run's own verdict survives the second signal"
+  expect_contains "$(cat "$dir/out")" "CHECK 91 RESULT END (exit 0)" \
+    "second interrupt: the block was still printed after the cleanup"
+  expect_contains "$(cat "$dir/err")" "cleanup is running, do not press Ctrl-C again" \
+    "second interrupt: the run says what the second Ctrl-C did"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_contains "$calls" "run services delete fugaro-chk91" "second interrupt: the service delete still ran"
+  expect_contains "$calls" "repositories delete fugaro-chk91" "second interrupt: the cleanup went on past the service"
+  expect_contains "$out" "FACT restore-counts: PASS" "second interrupt: the counts were still read"
+  local sc
+  sc=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
+  [ -n "$sc" ] || fail "second interrupt: the scratch directory was never announced"
+  if [ -d "$sc" ]; then fail "second interrupt: the cleanup was cut short — $sc survived"; fi
 }
 
 # A token on a command line is a token in `ps`: every user on the machine sees
@@ -1078,7 +1202,9 @@ test_burst_stream
 test_liveness_probe_failure_is_recorded
 test_no_http2_curl
 test_staged_source_is_removed
-test_unreadable_staging_bucket_falls_back_and_says_so
+test_unreadable_staging_bucket_stops_before_the_build
+test_every_curl_carries_a_cap
+test_second_interrupt_during_cleanup_does_not_kill_it
 test_identity_token_is_never_on_a_command_line
 test_ownership_record_precedes_the_create
 test_failed_create_takes_its_record_back

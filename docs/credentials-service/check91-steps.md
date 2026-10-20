@@ -288,11 +288,11 @@ gcloud auth print-identity-token >/dev/null || { echo "Check 91 stopped: no iden
 ```bash
 STAGING=gs://${P}_cloudbuild/chk91-source/${CHK91##*/}/
 gcloud storage ls "gs://${P}_cloudbuild/" >/dev/null 2>&1 \
-  && gcloud builds submit --project="${P:?}" --tag="${IMG:?}" --gcs-source-staging-dir="$STAGING" "$CHK91" \
-  || gcloud builds submit --project="${P:?}" --tag="${IMG:?}" "$CHK91"
+  || { echo "Check 91 stopped: gs://${P}_cloudbuild/ cannot be listed, and 'gcloud builds submit' would CREATE it to stage this run's source. A bucket is the installation's own — Terraform-managed, not this check's — so this check creates none and has no record by which to remove one. Create it as the installation's own, or give this account read access, then run again. Nothing was created, built or deployed." >&2; exit 1; }
+gcloud builds submit --project="${P:?}" --tag="${IMG:?}" --gcs-source-staging-dir="$STAGING" "$CHK91"
 ```
 
-If that bucket cannot be listed, the build uses gcloud's default staging directory instead and the tarball cannot be named afterwards — record that as the check's `build-staging` fact does, and let the bucket's own lifecycle rule remove it. The prefix is never a bucket-wide delete: it is `chk91-source/<this run's scratch name>/` and nothing else.
+**The bucket is checked before the build, and an unreadable one is a STOP — the script does not fall back to gcloud's default staging directory.** `gcloud builds submit` creates `gs://<project>_cloudbuild` when it is not there, and that bucket is the installation's: it is in the project's Terraform and not this check's, so a run that let gcloud make one would have created a project-level resource with no ownership record and no Restore that could delete it. The fallback was also worse in its own right — the tarball then cannot be named afterwards and stays for a bucket lifecycle rule to sweep away. The prefix is never a bucket-wide delete: it is `chk91-source/<this run's scratch name>/` and nothing else.
 
 ### Check 91 step 4: cold start (U5)
 
@@ -379,8 +379,9 @@ gcloud run services delete "${SVC:?}" --project="${P:?}" --region="${L:?}" --qui
 gcloud artifacts docker images delete "${IMG:?}" --project="${P:?}" --delete-tags --quiet
 gcloud artifacts repositories delete "${SVC:?}" --project="${P:?}" --location="${L:?}" --quiet
 # The build's staged source, removed from the prefix of this run's own (see
-# step 3). Only that prefix: never a bucket-wide delete, and nothing at all
-# when the build used gcloud's default staging directory instead.
+# step 3). Only that prefix: never a bucket-wide delete. A build is only ever
+# started with that prefix — an unlistable staging bucket stops the run before
+# the build — so an attempted build always has one to remove.
 rm -f "$AUTH_CONF"                          # the minted identity token goes before the directory
 gcloud storage rm -r "gs://${P}_cloudbuild/chk91-source/${CHK91##*/}/" 2>/dev/null || true
 ```

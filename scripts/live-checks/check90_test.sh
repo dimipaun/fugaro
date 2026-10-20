@@ -63,6 +63,7 @@ for v in "${GUARD_VARS[@]}"; do GUARD_UNSET+=(-u "$v"); done
 REAL_ENV=$(command -v env || true)
 REAL_PS=$(command -v ps || true)
 REAL_CHMOD=$(command -v chmod || true)
+REAL_RM=$(command -v rm || true)
 
 # --------------------------------------------------------------------- fakes
 write_fake_claude() { # dir
@@ -80,6 +81,42 @@ import http.client, json, os, subprocess, sys, time
 
 mode = os.environ.get("FAKE_CLAUDE_MODE", "ok")
 args = sys.argv[1:]
+
+# The flags this client documents, which is what the script may pass it. The
+# list is the installed client's own --help, restricted to the options the
+# check uses: --tools takes "" to disable every built-in tool and
+# --no-session-persistence needs --print, which every call here passes. A flag
+# that is NOT here is refused below, so the check cannot come to rely on an
+# option the real client does not have.
+HELP_FLAGS = {"-p": "Print response and exit (non-interactive)",
+              "--settings": "Path to a settings JSON file or a JSON string",
+              "--strict-mcp-config": "Only use MCP servers from --mcp-config",
+              "--tools": 'List of available tools (use "" to disable all tools)',
+              "--no-session-persistence": "Disable session persistence (with --print)",
+              "--version": "Output the version number"}
+VALUE_FLAGS = {"-p", "--settings", "--tools"}
+
+if "--help" in args:
+    print("Usage: claude [options] [command] [prompt]\n")
+    print("Options:")
+    for flag in sorted(HELP_FLAGS):
+        print("  %-28s %s" % (flag, HELP_FLAGS[flag]))
+    sys.exit(0)
+
+unknown = []
+i = 0
+while i < len(args):
+    a = args[i]
+    if a in HELP_FLAGS:
+        i += 2 if a in VALUE_FLAGS else 1
+        continue
+    if a.startswith("-"):
+        unknown.append(a)
+    i += 1
+if unknown:
+    sys.stderr.write("error: unknown option '%s'\n" % unknown[0])
+    sys.exit(2)
+
 if "--version" in args:              # the version probe is not a call
     # The probe is recorded so a test can say it was made ONCE, and it can be
     # made to hang so a test can say the probe is capped.
@@ -120,15 +157,24 @@ if os.environ.get("FAKE_CLAUDE_PS"):
 # with hooks off and MCP servers refused, and with no routing variable in its
 # environment (the review's M1).
 if os.environ.get("FAKE_CLAUDE_CONTEXT"):
+    # ANTHROPIC_LOG and DEBUG are watched with the routing names: neither routes
+    # the call, but both change what the client prints or writes, and the child
+    # that carries the token must not be started with either.
     watched = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
                "ANTHROPIC_BASE_URL", "ANTHROPIC_VERTEX_BASE_URL",
                "ANTHROPIC_BEDROCK_BASE_URL", "CLAUDE_CODE_USE_VERTEX",
                "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_FOUNDRY", "HTTP_PROXY",
-               "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "CHK90_CRED_SOURCE", "CHK90_CWD")
+               "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "ANTHROPIC_LOG", "DEBUG",
+               "CHK90_CRED_SOURCE", "CHK90_CWD")
     seen = ",".join(sorted(k for k in os.environ if k in watched))
+    # The tools value is recorded separately, and as a repr: `--tools ""` and a
+    # missing --tools both leave the argv joined by spaces looking the same, and
+    # the difference is the whole point of the flag.
+    ti = args.index("--tools") if "--tools" in args else -1
+    tools = repr(args[ti + 1]) if 0 <= ti < len(args) - 1 else "(none)"
     with open(os.environ["FAKE_CLAUDE_CONTEXT"], "a") as fh:
-        fh.write("cwd=%s kind=%s env=%s argv=%s\n"
-                 % (os.getcwd(), kind, seen, " ".join(args)))
+        fh.write("cwd=%s kind=%s env=%s tools=%s argv=%s\n"
+                 % (os.getcwd(), kind, seen, tools, " ".join(args)))
 
 # A client that stalls on ONE prompt and answers every other: the streaming
 # call is the only one this test can make the cap cut off without losing the
@@ -234,6 +280,22 @@ esac
 exec "$REAL_CHMOD" "\$@"
 CHMOD_EOF
   chmod +x "$1/bin/chmod"
+}
+
+# write_fake_rm DIR — an `rm` that takes its time and says when it started, so a
+# test can send a signal while the CLEANUP is running. It hands every removal to
+# the real `rm`; only the moment is the fake's.
+write_fake_rm() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/rm" <<RM_EOF
+#!/usr/bin/env bash
+# A stand-in for \`rm\`, for scripts/live-checks/check90_test.sh only.
+set -euo pipefail
+if [ -n "\${FAKE_RM_MARK:-}" ]; then printf 'rm\n' >>"\$FAKE_RM_MARK"; fi
+sleep "\${FAKE_RM_SLEEP:-2}"
+exec "$REAL_RM" "\$@"
+RM_EOF
+  chmod +x "$1/bin/rm"
 }
 
 write_fake_upstream() { # dir
@@ -879,6 +941,199 @@ test_token_length_is_not_printed() {
   return 0
 }
 
+# The child that carries the real token is given the two flags the review asked
+# for, and they are flags the client DOCUMENTS: the fake claude refuses any
+# option its own --help does not list (it mirrors the installed client's set),
+# so a flag that does not exist there fails this run rather than silently
+# changing what the call does. --tools "" is what removes the built-in tools: a
+# tool call is a process `claude` starts on its own, with the token in its
+# environment. --no-session-persistence keeps the call from writing a session
+# file into the owner's own store.
+test_child_flags_disable_tools_and_are_documented() {
+  local ctx=$work/flags/context
+  run90 flags ok "" FAKE_CLAUDE_CONTEXT="$ctx"
+  expect_status "$status" 0 "child flags: the run"
+  [ -s "$ctx" ] || {
+    fail "child flags: no child recorded its context, so this test proves nothing"
+    return 0
+  }
+  local line n=0 flag help
+  help=$("$work/flags/bin/claude" --help)
+  while IFS= read -r line; do
+    n=$((n + 1))
+    expect_contains "$line" "tools=''" "child flags: the child is given NO tool at all (line $n)"
+    expect_contains "$line" "--no-session-persistence" "child flags: no session file is written (line $n)"
+    for flag in --settings --strict-mcp-config --tools --no-session-persistence; do
+      expect_contains "$help" "$flag" "child flags: $flag is not in the client's own --help"
+      expect_contains "$line" "$flag" "child flags: the child was not given $flag (line $n)"
+    done
+  done <"$ctx"
+  [ "$n" -ge 3 ] || fail "child flags: only $n child(ren) recorded a context, the run changed shape"
+}
+
+# The placeholder is a per-run secret: the proxy refuses any request whose
+# Authorization is not it, so it is what keeps a page the browser loaded from
+# having the REAL token attached to its request. It reaches the proxy through a
+# 0600 file the proxy is pointed at, never through that process's command line:
+# `ps` shows a process's argv to every user of the machine for as long as the
+# process lives, and the delayed phase's proxy lives for minutes.
+test_placeholder_is_never_in_a_process_argv() {
+  local dir=$work/placeholder
+  run90 placeholder ok "" \
+    FAKE_CLAUDE_PS="$dir/ps.snapshot" FAKE_PS_PATTERN='chk90|proxy'
+  expect_status "$status" 0 "placeholder: the run"
+  local ph
+  ph=$(grep -o 'placeholder-[0-9a-f]*' "$dir/env.argv" 2>/dev/null | head -n 1 || true)
+  [ -n "$ph" ] || {
+    fail "placeholder: no placeholder was recorded in the argv the run handed over, so this test proves nothing"
+    return 0
+  }
+  [ -s "$dir/ps.snapshot" ] || {
+    fail "placeholder: nothing was recorded in the process snapshot, so it proves nothing"
+    return 0
+  }
+  expect_contains "$(cat "$dir/ps.snapshot")" "proxy.py" \
+    "placeholder: the snapshot did not catch the proxy itself, so its silence about the placeholder means nothing"
+  expect_absent "$(cat "$dir/ps.snapshot")" "$ph" \
+    "placeholder: the per-run placeholder is in a process's argv, where every user of this machine can read it"
+  # ... and the proxy is pointed at the FILE, so its silence about the value is
+  # not the silence of a proxy that was given no placeholder at all. (That the
+  # file itself is 0600 and inside the 0700 scratch directory is the script's
+  # own doing; what this run can see is that the value is not in any argv.)
+  expect_contains "$(cat "$dir/ps.snapshot")" "--require-credential-file" \
+    "placeholder: the proxy was not handed the placeholder file, so this proves nothing about how it was handed the value"
+}
+
+# Every managed settings directory the guard names is read, not just the first:
+# the Linux one the runner writes and the one a macOS install of the client
+# reads. Reading only the Linux path left the guard blind on the machine this
+# check is most likely to be run from, with its FACT claiming no managed settings
+# had been read at all. Two directories are named here and the routing key is in
+# the SECOND, so a guard that stops at the first is caught.
+test_managed_settings_reads_every_directory_it_names() {
+  local dir=$work/managedboth
+  mkdir -p "$dir/home" "$dir/tmp" "$dir/first" "$dir/second" "$dir/logs"
+  write_fake_claude "$dir"
+  write_fake_env "$dir"
+  write_fake_ps "$dir"
+  write_fake_upstream "$dir"
+  : >"$dir/claude.calls"
+  start_upstream "$dir" ok "" || return 1
+  printf '%s' '{"env":{"ANTHROPIC_BASE_URL":"https://example.invalid"}}' \
+    >"$dir/second/managed-settings.json"
+  local st=0
+  printf '%s\n' "$SENTINEL" | env \
+    ${GUARD_UNSET[@]} \
+    PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    CHECK90_MANAGED_SETTINGS_DIRS="$dir/first:$dir/second" \
+    CHECK90_UPSTREAM="$FAKE_UPSTREAM_ADDR" \
+    CHECK90_DELAY=1 CHECK90_CALL_TIMEOUT=20 CHECK90_TOTAL_SECONDS=180 \
+    CHECK90_KEEP_LOGS="$dir/logs" \
+    FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
+    bash "$script" >"$dir/out" 2>"$dir/err" || st=$?
+  expect_status "$st" 1 "managed settings: the run"
+  local line
+  line=$(grep -m1 '^FACT managed-settings-dir: ' "$dir/out" || true)
+  expect_contains "$line" "$dir/first" "managed settings: the first directory is named"
+  expect_contains "$line" "$dir/second" "managed settings: the second directory is named"
+  expect_contains "$(cat "$dir/out")" "FACT settings-routing: FAIL" \
+    "managed settings: a routing key in the SECOND directory is not read"
+  expect_contains "$(cat "$dir/err")" "$dir/second/managed-settings.json" \
+    "managed settings: the file in the second directory is named"
+  if [ -s "$dir/claude.calls" ]; then fail "managed settings: claude was run anyway"; fi
+}
+
+# The two directories a real run looks at are the Linux one and the macOS one,
+# as literals, because a run here cannot be used to see them: this machine has a
+# real /etc/claude-code, so a run would measure it rather than the check.
+test_default_managed_settings_names_both_platforms() {
+  expect_contains "$(cat "$script")" '/etc/claude-code' \
+    "default managed settings: the Linux directory"
+  expect_contains "$(cat "$script")" '/Library/Application Support/ClaudeCode' \
+    "default managed settings: the macOS directory"
+}
+
+# A second Ctrl-C DURING the cleanup must not kill the shell that is running it:
+# the first one has already ended the run, and what cleanup is doing is wiping
+# the token file and removing the scratch directory. Killed here, the token file
+# stays on disk in a directory nobody is left to remove, and the RESULT block
+# that would say so is never printed. The fake `rm` takes its time and says when
+# it started, so the signal lands inside the cleanup rather than before it.
+test_second_interrupt_during_cleanup_does_not_kill_it() {
+  local dir=$work/secondint
+  mkdir -p "$dir/home" "$dir/tmp" "$dir/managed"
+  write_fake_claude "$dir"
+  write_fake_env "$dir"
+  write_fake_ps "$dir"
+  write_fake_rm "$dir"
+  write_fake_upstream "$dir"
+  : >"$dir/claude.calls"
+  start_upstream "$dir" ok "" || return 1
+  local st=0
+  printf '%s\n' "$SENTINEL" >"$dir/tokenin"
+  rm -f "$dir/rm.mark"
+  # Job control: a background job of a non-interactive shell starts with SIGINT
+  # ignored, and bash cannot trap a signal that was ignored when it started.
+  set -m
+  env \
+    ${GUARD_UNSET[@]} \
+    PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    CHECK90_MANAGED_SETTINGS_DIR="$dir/managed" \
+    CHECK90_UPSTREAM="$FAKE_UPSTREAM_ADDR" \
+    CHECK90_DELAY=1 CHECK90_CALL_TIMEOUT=20 CHECK90_TOTAL_SECONDS=180 \
+    CHECK90_KEEP_LOGS="$dir/logs" \
+    FAKE_RM_MARK="$dir/rm.mark" FAKE_RM_SLEEP=3 \
+    FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
+    bash "$script" <"$dir/tokenin" >"$dir/out" 2>"$dir/err" &
+  local pid=$!
+  # The run takes about a minute to reach its cleanup (CHECK90_DELAY=1 over the
+  # seven steps), so this waits well past that, and stops early if the run is
+  # already gone — a run that died before its cleanup is a failure below, not
+  # something to wait three minutes for.
+  local i=0
+  while [ "$i" -lt 900 ] && kill -0 "$pid" 2>/dev/null; do
+    [ -s "$dir/rm.mark" ] && break
+    sleep 0.2
+    i=$((i + 1))
+  done
+  if [ ! -s "$dir/rm.mark" ]; then
+    kill -KILL "$pid" 2>/dev/null || true
+    set +m
+    wait "$pid" 2>/dev/null || true
+    fail "second interrupt: the run never reached its cleanup (no rm started), so this test proved nothing: $(tail -n 2 "$dir/err" | tr '\n' ' ')"
+    return 0
+  fi
+  kill -INT "$pid" 2>/dev/null || true
+  local j=0
+  while kill -0 "$pid" 2>/dev/null && [ "$j" -lt 600 ]; do
+    sleep 0.2
+    j=$((j + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+    set +m
+    fail "second interrupt: the run did not end after the second signal"
+    wait "$pid" 2>/dev/null || true
+    return 0
+  fi
+  wait "$pid" || st=$?
+  set +m
+  # The verdict is the run's own: the happy path measured what it measured, and
+  # the signal during the cleanup is not allowed to change either that or the
+  # block that reports it.
+  expect_status "$st" 0 "second interrupt: the run's own verdict survives the second signal"
+  expect_contains "$(cat "$dir/out")" "CHECK 90 RESULT END (exit 0)" \
+    "second interrupt: the block was still printed after the cleanup"
+  expect_contains "$(cat "$dir/err")" "cleanup is running, do not press Ctrl-C again" \
+    "second interrupt: the run says what the second Ctrl-C did"
+  local sc
+  sc=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
+  [ -n "$sc" ] || fail "second interrupt: the scratch directory was never announced"
+  if [ -d "$sc" ]; then fail "second interrupt: the cleanup was cut short — $sc survived"; fi
+  if [ -e "$sc/token" ]; then fail "second interrupt: the token file survived the cleanup"; fi
+  return 0
+}
+
 test_happy_path
 test_block_format
 test_env_guards
@@ -899,6 +1154,11 @@ test_budget_is_read_at_every_step
 test_version_probe_is_capped_and_once
 test_internal_error_is_aborted_not_viable
 test_token_length_is_not_printed
+test_child_flags_disable_tools_and_are_documented
+test_placeholder_is_never_in_a_process_argv
+test_managed_settings_reads_every_directory_it_names
+test_default_managed_settings_names_both_platforms
+test_second_interrupt_during_cleanup_does_not_kill_it
 
 if [ "$failures" -ne 0 ]; then
   echo "check90_test.sh: $failures failure(s)" >&2

@@ -216,9 +216,15 @@ func TestCheck90ScriptKeepsItsPromises(t *testing.T) {
 		"drain_input",
 		"XTRACE_AT_START",
 		"{ set +x; } 2>/dev/null",
-		// The whole line, not its two halves: both appear in the comment above it
-		// as well, and a pin the comment satisfies stops pinning anything.
-		`exec claude --settings "{\"disableAllHooks\":true}" --strict-mcp-config "$@"`,
+		// The whole line, not its halves: every part of it appears in the comment
+		// above it as well, and a pin the comment satisfies stops pinning
+		// anything. `--tools ""` removes the built-in tools (a tool call is a
+		// process the client starts on its own, with the token in its
+		// environment) and `--no-session-persistence` keeps the call's session
+		// file out of the owner's store; both are in the installed client's own
+		// --help, which the script's test asserts by rejecting any flag help
+		// does not list.
+		`exec claude --settings "{\"disableAllHooks\":true}" --strict-mcp-config --tools "" --no-session-persistence "$@"`,
 		`cd "$CHK90_CWD" || exit 1`,
 	} {
 		if !strings.Contains(text, want) {
