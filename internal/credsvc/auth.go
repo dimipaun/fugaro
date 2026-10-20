@@ -651,6 +651,11 @@ func decodeJWT(tok string) (head, claims map[string]any, err error) {
 // than half-read (review nit): a token whose payload is one claim set and then
 // another is not a token whose claims are the ones that were signed, and the
 // decoder would otherwise hand back the first and drop the rest without a word.
+//
+// "Anything after the object" is asked with Token, not with More: More reports
+// whether the next non-space byte is not ']' or '}', so a segment ending in a
+// closing brace or bracket — the first claim set followed by `}` — reads as
+// nothing left. Token returns io.EOF exactly when only whitespace remains.
 func decodeSegment(s string) (map[string]any, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(s, "="))
 	if err != nil {
@@ -662,7 +667,7 @@ func decodeSegment(s string) (map[string]any, error) {
 	if err := dec.Decode(&out); err != nil {
 		return nil, errors.New("credsvc: a JWT segment is not a JSON object")
 	}
-	if dec.More() {
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return nil, errors.New("credsvc: a JWT segment carries more than one JSON value")
 	}
 	return out, nil

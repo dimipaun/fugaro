@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"regexp"
@@ -321,13 +322,19 @@ func ReadWireError(status int, body []byte) (WireError, error) {
 
 // decodeStrict decodes exactly one JSON value into out: a field this code does
 // not know is an error, and so is anything after the value (Convention 6).
+//
+// "Anything after the value" is asked with Token, not with More: More reports
+// whether the next non-space byte is not ']' or '}', so a trailer that *is* a
+// closing brace or bracket — `{"error":"x"}}` — reads as nothing left. Token
+// returns io.EOF exactly when only whitespace remains, which is the question
+// this rule asks.
 func decodeStrict(raw []byte, out any) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(out); err != nil {
 		return err
 	}
-	if dec.More() {
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return errors.New("credsvc: trailing data after the JSON value")
 	}
 	return nil

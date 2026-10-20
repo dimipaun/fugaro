@@ -395,6 +395,13 @@ func TestSwitchHeaderRoundTrip(t *testing.T) {
 		"no reason":                 `{"from":"acct-one","to":"anthropic-key"}`,
 		"an oversized from": fmt.Sprintf(`{"from":%q,"to":"anthropic-key","reason":"exhausted"}`,
 			strings.Repeat("A", maxCredentialNameBytes+1)),
+		// A closing brace or bracket after the record is a second value like
+		// any other: dec.More() reports false for it — it answers "is the next
+		// byte '}' or ']'", not "is anything left" — so a trailer of '}' or ']'
+		// is the one that slips past a More() check (review finding on the
+		// strict-decode rule).
+		"a closing brace after the record":   `{"from":"acct-one","to":"anthropic-key","reason":"exhausted"}}`,
+		"a closing bracket after the record": `{"from":"acct-one","to":"anthropic-key","reason":"exhausted"}]`,
 	}
 	for name, raw := range malformed {
 		t.Run(name, func(t *testing.T) {
@@ -449,6 +456,13 @@ func TestWireErrorCarriesTheTypeAndNoIdentity(t *testing.T) {
 		`{"error":"state_unavailable"} trailing`,
 		"{\"error\":\"state_unavailable\",\"tried\":[{\"name\":\"a\",\"tier\":\"A\",\"reason\":\"exhausted\",\"extra\":1}]}",
 		"{\"error\":\"unverified_run_identity\",\"message\":\"a\x01b\"}",
+		// A closing brace or bracket after the value is the trailer that slips
+		// past a decoder's More(): More() answers "is the next byte '}' or ']'",
+		// not "is anything left", so `...}}` and `...}]` read as one value
+		// (review finding on the strict-decode rule).
+		`{"error":"state_unavailable"}}`,
+		`{"error":"state_unavailable"}]`,
+		`{"error":"state_unavailable"} } }`,
 	} {
 		_, err := ReadWireError(StatusUnverified, []byte(body))
 		if err == nil {

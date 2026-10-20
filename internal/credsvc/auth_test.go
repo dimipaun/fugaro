@@ -962,18 +962,29 @@ func TestVerifyRefusesASegmentWithTrailingBytes(t *testing.T) {
 	head := `{"alg":"RS256","kid":"` + testKid + `","typ":"JWT"}`
 
 	t.Run("trailing bytes after the claims", func(t *testing.T) {
-		f := newFixture(t)
-		tok := signRawJWT(t, testKey(), head, string(claims)+`{"extra":1}`)
-		if _, err := f.verify(tok, f.jobToken(), f.job); !errors.Is(err, ErrUnverified) {
-			t.Fatalf("err = %v, want ErrUnverified", err)
+		// A closing brace or bracket after the value is the trailer that slips
+		// past a decoder's More(): More() answers "is the next byte '}' or ']'",
+		// not "is anything left" (review finding on the strict-decode rule).
+		for _, trailer := range []string{`{"extra":1}`, "}", "]", "} }"} {
+			t.Run(trailer, func(t *testing.T) {
+				f := newFixture(t)
+				tok := signRawJWT(t, testKey(), head, string(claims)+trailer)
+				if _, err := f.verify(tok, f.jobToken(), f.job); !errors.Is(err, ErrUnverified) {
+					t.Fatalf("err = %v, want ErrUnverified", err)
+				}
+			})
 		}
 	})
 
 	t.Run("trailing bytes after the header", func(t *testing.T) {
-		f := newFixture(t)
-		tok := signRawJWT(t, testKey(), head+`{"extra":1}`, string(claims))
-		if _, err := f.verify(tok, f.jobToken(), f.job); !errors.Is(err, ErrUnverified) {
-			t.Fatalf("err = %v, want ErrUnverified", err)
+		for _, trailer := range []string{`{"extra":1}`, "}", "]", "} }"} {
+			t.Run(trailer, func(t *testing.T) {
+				f := newFixture(t)
+				tok := signRawJWT(t, testKey(), head+trailer, string(claims))
+				if _, err := f.verify(tok, f.jobToken(), f.job); !errors.Is(err, ErrUnverified) {
+					t.Fatalf("err = %v, want ErrUnverified", err)
+				}
+			})
 		}
 	})
 }
