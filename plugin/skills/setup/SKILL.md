@@ -38,8 +38,8 @@ Then continue here. If it names other missing pieces, the user decides whether t
 **A managed project's deletes.** A managed project records, in one object at the root of its runs bucket, the addresses whose deletes and replacements its owner approves. Its writer is the owner's command, run in their own terminal window, not through the agent; it refuses an agent's session. That is a speed bump, not a boundary: your session holds the owner's credentials, so never write that object yourself, by this command or any other:
 
 ```bash user-runs
-# approve the addresses a run may delete or replace
-fugaro allow-delete <address>...
+# approve one address, with the identity a refusal printed
+fugaro allow-delete '<address>=type=<type> name=<name> id=<id>'
 ```
 
 A project is managed when its runs bucket holds Fugaro's marker (`fugaro/managed.json`) **and the project carries the label `fugaro_managed=true`** — two marks, both written in the user's own terminal, not through the agent, and both by the same operator-run step: the run that creates the project writes them together, and for a project that already exists the owner has one command of their own that writes both in the same moment. **Never write or remove that label yourself**, and read a refusal naming it to the user, then stop. **Managed mode is gated off in 0.9.0**: the `managedDeployerShipped` gate (`internal/cli/recipes_skew.go`) is false, so creating one (`--create-project --managed`), flagging an existing one, `fugaro managed apply` and `fugaro restore` all refuse with `managed projects are disabled in this release` before any cloud call — read a refusal to the user, say managed mode is disabled in this release, and stop; the redesign is planned for 0.9.5, so 0.9.0 has no way in. [reference/managed.md](reference/managed.md) has the gate, and the apply, the flag and the creation for when it opens.

@@ -668,13 +668,28 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	const a = "user:a@example.com"
 	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
 
-	// (c) An address on the owner's list does not permit an init --yes delete.
+	// (c) An address on the owner's list does not permit an init --yes
+	// delete, and the entry here is the strongest one there is: it names this
+	// plan's own address and the identity this plan's own before view carries
+	// (identityOf reads it back through the plan, so the two cannot drift). A
+	// list that matched is the only way this row says anything — an object
+	// whose before view identified nothing, or a version-1 object a reader
+	// takes for no entries at all, would be refused whatever init did with
+	// the list — and what it says is the SCOPING: fugaro init's guard is the
+	// address half over fugaro's own roots (tf.Guard with the command line's
+	// own --allow-delete, D72/D74), and the owner's entries are read by a
+	// managed apply of the project's agent-authored root alone.
+	const bucket = "module.installation.google_storage_bucket.runs"
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
-	r.allowDeleteList(t, initProject, address)
-	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
+	ch := planChange{"address": bucket, "type": "google_storage_bucket",
+		"change": map[string]any{"actions": []string{"delete"},
+			"before": map[string]any{"id": "fugaro-runs-" + initProject, "name": "fugaro-runs-" + initProject, "project": initProject},
+			"after":  nil}}
+	r.allowDeleteList(t, initProject, tf.DeleteEntry{Address: bucket, Before: identityOf(t, ch)})
+	r.setPlan(t, ch)
 	_, _, err := executeStdin(t, "", "init", "--yes")
-	managedRefusal(t, err, address, true)
+	managedRefusal(t, err, bucket, true)
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatal("the owner's delete list approved a delete in fugaro's own root")
 	}
@@ -711,6 +726,22 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	if *reads != 0 {
 		t.Errorf("the creation fact was read %d time(s) for a plan the guard admits", *reads)
 	}
+}
+
+// identityOf is the identity a plan's own before view carries for one change,
+// read back through the plan the fake would report: it is tf.RemovedIdentity's
+// answer and not a fixture's guess, so an entry built with it matches exactly
+// what the gate compares.
+func identityOf(t *testing.T, ch planChange) string {
+	t.Helper()
+	var p tf.Plan
+	if err := json.Unmarshal([]byte(planJSON(t, ch)), &p); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.ResourceChanges) != 1 {
+		t.Fatalf("the change is %d resource changes, want 1", len(p.ResourceChanges))
+	}
+	return tf.RemovedIdentity(p.ResourceChanges[0]).String()
 }
 
 // Task 3.2's review, finding 5: a managed refusal made only of what no
@@ -913,15 +944,17 @@ func TestManagedInitRefusalBoundsUntrustedText(t *testing.T) {
 }
 
 // allowDeleteList writes the owner's own object for a managed project: the
-// addresses the owner approved, in the shape fugaro allow-delete writes
-// (fugaro/allow-delete.json at the root of the project's runs bucket). It is
-// written here and not through WriteDeleteList because this rig has no
-// operator credential to write with, and what these tests are about is what a
-// run READS, not what the owner's command writes (internal/infra/managed's own
-// tests hold the writer).
-func (r *initRig) allowDeleteList(t *testing.T, gcp string, addresses ...string) {
+// entries the owner approved, in the shape fugaro allow-delete writes
+// (fugaro/allow-delete.json at the root of the project's runs bucket, format
+// version 2 — an address and the identity of the object approved there, which
+// is the only shape a reader accepts: a version-1 object is read as no entries
+// at all). It is written here and not through WriteDeleteList because this rig
+// has no operator credential to write with, and what these tests are about is
+// what a run READS, not what the owner's command writes
+// (internal/infra/managed's own tests hold the writer).
+func (r *initRig) allowDeleteList(t *testing.T, gcp string, entries ...tf.DeleteEntry) {
 	t.Helper()
-	body, err := json.Marshal(map[string]any{"version": 1, "gcp_project": gcp, "addresses": addresses})
+	body, err := json.Marshal(managed.DeleteList{Version: managed.AllowDeleteVersion, GCPProject: gcp, Entries: entries})
 	if err != nil {
 		t.Fatal(err)
 	}

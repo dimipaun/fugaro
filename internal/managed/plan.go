@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -69,21 +70,23 @@ type Spec struct {
 	// refuses every plan: a managed plan is admitted by the managed cover, or
 	// by nothing.
 	Cover Cover
-	// AllowDelete are the addresses the owner approved a delete or a replace
-	// for. They come from the owner-written list at the root of the project's
-	// runs bucket, read fail-closed by the caller (infra/managed.AllowDelete),
-	// and never from the applying command's own arguments: in a managed
-	// project an address the applying session passed is refused rather than
-	// honoured, whatever the owner's list says (D72/D74, and
-	// infra/managed.GuardAllowList is where that is enforced). An empty list
-	// allows no delete and no replace at all.
+	// AllowDelete is the owner's delete list: for each address they approved,
+	// the identity of the object that was at it when they approved it (tf.
+	// DeleteEntry, plan Task 6.3). It comes from the owner-written list at the
+	// root of the project's runs bucket, read fail-closed by the caller
+	// (infra/managed.AllowDelete), and never from the applying command's own
+	// arguments: in a managed project an address the applying session passed is
+	// refused rather than honoured, whatever the owner's list says (D72/D74,
+	// and infra/managed.GuardAllowList is where that is enforced). An empty
+	// list allows no delete and no replace at all, and so does an entry whose
+	// identity is not the one the plan removes.
 	//
-	// Gate hands the same list to both halves of the gate (tf.Guard and the
-	// cover, which is told it through tf.Deletable), so the two cannot be given
-	// different ones, and it is one half of the decision rather than the whole
-	// of it: the resource is judged whatever its address is on this list
+	// Gate hands the same list to both halves of the gate (tf.GuardEntries and
+	// the cover, which is told it through tf.Deletable), so the two cannot be
+	// given different ones, and it is one half of the decision rather than the
+	// whole of it: the resource is judged whatever its address is on this list
 	// (D72/D74).
-	AllowDelete []string
+	AllowDelete []tf.DeleteEntry
 	// Imports are the import blocks the root's discovery wrote: an import is
 	// admitted only when its address and ID are exactly one of them
 	// (tf.Cover.NotCovered's own rule), so a stale imports.tf.json or a hand
@@ -162,7 +165,7 @@ func countChanges(p *tf.Plan) Changes {
 // flag-only finding, which no entry of the real list produces.
 var costFindings = tf.ManagedCosts
 
-// guard is tf.GuardWith with no advice of its own; a variable only so a test
+// guard is tf.GuardEntries with no advice of its own; a variable only so a test
 // can make it refuse in words the real guard never writes.
 //
 // No advice, because the guard's own (tf.AllowDeleteAdvice) names the flag a
@@ -171,7 +174,11 @@ var costFindings = tf.ManagedCosts
 // carrying it would survive into the verdict whenever no line of the refusal
 // is shaped like an address (a moved object's line is not), and tell the
 // reader to pass a flag that is refused (Task 3.2's review, finding 1).
-var guard = func(p *tf.Plan, allowDelete []string) error { return tf.GuardWith(p, allowDelete, "") }
+//
+// Entries rather than addresses, because the list this half of the gate reads
+// is the owner's own (D72/D74): under Task 6.3 an entry approves an address for
+// one object, and the address alone is no longer an approval (tf.GuardEntries).
+var guard = func(p *tf.Plan, entries []tf.DeleteEntry) error { return tf.GuardEntries(p, entries, "") }
 
 // Refusal is one refusal of one address: the gate that made it, the address it
 // is about, and the rule's own words for why — the actions the guard would
@@ -209,7 +216,7 @@ func Gate(ctx context.Context, planPath string, spec Spec) (Verdict, error) {
 	guardErr := guard(plan, spec.AllowDelete)
 	if guardErr != nil {
 		v.Refusals = append(v.Refusals, refusals(guardGate, guardLines(guardErr.Error()))...)
-		v.Listable = tf.Listable(plan, spec.AllowDelete)
+		v.Listable = tf.ListableEntries(plan, spec.AllowDelete)
 	}
 	notCovered := spec.notCovered(plan)
 	v.Refusals = append(v.Refusals, refusals(coverGate, notCovered)...)
@@ -265,25 +272,34 @@ func (s Spec) notCovered(p *tf.Plan) []string {
 		return []string{"no cover: a managed plan is admitted by the managed cover of " + s.what() + ", or by nothing"}
 	}
 	if d, ok := s.Cover.(tf.Deletable); ok {
-		return d.WithDeleteList(s.AllowDelete).NotCovered(p, s.Imports)
+		return d.WithDeleteEntries(s.AllowDelete).NotCovered(p, s.Imports)
 	}
 	return append(s.Cover.NotCovered(p, s.Imports), s.unjudgedDeletes(p)...)
 }
 
-// unjudgedDeletes lists every delete or replace of an address on the owner's
-// list, for the cover that cannot be told the list and so cannot judge the
+// unjudgedDeletes lists every delete or replace of an address the owner's list
+// names, for the cover that cannot be told the list and so cannot judge the
 // resource: the address is the one thing that is not a judgement of it, and a
 // cover that admits every delete would otherwise have a listed one admitted
 // with nothing reading the resource at all. Fail closed, and named: a delete
 // the owner approved still needs the resource it removes to be one a managed
 // plan may carry.
+//
+// An entry is tested by its address alone here, and not by Approves: the cover
+// that cannot be told the list is judging the resource, and an entry bound to
+// another object is already refused by the guard (tf.GuardEntries) whatever
+// this cover says — reading the address is the more fail-closed of the two,
+// and it is the same set of addresses as before Task 6.3.
 func (s Spec) unjudgedDeletes(p *tf.Plan) []string {
 	if p == nil {
 		return nil
 	}
+	named := func(address string) bool {
+		return slices.ContainsFunc(s.AllowDelete, func(e tf.DeleteEntry) bool { return e.Address == address })
+	}
 	var out []string
 	for _, rc := range p.ResourceChanges {
-		if slices.Contains(rc.Change.Actions, "delete") && slices.Contains(s.AllowDelete, rc.Address) {
+		if slices.Contains(rc.Change.Actions, "delete") && named(rc.Address) {
 			out = append(out, safetext.Field(rc.Address)+" (a delete or a replace of an address on the owner's delete list, and the cover this gate was handed cannot be told the list, so the resource is not judged: the address alone never admits one)")
 		}
 	}
@@ -323,15 +339,22 @@ func guardLines(text string) []string {
 // An item of the shape both gates write a refused change in, "<address>
 // (<why>)" — the guard with the plan actions it would take, the cover with the
 // rule that refused it — is carried as its address and its why, and so is the
-// guard's moved-object line, "<address> (<actions>): <why>". Any other item (a
+// guard's own line with a reason beside the actions, "<address> (<actions>):
+// <why>" (the moved object's, and the entries rule's). The two are told apart
+// by the actions between the parentheses and the ": " (tf.ActionsText) and not
+// by the item's last character, since a why may end in ")". Any other item (a
 // gate that refused without listing an address, a plan it could not read at
 // all) is carried whole rather than dropped: a refusal nobody can read is still
 // a refusal.
 //
 // Each item is one refusal however many lines it holds, and each part of it is
-// one bounded field (safetext.Field): an address and a rule's own words are read
-// out of a plan and out of objects other people wrote, and neither may add a
-// line, a control or a bidi override to the refusal a person reads.
+// bounded: an address and the actions beside it are read out of a plan, and
+// each is one safetext.Field, so neither may add a line, a control or a bidi
+// override to the refusal a person reads; a rule's own words are carried by
+// refusalWhy, which keeps them whole up to refusalWhyMax — because the sentence
+// a removal is refused in PRINTS the identity of the object the plan removes
+// for its reader to approve (tf.Approves), and a why cut at safetext.FieldMax
+// falls in the middle of that identity.
 func refusals(gate string, items []string) []Refusal {
 	var out []Refusal
 	for _, item := range items {
@@ -343,16 +366,61 @@ func refusals(gate string, items []string) []Refusal {
 		// no parenthesis, while a rule's own words may.
 		if i := strings.Index(item, " ("); i >= 0 {
 			addr := safetext.Field(item[:i])
-			if strings.HasSuffix(item, ")") {
-				out = append(out, Refusal{Gate: gate, Address: addr, Why: safetext.Field(item[i+2 : len(item)-1])})
+			// The two shapes are told apart by WHAT sits between the address's
+			// parentheses and the ": " — the guard's actions, and only the
+			// guard's (tf.ActionsText) — rather than by the item's last
+			// character. An item that ends in ")" is not always a cover's
+			// wrapper: a guard's why may end in ")" itself, and the entries
+			// rule's does (tf.Approves), so reading the suffix first took that
+			// item's actions as its why and cut the sentence's last character
+			// off with them. The suffix is still what a cover's item is, and
+			// the fallback below keeps carrying it as its content.
+			if j := strings.Index(item[i:], "): "); j >= 0 && tf.ActionsText(item[i+2:i+j]) {
+				out = append(out, Refusal{Gate: gate, Address: addr, Why: safetext.Field(item[i+2:i+j]) + ": " + refusalWhy(item[i+j+3:])})
 				continue
 			}
-			if j := strings.Index(item[i:], "): "); j >= 0 {
-				out = append(out, Refusal{Gate: gate, Address: addr, Why: safetext.Field(item[i+2:i+j] + ": " + item[i+j+3:])})
+			if strings.HasSuffix(item, ")") {
+				out = append(out, Refusal{Gate: gate, Address: addr, Why: refusalWhy(item[i+2 : len(item)-1])})
 				continue
 			}
 		}
-		out = append(out, Refusal{Gate: gate, Why: safetext.Field(item)})
+		out = append(out, Refusal{Gate: gate, Why: refusalWhy(item)})
 	}
 	return out
+}
+
+// refusalWhyMax is the most of one gate's Why a verdict carries: what one
+// removal rule prints — the identity of the object the plan removes
+// (tf.RemovalIdentityPrintMax) and the listing of the entries at the address
+// (safetext.FieldListMax entries of safetext.FieldMax) — with room for the
+// rule's own words around them.
+const refusalWhyMax = tf.RemovalIdentityPrintMax + safetext.FieldListMax*safetext.FieldMax + 4096
+
+// refusalWhy is one rule's own words as the verdict carries them: whole, when
+// they fit refusalWhyMax, and safetext.Field's bounded line — cut, with its
+// own marker — when they do not.
+//
+// Whole and not cut, because a removal rule PRINTS the identity of the object
+// the plan removes for the person who can approve it: the owner copies it into
+// fugaro allow-delete, and the entry they record has to be byte for byte what
+// the refusal showed (tf.DeleteEntry). safetext.Field would cut the sentence at
+// its own FieldMax, and the sentence a removal is refused in is longer than
+// that before the identity is reached — the entries rule names every entry at
+// the address first (tf.Approves) — so the cut falls in the middle of the
+// identity, which is the one part of the sentence its reader has to have: an
+// identity printed to a prefix is an approval of nothing, and every later apply
+// would refuse the same removal with the same sentence (a loop that cannot
+// close).
+//
+// The bound is not given up, it is placed where the parts are: each identity is
+// bounded by the rule that prints it (tf.RemovalIdentityPrintMax, and a longer
+// one is refused rather than printed) and a listing is bounded twice over
+// (safetext.FieldListLine), so a why of these rules fits refusalWhyMax, and one
+// that does not is not one of their sentences and is cut, with Field's marker,
+// rather than printed unbounded.
+func refusalWhy(why string) string {
+	if w := safetext.FieldUncut(why); utf8.RuneCountInString(w) <= refusalWhyMax {
+		return w
+	}
+	return safetext.Field(why)
 }
