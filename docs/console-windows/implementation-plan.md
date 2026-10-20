@@ -79,11 +79,11 @@ of it, so the native track lands on top rather than through this work.
 |---|---|---|---|
 | **A** — the seam and the fake `wsl.exe` | 6 (unit half) | F33, D11 | yes, first |
 | **B** — the packer and the fuse table | 5 (build half) | F35, F36, F37, F38, C3 | yes, independent of A |
-| **C** — the resolver, the wrapper and the distro | 1 | F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, C1, C2, C4, C6 | after A |
+| **C** — the resolver, the wrapper and the distro | 1 | F1, F2, F3, F4, F5, F6, F7, F8, F9, F34, C1, C4, C6 | after A |
 | **D** — paths | 2 | F12, F13, F14, F15, F16, F17, C5 | after C |
 | **E** — the credential boundary | 3 | F18, F19, F20, F21, F22 | after C |
 | **F** — spawning, streaming, cancellation, exit codes | 4 | F23, F24, F25, F26, F27, F28, F29 | after C |
-| **G** — the first-run pages and the distro picker | 1 (pages) | F30, F31, F32 | after C and F |
+| **G** — the first-run pages and the distro picker | 1 (pages) | F10, F11, F30, F31, F32, C2 | after C and F |
 | **H** — the installer job, the release text and the advisory CI | 5, 6 (CI half) | F39, F40, F41, F42, F43, F44 | after B and C |
 
 ---

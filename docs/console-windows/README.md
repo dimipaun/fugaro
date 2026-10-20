@@ -5,9 +5,18 @@ The owner ruled on **2026-10-20** that **0.10.0 gets a Windows build of the Cons
 Fugaro CLI is the *Linux* binary running inside WSL** — *"the CLI resolver runs
 `wsl.exe -d <distro> -- fugaro …`"* — and that the **Windows-native CLI is a separate track**,
 [docs/windows-cli/](../windows-cli/README.md). This directory is the plan for the console half of
-that ruling and nothing else: it writes no Go, no TypeScript, no `package.json`, no workflow under
-`.github/workflows/` and no live action. Everything it asks for starts at the plan's OWNER APPROVAL
-GATE.
+that ruling and nothing else: it writes no production Go, no TypeScript, no `package.json`, no
+workflow under `.github/workflows/` and no live action. Everything it asks for starts at the plan's
+OWNER APPROVAL GATE.
+
+**The one thing outside this directory that this work touches** is the set of sentences three tests
+hold to `docs/pending-workflows/`: staging `console-windows.yml` moves this repository's counts of
+the files still pending there, and a count left behind is `main` red. So the same pull request also
+edits `docs/pending-workflows/README.md`, `website/README.md`, `website/test/readme.mjs` (its words
+map gains `four`) and one marker in `internal/cli/docs_desktop_console_test.go` — the marker the
+copy-in test finds the replacement sentence by, moved from `file is pending` to `files are pending`
+so that it stops depending on the count. That is the whole of the code-adjacent surface: no
+production file, and no new test.
 
 **Owner:** the Fugaro owner (`dimipaun`). **Date:** 2026-10-20. **Base:** `main` at `ccc406b2`
 (`console: a Linux build (AppImage and .deb, unsigned) for 0.10.0 (#758)`).
@@ -88,7 +97,10 @@ because they are about *these* documents rather than about the code:
   three new pages are drawn in: §2.7–§2.9 (the degraded, unavailable and refusal screens and the
   one table of every state variant), §3.5 (never colour alone) and §4 (the window's structure).
 - [docs/pending-workflows/README.md](../pending-workflows/README.md) — the staging convention the
-  installer job follows, because no Fugaro run may write under `.github/workflows/` (F44).
+  installer job follows, because no Fugaro run may write under `.github/workflows/` (F44). Its
+  `## console-windows.yml` section is this work's staged job — one `windows-latest` job that
+  typechecks, runs the unit suite and packs the unsigned NSIS installer, outside the release gate —
+  and its header says in its first paragraph what must land in `console/` before the copy-in.
 - [SECURITY.md](../../SECURITY.md) — the claims the Windows leg must not repeat as Windows claims:
   the mode guarantee is POSIX-only, and the credential boundary this work must preserve is stated
   there in the terms the console already meets.
