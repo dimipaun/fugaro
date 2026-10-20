@@ -328,6 +328,39 @@ func TestDoctorBatchReportsTheLauncherGrant(t *testing.T) {
 	}
 }
 
+// TestDoctorBatchDoesNotRequireTheGrantOfOperators: the grant this check reads
+// is for_each over the compute root's own launchers (modules/compute/iam.tf,
+// roots/compute/main.tf passes var.launchers and var.operators separately), and
+// the installation's operators never receive it -- they hold actAs on the
+// preload account there and nothing else (design §8.1 task 6). So an
+// installation whose operator is not also one of its launchers is not a
+// finding: warning about it would name a Fix -- run fugaro init -- that leaves
+// the member in exactly the state the warning complains about.
+//
+// Mutation (read lc.Terraform.Launchers and lc.Terraform.Operators together, as
+// this check did): the operator is reported as not holding the grant and the
+// assertion that the check is ok fails.
+func TestDoctorBatchDoesNotRequireTheGrantOfOperators(t *testing.T) {
+	const launcher, operator = "user:a@example.com", "user:o@example.com"
+	r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
+	batchProvisioned(t, f)
+	r.withBatch(t, f, "terraform: { launchers: [\""+launcher+"\"], operators: [\""+operator+"\"] }\n")
+	// The module's own grant, on the module's own member: the launcher, with
+	// the Fugaro job-name condition, and nothing at all for the operator.
+	r.crm.SetPolicy("proj-1234", batchListerPolicy(launcher))
+
+	c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-launcher-iam")
+	if !ok {
+		t.Fatal("doctor reports no batch-launcher-iam check")
+	}
+	if !c.OK {
+		t.Fatalf("check = %+v, want it ok: an operator holds no roles/batch.jobsEditor and the compute module never grants one (modules/compute/iam.tf)", c)
+	}
+	if strings.Contains(c.Problem, operator) {
+		t.Errorf("the check names the operator: %s", c.Problem)
+	}
+}
+
 // TestDoctorBatchRefusesAJobDefinitionTheBackendWouldRefuse: the network and
 // the subnetwork are what Batch refuses a no-external-IP job without (§1.7),
 // and doctor reports the backend's own refusal -- the same one a launch would

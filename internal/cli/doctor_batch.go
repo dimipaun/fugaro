@@ -300,7 +300,20 @@ func logBucketPath(lc *localcfg.Config) string {
 // The same wording covers a grant that is absent for any other reason -- what
 // doctor can say is what it read.
 func doctorBatchLauncherIAM(ctx context.Context, lc *localcfg.Config, c *crm.Service) []doctorCheck {
-	launchers := slices.Concat(lc.Terraform.Launchers, lc.Terraform.Operators)
+	// Only terraform.launchers, and not the operators beside them: the two
+	// lists reach the compute root as two separate variables
+	// (infra.ComputeSpec.Launchers/Operators, roots/compute/main.tf), and the
+	// module's launcher_jobs_editor is for_each over var.launchers alone --
+	// the installation's operators hold actAs on the preload account there and
+	// nothing else (modules/compute/iam.tf, design §8.1 task 6). That is
+	// narrower than the installation and repository roots, which write
+	// launchersWithOperators into their own tfvars because an operator
+	// launches too (infra.tfvars.go); the Batch grant is not widened the same
+	// way. Reading the union here would therefore warn about a member the
+	// module deliberately does not grant, and no run of `fugaro init` could
+	// clear that warning: the Fix it prints is the state the installation is
+	// already in.
+	launchers := slices.Clone(lc.Terraform.Launchers)
 	slices.Sort(launchers)
 	launchers = slices.Compact(launchers)
 	if len(launchers) == 0 || c == nil {
