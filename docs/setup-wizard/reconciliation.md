@@ -101,10 +101,16 @@ and the confirmation machinery (`ConfirmClass` with `YesOrTyped` and `Typed`,
 `RunCovers`, `YesCovers`). `loop.Run` runs a read-only preview, prints the plan
 view, then converges, stopping at the first stage that needs the user or fails.
 
-`internal/cli/init_stages.go` registers the concrete stages: `preflightStage`,
-`newProjectStage` (only under `--create-project`), services, installation,
-Firebase, images, installation (second pass), secrets, plugin, repository, and
-`newComputeStage` (only under `--provision-batch`).
+`internal/cli/init_stages.go`'s `converge()` registers the concrete stages:
+`preflightStage`, `newInstallationStage`, `newFirebaseStage`, `e.images` (the
+images stage), `newInstallation2Stage` (installation, second pass),
+`newSecretsStage`, `newPluginStage`, `e.repo` (the repository stage), plus
+`newProjectStage` and `newComputeStage` only under `--create-project` and
+`--provision-batch`. **`initflow.Services` is not among them**: it is a slot in
+`internal/initflow`'s canonical `order` (`stage.go`: `Services` *needs* `Project`
+and `Installation` *needs* `Services`), and `internal/cli` contains no reference
+to it at all — so a stage list built from `Names()` would name a stage no front
+door registers.
 
 **Consequence.** `fugaro setup` and `fugaro update` are two *front doors to the
 same loop*, differing in which stages are registered, whether a missing input
@@ -225,9 +231,11 @@ plan's global constraints make this a hard rule with its own test.
   doctor's billing-API check.
 - A project held by someone else, or pending deletion: `infra.ReadProject`'s
   state check (`ACTIVE` required) and the `gcloud projects undelete` fix.
-- Agent sessions: `agentMarker` (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`,
-  `CLAUDE_CODE_SSE_PORT`, `CLAUDE_CODE_REMOTE`, `CURSOR_AGENT`, `AI_AGENT`) →
-  `agentEnv`; with one set nothing is applied, `--yes` or not.
+- Agent sessions: `internal/cli/initsecrets.go`'s `agentMarkers` (the list:
+  `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SSE_PORT`,
+  `CLAUDE_CODE_REMOTE`, `CURSOR_AGENT`, `AI_AGENT`) and `agentMarker(os.Getenv)`,
+  which returns the first one set → `agentEnv`; with one set nothing is applied,
+  `--yes` or not.
 - `refuseAppKeyReadInAgent`, `refuseHTTP2Debug`.
 
 **Consequence.** `fugaro setup` inherits every one of these for free by calling
@@ -376,7 +384,9 @@ started.astro` is hand-kept, not generated: its `#setup` block is a seven-step
 its anchor fragment `the-short-path-fugaro-init-then-fugarosetup` appears twice
 (the slug is the heading's words joined with hyphens, so it keeps a hyphen the
 name `fugaro-init` does not have).
-`website/test/docs-hub.mjs` and `website/test/caps-and-costs.mjs` also name it.
+`website/test/caps-and-costs.mjs` names the command too (once, resolving those
+anchors). `website/test/docs-hub.mjs` does **not**: its 450 lines contain no
+occurrence of `init` at all, so no task touches it.
 
 **Consequence.** A rename here is a two-file change plus the anchor fragment
 plus the pin test. The brief's "one command, the wizard asks the rest" means
@@ -385,7 +395,9 @@ flags has to go.
 
 ### F19 — `fugaro doctor` and ~50 other commands tell the user to run `fugaro init` · **Gap**
 
-The naming survey lists every emitting symbol; the shape of it: `doctor.go`'s
+§4 below lists every file that names the command, by package and count, and
+these four documents are the whole of it — there is no separate survey
+document. The shape of it: `doctor.go`'s
 `runDoctor` (`Fix: "run fugaro init"`), `doctorGitHubApps`, `doctorManagedDeployer`,
 `doctorCosign`, `sharedConfigChecks`, `doctorPolicyChecks`, `routingUnresolvedNoRepo`,
 `doctorSecretScopeChecks`, `doctorRulesSkew`; `doctor_bucket.go`'s
@@ -506,8 +518,11 @@ than refusing outright. See D11.
 
 ## 4. Every place that names `fugaro init`
 
-The exhaustive per-symbol list is in the naming survey; this is the map to work
-from, with the counts that decide the ordering of the work.
+**This section is the map** — there is no separate naming-survey document, and
+this folder's four files are the whole deliverable. Every file that names the
+command is listed below by category, with the count that decides the ordering
+of the work; the per-symbol breakdown inside each file is the rename task's own
+red step.
 
 **Go — user-facing strings (the rename's core).** 107 non-test files, 410 lines,
 7 `selfCommand() + " init"` sites:
@@ -528,9 +543,9 @@ from, with the counts that decide the ordering of the work.
   `tf/managed_cover.go`
 - `internal/initflow/loop.go` (the progress header and the Fix text)
 - `internal/{budget,runner,managed,config,localcfg,projectpolicy,preflight,backend/gcp}`
-- plus a long tail of comment-only mentions (no user string), listed in the
-  survey — these are free to rename but do not have to be part of the same
-  commit.
+- plus a long tail of comment-only mentions (no user string), counted in the
+  file totals above and named by the package bullets — these are free to rename
+  but do not have to be part of the same commit.
 
 **Go — tests.** 378 lines: the docs pins of F20, plus
 `internal/e2e/init_test.go` (26 `TestInitRepo*` tests of 27 `TestInit*`, which rename to
@@ -538,13 +553,17 @@ from, with the counts that decide the ordering of the work.
 `internal/initflow/loop_test.go`, and assertion helpers in ~40 other packages.
 
 **Markdown — 111 files** outside this folder (115 with it). Live (renamed):
-`README.md` (16),
+`README.md` (16), `CONTRIBUTING.md`,
 `docs/gcp-setup.md` (113 — its title is `# GCP setup with \`fugaro init\``),
 `docs/gcp-live-checklist.md` (158), `docs/project-layer.md`,
 `docs/project-claude-accounts.md`, `docs/multi-model.md`, `docs/git-providers.md`,
-`docs/dogfooding.md`, `docs/release.md`, `SECURITY.md`, `docs/coordinator/`,
+`docs/dogfooding.md`, `docs/release.md`, `SECURITY.md`, `docs/checkout.md`,
+`docs/backends.md`, `docs/base-image.md`, `docs/base-image-migration.md`,
+`docs/recipes.md`, `docs/releases/README.md` (the releases *index* is live;
+`docs/releases/v*` beside it are the dated records), `docs/coordinator/`,
 `docs/mobile/`, `docs/in-job-review/`, `plugin/skills/setup/SKILL.md` and
-`plugin/skills/setup/reference/*`, `.claude/skills/new-release/SKILL.md`.
+`plugin/skills/setup/reference/*`, `plugin/skills/working/reference/status.md`,
+`.claude/skills/new-release/SKILL.md`.
 Dated (left alone): `docs/plans/**`, `docs/releases/v*`,
 `docs/design/**`, `docs/credentials-service/**`, `docs/website/**` (another
 artifact's plan record — 3 mentions between `implementation-plan.md` and
@@ -555,19 +574,25 @@ prose is *about* the retirement).
 **Terraform — 29 files.** Variable and output `description`s saying what `fugaro
 init` writes, e.g. `deploy/terraform/gcp/modules/repo/variables.tf` ("Every name
 arrives from `fugaro init --repo`'s terraform.tfvars.json"),
-`roots/repo/tests/testdata/README.md`. Rename, but in its own commit: these are
-`terraform plan` output, not fugaro's own text, and a description edit is
-independently reviewable.
+`roots/repo/tests/testdata/README.md`, and the four
+`gcp/roots/{compute,firebase,installation,repo}/tests/*.tftest.hcl` files whose
+header comments say the names are "the ones `fugaro init` writes". Rename, but
+in its own commit: these are `terraform plan` output, not fugaro's own text, and
+a description edit is independently reviewable.
 
-**Website.** `website/data/install.yaml` (pinned), `website/src/pages/getting-
-started.astro` (hand-kept, 3 mentions, two anchor fragments),
-`website/content/cli-reference.md` (generated — regenerate, never hand-edit),
-`website/content/security.md` (generated from `SECURITY.md`),
-`website/src/components/Changelog.astro`, `website/test/caps-and-costs.mjs`,
-`website/test/docs-hub.mjs`.
+**Website.** `website/data/install.yaml` (pinned, 2 mentions),
+`website/src/pages/getting-started.astro` (hand-kept, 3 mentions, two anchor
+fragments), `website/content/cli-reference.md` (generated — regenerate, never
+hand-edit), `website/content/security.md` (generated from `SECURITY.md`),
+`website/src/components/Changelog.astro` (1), `website/test/caps-and-costs.mjs`
+(1), `website/README.md` (1, inside a quoted test description).
+`website/test/docs-hub.mjs` names the command **zero** times — its 450
+lines contain no occurrence of `init` at all — so it is **not** on this list and
+no task touches it.
 
 **Other.** `internal/config/example.yaml` + `example.go`, `schemas/fugaro.schema.json`,
-`images/verify-public.sh`, `docs/website/redesign/` (a dated plan record).
+`images/verify-public.sh`, `images/history/Dockerfile` (one comment naming
+`fugaro init --firebase`).
 
 ---
 

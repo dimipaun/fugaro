@@ -22,9 +22,10 @@ located with `git grep` and re-checked to exist before it was written; a path
 marked **new** does not exist yet. Line numbers are never cited. Three goldens
 are named throughout and are the plan's best verification target:
 `internal/cli/testdata/init_commands.golden` (every stage's
-"left for you" text, rewritten by `internal/cli/init_output_test.go`'s
-`-update` flag), `internal/cli/testdata/init_review.golden` (`-update-review`)
-and `internal/cli/testdata/init_retire.golden` (`-update-retire`).
+"left for you" text, rewritten by `TestPrintedCommandsGolden`'s `-update`
+flag), `internal/cli/testdata/init_review.golden` (`TestReviewScreenGolden`,
+`-update-review`) and `internal/cli/testdata/init_retire.golden`
+(`TestInitRepoRetireTranscriptGolden`, `-update-retire`).
 
 **Spec.** [spec.md](spec.md) (verbatim). **Reconciliation.** [reconciliation.md](reconciliation.md)
 — C1–C3, F1–F24, D1–D12, O1–O5, the UNVERIFIED table. **Index.** [README.md](README.md).
@@ -75,7 +76,7 @@ and `internal/cli/testdata/init_retire.golden` (`-update-retire`).
 | The honest UNVERIFIED list against the real services | `internal/infra/projectcreate.go` | W4.1, W4.5 |
 | Credential hygiene: `Options.Redact`, `loop.redact`/`redactAll`/`redactedCause`, `held`, `maxHeldSecrets` | `internal/initflow/loop.go`, `internal/cli/initsecrets.go` | W4.3, W0.1 |
 | `restore` invoking init as a child: `restoreInitCmd = newInitCmdWith`, and `TestRestoreSeamsAreProductionsFunctions` pinning the pointer | `internal/cli/restore.go`, `restore_test.go` | W1.2 |
-| The three goldens and their rewrite flags | `internal/cli/init_output_test.go` (`-update`), `init_review_test.go` (`-update-review`), `init_retire_test.go` (`-update-retire`) | W1.2, W2.1 |
+| The three goldens and the tests that own them | `TestPrintedCommandsGolden` (`internal/cli/init_output_test.go`, `-update`), `TestReviewScreenGolden` (`init_review_test.go`, `-update-review`), `TestInitRepoRetireTranscriptGolden` (`init_retire_test.go`, `-update-retire`) | W1.2, W2.1 |
 | The docs pins | `internal/cli/docs_*_test.go` (≈40), `internal/clidoc/cliref_test.go`, `internal/cli/docs_website_*_test.go`, `plugin/{readme,setup_skill,skills_lint}_test.go` | W2.3, W2.4, W2.6 |
 | The generated reference and its generator | `internal/clidoc/cliref.go`, `website/content/cli-reference.md` | W2.4 |
 | The dated-record precedent for a retirement | `plugin/readme_test.go`'s `TestReadmeNamesNoRetiredSkill` `skip` regex | W0.2, W2.6 |
@@ -128,10 +129,16 @@ rewritten stays the same number and is not reused elsewhere.
    is the specification, not an obstacle: run the pin first, read the sentence
    it names, change it on purpose. The guards are
    `GOFLAGS=-p=2 go test ./internal/cli ./internal/clidoc ./plugin/... -run 'Docs|Lint|CliRef|Readme|Skill' -count=1`.
-2. **The goldens are regenerated, never hand-edited.**
-   `go test ./internal/cli -run TestInitOutputView -update`, `-update-review`,
-   `-update-retire`; the regenerated diff is read line by line in review,
-   because it *is* the user-visible text.
+2. **The goldens are regenerated, never hand-edited** — each by the test that
+   owns it, named here because a `-run` that matches nothing **exits 0 and
+   regenerates nothing**, silently:
+   `testdata/init_commands.golden` by `TestPrintedCommandsGolden` with `-update`
+   (`internal/cli/init_output_test.go`), `testdata/init_review.golden` by
+   `TestReviewScreenGolden` with `-update-review` (`init_review_test.go`), and
+   `testdata/init_retire.golden` by `TestInitRepoRetireTranscriptGolden` with
+   `-update-retire` (`init_retire_test.go`). Each task that regenerates one
+   runs its own test **and checks the file's mtime changed**; the regenerated
+   diff is read line by line in review, because it *is* the user-visible text.
 3. **Nothing is decided here.** A task that would take a D-row's decision stops
    and asks. In particular no task implements the billing list (D6), an alias
    (D2), an automatic API enable (D3) or the merge (D1) as if it were settled.
@@ -269,6 +276,7 @@ A reviewer of a **task** reads its own "Reviewer" line.
 | `internal/cli/setup.go` (**new**) | W1.2 | The `setup` command: `Use`, `Short`, `Long`, the flag set, the run |
 | `internal/cli/update.go` (**new**) | W1.2 | The `update` command, its stage set and its refusals |
 | `internal/cli/retired.go` (**new**) | W1.2 | The hidden `init` tombstone: one message, two names, non-zero exit |
+| `internal/cli/retired_test.go` (**new**) | W1.2 | `TestInitIsRetiredAndSaysBothNames`, `TestRetiredInitAppliesNothing`; one of `retirementText`'s three |
 | `internal/cli/wizard_stage.go` (**new**) | W3.5 | The input phase as one `initflow.InputStage` whose `Missing()` names every flag |
 | `internal/billing/accounts.go` (**new**) | W4.1 | The Cloud Billing client: open accounts only, ids and display names, a typed disabled error |
 | `internal/billing/gcloud.go` (**new**) | W4.2 | The `gcloud billing accounts list` fallback behind an injected runner |
@@ -283,17 +291,17 @@ A reviewer of a **task** reads its own "Reviewer" line.
 | `docs/gcp-live-checklist.md` | W0.3 (L0), W2.6 (L5) |
 | `internal/initflow/loop.go`, `loop_test.go` | W1.1 (L0) |
 | `internal/cli/init.go`, `setup.go`, `update.go`, `retired.go`, `root.go`, `restore.go`, `restore_test.go`, `testdata/init_commands.golden`, `testdata/init_review.golden`, `testdata/init_retire.golden` | W1.2 (L1), W2.1 (L2), W5.1 (L7) |
-| `internal/cli/init_stages.go` | W1.3 (L3), W5.1 (L7) |
+| `internal/cli/init_stages.go` | W1.2 (L1), W1.3 (L3), W5.1 (L7) |
 | `internal/cli/init_project.go` | W1.3 (L3), W3.3 (L4), W4.3 (L9), W4.5 (L10) |
 | `internal/cli/init_inputs.go` | W3.1 (L4), W3.2 (L5), W3.5 (L6), W4.3 (L9) |
 | `internal/cli/init_firebase.go` | W3.3 (L4) |
 | `internal/cli/init_repo_gate.go`, `init_repo_target.go` | W3.4 (L5) |
-| `internal/infra/projectcreate.go` | W4.5 (L10) |
-| `internal/preflight/google.go` | W4.4 (L10) |
-| `README.md`, `docs/gcp-setup.md`, `docs/project-*.md`, `docs/multi-model.md`, `docs/git-providers.md`, `docs/dogfooding.md`, `docs/release.md`, `SECURITY.md`, `plugin/skills/**`, `.claude/skills/new-release/SKILL.md` | W2.3 (L3) |
-| `website/data/install.yaml`, `website/src/pages/getting-started.astro`, `website/src/components/Changelog.astro`, `website/test/*.mjs`, `website/content/cli-reference.md`, `website/content/security.md` | W2.4 (L4) |
+| `internal/infra/projectcreate.go` | W2.2 (L2), W4.5 (L10) |
+| `internal/preflight/google.go` | W2.2 (L2), W4.4 (L10) |
+| `README.md`, `CONTRIBUTING.md`, `docs/gcp-setup.md`, `docs/project-*.md`, `docs/multi-model.md`, `docs/git-providers.md`, `docs/dogfooding.md`, `docs/release.md`, `docs/checkout.md`, `docs/backends.md`, `docs/base-image*.md`, `docs/recipes.md`, `docs/releases/README.md`, `SECURITY.md`, `docs/coordinator/**`, `docs/mobile/**`, `docs/in-job-review/**`, `plugin/skills/{setup,working}/**`, `.claude/skills/new-release/SKILL.md` | W2.3 (L3) |
+| `website/data/install.yaml`, `website/src/pages/getting-started.astro`, `website/src/components/Changelog.astro`, `website/test/caps-and-costs.mjs`, `website/README.md`, `website/content/cli-reference.md`, `website/content/security.md` | W2.4 (L4) |
 | `deploy/terraform/**/*.tf` (29 files naming the command, of 58 in the tree), `deploy/terraform/terraform.go`, `deploy/terraform/gcp/roots/repo/tests/testdata/README.md` | W2.5 (L2) |
-| `internal/config/example.yaml`, `internal/config/example.go`, `schemas/fugaro.schema.json`, `images/verify-public.sh` | W2.6 (L5) |
+| `internal/config/example.yaml`, `internal/config/example.go`, `schemas/fugaro.schema.json`, `images/verify-public.sh` | W2.2 (L2, `example.go` only), W2.6 (L5) |
 | `internal/e2e/init_test.go` → `update_test.go` | W5.2 (L8) |
 
 ---
@@ -332,9 +340,9 @@ W6.2 ← W4.4, W4.5 (owner; plus a release)
 
 | Level | Tasks | Reviewer | Files (disjoint within the level) |
 |---|---|---|---|
-| **L0** | W0.1 the refusal matrix · W0.2 the census · W0.3 the checks written · W1.1 `initflow` names no command · W4.1 the billing client | standard · standard · standard · opus · **opus + mandatory** | `internal/cli/setup_refusals_test.go` · `internal/cli/docs_live_init_census_test.go` · `docs/gcp-live-checklist.md` · `internal/initflow/loop.go`, `loop_test.go` · `internal/billing/accounts.go` |
+| **L0** | W0.1 the refusal matrix · W0.2 the census · W0.3 the checks written · W1.1 `initflow` names no command · W4.1 the billing client | standard · standard · standard · opus · **opus + mandatory** | `internal/cli/setup_refusals_test.go` · `internal/cli/docs_live_init_census_test.go` · `docs/gcp-live-checklist.md` · `internal/initflow/loop.go`, `loop_test.go`, `stage.go` · `internal/billing/accounts.go` |
 | **L1** | W1.2 the two commands, the tombstone, `restore` · W4.2 the gcloud fallback | opus · standard | `internal/cli/{init,setup,update,retired,root,restore}.go`, `restore_test.go`, `testdata/*.golden` · `internal/billing/gcloud.go`, `internal/gcpfake/billing.go` |
-| **L2** | W2.1 the `internal/cli` strings · W2.2 the strings outside `internal/cli` · W2.5 Terraform | standard · standard · standard | ~30 `internal/cli/*.go` + the three goldens · `internal/{infra,budget,runner,managed,config,localcfg,projectpolicy,preflight,backend/gcp}/*.go` · `deploy/terraform/**` |
+| **L2** | W2.1 the `internal/cli` strings · W2.2 the strings outside `internal/cli` · W2.5 Terraform | standard · standard · standard | ~30 `internal/cli/*.go` + the three goldens · every non-test `.go` outside `internal/cli` that names the command (`internal/{infra,budget,runner,managed,config,localcfg,projectpolicy,preflight,gcpfake,gateway,imagecheck,mirror,basepin,backend/{gcp,backendtest}}/**`, minus `config/example.go`) · `deploy/terraform/**`, `schemas/`, `internal/config/example.{go,yaml}`, `images/verify-public.sh`, `images/history/Dockerfile` |
 | **L3** | W1.3 `setup` is the wizard · W2.3 live markdown, README and the skills | opus · standard | `internal/cli/{setup,init_stages,init_project}.go` · `README.md`, `docs/`, `plugin/skills/**`, `.claude/skills/new-release/SKILL.md` |
 | **L4** | W3.1 the id default · W3.3 `--firebase-project` · W2.4 the website and the generated reference | standard · standard · standard | `internal/cli/init_inputs.go` · `internal/cli/{init,init_firebase,init_project}.go` · `website/**` |
 | **L5** | W3.2 the region and the Firestore location · W3.4 the first-repository question · W2.6 the census emptied and the tail | standard · standard · standard | `internal/cli/init_inputs.go` · `internal/cli/{init_repo_gate,init_repo_target,setup}.go` · `internal/config/{example.yaml,example.go}`, `schemas/`, `images/verify-public.sh`, `docs/gcp-live-checklist.md`, `docs_live_init_census_test.go` |
@@ -346,7 +354,7 @@ W6.2 ← W4.4, W4.5 (owner; plus a release)
 | **L11** | W2.7 the pure file rename | standard | the `internal/cli/init*.go` → `install*.go` move only |
 | **L12** | W6.1 Check 27 · W6.2 Check 111 | owner · owner | none (the owner records the FACT lines) |
 
-**Widest levels: L0 (five) and L5 (three).** The levels obey one rule, and it is
+**Widest levels: L0 (five), and L2 and L5 (three each).** The levels obey one rule, and it is
 the one a reviewer can check mechanically: **no task sits at or below the level
 of another task it shares a file with.** That is what "no two writers of one
 file in a level" means, and it is a *lower bound* — a task may sit later than
@@ -377,6 +385,12 @@ internal/cli/init_stages.go        W1.2 (L1) → W1.3 (L3) → W5.1 (L7)
 internal/cli/setup.go              W1.2 (L1) → W1.3 (L3) → W3.4 (L5)
 internal/cli/update.go             W1.2 (L1) → W5.1 (L7)
 internal/cli/billing_prompt.go     W4.3 (L9) → W4.4 (L10)
+internal/preflight/google.go       W2.2 (L2) → W4.4 (L10)
+internal/infra/projectcreate.go    W2.2 (L2) → W4.5 (L10)
+internal/config/example.go         W2.5 (L2) → W2.6 (L5)
+internal/config/example.yaml       W2.5 (L2) → W2.6 (L5)
+schemas/fugaro.schema.json         W2.5 (L2) → W2.6 (L5)
+images/verify-public.sh            W2.5 (L2) → W2.6 (L5)
 testdata/*.golden                  W1.2 (L1) → W2.1 (L2)
 docs/gcp-live-checklist.md         W0.3 (L0) → W2.6 (L5)
 docs_live_init_census_test.go      W0.2 (L0) → W2.6 (L5)
@@ -426,8 +440,8 @@ or owner-built binary.
    input phase has to exist.
 5. **W4.1 and W4.2 before W4.3.** The picker asks a client that lists accounts.
 6. **W2.1–W2.5 before W2.6**, which empties the census and flips its assertion
-   to "`pendingRename` is empty and `retirementText` is exactly the four files
-   whose subject is the retirement".
+   to "`pendingRename` is empty and the only files left naming the command are
+   the three whose subject is the retirement".
 7. **W3.5 before W2.7**, even though nothing in W2.7 depends on it: W3.5 edits
    `internal/cli/init_inputs.go` and W2.7 renames it, and the rename waits until
    nothing else writes an `init*.go` file (L11, after L10).
@@ -475,7 +489,8 @@ walks the live roots (`README.md`, `CONTRIBUTING.md`, `docs/` minus the dated
 roots, `plugin/`, `.claude/`, `website/`, `schemas/`, `scripts/`, `internal/`,
 `images/`, `deploy/`), collects every file naming `fugaro init` or `init --repo`,
 and asserts that set equals a checked-in `pendingRename` list plus the
-`datedRecords` list. A new occurrence fails (the set grew); a renamed file that
+`datedRecords` roots plus `retirementText`. A new occurrence fails (the set
+grew); a renamed file that
 was not removed from `pendingRename` fails (the set shrank). The
 `datedRecords` list is **the six dated roots, and it is stated once, here**:
 `docs/plans/`, `docs/releases/v`, `docs/design/`, `docs/credentials-service/`,
@@ -492,12 +507,25 @@ The handful of *generated* files (`website/content/cli-reference.md`,
 `website/content/security.md`) are asserted to be in `pendingRename` and are
 removed from it by W2.4, which regenerates them rather than editing them.
 **A second exemption class, `retirementText`, is needed for the flip to be
-achievable**, and it is not a judgement call: `internal/cli/retired.go` and its
-test, `internal/cli/testdata/init_retire.golden` and this census file itself
-name `fugaro init` **as the retired verb** — that is their whole job, and no
-rename can remove it. They are listed separately, so "the live tree names
-`fugaro init` nowhere" stays a claim with teeth: W2.6 asserts `pendingRename` is
-empty and `retirementText` is exactly those four paths.
+achievable**, and it is not a judgement call: it is **three** paths, and each
+names `fugaro init` **as the retired verb**, which is its whole job and which no
+rename can remove — `internal/cli/retired.go` (W1.2's new tombstone, whose one
+message says `` `fugaro init` is now `fugaro setup` … ``),
+`internal/cli/retired_test.go` (W1.2's new test, which asserts that message) and
+this census file itself (whose `pendingRename` literal and whose scan pattern
+are the string). None of the three exists at L0; the class is a list of paths
+that **may** name the command, so an absent path contributes nothing and W1.2
+adds the first two. They are listed separately, so "the live tree names `fugaro
+init` nowhere" stays a claim with teeth: W2.6 asserts `pendingRename` is empty
+and the files naming the command are exactly `datedRecords` plus these three.
+**`internal/cli/testdata/init_retire.golden` is deliberately not among them**,
+even though it names the command four times today: it is a *transcript*, not a
+retirement statement, and all four are strings W2.1 renames (the
+`retireNextCommand` line, the `--anchor` hint, the `--repo` rerun and the
+`build.service_account` deprecation warning), so W1.2/W2.1 regenerate it with
+`TestInitRepoRetireTranscriptGolden -update-retire` exactly like the other two
+goldens. An exemption for a file the rename empties is the "wrong in one
+direction" case Global Constraint 7 forbids.
 **Red step.** None: passes today with `pendingRename` = today's census
 (410 non-test Go lines across 107 files, 378 test lines across 106 files, 111
 markdown files outside this folder, 29 Terraform files naming the command of
@@ -535,7 +563,10 @@ and are **not run** until W6.1 and W6.2. **Reviewer.** standard.
 
 ### Task W1.1: `initflow` stops naming a command — opus
 
-**Files.** `internal/initflow/loop.go`, `internal/initflow/loop_test.go`.
+**Files.** `internal/initflow/loop.go`, `internal/initflow/loop_test.go`, and
+`internal/initflow/stage.go` — its package comment's first line, "Package
+initflow is the converge loop behind `fugaro init`", is a mention no other task
+owns.
 **What changes.** `Options.Program` (**new** field; `""` means the current
 defaults, so the package stays usable and no test that does not care has to
 change). `loop.view`'s header (`"fugaro init: project %s (GCP %s, %s)"`),
@@ -566,8 +597,11 @@ hidden tombstone and no `init`), `restore.go` (`restoreInitCmd` repointed at the
 shared constructor, and its printed `"fugaro init --create-project --managed
 uses: fugaro init %s"` reworded), `restore_test.go`
 (`TestRestoreSeamsAreProductionsFunctions`'s pointer pair updated),
-`docs_base_test.go` (its `"fugaro init": newInitCmd` map key), the three
-`testdata/*.golden` files regenerated with their flags.
+`docs_base_test.go` (its `"fugaro init": newInitCmd` map key),
+`init_stages.go` — `converge()` passes the front door's name into W1.1's
+`Options.Program`, which is the one line W1.1 leaves for this task — and the
+three `testdata/*.golden` files regenerated by their own tests with their own
+flags (Convention 2).
 **What changes.** `fugaro setup` = the wizard; `fugaro update` = the re-converge;
 both take the flags that belong to them, and a flag that only makes sense in one
 (e.g. `--create-project`, `--link-billing`) is refused in the other with a
@@ -676,14 +710,36 @@ package, since this task touches most of it) and `fugaro verify test`.
 
 ### Task W2.2: The strings outside `internal/cli` — standard
 
-**Files.** `internal/infra/{discover,discover_firebase,firebase,firebasedb,hardening,installation,projectcreate,projectjobs,readiness,checkjob,tf/env,tf/managed_cover}.go`,
+**Files.** **Every non-test `.go` file outside `internal/cli` that names the
+command**, in these packages — an enumeration is the wrong shape for a sweep
+this wide, so the rule is the list and `grep` is the check:
+
+```
+internal/infra/** (incl. tf/ and managed/)   internal/budget/**
+internal/runner/**                          internal/managed/**
+internal/config/** (except example.go)      internal/localcfg/**
+internal/projectpolicy/**                   internal/preflight/**
+internal/backend/gcp/**                     internal/backend/backendtest/**
+internal/gcpfake/**                         internal/gateway/**
+internal/imagecheck/**                      internal/mirror/**
+internal/basepin/**
+```
+
+`grep -rl 'fugaro init' internal/ --include='*.go' | grep -v _test.go | grep -v
+'^internal/cli/'` is the exact command; if it names a package not listed here,
+this list is what is wrong. Named examples of the user-facing ones:
+`internal/infra/{discover,discover_firebase,firebase,firebasedb,hardening,installation,projectcreate,projectjobs,readiness,checkjob,tf/env,tf/managed_cover}.go`,
 `internal/budget/{rollover,registry,session}.go`,
 `internal/runner/{project,projectpolicy,projectjob,halt,gateway,budget_session}.go`,
 `internal/managed/budget.go`, `internal/localcfg/{localcfg,select}.go`,
 `internal/config/{config,providers,routing}.go`,
 `internal/projectpolicy/{read,profiles}.go`,
-`internal/preflight/google.go`, `internal/backend/gcp/run.go`, and the
-comment-only mentions listed in the reconciliation's §4 tail.
+`internal/preflight/google.go`, `internal/backend/gcp/run.go`.
+**Two entries in this list are not this task's**: `internal/config`'s
+`example.go` (W2.5 owns it, and no file has two writers in one level) and
+`internal/initflow` entire — its three files that name the command
+(`loop.go`, `loop_test.go` and `stage.go`) are all W1.1's, so the sweep skips
+`internal/initflow/**` and takes `internal/config/**` minus `example.go`.
 **Which name each gets.** The same rule as W2.1. Note two families: the
 *operator* strings ("an operator runs fugaro init (0.7.0 or later)") become
 `` `fugaro update` `` — the operator's job after an upgrade — and the
@@ -691,8 +747,9 @@ comment-only mentions listed in the reconciliation's §4 tail.
 `` `fugaro update` in the checkout ``. `internal/infra/projectcreate.go`'s
 `"rerun fugaro init --create-project"` becomes `"rerun fugaro setup"`, and its
 head comment is W4.5's.
-**Tests.** The ~120 test files asserting those strings (the reconciliation's
-survey lists them by function); every one is updated in this commit.
+**Tests.** The 106 test files asserting those strings (the reconciliation's §4
+counts them, and each package's own red step names them); every one is updated
+in this commit.
 **Red step.** `GOFLAGS=-p=2 go test ./internal/infra/... ./internal/budget/... ./internal/runner/... -count=1` before the edit — it is green; after the edit but before the test text, it names each assertion.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/... -count=1` and `fugaro verify test`.
 **Depends on.** W1.2. **Reviewer.** standard.
@@ -700,14 +757,19 @@ survey lists them by function); every one is updated in this commit.
 
 ### Task W2.3: Live markdown, README and the skills — standard
 
-**Files.** `README.md` (16), `docs/gcp-setup.md` (113 — including its title
+**Files.** `README.md` (16), `CONTRIBUTING.md`, `docs/gcp-setup.md` (113 —
+including its title
 `# GCP setup with \`fugaro init\`` and its
 `## The short path: \`fugaro init\`, then \`/fugaro:setup\`` section),
 `docs/project-layer.md`, `docs/project-claude-accounts.md`,
 `docs/multi-model.md`, `docs/git-providers.md`, `docs/dogfooding.md`,
-`docs/release.md`, `SECURITY.md`, `docs/coordinator/**`, `docs/mobile/**`,
+`docs/release.md`, `SECURITY.md`, `docs/checkout.md`, `docs/backends.md`,
+`docs/base-image.md`, `docs/base-image-migration.md`, `docs/recipes.md`,
+`docs/releases/README.md` (the releases index — live; the dated records beside
+it are `docs/releases/v*`, which the six roots exempt),
+`docs/coordinator/**`, `docs/mobile/**`,
 `docs/in-job-review/**`, `plugin/skills/setup/SKILL.md` and
-`plugin/skills/setup/reference/**`, `plugin/skills/upgrade/**`,
+`plugin/skills/setup/reference/**`, `plugin/skills/working/reference/status.md`,
 `.claude/skills/new-release/SKILL.md`; and the pins updated in the same commit:
 `plugin/readme_test.go`'s `TestReadmeGettingStartedIsTwoSteps` (step 1,
 "`fugaro init` again"), `plugin/setup_skill_test.go`'s five tests,
@@ -740,9 +802,12 @@ seven-step `#setup` `<ol>` collapsing to about three, and the anchor fragment
 `the-short-path-fugaro-init-then-fugarosetup`, which appears **twice** — the
 slug keeps the hyphen inside `fugaro-init` that the name itself does not have,
 because it is the heading's words joined; the heading and both fragments move
-together, and `website/test/*.mjs` resolves them),
-`website/src/components/Changelog.astro`, `website/test/docs-hub.mjs`,
-`website/test/caps-and-costs.mjs`, `website/content/cli-reference.md`
+together, and `website/test/caps-and-costs.mjs` resolves them),
+`website/src/components/Changelog.astro`, `website/test/caps-and-costs.mjs`
+(**not** `website/test/docs-hub.mjs`: its 450 lines name the command zero
+times), `website/README.md` (one mention, inside a quoted test description —
+"rendered \"fugaro init in your own terminal.\"" — so the quote moves with the
+test), `website/content/cli-reference.md`
 (**regenerated** with `go run ./internal/clidoc`, never hand-edited),
 `website/content/security.md` (**regenerated** by `internal/clidoc/secdoc.go`
 from `SECURITY.md`).
@@ -775,8 +840,11 @@ variable and output
 package comment, `deploy/terraform/gcp/roots/repo/tests/testdata/README.md`,
 `internal/config/example.go`'s `exampleProjectLines` +
 `internal/config/example.yaml` (the comment line naming `--config-only`'s
-writer), `schemas/fugaro.schema.json` (`gcp_project`'s `description`), and
-`images/verify-public.sh`.
+writer), `schemas/fugaro.schema.json` (`gcp_project`'s `description`),
+`images/verify-public.sh`, `images/history/Dockerfile` (one comment: "docker
+push it (fugaro init --firebase prints the commands)"), and the four
+`deploy/terraform/gcp/roots/{compute,firebase,installation,repo}/tests/*.tftest.hcl`
+files, whose header comments say the names are "the ones `fugaro init` writes".
 **Why its own task.** These are not fugaro's own output: they are
 `terraform plan` text and public artifacts, independently reviewable, and they
 depend on nothing in Slice 1 — which is why this task starts first and can merge
@@ -798,11 +866,20 @@ reflow).
 ### Task W2.6: The census emptied, and the tail — standard
 
 **Files.** `internal/cli/docs_live_init_census_test.go` (W0.2's file: the final
-assertion flips to "`pendingRename` is empty, and `retirementText` is exactly
-the four files whose subject is the retirement"), the leftovers the other rename
-tasks did not own — `docs/gcp-live-checklist.md`'s remaining prose mentions
-(other than Checks 27 and 111, which are W0.3's and already name the new
-commands). The exempt roots are **exactly W0.2's six, no more and no fewer** —
+assertion flips to "`pendingRename` is empty, and the only files left naming the
+command are `retirementText`'s three — the tombstone, its test and this file"),
+plus `docs/gcp-live-checklist.md`
+— its remaining prose beyond Checks 27 and 111, which W0.3 wrote and which
+already name the new commands.
+**The leftover set is closed, and this is the whole of it.** Once W2.1–W2.5 have
+landed, the only files outside the six exempt roots and the three
+`retirementText` files that still name the command are `docs/gcp-live-checklist.md`
+and — if W2.5 has not landed yet — `schemas/fugaro.schema.json`,
+`internal/config/example.{go,yaml}` and `images/verify-public.sh`. **Every live
+file is owned by exactly one of W2.1–W2.5** (see `### The file lanes` for the
+files with more than one writer); anything else the red step prints is a file a
+rename task missed and belongs to that task, not to this one.
+The exempt roots are **exactly W0.2's six, no more and no fewer** —
 `docs/plans/`, `docs/releases/v`, `docs/design/`, `docs/credentials-service/`,
 `docs/website/` and `docs/setup-wizard/` — and this task does not restate them
 from memory: the guard's `datedRecords` is one constant, and W0.2 is where it is
@@ -1111,8 +1188,11 @@ cover them — the map lives in `internal/initflow/stage.go`),
 section), their tests.
 **What it is (F11, F16, D1, D5).** `update` registers everything `setup` does
 **except** the project stage's creation path and `computeStage`: preflight,
-services, installation, Firebase, images, secrets, plugin, and each enrolled
-repository. Its refusals, each with a test:
+installation, Firebase, images, installation (second pass), secrets, plugin, and
+each enrolled repository. There is **no `services` stage** — `initflow.Services`
+is a slot in the canonical order (`internal/initflow/stage.go`) that
+`internal/cli` never registers, and this list is built from `converge()`'s, not
+from `Names()`. Its refusals, each with a test:
 - `--create-project` and `--link-billing` → refused, naming `fugaro setup`;
 - no installation → refused, naming `fugaro setup`
   (`"there is no Terraform state bucket gs://%s, so no installation"`);
@@ -1230,7 +1310,9 @@ Each needs its own plan amendment and the owner's go.
   user who wants to see it without running the wizard — refused under `--json`
   like everything else, and only if the owner wants it.
 - **A rename of the `init*.go` files in `internal/infra` and the tests whose
-  names say `init`** (the survey's long tail), after W2.7's precedent.
+  names say `init`** — the comment-only tail of W2.2's sweep, which renames no
+  string and is therefore not worth a commit on its own — after W2.7's
+  precedent.
 
 ---
 
