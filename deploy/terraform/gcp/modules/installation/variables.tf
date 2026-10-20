@@ -290,6 +290,27 @@ variable "project_secrets" {
   nullable    = false
 }
 
+variable "credentials_service" {
+  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image (C1.20's init stage fills it, as it fills history.image); bundle_secret is the Secret Manager ID of the one bundle container the service reads (gcp.CredsBundleSecretID), created here and written only by the owner-run fugaro creds set (C1.25)."
+  type = object({
+    account_id    = string
+    service       = string
+    image         = string
+    bundle_secret = string
+  })
+  default = null
+
+  validation {
+    condition = var.credentials_service == null ? true : (
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.credentials_service.account_id)) &&
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.credentials_service.service)) &&
+      length(var.credentials_service.image) > 0 &&
+      can(regex("^[a-zA-Z0-9_-]{1,255}$", var.credentials_service.bundle_secret))
+    )
+    error_message = "credentials_service needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter), a Cloud Run service name, an image, and the bundle secret's Secret Manager ID (letters, digits, - and _)."
+  }
+}
+
 variable "managed_deployer_scoped" {
   description = "Whether to create the managed deployer's scoped role (fugaroDeployerScoped) and its one conditioned binding. OFF by default since 0.8.6, and fugaro init never sets it: the fmgd- prefix fence that binding carries cannot be expressed as a GCP IAM condition today (17 logical operators where IAM allows 12, resource.name.contains() is not a supported function, and resource.name is not supported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, service accounts or API keys), so setIamPolicy would reject it and stop the whole apply. Managed projects stay disabled until the fence is redesigned and measured live (0.9.5)."
   type        = bool

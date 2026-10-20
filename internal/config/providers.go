@@ -477,6 +477,30 @@ func IsProviderKeyEnv(name string) bool {
 	return strings.HasPrefix(strings.ToUpper(name), ProviderKeyEnvPrefix)
 }
 
+// ModelSecretEnvs are the job variables a model credential is mounted as
+// (D145): the Claude OAuth token's and the Anthropic key's, each the value
+// ReservedSecrets maps its logical name to. A provider's key is the third —
+// IsProviderKeyEnv's namespace, which ReservedEnvPrefixes keeps out of every
+// workflow secret's reach — so IsModelSecretEnv is the whole predicate.
+//
+// The git credential's two variables are deliberately not here: D145 leaves
+// Bitbucket untouched and moves the GitHub App key only in C2.3, so both keep
+// the job accessor they have today.
+var ModelSecretEnvs = []string{ReservedSecrets[ClaudeOAuthToken], ReservedSecrets[AnthropicSecret]}
+
+// IsModelSecretEnv reports whether the job variable name carries a model
+// credential: one of ModelSecretEnvs, or a provider key's variable.
+//
+// The credentials service (D146) is what makes the question matter: once an
+// installation opts in, a job's account keeps no secretAccessor on these
+// (modules/workflow/sa.tf) because the service holds them (C1.11), and C1.20
+// drops the mount. Terraform cannot ask Go, so the same three names are
+// literals in that module's locals, held to this function by
+// deploy/terraform's TestModelSecretEnvsMatchTheCredentialsService.
+func IsModelSecretEnv(name string) bool {
+	return slices.Contains(ModelSecretEnvs, name) || IsProviderKeyEnv(name)
+}
+
 // ProviderBySecret is the provider whose key is the secret named secret.
 // Provider secrets are the owner's, in the local config, so a workflow's own
 // secrets cannot be checked against them by Validate: the places that hold

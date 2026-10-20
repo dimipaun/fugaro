@@ -208,6 +208,28 @@ func ProjectSecretID(fugaroProject, logical string) string {
 	return derive(sanitize("fugaro-project-"+fugaroProject+"-"+logical), "project\x00"+fugaroProject, logical, maxSecretID, secretHashHex)
 }
 
+// CredsBundleSecret is the logical name of the one secret the credentials
+// service reads (Q6, ruled 2026-10-19): a YAML document of credential names
+// to values, written only by the owner-run `fugaro creds set` (C1.25) and
+// read in one go by the service's loader (C1.11).
+const CredsBundleSecret = "creds-bundle"
+
+// CredsBundleSecretID is that secret's Secret Manager ID: the project-wide
+// container of CredsBundleSecret, named the way every project-wide secret is
+// (ProjectSecretID), so the loader that reads it, the command that writes it
+// and the Terraform that creates it (C1.18's credentials.tf, through its
+// credentials_service.bundle_secret variable) name one secret and cannot
+// drift.
+//
+// It is deliberately NOT a name a workflow may mount: the bundle is one
+// document with its own writer, never a logical secret of the project's
+// secret set, and the container Terraform creates carries no
+// LabelSecret for exactly that reason (internal/infra/discover.go's
+// liveProjectSecrets).
+func CredsBundleSecretID(fugaroProject string) string {
+	return ProjectSecretID(fugaroProject, CredsBundleSecret)
+}
+
 // ImageName is the derived image of (slug, workflow) in registry, untagged,
 // built like JobName without the fugaro- prefix.
 func ImageName(registry, slug, workflow string) string {
