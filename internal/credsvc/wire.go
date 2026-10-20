@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The wire contract between a run's in-runner gateway and this service
@@ -299,6 +301,16 @@ func WriteWireError(w http.ResponseWriter, status int, e WireError) {
 // A body over the bound is refused rather than clipped, so no half of another
 // writer's sentence is displayed as this service's words.
 //
+// It is also made one printable line (review finding): every other field of
+// the body is held to a printable rule on both sides, and this one is another
+// writer's text that a terminal and a log file will print — an escape sequence
+// in it would repaint the terminal and a newline would forge a second line.
+// The repository's rule for text from another writer is internal/safetext, and
+// internal/budget/registry.go holds a credential name to it for the same
+// reason. Sanitised rather than refused, unlike the length bound: the type and
+// the fields are what the caller acts on, and the sentence is the writer's own
+// rendering of them.
+//
 // The body is a caller's text — it arrives from the service, and nothing
 // about it is trusted — so no error here repeats it: a decoder's own message
 // names the byte it choked on, and this code says only that the body is not
@@ -317,6 +329,7 @@ func ReadWireError(status int, body []byte) (WireError, error) {
 	if len(e.Message) > maxRefusalMessageBytes {
 		return WireError{}, errors.New("credsvc: the refusal body's message is longer than this contract's")
 	}
+	e.Message = safetext.OneLine(e.Message)
 	return e, nil
 }
 
@@ -376,15 +389,20 @@ func (e ExhaustedUntil) Error() string {
 // hidden clock. A reset that has already passed carries no Retry-After: it
 // would be a lie to a proxy, and the runner reads the body's instant.
 //
-// An answer this code cannot write is an error rather than a body: a zero
-// ResetAt is the instant the runner waits for and ReadExhaustedUntil refuses,
-// so rendering it would build an answer the other end of this contract cannot
+// An answer this code cannot write is an error rather than a body: a reset
+// instant the reader would refuse is the instant the runner waits for, so
+// rendering it would build an answer the other end of this contract cannot
 // read (review finding M3), and a tried entry that fails the rules above would
 // be carried into the run's halt message. A caller that gets an error here has
 // nothing to send: it answers a state_unavailable refusal instead
 // (WriteExhaustedUntil does exactly that).
+//
+// The instant is held to the reader's rule exactly — the field is written only
+// when it is positive, so a value at or before the epoch is refused here
+// rather than rendered, dropped by the field's omitempty and refused on the
+// way back in (review finding).
 func (e ExhaustedUntil) Wire(now time.Time) (status int, hdr http.Header, body []byte, err error) {
-	if e.ResetAt.IsZero() {
+	if e.ResetAt.UnixMilli() <= 0 {
 		return 0, nil, nil, errors.New("credsvc: the exhausted answer carries no reset instant")
 	}
 	for _, tr := range e.Tried {
@@ -399,7 +417,7 @@ func (e ExhaustedUntil) Wire(now time.Time) (status int, hdr http.Header, body [
 	}
 	body, err = json.Marshal(WireError{
 		Error:   ErrorExhaustedUntil,
-		Message: e.Error(),
+		Message: clipRefusalMessage(e.Error()),
 		ResetAt: e.ResetAt.UnixMilli(),
 		Tried:   e.Tried,
 	})
@@ -407,6 +425,23 @@ func (e ExhaustedUntil) Wire(now time.Time) (status int, hdr http.Header, body [
 		return 0, nil, nil, fmt.Errorf("credsvc: encoding the exhausted answer: %w", err)
 	}
 	return StatusExhaustedUntil, hdr, body, nil
+}
+
+// clipRefusalMessage bounds the sentence the typed answer carries to what
+// ReadWireError reads. The sentence is the writer's rendering of the fields
+// beside it — the runner rebuilds it from them — so a rendering the other end
+// of this contract would refuse would make the whole typed answer unreadable,
+// which is the one answer the runner cannot do without (review finding). The
+// tried list is what makes it long: nothing bounds how many credentials the
+// service considers, and fifty of them at the rules' 200-byte name bound is
+// over the refusal bound. The structured Tried field is not clipped — it is
+// where the runner reads the names from — and the cut is made on bytes, which
+// is what the reader's bound counts.
+func clipRefusalMessage(s string) string {
+	if len(s) <= maxRefusalMessageBytes {
+		return s
+	}
+	return strings.ToValidUTF8(s[:maxRefusalMessageBytes], "")
 }
 
 // WriteExhaustedUntil writes the typed answer to a client. An answer that
@@ -502,11 +537,23 @@ func SetCredentialHeaders(h http.Header, tier, name string) error {
 // C, and a missing name is not one clean header value, so each is refused by
 // the rule for the half that is missing.
 //
+// A header the answer carries twice is refused, as the request side refuses
+// one a call sent twice (oneHeader, review finding): the tier settles a call
+// against the caps and the name is what the run records, so neither may be
+// decided by the order an answer's headers happen to be in.
+//
 // The error names the field and never the value: both arrive as header text
 // from another process.
 func CredentialHeaders(h http.Header) (tier, name string, ok bool, err error) {
-	tier, name = h.Get(HeaderTier), h.Get(HeaderCredential)
-	if tier == "" && name == "" {
+	tier, haveTier, err := responseHeader(h, HeaderTier)
+	if err != nil {
+		return "", "", false, err
+	}
+	name, haveName, err := responseHeader(h, HeaderCredential)
+	if err != nil {
+		return "", "", false, err
+	}
+	if !haveTier && !haveName {
 		return "", "", false, nil
 	}
 	if !ValidTier(tier) {
@@ -516,6 +563,23 @@ func CredentialHeaders(h http.Header) (tier, name string, ok bool, err error) {
 		return "", "", false, errors.New("credsvc: the answer's credential name is not one clean header value")
 	}
 	return tier, name, true, nil
+}
+
+// responseHeader returns the single value of an answer's header. An answer
+// that carries it more than once is refused for the same reason the request
+// side refuses a header a call sent twice: there is nothing to pick between,
+// and a reader that took the first would let whoever wrote the second decide
+// what the first one means. present is false when the answer carries none.
+// The error names the header, a constant of this contract, never a value.
+func responseHeader(h http.Header, name string) (value string, present bool, err error) {
+	values := h.Values(name)
+	switch len(values) {
+	case 1:
+		return values[0], true, nil
+	case 0:
+		return "", false, nil
+	}
+	return "", false, fmt.Errorf("credsvc: the answer carries the %s header more than once", name)
 }
 
 // SetSwitchHeader records a switch on an answer. From is empty when the call
@@ -552,11 +616,17 @@ func SetSwitchHeader(h http.Header, s Switch) error {
 // credential that answered it), To likewise, and the reason is one of the
 // closed set — a record without the why, or with a why this contract does not
 // carry, is not a record of a switch. The header is decoded strictly
-// (Convention 6), and no error here repeats a name or a reason: the header is
-// text from another process, and a value in an error is a value in a log.
+// (Convention 6) and an answer that carries it twice is refused as the request
+// side refuses a header a call sent twice (review finding): the record is what
+// the run logs, and which of the two is logged must not be decided by header
+// order. No error here repeats a name or a reason: the header is text from
+// another process, and a value in an error is a value in a log.
 func SwitchHeader(h http.Header) (Switch, bool, error) {
-	raw := h.Get(HeaderSwitch)
-	if raw == "" {
+	raw, present, err := responseHeader(h, HeaderSwitch)
+	if err != nil {
+		return Switch{}, false, err
+	}
+	if !present || raw == "" {
 		return Switch{}, false, nil
 	}
 	var s Switch
