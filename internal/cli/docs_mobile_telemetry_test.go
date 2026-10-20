@@ -368,65 +368,69 @@ func TestTelemetryPlanKeepsNoAnsweredRowOpen(t *testing.T) {
 // the installation's web API key lives in secure storage and in the pairing
 // payload, so the plan names the value's KIND and never a value.
 //
-// Mutations (verified, run and restored): delete §4.4's "Inside the pairing
-// payload" row; delete "Realtime Database URL" from §4.4; delete "EAS file
-// secrets" from §4.4; change "four items per account" to "two items per
-// account" in §4.4; delete "init_firebase.go" from §4.4; delete the dated
-// amendment from docs/mobile/reconciliation.md's D111 row; delete the dated
-// amendment from Global Constraint 4; or write a 39-character `AIza…` value
-// into §4.4 — this test fails, each of them.
+// Each assertion is read from the row, sentence or line it is about, not from
+// the document: the first draft read them all from §4.4, and deleting
+// "Realtime Database URL" from the pairing-payload row proved nothing because
+// the secure-storage row names the same two values.
+//
+// Mutations (verified, run and restored): delete the "Inside the pairing
+// payload" row; delete "EAS file secrets" from the built-in row; delete
+// "Realtime Database URL" from the pairing-payload row; delete
+// "init_firebase.go" from it; change "Four items per account" to "Two items per
+// account" in the secure-storage row; delete "SECRET_SHAPES" from that row;
+// delete "Realtime Database URL" from that row; delete the dated amendment from
+// docs/mobile/reconciliation.md's D111 row, or "four items per account" from
+// it; delete the dated amendment from Global Constraint 4; or write a
+// 39-character `AIza…` value into §4.4 — this test fails, each of them.
 func TestTelemetryPlanRecordsWhatIsBuiltInAndWhatThePairingPayloadCarries(t *testing.T) {
 	doc := readDoc(t, telemetryPlan)
 	s44 := planSubsection(t, doc, "### 4.4 What is built in, what arrives in the pairing payload, and what is in secure storage (D199, accepted)")
 
-	// The three groups, named as the row's answer names them.
-	for _, want := range []string{
-		"Built into the build",
-		"Inside the pairing payload",
-		"In the phone's secure storage",
-	} {
-		if !strings.Contains(telemetryPlain(s44), want) {
-			t.Errorf("%s §4.4 does not carry the %q group: D199's answer is a split into what is compiled in, what arrives in the pairing payload and what is held in secure storage, and a reader who cannot find one of the three cannot tell which value goes where", telemetryPlan, want)
-		}
-	}
+	// The three groups, named as the row's answer names them. Each is read from
+	// the ROW that carries it, not from the section: the same phrases appear in
+	// the paragraphs below the table, so a section-wide Contains would stay green
+	// with a row deleted — which is how this test's first draft proved nothing.
+	builtIn := telemetryRowWith(t, s44, "| **Built into the build** |")
+	payload := telemetryRowWith(t, s44, "| **Inside the pairing payload** |")
+	storage := telemetryRowWith(t, s44, "| **In the phone's secure storage** |")
 
 	// What is compiled in: the telemetry project's two native files, delivered
-	// as EAS file secrets.
+	// as EAS file secrets and naming the project the owner answered for.
 	for _, want := range []string{
 		"google-services.json",
 		"GoogleService-Info.plist",
 		"EAS file secrets",
 		"fugaro-prod",
 	} {
-		if !strings.Contains(s44, want) {
-			t.Errorf("%s §4.4 does not name %q among what is built into the build: the same-for-every-installation half of D199's answer is the telemetry project's two native config files, delivered as EAS file secrets and naming the project the owner answered for (D194)", telemetryPlan, want)
+		if !strings.Contains(builtIn, want) {
+			t.Errorf("%s §4.4's \"built into the build\" row does not name %q: the same-for-every-installation half of D199's answer is the telemetry project's two native config files, delivered as EAS file secrets and naming the project the owner answered for (D194)", telemetryPlan, want)
 		}
 	}
 
 	// What arrives in the pairing payload: the installation's own connection,
-	// which no build can carry.
+	// which no build can carry, and the CLI side that already records it.
 	for _, want := range []string{
-		"encrypted pairing payload",
 		"Realtime Database URL",
 		"web API key",
-		"not known at build time",
+		"not known at build time**",
+		"encrypted pairing payload",
 		"init_firebase.go",
 		"G18",
 	} {
-		if !strings.Contains(s44, want) {
-			t.Errorf("%s §4.4 does not name %q in the pairing-payload half of D199's answer: the installation's own Firebase connection differs per installation and is unknown at build time, so it is delivered inside the encrypted pairing payload the user's own installation hands over — and the CLI already records both values, which G18 reads for the QR", telemetryPlan, want)
+		if !strings.Contains(payload, want) {
+			t.Errorf("%s §4.4's pairing-payload row does not name %q: the installation's own Firebase connection differs per installation and is unknown at build time, so it is delivered inside the encrypted pairing payload the user's own installation hands over — and the CLI already records both values, which G18 reads for the QR", telemetryPlan, want)
 		}
 	}
 
 	// What is in secure storage: four items, and the settings store's fence is
-	// NOT relaxed to hold them. SECRET_SHAPES is matched against the raw text,
-	// not telemetryPlain's flattening, because the underscores are what a reader
+	// NOT relaxed to hold them. SECRET_SHAPES is matched against the raw row, not
+	// telemetryPlain's flattening, because the underscores are what a reader
 	// greps for.
-	if !strings.Contains(s44, "SECRET_SHAPES") {
+	if !strings.Contains(storage, "SECRET_SHAPES") {
 		t.Errorf("%s §4.4 does not name SECRET_SHAPES: the two new items must NOT be held in the settings entry, and the store's refusal of an API-key-shaped value is the reason D199's answer puts them in secure storage instead of relaxing that fence", telemetryPlan)
 	}
-	if !strings.Contains(telemetryPlain(s44), "four items per account") {
-		t.Errorf("%s §4.4 does not say the app holds four items per account: D199's acceptance is what amends D111's record from two to four, and the section that states the new record is the section that has to state its size", telemetryPlan)
+	if !strings.Contains(strings.ToLower(telemetryPlain(storage)), "four items per account") {
+		t.Errorf("%s §4.4 does not say the app holds four items per account: D199's acceptance is what amends D111's record from two to four, and the row that states the new record is the row that has to state its size", telemetryPlan)
 	}
 	for _, want := range []string{
 		"ID token",
@@ -435,7 +439,7 @@ func TestTelemetryPlanRecordsWhatIsBuiltInAndWhatThePairingPayloadCarries(t *tes
 		"web API key",
 		"Keychain / Keystore",
 	} {
-		if !strings.Contains(s44, want) {
+		if !strings.Contains(storage, want) {
 			t.Errorf("%s §4.4 does not name %q among the four items in secure storage: D54b's precedent is to list every item held and not only the obvious one, and a list that stops at D111's two hides the two D199 adds", telemetryPlan, want)
 		}
 	}
@@ -447,20 +451,34 @@ func TestTelemetryPlanRecordsWhatIsBuiltInAndWhatThePairingPayloadCarries(t *tes
 		t.Errorf("%s carries the secret-shaped literal %q: the plan names the installation's web API key as a KIND and never as a value, because the whole of D199's answer is that the value lives in the pairing payload and in secure storage and nowhere in this repository", telemetryPlan, m)
 	}
 
-	// And the two documents that repeat D111's record carry the amendment. A
-	// plan that amends a constraint only in its own section leaves the constraint
-	// itself reading "exactly two items", which is the record a task is built on.
-	for _, tc := range []struct{ path, marker string }{
-		{"docs/mobile/reconciliation.md", "D111"},
-		{"docs/mobile/implementation-plan.md", "Global Constraint 4"},
-	} {
-		body := readDoc(t, tc.path)
-		if !strings.Contains(telemetryPlain(body), "four items per account") {
-			t.Errorf("%s does not record that D111's list is now four items per account: D199's acceptance amends a record that document repeats, and an amendment kept in one file while the constraint it amends still reads \"exactly two items\" is a record that disagrees with itself", tc.path)
+	// And the two documents that repeat D111's record carry the amendment, read
+	// from the sentence that repeats it rather than from the document — both name
+	// 2026-10-20 elsewhere, so a document-wide Contains proves nothing.
+	recon := readDoc(t, "docs/mobile/reconciliation.md")
+	d111 := telemetryRowWith(t, recon, "| **D111** |")
+	if !strings.Contains(strings.ToLower(telemetryPlain(d111)), "four items per account") {
+		t.Errorf("docs/mobile/reconciliation.md's D111 row does not record that the list is now four items per account: D199's acceptance amends a record that row states, and an amendment kept in one file while the row a task is built on still reads \"Exactly two items, per account\" is a record that disagrees with itself")
+	}
+	if !strings.Contains(d111, "Amended 2026-10-20") {
+		t.Errorf("docs/mobile/reconciliation.md's D111 row carries no dated amendment for D199's acceptance: the repository's habit is to keep the superseded text visible under a dated note (D129), and an undated change to a constraint a task is built on cannot be told from the text it replaced")
+	}
+
+	plan := readDoc(t, "docs/mobile/implementation-plan.md")
+	constraint := ""
+	for _, line := range strings.Split(plan, "\n") {
+		if strings.HasPrefix(line, "4. **The app holds exactly two items per account") {
+			constraint = line
+			break
 		}
-		if !strings.Contains(body, "2026-10-20") {
-			t.Errorf("%s carries no dated amendment for D199's acceptance: the repository's habit is to keep the superseded text visible under a dated note (D129), and an undated change to a constraint a task is built on cannot be told from the text it replaced", tc.path)
-		}
+	}
+	if constraint == "" {
+		t.Fatalf("docs/mobile/implementation-plan.md has no Global Constraint 4 line beginning \"4. **The app holds exactly two items per account\": this test cannot check an amendment to a constraint it cannot locate, and the constraint is the record every mobile task is built on")
+	}
+	if !strings.Contains(strings.ToLower(telemetryPlain(constraint)), "four items per account") {
+		t.Errorf("docs/mobile/implementation-plan.md's Global Constraint 4 does not record that the list is now four items per account: D199's acceptance amends the constraint itself, and Global Constraint 12 is the precedent for amending one in place with a dated note rather than leaving it to be reconciled by hand")
+	}
+	if !strings.Contains(constraint, "Amended 2026-10-20") {
+		t.Errorf("docs/mobile/implementation-plan.md's Global Constraint 4 carries no dated amendment for D199's acceptance: the amendment has to be dated, or the text it replaced cannot be told from the text that replaced it")
 	}
 }
 
