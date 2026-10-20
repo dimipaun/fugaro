@@ -390,11 +390,26 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 // followup.allow_public refusal is the file's own business): the gateway its
 // calls are made by, and O2 — the project policy's switch.
 //
-// The mode is the run's effective one, the same merge budgetProblems and
-// providerProblems read (policy.Merge of the project config's ceiling and the
-// file), because the file's own mode is only a lower bound on the run's: a
-// file that writes no budget under an installation whose ceiling enforces has
-// the gateway on. The ceiling is this file's project's, and a file that
+// The mode is the run's effective one, the merge budgetProblems and
+// providerProblems read (policy.Merge of the ceiling and the file), because the
+// file's own mode is only a lower bound on the run's: a file that writes no
+// budget under an installation whose ceiling enforces has the gateway on.
+//
+// The ceiling is the project config's *and* the published policy node's mode,
+// which is the part of it this function is alone in reading. The runner builds
+// its ceiling that way before the file is merged over it:
+// internal/runner/policy.go's policyCeiling writes pp.Budget.Mode over the
+// ceiling's own mode ("the mode is the key this matters most for"), so the node
+// is the ceiling for the mode rather than a layer over it — a node that observes
+// gives every run of the project the gateway even where the project config's
+// ceiling says off. Since O2 makes this function read the published policy
+// anyway, judging the gateway rule without the node's mode refuses a file that
+// every run of it admits, for a reason — "budget.mode is not set" — that is
+// false of the project. So the node is read first, and its mode, when the node
+// carries one, stands in for the ceiling's before the gateway rule is judged.
+// (The rest of the file reads no node — design §11, offline — which is why this
+// overlay is here and not in ceilingLayer.) The ceiling is this file's
+// project's, and a file that
 // belongs to no selected project config has none — the reading the rest of
 // this file gives that state — so the gateway rule is judged only where that
 // ceiling can be read at all. Judging it without one reads the file's own mode
@@ -448,9 +463,15 @@ func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 		return problems
 	}
 	// The ceiling is readable from here on, so the gateway rule can be judged
-	// over the run's own mode.
-	problems = config.CheckCascadeGateway(cfg.Agent, policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode)
+	// over the run's own mode. The node's mode stands in for the ceiling's, as
+	// the runner's policyCeiling does (the doc comment above); the read is the
+	// one O2 needs below in any case, moved up.
+	ceiling := ceilingLayer(lc)
 	p, found, err := projectPolicyRead(ctx, lc)
+	if err == nil && found && p != nil && p.Budget.Mode != "" {
+		ceiling.Mode = p.Budget.Mode
+	}
+	problems = config.CheckCascadeGateway(cfg.Agent, policy.Merge(ceiling, runner.FileLayer(cfg)).Mode)
 	switch {
 	case err != nil:
 		refuse("the project's published policy could not be read (" + oneLineCLI(err.Error()) + ")")

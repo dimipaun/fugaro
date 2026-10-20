@@ -92,7 +92,7 @@ The catalog recipes `standard` (a first-line loop by the coder's model, then one
 Each is an `infra_error` before any model call, naming the pin and the rule (and `fugaro validate` reports the same):
 
 - **No provider claims the model**, or the provider's `allow_data_to` is a real, non-empty, non-`["*"]` list that does not name this repository. Code only goes where the owner said it may; an absent list (or `["*"]`) means every repository, on purpose.
-- **`agent.auth` is `oauth` or `vertex`.** An OAuth token is a Claude subscription credential and is never sent elsewhere, and a run does not mix credentials. Use `api-key`.
+- **`agent.auth` is `oauth`, `vertex` or `cascade`.** An OAuth token is a Claude subscription credential and is never sent elsewhere — and a cascade run's own tier A is one of those tokens — so a run does not mix credentials. Use `api-key`.
 - **The gateway is off or only observing** (`budget.mode: off` or `observe`). The gateway is what holds the key and prices the calls, and only `enforce` refuses a call that would go over a cap. A project that has published a project policy ([design/project-centric.md](design/project-centric.md)) has no `off` to offer here: a run reads that policy out of the project's own database, so its jobs must carry the Firebase backend, and an installation that wants the budget off stays on the per-repository path.
 - **A variant suffix (`:free`, `:nitro`, `:online`) or an alias.** A variant is another price and routing; pins are exact upstream IDs.
 - **No price** for the model (add it under `model_prices`), or an entry in `budget.allowed_models` or the pins that the owner's allow-list does not carry.

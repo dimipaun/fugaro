@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // TestDocsCredentialsAuthListNamesCascade: agent.auth gained a fourth value
@@ -20,12 +22,18 @@ import (
 // one list the validator, the layer's own defaults.agent.auth key and the
 // launcher's check of a run's spec all read — rather than spelled out here, so
 // a fifth value fails this test in all five documents at once rather than
-// leaving them to be found by eye.
+// leaving them to be found by eye. The sixth section reads the other
+// enumeration (the values CheckProviderAuth refuses with a provider model —
+// every value but api-key) out of that function for the same reason: it is the
+// rule docs/multi-model.md §5 and README.md state, and both said "oauth or
+// vertex" until the cascade joined it.
 //
 // Mutation (run, restored): drop "cascade" from README.md's auth comment, from
 // the setup skill's decision line, from the reference's §2 table, from
 // internal/config/example.yaml's comment, or restore §1.2's "has three values,
-// not four" heading — each fails, naming the document it reads.
+// not four" heading — each fails, naming the document it reads. Drop it from
+// README.md's `with a provider model` comment or from docs/multi-model.md §5's
+// refusal bullet and the sixth section fails on the document it reads.
 func TestDocsCredentialsAuthListNamesCascade(t *testing.T) {
 	auths := quoted(sourceValues(t, "internal/config/defaults.go", readDoc(t, "internal/config/defaults.go"),
 		`AgentAuths = \[\]string\{([^}]*)\}`)[0])
@@ -139,6 +147,111 @@ func TestDocsCredentialsAuthListNamesCascade(t *testing.T) {
 			t.Errorf("plugin/skills/setup/reference/decisions.md's §2 table has no row for %q (config.AgentAuths): a value the skill offers without its facts", auth)
 		}
 	}
+
+	// 6. The *other* enumeration: the values refused with a provider model,
+	// which is every value but api-key (config.CheckProviderAuth's own arms).
+	// Two reader-facing copies of it stayed behind when the cascade was added —
+	// docs/multi-model.md §5's list of refusals ("`agent.auth` is `oauth` or
+	// `vertex`") and README.md's provider-key walkthrough ("oauth and vertex are
+	// refused with a provider model") — and a reader who takes either for the
+	// whole rule would read a cascade run with a provider model as admitted,
+	// which the runner refuses on every launch.
+	//
+	// The set is read from CheckProviderAuth rather than spelled out: this list
+	// is not config.AgentAuths (api-key is the value it admits), and a fifth
+	// value is one it refuses by its default arm the day it exists.
+	refused := refusedWithAProviderModel(t, auths)
+
+	multi := readDoc(t, "docs/multi-model.md")
+	var multiLine string
+	for _, line := range strings.Split(multi, "\n") {
+		if strings.HasPrefix(line, "- **`agent.auth` is") {
+			multiLine = line
+			break
+		}
+	}
+	if multiLine == "" {
+		t.Fatal("docs/multi-model.md §5 carries no `agent.auth is` refusal bullet: the list moved and this scan no longer reads it")
+	}
+	// The enumeration itself, and not the whole bullet: a document can name the
+	// value in a clause beside the list — "a cascade run's own tier A" — while
+	// leaving it out of the list, and a line-wide contains check reads that as
+	// right. What has to carry every refused value is the list.
+	multiEnum := between(multiLine, "`agent.auth` is ", ".")
+	if multiEnum == multiLine {
+		t.Fatalf("docs/multi-model.md §5's refusal bullet no longer spells the list after `agent.auth` is: %q", multiLine)
+	}
+	everyAuthQuoted(t, "docs/multi-model.md §5's provider-model refusal list", multiEnum, refused)
+
+	var readmeProviderLine string
+	for _, line := range strings.Split(readme, "\n") {
+		if strings.Contains(line, "auth: api-key") && strings.Contains(line, "with a provider model") {
+			readmeProviderLine = line
+			break
+		}
+	}
+	if readmeProviderLine == "" {
+		t.Fatal("README.md carries no `auth: api-key … with a provider model` comment: the walkthrough moved and this scan no longer reads it")
+	}
+	// The comment's own list, for the same reason: the sentence it introduces
+	// names the rule, and the list before it is what a reader copies.
+	readmeEnum := between(readmeProviderLine, "# ", " are refused")
+	if readmeEnum == readmeProviderLine {
+		t.Fatalf("README.md's provider-model refusal comment no longer lists the values before `are refused`: %q", readmeProviderLine)
+	}
+	namesEveryAuth(t, "README.md's provider-model refusal comment", readmeEnum, refused)
+}
+
+// between is the text after the first `after` and before the first `before`
+// following it, or s itself when either marker is absent — a caller's way of
+// telling "the sentence moved" from "the sentence says what it should".
+func between(s, after, before string) string {
+	i := strings.Index(s, after)
+	if i < 0 {
+		return s
+	}
+	rest := s[i+len(after):]
+	j := strings.Index(rest, before)
+	if j < 0 {
+		return s
+	}
+	return rest[:j]
+}
+
+// everyAuthQuoted requires text to spell every auth value as a backticked code
+// span: the enumeration these documents write in prose quotes each value.
+func everyAuthQuoted(t *testing.T, where, text string, auths []string) {
+	t.Helper()
+	for _, auth := range auths {
+		if !strings.Contains(text, "`"+auth+"`") {
+			t.Errorf("%s does not name %q (config.AgentAuths): %q", where, auth, text)
+		}
+	}
+}
+
+// refusedWithAProviderModel is the set of agent.auth values
+// config.CheckProviderAuth refuses when the run pins a model a provider serves
+// — every value but api-key, which is the one it is for. It is computed from
+// the function itself so that a fifth value, refused by the switch's default
+// arm, has to be named in the two documents this scan reads.
+func refusedWithAProviderModel(t *testing.T, auths []string) []string {
+	t.Helper()
+	ps := map[string]config.ModelProvider{"openrouter": {
+		Kind: "openai", BaseURL: "https://openrouter.ai/api/v1",
+		Auth: "bearer", Secret: "openrouter-api-key",
+		Models: []string{"deepseek/*"},
+	}}
+	var refused []string
+	for _, auth := range auths {
+		a := config.Agent{Auth: auth, Models: config.ModelRoles{Coder: "deepseek/deepseek-v4-flash"}}
+		if len(config.CheckProviderAuth(a, ps)) > 0 {
+			refused = append(refused, auth)
+		}
+	}
+	if len(refused) == 0 || len(refused) == len(auths) {
+		t.Fatalf("config.CheckProviderAuth refused %d of %d values (config.AgentAuths, refused %v): this scan is no longer reading it", len(refused), len(auths), refused)
+	}
+	return refused
 }
 
 // namesEveryAuth requires text to carry every value of the auth list. It is a

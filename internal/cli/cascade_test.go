@@ -37,6 +37,67 @@ func cascadePolicy() string {
 	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}}}`, projectpolicy.RulesVersion)
 }
 
+// cascadePolicyWithMode is cascadePolicy with the policy's own budget node,
+// whose mode is the one the runner overlays onto the installation's ceiling
+// (runner.policyCeiling). A policy that carries a budget must name a mode
+// (projectpolicy.validBudget), so this is the shape a mode arrives in when the
+// project config's own ceiling names none.
+func cascadePolicyWithMode(mode string) string {
+	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},"budget":{"mode":%q}}`, projectpolicy.RulesVersion, mode)
+}
+
+// TestValidateReadsTheGatewayModeFromThePolicyNode: the mode the gateway rule
+// is judged over is the *run's*, and the run's ceiling is not the project
+// config's alone. The runner overlays the published policy node's budget.mode
+// onto the environment ceiling before the file is merged over the two
+// (internal/runner/policy.go's policyCeiling, where the node replaces the
+// ceiling's mode and not merely tightens it — "the mode is the key this
+// matters most for"), and this command already reads that same node for O2.
+//
+// So a project whose owner sets the mode in the policy alone — the project
+// config's ceiling names none, which is the state a policy published for its
+// mode leaves behind — is an installation whose every cascade run has the
+// gateway on: reading the ceiling without the node refused the file with
+// "budget.mode is not set", for a run that observes.
+//
+// Mutation (run, restored): judge policy.Merge(ceilingLayer(lc),
+// runner.FileLayer(cfg)) without the node's mode — this fails on that
+// refusal, and the mode the node set is the only thing that changes.
+func TestValidateReadsTheGatewayModeFromThePolicyNode(t *testing.T) {
+	f := newLaunchBudget(t, "off")
+	publishPolicy(t, f, cascadePolicyWithMode("observe"))
+	out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+	if err != nil {
+		t.Fatalf("a cascade file whose policy sets the mode was refused: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	if strings.Contains(out+errOut, "needs the budget gateway") {
+		t.Errorf("the gateway rule was judged without the policy node's mode:\n%s%s", out, errOut)
+	}
+}
+
+// TestValidateRefusesCascadeWhenThePolicyNodeTurnsTheGatewayOff is the same
+// overlay read the other way, and the reason it is the node's mode the ceiling
+// takes rather than a second layer over it. The node *replaces* the ceiling's
+// mode (runner.policyCeiling), so a policy that says off means every run of the
+// project has the gateway off — even where the project config's own ceiling
+// observes. Merging the two as tightening layers (the higher mode wins, which is
+// what policy.Merge does between the ceiling and a file) would read this file as
+// observing and admit it, for runs the gateway rule refuses.
+//
+// Mutation (run, restored): merge the node's mode through policy.Merge instead
+// of taking it as the ceiling's own — the file is reported valid and this fails.
+func TestValidateRefusesCascadeWhenThePolicyNodeTurnsTheGatewayOff(t *testing.T) {
+	f := newLaunchBudget(t, "observe")
+	publishPolicy(t, f, cascadePolicyWithMode("off"))
+	out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+	if err == nil {
+		t.Fatalf("a cascade file whose policy turns the budget off was admitted:\nstdout:\n%s\nstderr:\n%s", out, errOut)
+	}
+	if !strings.Contains(out+errOut, "needs the budget gateway") {
+		t.Errorf("the file was refused, but not for the gateway the policy turns off:\n%s%s", out, errOut)
+	}
+}
+
 // TestValidateRefusesCascadeWithoutPolicySwitch is O2 — the owner's ruling of
 // 2026-10-17: a repository may *ask* for the cascade, and only the
 // operator-written project policy enables it. `fugaro validate` is the surface
@@ -263,12 +324,15 @@ func TestValidateCascadeSwitchReasonNeverBlamesTheGateway(t *testing.T) {
 // it stays green when the constant moves — which is the skew the test exists
 // to catch.
 //
-// The constant's own patch series takes precedence — 0.9.6's neighbours are
-// 0.9.5 and 0.9.7 — and a release that opens its minor (a patch of 0, as
-// 0.10.0 does) has no patch below it at all, so the minor moves instead and
-// the patch stays: 0.9.0 below, 0.11.0 above. Both are releases the gate's own
-// numeric compare puts on the right side of the constant, which is all this
-// fixture has to be; a constant whose minor cannot shift either is not a
+// The patch is the component that moves whenever it can, so a constant with a
+// nonzero patch has both neighbours in its own patch series (0.9.6's are 0.9.5
+// and 0.9.7). A constant that opens its minor — a patch of 0, as 0.10.0 does —
+// has no patch below it, so the lower neighbour moves the minor and keeps the
+// patch (0.9.0) while the one above it still moves the patch (0.10.1): the
+// patch is tried first, and only the direction that would go below zero falls
+// through to the minor. Both are releases the gate's own numeric compare puts
+// on the right side of the constant, which is all this fixture has to be; a
+// constant whose patch cannot move down and whose minor cannot either is not a
 // release this gate can judge, and that is what the fatal says.
 func shiftRelease(t *testing.T, rel string, delta int) string {
 	t.Helper()
@@ -295,6 +359,33 @@ func shiftRelease(t *testing.T, rel string, delta int) string {
 	}
 	t.Fatalf("cascadeSince = %q has no release %d below/above it", rel, delta)
 	return ""
+}
+
+// TestShiftReleaseMovesThePatchFirst pins the fixture's own precedence rule,
+// because the gate tests' boundary rows rest on it and it is easy to misread
+// from the comment alone: the patch is tried first, so 0.10.0's neighbour above
+// is 0.10.1, and only a direction with no patch left falls through to the minor
+// (0.9.0 below). A constant with a nonzero patch moves no minor at all. The
+// comment above shiftRelease said the opposite — 0.11.0 above — until this
+// round's review, which is the drift this test exists to stop.
+//
+// Mutation (run, restored): swap the switch's two cases (minor first) and the
+// 0.10.0/+1 row becomes 0.11.0 and this fails.
+func TestShiftReleaseMovesThePatchFirst(t *testing.T) {
+	for _, c := range []struct {
+		rel   string
+		delta int
+		want  string
+	}{
+		{"0.10.0", 1, "0.10.1"},
+		{"0.10.0", -1, "0.9.0"},
+		{"0.9.6", 1, "0.9.7"},
+		{"0.9.6", -1, "0.9.5"},
+	} {
+		if got := shiftRelease(t, c.rel, c.delta); got != c.want {
+			t.Errorf("shiftRelease(%q, %d) = %q, want %q", c.rel, c.delta, got, c.want)
+		}
+	}
 }
 
 // TestInitRepoRefusesCascadeOnOlderBaseImage is Task C1.1's skew gate: a

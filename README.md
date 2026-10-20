@@ -166,7 +166,7 @@ A run's coder can be a non-Anthropic model served by OpenRouter — one key for 
 
    ```yaml
    agent:
-     auth: api-key                     # oauth and vertex are refused with a provider model
+     auth: api-key                     # oauth, vertex and cascade are refused with a provider model
      models:
        coder: deepseek/deepseek-v4.1-flash
        reviewer: deepseek/deepseek-v4.1-flash
