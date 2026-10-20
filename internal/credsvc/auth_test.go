@@ -52,7 +52,14 @@ var testKey = sync.OnceValue(func() *rsa.PrivateKey {
 // can hand the verifier a token signed by a key it does not know.
 func signJWT(t *testing.T, key *rsa.PrivateKey, kid string, claims map[string]any) string {
 	t.Helper()
-	head, err := json.Marshal(map[string]any{"alg": "RS256", "kid": kid, "typ": "JWT"})
+	return signJWTAlg(t, key, kid, "RS256", claims)
+}
+
+// signJWTAlg is signJWT with the header's algorithm under the test's control,
+// so a test can present a token that says it is signed another way.
+func signJWTAlg(t *testing.T, key *rsa.PrivateKey, kid, alg string, claims map[string]any) string {
+	t.Helper()
+	head, err := json.Marshal(map[string]any{"alg": alg, "kid": kid, "typ": "JWT"})
 	if err != nil {
 		t.Fatalf("marshalling the header: %v", err)
 	}
@@ -332,12 +339,71 @@ func TestVerifyRefusesAnIdentityThatNamesTwoRuns(t *testing.T) {
 		},
 		"two different uids": func(c map[string]any) { c["sub"] = "r~another-repo~20261020-090000-ffff" },
 		"no fx":              func(c map[string]any) { delete(c, "fx") },
+		// The slug and the run id become a database path and a log line: a
+		// separator or a control character hiding in either is not one.
+		"a slug that is not a path segment": func(c map[string]any) {
+			uid := "r~a/b~" + c["fr"].(string)
+			c["sub"], c["user_id"], c["fs"] = uid, uid, "a/b"
+		},
+		"a run id with a newline in it": func(c map[string]any) {
+			uid := "r~" + c["fs"].(string) + "~run\nid"
+			c["sub"], c["user_id"], c["fr"] = uid, uid, "run\nid"
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
 			if _, err := f.verify(f.runToken(mutate), f.jobToken(), f.job); !errors.Is(err, ErrUnverified) {
 				t.Fatalf("err = %v, want ErrUnverified", err)
+			}
+		})
+	}
+}
+
+// A token the service cannot read, or reads and finds out of date, is not an
+// identity: the shape, the algorithm and the two ends of the token's life are
+// checked before any claim is believed.
+func TestVerifyRefusesTokensThatAreNotUsable(t *testing.T) {
+	oversized := "e30." + strings.Repeat("a", maxTokenBytes) + ".sig"
+	runCases := map[string]func(*fixture) string{
+		"no token at all":             func(*fixture) string { return "" },
+		"not a JWT":                   func(*fixture) string { return "not.a.jwt" },
+		"a token past the size bound": func(*fixture) string { return oversized },
+		"another algorithm": func(f *fixture) string {
+			return signJWTAlg(t, testKey(), testKid, "HS256", f.runClaims())
+		},
+		"an expired ID token": func(f *fixture) string {
+			return f.runToken(func(c map[string]any) { c["exp"] = f.now.Add(-time.Minute).Unix() })
+		},
+		"no exp at all": func(f *fixture) string {
+			return f.runToken(func(c map[string]any) { delete(c, "exp") })
+		},
+		"issued in the future": func(f *fixture) string {
+			return f.runToken(func(c map[string]any) { c["iat"] = f.now.Add(time.Hour).Unix() })
+		},
+	}
+	for name, tok := range runCases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			if _, err := f.verify(tok(f), f.jobToken(), f.job); !errors.Is(err, ErrUnverified) {
+				t.Fatalf("err = %v, want ErrUnverified", err)
+			}
+		})
+	}
+
+	jobCases := map[string]func(*fixture) string{
+		"no token at all":             func(*fixture) string { return "" },
+		"not a JWT":                   func(*fixture) string { return "not.a.jwt" },
+		"a token past the size bound": func(*fixture) string { return oversized },
+		"no exp at all": func(f *fixture) string {
+			return f.jobToken(func(c map[string]any) { delete(c, "exp") })
+		},
+	}
+	for name, tok := range jobCases {
+		t.Run("the caller's "+name, func(t *testing.T) {
+			f := newFixture(t)
+			if _, err := f.verify(f.runToken(), tok(f), f.job); !errors.Is(err, ErrUnverifiedJob) {
+				t.Fatalf("err = %v, want ErrUnverifiedJob", err)
 			}
 		})
 	}

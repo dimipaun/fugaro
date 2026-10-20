@@ -45,6 +45,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/budget/token"
 )
 
 // The refusals. Each is a sentinel so a caller can answer the wire contract's
@@ -151,7 +152,7 @@ type RTDBOutcomes struct {
 // UTC epoch day the rules' TODAY computes, and the path escapes slug and run
 // exactly as the writer did.
 func (o RTDBOutcomes) OutcomeExists(ctx context.Context, day int64, slug, run string) (bool, error) {
-	if !validHeaderToken(slug) || !validHeaderToken(run) {
+	if !token.ValidSegment(slug) || !token.ValidSegment(run) {
 		// budget.PathOutcome panics on an empty segment; a reader is not the
 		// place to find that out.
 		return false, errors.New("credsvc: the run's slug or run id is not a usable database path segment")
@@ -419,15 +420,18 @@ func runDay(run string) (int64, bool) {
 	return budget.Day(t), true
 }
 
-// splitRunUID splits r~<slug>~<run>. Both parts must be one clean header
-// token: they become a database path (budget.PathOutcome) and an audit line.
+// splitRunUID splits r~<slug>~<run>. Both parts must be the segments the
+// launcher's own minter accepts (token.ValidSegment: no '~', no '/', no
+// control, no space), because they become a database path
+// (budget.PathOutcome) and an audit line, and the rule for what may be in
+// them is one rule, held in one place.
 func splitRunUID(uid string) (slug, run string, ok bool) {
 	rest, found := strings.CutPrefix(uid, "r~")
 	if !found {
 		return "", "", false
 	}
 	slug, run, found = strings.Cut(rest, "~")
-	if !found || !validHeaderToken(slug) || !validHeaderToken(run) {
+	if !found || !token.ValidSegment(slug) || !token.ValidSegment(run) {
 		return "", "", false
 	}
 	return slug, run, true
