@@ -160,6 +160,51 @@ describe('the source bound to the active installation', () => {
     ])
   })
 
+  it('rebuilds when the directory the installation runs in changes, so the next read runs there', async () => {
+    // A checkout is a field of the record that decides **where the child runs**
+    // (`options.checkout ?? privateWorkingDirectory()`), and it is the one field
+    // the picker changes on a record it already holds: `setCheckout` deliberately
+    // preserves the record's `id` (`console/src/main/installations.ts` -- the id is
+    // *which* installation this is, not where it runs). A source cached by that id
+    // alone therefore kept the build made for the **previous** directory: the
+    // picker ran rule 7's `doctor` from the new one and the row and the header
+    // reported it, while every read still spawned with the old cwd -- the
+    // dashboard reading the wrong repository, or refused by the CLI's own pairing
+    // sentence, under a screen that said the new checkout was in use.
+    let installation: BoundInstallation = { id: 'a1', project: 'acme', checkout: '/src/one' }
+    const built: (string | undefined)[] = []
+    const closed: string[] = []
+    const source = createBoundSource({
+      installation: () => installation,
+      create: async (each) => {
+        built.push(each.checkout)
+        return aSource(closed, each.checkout ?? 'the private working directory')
+      },
+    })
+
+    expect((await source.version()).text).toBe('/src/one')
+    installation = { ...installation, checkout: '/src/two' }
+    // The read after the change is the whole claim: it is answered by a source
+    // built from the new checkout, and the source built for the previous one was
+    // closed first -- its `watch` child is running in the old directory.
+    expect((await source.version()).text, 'the read after a checkout change ran in the previous directory').toBe(
+      '/src/two',
+    )
+    expect(closed, 'the source built for the previous checkout was left running').toEqual(['/src/one'])
+    // No churn while the binding is unchanged, which is what makes this a key and
+    // not a rebuild-on-everything: the same read twice builds once.
+    await source.version()
+    expect(built).toEqual(['/src/one', '/src/two'])
+    // A clear is a change too: rule 5's ordinary case is an installation with no
+    // checkout, and its child runs in the console's own private directory.
+    installation = { id: 'a1', project: 'acme' }
+    expect((await source.version()).text).toBe('the private working directory')
+    expect(built).toEqual(['/src/one', '/src/two', undefined])
+    // The ref a screen draws is still read from the binding at call time, so the
+    // header and the child never disagree about which directory is in use.
+    expect(source.installation?.checkout, 'the ref still names the previous checkout').toBeUndefined()
+  })
+
   it('refuses a read for an installation the console stopped showing, and says so', async () => {
     let installation: BoundInstallation | null = FIRST
     const closed: string[] = []

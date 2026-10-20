@@ -1102,6 +1102,14 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
       binding,
       'the source binding reads the run’s resolution, so a well-known path is handed to the resolver as the operator’s own',
     ).not.toContain('resolvedBinaries')
+    // The checkout travels too, and it is not decoration: it is the child's
+    // working directory, and it is the one field the picker changes on a record
+    // the console already holds (`setCheckout` preserves the id, deliberately).
+    // `createBoundSource` caches its source by the binding -- id *and* checkout --
+    // so a binding that dropped this field would leave the console spawning in
+    // the directory the operator just left while the row and the header reported
+    // the new one (`test/unit/bound-source.test.ts` is the other half of this).
+    expect(binding).toContain('checkout: chosen.checkout')
   })
 
   it('hands the startup handshake to the picker under the installation’s project, never its id', () => {

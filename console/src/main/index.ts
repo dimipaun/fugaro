@@ -352,8 +352,12 @@ const resolvedBinaries = new Map<string, string>()
 /**
  * boundSource is the `FugaroSource` the whole surface is built over: the real
  * `CliSource` for the active installation, built by `sourceFor` and cached by
- * the installation's id (`createBoundSource` in `src/source/cli.ts`, where the
- * whole of the decision is unit-tested).
+ * the installation's binding -- its id and the three fields the child is built
+ * from, the checkout among them (`createBoundSource` in `src/source/cli.ts`,
+ * where the whole of the decision is unit-tested). The checkout is in that key
+ * because it is the child's working directory: a record whose checkout changed
+ * keeps its id, so a source cached by the id alone would keep spawning in the
+ * directory the operator just left.
  *
  * **This is the only source the shipped app can construct.** `sourceFor` gives
  * the record's optional override to the resolver as the configured path and

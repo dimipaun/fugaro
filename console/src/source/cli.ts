@@ -620,6 +620,34 @@ export interface BoundSource extends FugaroSource {
 }
 
 /**
+ * bindingKey is what "the same source" means: the fields of one installation
+ * that decide **what the child is and where it runs**. It is not the id alone,
+ * and that is the whole of a defect this function exists to prevent: the id is
+ * *which* installation this is -- `setCheckout` deliberately preserves it
+ * (`console/src/main/installations.ts`), and so does a record that gains or
+ * loses its override -- while the checkout is the child's working directory
+ * (`options.checkout ?? privateWorkingDirectory()`) and the override is rule 4's
+ * first candidate. A source cached by the id alone kept running in the directory
+ * the installation used to be in: the picker ran rule 7's `doctor` from the new
+ * one, the row and the header reported it, and every read still spawned with the
+ * old cwd, so the dashboard read the wrong repository (or was refused by the
+ * CLI's own pairing sentence) under a screen saying the new checkout was in use.
+ *
+ * It is serialised rather than joined with a separator: these are paths and
+ * project names, and a delimiter one of them may contain is a collision waiting
+ * to be a wrong directory.
+ */
+function bindingKey(installation: BoundInstallation): string {
+  return JSON.stringify([
+    installation.id,
+    installation.project,
+    installation.binaryPath ?? '',
+    installation.configPath ?? '',
+    installation.checkout ?? '',
+  ])
+}
+
+/**
  * createBoundSource is the join between the console's own state and the data
  * plane: every read resolves the installation that is active **now**, builds the
  * one source for it if there is not one already, and delegates.
@@ -628,10 +656,11 @@ export interface BoundSource extends FugaroSource {
  *
  *   - **no installation, no spawn.** `resolve` throws `NoInstallation` before
  *     anything is constructed, so a console with nothing chosen drives nothing.
- *   - **one source per installation.** The source is cached by the
- *     installation's id and the previous one is closed when the id changes, so a
- *     switch cannot leave a `fugaro watch` child running for an installation the
- *     console has stopped showing.
+ *   - **one source per binding.** The source is cached by `bindingKey` -- the
+ *     installation's id and the three fields the child is built from -- and the
+ *     previous one is closed when that key changes, so neither a switch nor a
+ *     checkout change can leave a `fugaro watch` child running for a directory
+ *     the console has stopped showing.
  *   - **`subscribeLive` stays synchronous and idempotent.** Building a
  *     `CliSource` is asynchronous (it resolves and probes the binary) and
  *     `FugaroSource.subscribeLive` is not, so the feed this returns is a
@@ -645,8 +674,8 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   const { installation: _installation, create: injected, ...options } = deps
   const create =
     injected ?? ((installation: BoundInstallation): Promise<CliSource> => sourceFor(installation, options))
-  let bound: { readonly id: string; readonly source: CliSource } | null = null
-  let pending: { readonly id: string; readonly source: Promise<CliSource> } | null = null
+  let bound: { readonly key: string; readonly source: CliSource } | null = null
+  let pending: { readonly key: string; readonly source: Promise<CliSource> } | null = null
   const feeds = new Map<string, LiveFeed>()
 
   /**
@@ -681,7 +710,10 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
    * not this one, with a `searched` list and an install command to match. The
    * store is read here, at the moment of the refusal, so the sentence is about
    * what actually happened: a removal is D13's state, and a switch is a read for
-   * an installation the console has stopped showing.
+   * an installation the console has stopped showing. A build superseded by a
+   * **checkout change** lands here too, and the sentence is right for it as well:
+   * the read was for the binding that named the previous directory, which is a
+   * binding the console is no longer showing.
    */
   const superseded = (): SourceRefusal =>
     deps.installation() === null
@@ -691,16 +723,17 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   const resolve = async (): Promise<CliSource> => {
     const installation = deps.installation()
     if (installation === null) throw noInstallation()
-    if (bound !== null && bound.id === installation.id) return bound.source
-    if (pending !== null && pending.id === installation.id) return pending.source
-    // A different installation, or none bound: the previous source's children
-    // are stopped before a new one is built. `bound` is cleared first so a read
-    // that arrives while the close is in flight cannot be handed the source that
-    // is on its way out -- and the build is registered as `pending` **before**
-    // that close is awaited, so the read that arrives in the same window joins
-    // this build instead of starting a second one for the same installation
-    // (which would leave the first refused as a superseded build, and cost a
-    // second probe of a binary that was already being probed).
+    const key = bindingKey(installation)
+    if (bound !== null && bound.key === key) return bound.source
+    if (pending !== null && pending.key === key) return pending.source
+    // A different binding, or none: the previous source's children are stopped
+    // before a new one is built. `bound` is cleared first so a read that arrives
+    // while the close is in flight cannot be handed the source that is on its way
+    // out -- and the build is registered as `pending` **before** that close is
+    // awaited, so the read that arrives in the same window joins this build
+    // instead of starting a second one for the same binding (which would leave the
+    // first refused as a superseded build, and cost a second probe of a binary
+    // that was already being probed).
     const previous = bound
     bound = null
     feeds.clear()
@@ -710,18 +743,18 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       if (previous !== null) await previous.source.close()
       const created = await create(installation)
       if (mine !== epoch) {
-        // Dropped, or superseded by a build for another installation, while this
+        // Dropped, or superseded by a build for another binding, while this
         // one was in flight. `forget` could not close what did not exist yet, so
         // this source is closed here -- nothing else holds it -- and the read
         // that asked for it is refused for what actually happened.
         void created.close().catch(() => undefined)
         throw superseded()
       }
-      bound = { id: installation.id, source: created }
+      bound = { key, source: created }
       pending = null
       return created
     })()
-    pending = { id: installation.id, source }
+    pending = { key, source }
     // A build that failed is not kept as this installation's pending build: the
     // probe can fail for a reason that passes (a `version` that did not answer
     // in time on a loaded machine, a binary mid-upgrade), and a rejection kept
