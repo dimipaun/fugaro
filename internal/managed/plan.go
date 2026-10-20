@@ -121,11 +121,13 @@ type Verdict struct {
 	// affects OK.
 	Changes Changes
 	// Listable is the addresses the guard refused that the owner's list would
-	// admit if it named them (tf.Listable): an unlisted delete or replace of
-	// the address's own object. It is empty when the guard refused only what
-	// no list clears — a moved object, an action it does not know, a change
-	// with no actions — and then a refusal must not point at the owner's list
-	// (Request.advice). It never affects OK.
+	// admit if it carried an entry approving them: tf.ListableEntries, not
+	// tf.Listable, because an address alone is no longer an approval — the
+	// entry has to match the object the plan removes (tf.Approves). It is empty
+	// when the guard refused only what no entry clears — a moved object, an
+	// action it does not know, a change with no actions, a removal whose before
+	// view identifies no object to match an entry against — and then a refusal
+	// must not point at the owner's list (Request.advice). It never affects OK.
 	Listable []string
 }
 
