@@ -677,6 +677,15 @@ func leaseDB(n int) (*fakeDB, Run) {
 func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
 	const gone = DefaultLeaseResidue + 6
 	db, live := leaseDB(gone)
+	// The runs are placed, not only leased: a run holds a placement node of its
+	// own (PathCurrent), and what the sweep does to it is part of what this read
+	// promises — it deletes the dead LEASE, and a run's placement is not its to
+	// delete. Review finding: the sweep's placement was asserted with Current on
+	// a run the fixture never placed, so the assertion could not fail whatever
+	// the code did.
+	for _, id := range []string{"gone-0", "gone-5", "gone-6", "live"} {
+		db.put(PathCurrent(Run{Slug: "acme", ID: id}), a1.Name)
+	}
 	st := &RTDBStore{DB: db}
 
 	leases, err := st.Leases(ctx, now)
@@ -691,11 +700,22 @@ func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
 	if want := gone - DefaultLeaseResidue; db.deletes != want {
 		t.Fatalf("the sweep deleted %d nodes; want %d — the lapsed ones above the residue of %d", db.deletes, want, DefaultLeaseResidue)
 	}
+	// And the runs are still placed where they were, the ones it took a lease
+	// from and the one it left alike: the sweep deletes a dead LEASE and not the
+	// placement beside it. A lapsed lease is not a finished run — a run between
+	// two selections holds one, and the lease it refreshed is the only thing the
+	// sweep re-checks — so a sweep that took the placement too would move a
+	// working run off the credential it is on. A run's placement is removed
+	// where the run ends and not on this read path (the plan's own C1.9 note
+	// N4: `creds/current/*` is not swept at all).
+	for _, id := range []string{"gone-0", "gone-5", "gone-6"} {
+		r := Run{Slug: "acme", ID: id}
+		if name, found, err := st.Current(ctx, r); err != nil || !found || name != a1.Name {
+			t.Fatalf("the run %+v is on %q, found=%v, %v; want the placement %q left where it was: the sweep deletes dead leases and not placements", r, name, found, err, a1.Name)
+		}
+	}
 	// The oldest went, the newest lapsed stayed, and the live hold was never a
 	// candidate.
-	if _, found, _ := st.Current(ctx, Run{Slug: "acme", ID: "gone-0"}); found {
-		t.Fatal("the sweep left the oldest lapsed lease's run placed somewhere")
-	}
 	for _, r := range []Run{{Slug: "acme", ID: "gone-0"}, {Slug: "acme", ID: "gone-5"}} {
 		if _, ok := db.nodes[PathLease(r)]; ok {
 			t.Fatalf("the sweep left %+v: it deletes the oldest lapsed leases first", r)
