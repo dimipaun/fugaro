@@ -1002,11 +1002,15 @@ func TestValidatedFields(t *testing.T) {
 // `mac` needs no row of its own: every record here carries one of exactly
 // MACMax, so the rows below pin that length between them. `head_sha` is
 // different — its length is neither bounded nor one exact value but a choice of
-// two — and the vector file the package replays carries only the 40-character
-// one, so the 64-character length is pinned by the two rows at the end of the
-// table and by nothing else. Without them `shaField` narrowed to
-// `utf16Len(s) != SHAMin` refuses a length the module accepts and the whole
-// suite stays green.
+// two — and the merged `vectors.json` the package replays carries only the
+// 40-character one, so the 64-character length is pinned by the two rows at the
+// end of the table and — since the T1 follow-up of PR #715 added
+// `vectors.bounds.json` — by that file's "a head SHA of exactly SHA_MAX" row and
+// its `past` spec as well: `TestTheSharedBoundVectorsHold` now refuses the same
+// narrowing this table does. The two rows stay because they are the direct
+// half — they walk the field with no fixture between the test and the validator,
+// and they name it in the failure — while the shared file is what holds the two
+// ends to one artifact.
 func TestTheBoundsThemselvesAreAccepted(t *testing.T) {
 	message := func(over Record) Record {
 		record := Record{

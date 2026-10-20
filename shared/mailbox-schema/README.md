@@ -407,21 +407,24 @@ canonical bytes and that `verifyMac` answers `false` rather than throwing.
 
 Section 6 is the group about the bounds. Most of its rows **move a comparison by
 one** — `> MAX` to `>= MAX`, and to `> MAX + 1` — because that, rather than a
-deleted check, is the mutation this module has actually been wrong about. Three
-of the eighteen move nothing and drop a term instead — DEL from each of the two
-character rules, and the second head-SHA length from the SHA rule, which is the
-same class of mistake one step further from the check's edge.
-`repo.length > TARGET_MAX` narrowed to `>= TARGET_MAX` refused a repository
-of exactly the bound, and widened to `> TARGET_MAX + 1` it accepted one a code
-unit past it, with every test in this package **and** every test on the Go side
-green. A bound that can be missed in either direction therefore takes two mutants
-here, and the row that kills each one lives in `bounds.test.js` (and in the Go
-replay), not in `vectors.json`: that file sits on exactly two lengths by accident
-and on no other bound.
+deleted check, is the mutation this module has actually been wrong about:
+thirteen of the eighteen do it. Four more drop a term of a rule instead — the
+carriage return from the line-break rule, DEL from each of the two character
+rules, and the second head-SHA length from the SHA rule, which is the same class
+of mistake one step further from the check's edge. The last does neither: it
+replaces the SHA rule's equality test with a range test (`action: the head SHA
+may be any length from SHA_MIN to SHA_MAX`), and a refusal of a head SHA between
+the two lengths is what kills it. `repo.length > TARGET_MAX` narrowed to
+`>= TARGET_MAX` refused a repository of exactly the bound, and widened to
+`> TARGET_MAX + 1` it accepted one a code unit past it, with every test in this
+package **and** every test on the Go side green. A bound that can be missed in
+either direction therefore takes two mutants here, and the row that kills each
+one lives in `bounds.test.js` (and in the Go replay), not in `vectors.json`: that
+file sits on exactly two lengths by accident and on no other bound.
 
-Two of the guards are about the **boundary** rather than a refusal: that `index.js` carries no import and no buffer
-type, because that is what keeps the schema importable by the phone and nothing else in
-the suite would notice it breaking.
+Two of the guards are about the **boundary** rather than a refusal: that `index.js`
+carries no import and no buffer type, because that is what keeps the schema importable
+by the phone and nothing else in the suite would notice it breaking.
 
 It runs `npm test`, and requires the suite to fail
 each time. It restores the files with `git checkout` after each one and refuses to run
