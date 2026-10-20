@@ -1009,6 +1009,34 @@ func TestDeployerScopedRolesAreD75Partitioned(t *testing.T) {
 	}
 }
 
+// TestDeployerPermissionCountsAreTheDocumentedNumbers pins the two numbers the
+// design's R3 states to the lists the tree holds, because R3's claim is that the
+// redesign neither added, removed nor moved a permission between the two halves:
+// a count that drifted from the lists leaves that claim unreadable, and an
+// earlier revision of the sentence stated the unconditioned half as 25 where
+// every tree that carries it holds 26 — this map, the module's fugaroDeployer
+// role and the golden plan.
+func TestDeployerPermissionCountsAreTheDocumentedNumbers(t *testing.T) {
+	unconditioned := len(RolePermissions[DeployerRole])
+	conditioned := 0
+	for _, role := range DeployerServiceRoles() {
+		conditioned += len(RolePermissions[role])
+	}
+	if unconditioned != len(deployerRoleGolden[DeployerRole]) || conditioned != len(d75ScopedPermissions) {
+		t.Fatalf("the unconditioned role holds %d permissions here and %d in the golden plan; the seven conditioned roles hold %d here and D75's scoped list holds %d: R3 is stated against one list and this test reads the other",
+			unconditioned, len(deployerRoleGolden[DeployerRole]), conditioned, len(d75ScopedPermissions))
+	}
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := strings.Join(strings.Fields(string(b)), " ")
+	want := fmt.Sprintf("The %d + %d permissions are D75's", unconditioned, conditioned)
+	if !strings.Contains(doc, want) {
+		t.Errorf("docs/design/managed-deployer-fence.md's R3 does not state %q: the tree holds %d permissions in %s and %d across the seven conditioned roles, and R3's claim is that no permission was added, removed or moved between the halves", want, unconditioned, DeployerRole, conditioned)
+	}
+}
+
 // deployerOperators is the number of logical operators IAM counts in a
 // condition expression: every && and every || is one. IAM allows 12, and the
 // 0.8.6 shape had 17 — TestDeployerOperatorCountMatchesTheRecordedDefect pins

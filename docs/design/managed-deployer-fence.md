@@ -95,7 +95,7 @@ R1. **Every binding that holds a fence-limited permission is conditioned**, and
 R2. **Every condition is under IAM's 12-operator limit** and uses only supported
      functions, with a `resource.name` form the service honours.
 R3. **No permission is added, removed or moved between the conditioned and the
-     unconditioned role** except where §7 says so and §8 asks. The 25 + 31
+     unconditioned role** except where §7 says so and §8 asks. The 26 + 31
      permissions are D75's, and the unconditioned role still holds nothing that
      updates, deletes, runs, pauses, sets a policy or acts as anything.
 R4. **The shape is pinned by the tree**: the Terraform module and

@@ -62,6 +62,14 @@ func TestChecklistHasCheck68(t *testing.T) {
 		// 17). A row that says "one operator at the most" states a number no
 		// test produces and no IAM refusal is about.
 		"three logical operators at the most",
+		// The throwaway resources, which are TEN and not the plan's fourteen
+		// addresses: step 4 creates seven (one per service) and step 5 three
+		// near misses (the bucket, the secret and the job), and the Restore
+		// deletes those ten. The fourteen are the plan's addresses — seven
+		// roles and seven bindings — and a row that conflates the two counts
+		// the resources an owner has to find and delete wrongly.
+		"ten throwaway resources",
+		"the seven per-service probes of step 4 and the three near misses of step 5",
 	} {
 		if !strings.Contains(row, want) {
 			t.Errorf("the `| 68 |` row does not carry %q", want)
@@ -374,6 +382,11 @@ func TestChecklistHasCheck68(t *testing.T) {
 		"**Passes when:**",
 		"**Fails when:**",
 		"**Paste back:**",
+		// The three near misses, not two: step 5 creates one for the bucket,
+		// one for the secret and one for the job, its own FACT counts three and
+		// the Restore deletes three. A Paste-back line that asks for two asks
+		// for a result the check does not produce.
+		"the seven negative results and all three near misses with their verbatim denials",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 68 does not carry %q", want)
