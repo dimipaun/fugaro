@@ -183,8 +183,16 @@ type AuthConfig struct {
 	// identities that may call the service at all (the owner's answer of
 	// 2026-10-19).
 	JobAccounts []string
-	// Keys is Google's published key set for Firebase ID tokens.
+	// Keys is Google's published key set for Firebase ID tokens: the run
+	// identities this service admits.
 	Keys KeySource
+	// JobKeys is Google's published key set for Google ID tokens: the callers
+	// this service admits (GoogleOAuthCertsURL). It is a second source
+	// because the two token kinds are signed by different Google keys, and
+	// because checking the caller's signature here means the service does not
+	// depend on its ingress having enforced IAM for the *identity* check to
+	// mean anything — only for the request to have arrived at all.
+	JobKeys KeySource
 	// Outcomes reads the write-once outcomes.
 	Outcomes OutcomeReader
 	// SharedJob reports whether a Cloud Run job name is one of the
@@ -219,6 +227,8 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		return nil, errors.New("credsvc: no job service accounts: any identity IAM admits would be admitted here too")
 	case cfg.Keys == nil:
 		return nil, errors.New("credsvc: no key source: the run identity's signature could not be checked")
+	case cfg.JobKeys == nil:
+		return nil, errors.New("credsvc: no job key source: the caller's signature could not be checked")
 	case cfg.Outcomes == nil:
 		return nil, errors.New("credsvc: no outcome reader: the run's liveness could not be checked")
 	case cfg.SharedJob == nil:
@@ -245,7 +255,7 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 // not read the outcome). It never returns a partially verified identity.
 func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, error) {
 	now := a.now()
-	account, err := a.verifyJob(req.JobIDToken, now)
+	account, err := a.verifyJob(ctx, req.JobIDToken, now)
 	if err != nil {
 		return Identity{}, err
 	}
@@ -269,20 +279,38 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 // verifyJob checks the caller's Google ID token and returns the account that
 // called.
 //
-// The signature is Cloud Run IAM's, not this code's: the request reaches this
-// container only after the front end admitted the bearer token for an
-// identity holding run.invoker on the service (C1.18 deploys it with ingress
-// requiring IAM). What IAM cannot say is *which* identity called — its bit
-// says an authorised one did — so this code reads the email claim and refuses
-// anything that is not one of the installation's job service accounts (the
-// owner's answer of 2026-10-19). An installation that deployed the service
-// with --allow-unauthenticated would have no signature check at all, which is
-// why the ingress requirement is a precondition of this check and not a
-// convenience.
-func (a *Authenticator) verifyJob(tok string, now time.Time) (string, error) {
-	_, claims, err := decodeJWT(tok)
+// Two checks, and the plan asks for both ("checked by Cloud Run IAM **and** by
+// this code"):
+//
+//   - the signature, against Google's own published certificates. Cloud Run
+//     IAM also checks it — a request whose bearer token is not a Google ID
+//     token for an identity holding run.invoker on the service never reaches
+//     this container (C1.18 deploys it with ingress requiring IAM) — but the
+//     service does not rely on that: an installation deployed with
+//     --allow-unauthenticated, or a request that arrived from inside the
+//     network, would otherwise be admitted on a claim set alone.
+//   - *which* identity called, which is what IAM cannot say: its bit says an
+//     authorised identity did. The email claim must be one of the
+//     installation's job service accounts (the owner's answer of 2026-10-19),
+//     verified, for this service's own audience, unexpired, and issued by
+//     Google.
+func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time) (string, error) {
+	head, claims, err := decodeJWT(tok)
 	if err != nil {
 		return "", fmt.Errorf("%w: the caller's ID token is not a JWT", ErrUnverifiedJob)
+	}
+	if alg := claimString(head, "alg"); alg != "RS256" {
+		return "", fmt.Errorf("%w: the caller's ID token is not signed with RS256", ErrUnverifiedJob)
+	}
+	key, err := a.cfg.JobKeys.Key(ctx, claimString(head, "kid"))
+	if err != nil {
+		if errors.Is(err, ErrUnknownKeyID) {
+			return "", fmt.Errorf("%w: %w", ErrUnverifiedJob, err)
+		}
+		return "", err
+	}
+	if err := verifySignature(tok, key); err != nil {
+		return "", fmt.Errorf("%w: the caller's ID token's signature does not verify", ErrUnverifiedJob)
 	}
 	if aud := claimString(claims, "aud"); aud != a.cfg.Audience {
 		return "", fmt.Errorf("%w: the caller's ID token is for another audience", ErrUnverifiedJob)
@@ -503,8 +531,13 @@ func claimInt(m map[string]any, k string) (int64, bool) {
 }
 
 // GoogleKeysURL is where Google publishes the certificates that sign Firebase
-// ID tokens.
+// ID tokens (a run's identity).
 const GoogleKeysURL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
+
+// GoogleOAuthCertsURL is where Google publishes the certificates that sign its
+// own ID tokens (a caller's identity). It is the same document shape as
+// GoogleKeysURL, so AuthConfig.JobKeys is a GoogleKeys pointed here.
+const GoogleOAuthCertsURL = "https://www.googleapis.com/oauth2/v1/certs"
 
 // GoogleKeys is the KeySource over Google's published certificates, cached
 // for as long as Google's own Cache-Control says (clamped to a minute and a

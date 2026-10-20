@@ -42,6 +42,10 @@ const (
 	testOtherSA  = "another-job@aurora-dev.iam.gserviceaccount.com"
 	testKid      = "test-kid-1"
 	testOtherKid = "test-kid-2"
+	// The key id a Google ID token names. Google's own certs and Firebase's
+	// are different key sets, so the caller's token is signed by a key the run
+	// token's set does not hold.
+	testJobKid = "google-kid"
 )
 
 // testKey is the key every token here is signed with, generated once: a
@@ -125,6 +129,7 @@ type fixture struct {
 	shared   map[string]bool
 	auth     *Authenticator
 	keys     staticKeys
+	jobKeys  staticKeys
 }
 
 // testNow is the instant every test's clock stands at.
@@ -142,6 +147,7 @@ func newFixture(t *testing.T) *fixture {
 		outcomes: &fakeOutcomes{outcomes: map[string]bool{}, agents: map[string]bool{}},
 		shared:   map[string]bool{},
 		keys:     staticKeys{testKid: &testKey().PublicKey},
+		jobKeys:  staticKeys{testJobKid: &testKey().PublicKey},
 	}
 	var err error
 	f.auth, err = NewAuthenticator(AuthConfig{
@@ -150,6 +156,7 @@ func newFixture(t *testing.T) *fixture {
 		Audience:        testAudience,
 		JobAccounts:     []string{testJobSA},
 		Keys:            f.keys,
+		JobKeys:         f.jobKeys,
 		Outcomes:        f.outcomes,
 		SharedJob:       func(job string) bool { return f.shared[job] },
 		Now:             func() time.Time { return f.now },
@@ -216,7 +223,7 @@ func (f *fixture) jobClaims(mutate ...func(map[string]any)) map[string]any {
 }
 
 func (f *fixture) jobToken(mutate ...func(map[string]any)) string {
-	return signJWT(f.t, testKey(), "google-kid", f.jobClaims(mutate...))
+	return signJWT(f.t, testKey(), testJobKid, f.jobClaims(mutate...))
 }
 
 func (f *fixture) verify(runToken, jobToken, job string) (Identity, error) {
@@ -550,6 +557,37 @@ func TestVerifyRefusesForeignIDTokenEmail(t *testing.T) {
 	}
 }
 
+// The caller's ID token is signed by Google, and the service checks that for
+// itself rather than trusting its ingress to have done it: a claim set is not
+// an identity. A token signed by a key Google does not publish, one that names
+// a key id Google does not publish, and one that says it is signed another way
+// are all refused.
+func TestVerifyRefusesAForgedJobIDToken(t *testing.T) {
+	other, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generating a key: %v", err)
+	}
+	cases := map[string]func(*fixture) string{
+		"another key, a published kid": func(f *fixture) string {
+			return signJWT(t, other, testJobKid, f.jobClaims())
+		},
+		"a kid Google does not publish": func(f *fixture) string {
+			return signJWT(t, testKey(), testOtherKid, f.jobClaims())
+		},
+		"another algorithm": func(f *fixture) string {
+			return signJWTAlg(t, testKey(), testJobKid, "none", f.jobClaims())
+		},
+	}
+	for name, tok := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			if _, err := f.verify(f.runToken(), tok(f), f.job); !errors.Is(err, ErrUnverifiedJob) {
+				t.Fatalf("err = %v, want ErrUnverifiedJob", err)
+			}
+		})
+	}
+}
+
 func TestVerifyAcceptsJobSAIDTokenEmail(t *testing.T) {
 	f := newFixture(t)
 	// The installation's own job service account, verified and for the right
@@ -634,6 +672,7 @@ func TestNewAuthenticatorRefusesAnIncompleteConfig(t *testing.T) {
 		Audience:        testAudience,
 		JobAccounts:     []string{testJobSA},
 		Keys:            staticKeys{testKid: &testKey().PublicKey},
+		JobKeys:         staticKeys{testJobKid: &testKey().PublicKey},
 		Outcomes:        &fakeOutcomes{},
 		SharedJob:       func(string) bool { return false },
 	}
@@ -643,6 +682,7 @@ func TestNewAuthenticatorRefusesAnIncompleteConfig(t *testing.T) {
 		"no audience":         func(c *AuthConfig) { c.Audience = "" },
 		"no job accounts":     func(c *AuthConfig) { c.JobAccounts = nil },
 		"no keys":             func(c *AuthConfig) { c.Keys = nil },
+		"no job keys":         func(c *AuthConfig) { c.JobKeys = nil },
 		"no outcomes":         func(c *AuthConfig) { c.Outcomes = nil },
 		"no shared job gate":  func(c *AuthConfig) { c.SharedJob = nil },
 	}
@@ -690,6 +730,22 @@ func TestRTDBOutcomesReadsTheWriteOncePath(t *testing.T) {
 	// A segment budget.PathOutcome would panic on is refused, not panicked on.
 	if _, err := (RTDBOutcomes{DB: fake}).OutcomeExists(context.Background(), day, "", run); err == nil {
 		t.Error("an empty slug was accepted as a path segment")
+	}
+}
+
+// The two key sets are two Google endpoints, and the service must be pointed
+// at each one for its own token kind: a source built with no option is the
+// run identity's, and the caller's is that same source pointed at Google's
+// own certificates.
+func TestGoogleKeySourcesAreTheTwoGoogleEndpoints(t *testing.T) {
+	if got := NewGoogleKeys().url; got != GoogleKeysURL {
+		t.Errorf("a key source with no options reads %q, want the Firebase set %q", got, GoogleKeysURL)
+	}
+	if GoogleKeysURL == GoogleOAuthCertsURL {
+		t.Error("the run identity's key set and the caller's are the same URL: one of them is wrong")
+	}
+	if got := NewGoogleKeys(WithKeysEndpoint(GoogleOAuthCertsURL)).url; got != GoogleOAuthCertsURL {
+		t.Errorf("the caller's key source reads %q, want %q", got, GoogleOAuthCertsURL)
 	}
 }
 
