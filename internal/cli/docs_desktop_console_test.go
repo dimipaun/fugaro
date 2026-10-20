@@ -132,6 +132,13 @@ func TestDocsDesktopConsoleDesignCarriesTheDecisions(t *testing.T) {
 // a bare "|" inside a code span (`example|show|layer|init|publish`), which
 // docTableAfter splits on, so the answer is read as the row's LAST cell -- the
 // column's position is what is fixed, not the cell count.
+//
+// Three acceptances carry an amendment appended to the cell, and each is
+// pinned as the clause that must be there: D10's owner's ruling of 2026-10-20
+// (Linux for 0.10.0, unsigned; Windows stays later), D12's Check 59 written as
+// 59a and 59b, and D13's pairing check. An amendment is the record of a later
+// ruling and it goes where the answer is, so a cell that lost one fails here
+// rather than in review.
 func TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers(t *testing.T) {
 	const path = "docs/design/desktop-console.md"
 	doc := readDoc(t, path)
@@ -145,7 +152,7 @@ func TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers(t *testing.T) {
 		}
 	}
 
-	// The ruled cells, exactly as the owner ruled them, and the two acceptances
+	// The ruled cells, exactly as the owner ruled them, and the three acceptances
 	// that carry a recorded amendment to the recommendation they accept.
 	const accepted = "**Accepted as recommended.**"
 	ruled := map[string]string{
@@ -157,10 +164,14 @@ func TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers(t *testing.T) {
 
 	// The sixteen lines the plan calls "accepted as recommended", keyed to the
 	// clause that must follow the acceptance where the design records one; ""
-	// is the plain acceptance, and D12 and D13 are the two with an amendment.
+	// is the plain acceptance, and D10, D12 and D13 are the three with an
+	// amendment -- D10's being the owner's Linux ruling of 2026-10-20 (Linux
+	// ships from 0.10.0, unsigned; Windows stays later), which the design
+	// appends to the acceptance rather than to the recommendation.
 	acceptedSixteen := map[string]string{
 		"**D2**": "", "**D5**": "", "**D6**": "", "**D7**": "", "**D8**": "",
-		"**D9**": "", "**D10**": "",
+		"**D9**":  "",
+		"**D10**": "**Amended 2026-10-20 by the owner's ruling: Linux for 0.10.0, unsigned; Windows stays later.**",
 		"**D12**": "with Check 59 written as 59a and 59b",
 		"**D13**": "with the pairing check above recorded",
 		"**D14**": "", "**D15**": "", "**D16**": "", "**D17**": "", "**D18**": "",
