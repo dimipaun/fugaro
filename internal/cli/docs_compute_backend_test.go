@@ -1924,6 +1924,52 @@ func TestDocsComputeBackendTask10CarriesTheArtifactGatesRefResidual(t *testing.T
 	}
 }
 
+// TestDocsComputeBackendTask10EnableIsTiedToTheArtifactGatesRefResidual: the
+// pin above says Task 10's step 5 carries the launch gate's residual, but
+// nothing tied that entry to the step that actually lifts the refusal — step 1,
+// which turns `TestCloudBatchIsRefused` into the acceptance. A later trim could
+// then leave Task 10 reading as "the name becomes selectable" with the closure
+// of entry 6 as one requirement among many, or drop `run.go` and `run_test.go`
+// from Task 10's Files line while the entry still named them. The tie is three
+// halves and all three are asserted: the entry says this task closes it **before
+// the name is selectable**, Task 10's Files name the files the closure lands in,
+// and the tree carries the mechanism and the cases the entry names — so the
+// enable's commit cannot claim the closure while the code it claims is absent.
+//
+// Mutation (drop `internal/cli/run.go` with `internal/cli/run_test.go` from
+// Task 10's Files, or drop the "before the name is selectable" sentence, or
+// rename `carriedRecipeAtRef`): the named assertion fails.
+func TestDocsComputeBackendTask10EnableIsTiedToTheArtifactGatesRefResidual(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	task := section(t, doc, "### Task 10: The enable", "## Phase C")
+	for _, want := range []string{
+		// The step that makes the name selectable, and the entry that says the
+		// closure comes first: read together they are the tie.
+		"**The refusal becomes an acceptance.**",
+		"**This task closes it before the name is selectable**",
+		// And where the closure lands, per the task's own Files line.
+		"`internal/cli/run.go` with `internal/cli/run_test.go` for step 5's sixth entry",
+	} {
+		if !strings.Contains(task, want) {
+			t.Errorf("%s's Task 10 no longer says %q: the enable is the commit that makes backend: cloud-batch selectable, so the closure of the launch gate's residual has to be tied to it here rather than left as a nearby requirement", computeBackendPlan, want)
+		}
+	}
+	// The mechanism the entry names is in the tree, so the tie above is about
+	// code the enable inherits and not about a sentence: the gate's ref read and
+	// both of its cases (the carried text the ref shadows, and the ref this
+	// checkout cannot read).
+	for _, f := range []struct{ path, sym string }{
+		{"internal/cli/run.go", "func carriedRecipeAtRef("},
+		{"internal/cli/run.go", "func recipeAtRef("},
+		{"internal/cli/run_test.go", "func TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch("},
+		{"internal/cli/run_test.go", "func TestACarriedRecipeTheRefCannotBeReadForIsRefusedOnCloudBatch("},
+	} {
+		if !strings.Contains(readDoc(t, f.path), f.sym) {
+			t.Errorf("%s does not declare %q: Task 10's step 5 names this mechanism as the half Task 8 already landed, and a task whose enable inherits it has to find it here", f.path, f.sym)
+		}
+	}
+}
+
 // TestDocsSharedConfigStatesTheImageChecksExactly: the design's §5 bullet is
 // what a later reader checks the reader's own batch.image checks against, so it
 // has to claim exactly what they enforce. Two halves are pinned here, and the
