@@ -426,8 +426,8 @@ const listingLineMax = 2 * tf.RemovalIdentityPrintMax
 // line, in the ADDRESS=IDENTITY form this command's arguments take — so a line
 // the owner reads is a line they can paste back.
 //
-// Each line is printed as the entry itself (safetext.FieldUncut above the
-// listing's own line bound, safetext.Field past it): Field is what keeps an
+// Each line is printed as the entry itself (safetext.FieldUncut at or below
+// the listing's own line bound, safetext.Field past it): Field is what keeps an
 // entry read from the bucket — whatever its writer put there, since
 // parseDeleteList refuses only blank halves — from reaching the terminal as an
 // escape sequence, a bidi control or a newline of its own, but it also cuts a
