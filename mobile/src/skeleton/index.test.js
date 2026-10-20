@@ -9,7 +9,7 @@
 // makes the glob real rather than assumed. `mobile/README.md` says why the glob
 // is rooted at `src/`.
 //
-// Four checks, all about the artifact rather than about logic:
+// Three checks, all about the artifact rather than about logic:
 //
 //   * the module and the manifest name the same package, so a rename cannot
 //     leave the two disagreeing;
@@ -23,13 +23,18 @@
 //     P3.5's `src/voice/`, P3.6's `src/mailbox/`) lands its own tests without
 //     editing this manifest. A script that named its test files would collapse
 //     that parallelism, which is why the mutation below is a named one; and
-//   * the app declares no runtime dependency yet, and this test is where that
-//     is pinned rather than left to be noticed: P3.1's verification needs no
-//     device and no install (Global Constraint 10), and a manifest declaring
-//     Expo without a lockfile that `npm ci` could satisfy would be a claim
-//     about a toolchain nobody in this repository has run. The task that first
-//     needs the device runtime adds the dependencies, the lockfile and its own
-//     reason here.
+//   * (a fourth check stood here until the Expo SDK was declared: "the app
+//     declares no runtime dependency yet", pinned because a manifest naming
+//     Expo without a lockfile `npm ci` could satisfy would have been a claim
+//     about a toolchain nobody had run. The task that first needed the device
+//     runtime -- the one that made `eas build` able to find an SDK at all --
+//     added the dependencies and the lockfile, and this test went with them:
+//     the claim is now the **opposite** one, and `src/dependencies.test.js`
+//     owns it, positively -- `expo`, `react` and `react-native` are declared,
+//     every bare import in `index.js` and `src/` is declared, and the lockfile
+//     is the one `npm ci` installs. Two files asserting the same manifest from
+//     opposite directions is one file too many, so this one keeps the three
+//     checks above and nothing about dependencies.)
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -57,9 +62,4 @@ test('the test script is a glob, so no later task edits this manifest', () => {
     /\*\*\/\*\.test\.js/,
     'P3.1 owns mobile/package.json (the plan\'s "shared files" table): the script must discover every module\'s tests through a glob, so P3.2-P3.6 add files and never this manifest',
   );
-});
-
-test('the app declares no runtime dependency yet', () => {
-  assert.equal(manifest.dependencies, undefined);
-  assert.equal(manifest.devDependencies, undefined);
 });
