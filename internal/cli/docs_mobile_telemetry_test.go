@@ -85,7 +85,16 @@ import (
 // `file.md:653` line citation back into §1, drop §1's "cited by symbol" sentence,
 // name a base commit this branch is not built on, name no base at all, narrow
 // planPathRE's class so it stops matching the plist, or widen isPlanPath's
-// extension list so it starts — each of those fails, run and restored.
+// extension list so it starts — each of those fails, run and restored. And for
+// round 11's four findings: restore the pre-D195 "two groups … the four switches
+// that decide *what*" framing in §4.2's preamble, delete that preamble's
+// "`true` six times … `false` twice" (the count below the table still stands), put
+// the closing `**` back onto "including the option that must switch ad-ID
+// collection off" in the mobile plan's open item 9, drop `expo` from §1's
+// `mobile/index.js` row, put "and nothing else" back in that row, restore step
+// 7b's sub-range of the block, or write any sub-range of D193–D200 into another
+// document under docs/ — including one in a paragraph that mentions telemetry —
+// each of those fails, run and restored.
 const telemetryPlan = "docs/plans/2026-10-19-mobile-telemetry.md"
 
 // The two allocation documents, and the shapes a block is written in there:
@@ -572,6 +581,114 @@ func TestTelemetryPlanDoesNotClaimWorkAlreadyDone(t *testing.T) {
 	}
 }
 
+// TestTelemetryPlanBalancesTheEmphasisInItsReadsOfThePhaseSevenPlan reads a
+// paragraph of the MOBILE plan, and it is here because the paragraph is about
+// this plan's own requirements. Open item 9 says which of Phase 7's requirements
+// were read from memory of the SDKs' documentation rather than from a page read
+// that day — a warning to the owner, and the reason this plan's §14 carries the
+// UNVERIFIED list. Its emphasis was unbalanced: the `**` opened before "read" was
+// closed by the marker meant to OPEN "including the option that must switch ad-ID
+// collection off on each platform (P7.1, and the plan's §14)", so from there to
+// the end of the item bold and plain text are inverted — in the one paragraph
+// whose whole point is which half was actually read.
+//
+// Mutation (verified, run and restored): move the closing `**` back off "today"
+// and onto "including" — the text as it was — and this test fails.
+func TestTelemetryPlanBalancesTheEmphasisInItsReadsOfThePhaseSevenPlan(t *testing.T) {
+	const path = "docs/mobile/implementation-plan.md"
+	doc := readDoc(t, path)
+
+	// The item as a paragraph: it wraps over a dozen lines, so a line-by-line
+	// read would see markers balanced within no line at all.
+	item := ""
+	for _, para := range strings.Split(doc, "\n\n") {
+		if strings.Contains(para, "9. **Phase 7 (telemetry) is proposed and unbuilt") {
+			item = strings.Join(strings.Fields(para), " ")
+		}
+	}
+	if item == "" {
+		t.Fatalf("%s's open item 9 is gone or renumbered: this test reads the paragraph that states which Phase 7 requirements were read from memory, and it cannot judge a paragraph it cannot find", path)
+	}
+	if n := strings.Count(item, "**"); n%2 != 0 {
+		t.Errorf("%s's open item 9 carries %d `**` markers, an odd number: one span is left open, which inverts bold and plain text from there to the end of the item — in the item whose point is which half of Phase 7 was actually read", path, n)
+	}
+	if !strings.Contains(item, "from a page read today**") {
+		t.Errorf("%s's open item 9 does not close its emphasis after \"a page read today\": the bold span is \"read from memory of the SDKs' documentation and not from a page read today\", and the ad-ID option named next is part of the list that was NOT read from a page — closing the span anywhere else inverts the two halves of the item", path)
+	}
+}
+
+// telemetryImportRE reads an import specifier out of mobile/index.js, the app's
+// entry: the default form, the named form and the side-effect form alike.
+var telemetryImportRE = regexp.MustCompile(`(?m)^import\s+(?:[^'"]*?\sfrom\s+)?['"]([^'"]+)['"]`)
+
+// TestTelemetryPlanReadsTheEntrysImports is §1's row on `mobile/index.js` checked
+// against the file it cites. The row is the plan's evidence that the app wires no
+// Firebase SDK, and a column that says what was read has to be what the file
+// holds: the row named `expo-async-storage`, which is not a package at all — it is
+// the app's OWN port module, `mobile/src/accounts/expo-async-storage.js`, reached
+// through a `./src/` path — and it left out `expo` (the `registerRootComponent`
+// import), while finishing with "and nothing else". The conclusion the row draws —
+// no Firebase SDK is wired — survives all three; the column exists to record
+// exactly what was read from the tree.
+//
+// Mutation (verified, run and restored): drop `expo` from the row's list of
+// imports — a real import of the file, and the one the row was missing — and this
+// test fails. Dropping the port module's path, or restoring "and nothing else",
+// fails it too.
+func TestTelemetryPlanReadsTheEntrysImports(t *testing.T) {
+	const entry = "mobile/index.js"
+	src := readDoc(t, entry)
+	s1 := planSection(t, readDoc(t, telemetryPlan), "## 1. What is in the tree today, and what this plan therefore builds on")
+	row := telemetryRowWith(t, s1, "`"+entry+"`")
+
+	// Every BARE package the entry imports is named in the row, backticked: a
+	// substring test would be satisfied by `expo-secure-store` for `expo`, which
+	// is the one the row was missing. The relative specifiers are this app's own
+	// modules; the row names them as a group and the async-storage port module by
+	// path, which is the name the row got wrong.
+	specs, bare := 0, 0
+	for _, m := range telemetryImportRE.FindAllStringSubmatch(src, -1) {
+		spec := m[1]
+		specs++
+		if strings.HasPrefix(spec, ".") {
+			continue
+		}
+		bare++
+		if !strings.Contains(row, "`"+spec+"`") {
+			t.Errorf("%s's §1 row on %s does not name %q, which the file imports: the row records what was read from the tree, so a package the file imports and the row does not list is a column a reader cannot trust", telemetryPlan, entry, spec)
+		}
+	}
+	if specs < 9 || bare < 5 {
+		t.Fatalf("%s yielded %d import specifiers (%d of them bare packages), which is too few for it to be the app's entry: update this test's regexp rather than letting the comparison above pass vacuously", entry, specs, bare)
+	}
+
+	// The port module is named as what it is — by the path the file imports it
+	// from — and the absence of Firebase as what it is. `expo-async-storage` reads
+	// like a package and is not one; the third-party storage package is
+	// `@react-native-async-storage/async-storage`.
+	port := ""
+	for _, m := range telemetryImportRE.FindAllStringSubmatch(src, -1) {
+		if strings.HasPrefix(m[1], ".") && strings.Contains(m[1], "expo-async-storage") {
+			port = m[1]
+		}
+	}
+	if port == "" {
+		t.Fatalf("%s imports no expo-async-storage port: the row's correction is about that module, and this test cannot hold a name the file no longer imports", entry)
+	}
+	for _, want := range []string{"@react-native-async-storage/async-storage", "`" + port + "`", "no Firebase import"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s's §1 row on %s does not say %q: the row is the plan's evidence that no Firebase SDK is wired, and it has to record the imports it actually read — the storage package's real name, this app's own port module by the path the file imports it from, and the absence of any Firebase import", telemetryPlan, entry, want)
+		}
+	}
+
+	// And nothing in the row claims its list is complete by fiat. "and nothing
+	// else" was false as written — the file imports `expo` too — and a
+	// completeness claim is what makes the rest of the row unfalsifiable.
+	if strings.Contains(row, "and nothing else") {
+		t.Errorf("%s's §1 row on %s says \"and nothing else\": the imports are listed above it, and a completeness claim beside a list that was missing one of them is a claim a reader takes for a reading — the row states what was read, and does not certify that the list is exhaustive", telemetryPlan, entry)
+	}
+}
+
 // telemetryAPIKeyRE matches a Google API key VALUE, not the shape's name: 39
 // characters starting `AIza`, which is `SECRET_SHAPES`'s own `google-api-key`
 // pattern. The plan writes the ellipsis form (`AIza…`) when it names the shape,
@@ -590,13 +707,6 @@ var telemetryScreenEnumRE = regexp.MustCompile("`screen: ([^`]*)`")
 // are not ranges and are not read as one.
 var telemetryRangeRE = regexp.MustCompile(`D([0-9]+)[a-z]?[–-]D?([0-9]+)`)
 
-// telemetryPlanWords are how a document says it is talking about THIS plan. A
-// paragraph that names one of them and states a range inside D193–D200 is
-// registering this plan, not staking a claim on it — docs/mobile/README.md's row
-// and the plan register's Phase 7 both do exactly that, and the block itself is
-// written across two wrapped lines there.
-var telemetryPlanWords = []string{"telemetry", "Phase 7", "P7.", "next free decision block"}
-
 // TestTelemetryPlanTakesTheOnlyBlockReachingD193 is the claim "D193–D200 is the
 // next free block", checked against **every markdown file under docs/** rather
 // than against the two allocation documents' summaries. The pin's own header said
@@ -605,15 +715,25 @@ var telemetryPlanWords = []string{"telemetry", "Phase 7", "P7.", "next free deci
 // claiming D193–D199, say — was not caught by the very test that pins "next
 // free". It is caught now, and the walk is over the tree.
 //
-// The statements allowed to reach into D193–D200 are this plan's own block, and
-// nothing else: a document that states D193–D200 is stating what this plan took
+// The one statement allowed to reach into D193–D200 is the block itself, D193–D200:
+// a document that states it in full is stating what this plan took
 // (docs/mobile/README.md's row and the phase in the plan register it that way),
-// and a document stating any other range that touches the block is a second
-// claim on a number that is taken.
+// and **any other range that touches the block is a second claim on a number that
+// is taken — including a sub-range, and including one written in a paragraph that
+// mentions telemetry.** That last clause is the point: the walk used to excuse a
+// range whenever its paragraph named "telemetry", "Phase 7", "P7." or "next free
+// decision block", which is a topic and not a claim of ownership, so another
+// document could write "**D193–D199**" beside the word "telemetry" and the pin
+// passed — the exact failure mode this test was rewritten to catch. A sub-range
+// is never evidence that a paragraph is describing this plan's block; stating the
+// block in full is, and that is the whole exemption.
 //
 // Mutation (verified, run and restored): append "**D193–D199** the widgets plan's"
 // to any document under docs/ other than this plan — docs/mobile/spec.md was
-// used — and this test fails, naming the file and the line.
+// used — and this test fails, naming the file and the line. The sharper mutation,
+// and the one the exemption above was removed for: append "**D193–D199** the
+// widgets plan's, which also covers telemetry" — a sub-range in a paragraph that
+// names telemetry — and it fails too.
 func TestTelemetryPlanTakesTheOnlyBlockReachingD193(t *testing.T) {
 	var files []string
 	err := filepath.WalkDir("../../docs", func(path string, entry fs.DirEntry, err error) error {
@@ -644,16 +764,11 @@ func TestTelemetryPlanTakesTheOnlyBlockReachingD193(t *testing.T) {
 		// **A paragraph, not a line**, because these documents wrap: the phase that
 		// registers this plan writes its block on one line and what the block is on
 		// the next, and reading them apart turns a sentence about this plan into a
-		// claim by somebody else.
+		// claim by somebody else. What is excused is the block written in full,
+		// never a sub-range and never a paragraph's topic — see this test's header.
 		line := 1
 		for _, para := range strings.Split(readDoc(t, file), "\n\n") {
 			flat := strings.Join(strings.Fields(para), " ")
-			about := false
-			for _, word := range telemetryPlanWords {
-				if strings.Contains(flat, word) {
-					about = true
-				}
-			}
 			for _, m := range telemetryRangeRE.FindAllStringSubmatch(flat, -1) {
 				lo, errLo := strconv.Atoi(m[1])
 				hi, errHi := strconv.Atoi(m[2])
@@ -664,8 +779,8 @@ func TestTelemetryPlanTakesTheOnlyBlockReachingD193(t *testing.T) {
 				if hi < 193 || lo > 200 {
 					continue
 				}
-				if lo == 193 && hi == 200 || about {
-					continue // this plan's block, or a paragraph about this plan
+				if lo == 193 && hi == 200 {
+					continue // this plan's block, and only ever as the whole block
 				}
 				t.Errorf("%s:%d names the block D%d–D%d, which reaches into D193–D200: %s takes that block and no decision number is taken twice, so this is a statement made about a block that is not free", file, line, lo, hi, telemetryPlan)
 			}
@@ -836,6 +951,64 @@ func TestTelemetryPlanNamesTheFlagsExactly(t *testing.T) {
 	}
 	if !strings.Contains(section, "false") {
 		t.Errorf("%s's §4.2 states no required value: every switch in the table is thrown, one way or the other, and a table that names a switch without a value is a table an implementer reads as optional", telemetryPlan)
+	}
+}
+
+// TestTelemetryPlanDescribesItsFlagTableAsTheTableItIs is §4.2's preamble read
+// against the table fifteen lines below it. The preamble described "two groups" —
+// "the four switches that decide *what*" against "the two switches that decide
+// *whether*" — which is the shape of the opt-in table this plan recommended and
+// the owner did not take, and not this table's shape at all: this table's four
+// native collection switches are `true` under D195's always-on answer, and the
+// two switches that preamble called "what" are the ad-ID pair, which is not among
+// those four. An implementer who builds what it described builds four collection
+// switches `false` — the table §7.4's build-time test refuses — and the sentence
+// that contradicts it ("`true` six times … `false` twice") sat below the table,
+// pinned, while the preamble above it shipped green. So the preamble is pinned to
+// the table's own arithmetic, and the two stale framings are banned from it.
+//
+// Mutation (verified, run and restored): put the old preamble's opening back —
+// "There are **two groups** and they answer different questions: the **four
+// switches that decide *what*** the SDKs may collect" — and this test fails.
+func TestTelemetryPlanDescribesItsFlagTableAsTheTableItIs(t *testing.T) {
+	doc := readDoc(t, telemetryPlan)
+	section := planSubsection(t, doc, "### 4.2 The flags, named exactly")
+
+	// The preamble is everything before the table's header row, read as a slice
+	// rather than as the section: a count or a framing stated BELOW the table
+	// cannot satisfy an assertion about the paragraph that introduces it, which
+	// is the whole reason this pin exists.
+	at := strings.Index(section, "| What it gates |")
+	if at < 0 {
+		t.Fatalf("%s's §4.2 has no flag table: this test reads the paragraph that introduces it, and a section whose table is gone cannot be judged against it", telemetryPlan)
+	}
+	preamble := telemetryPlain(section[:at])
+	if fields := len(strings.Fields(preamble)); fields < 40 {
+		t.Fatalf("%s's §4.2 has %d words before its flag table, which is too few to be the paragraph that introduces it: update this test's marker rather than letting the assertions below pass against the heading", telemetryPlan, fields)
+	}
+
+	// The table's arithmetic, in the paragraph a reader meets the table through.
+	for _, want := range []string{"`true` six times", "`false` twice"} {
+		if !strings.Contains(preamble, want) {
+			t.Errorf("%s's §4.2 preamble does not say %q: the table it introduces throws six switches `true` and two `false`, and a count stated only under the table is a count the reader who stops at the preamble never sees", telemetryPlan, want)
+		}
+	}
+
+	// What the four native collection switches are, and that the ad-ID pair is
+	// not among them: the two halves the old preamble assigned to wrong groups.
+	for _, want := range []string{"four native collection switches", "ad-ID"} {
+		if !strings.Contains(preamble, want) {
+			t.Errorf("%s's §4.2 preamble does not name %q: the preamble is where a reader learns which switches D195's always-on answer turns on and which stay `false`, and one that does not say it leaves the table to be guessed at", telemetryPlan, want)
+		}
+	}
+
+	// And the two framings that describe the pre-D195 table. Both were in the
+	// preamble as written, and both have an implementer turning the four native
+	// collection switches off.
+	for _, banned := range []string{"two groups", "switches that decide"} {
+		if strings.Contains(preamble, banned) {
+			t.Errorf("%s's §4.2 preamble says %q: that is the opt-in table's grouping — \"what\" against \"whether\" — while this table's four native collection switches are `true` under D195's always-on answer, so the preamble as written describes a table §7.4's build-time test refuses", telemetryPlan, banned)
+		}
 	}
 }
 

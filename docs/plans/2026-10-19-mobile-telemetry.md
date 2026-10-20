@@ -83,7 +83,7 @@ the sentence it was written for without anything looking wrong.
 
 | Fact | Where it was read | What it means here |
 |---|---|---|
-| The app is an Expo app at `mobile/`, its own artifact outside the Go module, with **no Firebase SDK wired at all** | `mobile/package.json` (`engines: node ">=22 <23"`, `npm ">=10"`, `test: node --test "src/**/*.test.js"`); `mobile/index.js` (the entry wires `expo-secure-store`, `expo-async-storage`, `react`, `react-native` — and nothing else) | The telemetry work is the **first** thing that would put a Firebase SDK in the app. It therefore meets the app's unbuilt Firebase wiring head-on, and §3's **D199** is that question — **answered 2026-10-19, and the answer is §4.4's three-way split.** |
+| The app is an Expo app at `mobile/`, its own artifact outside the Go module, with **no Firebase SDK wired at all** | `mobile/package.json` (`engines: node ">=22 <23"`, `npm ">=10"`, `test: node --test "src/**/*.test.js"`); `mobile/index.js`, whose imports were read in full: `@react-native-async-storage/async-storage`, `expo` (`registerRootComponent`), `expo-secure-store`, `react`, `react-native`, and this app's own modules under `src/` — **no Firebase import of any kind**. The storage package is `@react-native-async-storage/async-storage` and not `expo-async-storage`: that name is the app's **own port module** at `mobile/src/accounts/expo-async-storage.js`, which the entry imports as `./src/accounts/expo-async-storage.js` | The telemetry work is the **first** thing that would put a Firebase SDK in the app. It therefore meets the app's unbuilt Firebase wiring head-on, and §3's **D199** is that question — **answered 2026-10-19, and the answer is §4.4's three-way split.** |
 | `mobile/app.json` carries the **EAS project id** and nothing Firebase-shaped | `mobile/app.json` (`expo.extra.eas.projectId = "70e67d4a-77d3-4110-9db6-e600266db345"`) | The EAS project the native config files would be delivered into already exists. |
 | **`mobile/app.config.js` and `mobile/eas.json` are on `main`** — P4.4's, merged by **PR #675** for the store path (check 89) | `ls mobile/`: `README.md`, `app.config.js`, `app.json`, `eas.json`, `index.js`, `package-lock.json`, `package.json`, `src/`; `mobile/eas.json` carries three build profiles — **`development`**, **`preview`** and **`internal`** — over the EAS environments `development`, `preview` and `production` | P7.1 **modifies both existing files**: the plugin entry and the build-time guard in `app.config.js`, the two `env` entries in each of `eas.json`'s three build profiles, and the Firebase entries in `mobile/.gitignore`. **Neither file is created by this change, and this plan no longer waits on #675.** |
 | The app's account tuple is **four fields and holds no connection value** | `mobile/src/accounts/account.js` — `ACCOUNT_FIELDS = ['id', 'firebaseProjectId', 'authUid', 'fugaroProject']` | There is no `rtdbURL` and no web API key in an account today. **D199 (accepted 2026-10-19) is the row that puts them in secure storage rather than in the tuple**, and §3 and §4.4 explain why. |
@@ -273,16 +273,26 @@ moment. The three consequences that decide half this plan:
 
 ### 4.2 The flags, named exactly
 
-The plan names every flag it depends on. There are **two groups** and they answer different
-questions: the **four switches that decide *what*** the SDKs may collect — the two ad-ID ones
-are thrown to `false` and stay there under D195's always-on answer, exactly as they were
-thrown to `false` under the opt-in recommendation this plan made and the owner did not take —
-and the **two switches that decide *whether*** they collect at all, which D195's answer puts
-**on**. The second group is the half that changed when the owner answered: this table used to
-require all four collection switches `false` so that "nothing is collected before consent" was
-true of the *native* SDK and not merely of our JavaScript, and **there is no consent to wait
-for now**, so the app's builds collect from the first launch and the table says so. The ad-ID
-half is unaffected, and §7.4's build-time test holds both halves.
+The plan names every flag it depends on. The table below is **one requirement**, and the
+grouping that describes it is **not** "what" against "whether" — that was the shape of the
+opt-in table this plan recommended and the owner did not take, and reading this one that way
+has an implementer build four collection switches `false`, which is the table §7.4's
+build-time test refuses. What this table holds is: **four native collection switches that
+D195's always-on answer puts on** (`true`), **two `firebase.json` auto-collection switches**,
+also `true`, and **two ad-ID switches thrown to `false` and left there** — the ad-ID pair is
+thrown to `false` under D195's answer exactly as it was thrown to `false` under the opt-in
+recommendation, and it is not one of the four native collection switches. Alongside the
+switches the table holds **two rows that are not switch values at all** — on iOS the app links
+no `AdSupport` framework, and on Android the `AD_ID` permission is absent from the merged
+manifest — and **two runtime calls that are never made**. Read down the value column that is
+**`true` six times** and **`false` twice**, which is the arithmetic the paragraph under the
+table also states, and the table below is the whole of it.
+
+The half that changed when the owner answered is the collection half: this table used to
+require all four collection switches `false`, so that "nothing is collected before consent"
+was true of the *native* SDK and not merely of our JavaScript, and **there is no consent to
+wait for now**, so the app's builds collect from the first launch and the table says so. The
+ad-ID half is unaffected, and §7.4's build-time test holds both halves.
 
 | What it gates | Platform | The exact name | Value the plan requires |
 |---|---|---|---|
