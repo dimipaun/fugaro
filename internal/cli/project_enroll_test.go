@@ -1103,6 +1103,57 @@ func TestProjectReposLsNeverAdvertisesAPatternAsTheRemedy(t *testing.T) {
 	}
 }
 
+// TestProjectReposLsNeverAdvertisesACommandItWouldRefuse: the remedy is printed
+// to be pasted into a shell, so it has to be a command that WORKS. `repos add`
+// validates its argument with projectpolicy.ValidPattern, whose first segment
+// must be a git provider kind (config.Providers: github, bitbucket) — while the
+// shape of a provider (task.ValidProvider: ^[a-z][a-z0-9-]*$) admits any
+// lower-case word. A spendDaily slug of `prod/acme/app`, the name one
+// hand-written document's slug field can carry, is provider-shaped, so a gate
+// that only reads the shape handed the operator
+//
+//   - (seen in spendDaily; not admitted: … 'fugaro project repos add prod/acme/app')
+//
+// and that command exits with `"prod" is not a git provider kind (github,
+// bitbucket)`. The name is a repository identifier AND its first segment has to
+// be a provider kind this Fugaro knows, or the name gets no command at all.
+//
+// Mutation (verified, run and restored): put the provider test back on
+// task.ValidProvider — this test fails on the hand-written slug, which prints
+// the command `repos add` refuses.
+func TestProjectReposLsNeverAdvertisesACommandItWouldRefuse(t *testing.T) {
+	f := newSeenFixture(t)
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	// Written by hand, the way the comment on spendRepos describes: the ID is
+	// the day's own (firestore's validName refuses a "/" in a document ID, so
+	// Fugaro's own writer never stores a slug that way) and the slug FIELD is
+	// the name this listing reads (budget.FromFields) and prints.
+	const notAProvider = "prod/acme/app"
+	rec := budget.DayRecord{Repo: notAProvider, Slug: notAProvider, Date: budget.DayDate(budget.Day(f.now)),
+		Version: budget.DayRecordVersion, Final: true, SpentMicros: budget.Micros(1_000_000), Runs: 1}
+	f.fs.Set(budget.SpendCollection, budget.DayDate(budget.Day(f.now))+"_handwritten", rec.ToFields())
+
+	out, _, err := execute(t, "project", "repos", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	_, seen, ok := strings.Cut(out, "repositories seen here")
+	if !ok {
+		t.Fatalf("the listing does not print the seen half:\n%s", out)
+	}
+	line := listLine(t, seen, notAProvider)
+	if strings.Contains(line, "repos add "+notAProvider) {
+		t.Errorf("the listing tells the operator to run `fugaro project repos add %s`, which `repos add` refuses (%q is not a git provider kind):\n%s", notAProvider, "prod", line)
+	}
+	if !strings.Contains(line, "not admitted") || !strings.Contains(line, "not a repository name") {
+		t.Errorf("the entry for %q does not say the allow-list refuses it, nor that it is not an enrollable name:\n%s", notAProvider, line)
+	}
+}
+
 // TestProjectShowNeverAdvertisesAPatternAsTheRemedy: `project show`'s running
 // list is the run registry's keys, which a run writes, and its not-admitted
 // note goes through the same sentence as `repos ls` — so it had the same hole
@@ -1161,7 +1212,10 @@ func TestProjectShowNeverAdvertisesAPatternAsTheRemedy(t *testing.T) {
 // "/"-segments (drop the alphabet check) — red on `github/*/*`, `github/acme/app
 // b`, `github/acme/app;id` and the uppercase provider; drop the "-"/"."/".."
 // segment rule — red on `-x/y/z`, `github/acme/-app` and `github/acme/..`;
-// drop the length bound — red on the name one byte over safetext.FieldMax.
+// drop the length bound — red on the name one byte over safetext.FieldMax;
+// put the provider test back on task.ValidProvider, which reads the shape of a
+// provider and nothing else — red on `prod/acme/app`, the name `repos add`
+// refuses even though it is shaped like a provider.
 func TestEnrollableArgHoldsTheRemedyToARepository(t *testing.T) {
 	for _, ok := range []string{
 		"github/acme/app",
@@ -1186,6 +1240,7 @@ func TestEnrollableArgHoldsTheRemedyToARepository(t *testing.T) {
 		"acme/app",            // two segments: `repos add` resolves its provider through a config these listings do not have
 		"github/acme",         // no repository name
 		"GitHub/acme/app",     // not a provider kind (task.ValidProvider is lower-case)
+		"prod/acme/app",       // provider-shaped, but not a git provider kind: `repos add` refuses this argument (projectpolicy.ValidPattern)
 		"-x/y/z",              // a shell word opening with a dash reads as an option
 		"github/acme/-app",    // the same, one segment in
 		"github/acme/..",      // a directory, not a repository

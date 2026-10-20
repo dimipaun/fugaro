@@ -19,6 +19,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -2608,12 +2609,28 @@ func notAdmittedSentence(r string) string {
 // for it, when name is a repository identifier and nothing else: a
 // provider/owner/name path (a repository may nest, so any depth above two) over
 // the repository alphabet [A-Za-z0-9._-], whose first segment is a provider
-// kind (task.ValidProvider, what projectpolicy.Canonical and task.Slug take),
-// with no empty, "." or ".." segment and no segment opening with "-" (a shell
+// kind this Fugaro knows (config.Providers — the set projectpolicy.ValidPattern
+// requires, and the one `repos add` validates the argument with), with no
+// empty, "." or ".." segment and no segment opening with "-" (a shell
 // word that opens with a dash reads as an option). A "*" — the wildcard of a
 // pattern, and the one character that makes the name admit more than itself —
 // is not in the alphabet, and neither is a space, so a pattern and a name a run
-// padded are both refused. The value comes back quoted as one shell word
+// padded are both refused.
+//
+// The provider is the KIND and not its shape: task.ValidProvider reads
+// ^[a-z][a-z0-9-]*$, which admits any lower-case word, while `repos add`
+// validates the argument it is given with projectpolicy.ValidPattern, whose
+// first segment must be a member of config.Providers. A slug field of
+// `prod/acme/app` — a name one hand-written spendDaily document can carry — is
+// provider-shaped, so a shape-only gate printed
+// 'fugaro project repos add prod/acme/app', and that command exits with
+// `"prod" is not a git provider kind (github, bitbucket)`: an instruction the
+// program hands out that the program itself refuses. What is printed is meant
+// to work, so the set is the one the command applies. A provider kind spelled
+// in another case is refused by both tests anyway (config.Providers is
+// lower-case, and so is task.ValidProvider).
+//
+// The value comes back quoted as one shell word
 // (shellword.Quote: unchanged when it is already safe, single-quoted
 // otherwise), because what is printed is meant to be pasted into a shell.
 //
@@ -2633,7 +2650,7 @@ func enrollableArg(name string) (string, bool) {
 		return "", false
 	}
 	segs := strings.Split(name, "/")
-	if len(segs) < 3 || !task.ValidProvider(segs[0]) {
+	if len(segs) < 3 || !slices.Contains(config.Providers, segs[0]) {
 		return "", false
 	}
 	for _, seg := range segs {
