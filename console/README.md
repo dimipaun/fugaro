@@ -3785,6 +3785,25 @@ handover the platform declined is `openExternal: { ok: false }` with the console
 the screen draws, rather than a success that drew nothing. `will-navigate` and
 `setWindowOpenHandler` still deny everything else.
 
+### The startup's answer is remembered under the project, never the id
+
+The compatibility a handshake read is held **by project name**: `picker.remember`
+is `registry.remember(project, …)` -> `compatibility.set(project, value)`, and
+every reader asks for that key — `current()` and `activeCompatibility()` do
+`compatibility.get(active.project)`, `rows()` does
+`compatibility.get(installation.project)`. The entry point handed it the
+installation's **id**, so on every launch with a stored active installation the
+dashboard's header drew "version not read · unknown" and the picker's active row
+said `unknown`, with the answer the handshake had just read thrown away. The
+variable is `handshakeProject` now, assigned from `chosen.target.project`, and
+the id is not carried at all (`resolveHandshakeBinary` takes an override and a
+target, so the field was dead weight that invited the mix-up).
+
+A screen a reply carries whose `kind` this build does not know is **no screen**
+(`drawnScreen` in `src/renderer/installations.ts`): `ONBOARDING_COPY` is a closed
+map, so an unknown kind reached `copy.title` on `undefined` and threw while the
+window was being drawn — taking the rows and the CLI's own warning lines with it.
+
 ### The mutations each guard was proved against
 
 Every property below was planted as a change to the shipped code, run, and removed;
@@ -3804,10 +3823,15 @@ the failure is the red step, and each test goes red **by name**.
 | the header read from the store alone (`installationState` dropping `resolvedBinaries`) | `startup.test.ts`, "answers the header from this run's resolution, and keeps the record for the source" |
 | the `openExternal` row's boolean ignored (`if (!opened)` removed) | `installations-ipc.test.ts`, "reports a handover the platform declined, rather than a success that drew nothing" |
 | the old refusal sentence restored ("give an absolute path…") | `spawn.test.ts`, the non-absolute configured path case |
+| the startup's answer remembered under the installation **id** (`chosen.id`) instead of its project | `startup.test.ts`, "hands the startup handshake to the picker under the installation's project, never its id" |
+| the compatibility read back by id (`compatibility.get(active.id)`) | `installations-ipc.test.ts`, "carries the startup's handshake into the dashboard's read and the picker's row" |
+| `drawnScreen` removed, so any `kind` reaches `ONBOARDING_COPY` | `installations-view.test.ts`, "draws no screen for a kind it does not know, and draws the rows anyway" and the `viewOf` case beside it |
+| `internal/cli/config_init.go`'s `Use:` renamed (the setup-wizard rename) | `onboarding.test.ts`, "is the command the CLI itself declares" |
+| a wrong repository root in the test's own path arithmetic | `onboarding.test.ts`, "is a small closed union, and `none` is shared" |
 
 ### The verification, and what it did not cover
 
-`npx vitest run --dir test/unit` under Node 22 is green — **55 files, 2016 passed, 1
+`npx vitest run --dir test/unit` under Node 22 is green — **55 files, 2019 passed, 1
 skipped** (the console's own suite; the verify container runs this repository's Go
 build and test, so the console's tests are run locally and the pull request says so)
 — and `npx tsc --noEmit` is clean, which typechecks the Playwright specs too.
@@ -3824,7 +3848,14 @@ an id and a project and no `binaryPath`, which is the shape this console writes 
 seeded through `seedActiveInstallation(project, null)`, which writes the field as
 absent), and `installations.spec.ts`'s rewrite. They are typechecked, and their
 claim that the header's line and the child's binary agree is the one the unit suite
-pins without a window.
+pins without a window. **A later review round** made those two cases ask
+`resolveConsoleBinary(env)` for the binary they expect rather than spelling
+`~/.local/bin/fugaro`: rule 4 asks `/opt/homebrew/bin` and `/usr/local/bin` first,
+so on a machine with a real `fugaro` in either, the console drives that one — and
+a spec that hardcoded the scratch stub would fail there for a fact about the
+machine. A machine where nothing this console can drive resolves skips them by
+name. `resolveConsoleBinary` itself now takes `HOME` out of the environment it is
+handed, so its answer is the app's own question rather than the spec runner's.
 
 **The checkouts a row offers are the ones the CLI's document carries.** The contract
 is tolerant of the array's absence and of a malformed entry, so a `config list` that
