@@ -21,7 +21,13 @@
 //   5. **the blank-image check** (`tools/screenshots/png.ts`): a uniform
 //      rectangle is refused, a drawn one is not, and a capture at the wrong size
 //      is refused -- on PNGs built by the encoder below, because the check has to
-//      be driven with a picture whose pixels are known.
+//      be driven with a picture whose pixels are known;
+//   6. **the failure path** (`tools/screenshots/failure.ts`): the sentence a
+//      failed run prints, the unhandled rejection that would otherwise end the
+//      process on Playwright's own stack, and the exit code that stands. The
+//      entry point itself is read here rather than imported -- it launches
+//      Electron, so nothing can import it -- and the one thing asserted about it
+//      is that it wires this handler in.
 //
 // What is *not* here, stated plainly: the Electron launch, the window's real
 // size, and the fact that a screen draws at all. Those need a display, and the
@@ -48,6 +54,8 @@ import type { Isolation } from '../../tools/screenshots/isolation'
 import { BLANK_STDDEV_FLOOR, assertUsableCapture, decodePng, pixelStdDev } from '../../tools/screenshots/png'
 import { CAPTURE_WINDOW, buildManifest, serializeManifest, sha256Of } from '../../tools/screenshots/manifest'
 import { CAPTURE_PIXELS, OMISSIONS, PICKER_SCREEN, RUN_ID, SCREENS } from '../../tools/screenshots/screens'
+import { FAILURE_SENTENCE, exitCodeFor, failureLine, installFailureHandler } from '../../tools/screenshots/failure'
+import type { RunProcess } from '../../tools/screenshots/failure'
 import { STUB_COMMAND_KEYS } from './stub'
 
 /** CONSOLE_ROOT is the console package, from this file's own location: the
@@ -1034,6 +1042,128 @@ describe('the blank-image check', () => {
     // two colour types are read, and a third is refused above.
     const image = decodePng(png({ width: 2, height: 2, colourType: 2, pixel: () => [10, 20, 30] }))
     expect([...image.pixels.subarray(0, 4)]).toEqual([10, 20, 30, 255])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 6. The line a failed run ends with, and the exit code that stands.
+// ---------------------------------------------------------------------------
+
+/** FakeRun is the stand-in `process` the failure handler is driven with: it
+ * records the events it was asked to listen for, hands the reason to those
+ * listeners the way `emit` would, and keeps the bytes and the exit code the run
+ * would have left. */
+interface FakeRun {
+  readonly target: RunProcess
+  readonly events: readonly string[]
+  readonly written: () => string
+  readonly exitCode: () => number | string | undefined
+  readonly emit: (reason: unknown) => void
+}
+
+function fakeRun(): FakeRun {
+  const listeners = new Map<string, ((reason: unknown) => void)[]>()
+  let written = ''
+  let exitCode: number | string | undefined
+  const target: RunProcess = {
+    on(event: string, listener: (reason: unknown) => void) {
+      listeners.set(event, [...(listeners.get(event) ?? []), listener])
+      return target
+    },
+    stderr: {
+      write(chunk: string) {
+        written += chunk
+        return true
+      },
+    },
+    get exitCode() {
+      return exitCode
+    },
+    set exitCode(value: number | string | undefined) {
+      exitCode = value
+    },
+  }
+  return {
+    target,
+    get events() {
+      return [...listeners.keys()]
+    },
+    written: () => written,
+    exitCode: () => exitCode,
+    emit: (reason: unknown) => {
+      for (const listener of listeners.get('unhandledRejection') ?? []) listener(reason)
+    },
+  }
+}
+
+describe('the line a failed run ends with', () => {
+  it('names the reason, and is a line of its own', () => {
+    // The reason is Playwright's own sentence, passed through rather than
+    // summarised: "Electron launch failed" is the one fact the owner needs.
+    expect(failureLine(new Error('Process failed to launch!'))).toBe(
+      '\nthe screenshot run failed: Process failed to launch!\n',
+    )
+    // Playwright does not always reject with an `Error`, and a rejection reason
+    // that is a string must not be printed as an object.
+    expect(failureLine('Target page, context or browser has been closed')).toContain(
+      'the screenshot run failed: Target page, context or browser has been closed',
+    )
+    expect(failureLine(undefined)).toContain('the screenshot run failed: undefined')
+    // Both newlines are load-bearing: Playwright's own stderr and this run's
+    // report share the stream, and the sentence must not run into either.
+    const line = failureLine(new Error('x'))
+    expect(line.startsWith('\n')).toBe(true)
+    expect(line.endsWith('\n')).toBe(true)
+    expect(FAILURE_SENTENCE).toBe('the screenshot run failed: ')
+  })
+
+  it('turns an unhandled rejection into that sentence and a failed run', () => {
+    // The failure this exists for: Node 22's default `--unhandled-rejections=
+    // throw` ends the process on Playwright's first rejection, so `main()`'s own
+    // catch never runs. The listener is on `unhandledRejection` -- not
+    // `uncaughtException`, and not some event of this run's invention.
+    const run = fakeRun()
+    installFailureHandler(run.target)
+    expect(run.events).toEqual(['unhandledRejection'])
+    // Nothing is written, and nothing exits, before a rejection arrives.
+    expect(run.written()).toBe('')
+    expect(run.exitCode()).toBeUndefined()
+    // A listener that threw would leave the process in exactly the state the
+    // handler is here to prevent, so `emit` must come back.
+    expect(() => {
+      run.emit(new Error('Process failed to launch!'))
+    }).not.toThrow()
+    expect(run.written()).toBe('\nthe screenshot run failed: Process failed to launch!\n')
+    expect(run.exitCode()).toBe(1)
+  })
+
+  it('does not let a recovered run report success', () => {
+    // The launch retry (`test/support/launch.ts`, ETXTBSY) is the case: the
+    // failed attempt rejects, the retry succeeds, and `main()` returns 0. The
+    // run printed a failure line, so it does not exit 0 -- while a run that
+    // failed on its own terms keeps its own code.
+    const run = fakeRun()
+    installFailureHandler(run.target)
+    expect(exitCodeFor(0, run.target)).toBe(0)
+    run.emit(new Error('spawn ETXTBSY'))
+    expect(exitCodeFor(0, run.target)).toBe(1)
+    expect(exitCodeFor(1, run.target)).toBe(1)
+    const clean = fakeRun()
+    expect(exitCodeFor(1, clean.target)).toBe(1)
+    expect(exitCodeFor(0, clean.target)).toBe(0)
+  })
+
+  it('is wired into the entry point, on both of its failure paths', () => {
+    // `capture.ts` launches Electron, so it is read here rather than imported --
+    // and the finding this holds is that its own catch is not enough: a
+    // rejection nobody awaited never reaches it. The handler is therefore
+    // installed before the work starts, and the sentence is written in one
+    // place (`failure.ts`) rather than two.
+    const source = readFileSync(join(CONSOLE_ROOT, 'tools/screenshots', 'capture.ts'), 'utf8')
+    expect(source).toContain('installFailureHandler(process)')
+    expect(source).toContain('failureLine(error)')
+    expect(source).toContain('exitCodeFor(code, process)')
+    expect(source).not.toContain(FAILURE_SENTENCE)
   })
 })
 

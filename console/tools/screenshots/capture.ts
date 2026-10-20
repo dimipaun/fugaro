@@ -4,10 +4,12 @@
 // what it captured.
 //
 // `scripts/console-screenshots.sh` is the command an owner runs; this file is
-// what that command runs. It is one file of four: `isolation.ts` is the screen
+// what that command runs. It is one file of six: `isolation.ts` is the screen
 // the run has to pass before a window exists (the binary, the three paths, the
-// environment), `fixture.ts` is the fake CLI and the store it seeds, `png.ts` is
-// the check on what came back, and `manifest.ts` is the document the run leaves.
+// environment), `fixture.ts` is the fake CLI and the store it seeds, `screens.ts`
+// is what is captured and what is not, `png.ts` is the check on what came back,
+// `manifest.ts` is the document the run leaves, and `failure.ts` is the line a
+// failed run ends with.
 //
 // **What this run is, exactly.** The console it launches is the real one -- its
 // startup handshake, its resolver, its `watch` supervisor, its protocol handler
@@ -50,6 +52,7 @@ import type { ElectronApplication, Page } from '@playwright/test'
 import { INSTALLATIONS_MENU_LABEL } from '../../src/main/picker'
 import { APP_ENTRY_URL, PICKER_ENTRY_URL } from '../../src/main/protocol'
 import { launchConsole } from '../../test/support/launch'
+import { exitCodeFor, failureLine, installFailureHandler } from './failure'
 import { installScreenshotFixture, FIXTURES_RELATIVE } from './fixture'
 import type { ScreenshotFixture } from './fixture'
 import { assertIsolated, assertLaunchIsFixture, launchEnvironment, newIsolation, realPaths } from './isolation'
@@ -336,7 +339,7 @@ async function main(): Promise<number> {
     for (const command of [...commands].sort()) process.stdout.write(`  ${command}\n`)
     return 0
   } catch (error) {
-    process.stderr.write(`\nthe screenshot run failed: ${error instanceof Error ? error.message : String(error)}\n`)
+    process.stderr.write(failureLine(error))
     return 1
   }
 }
@@ -344,13 +347,20 @@ async function main(): Promise<number> {
 // Only when run as a command. Nothing imports this file -- it launches Electron
 // and needs a display, so nothing can -- and the build is CommonJS
 // (`tsconfig.screenshots.json`), which is what `require` and `module` are here.
+//
+// The handler is installed **first**, before any of the work starts: what it
+// exists for is the rejection nobody awaits, and Playwright emits them from
+// inside the launch `main()` is about to make. See `failure.ts` for why the
+// handler sets an exit code rather than exiting, and why `exitCodeFor` refuses
+// to let a recovered run report success.
 if (require.main === module) {
+  installFailureHandler(process)
   main().then(
     (code) => {
-      process.exitCode = code
+      process.exitCode = exitCodeFor(code, process)
     },
     (error: unknown) => {
-      process.stderr.write(`\nthe screenshot run failed: ${error instanceof Error ? error.message : String(error)}\n`)
+      process.stderr.write(failureLine(error))
       process.exitCode = 1
     },
   )
