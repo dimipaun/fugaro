@@ -332,6 +332,20 @@ func TestWireRefusesAnAnswerItCouldNotReadBack(t *testing.T) {
 	} else if len(got.Tried) != len(many) {
 		t.Errorf("tried = %d entries, want %d: the list is not the message", len(got.Tried), len(many))
 	}
+	// Clipped, not dropped: the sentence a human reads is still the writer's,
+	// cut to the bound the reader holds it to. An empty one would leave the
+	// run's halt message with nothing to say.
+	we, err := ReadWireError(StatusExhaustedUntil, body)
+	if err != nil {
+		t.Fatalf("ReadWireError: %v", err)
+	}
+	full := ExhaustedUntil{ResetAt: time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC), Tried: many}.Error()
+	if we.Message == "" || !strings.HasPrefix(full, we.Message) {
+		t.Errorf("message = %q, want the writer's sentence, clipped", we.Message)
+	}
+	if len(we.Message) > maxRefusalMessageBytes {
+		t.Errorf("message is %d bytes, over the bound the reader holds it to", len(we.Message))
+	}
 }
 
 // An answer that cannot carry the tier and the name must not be sent as if it
