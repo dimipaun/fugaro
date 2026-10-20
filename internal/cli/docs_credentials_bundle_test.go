@@ -168,6 +168,11 @@ func TestDocsCredentialsServiceKeepsOneBundleSecret(t *testing.T) {
 //     operator grant — the sentence that used to promise an operator's
 //     secretVersionAdder is gone, and the test forbids it coming back.
 //
+// The re-review (rev3) added N1: the first step's address has to be the
+// installation root's, module-prefixed and single-quoted, because the bare one
+// names nothing in that state and zsh refuses an unquoted `[0]`. Both wrong
+// forms are forbidden below.
+//
 // It is about wording only: nothing here is implemented by the documents it
 // reads. Every phrase below was checked against the plan as amended.
 func TestDocsCredentialsServiceCarriesTheSecurityReviewFixes(t *testing.T) {
@@ -183,8 +188,10 @@ func TestDocsCredentialsServiceCarriesTheSecurityReviewFixes(t *testing.T) {
 		"pinned by digest and never by tag",
 		"C1.20's init stage fills the verified digest",
 		"the variable's validation refuses anything else at plan time",
-		// M2
-		"terraform state rm google_secret_manager_secret.credentials_bundle[0]",
+		// M2, with the address as an owner types it: module-prefixed (the
+		// container is a resource of `module "installation"`) and
+		// single-quoted for zsh (re-review N1).
+		"terraform state rm 'module.installation.google_secret_manager_secret.credentials_bundle[0]'",
 		`fails with "Instance cannot be destroyed" and applies **nothing**`,
 		// m3
 		"`DATA_READ` audit logs are off by default and Fugaro's Terraform manages no audit config",
@@ -208,6 +215,11 @@ func TestDocsCredentialsServiceCarriesTheSecurityReviewFixes(t *testing.T) {
 		"its image a variable, its SA",
 		// M2: the claim that the opt-out is an ordinary removal.
 		"Turning the opt-in off is therefore a removal a plan may make, not a refusal",
+		// N1: the opt-out's first step with an address that names nothing in
+		// the installation root's state — no module prefix — and the prefixed
+		// one unquoted, which zsh refuses before terraform sees it.
+		"terraform state rm google_secret_manager_secret.credentials_bundle[0]",
+		"terraform state rm module.installation.google_secret_manager_secret.credentials_bundle[0]",
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Errorf("%s says %q again, which the independent security review found wrong", plan, forbidden)

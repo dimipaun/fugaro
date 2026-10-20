@@ -431,7 +431,9 @@ func TestPreventDestroy(t *testing.T) {
 // opposite (independent security review of this file, M2) and nothing else in
 // the tree states the order. deletion_protection = false is what makes step
 // two possible; the container's prevent_destroy is what keeps a credential
-// from being deleted by a plan.
+// from being deleted by a plan. The first step's address is pinned exactly as
+// an owner types it — module-prefixed and quoted (re-review N1), because the
+// first version of it named a resource the root's state does not hold.
 func TestCredentialsServiceOptOutIsTwoSteps(t *testing.T) {
 	const path = "gcp/modules/installation/credentials.tf"
 	data, err := fs.ReadFile(FS, path)
@@ -439,9 +441,28 @@ func TestCredentialsServiceOptOutIsTwoSteps(t *testing.T) {
 		t.Fatalf("reading %s: %v", path, err)
 	}
 	text := string(data)
-	const step = "terraform state rm google_secret_manager_secret.credentials_bundle[0]"
+	// The address carries the module prefix, because the container is a
+	// resource of `module "installation"` (roots/installation/main.tf) and not
+	// of the root: `terraform state rm` on the bare address names nothing in
+	// the root's state and is refused. internal/infra/forget.go's
+	// LogBucketAddress and TagMoverRoleAddress are the same shape for the same
+	// root. It is single-quoted because `[0]` is a glob to zsh, which fails the
+	// command with "no matches found" rather than passing it through
+	// (independent security review of this file, re-review N1).
+	const step = "terraform state rm 'module.installation.google_secret_manager_secret.credentials_bundle[0]'"
 	if !strings.Contains(text, step) {
 		t.Errorf("%s does not document the opt-out's first step (%q): without it a reader is left with the plan failure and no path", path, step)
+	}
+	// The two forms that must not come back: the unprefixed address (the
+	// review's N1 — it names nothing in the root), and the prefixed one
+	// unquoted (zsh refuses it before terraform ever sees it).
+	for _, wrong := range []string{
+		"terraform state rm google_secret_manager_secret.credentials_bundle[0]",
+		"terraform state rm module.installation.google_secret_manager_secret.credentials_bundle[0]",
+	} {
+		if strings.Contains(text, wrong) {
+			t.Errorf("%s carries the opt-out's first step as %q: the address needs the module prefix and single quotes, %q", path, wrong, step)
+		}
 	}
 	if strings.Contains(text, "is therefore a removal a plan may make") || strings.Contains(text, "removal a plan may make, not a refusal") {
 		t.Errorf("%s still claims the opt-out is a removal a plan may make: it is not, the container's prevent_destroy refuses the whole plan", path)

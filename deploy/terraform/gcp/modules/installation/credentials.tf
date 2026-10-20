@@ -146,9 +146,14 @@ resource "google_cloud_run_v2_service" "credentials" {
   # of this comment claimed the opposite). Turning the service off is two
   # owner steps, in this order, and C1.22's runbook carries them:
   #
-  #   1. terraform state rm google_secret_manager_secret.credentials_bundle[0]
+  #   1. terraform state rm 'module.installation.google_secret_manager_secret.credentials_bundle[0]'
   #      — forgets the container. It deletes nothing in GCP and leaves every
-  #      credential in it alone.
+  #      credential in it alone. The address is the installation ROOT's: this
+  #      resource is inside `module "installation"`, so the prefix is not
+  #      optional (the bare address names nothing in that state and
+  #      `terraform state rm` refuses it), and the single quotes are: `[0]` is
+  #      a glob to zsh, which would refuse the command before terraform ran
+  #      (independent security review of this file, re-review N1).
   #   2. an ordinary plan and apply, with credentials_service unset, which
   #      removes this service, its account and the grant, and touches no
   #      secret.
