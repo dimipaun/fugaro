@@ -43,6 +43,16 @@
 // FACT lines it has collected are checked against those secrets before the
 // test ends.
 //
+// It works in the database's day, not this machine's: DAYOK compares $day with
+// the server's TODAY and YESTERDAY, so the day comes from the owner client's
+// ServerNow() — the same source budget.Session reads it from, filled by the
+// check's own first read, so it costs no request of its own. A machine whose
+// day differs from the database's is the day boundary, not a failure: the
+// check says so in a FACT line and goes on in the database's day. A machine
+// whose *clock* is minutes off is refused before anything is written, because
+// the rules judge a run token's fx by the database's clock while
+// token.Exchange judges the custom token's exp by this machine's.
+//
 // The accepted writes are what makes the refusals mean anything: a database
 // that refused everything (a dead URL, a token the rules do not honour) would
 // fail this check on its positive controls, not pass it.
@@ -96,6 +106,15 @@ const (
 	// repository when the check is over.
 	crRepoBase = "live92-"
 	crSub      = "/rules"
+
+	// crClockSkew is how far this machine's clock may sit from the database's
+	// before the check refuses to run. The two *days* may differ while the
+	// clocks agree — that is the day boundary, and the check works in the
+	// database's day — but a clock minutes off is a clock to fix: the rules
+	// judge a run token's fx by the database's clock and token.Exchange judges
+	// the custom token's exp by this machine's, so every case below would fail
+	// for a reason that is not the rules.
+	crClockSkew = 2 * time.Minute
 )
 
 // crScopes are the scopes the owner's Application Default Credentials need:
@@ -175,6 +194,15 @@ func crTargetFrom(getenv func(string) string) (crTarget, error) {
 		t.requestedBy = crDefaultBy
 	}
 	return t, nil
+}
+
+// crClockTooFar reports whether this machine's clock is too far from the
+// database's to run at all. The two *days* may differ while the clocks agree —
+// that is the day boundary, and the check works in the database's day — but a
+// clock minutes off is a clock to fix, for the reason crClockSkew gives.
+func crClockTooFar(serverNow, localNow time.Time) bool {
+	skew := serverNow.Sub(localNow)
+	return skew > crClockSkew || skew < -crClockSkew
 }
 
 // crIsLocalOrIP reports whether a host is loopback by name, or any literal IP.
@@ -264,17 +292,23 @@ type crNames struct {
 	repo, slug, run                string
 	otherRepo, otherSlug, otherRun string
 	n1, n2, n3                     string // scratch credential names
-	day, oldDay                    int64  // today's epoch day, and one DAYOK refuses
+	day, oldDay                    int64  // the database's day, and one DAYOK refuses
 	resumeAt                       int64  // the instant the registry entry's waiting_until holds
 }
 
-func crNewNames(now time.Time) crNames {
+// crNewNames builds one run of the check's scratch names. day is the
+// *database's* day — budget.Day of the owner client's ServerNow(), as
+// budget.Session reads it — not budget.Day(now): DAYOK compares $day with the
+// server's TODAY and YESTERDAY, so a machine whose clock is on the other side
+// of midnight would build the accepted counters for the wrong day and the
+// refused ones for a day DAYOK admits.
+func crNewNames(now time.Time, day int64) crNames {
 	h := crHex(3)
 	n := crNames{
 		repo:      crRepoBase + h + crSub,
 		otherRepo: crRepoBase + h + "-other" + crSub,
-		day:       budget.Day(now),
-		oldDay:    budget.Day(now) - 2, // DAYOK admits today and yesterday only
+		day:       day,
+		oldDay:    day - 2, // DAYOK admits the server's today and yesterday only
 		resumeAt:  now.Add(15 * time.Minute).UnixMilli(),
 	}
 	var err error
@@ -430,15 +464,23 @@ func crCases(n crNames, maxRes int64, requestedBy string) []crCase {
 // written: they are what makes the table safe to run at all, and a table that
 // breaks one must fail here rather than on a live installation.
 //
-//  1. an accepted write names the scratch slug: nothing real is written, and
-//     nothing outside the scratch names is written at all;
-//  2. nothing under /creds, and nothing under config/, is ever accepted;
-//  3. no accepted write names the project-wide day counter;
-//  4. a delete is never accepted;
-//  5. the first case on a path does not seed it, and an accepted case is the
+//  1. a seed names the scratch slug, and lies under neither /creds nor
+//     config/: a seed is written by the owner client, which bypasses the rules
+//     — no rule stands behind it, so this check is all that does;
+//  2. an accepted write names the scratch slug: nothing real is written;
+//  3. nothing under /creds, and nothing under config/, is ever accepted;
+//  4. no accepted write names the project-wide day counter;
+//  5. a delete is never accepted;
+//  6. the first case on a path does not seed it, and an accepted case is the
 //     first on its path — an accepted write changes what the next case on the
 //     same path sees, and a seeded one would change what the accepted case
 //     sees.
+//
+// The refused cases' own paths are deliberately not held to 2: a case that
+// names another repository's counter or a generation marker is an *attempt* by
+// the run's identity, which the rules refuse (and which crUndo puts back if a
+// live document accepts it). Their seeds are held to 1, because a seed is not
+// an attempt: the owner writes it.
 func crCheckCases(cases []crCase, scratch ...string) error {
 	seen := map[string]bool{}
 	for i, c := range cases {
@@ -454,6 +496,14 @@ func crCheckCases(cases []crCase, scratch ...string) error {
 		seen[c.path] = true
 		if first && c.seed != nil {
 			return fmt.Errorf("case %q seeds /%s before anything has read it as it is: the first case on a path must not seed", c.name, c.path)
+		}
+		if c.seed != nil {
+			switch {
+			case !crNamesAny(c.path, scratch):
+				return fmt.Errorf("case %q seeds /%s, which carries no scratch name: the owner client bypasses the rules, so a seed outside the check's own nodes would be written for real", c.name, c.path)
+			case strings.HasPrefix(c.path, "creds/"), strings.HasPrefix(c.path, "config/"):
+				return fmt.Errorf("case %q seeds /%s: nothing under /creds or config/ is the check's to write, even as the owner", c.name, c.path)
+			}
 		}
 		if strings.HasPrefix(c.path, "creds/") && c.allow {
 			return fmt.Errorf("case %q accepts a write under /creds: no run token holds a grant there (O1)", c.name)
@@ -510,18 +560,11 @@ func TestLiveCredsRules(t *testing.T) {
 	defer facts.checkSecrets()
 	ctx := context.Background()
 	now := time.Now()
-	n := crNewNames(now)
 
 	owner, err := crOwner(ctx, target)
 	if err != nil {
 		t.Fatal(facts.errText(err))
 	}
-	// The cleanup is registered before the first write and is idempotent: a
-	// failure anywhere below still leaves the installation as it was found.
-	clean := &crCleanup{paths: crWritten(n)}
-	defer clean.run(t, target, facts)
-
-	facts.fact("the check works under one scratch repository (slug %s, run %s) and three scratch credential names (%s, %s, %s): no real repository's counters and no real credential's mark are touched", n.slug, n.run, n.n1, n.n2, n.n3)
 
 	// 1. The installation, stated twice: what the owner said, and what the
 	// database says. The rules compare fp with /fugaro/project, so a
@@ -536,7 +579,37 @@ func TestLiveCredsRules(t *testing.T) {
 	}
 	facts.fact("the database at %s names the installation %q, the same one %s names, and it is not belong", target.rtdbURL, install, crInstallVar)
 
-	// 2. The two generation markers, as the owner: the credentials document
+	// 2. The database's clock, which is the one the rules judge by: DAYOK
+	// compares $day with the server's TODAY and YESTERDAY, and the RUN macro
+	// compares a run token's fx with the server's now. The owner client's clock
+	// is filled by the read above, so this costs no request of its own — it is
+	// the same source budget.Session reads the day from.
+	serverNow, ok := owner.ServerNow()
+	if !ok {
+		t.Fatal("the database has answered nothing yet, so the owner client has no clock reading: the check cannot know which day DAYOK will judge by")
+	}
+	if crClockTooFar(serverNow, now) {
+		t.Fatalf("this machine's clock is %s from the database's (%s against %s): fix the clock and run again — the rules judge a run token's fx with the database's clock while token.Exchange judges the custom token's exp with this machine's, so a clock this far off would fail every case below for a reason that is not the rules",
+			serverNow.Sub(now).Round(time.Second), now.UTC().Format(time.RFC3339), serverNow.UTC().Format(time.RFC3339))
+	}
+	day := budget.Day(serverNow)
+	if day != budget.Day(now) {
+		// Not a failure: near midnight the two days differ while the clocks
+		// agree, and which side of the boundary a write lands on is the
+		// database's to say. The rtdb package documents the same thing as a
+		// retry with the fresh day rather than a refusal.
+		facts.fact("this machine's day is %d and the database's is %d: the check works in the database's day, as DAYOK does", budget.Day(now), day)
+	}
+	n := crNewNames(now, day)
+
+	// The cleanup is registered before the first write and is idempotent: a
+	// failure anywhere below still leaves the installation as it was found.
+	clean := &crCleanup{paths: crWritten(n)}
+	defer clean.run(t, target, facts)
+
+	facts.fact("the check works under one scratch repository (slug %s, run %s) and three scratch credential names (%s, %s, %s), in the database's day %d: no real repository's counters and no real credential's mark are touched", n.slug, n.run, n.n1, n.n2, n.n3, n.day)
+
+	// 3. The two generation markers, as the owner: the credentials document
 	// has to be deployed, or every case below would be about another document.
 	credsMarker, err := crMarker(ctx, facts, owner, rules.PathCredsRulesMarker())
 	if err != nil {
@@ -555,7 +628,7 @@ func TestLiveCredsRules(t *testing.T) {
 		t.Errorf("%s reads %d, want %d: the deployed document is not the one this release generates, so what the cases below prove is another document's behaviour (check 82 is the deploy's own check)", projectpolicy.PathRulesMarker(), policyMarker, projectpolicy.RulesVersion)
 	}
 
-	// 3. The run's identity, minted and exchanged as the launcher does.
+	// 4. The run's identity, minted and exchanged as the launcher does.
 	signer, err := crSigner(ctx, target, facts)
 	if err != nil {
 		t.Fatal(err)
@@ -577,7 +650,7 @@ func TestLiveCredsRules(t *testing.T) {
 	}
 	facts.fact("the exchange produced the identity %s (expires %s), carrying fs/fr/fx/fp/rb as minted, with no sign-in provider enabled and the restricted web key", sess.UID(), sess.Expiry().UTC().Format(time.RFC3339))
 
-	// 4. The markers as the run: a cascade launch reads them with the run's own
+	// 5. The markers as the run: a cascade launch reads them with the run's own
 	// identity (C1.19), and neither is a run's to write.
 	maxResPath := budget.PathLimits + "/maxReserveMicros"
 	maxRes, err := crMaxReserve(ctx, facts, run)
@@ -591,20 +664,20 @@ func TestLiveCredsRules(t *testing.T) {
 		facts.fact("the run's own identity read %s (=%d, the gate a cascade launch reads before it starts)", rules.PathCredsRulesMarker(), runCredsMarker)
 	}
 
-	// 5. The table, and its own safety invariants, before the first write.
+	// 6. The table, and its own safety invariants, before the first write.
 	cases := crCases(n, maxRes, target.requestedBy)
 	if err := crCheckCases(cases, budget.Key(n.slug), budget.Key(n.otherSlug)); err != nil {
 		t.Fatalf("the case table is not safe to run: %v", err)
 	}
 
-	// 6. Seed, as the owner, what the denials are proven against: a read that
+	// 7. Seed, as the owner, what the denials are proven against: a read that
 	// came back empty because there was nothing to read would not be a denial.
 	if err := crSeed(t, ctx, facts, owner, n, now); err != nil {
 		t.Fatal(err)
 	}
 	facts.fact("seeded under /creds as the owner: %s", strings.Join(crCredsPaths(n).seeded(), ", "))
 
-	// 7. Every read a run's identity must not be able to make under /creds.
+	// 8. Every read a run's identity must not be able to make under /creds.
 	reads := crCredsPaths(n).all()
 	reads = append(reads, "creds", "creds/marks")
 	if denied := crDeniedReads(t, ctx, facts, run, reads); denied != len(reads) {
@@ -613,7 +686,7 @@ func TestLiveCredsRules(t *testing.T) {
 		facts.fact("a run's identity read nothing under /creds: %d reads refused (permission denied), including the marks, the leases, its own sticky credential and the round-robin counter", denied)
 	}
 
-	// 8. Every write: accepted where the run's own identity must be able to
+	// 9. Every write: accepted where the run's own identity must be able to
 	// write, refused everywhere else, with the node read back as the owner
 	// before and after each attempt.
 	accepted, refused := crRunCases(t, ctx, facts, owner, run, cases)
@@ -624,7 +697,7 @@ func TestLiveCredsRules(t *testing.T) {
 		facts.fact("the rules refused %d writes a run's identity must not make: %s", len(refused), crCaseNames(refused))
 	}
 
-	// 9. The launcher's rb: the entry's children are tied to the launcher that
+	// 10. The launcher's rb: the entry's children are tied to the launcher that
 	// wrote the entry (RBOK), so the same run's identity with another
 	// launcher's rb is refused. The accepted writes above are what makes the
 	// refusals mean something; this one is what makes them mean *this* run's.
