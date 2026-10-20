@@ -324,12 +324,15 @@ under `reduce`, the page shows the finished transcript, still, in full.
 
 ### RF18 — **Wrong (confirmed by measurement)** — the accent does not match the logo
 
-Sampled from `brand/fugaro-logo.png` (1024 × 1024, RGBA; 115,370 pixels with alpha ≥ 250,
-of which 107,437 are not near-black) by the committed
-[sample-logo-hue.py](sample-logo-hue.py): the circular mean hue is **198.4°** at
-saturation ≥ 0.5, **199.5°** at ≥ 0.6, **201.4°** at ≥ 0.7 and **204.2°** at ≥ 0.8; the
-largest 5° bins are **200–204 (26.8 %)**, 195–199 (19.6 %), 205–209 (15.3 %). The logo's
-hue is a cyan-blue around **198–204°**.
+Sampled from `brand/fugaro-logo.png` (2048 × 2048, RGBA; 465,878 pixels with alpha ≥ 250,
+of which 431,842 are not near-black) by the committed
+[sample-logo-hue.py](sample-logo-hue.py): the circular mean hue is **199.0°** at
+saturation ≥ 0.5, **200.0°** at ≥ 0.6, **202.0°** at ≥ 0.7 and **205.0°** at ≥ 0.8; the
+largest 5° bins are **200–204 (26.8 %)**, 205–209 (18.5 %), 195–199 (16.2 %). The logo's
+hue is a cyan-blue around **199–205°**. (The owner replaced the source with a 2048 px one
+on 2026-10-20 — the same artwork with twice the real pixels — so §5.1's canvas, counts and
+means are the re-sample of that file; the derived palette of §5.2 did not move, and the
+accent it names is still within D180's 5° of the mean.)
 
 The palette in force: `--accent: #8B5CF6` (hue **258.3°**), `--accent-on-dark: #C4B5FD`
 (hue **252.5°**), `--warn: #F97316` (hue **24.6°**). **The accent is about 60° away from
@@ -489,13 +492,13 @@ copy rather than written in place.
 
 ### 5.1 What was sampled, and how
 
-`brand/fugaro-logo.png`, 1024 × 1024 RGBA, read pixel by pixel by
+`brand/fugaro-logo.png`, 2048 × 2048 RGBA, read pixel by pixel by
 [sample-logo-hue.py](sample-logo-hue.py) (Pillow only, like `scripts/gen-brand-icons.py`;
 run `python3 -I docs/website/redesign/sample-logo-hue.py brand/fugaro-logo.png` from the
 repository root):
 
 1. pixels with alpha below 250 and near-black pixels (HSV value below 0.05) are dropped —
-   the logo's ground is not its colour; 107,437 pixels remain;
+   the logo's ground is not its colour; 431,842 pixels remain;
 2. the remaining pixels are converted to HSV;
 3. for each saturation threshold, the hue is averaged **as a circular mean**
    (sin/cos sum, which is the only correct average for an angle, and which stops a few
@@ -504,31 +507,47 @@ repository root):
 
 | saturation ≥ | pixels | mean hue | weighted by saturation | mean saturation |
 | --- | --- | --- | --- | --- |
-| 0.5 | 83,028 | **198.4°** | 199.7° | 0.832 |
-| 0.6 | 77,323 | **199.5°** | 200.5° | 0.853 |
-| 0.7 | 68,005 | **201.4°** | 201.9° | 0.880 |
-| 0.8 | 51,926 | **204.2°** | 204.4° | 0.918 |
+| 0.5 | 336,810 | **199.0°** | 200.1° | 0.816 |
+| 0.6 | 316,337 | **200.0°** | 200.9° | 0.833 |
+| 0.7 | 279,066 | **202.0°** | 202.5° | 0.857 |
+| 0.8 | 209,422 | **205.0°** | 205.1° | 0.890 |
 
 The largest 5° bins over the pixels with saturation ≥ 0.7:
 
 | bin | share |
 | --- | --- |
-| 200–204° | 26.78 % |
-| 195–199° | 19.63 % |
-| 205–209° | 15.31 % |
-| 210–214° | 9.59 % |
-| 190–194° | 8.05 % |
-| 185–189° | 7.76 % |
+| 200–204° | 26.81 % |
+| 205–209° | 18.47 % |
+| 195–199° | 16.22 % |
+| 210–214° | 11.01 % |
+| 185–189° | 7.64 % |
+| 190–194° | 7.37 % |
 
 (The bins move by a point or two with the HSV implementation, because many pixels sit
 exactly on 200°; the means do not.) The logo's colour is a saturated cyan-blue centred on
-**198–202°**, its mass sitting between 185° and 214°.
+**199–205°**, its mass sitting between 185° and 214°.
+
+The source was 1024 × 1024 when this round first sampled it, and the owner replaced it with
+a 2048 × 2048 one on 2026-10-20: the same artwork with twice the real pixels, so the
+derived icons are no longer upscales. **Every figure above is the re-sample of that file**,
+and the movement is small but real — the canvas and every count scale with the resolution,
+and each mean hue moves up by 0.6–0.8° (198.4 → 199.0 at saturation ≥ 0.5, 199.5 → 200.0 at
+≥ 0.6, 201.4 → 202.0 at ≥ 0.7, 204.2 → 205.0 at ≥ 0.8). Why the finer file reads a shade
+bluer is not something this sample settles: the pixels at the artwork's edges, which a
+1024 px render blends with the transparent ground and a 2048 px one resolves, are the
+likeliest place for it, and this document does not claim more than that. What did not move
+is the palette: `--accent` is 198.0°, inside D180's 5° of both samples, and §5.2 is
+otherwise the derivation it was.
 
 ### 5.2 The derived palette
 
-One accent hue (198°, the sampled mean), one derivation, and **exactly the ten tokens every
-palette file declares** (RF16: the palettes are one vocabulary, so a new token in one file
-alone fails `a11y.mjs`). It is written as a fourth palette file, `palette-logo.css`:
+One accent hue (199.0°, the sampled mean of the 2048 px source; 198.4° when this round
+sampled the 1024 px one), one derivation, and **exactly the ten tokens every palette file
+declares** (RF16: the palettes are one vocabulary, so a new token in one file alone fails
+`a11y.mjs`). The values below are the derivation this round made and did not move with the
+re-sample: `--accent` is 198.0°, inside D180's 5° of both samples, and the contrast matrix
+of §5.3 is computed from these literals and not from the logo. It is written as a fourth
+palette file, `palette-logo.css`:
 
 | token | value | hue | what it is |
 | --- | --- | --- | --- |
