@@ -119,7 +119,7 @@ function build() {
       const parent = path.basename(path.dirname(src))
       if (path.dirname(src) === REPO && SKIP.has(name)) return false
       // `plugin/skills` and `plugin/.claude-plugin` are the parts of `plugin/` a build
-      // reads: the hero's chat quotes the skills, and the changelog decides which releases
+      // reads: the slider's "See it" panel quotes the skills, and the changelog decides which releases
       // are published from the plugin's own version (website/test/lib/build.mjs).
       if (parent === 'plugin' && !READ_UNDER_PLUGIN.has(name)) return false
       if (parent === 'website' && SKIP_UNDER_WEBSITE.has(name)) return false

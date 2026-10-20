@@ -3,10 +3,13 @@
 // redesign part P8, D185; website changes spec of 2026-10-18, item 4).
 //
 // The page is the picture and then the detail of it, in that order: the four steps the
-// changes spec names (`ArchitectureDiagram.astro`, the same component the homepage renders —
-// one drawing, not two) and, under it, the run README.md's `## How it works` numbers, in
-// that section's own words (`RunDetail.astro`). A reader who wants the whole of it reads
-// down; a reader who wants the shape of it stops at the picture.
+// changes spec names (`ArchitectureDiagram.astro`) and, under it, the run README.md's
+// `## How it works` numbers, in that section's own words (`RunDetail.astro`). A reader who
+// wants the whole of it reads down; a reader who wants the shape of it stops at the picture.
+// The changes spec's item 4 asked this page to open with the same drawing the homepage showed
+// — one shared component, not two copies — and it still is that component: the owner's
+// approved draft of 2026-10-19 ("Home, draft 2 (slider)") is what took the flow off the
+// homepage, so this is now the one page that draws it (`src/pages/index.astro`).
 //
 // Everything else this page could say is a fact of its own: what each stage costs, what it
 // can reach, what the caps are. Those are pages and sections of their own (W1.5, W1.6,
@@ -29,13 +32,11 @@ import RunDetail from '../components/RunDetail.astro'
      picture and then the detail of it, and the picture is what it opens with: `base.css`'s
      heading margin (`--space-xs`, 12 px) left the drawing almost against the title — the
      review measured the gap and found the picture starting 12 px under the `h1`. The room is
-     this page's rather than the diagram's, because the same component is the homepage's
-     picture too, and there it is not the first thing under the `h1`: the homepage's order is
-     the hero, then the chat, then the flow (`index.astro`), and round 2's complaint about it
-     was that the flow sat outside the first 900 px of that page — read down to, not met,
-     which is a position the homepage's own sections answer and a margin on the shared
-     component would move as well. `website/test/base-styles.mjs` reads this rule and refuses
-     a title with a heading's margin under it. */
+     this page's rather than the diagram's, because the drawing sits directly under the `h1`
+     here and nowhere else now: the owner's approved draft of 2026-10-19 ("Home, draft 2
+     (slider)") took the flow off the homepage, and a margin on the shared component would
+     move every page that ever renders it. `website/test/base-styles.mjs` reads this rule and
+     refuses a title with a heading's margin under it. */
   .page-title {
     margin-bottom: var(--space-xl);
   }

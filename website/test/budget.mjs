@@ -317,14 +317,16 @@ function textBetween(main, from, to) {
  * region is the reading and the container is not.
  *
  * **Where the homepage stands today** (2026-10-19): its `h1` is the headline, its first `h2`
- * is the chat's own "Through your agent" — the chat is the first block under the promise
- * (review round 5) and its heading is inside it — and the region between the two headings is
- * the request the hero renders under the headline (the owner's feedback of 2026-10-19),
- * the promise and its two calls to action: **23 words**, the number the built page measures.
- * Both readings agree here, because everything between the `h1` and that heading is inside
- * the hero's own section; they did not agree on the homepage of two rounds ago, when the
- * hero's section held the `h1`, the install blocks and the chat sat between it and the flow's
- * first step heading, and the container reading said 24 words where the region said 134. The
+ * is the slider's first panel title, "Easy to use" — the slider is the first block under the
+ * promise (the owner's approved draft of 2026-10-19, "Home, draft 2 (slider)") and that
+ * heading is inside its first panel — and the region between the two headings is the request
+ * the hero renders under the headline (the owner's feedback of 2026-10-19), the promise, its
+ * three calls to action and the slider's three tab labels: **29 words**, the number the built
+ * page measures. Both readings agree here, because everything between the `h1` and that
+ * heading is inside the hero's own section; they did not agree on the homepage of two rounds
+ * ago, when the hero's section held the `h1`, the install blocks and the chat sat between it
+ * and the flow's first step heading, and the container reading said 24 words where the region
+ * said 134. The
  * region is what is enforced, on this page and on any page that grows a block between its
  * `h1` and its first `h2` later.
  *

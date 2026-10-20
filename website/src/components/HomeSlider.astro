@@ -65,9 +65,8 @@ import Benefits from './Benefits.astro'
 
 /**
  * A string with its markdown markers and its whitespace removed: how a caption and the section
- * it claims to come from are compared. The same reading `ArchitectureDiagram.astro` and
- * `AgentChat.astro` use, so the build and `website/test/home.mjs` resolve a quotation the same
- * way.
+ * it claims to come from are compared. The same reading `ArchitectureDiagram.astro` uses, so
+ * the build and `website/test/home.mjs` resolve a quotation the same way.
  */
 function comparable(document: string): string {
   return document.replace(/[`*]/g, '').replace(/\s+/g, '')

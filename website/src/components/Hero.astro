@@ -20,25 +20,22 @@
  *      2026-10-19). The owner's words: "the hero says in as few words as possible that you
  *      drive Fugaro through your coding agent, with the one prompt line `> Fan out these
  *      three bug fixes.` … as the centrepiece; cut every explanatory paragraph that repeats
- *      it." So the line sits directly under the headline, drawn as the chat's own bubble, and
- *      it is the one string `src/lib/agent-request.mjs` holds — the same line the chat's first
- *      turn speaks, so the page cannot show the reader asking for one thing and being answered
- *      about another. There is no paragraph under it saying what it means: what it means is
- *      that a reader types that sentence into the agent they already have, and the figure
- *      below is the rest of the sentence.
+ *      it." So the line sits directly under the headline, drawn as a line a reader types, and
+ *      it is the one string `src/lib/agent-request.mjs` holds — the line is a quotation of the
+ *      changes spec, and the module is where it is held to that document. There is no paragraph
+ *      under it saying what it means: what it means is that a reader types that sentence into
+ *      the agent they already have, and the block below the hero is the rest of the sentence.
  *   4. **The video slot is empty while `site.yaml` says the video does not exist** (D107):
  *      no player, no poster, no play button, nothing to click that plays nothing. W2.4 flips
  *      the flag and fills the slot in the same commit.
  *
  * **What is not here, and why.** The hero used to carry the install commands and the agent
  * chat under the promise, and item 4 asks for the picture of the run to be the page's
- * centrepiece rather than the fourth thing down: the homepage is now the promise and its
- * prompt line and its one call to action, then the chat, then the diagram, then the install
- * paths (`src/pages/index.astro`, which owns that order). The chat leads the three because
- * what the page offers a reader is a conversation with the agent they already have (review
- * round 5); the diagram is still the largest thing after the promise and is its own section
- * directly under the chat. The commands are
- * `HomeInstall.astro` and the chat is `AgentChat.astro`; both are placed by the page, so a
+ * centrepiece rather than the fourth thing down: the homepage is now the promise, its prompt
+ * line and its row of links, then one slider with three tabs, then one install block
+ * (`src/pages/index.astro`, which owns that order — the draft of 2026-10-19 folded the chat,
+ * the diagram and the two install cards into those two blocks). The commands are
+ * `HomeInstall.astro` and the slider is `HomeSlider.astro`; both are placed by the page, so a
  * page can put them where its own shape wants them.
  *
  * **The one line the hero writes itself.** The headline and the promise are documents' lines;
@@ -75,12 +72,11 @@ const tagline = site.tagline
 // `website/test/layout.mjs` holds the head to the same one.
 const LEAD = site.subline
 
-// The prompt line: the request `src/lib/agent-request.mjs` holds, which is also the chat's
-// first turn below. Read from that module rather than typed here, because the hero's line and
-// the chat's first turn are one sentence, and the module is where the line is held to the
-// changes spec it is quoted from (the owner's feedback of 2026-10-19; changes spec item
-// 3; Global Constraint 6). `data-source` names that document, and
-// `website/test/home.mjs` reads the attribute and holds the line to it from outside the build.
+// The prompt line: the request `src/lib/agent-request.mjs` holds. Read from that module
+// rather than typed here, because the module is where the line is held to the changes spec it
+// is quoted from (the owner's feedback of 2026-10-19; changes spec item 3; Global Constraint
+// 6). `data-source` names that document, and `website/test/home.mjs` reads the attribute and
+// holds the line to it from outside the build.
 const PROMPT = REQUEST
 
 // The video slot's flag. Read from site.yaml rather than assumed, so the day the video
@@ -98,11 +94,11 @@ const consoleExists = facts.features.consoleDownloads
   <h1 class="hero-tagline" id="hero-tagline">{tagline}</h1>
 
   {/* The prompt line (the owner's feedback of 2026-10-19): the one thing a reader does
-      with Fugaro, in the words they say it in. It is the request the chat's first turn speaks,
-      drawn as the chat's own bubble — a reader who scrolls on meets the same line inside the
-      conversation — and the `>` in front of it is the prompt mark, `aria-hidden` because a
-      screen reader reads the sentence rather than the mark: what the line is for is that it is
-      something a reader types, and that is the one thing a mark adds nothing to. */}
+      with Fugaro, in the words they say it in. It is the line a reader types, drawn as the
+      box a reader would type it into, and the `>` in front of it is the prompt mark,
+      `aria-hidden` because a screen reader reads the sentence rather than the mark: what the
+      line is for is that it is something a reader types, and that is the one thing a mark
+      adds nothing to. */}
   <p class="hero-prompt" data-source={REQUEST_SOURCE}>
     <span class="hero-prompt-mark" aria-hidden="true">&gt;</span>
     {PROMPT}
@@ -186,10 +182,10 @@ const consoleExists = facts.features.consoleDownloads
     color: var(--text);
   }
 
-  /* The prompt line (the owner's feedback of 2026-10-19). It is drawn as the chat's own
-     bubble — a bordered box on the ground, the radius and the border `.turn-body` in
-     `AgentChat.astro` gives a turn — so the line a reader meets here is visibly the line the
-     figure below shows them typing. `align-self: flex-start` is what makes it a message
+  /* The prompt line (the owner's feedback of 2026-10-19). It is drawn as a box a reader
+     types into — a bordered box on the ground, the border, radius and ground `.watch-block`
+     in `HomeSlider.astro` gives a command — so the line reads as something a reader says
+     rather than as a sentence about the product. `align-self: flex-start` is what makes it a message
      rather than a band across the column: the hero is a column of blocks and a flex item
      stretches by default, and a bubble that spanned the measure would read as a panel. The
      line is the site's largest sentence under the headline (`--font-size-xl`, 24px, between
@@ -214,8 +210,8 @@ const consoleExists = facts.features.consoleDownloads
 
   /* The prompt mark, and the only mono type in the hero: what says the line above is something
      a reader types rather than a sentence about the product. `--accent-on-dark` on `--ground`
-     is the pair `a11y.mjs` computes at 4.5:1, the same tone the chat marks the agent's name
-     with — the accent where the work leaves the reader's hands, here where it starts. */
+     is the pair `a11y.mjs` computes at 4.5:1 — the accent where the work leaves the reader's
+     hands, here where it starts. */
   .hero-prompt-mark {
     flex: none;
     font-family: var(--font-mono);

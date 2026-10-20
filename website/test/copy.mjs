@@ -8,10 +8,11 @@
 // script to be able to drive it:
 //
 //   - **Every command carries exactly one control.** A command is a `<pre>` (an install
-//     block, a code block of the rendered CLI reference, the hero's `fugaro watch` snippet)
+//     block, a code block of the rendered CLI reference, the slider's `fugaro watch` snippet)
 //     or a `code.usage` (the caps guide's usage lines, which are commands but not `<pre>`).
-//     A line the reader did not type — the agent's launch in the hero's chat — is not a
-//     command block at all and carries none (changes spec of 2026-10-18, item 3).
+//     A line that is not a command a reader runs — the hero's prompt line is the one on the
+//     homepage — is not a command block at all and carries none (changes spec of
+//     2026-10-18, item 3).
 //   - **The control is in the markup, `hidden`, and the command is too.** This is D183's
 //     "no broken control": the control is emitted hidden and the script reveals it, so a
 //     reader whose browser runs no script — or whose browser has no clipboard to write to —

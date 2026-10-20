@@ -1086,19 +1086,22 @@ five of the documents the site renders sit elsewhere in the repository, and the 
 them there.
 
 - **The changes spec**, `docs/website/redesign/changes-spec-2026-10-18.md` — the reader's
-  own request in the hero's chat is item 3's example of one, quoted from the ruling that
-  asked for the chat (`src/components/AgentChat.astro`).
-- **The two skills the agent reads**, `plugin/skills/parallelism/SKILL.md` and
-  `plugin/skills/working/SKILL.md` — the agent's two answers in that chat, and the line about
-  what the watch screen shows. The launch status line is *not* one of them: it is the
-  illustration's own label, and the build refuses it if it turns out to be a sentence of the
-  skill its turn cites (`AgentChat.astro`). Item 3's acceptance is that the
-  agent's lines "show the real shape of the skills' behaviour", and every line a turn of the
+  own request in the hero's prompt line is item 3's example of one, quoted from the ruling
+  that asked for it (`src/components/Hero.astro`, through `src/lib/agent-request.mjs`, which
+  is where the line is held to that document at build time).
+- **The skill the reader's screen is described by**, `plugin/skills/working/SKILL.md` — the
+  line about what the watch screen shows, under the command in the slider's "See it" panel.
+  The two answers the chat's illustration spoke, and the launch status line it printed, left
+  the site with `AgentChat.astro` when the owner's approved draft of 2026-10-19 ("Home, draft
+  2 (slider)") folded the chat into the slider: the status line was the illustration's own
+  label rather than a document's line, and the build refused it if it turned out to be a
+  sentence of the skill its turn cited. Item 3's acceptance is that the
+  agent's lines "show the real shape of the skills' behaviour", and every line the
   illustration *speaks* is a line of the document it cites, so the build reads those files and
   stops, naming the file, when a line is not in one of them. (The three `Pull request n of 3`
-  labels are the illustration's own rather than a document's lines — a run that has not
-  happened has no numbers to quote — and the caption labels the figure an illustration rather
-  than claiming its lines are quotations.) **This is why a test build's copy of the
+  labels were the illustration's own rather than a document's lines — a run that has not
+  happened has no numbers to quote — and the caption labelled the figure an illustration
+  rather than claiming its lines are quotations.) **This is why a test build's copy of the
   repository carries `plugin/skills/`**: `test/lib/build.mjs` and the five test files that
   stage their own copy skip only the parts of `plugin/` a build does not read
   (`READ_UNDER_PLUGIN`).

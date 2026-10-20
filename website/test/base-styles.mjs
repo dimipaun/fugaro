@@ -1574,8 +1574,8 @@ const PHONE = 360
  * grid with more than one track and anything written with a `repeat(…)` are each a run laid
  * out across the page.
  *
- * **Every `repeat` is refused, counted or not** — the same reading the chat's own one-column
- * case takes (`chatConversationFailures`). Two of them cannot be counted at all: an
+ * **Every `repeat` is refused, counted or not** — the same reading the run's own one-column
+ * case takes (`runLayoutAt`). Two of them cannot be counted at all: an
  * `auto-fit`/`auto-fill` repeat fits as many tracks as the width allows, which is a fact about
  * the viewport rather than about the declaration. And a definite one hides its tracks in
  * parentheses that `splitTop` deliberately does not split — `repeat(5, 1fr)` is the five steps
@@ -2206,7 +2206,7 @@ test('the rhythm reading refuses a block whose rule cannot reach it', () => {
  * Every way the `fugaro watch` slot breaks the two rules that make it a slot rather than a
  * placeholder. It is empty until a later task adds the screenshot — that is item 3's own
  * arrangement and PR #622's image — and the review of round 3 found the cost of getting it
- * wrong: about 140 px of blank page between the chat and the command bar under it. So:
+ * wrong: about 140 px of blank page between the figure and the command bar under it. So:
  *
  *   - **nothing draws a box around an empty slot.** `:empty { display: none }` is what takes
  *     it out of the page while it holds nothing, and any rule that gives the slot itself a
@@ -3138,7 +3138,7 @@ export function sideBySideCopyBlocks(css, html, width = 80 * 16) {
  * same thing from the other end and is let through.
  *
  * The review of round 3 (item 3c) is why this is one rule and not two: the install cards used
- * to put the control in a row *above* their command while the chat's watch bar put it beside
+ * to put the control in a row *above* their command while the watch bar put it beside
  * one, and two placements for one control read as two different components. So the blocks
  * this returns are now every command block on the page, and a block that stops sharing the
  * row is a second placement the case below fails on rather than a shape this rule ignores.
@@ -3250,7 +3250,7 @@ export function installCommandFailures(css) {
   const out = []
   // Every rule that styles a command block's own `<pre>`, **wherever the block is**. The
   // homepage's install commands carry a class of their own, and every other command block on the
-  // site — Getting Started's install cards, the chat's watch command — is reached by
+  // site — Getting Started's install cards, the slider's watch command — is reached by
   // `base.css`'s `.command-block > pre`. Reading only the homepage's class left the site's other
   // install commands held by nothing, which is where this rule's own defect then reappeared: the
   // `pre` gives up the width of the copy control beside it, so the page whose whole job is the

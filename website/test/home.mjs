@@ -1,5 +1,6 @@
-// website/test/home.mjs — the hero, the chat, the flow and the run detail (website plan,
-// Task W1.4; website changes spec of 2026-10-18, items 2, 3 and 4).
+// website/test/home.mjs — the hero, the benefits, the slider and the run detail (website plan,
+// Task W1.4; website changes spec of 2026-10-18, items 2, 3 and 4; the owner's approved draft
+// "Home, draft 2 (slider)", 2026-10-19).
 //
 // The two pages this task writes are the first pages the site has, and they are the pages
 // where a marketing site is most likely to say something the product cannot back. So every
@@ -13,24 +14,19 @@
 //      be a sentence of README.md, and its install commands have to be the commands
 //      `website/data/install.yaml` carries for the paths it renders — never typed into the
 //      component (Global Constraint 6, W1.4 step 1).
-//   3. **The chat is the workflow, and every line its turns speak is a document's own**
-//      (changes spec item 3). The request is the spec's example and the agent's two lines are
-//      the `parallelism` and `working` skills' own sentences — read from those files rather
-//      than imagined, since a chat is where a page invents what a product says. Two things on
-//      the figure are not quotations, and they are held as what they are instead: the three
-//      `Pull request n of 3` labels, the illustration's own labels for work a run would
-//      report, and the status line under the agent's answer, the illustration's own label for
-//      the launch (`Fugaro: launching 3 jobs`), which no skill prints — the launch is what the
-//      agent did, and the line the reader is shown is the picture's, not a sentence quoted
-//      from `plugin/skills/parallelism/SKILL.md`. That is why the caption may not call the
-//      figure's lines quotations, and why the case below refuses a status line that *is* a
-//      sentence of the document its turn cites. The hero offers one command to
-//      copy besides the install paths, `fugaro watch`, and the old `fugaro run` example is
-//      asserted gone; the slot for the screenshot a separate task adds is asserted to be
-//      marked, and **the owner's real capture is asserted to be in it** (owner spec of
-//      2026-10-18, item 5; PR #622) — the slot's own hook, a non-empty `alt`, the capture's
-//      declared dimensions and a same-origin path, so the page carries the wordmark and the
-//      working terminal and nothing else.
+//   3. **The prompt line is the request, quoted from the document it cites** (changes spec item
+//      3; the owner's feedback of 2026-10-19). The request is the spec's own example, read from
+//      `src/lib/agent-request.mjs` and held back to the document the page names in
+//      `data-source`, rather than imagined — the page shows the reader a line that document
+//      writes. The chat the same item asked for left the site with `AgentChat.astro` when the
+//      owner's approved draft of 2026-10-19 ("Home, draft 2 (slider)") folded it into the
+//      slider's first panel, so what this file holds to the repository instead is the run the
+//      reader is shown: the watch block, which is the one command the page offers to copy
+//      besides the install command (`fugaro watch`, with the old `fugaro run` example asserted
+//      gone), and the slot for the screenshot, which is asserted to be marked and to hold
+//      **the owner's real capture** (owner spec of 2026-10-18, item 5; PR #622) — the slot's
+//      own hook, a non-empty `alt`, the capture's declared dimensions and a same-origin path,
+//      so the page carries the wordmark and the working terminal and nothing else.
 //   4. **The flow carries the changes spec's four steps, in order**, one short line each,
 //      from one component on both pages: the names, and the caption of each step, are read
 //      out of the spec's own item 4 and of the section of a document of this repository the
