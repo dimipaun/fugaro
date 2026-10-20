@@ -26,9 +26,12 @@
 //     nowhere else, and the client is built with the Google SDK's logger
 //     discarded (discardLogger), so a body full of account names cannot reach
 //     stderr when GOOGLE_SDK_GO_LOGGING_LEVEL is set.
-//   - The operator's own Application Default Credentials: no service account,
-//     no impersonated identity, no token of this package's own, and no way for
-//     a caller to hand it another one.
+//   - The operator's own Application Default Credentials. The one caller
+//     (W4.3) passes the zero Credentials; the struct's Endpoint and HTTPClient
+//     fields are the same test seam the sibling constructors carry (see
+//     internal/infra/projectcreate.go's NewProjectClients), there so a test
+//     can point the call at a fake. Nothing in this package builds an identity
+//     of its own: no service account, no impersonation, no token.
 //
 // Everywhere else the rule stands: no other command lists a caller's billing
 // accounts, and none of them prints the account a project is already linked
@@ -183,7 +186,13 @@ func newService(ctx context.Context, creds Credentials) (*cloudbilling.APIServic
 // missing or expired are not a missing permission, and the API's own message
 // says which.
 func listErr(err error) error {
-	if quota, ok := quotaProjectIfDisabled(err); ok {
+	if off, quota := serviceDisabled(err); off {
+		if quota == "" {
+			// An API is off, but not one this package can print an enable line
+			// for — another API's answer, or one naming no quota project. It is
+			// not a missing permission, so it stays as it came.
+			return fmt.Errorf("listing billing accounts: %w", err)
+		}
 		return &ErrDisabled{
 			QuotaProject:  quota,
 			EnableCommand: "gcloud services enable " + serviceCloudBilling + " --project " + shellword.Quote(quota),
@@ -196,14 +205,15 @@ func listErr(err error) error {
 	return fmt.Errorf("listing billing accounts: %w", err)
 }
 
-// quotaProjectIfDisabled reports the quota project the Cloud Billing API is
-// disabled on, read from err's structured detail exactly as
+// serviceDisabled reports whether err is an API being off rather than a caller
+// being refused, and the quota project the answer names it on — "" when it
+// names none, or names another API. It reads the structured detail exactly as
 // internal/preflight/google.go's check of the same API reads it (mirrored, not
 // reused, to keep each package's Google surface to the one client it needs).
-func quotaProjectIfDisabled(err error) (string, bool) {
+func serviceDisabled(err error) (off bool, quota string) {
 	var ae *googleapi.Error
 	if !errors.As(err, &ae) || ae.Code != http.StatusForbidden {
-		return "", false
+		return false, ""
 	}
 	for _, d := range ae.Details {
 		m, ok := d.(map[string]any)
@@ -211,9 +221,11 @@ func quotaProjectIfDisabled(err error) (string, bool) {
 			continue
 		}
 		md, _ := m["metadata"].(map[string]any)
-		if consumer, _ := md["consumer"].(string); md["service"] == serviceCloudBilling && consumer != "" {
-			return strings.TrimPrefix(consumer, "projects/"), true
+		if md["service"] != serviceCloudBilling {
+			return true, ""
 		}
+		consumer, _ := md["consumer"].(string)
+		return true, strings.TrimPrefix(consumer, "projects/")
 	}
-	return "", false
+	return false, ""
 }

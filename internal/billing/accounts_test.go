@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strconv"
 	"strings"
@@ -117,10 +118,73 @@ func TestListRefusedWithoutThePermission(t *testing.T) {
 	}
 }
 
-// TestListIsNeverRetriedIntoASecondCall pins the shape of the walk: a refusal
-// is told once and never re-asked, and an answer that fits one page is one
-// call. A retry loop, or a second credential tried after the first is refused,
-// fails here.
+// TestListLeavesADisabledAPINamingNoProjectUntyped pins that "an API is off"
+// is never answered with the missing-permission error. A SERVICE_DISABLED
+// answer that names no quota project gives this package nothing to print an
+// enable line for, so it stays as it came rather than sending the operator
+// after roles/billing.viewer.
+func TestListLeavesADisabledAPINamingNoProjectUntyped(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	f.RefusePath("/v1/billingAccounts", http.StatusForbidden, "PERMISSION_DENIED", "SERVICE_DISABLED", "the API is disabled")
+
+	_, err := List(context.Background(), fakeCreds(f))
+	if err == nil {
+		t.Fatal("a refused list returned no error")
+	}
+	var d *ErrDisabled
+	var p *ErrNoPermission
+	if errors.As(err, &d) || errors.As(err, &p) {
+		t.Errorf("a disabled API naming no project is neither a named disable nor a missing permission: %v", err)
+	}
+	if !strings.Contains(err.Error(), "listing billing accounts") {
+		t.Errorf("the error does not say what failed: %v", err)
+	}
+}
+
+// TestListLeavesAnotherAPIsDisabledAnswerUntyped pins the other half of the
+// same reading: a SERVICE_DISABLED answer naming a *different* API is not this
+// package's API being off, so it is not an ErrDisabled either — the quota
+// project in it belongs to that API's enable line, not Cloud Billing's.
+func TestListLeavesAnotherAPIsDisabledAnswerUntyped(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	su := gcpfake.NewServiceUsage(t)
+	su.Disable("firestore.googleapis.com", f.Server)
+
+	_, err := List(context.Background(), fakeCreds(f))
+	if err == nil {
+		t.Fatal("a refused list returned no error")
+	}
+	var d *ErrDisabled
+	if errors.As(err, &d) {
+		t.Errorf("another API's disabled answer became ErrDisabled with %q", d.QuotaProject)
+	}
+}
+
+// TestListSkipsAnEntryItCannotRead pins that a malformed answer is skipped
+// rather than a panic: the API's own shape is not this package's to assume.
+func TestListSkipsAnEntryItCannotRead(t *testing.T) {
+	id := accountID(t, "one")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"billingAccounts":[null,{"name":"billingAccounts/` + id + `","displayName":"the operator's own account","open":true}]}`))
+	}))
+	defer srv.Close()
+
+	got, err := List(context.Background(), Credentials{Endpoint: srv.URL, NoAuth: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != id {
+		t.Errorf("the list: %+v, want only %s", got, id)
+	}
+}
+
+// TestListIsNeverRetriedIntoASecondCall pins the shape of the walk: one call
+// per page and not one more, and no failure answered by asking again — not a
+// refusal, and not a transient one either. A retry loop, or a second
+// credential tried after the first is refused, fails here. (Following
+// nextPageToken is a walk of pages, not a retry: TestListFollowsEveryPage
+// covers it.)
 func TestListIsNeverRetriedIntoASecondCall(t *testing.T) {
 	refused := gcpfake.NewBilling(t)
 	refuseAccounts(refused)
@@ -138,6 +202,27 @@ func TestListIsNeverRetriedIntoASecondCall(t *testing.T) {
 	}
 	if n := len(one.Requests()); n != 1 {
 		t.Errorf("a one-page list made %d calls, want 1: %+v", n, one.Requests())
+	}
+
+	// The codes a retrying client would re-ask: the generated client sends
+	// through gensupport.SendRequest, which carries no retry config, so each
+	// of these is one call and one error. A client that started retrying —
+	// here or in the SDK — makes a second call and fails this.
+	for _, c := range []struct {
+		code   int
+		status string
+	}{
+		{http.StatusInternalServerError, "INTERNAL"},
+		{http.StatusTooManyRequests, "RESOURCE_EXHAUSTED"},
+	} {
+		f := gcpfake.NewBilling(t)
+		f.RefusePath("/v1/billingAccounts", c.code, c.status, "", c.status)
+		if _, err := List(context.Background(), fakeCreds(f)); err == nil {
+			t.Fatalf("a %d list returned no error", c.code)
+		}
+		if n := len(f.Requests()); n != 1 {
+			t.Errorf("a %d list made %d calls, want 1: %+v", c.code, n, f.Requests())
+		}
 	}
 }
 
