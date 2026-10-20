@@ -5739,3 +5739,72 @@ echo "Check 89 ready: $TAG at $SHA — $APP"
 - The builds are on your Expo account (and inside the internal tracks). TestFlight builds expire on Apple's own schedule; a Play internal-testing release can be halted or its rollout stopped from the console if you want the internal link dead.
 - **Nothing public was created, so there is no public release to withdraw** — that is C8's point, and if step 3's negative ever fails, the restore is the halt named there, recorded with what was exposed and for how long.
 - The signing credentials are yours and stay where they were (EAS's servers or your machine). No step here creates, rotates, exports or deletes one, and none is ever pasted.
+
+## Check 111: the billing picker's failure modes — nothing listed, nothing enabled (installation `fugaro`, throwaway projects only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** This check is new (setup-wizard plan Task W0.3 writes it, Task W6.2 runs it), and number **111** is the first free number above every claim the register above records — 110 is claimed by an open pull request, and a claim is settled at its merge. Its subject is the other half of the billing picker: **Check 27 step 3 is the picker's success path against a real account, and this is what it does when it cannot list one.** Nothing here is a claim that any of it works: the picker ran against fakes only (`internal/gcpfake/billing.go`, W4.2's injected `gcloud` runner, pty tests), and no live run has ever shown an account list, a refusal or a guided line.
+
+**What it settles (D3 and D6, plan Tasks W4.1–W4.5).** The picker lists the owner's **open** billing accounts by number, at a real terminal only, and **prefers the Cloud Billing API with `gcloud billing accounts list` as a fallback** — it says which one answered, and it is never allowed to list anything at all when `canType()` is false (a real terminal, not `--non-interactive`, not `--json`, not a coding agent's session). Every failure mode below must therefore end in the **same three places**, and each mode asserts all three:
+
+1. the **guided line** — `gcloud billing projects link <project> --billing-account=BILLING_ACCOUNT_ID`, the line `internal/cli/init_project.go`'s `guided()` prints today — reaches the owner, together with how to find the account's ID (the console, or `gcloud billing accounts list`);
+2. **nothing was enabled**: no API was turned on in any project, and the only way this check may ever enable one is mode 1(a)'s typed offer, which is **declined** here;
+3. **no account list appears in any output** — not on stdout, not on stderr, not in `--json`'s document: no display name, no numbered list, no `billingAccounts/<id>`.
+
+**Rules.** Use the installation **named `fugaro`** (`N`) on your **throwaway** project (`P` — the one Check 27 created, or a fresh one), and, for mode 1(b), a **second** throwaway project of yours whose Cloud Billing API is **off** (`Q`, which you make the ADC quota project). Never `belong` (the installation on `edge-devel-dimi`), `fugaro-dev` or `edge-devel-dimi` itself. Run every command in your own terminal, with a **release build** of `fugaro` that carries the picker — **0.10.0 or later** — and record `fugaro version`, the date and the OS first. **No agent runs any step of this check** — and one of its five modes *is* an agent session, so mode 5 must be run by you, in a session you deliberately mark, never by handing the step to an agent. **Nothing below creates a project, links an account, enables an API or writes a config**: every step is a refusal, so the check costs nothing.
+
+⚠ **Set these, and pass the hard stops, by running ONE block — and re-run that whole block at the start of every mode.** The project ids and the installation's name are **hard-coded in the block, never read from `gcloud`**, and every `gcloud` command below carries `--project="${VAR:?}"`.
+
+```bash
+# === Check 111: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# mode (1a, 1b, 2, 3, 4, 5). ===
+P=fugaro-live-20261020   # YOUR throwaway project (Check 27's, or a fresh one): HARD-CODED
+N=fugaro                 # the installation's NAME: hard-coded, and asserted below
+Q=                       # a SECOND throwaway project of yours, Cloud Billing API OFF, for mode 1(b)
+C=$(mktemp -d)           # this check's own config root: the machine's own installations are never read or written
+export XDG_CONFIG_HOME="$C"
+
+case "$P" in
+  ""|belong|fugaro-dev|edge-devel-dimi|fugaro-belong)
+    echo "Check 111 stopped: P=$P is empty or names a project this check never touches (belong on edge-devel-dimi, fugaro-dev). Set P to your own throwaway project." >&2; exit 1;;
+esac
+[ "$N" = fugaro ] || { echo "Check 111 stopped: this check runs on the installation named fugaro (N=$N)" >&2; exit 1; }
+[ "$XDG_CONFIG_HOME" = "$C" ] || { echo "Check 111 stopped: re-run the whole block (the config root is not this check's own temp dir)" >&2; exit 1; }
+```
+
+**Mode 1(b) needs `Q` and nothing else does.** It is the only step that changes anything outside your shell — `gcloud auth application-default set-quota-project "$Q"` points **your own ADC** at the second throwaway project — so run it last, and put the quota project back when it is done (`gcloud auth application-default set-quota-project <your usual quota project>`), which is also the Restore's first line.
+
+**The five modes.**
+
+1. **The Cloud Billing API is disabled on the quota project** — and **D3 splits this in two**, which is why it is two sub-modes rather than one. Both are reached by disabling the API on the project concerned (`gcloud services disable cloudbilling.googleapis.com --project=<project> --force` — a *throwaway* project only, never one you need) and running `fugaro setup --name "$N" --region us-east5 --budget-mode observe` at a real terminal.
+   **(a) The quota project IS the project being set up.** The wizard **may offer to enable** `cloudbilling.googleapis.com`, naming the project and the API, behind a **typed** confirmation that `--yes` never covers (D3, D12 — and note this is the one place in the whole wizard where enabling an API is offered at all). **Decline it**, and record: the offer's exact text; that `--yes` alone did not take it (rerun with `--yes` at a terminal and record that the typed banner still comes); and then the three assertions — the guided line, `gcloud services list --enabled --project="${P:?}" --filter='config.name:cloudbilling.googleapis.com'` printing **nothing**, and no account list anywhere. **FACT:** the offer, the decline, and that the API is still disabled after it.
+   **(b) The quota project is ANOTHER project.** `gcloud auth application-default set-quota-project "$Q"`, then run the same `fugaro setup`. Expect a **refusal** — not an offer — that names the exact `gcloud services enable cloudbilling.googleapis.com --project "$Q"` line **and who to ask**, and that enables nothing anywhere. **FACT:** the exact line, the project it names, whether it names a person or a role to ask, that `Q`'s API is still disabled, that `P`'s API is still disabled, and that no account list appeared.
+2. **A user without `billing.accounts.list`.** With the API enabled but the caller lacking the permission (a second Google account without a billing role on the organization is the reliable way; a role removed by hand is the other), the API answers 403. The picker must **fall back to `gcloud billing accounts list`** — and say so — or, when that answers nothing either, print the guided line: what it must **not** do is crash, print a raw API error as its only output, or claim an account exists. **FACT:** the exact message, **which source answered** (the API, gcloud, or neither), and the three assertions. This is also the mode that shows the two sources can disagree: record whether the fallback listed anything the API's own answer would not have.
+3. **No TTY.** `fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe < /dev/null` (a pipe or a redirected stdin is the same case), and `--non-interactive` with it. The picker **never runs**: no list, no prompt, no hang waiting for input. **FACT:** the exit code, the guided line, and the three assertions. A run that blocks, or that prints a numbered list it cannot be answered, is a failure of this mode.
+4. **`--json`.** The same command with `--json`, its stdout kept apart from its stderr (`> /tmp/chk111.json 2> /tmp/chk111.err`). The picker never runs, and **no account list is in the document**: `jq -e '[.. | strings | select(test("billingAccounts/|billing accounts"))] | length == 0' /tmp/chk111.json` must be true, and the numbered-list grep below must find nothing. **FACT:** the exit code, the document's own account of the billing stage, the guided line on stderr, and the three assertions.
+5. **An agent session.** The environment marker a coding agent sets (`CLAUDECODE` and the like) is what `Options.Agent` reads: with it set, nothing is applied at all, `--yes` or not, and every applying stage is *needs-you* ("run this in your own terminal window"). Run the same command **with the marker set by hand in your own shell** — never by asking an agent to run it — and expect the picker not to run, the guided line, and the three assertions. **FACT:** the marker you set, the exact wording of the *needs-you* line, the exit code, and the three assertions.
+
+The assertion block, run at every mode (it reads, and writes nothing):
+
+```bash
+# 1. the guided line reached you: the command above printed it. Paste it.
+# 2. nothing was enabled, in either project:
+echo "P cloudbilling: $(gcloud services list --enabled --project="${P:?}" --filter='config.name:cloudbilling.googleapis.com' --format='value(config.name)' | wc -l)"   # must read 0
+#    (and the same line for Q in mode 1(b), which must read 0 too)
+# 3. no account list, anywhere: no numbered picker list on either stream, and
+#    no account identifier in the JSON document.
+grep -cE '^[[:space:]]*[0-9]+[\).]' /tmp/chk111.err /tmp/chk111.json 2>/dev/null   # must read 0 for both
+jq -e '[.. | strings | select(test("billingAccounts/|billing accounts"))] | length == 0' /tmp/chk111.json
+```
+
+**Passes when:** each of the five modes ends in the guided `gcloud billing projects link` line; no API was enabled in any project (mode 1(a)'s typed offer was declined, and it is the **only** mode in which an offer may appear at all — mode 1(b) must refuse instead); no numbered account list, display name or account id appears on stdout, on stderr or in `--json`'s document; mode 3 and mode 4 do not block waiting for input; and mode 5's run applies nothing, `--yes` or not.
+
+**Fails when:** any mode prints a list of accounts; any mode enables an API without a typed answer, or mode 1(b) offers to enable instead of refusing and naming who to ask; a mode crashes, or prints a raw API error as its only output, where the guided line belongs; mode 3 or 4 waits for input, or prints a numbered list it cannot be answered; mode 5 applies anything; or a mode writes an account id into a config file. **What failing looks like:** a picker that lists accounts under `--json` (the reversal D6's four conditions exist to keep narrow); an `ErrDisabled` path that runs the enable command itself; a fallback that silently answers with the *project's* own billing info instead of the organization's accounts.
+
+**Paste back** (no secret, no token, and **no account id you want private** — a billing account's ID is the one value this check is about, so paste the guided line with the placeholder intact if you would rather): `fugaro version`, the OS and the date; for each of the five modes the result (pass, fail, or not run), the **exact** guided line, the exact refusal or offer text, the exit code, which source answered in mode 2, and the assertion block's two counts; and whether `--yes` ever took mode 1(a)'s offer. Until this check runs, the picker's failure modes are unverified and the row above stays **NOT RUN**.
+
+**Restore.** Nothing is created, so there is almost nothing to undo — which is itself the check's point:
+
+- **Put your ADC quota project back**: `gcloud auth application-default set-quota-project <your usual quota project>` (mode 1(b) is the only step that changed it).
+- **Re-enable the API you disabled** on the throwaway project the mode used: `gcloud services enable cloudbilling.googleapis.com --project=<that project>`. If the mode's project was a fresh throwaway and you are done with it, delete it instead (`gcloud projects delete <that project>`).
+- **Remove this check's temporary config roots** (`$C` among them) and the two files mode 4 wrote (`/tmp/chk111.json`, `/tmp/chk111.err`).
+- **Never touch `belong`, EdgeWeb or EdgeServer**: no step here writes to them, the guard block is what makes that so, and the guided line this check is about names a project you type, never one of theirs.
