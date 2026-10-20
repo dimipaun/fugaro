@@ -1,0 +1,700 @@
+---
+/**
+ * website/src/components/RunDiagram.astro — the run as one diagram (the owner's approved
+ * draft of 2026-10-19, "How it works, draft 2 (diagram)"; approved on 2026-10-19 with
+ * "build it").
+ *
+ * **What it draws.** One picture: four boxes in the run's order and a band under them.
+ *
+ *   your agent ─► Fugaro ─► an ephemeral cloud job ─► a pull request
+ *                            (bootstrap, implement, verify, review with a fix round,
+ *                             writeback)
+ *
+ *   ┌ Spend caps watch the whole run ───────────────────────────────────────────┐
+ *
+ * The How It Works page is this figure and the run in words under it. The homepage keeps
+ * `ArchitectureDiagram.astro`, the four-step flow of the changes spec's item 4, which is a
+ * different drawing of the same run (the ruling is in `website/README.md`).
+ *
+ * **Every label is a line a document of this repository writes.** The box names, the lines
+ * under them, the stage names and the three cap facts are the repository's own words — the
+ * README's `## How it works`, `## Why Fugaro`, `## Getting started` and `## Safety and cost
+ * controls`, `docs/gcp-setup.md`'s budget and checkpoint sentences, the `parallelism` skill
+ * and the changes spec's own example request. This file quotes them and never paraphrases:
+ * each label goes through `comparable()` and the build stops, naming the file, when it is
+ * not in the document it cites (Global Constraint 6). `website/test/how-it-works.mjs` makes
+ * the same check against the built page, so a label that drifts from its document stops the
+ * tests as well as the build.
+ *
+ * **The stage names are the run's own stages.** `bootstrap`, `implement`, `verify`,
+ * `review` and `writeback` are the stages `docs/design/v1.md` §4 and
+ * `plugin/skills/working/reference/logs.md` name; `fix` is the loop `docs/design/v1.md`
+ * draws back round into `review`, and the diagram draws it as the arrow the draft asks for.
+ * `website/test/how-it-works.mjs` pins both lists and refuses a stage the page renders that
+ * the repository no longer names, one added, and one dropped.
+ *
+ * **One picture, two viewBoxes, no JavaScript.** The wide drawing is the run read left to
+ * right; the tall one is the same run read top to bottom, one card under the other, for a
+ * phone. Both are in the markup and the stylesheet shows exactly one of them at a time
+ * (`display: none` takes the other out of the accessibility tree as well as off the page):
+ * below 48 rem — the width the site's chrome switches at — the wide drawing's labels would
+ * be a third of the size they are drawn at. Each `<svg>` is `role="img"` with an
+ * `aria-label`, carries a `viewBox` and `width: 100%` so it scales to the column and never
+ * scrolls sideways, and the text list under the figure carries the same facts for a reader
+ * who skips the picture.
+ *
+ * **Every line is drawn in the box it was laid out for.** The drawing is set in the reader's
+ * own sans, and that stack is wider per character on some systems than on others (DejaVu Sans
+ * on most Linux desktops is the widest of them), so each line is measured at a conservative
+ * `CHAR` and broken to the room it has: a long box name or band title wraps rather than
+ * running over the card's border, the loop's arrow is drawn in a lane the stage pills leave
+ * rather than across them, and a line that outgrows its room anyway stops the build naming
+ * itself. `website/test/how-it-works.mjs` measures the built drawing the same way, against the
+ * inset each card declares with `data-pad`.
+ *
+ * **No font, no colour and no motion is load-bearing.** The text is SVG `<text>` in the
+ * body's own font stack, painted from the palette's tokens, and nothing here animates.
+ */
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { REPO_ROOT } from '../content.ts'
+
+/** A string with its markdown markers, its apostrophes and its whitespace removed: how a
+ * label and the document it claims to come from are compared, the reading
+ * `ArchitectureDiagram.astro` uses. A page may set a document's straight apostrophe in the
+ * site's own type, and that is a glyph rather than a word. */
+function comparable(document: string): string {
+  return document.replace(/[`*]/g, '').replace(/[‘’]/g, "'").replace(/\s+/g, '')
+}
+
+function wholeFile(file: string): string {
+  return readFileSync(path.join(REPO_ROOT, file), 'utf8')
+}
+
+/**
+ * One section of a document — `<heading>` at whatever level the document writes it, whether
+ * `## How it works` in the README or `### Run, watch, diagnose` in `docs/gcp-setup.md` — up
+ * to the next heading of the same level or a shallower one, which is where a reader would say
+ * that section ends.
+ */
+function section(file: string, heading: string): string {
+  const text = wholeFile(file)
+  const at = [...text.matchAll(/^(#+) (.+)$/gm)].find((match) => match[2].replace(/`/g, '') === heading)
+  if (!at || at.index === undefined) {
+    throw new Error(
+      `website/src/components/RunDiagram.astro: ${file} carries no "${heading}" section, and a label of the diagram is quoted from it (the owner's draft of 2026-10-19). Either the section was renamed or the label moved.`,
+    )
+  }
+  const level = at[1].length
+  const rest = text.slice(at.index)
+  const next = [...rest.matchAll(/^(#+) /gm)].find((match) => match.index !== undefined && match.index > 0 && match[1].length <= level)
+  return next && next.index !== undefined ? rest.slice(0, next.index) : rest
+}
+
+const SPEC = 'docs/website/redesign/changes-spec-2026-10-18.md'
+const PARALLELISM = 'plugin/skills/parallelism/SKILL.md'
+const README_HOW = 'README.md#How it works'
+const README_WHY = 'README.md#Why Fugaro'
+const README_SAFETY = 'README.md#Safety and cost controls'
+const README_START = 'README.md#Getting started'
+const GCP_BUDGET = 'docs/gcp-setup.md#Turning the model budget on'
+const GCP_RUN = 'docs/gcp-setup.md#Run, watch, diagnose'
+const DESIGN = 'docs/design/v1.md'
+
+const SOURCES: { [name: string]: string } = {
+  [SPEC]: wholeFile(SPEC),
+  [PARALLELISM]: wholeFile(PARALLELISM),
+  [README_HOW]: section('README.md', 'How it works'),
+  [README_WHY]: section('README.md', 'Why Fugaro'),
+  [README_SAFETY]: section('README.md', 'Safety and cost controls'),
+  [README_START]: section('README.md', 'Getting started'),
+  [GCP_BUDGET]: section('docs/gcp-setup.md', 'Turning the model budget on'),
+  [GCP_RUN]: section('docs/gcp-setup.md', 'Run, watch, diagnose'),
+  [DESIGN]: wholeFile(DESIGN),
+}
+
+/** A line of the diagram: its text, and the document the text is a line of. */
+interface Label {
+  text: string
+  source: string
+}
+
+const LABELS = {
+  // The reader's own agent, asking for the work: the changes spec's item 3 example.
+  request: { text: 'Fan out these three bug fixes.', source: SPEC } as Label,
+  // Fugaro's half of the run: one run per piece, the `parallelism` skill's own rule.
+  perPiece: { text: 'One run per piece, each with a self-contained task', source: PARALLELISM } as Label,
+  // The job: whose project it runs in, what it is, and how long it lives.
+  ownProject: { text: 'in your own cloud project', source: README_WHY } as Label,
+  jobKind: { text: 'Cloud Run job per repository workflow', source: README_HOW } as Label,
+  oneExecution: { text: 'one execution per task, then gone', source: README_HOW } as Label,
+  // The pull request: when it opens and in what state, README.md's own step 4.
+  draft: { text: 'a draft opens at the first push (marked not verified)', source: README_HOW } as Label,
+  // The band: the two caps, and that the run spends the reader's own credential.
+  perRunCap: { text: "A run halts when its next call's worst case would pass the cap", source: GCP_BUDGET } as Label,
+  dailyCap: { text: 'runs also share daily caps per repository and project', source: README_SAFETY } as Label,
+  yourCredential: {
+    text: 'There is no Fugaro service in between: it uses your Google Cloud project and your model credentials',
+    source: README_WHY,
+  } as Label,
+  // The page's facts the diagram does not carry, in the page's own words under it.
+  howItStarts: { text: 'the plugin’s working skill launches, watches and diagnoses runs', source: README_START } as Label,
+  checkpoint: {
+    text: 'The draft appears at the run’s first checkpoint push (within about a minute of its first commit), marked not verified',
+    source: GCP_RUN,
+  } as Label,
+  caches: { text: 'Sync to the exact target commit and restore the dependency caches.', source: README_HOW } as Label,
+  whatRemains: { text: 'The run record and the PR remain; the container does not.', source: README_HOW } as Label,
+  boundary: { text: 'The trust boundary is the container, not the process.', source: DESIGN } as Label,
+}
+
+/** Every label the page renders, held to the document it cites: a paraphrase — or a label
+ * that moved to another box — stops the build naming the file rather than reaching a reader
+ * as the repository's own words (Global Constraint 6). */
+function hold(labels: { [name: string]: Label }): void {
+  for (const [name, label] of Object.entries(labels)) {
+    const doc = SOURCES[label.source]
+    if (!doc || !comparable(doc).includes(comparable(label.text))) {
+      throw new Error(
+        `website/src/components/RunDiagram.astro: the ${name} label ${JSON.stringify(label.text)} is not a line of ${label.source}, and every label of the diagram is the repository's own words (Global Constraint 6; the owner's draft of 2026-10-19).`,
+      )
+    }
+  }
+}
+
+hold(LABELS)
+
+/**
+ * The stages of the run, in order, and the loop the draft asks for: `review` sends a `fix`
+ * back round, which is `docs/design/v1.md` §4's own arrow (`[fix ─► review(2)] …`). The
+ * names are the run's stages rather than words written for the page, and
+ * `website/test/how-it-works.mjs` holds them to the two documents that name them.
+ */
+const STAGES = ['bootstrap', 'implement', 'verify', 'review', 'writeback']
+const LOOP = 'fix'
+
+/**
+ * The four boxes, and the band, each with the labels it carries. The list under the figure
+ * is generated from this — same names, same labels, same order — so the words below the
+ * picture cannot say something the picture does not.
+ */
+const BOXES: { name: string; labels: Label[]; stages?: boolean }[] = [
+  { name: 'Your agent', labels: [LABELS.request] },
+  { name: 'Fugaro', labels: [LABELS.perPiece] },
+  { name: 'Ephemeral cloud job', labels: [LABELS.ownProject, LABELS.jobKind, LABELS.oneExecution], stages: true },
+  { name: 'Pull request', labels: [LABELS.draft] },
+]
+
+const BAND_NAME = 'Spend caps watch the whole run'
+const BAND: Label[] = [LABELS.perRunCap, LABELS.dailyCap, LABELS.yourCredential]
+
+/**
+ * The page's remaining facts, the ones the diagram does not carry: how a run starts, when
+ * the draft appears, what a run syncs before it works, what outlives the container, and
+ * where the boundary of a run is. Each is quoted like every label above.
+ */
+const ALSO: Label[] = [LABELS.howItStarts, LABELS.checkpoint, LABELS.caches, LABELS.whatRemains, LABELS.boundary]
+
+for (const [index, label] of ALSO.entries()) {
+  const doc = SOURCES[label.source]
+  if (!doc || !comparable(doc).includes(comparable(label.text))) {
+    throw new Error(
+      `website/src/components/RunDiagram.astro: line ${index + 1} under the diagram, ${JSON.stringify(label.text)}, is not a line of ${label.source}, and the page's facts are the repository's own words (Global Constraint 6).`,
+    )
+  }
+}
+
+// ---- the drawing ------------------------------------------------------------------------
+//
+// Two layouts of one picture, both generated from the labels above, so the wide drawing and
+// the tall one cannot say different things: `website/test/how-it-works.mjs` reads each of
+// them out of the built page and holds the two to the same words.
+//
+// Geometry is in the viewBox's own units and the type size is an attribute, because that is
+// what a picture is made of; every colour is a class in the stylesheet below, so a colour is
+// a token of the palette rather than a value in the markup.
+
+interface Font {
+  name: number
+  small: number
+  body: number
+  stage: number
+}
+
+const WIDE: Font = { name: 26, small: 16, body: 19, stage: 17 }
+const TALL: Font = { name: 21, small: 14, body: 16, stage: 15 }
+
+/**
+ * Roughly what one character of this diagram's own alphabet takes at a size, and above what
+ * it takes in any font the page can be read in: the labels are set in the reader's own sans
+ * (`--font-sans`), and that stack lands on a wide face on more systems than not — DejaVu Sans
+ * on most Linux desktops is the widest of them, and it is about a tenth wider per character
+ * than Arial or Inter. A line broken to fit this measurement fits in all of them, and a line
+ * drawn to fit its room under it is checked at build time and again on the built page
+ * (`website/test/how-it-works.mjs`).
+ */
+const CHAR = 0.62
+
+/** What a run of text takes at a size, at the estimate above. */
+function textWidth(text: string, size: number): number {
+  return text.length * CHAR * size
+}
+
+/**
+ * A label's lines: the text broken at word boundaries to fit `room` units, and a single word
+ * wider than the room broken inside itself — a name the repository words in one long word
+ * breaks rather than running out of the box, the guard `ArchitectureDiagram.astro`'s
+ * `overflow-wrap: anywhere` is for its step names.
+ */
+function wrap(text: string, room: number, size: number): string[] {
+  const chars = Math.max(3, Math.floor(room / (CHAR * size)))
+  const out: string[] = []
+  let line = ''
+  const push = (word: string) => {
+    while (word.length > chars) {
+      if (line) {
+        out.push(line)
+        line = ''
+      }
+      out.push(word.slice(0, chars))
+      word = word.slice(chars)
+    }
+    if (!word) return
+    if (line && line.length + 1 + word.length > chars) {
+      out.push(line)
+      line = word
+    } else {
+      line = line ? `${line} ${word}` : word
+    }
+  }
+  for (const word of text.split(' ')) push(word)
+  if (line) out.push(line)
+  return out
+}
+
+/**
+ * A line refused at build time when it is drawn wider than the room it was given. The
+ * estimate above is what the drawing is laid out with, so a label that outgrows its box fails
+ * the build naming itself rather than running over the card's edge on a reader's screen.
+ */
+function fits(what: string, row: string, size: number, room: number): void {
+  const width = textWidth(row, size)
+  if (width > room) {
+    throw new Error(
+      `website/src/components/RunDiagram.astro: ${what} is drawn as ${JSON.stringify(row)}, which takes about ${Math.round(width)} units at ${size} and the room it has is ${Math.round(room)}. A label wider than its box runs over the drawing's edge, where a card's border is: shorten the label, or give the box more room (the owner's draft of 2026-10-19).`,
+    )
+  }
+}
+
+/** The escape SVG text needs, and no label of this file carries one of the three. */
+function esc(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/** A `<g>` of text lines, marked with the document the text is a line of. */
+function lines(label: Label, x: number, y: number, size: number, room: number, klass: string): { markup: string; height: number } {
+  const rows = wrap(label.text, room, size)
+  for (const row of rows) fits(`the label ${JSON.stringify(label.text.slice(0, 40))}`, row, size, room)
+  const step = size * 1.35
+  const markup = [
+    `<g class="run-label ${klass}" data-source="${esc(label.source)}">`,
+    ...rows.map((row, i) => `<text class="run-text ${klass}" x="${x.toFixed(1)}" y="${(y + i * step).toFixed(1)}" font-size="${size}">${esc(row)}</text>`),
+    '</g>',
+  ].join('')
+  return { markup, height: rows.length * step }
+}
+
+interface BoxGeometry {
+  w: number
+  pad: number
+  f: Font
+  stageRow: number
+}
+
+/**
+ * One box's contents, from its top-left corner: the number and the name, the labels under
+ * them, and — the job's — the run's stages with the `fix` loop drawn beside them. It returns
+ * the words and the height they take, and the caller draws the card around them, so the four
+ * cards of a row can be one height while their contents are packed from the top.
+ */
+function boxContents(b: { name: string; labels: Label[]; stages?: boolean }, index: number, geo: BoxGeometry): { markup: string; height: number } {
+  const { w, pad, f, stageRow } = geo
+  const inner = w - pad * 2
+  const parts: string[] = []
+  let cy = pad + f.name * 0.8
+  parts.push(`<text class="run-number" x="${pad.toFixed(1)}" y="${cy.toFixed(1)}" font-size="${(f.name * 0.8).toFixed(1)}">${index + 1}</text>`)
+
+  // The name, in the room the number leaves rather than at whatever width it takes: a name is
+  // a heading and the widest word of this diagram's own is wider than its card in a system
+  // font, so it is broken like a label instead of running over the card's edge.
+  const nameX = pad + f.name * 1.1
+  const nameRoom = w - pad - nameX
+  const nameRows = wrap(b.name, nameRoom, f.name)
+  for (const row of nameRows) fits(`the box named ${JSON.stringify(b.name)}`, row, f.name, nameRoom)
+  nameRows.forEach((row, rowIndex) => {
+    parts.push(
+      `<text class="run-name" x="${nameX.toFixed(1)}" y="${(cy + rowIndex * f.name * 1.15).toFixed(1)}" font-size="${f.name}">${esc(row)}</text>`,
+    )
+  })
+  cy += f.name * 0.5 + (nameRows.length - 1) * f.name * 1.15
+
+  const labels = b.labels
+  const smalls = labels.slice(0, labels.length - 1)
+  for (const small of smalls) {
+    cy += f.small * 0.5
+    const drawn = lines(small, pad, cy + f.small, f.small, inner, 'run-small')
+    parts.push(drawn.markup)
+    cy += drawn.height
+  }
+
+  cy += f.body * 0.55
+  const main = lines(labels[labels.length - 1], pad, cy + f.body, f.body, inner, 'run-line')
+  parts.push(main.markup)
+  cy += main.height
+
+  if (b.stages) {
+    cy += f.stage * 0.8
+    // The loop's own lane down the right of the pills: the arrow leaves `review`, runs up
+    // beside the pills and comes back in at `implement`, and the word `fix` is written in the
+    // lane beside the rail. The pills give the lane up rather than the arrow crossing them,
+    // which is what a reader would otherwise see — a line struck through the two stages the
+    // round trip is between.
+    const lane = textWidth(LOOP, f.stage) + 26
+    const pillW = inner - lane
+    const pillRight = pad + pillW
+    for (const [row, stage] of STAGES.entries()) {
+      const rowY = cy + row * stageRow
+      parts.push(`<rect class="run-stage-pill" x="${pad}" y="${rowY.toFixed(1)}" width="${pillW}" height="${(stageRow - 6).toFixed(1)}" rx="8" />`)
+      parts.push(
+        `<text class="run-stage" data-stage="${stage}" x="${(pad + pillW / 2).toFixed(1)}" y="${(rowY + stageRow / 2 + f.stage * 0.35).toFixed(1)}" font-size="${f.stage}" text-anchor="middle">${stage}</text>`,
+      )
+      // Review is where a fix sends the run back round: the arrow leaves the pill's right
+      // edge, runs up the lane beside the pills and lands back on implement's — the loop the
+      // draft draws, and the arrow `docs/design/v1.md` §4 writes as `[fix ─► review(2)] …`.
+      // Nothing of it is drawn over a pill: the whole loop, its head and its word are in the
+      // lane the pills leave, inside the same content box as the labels above them.
+      if (stage === 'review') {
+        const from = rowY + stageRow / 2
+        const to = cy + STAGES.indexOf('implement') * stageRow + stageRow / 2
+        const tip = pillRight + 2
+        const head = tip + 9
+        const rail = head + 7
+        const labelX = rail + 4
+        fits(`the loop's word ${JSON.stringify(LOOP)}`, LOOP, f.stage, pillRight + lane - labelX)
+        parts.push(`<path class="run-loop-line" d="M ${pillRight.toFixed(1)} ${from.toFixed(1)} H ${rail.toFixed(1)} V ${to.toFixed(1)} H ${head.toFixed(1)}" />`)
+        parts.push(`<path class="run-loop-head" d="M ${tip.toFixed(1)} ${(to - 6).toFixed(1)} L ${head.toFixed(1)} ${to.toFixed(1)} L ${tip.toFixed(1)} ${(to + 6).toFixed(1)} Z" />`)
+        parts.push(
+          `<text class="run-text run-loop" x="${labelX.toFixed(1)}" y="${((from + to) / 2 + f.stage * 0.35).toFixed(1)}" font-size="${f.stage}">${LOOP}</text>`,
+        )
+      }
+    }
+    cy += STAGES.length * stageRow - 6
+  }
+
+  return { markup: parts.join(''), height: cy + pad }
+}
+
+/**
+ * The card a box is drawn on, at the height the row settled on. The card carries the inset
+ * its contents are drawn at (`data-pad`), which is the content box every line of the box is
+ * held to — by `fits` above at build time, and by `website/test/how-it-works.mjs` on the
+ * built page, which measures each drawn line against the box this attribute declares.
+ */
+function card(x: number, y: number, w: number, height: number, box: number, contents: string, pad: number): string {
+  return [
+    `<g class="run-box" data-box="${box}">`,
+    `<rect class="run-card" data-pad="${pad}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${height.toFixed(1)}" rx="18" />`,
+    `<g class="run-box-body" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">${contents}</g>`,
+    '</g>',
+  ].join('')
+}
+
+/** The band under the boxes: what watches the whole run. It is drawn across them because
+ * that is the claim — the caps are not a box, they are what the run spends under. */
+function band(x: number, y: number, w: number, f: Font): { markup: string; height: number } {
+  const pad = 16
+  const parts: string[] = []
+  let cy = pad + (f.body + 3) * 0.85
+  // The band's own name, wrapped to the band's width like any other line: on the tall drawing
+  // it is wider than the band it heads, which is the same overflow the box names carry.
+  const titleRoom = w - pad * 2
+  const titleRows = wrap(BAND_NAME, titleRoom, f.body + 3)
+  for (const row of titleRows) fits(`the band named ${JSON.stringify(BAND_NAME)}`, row, f.body + 3, titleRoom)
+  titleRows.forEach((row, rowIndex) => {
+    parts.push(`<text class="run-band-title" x="${pad.toFixed(1)}" y="${(cy + rowIndex * (f.body + 3) * 1.15).toFixed(1)}" font-size="${f.body + 3}">${esc(row)}</text>`)
+  })
+  cy += (f.body + 3) * 0.5 + (titleRows.length - 1) * (f.body + 3) * 1.15
+  for (const label of BAND) {
+    cy += f.small * 0.45
+    const drawn = lines(label, pad, cy + f.small, f.small, w - pad * 2, 'run-cap')
+    parts.push(drawn.markup)
+    cy += drawn.height
+  }
+  const height = cy + pad
+  return {
+    markup: [
+      `<g class="run-band-box">`,
+      `<rect class="run-band" data-pad="${pad}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${height.toFixed(1)}" rx="18" />`,
+      `<g class="run-band-body" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">${parts.join('')}</g>`,
+      '</g>',
+    ].join(''),
+    height,
+  }
+}
+
+/** The arrow between two boxes, drawn in the gap between them. */
+function arrowWide(x1: number, x2: number, y: number): string {
+  return [
+    `<line class="run-arrow-line" x1="${x1.toFixed(1)}" y1="${y.toFixed(1)}" x2="${(x2 - 12).toFixed(1)}" y2="${y.toFixed(1)}" />`,
+    `<path class="run-arrow-head" d="M ${x2.toFixed(1)} ${y.toFixed(1)} L ${(x2 - 15).toFixed(1)} ${(y - 9).toFixed(1)} L ${(x2 - 15).toFixed(1)} ${(y + 9).toFixed(1)} Z" />`,
+  ].join('')
+}
+
+function arrowTall(x: number, y1: number, y2: number): string {
+  return [
+    `<line class="run-arrow-line" x1="${x.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x.toFixed(1)}" y2="${(y2 - 12).toFixed(1)}" />`,
+    `<path class="run-arrow-head" d="M ${x.toFixed(1)} ${y2.toFixed(1)} L ${(x - 9).toFixed(1)} ${(y2 - 15).toFixed(1)} L ${(x + 9).toFixed(1)} ${(y2 - 15).toFixed(1)} Z" />`,
+  ].join('')
+}
+
+/** The wide drawing: the run read left to right, and the band under it. */
+function drawWide(): { viewBox: string; markup: string } {
+  const pad = 16
+  const gap = 32
+  const w = Math.floor((1200 - pad * 2 - gap * 3) / 4)
+  const top = 18
+  const geo: BoxGeometry = { w, pad: 18, f: WIDE, stageRow: 34 }
+  const contents = BOXES.map((b, index) => boxContents(b, index, geo))
+  const height = Math.max(...contents.map((c) => c.height))
+  const markup: string[] = []
+  BOXES.forEach((b, index) => {
+    const x = pad + index * (w + gap)
+    markup.push(card(x, top, w, height, index + 1, contents[index].markup, geo.pad))
+    if (index < BOXES.length - 1) markup.push(arrowWide(x + w, x + w + gap, top + height * 0.42))
+  })
+  const bandY = top + height + 40
+  const strip = band(pad, bandY, 1200 - pad * 2, WIDE)
+  markup.push(strip.markup)
+  return { viewBox: `0 0 1200 ${Math.ceil(bandY + strip.height + 20)}`, markup: markup.join('') }
+}
+
+/** The tall drawing: the same run read top to bottom, at a phone's own scale. */
+function drawTall(): { viewBox: string; markup: string } {
+  const pad = 12
+  const w = 360 - pad * 2
+  const gap = 44
+  const geo: BoxGeometry = { w, pad: 14, f: TALL, stageRow: 28 }
+  const markup: string[] = []
+  let y = 10
+  BOXES.forEach((b, index) => {
+    const one = boxContents(b, index, geo)
+    const h = one.height
+    markup.push(card(pad, y, w, h, index + 1, one.markup, geo.pad))
+    y += h
+    if (index < BOXES.length - 1) {
+      markup.push(arrowTall(360 / 2, y + 8, y + gap))
+      y += gap
+    }
+  })
+  const strip = band(pad, y + 30, w, TALL)
+  markup.push(strip.markup)
+  return { viewBox: `0 0 360 ${Math.ceil(y + 30 + strip.height + 14)}`, markup: markup.join('') }
+}
+
+const WIDE_DRAWING = drawWide()
+const TALL_DRAWING = drawTall()
+
+/** What the picture is, for a reader who cannot see it. */
+const ALT =
+  'How a task becomes a pull request: your agent asks for the work, Fugaro runs one job per piece, and each job is one ephemeral execution in your own cloud project, working through bootstrap, implement, verify, review and writeback, then opening a draft pull request. Spend caps watch the whole run.'
+---
+
+<section class="run-picture" aria-labelledby="run-picture-title">
+  {/* The picture's own heading, and the page's first `h2`: the diagram is the page's opening
+      block, so it is the block the page's first heading belongs to. */}
+  <h2 class="run-picture-title" id="run-picture-title">How a task becomes a pull request</h2>
+  <figure class="run-diagram" data-source={SPEC}>
+    {/* The wide drawing and the tall one are the same picture at two scales, and the
+        stylesheet shows one of them: the other is `display: none`, and `hidden` is what keeps
+        it out of the accessibility tree as well as off the page, so the run is drawn twice and
+        read once. It is not `hidden` above the breakpoint and rendered below it for nothing:
+        the tall drawing is the one a phone shows. */}
+    <svg class="run-svg run-wide" viewBox={WIDE_DRAWING.viewBox} role="img" aria-label={ALT} set:html={WIDE_DRAWING.markup} />
+    <svg class="run-svg run-tall" viewBox={TALL_DRAWING.viewBox} role="img" aria-label={ALT} hidden set:html={TALL_DRAWING.markup} />
+  </figure>
+</section>
+
+<section class="run-words" aria-labelledby="run-words-title">
+  <h2 class="run-words-title" id="run-words-title">The same, in words</h2>
+  <ol class="run-facts">
+    {
+      [...BOXES.map((b) => ({ name: b.name, labels: b.labels })), { name: BAND_NAME, labels: BAND }].map((entry) => (
+        <li class="run-fact">
+          <strong class="run-fact-name">{entry.name}</strong>
+          {entry.labels.map((label) => (
+            <span class="run-fact-text" data-source={label.source}>
+              {label.text}{' '}
+            </span>
+          ))}
+        </li>
+      ))
+    }
+  </ol>
+
+  <h2 class="run-words-title">Also true of a run</h2>
+  <ul class="run-also">
+    {
+      ALSO.map((label) => (
+        <li class="run-also-item" data-source={label.source}>
+          {label.text}
+        </li>
+      ))
+    }
+  </ul>
+</section>
+
+<style>
+  /* The figure and the words under it take the page's column, like every other block here.
+     The drawing is first-party SVG in the markup: nothing is fetched, nothing is a picture
+     file, and no script measures or moves any of it. */
+  .run-diagram {
+    margin: 0;
+  }
+
+  /* The heading over the picture, and the room between it and the drawing: the page's own
+     heading spacing, so the block reads as a block rather than as part of the title. */
+  .run-picture-title {
+    margin-bottom: var(--space-lg);
+  }
+
+  /* The picture scales to the column and never scrolls sideways: the `viewBox` is the
+     drawing's own coordinates and `width: 100%` is what maps them onto the column, so the
+     SVG is a third of its size at a phone's width and full size on a desktop. `height: auto`
+     keeps the drawing's own proportions, which is what makes the two viewBoxes one picture. */
+  .run-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-width: 100%;
+  }
+
+  /* One drawing at a time. Under 48 rem — where the site's chrome switches — the wide
+     drawing's labels would be a third of the size they are drawn at, so the tall viewBox is
+     the one a phone shows; above it, the tall one is not rendered at all. An SVG that is not
+     rendered is not in the accessibility tree either, so a screen reader is told the run
+     once. */
+  .run-tall {
+    display: none;
+  }
+
+  @media (max-width: 47.99rem) {
+    .run-wide {
+      display: none;
+    }
+
+    .run-tall {
+      display: block;
+    }
+  }
+
+  /* Paint: tokens only (W1.2), and the accent is the structure the draft asks for — the
+     arrows, the numbers and the band's rule. The cards are the surface, the names are the
+     page's own text, and the labels under them are the quieter tone. */
+  .run-card {
+    fill: var(--surface);
+    stroke: var(--border);
+    stroke-width: 1.5;
+  }
+
+  .run-band {
+    fill: var(--surface);
+    stroke: var(--accent);
+    stroke-width: 1.5;
+  }
+
+  /* Every text node of the drawing is a line of a picture rather than a word of a sentence,
+     and the stylesheet says so: a class laid out as a block is a boundary a reader sees, which
+     is what `spacing.mjs` reads a page's own stylesheet for. Two labels of the drawing are
+     therefore never read as one glued word, and the wrapped rows of one label are as many
+     lines as the drawing gives them. */
+  .run-name,
+  .run-band-title {
+    display: block;
+    fill: var(--text);
+    font-family: var(--font-sans);
+    font-weight: var(--weight-semibold);
+  }
+
+  .run-text {
+    display: block;
+    font-family: var(--font-sans);
+  }
+
+  .run-number {
+    display: block;
+    fill: var(--accent-on-dark);
+    font-family: var(--font-sans);
+    font-weight: var(--weight-semibold);
+  }
+
+  .run-small,
+  .run-cap {
+    display: block;
+    fill: var(--text-muted);
+  }
+
+  .run-line,
+  .run-stage {
+    display: block;
+    fill: var(--text);
+  }
+
+  .run-stage-pill {
+    fill: var(--ground);
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+
+  .run-loop {
+    display: block;
+    fill: var(--accent-on-dark);
+  }
+
+  .run-arrow-line,
+  .run-loop-line {
+    stroke: var(--accent);
+    stroke-width: 2;
+    fill: none;
+  }
+
+  .run-arrow-head,
+  .run-loop-head {
+    fill: var(--accent);
+  }
+
+  /* The words under the picture: the same facts for a reader who skips the figure, in the
+     run's own order, and then the page's remaining facts. They are the page's lists, so
+     `base.css`'s list and heading defaults apply and nothing here is a picture. */
+  .run-words {
+    margin-top: var(--space-2xl);
+  }
+
+  .run-facts,
+  .run-also {
+    max-width: none;
+  }
+
+  .run-fact,
+  .run-also-item {
+    margin-bottom: var(--space-2xs);
+    color: var(--text-muted);
+  }
+
+  /* The name of the thing a run reaches, then what happens to it: the name is a line of its
+     own above the fact, which is also the boundary the spacing gate reads a page's own
+     stylesheet for — the name and the fact are two lines and never one word. */
+  .run-fact-name {
+    display: block;
+    color: var(--text);
+  }
+</style>
