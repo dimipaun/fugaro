@@ -394,10 +394,11 @@ func crCases(n crNames, maxRes int64, requestedBy string) []crCase {
 	otherRepoLedger := budget.PathRun(n.otherSlug, n.run) + "/byTier"
 	cp := crCredsPaths(n)
 
-	// amount is the one positive counter write the check makes: it is what
-	// proves the repository's day leaf accepts a real amount, and it lives
-	// under the scratch slug. With no maxReserveMicros bound deployed the leaf
-	// accepts only a zero, and the zero is what is written.
+	// amount is what the check's two positive counter writes carry (this
+	// repository's tier-B and tier-C day leaves): they are what proves the
+	// day leaves accept a real amount, and both live under the scratch slug.
+	// With no maxReserveMicros bound deployed the leaves accept only a zero,
+	// and the zero is what is written.
 	amount := int64(1)
 	if maxRes < 1 {
 		amount = 0
@@ -589,6 +590,11 @@ type crIdentity struct {
 	// control, without which "it was refused /creds" is also the answer a
 	// token the rules ignore entirely would give. "" where the identity's only
 	// grant is a write this check does not make (the consumer's is a mailbox).
+	//
+	// It is a path in the deployed document, and a test walks
+	// rules.Generate()'s document to it and asserts the read its family is
+	// read by: a reach the rules do not grant would make the check fail every
+	// time it ran, for a reason that is not the rules.
 	reach string
 }
 
@@ -610,7 +616,10 @@ func crIdentities(n crNames) []crIdentity {
 		{name: "another run of this repository", slug: n.slug, run: n.otherRun},
 		{name: "the phone", uid: phone, claims: map[string]any{"mu": phone}, device: true, reach: "config/caps/global"},
 		{name: "the consumer", uid: consumer, claims: map[string]any{"mc": consumer}},
-		{name: "the pairing session", uid: pairing, claims: map[string]any{"pu": pairing}, reach: "config/pairing/" + budget.Key(pairing) + "/delivery"},
+		// The pairing subtree is at the database's root (pairing/$uid/...), not
+		// under config/: the read its family is granted is the delivery node
+		// there, and it is spelled with the root path the document has.
+		{name: "the pairing session", uid: pairing, claims: map[string]any{"pu": pairing}, reach: "pairing/" + budget.Key(pairing) + "/delivery"},
 	}
 }
 

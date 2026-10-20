@@ -49,8 +49,8 @@
 // all: the reservation a positive by-tier write on the run's *own* ledger
 // would need is a multi-path write into the global `counted` counters, so the
 // check refuses to perform it and writes the zero the leaf accepts (see
-// crCases). The one positive counter write is under the scratch repository's
-// own day node.
+// crCases). The two positive counter writes are under the scratch
+// repository's own day node: its tier-B and its tier-C leaf.
 //
 // It never prints a secret. The custom tokens, the ID tokens, the refresh
 // tokens and the web API key are registered with the FACT recorder as they are
@@ -323,11 +323,13 @@ func TestLiveCredsRules(t *testing.T) {
 		t.Error(err)
 	}
 
-	// 11. The launcher's rb: the entry's children are tied to the launcher that
-	// wrote the entry (RBOK), so the same repository's other run, launched by
-	// another launcher, may write its own entry's children and not this run's.
-	// The accepted writes above are what makes the refusals mean something;
-	// this pair is what makes them mean *this run's*.
+	// 11. The launcher's rb: the entry's children are tied to the launcher the
+	// entry names (RBOK), not to the run. The other launcher's own run writes
+	// its own entry's children; a token of *this* run carrying the other
+	// launcher's rb is refused this run's credential child and then, once it
+	// has named itself in the entry, is allowed it. The accepted writes above
+	// are what makes the refusals mean something; this pair is what makes them
+	// mean *this run's*.
 	if err := crOtherLauncher(t, ctx, facts, target, n, owner, now, users); err != nil {
 		t.Error(err)
 	}
@@ -638,13 +640,26 @@ func crOtherIdentities(t *testing.T, ctx context.Context, facts *crFacts, target
 	return nil
 }
 
-// crOtherLauncher is the RBOK pair: the same repository's other run, minted
-// with another launcher's rb, writes its *own* entry and its own credential
-// child — the positive control — and is refused this run's credential child,
-// which the first launcher's rb ties to itself. Without the positive control
-// the refusal below would be consistent with a database that refuses
-// everything, and the accepted writes above with a database that admits
-// everything.
+// crOtherLauncher is the RBOK pair, and it takes two tokens to be one.
+//
+// The first is the other launcher's own run (n.otherRun, minted with another
+// launcher's rb): it creates that run's registry entry and writes its
+// credential child, which the rules accept. That is the positive control for
+// the other launcher's identity — the rules honour it where it launched.
+//
+// The second is *this* run (n.run), minted with the same other launcher's rb.
+// Its fs and fr are this run's, so RUN admits it at this run's entry and the
+// entry's `.write` is granted: RBOK is the only rule left that can refuse the
+// entry's credential child, and it does, because the entry names the first
+// launcher. The second token then writes the entry's own requestedBy to
+// itself — accepted, since that is exactly what RBOK compares — and the same
+// credential write is then accepted too. The only thing that changed between
+// the refusal and the acceptance is the entry's requestedBy, which is what
+// makes the refusal RBOK's and not RUN's, not the token's, and not the node's.
+//
+// Minting the second token for n.otherRun instead would have made the refusal
+// the entry node's `.write` (RUN: fr == $run), and the FACT line below would
+// have recorded evidence the check never gathered.
 func crOtherLauncher(t *testing.T, ctx context.Context, facts *crFacts, target crTarget, n crNames, owner *rtdb.Client, now time.Time, users *crAuthUsers) error {
 	t.Helper()
 	other := target
@@ -653,7 +668,37 @@ func crOtherLauncher(t *testing.T, ctx context.Context, facts *crFacts, target c
 	if err != nil {
 		return err
 	}
+
+	// The other launcher's own run: its entry, and the entry's credential
+	// child, which RBOK ties to the launcher that wrote the entry — this one.
 	custom, err := crMint(ctx, facts, signer, other, n.slug, n.otherRun, now)
+	if err != nil {
+		return err
+	}
+	ownSess, err := crExchange(ctx, facts, other, custom)
+	if err != nil {
+		return err
+	}
+	users.add(ownSess.UID())
+	ownClient, err := rtdb.New(target.rtdbURL, rtdb.Auth{IDToken: ownSess.Token})
+	if err != nil {
+		return errors.New(facts.errText(err))
+	}
+	own := budget.PathAgent(n.slug, n.otherRun)
+	entry := map[string]any{"repo": n.repo, "auth": "cascade", "startedAt": now.UnixMilli(), "requestedBy": other.requestedBy}
+	if err := ownClient.Patch(ctx, "", map[string]any{own: entry}); err != nil {
+		return fmt.Errorf("the other launcher's identity could not create its own run's registry entry /%s: %s", own, facts.errText(err))
+	}
+	if err := ownClient.Patch(ctx, "", map[string]any{own + "/credential": n.n3}); err != nil {
+		return fmt.Errorf("the other launcher's identity could not write its own entry's credential child /%s/credential: %s", own, facts.errText(err))
+	}
+	if got, found := crRead(t, ctx, facts, owner, own+"/credential"); !found || !crSameJSON(got, n.n3) {
+		return fmt.Errorf("/%s/credential reads %s after the other launcher wrote %s", own, crJSON(got), crJSON(n.n3))
+	}
+
+	// This run, minted with the same other launcher's rb: RUN admits it here,
+	// so what follows is RBOK's answer alone.
+	custom, err = crMint(ctx, facts, signer, other, n.slug, n.run, now)
 	if err != nil {
 		return err
 	}
@@ -662,39 +707,51 @@ func crOtherLauncher(t *testing.T, ctx context.Context, facts *crFacts, target c
 		return err
 	}
 	users.add(sess.UID())
-	run, err := rtdb.New(target.rtdbURL, rtdb.Auth{IDToken: sess.Token})
+	// The token has to be what the argument below rests on: this run's fs and
+	// fr, so RUN admits it here, and the other launcher's rb, so RBOK is what
+	// refuses the child. Minting it for another run (n.otherRun) would make the
+	// refusal the entry node's .write instead, and the FACT line would record
+	// evidence the check never gathered.
+	if c := sess.Claims(); c.Slug != budget.Key(n.slug) || c.Run != budget.Key(n.run) || c.RB != other.requestedBy {
+		return fmt.Errorf("the RBOK pair's second token carries fs=%s fr=%s rb=%s, want fs=%s fr=%s rb=%s: it has to be this run, minted by the other launcher, or RBOK is not the rule the refusal comes from", c.Slug, c.Run, c.RB, budget.Key(n.slug), budget.Key(n.run), other.requestedBy)
+	}
+	second, err := rtdb.New(target.rtdbURL, rtdb.Auth{IDToken: sess.Token})
 	if err != nil {
 		return errors.New(facts.errText(err))
 	}
-
-	// The positive control: its own run's entry, and the entry's credential
-	// child, which RBOK ties to the launcher that wrote the entry — this one.
-	own := budget.PathAgent(n.slug, n.otherRun)
-	entry := map[string]any{"repo": n.repo, "auth": "cascade", "startedAt": now.UnixMilli(), "requestedBy": other.requestedBy}
-	if err := run.Patch(ctx, "", map[string]any{own: entry}); err != nil {
-		return fmt.Errorf("the other launcher's identity could not create its own run's registry entry /%s: %s", own, facts.errText(err))
-	}
-	if err := run.Patch(ctx, "", map[string]any{own + "/credential": n.n3}); err != nil {
-		return fmt.Errorf("the other launcher's identity could not write its own entry's credential child /%s/credential: %s", own, facts.errText(err))
-	}
-	if got, found := crRead(t, ctx, facts, owner, own+"/credential"); !found || !crSameJSON(got, n.n3) {
-		return fmt.Errorf("/%s/credential reads %s after the other launcher wrote %s", own, crJSON(got), crJSON(n.n3))
-	}
-
-	// The refusal: this run's entry's credential child.
 	first := budget.PathAgent(n.slug, n.run)
+
+	// The refusal: this run's credential child, which the first launcher's rb
+	// ties to the first launcher.
 	before, beforeFound := crRead(t, ctx, facts, owner, first+"/credential")
-	err = run.Patch(ctx, "", map[string]any{first + "/credential": n.n2})
+	err = second.Patch(ctx, "", map[string]any{first + "/credential": n.n2})
 	after, afterFound := crRead(t, ctx, facts, owner, first+"/credential")
 	switch {
 	case err == nil:
-		return fmt.Errorf("the same repository's other run, launched by another launcher, wrote /%s/credential: the rules accepted a write RBOK must refuse; it now reads %s", first, crJSON(after))
+		return fmt.Errorf("a token of this run carrying another launcher's rb (%s) wrote /%s/credential: the rules accepted a write RBOK must refuse; it now reads %s", other.requestedBy, first, crJSON(after))
 	case !errors.Is(err, rtdb.ErrPermission):
-		return fmt.Errorf("the other launcher's write: want a permission error, got %s", facts.errText(err))
+		return fmt.Errorf("the other launcher's write to /%s/credential: want a permission error, got %s", first, facts.errText(err))
 	case afterFound != beforeFound || !crSameJSON(after, before):
 		return fmt.Errorf("the other launcher's write was refused but /%s/credential changed from %s to %s", first, crJSON(before), crJSON(after))
 	}
-	facts.fact("the other launcher's identity (uid %s, rb %s) created its own run's entry /%s and its credential child, and was refused this run's /%s/credential: the entry's children are tied to the launcher that wrote the entry", sess.UID(), other.requestedBy, own, first)
+
+	// The same token, the same write, the one thing changed: the entry now
+	// names it. RUN granted the entry's write all along — this is the write
+	// that shows it — and RBOK follows the entry.
+	if err := second.Patch(ctx, "", map[string]any{first + "/requestedBy": other.requestedBy}); err != nil {
+		return fmt.Errorf("a token of this run carrying another launcher's rb could not write the entry's own requestedBy to itself (/ %s/requestedBy), which RUN grants and RBOK admits once the entry names it: %s", first, facts.errText(err))
+	}
+	if got, found := crRead(t, ctx, facts, owner, first+"/requestedBy"); !found || !crSameJSON(got, other.requestedBy) {
+		return fmt.Errorf("/%s/requestedBy reads %s after the other launcher took the entry over", first, crJSON(got))
+	}
+	if err := second.Patch(ctx, "", map[string]any{first + "/credential": n.n2}); err != nil {
+		return fmt.Errorf("the same token that was refused /%s/credential was refused it again after the entry named it: %s — so the first refusal was not RBOK's", first, facts.errText(err))
+	}
+	if got, found := crRead(t, ctx, facts, owner, first+"/credential"); !found || !crSameJSON(got, n.n2) {
+		return fmt.Errorf("/%s/credential reads %s after the entry named the other launcher, want %s", first, crJSON(got), crJSON(n.n2))
+	}
+
+	facts.fact("the other launcher's identity (uid %s, rb %s) created its own run's entry /%s and its credential child; a token of this run carrying the same rb (uid %s) was refused /%s/credential (RBOK: the entry named %s), then wrote the entry's requestedBy to itself and the same credential child was accepted: the entry's children follow the launcher the entry names, and RUN admits the token either way", ownSess.UID(), other.requestedBy, own, sess.UID(), first, target.requestedBy)
 	return nil
 }
 

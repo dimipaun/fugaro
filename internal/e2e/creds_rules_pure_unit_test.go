@@ -14,8 +14,11 @@
 package e2e
 
 import (
+	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -444,6 +447,22 @@ func TestCredsRulesCaseTableIsComplete(t *testing.T) {
 			t.Errorf("the table has no accepted case for /%s: the rules must accept a run's own registry entry and the two children the cascade writes", path)
 		}
 	}
+	// Exactly two accepted counter writes carry a positive amount, and they
+	// are the scratch repository's two day leaves: the check's documentation
+	// says so, and a third (or a lost one) would make it wrong. The other
+	// accepted writes carry a zero, a name or a timestamp.
+	var positive []string
+	for _, c := range cases {
+		if !c.allow || !strings.Contains(c.path, "/byTier/") || !strings.HasSuffix(c.path, "/spent") {
+			continue
+		}
+		if v, ok := c.value.(int64); ok && v > 0 {
+			positive = append(positive, c.path)
+		}
+	}
+	if len(positive) != 2 {
+		t.Errorf("the table accepts %d counter writes carrying a positive amount (%s), want the scratch repository's tier-B and tier-C day leaves: what the check moves on the installation is what its documentation says it moves", len(positive), strings.Join(positive, ", "))
+	}
 	if len(allowed) < 7 {
 		t.Errorf("the table has %d accepted cases, want the registry entry, its two children and the by-tier leaves", len(allowed))
 	}
@@ -546,8 +565,34 @@ func TestCredsRulesIdentityFamilies(t *testing.T) {
 	if byName["the consumer"].reach != "" {
 		t.Errorf("the consumer claims the reach %q: its only grant is a mailbox write this check does not make, so it has no positive control to make — the check says so rather than inventing one", byName["the consumer"].reach)
 	}
-	if byName["the pairing session"].reach == "" {
-		t.Error("the pairing session has no positive control: it reaches config/pairing/<uid>/delivery, and a refusal from a token that reaches nothing proves nothing")
+	// The positive controls are paths in the document the deploy ships, and
+	// this is what checks them: a reach the rules do not grant would make the
+	// owner's run fail every time it ran, for a reason that is not the rules.
+	// A reach spelled `config/pairing/<uid>/delivery` is exactly that — the
+	// pairing subtree is at the database's root, and there is no such node
+	// under config/.
+	for _, id := range ids {
+		if id.reach == "" {
+			continue
+		}
+		if read := crRulesRead(t, id.reach); read == "" {
+			t.Errorf("%s's positive control is /%s, which the generated document grants no read at: the check would fail there every time, for a reason that is not the rules", id.name, id.reach)
+		}
+	}
+	// The document expands the macros inline, so what is checked is the claim
+	// the family is read by, not the macro's name.
+	for _, c := range []struct{ name, claim string }{
+		{"the phone", "auth.token.mu"},
+		{"the pairing session", "auth.token.pu"},
+	} {
+		id := byName[c.name]
+		if id.reach == "" {
+			t.Errorf("%s has no positive control: a refusal from a token that reaches nothing proves nothing", c.name)
+			continue
+		}
+		if read := crRulesRead(t, id.reach); read != "" && !strings.Contains(read, c.claim) {
+			t.Errorf("%s's positive control /%s is read by %q, which does not read %s: the read has to be the grant its own family is read by", c.name, id.reach, read, c.claim)
+		}
 	}
 	// Every claim identity's uid is a scratch name, and the pairing session's
 	// is the shape its rule requires (auth.uid.beginsWith('p~')).
@@ -783,4 +828,58 @@ func TestCredsRulesScratchNamesAreThrowaway(t *testing.T) {
 	if n.repo == n.otherRepo {
 		t.Error("the two scratch repositories are the same repository")
 	}
+}
+
+// crRulesRead walks rules.Generate()'s document to path and returns the .read
+// rule Firebase would apply there: the nearest one on the way down, and "" if
+// the document has no such node or none of them grants a read. It is what
+// makes the identity families' positive controls real — a reach spelled at a
+// path the deployed document does not have would make the owner's run fail for
+// a reason that is not the rules.
+func crRulesRead(t *testing.T, path string) string {
+	t.Helper()
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatalf("rules.Generate(): %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(gen, &doc); err != nil {
+		t.Fatalf("the generated document is not JSON: %v", err)
+	}
+	node, ok := doc["rules"].(map[string]any)
+	if !ok {
+		t.Fatal("the generated document has no rules object")
+	}
+	read := ""
+	segs := strings.Split(path, "/")
+	for i, seg := range segs {
+		if r, ok := node[".read"].(string); ok {
+			read = r
+		}
+		next, found := node[seg].(map[string]any)
+		if !found {
+			// A $ wildcard stands in for a literal segment: the parameter's
+			// name is the document's, the segment is the check's. $other is
+			// the catch-all every closed allowlist ends with, and it is never
+			// a grant.
+			for _, k := range slices.Sorted(maps.Keys(node)) {
+				if !strings.HasPrefix(k, "$") || k == "$other" {
+					continue
+				}
+				if m, ok := node[k].(map[string]any); ok {
+					next, found = m, true
+					break
+				}
+			}
+		}
+		if !found {
+			t.Errorf("the generated document has no node at /%s (no %q under /%s)", path, seg, strings.Join(segs[:i], "/"))
+			return ""
+		}
+		node = next
+	}
+	if r, ok := node[".read"].(string); ok {
+		read = r
+	}
+	return read
 }
