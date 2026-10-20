@@ -516,6 +516,11 @@ func TestValidJobNameIsTheJobNameRuleAndNotTheHeaderRule(t *testing.T) {
 		"a",
 		"a1",
 		"job-1",
+		// The longest name internal/backend/gcp's derive produces: its readable
+		// part truncated to the limit less the hash's room, then "-" and twelve
+		// hex digits — 36 + 13 = 49, Cloud Run's own bound. Every job of this
+		// installation is that shape, so the rule must accept its edge.
+		strings.Repeat("a", maxJobNameBytes-13) + "-0123456789ab",
 	} {
 		if !ValidJobName(ok) {
 			t.Errorf("ValidJobName(%q) = false, want true", ok)
