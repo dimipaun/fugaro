@@ -44,10 +44,12 @@
 #             to copy back to the coordinator. Exit 0 when every fact passed,
 #             1 when one did not (or a hard stop ended the run).
 #
-# CHECK91_IDLE_SECONDS, CHECK91_BODY_SIZES, CHECK91_SSE_SECONDS,
-# CHECK91_PROBE_SECONDS and CHECK91_DRY_RUN exist for this script's own test:
-# they shorten waits and sizes, and none of them can point the check at another
-# project, another region or another service.
+# CHECK91_IDLE_SECONDS, CHECK91_BODY_SIZES, CHECK91_PROBE_SECONDS and
+# CHECK91_DRY_RUN exist for this script's own test: they shorten waits and
+# sizes, and none of them can point the check at another project, another
+# region or another service. (The long stream has no variable of its own: its
+# length is the relay's own SSE_MINUTES, which the check sets to 59 with the
+# service update it runs for that step.)
 set -euo pipefail
 
 # The owner's own stdout and stderr, kept on 3 and 4: a trap runs with whatever
@@ -259,8 +261,33 @@ guard_project() {
     stop "the project and the region must be fugaro-dev and a region; P=${P} L=${L}"
   fi
   # Hard stop 2: this is the fugaro-dev installation, not another one.
-  fugaro doctor --project fugaro 2>/dev/null | grep -q '^project: .*(GCP fugaro-dev,' \
-    || stop "this is not the fugaro-dev installation (fugaro doctor --project fugaro did not say 'project: ... (GCP fugaro-dev,'), and this check runs on the sandbox installation only"
+  #
+  # The question is doctor's project: LINE, and its exit status is not the
+  # answer to it: doctor exits 1 whenever any check of its own failed
+  # (emitDoctor returns ExitUserError, internal/cli/doctor.go), and billing,
+  # IAM and the update check have nothing to do with which installation this
+  # is — so the status is not read (`|| true`). Its output is captured rather
+  # than piped into grep for two reasons: `set -o pipefail` would put doctor's
+  # own status into the pipeline and turn a perfectly matched line into "this
+  # is not the fugaro-dev installation" (the wrong cause, and every other
+  # doctor check is unrelated to it), and `grep -q` closes the pipe on its
+  # match while doctor is still printing — its secrets: line comes right after
+  # the project: line — so doctor would die on the broken pipe (141) and
+  # pipefail would stop the run just the same. The stop names all three
+  # causes, as this guard's own wording in the check register does
+  # (docs/gcp-live-checklist.md, Check 38's guard block): a foreign checkout, a
+  # --project that disagrees with it, or a doctor that could not run here at
+  # all.
+  local doctor_out
+  doctor_out=$(fugaro doctor --project fugaro || true)
+  # `grep` reads every line it is given here — no -q, no -m, so it never closes
+  # the pipe on its match. With -q it would: printf, still writing doctor's
+  # output, would be killed by the closed pipe (141), and pipefail would report
+  # the pipeline as failed although the line matched — the same trap this
+  # capture exists to remove, one process further along.
+  if ! printf '%s\n' "$doctor_out" | grep '^project: .*(GCP fugaro-dev,' >/dev/null; then
+    stop "this is not the fugaro-dev installation: fugaro doctor --project fugaro printed no 'project: ... (GCP fugaro-dev,' line. Either this is not the fugaro-dev installation, or --project fugaro disagrees with this checkout's project:, or doctor itself failed (doctor is not offline: it needs usable credentials and reads the installation's billing and IAM policy). Run 'fugaro doctor --project fugaro' here yourself and read its output before going on — this check runs on the sandbox installation only, never belong"
+  fi
   local v
   v=$(fugaro version 2>/dev/null | head -n 1 || true)
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing}"

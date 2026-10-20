@@ -53,9 +53,33 @@ printf 'fugaro %s\n' "$*" >>"$FAKE_LOG_DIR/fugaro.calls"
 case "${1:-}" in
 version) echo "fugaro 0.9.6 (test)" ;;
 doctor)
+  # Faithful to internal/cli/doctor.go's emitDoctor: the checks first, then the
+  # project: line, then secrets: — all on stdout — and exit 1 (ExitUserError) as
+  # soon as any check of its own failed, whatever the project: line said. A
+  # stand-in that only ever printed the project line and exited 0 would not be
+  # the command this guard depends on.
   case "${FAKE_FUGARO_MODE:-ok}" in
   ok) echo "project: fugaro (GCP fugaro-dev, us-east5)" ;;
   other) echo "project: fugaro (GCP someone-else-prod, us-east5)" ;;
+  checkfail)
+    echo "billing: FAIL (a check that has nothing to do with which installation this is)"
+    echo "project: fugaro (GCP fugaro-dev, us-east5)"
+    echo "secrets: none stored"
+    exit 1
+    ;;
+  noisy)
+    echo "project: fugaro (GCP fugaro-dev, us-east5)"
+    echo "secrets: none stored"
+    # Everything after the project: line, which is what a `grep -q` at the far
+    # end of a pipe stops reading at: enough of it to fill a pipe buffer, so a
+    # reader that stops at the match breaks the pipe rather than racing it.
+    pad=$(printf 'x%.0s' $(seq 1 300))
+    i=0
+    while [ "$i" -lt 4000 ]; do
+      printf 'check: %s\n' "$pad" || exit 141
+      i=$((i + 1))
+    done
+    ;;
   *) exit 1 ;;
   esac
   ;;
@@ -448,6 +472,56 @@ test_project_guard() {
   if [ -d "$scratch" ]; then fail "project guard: the scratch directory survived"; fi
 }
 
+# A knob the header advertises and nothing reads is worse than no knob at all:
+# a reader — or a test — sets it, gets no effect, and gets no error either. The
+# SSE probe's duration is CHECK91_PROBE_SECONDS and the long stream's is the
+# relay's SSE_MINUTES, and the header once named a CHECK91_SSE_SECONDS that
+# neither the script nor this test ever mentions.
+test_every_advertised_knob_is_read() {
+  local name uses
+  local knobs
+  knobs=$(sed -n '1,60p' "$script" | grep -o 'CHECK91_[A-Z_]*' | sort -u)
+  if [ -z "$knobs" ]; then
+    fail "the header advertises no CHECK91_ knob at all, so this test reads nothing"
+    return
+  fi
+  for name in $knobs; do
+    uses=$(grep -c "$name" "$script" || true)
+    if [ "$uses" -lt 2 ]; then
+      fail "$name is advertised in the header and read nowhere in the script ($uses mention(s), the header's own)"
+    fi
+  done
+}
+
+# The guard asks one question — does doctor's project: line name fugaro-dev —
+# and doctor's exit status is not the answer to it. doctor exits 1 whenever any
+# check of its own failed (emitDoctor returns ExitUserError, doctor.go), and
+# those checks (billing, IAM, the update check) are unrelated to which
+# installation this is, so the guard must read the line doctor printed rather
+# than the code it exited with.
+test_doctor_failing_its_own_checks_is_not_a_stop() {
+  local dir=$work/docfail
+  prepare "$dir"
+  run91 "$dir" FAKE_FUGARO_MODE=checkfail CHECK91_DRY_RUN=1
+  expect_absent "$err" "not the fugaro-dev installation" "doctor failed a check of its own: no false stop on the installation guard"
+  expect_contains "$out" "FACT project-region: PASS — fugaro-dev/us-east5" "doctor failed a check of its own: the run went past the guard"
+  expect_status "$status" 0 "doctor failed a check of its own: the dry run"
+}
+
+# doctor prints its secrets: line right after the project: line, so a guard that
+# pipes doctor into `grep -q` closes the pipe on the match: doctor's next write
+# fails, it dies on the broken pipe (141), and `set -o pipefail` makes the
+# pipeline 141 — a matched line read as a failed check. doctor's output is
+# captured here, so nothing closes under it.
+test_doctor_output_after_the_project_line_is_not_a_stop() {
+  local dir=$work/docpipe
+  prepare "$dir"
+  run91 "$dir" FAKE_FUGARO_MODE=noisy CHECK91_DRY_RUN=1
+  expect_absent "$err" "not the fugaro-dev installation" "doctor still printing after the project line: no false stop"
+  expect_contains "$out" "FACT project-region: PASS — fugaro-dev/us-east5" "doctor still printing after the project line: the run went past the guard"
+  expect_status "$status" 0 "doctor still printing after the project line: the dry run"
+}
+
 test_service_taken() {
   local dir=$work/svc
   prepare "$dir"
@@ -715,6 +789,9 @@ test_never_belong() {
 test_curl_cutting_the_stream
 test_dry_run
 test_project_guard
+test_every_advertised_knob_is_read
+test_doctor_failing_its_own_checks_is_not_a_stop
+test_doctor_output_after_the_project_line_is_not_a_stop
 test_service_taken
 test_repo_taken
 test_happy_path

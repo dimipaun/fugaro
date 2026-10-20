@@ -192,6 +192,66 @@ func TestCheck90ScriptKeepsItsPromises(t *testing.T) {
 	}
 }
 
+// TestCheck90RegisterNamesEveryBlockKey: the register's "Reading the `CHECK 90
+// RESULT` block" paragraph is what the owner diffs a pasted block against, so
+// it names every key the block prints, and what the block prints is the
+// script's own BLOCK_KEYS rather than a paraphrase of it. A key the paragraph
+// leaves out reads as a key the block was not meant to print: `restore` is the
+// one that says the token file and the scratch directory are gone, and Check
+// 91's paragraph calls out its equivalent, so Check 90's omission read as
+// deliberate rather than abbreviated. The paragraph, and not the whole section,
+// is the check: `restore` is named again in the section's own `**Restore:**`
+// sentence, which is about the directory rather than about the block's keys.
+//
+// Mutation (verified, run and restored): take `restore` back out of the
+// paragraph's list — red on that key.
+func TestCheck90RegisterNamesEveryBlockKey(t *testing.T) {
+	keys := blockKeys(t, readRepoFile(t, check90Script))
+	// A parse that reads nothing (or reads the comment above the array) would
+	// make this test vacuous.
+	if len(keys) < 10 {
+		t.Fatalf("%s: BLOCK_KEYS parsed as %d keys (%v), which cannot be the block", check90Script, len(keys), keys)
+	}
+	sec := registerSection(t, readDoc(t, liveChecksDoc), check90Heading)
+	const heading = "**Reading the `CHECK 90 RESULT` block:**"
+	i := strings.Index(sec, heading)
+	if i < 0 {
+		t.Fatalf("%s: the Check 90 section has no %q paragraph", liveChecksDoc, heading)
+	}
+	para := sec[i:]
+	if j := strings.Index(para, "\n\n"); j >= 0 {
+		para = para[:j]
+	}
+	for _, k := range keys {
+		if !strings.Contains(para, "`"+k+"`") {
+			t.Errorf("the register's Check 90 %q paragraph does not name the block key `%s`, which check90.sh's BLOCK_KEYS prints", heading, k)
+		}
+	}
+}
+
+// blockKeys reads one check script's BLOCK_KEYS array: the keys, in the order
+// the block prints them. `#` fields are comments inside the array, if any.
+func blockKeys(t *testing.T, script string) []string {
+	t.Helper()
+	i := strings.Index(script, "BLOCK_KEYS=(")
+	if i < 0 {
+		t.Fatalf("the script has no BLOCK_KEYS= array")
+	}
+	rest := script[i+len("BLOCK_KEYS=("):]
+	j := strings.Index(rest, ")")
+	if j < 0 {
+		t.Fatalf("BLOCK_KEYS=( is never closed")
+	}
+	var keys []string
+	for _, f := range strings.Fields(rest[:j]) {
+		if strings.HasPrefix(f, "#") {
+			continue
+		}
+		keys = append(keys, f)
+	}
+	return keys
+}
+
 // TestCheck91ScriptKeepsItsPromises: Check 91's script is the sandbox
 // installation's and nobody else's, and it creates only what it deletes.
 func TestCheck91ScriptKeepsItsPromises(t *testing.T) {
