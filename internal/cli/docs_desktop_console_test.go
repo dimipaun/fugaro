@@ -5593,3 +5593,584 @@ func verifySummaryLine(format, kind, n, status, code string) string {
 	}
 	return format
 }
+
+// ---------------------------------------------------------------------------
+// The Linux packaging change (2026-10-20).
+//
+// The owner's ruling of that date is "yes, Linux for 0.10.0, unsigned", and the
+// workflow half of it cannot be applied by an agent at all: GitHub rejects a
+// push that touches .github/workflows/**, so both changes are staged under
+// docs/pending-workflows/ for the owner to copy in
+// (docs/pending-workflows/README.md, and the `## console-linux.yml` and
+// `## console-release-linux.yml` sections there).
+//
+// These tests read the staged text as bytes and as YAML. Two of the three
+// claims are ordinary shape claims -- one secretless build job; a release
+// pipeline whose third job builds and verifies the Linux artifacts and whose
+// publish merges both legs behind one signed sums file. The third is the one a
+// *replacement* file needs and a second file would not: that
+// console-release-linux.yml, which supersedes console-release.yml, **leaves the
+// macOS leg byte-for-byte where it was**. It is asserted by comparing the
+// `release` job's parsed mapping between the two files and by requiring every
+// `run:` body the old `publish` had to still be in the new one -- so a rewrite
+// of the signing job cannot ride along inside a Linux change unseen.
+//
+// What none of this can check is the packaging itself: the pack, the AppImage
+// runtime, dpkg-deb and the three fuse read-backs run on a runner that this
+// container is not. Those are Check 59a's, and the staged files say so.
+// ---------------------------------------------------------------------------
+
+const (
+	// consoleLinuxWorkflowPath is the staged build-only CI job.
+	consoleLinuxWorkflowPath = "docs/pending-workflows/console-linux.yml"
+	// consoleReleaseLinuxWorkflowPath is the staged replacement of
+	// consoleReleaseWorkflowPath with the Linux legs added.
+	consoleReleaseLinuxWorkflowPath = "docs/pending-workflows/console-release-linux.yml"
+	// consoleLinuxJobName is the job's key AND its display name: a job name
+	// with an expression in it is a check name nobody can match, which is the
+	// reason console-tests.yml's own comment gives for its static `console`.
+	consoleLinuxJobName = "console-linux"
+)
+
+// readStagedWorkflow is readConsoleTestsWorkflow for a second staged file: the
+// text, the typed shape (steps, permissions, matrix) and the raw mappings of
+// the trigger block and of each job, where a key this file does not model
+// (`needs:`, `environment:`, `paths:`) is still visible.
+func readStagedWorkflow(t *testing.T, path string) (string, consoleWorkflow, map[string]any, map[string]map[string]any) {
+	t.Helper()
+	text := readDoc(t, path)
+	var wf consoleWorkflow
+	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", path, err)
+	}
+	var raw struct {
+		On   map[string]any            `yaml:"on"`
+		Jobs map[string]map[string]any `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &raw); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", path, err)
+	}
+	if len(raw.On) == 0 || len(wf.Jobs) == 0 {
+		t.Fatalf("%s parsed with no triggers (%d) or no jobs (%d): these tests read the file, not a comment about it",
+			path, len(raw.On), len(wf.Jobs))
+	}
+	return text, wf, raw.On, raw.Jobs
+}
+
+// renderedJob marshals one parsed job back to YAML. The per-job text is what
+// the secretlessness assertions read: a claim about the `linux` job has to be
+// asked of that job, not of the file around it, or a `secrets.` in the signing
+// step would decide it.
+func renderedJob(t *testing.T, jobs map[string]map[string]any, path, name string) string {
+	t.Helper()
+	raw, ok := jobs[name]
+	if !ok {
+		t.Fatalf("%s has no %s job: it has %v", path, name, jobKeys(jobs))
+	}
+	out, err := yaml.Marshal(raw)
+	if err != nil {
+		t.Fatalf("%s's %s job does not marshal back to YAML: %v", path, name, err)
+	}
+	return string(out)
+}
+
+// jobKeys is the job names of a parsed workflow, sorted, for a message that
+// says what was there instead.
+func jobKeys(jobs map[string]map[string]any) []string {
+	keys := make([]string, 0, len(jobs))
+	for k := range jobs {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// stepStrings is every step's `run` and `uses` of a workflow, in order: the
+// bodies a "nothing here changed" claim is compared against.
+func stepStrings(wf consoleWorkflow, job string) []string {
+	var out []string
+	for _, step := range wf.Jobs[job].Steps {
+		switch {
+		case step.Uses != "":
+			out = append(out, "uses:"+step.Uses)
+		case step.Run != "":
+			out = append(out, "run:"+step.Run)
+		}
+	}
+	return out
+}
+
+// TestConsoleLinuxWorkflowIsBuildOnlyAndSecretless holds the staged CI job to
+// what the task asked for and to what the file family requires: one job on
+// ubuntu-latest, no secret of any kind, no environment, every action pinned,
+// the packer's own script rather than a second copy of its command line, and no
+// version stamped into it (only a release knows the version).
+//
+// The mutations that prove it: give the job `environment: console-release`,
+// drop the `pull_request` trigger, replace `npm run package:linux` with an
+// inline `npx electron-builder --linux`, add a `paths:` filter, and add
+// `-c.extraMetadata.version=0.10.0`.
+func TestConsoleLinuxWorkflowIsBuildOnlyAndSecretless(t *testing.T) {
+	text, wf, rawOn, rawJobs := readStagedWorkflow(t, consoleLinuxWorkflowPath)
+
+	// One job, keyed and named `console-linux`: the key is what a reader types
+	// and the name is what the check run is called.
+	if len(wf.Jobs) != 1 {
+		t.Fatalf("%s has jobs %v, want exactly one: it is a build-only job, and a second one would be a second check run on every pull request", consoleLinuxWorkflowPath, jobKeys(rawJobs))
+	}
+	job, ok := wf.Jobs[consoleLinuxJobName]
+	if !ok {
+		t.Fatalf("%s has no %s job: it has %v", consoleLinuxWorkflowPath, consoleLinuxJobName, jobKeys(rawJobs))
+	}
+	if job.Name != consoleLinuxJobName {
+		t.Errorf("%s's job is named %q, want the static %q: the gate and a reader both match the name", consoleLinuxWorkflowPath, job.Name, consoleLinuxJobName)
+	}
+	if job.RunsOn != "ubuntu-latest" {
+		t.Errorf("%s runs on %q, want ubuntu-latest: this job's subject is the packaging path, and what must not move is pinned by the lockfile rather than by the runner image", consoleLinuxWorkflowPath, job.RunsOn)
+	}
+
+	// Triggers: every pull request and every push to main, with no path filter.
+	// A filter here is not the design section 9.4 bug (this job is in no gate's
+	// list) and it is still refused: the Linux packaging path is what rots when
+	// only a tag runs it.
+	if _, ok := rawOn["pull_request"]; !ok {
+		t.Errorf("%s does not run on pull_request: %v", consoleLinuxWorkflowPath, rawOn)
+	}
+	push, ok := rawOn["push"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s's push trigger is not a mapping: %v", consoleLinuxWorkflowPath, rawOn["push"])
+	}
+	if branches, _ := push["branches"].([]any); len(branches) != 1 || branches[0] != "main" {
+		t.Errorf("%s's push trigger is %v, want branches: [main]", consoleLinuxWorkflowPath, push["branches"])
+	}
+	for name, trigger := range rawOn {
+		block, err := yaml.Marshal(trigger)
+		if err != nil {
+			t.Fatalf("%s's %s trigger does not marshal back: %v", consoleLinuxWorkflowPath, name, err)
+		}
+		if strings.Contains(string(block), "paths") {
+			t.Errorf("%s's %s trigger carries a path filter (%s): the Linux packaging path is exercised by every change or it is not exercised", consoleLinuxWorkflowPath, name, strings.TrimSpace(string(block)))
+		}
+	}
+
+	// No secret, no environment, no shape that could be one -- asked of the raw
+	// job as well as of the file, because a job-level `environment:` would be
+	// exactly the edit that puts a staging file next to release credentials.
+	rawJob := renderedJob(t, rawJobs, consoleLinuxWorkflowPath, consoleLinuxJobName)
+	for _, forbidden := range []string{"secrets.", "environment:", "-----BEGIN", "pull_request_target", "workflow_run", "write-all"} {
+		if strings.Contains(text, forbidden) && forbidden != "environment:" {
+			t.Errorf("%s contains %q, which a job that runs on every pull request may never have (design section 9.4)", consoleLinuxWorkflowPath, forbidden)
+		}
+		if strings.Contains(rawJob, forbidden) {
+			t.Errorf("%s's %s job contains %q: it packs an unsigned artifact and holds nothing", consoleLinuxWorkflowPath, consoleLinuxJobName, forbidden)
+		}
+	}
+
+	// Permissions: declared, and read-only, both at the workflow and at the job.
+	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
+		t.Errorf("%s's workflow permissions = %v, want exactly contents: read", consoleLinuxWorkflowPath, wf.Permissions)
+	}
+	if len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
+		t.Errorf("%s's %s job permissions = %v, want exactly contents: read declared on the job", consoleLinuxWorkflowPath, consoleLinuxJobName, job.Permissions)
+	}
+	if _, ok := rawJobs[consoleLinuxJobName]["permissions"]; !ok {
+		t.Errorf("%s's %s job inherits permissions instead of declaring them", consoleLinuxWorkflowPath, consoleLinuxJobName)
+	}
+
+	// Every action pinned to a full commit with a version comment, and at least
+	// one action: Dependabot does not watch docs/pending-workflows/.
+	uses := 0
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.Contains(line, "uses:") {
+			continue
+		}
+		uses++
+		if !consoleUsesLine.MatchString(line) {
+			t.Errorf("%s: %q is not a full 40-hex pin with a `# vX.Y.Z` comment", consoleLinuxWorkflowPath, strings.TrimSpace(line))
+		}
+	}
+	if uses == 0 {
+		t.Fatalf("%s pins no action at all: the job checks the repository out and installs Node", consoleLinuxWorkflowPath)
+	}
+
+	// The install, and the pack.
+	runs := strings.Join(stepStrings(wf, consoleLinuxJobName), "\n")
+	if n := strings.Count(runs, "npm ci --ignore-scripts --no-audit --no-fund"); n != 1 {
+		t.Errorf("%s runs the lockfile install %d times, want exactly 1: it is the pinned toolchain step", consoleLinuxWorkflowPath, n)
+	}
+	for _, want := range []string{
+		"node node_modules/electron/install.js",
+		"npm run build",
+		"npm run package:linux",
+	} {
+		if !strings.Contains(runs, want) {
+			t.Errorf("%s never runs %q", consoleLinuxWorkflowPath, want)
+		}
+	}
+	// `package:linux` is the script -- `electron-builder --linux --publish
+	// never` -- and not a second copy of its command line: a pack that spelled
+	// the flags out here could drop `--publish never` without touching the
+	// script the release job also runs. (Asked of the step bodies: the file's
+	// own prose names the script and the packer on purpose.)
+	for _, forbidden := range []string{"npx ", "npm install", "electron-builder", "extraMetadata", "--publish"} {
+		if strings.Contains(runs, forbidden) {
+			t.Errorf("%s's steps contain %q: the packer is the lockfile's, through the npm script, and nothing stamps a version -- only a release knows one (console-release.yml)", consoleLinuxWorkflowPath, forbidden)
+		}
+	}
+
+	// The artifacts are uploaded, both kinds, and an empty upload is a failure.
+	uploads := 0
+	for _, step := range job.Steps {
+		if !strings.Contains(step.Uses, "actions/upload-artifact@") {
+			continue
+		}
+		uploads++
+		if step.With["if-no-files-found"] != "error" {
+			t.Errorf("%s's upload step takes if-no-files-found %q, want error: a build that produced nothing and uploaded nothing, successfully, is the one outcome this job must not report", consoleLinuxWorkflowPath, step.With["if-no-files-found"])
+		}
+		for _, want := range []string{"console/release/*.AppImage", "console/release/*.deb"} {
+			if !strings.Contains(step.With["path"], want) {
+				t.Errorf("%s's upload step uploads %q, which does not name %s", consoleLinuxWorkflowPath, step.With["path"], want)
+			}
+		}
+	}
+	if uploads != 1 {
+		t.Errorf("%s has %d upload-artifact steps, want 1: the artifacts are the point of the job", consoleLinuxWorkflowPath, uploads)
+	}
+}
+
+// TestConsoleReleaseLinuxAddsTheLinuxLegAndMovesNothingElse is the claim a
+// replacement file has to earn. Three jobs; the new one read-only and
+// secretless, building and verifying the shipped Linux bytes; `publish` waiting
+// for both legs, merging them behind one sums file, signing that file keyless
+// and attaching everything -- and the `release` job, the whole macOS signing
+// pipeline, byte-for-byte the same job it was.
+//
+// The mutations that prove it: give the `linux` job `contents: write` or an
+// `environment:`, drop `id-token: write` from `publish`, `needs: release` back
+// to one leg, drop the cosign step or the `.deb` from `gh release create`, and
+// -- the one this test exists for -- change a single character inside the
+// `release` job.
+func TestConsoleReleaseLinuxAddsTheLinuxLegAndMovesNothingElse(t *testing.T) {
+	oldText, oldWF, _, oldJobs := readStagedWorkflow(t, consoleReleaseWorkflowPath)
+	text, wf, _, rawJobs := readStagedWorkflow(t, consoleReleaseLinuxWorkflowPath)
+
+	// Three jobs, and what each is for.
+	want := []string{"linux", "publish", "release"}
+	if got := jobKeys(rawJobs); !slices.Equal(got, want) {
+		t.Fatalf("%s has jobs %v, want %v", consoleReleaseLinuxWorkflowPath, got, want)
+	}
+
+	// The macOS leg, unchanged. This is a comparison of the parsed job rather
+	// than of a remembered copy of it: whatever console-release.yml says today
+	// is what this file must still say.
+	if !reflect.DeepEqual(oldJobs["release"], rawJobs["release"]) {
+		t.Errorf("%s's release job is not the one in %s: this file replaces that file, so a change to the signing pipeline has to be one it says out loud (it changes the header, the job inventory and the artifact-name bullets, and adds a job)", consoleReleaseLinuxWorkflowPath, consoleReleaseWorkflowPath)
+	}
+	// And the job that did move kept everything it had. Its first two steps --
+	// the download and the check of the macOS assets against the sums the
+	// release job recorded -- are the same two steps, and five are added after
+	// them (the Linux download, the Linux check, the cosign installer, the
+	// merge and the signature).
+	oldSteps, newSteps := stepStrings(oldWF, "publish"), stepStrings(wf, "publish")
+	if len(oldSteps) < 3 {
+		t.Fatalf("%s's publish job has %d steps: this test reads its last one as the release step", consoleReleaseWorkflowPath, len(oldSteps))
+	}
+	at := 0
+	for i, keep := range oldSteps[:2] {
+		next := slices.Index(newSteps[at:], keep)
+		if next < 0 {
+			t.Errorf("%s's publish job no longer has the step %d of %s (%s) after the ones before it: the merge and the signature are added to that job, not a rewrite of it", consoleReleaseLinuxWorkflowPath, i+1, consoleReleaseWorkflowPath, strings.TrimSpace(keep))
+			break
+		}
+		at += next + 1
+	}
+	if len(newSteps) != len(oldSteps)+5 {
+		t.Errorf("%s's publish job has %d steps, want %d (%d plus the five this change adds)", consoleReleaseLinuxWorkflowPath, len(newSteps), len(oldSteps)+5, len(oldSteps))
+	}
+	// And the release step is still last, and still the one that publishes.
+	if last := strings.TrimSpace(newSteps[len(newSteps)-1]); !strings.HasSuffix(last, `echo "published $CONSOLE_TAG"`) {
+		t.Errorf("%s's last publish step ends %q, want the release step: the draft-then-publish sequence is the last thing the job does", consoleReleaseLinuxWorkflowPath, last[len(last)-60:])
+	}
+	// The release step itself survives line for line, except the two lines this
+	// change edits on purpose: the notes, which have to describe artifacts that
+	// are unsigned, and the asset list, which has to carry them.
+	oldRelease := oldWF.Jobs["publish"].Steps[len(oldWF.Jobs["publish"].Steps)-1].Run
+	deliberatelyEdited := []string{
+		`--notes "The Fugaro desktop console built from the CLI's $TAG tag`,
+		`"$DMG" "$APP_ZIP" "$RECORD" "$SUMS"`,
+	}
+	for _, line := range strings.Split(oldRelease, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if slices.ContainsFunc(deliberatelyEdited, func(prefix string) bool { return strings.HasPrefix(trimmed, prefix) }) {
+			continue
+		}
+		if !strings.Contains(text, trimmed) {
+			t.Errorf("%s no longer carries the release step's line %q from %s: the publishing step is edited in two places (the notes and the asset list) and nowhere else", consoleReleaseLinuxWorkflowPath, trimmed, consoleReleaseWorkflowPath)
+		}
+	}
+
+	// The linux job: the pinned runner, read-only, and nothing to keep secret.
+	linux := renderedJob(t, rawJobs, consoleReleaseLinuxWorkflowPath, "linux")
+	for _, want := range []string{"runs-on: ubuntu-24.04", "contents: read", "checks: read"} {
+		if !strings.Contains(linux, want) {
+			t.Errorf("%s's linux job does not carry %q: %s", consoleReleaseLinuxWorkflowPath, want, strings.TrimSpace(linux))
+		}
+	}
+	for _, forbidden := range []string{"secrets.", "environment:", "contents: write", "id-token", "-----BEGIN"} {
+		if strings.Contains(linux, forbidden) {
+			t.Errorf("%s's linux job carries %q: there is nothing to sign an AppImage with, so this job holds nothing (design section 5.1, the owner's ruling of 2026-10-20)", consoleReleaseLinuxWorkflowPath, forbidden)
+		}
+	}
+
+	// What the linux job does: the same gate, the same pack, and -- added for
+	// Linux because an unsigned artifact has no other claim -- the shipped bytes
+	// opened and read.
+	linuxRuns := strings.Join(stepStrings(wf, "linux"), "\n")
+	for _, want := range []string{
+		`scripts/release-gate.sh "$TAG"`,
+		"npm run package:linux",
+		`sha256sum "$(basename "$APPIMAGE")" "$(basename "$DEB")"`,
+		"dpkg-deb --info",
+		"dpkg-deb --extract",
+		"--appimage-extract",
+		"getCurrentFuseWire",
+		"console-linux-verification.txt",
+	} {
+		if !strings.Contains(linuxRuns, want) {
+			t.Errorf("%s's linux job never runs %q: the release records what it verified, on the files it ships", consoleReleaseLinuxWorkflowPath, want)
+		}
+	}
+	// The fuse read-back is the six flips src/main/fuses.ts makes, named one by
+	// one: a checker that read one fuse and called the artifact verified is the
+	// mutation this catches.
+	for _, fuse := range []string{
+		"FuseV1Options.RunAsNode",
+		"FuseV1Options.EnableNodeOptionsEnvironmentVariable",
+		"FuseV1Options.EnableNodeCliInspectArguments",
+		"FuseV1Options.EnableEmbeddedAsarIntegrityValidation",
+		"FuseV1Options.OnlyLoadAppFromAsar",
+		"FuseV1Options.GrantFileProtocolExtraPrivileges",
+	} {
+		if !strings.Contains(linuxRuns, fuse) {
+			t.Errorf("%s's linux job does not read %s back out of the shipped executable: the fuse hook's claim is about the packed tree, and this is the check on the artifact", consoleReleaseLinuxWorkflowPath, fuse)
+		}
+	}
+	// And it reads the wire out of all three copies of the executable: the
+	// unpacked tree, the file inside the .deb and the one inside the AppImage.
+	if n := strings.Count(linuxRuns, "node check-fuses.mjs"); n != 3 {
+		t.Errorf("%s's linux job reads the fuse wire %d times, want 3 (the linux-unpacked tree, the .deb's own copy and the AppImage's)", consoleReleaseLinuxWorkflowPath, n)
+	}
+
+	// publish: both legs, the write token and the signing identity, and nothing
+	// else.
+	needs, _ := rawJobs["publish"]["needs"].([]any)
+	if len(needs) != 2 || needs[0] != "release" || needs[1] != "linux" {
+		t.Errorf("%s's publish job needs %v, want [release, linux]: publishing before the Linux leg has verified would ship a release with a leg missing", consoleReleaseLinuxWorkflowPath, rawJobs["publish"]["needs"])
+	}
+	pub := wf.Jobs["publish"]
+	if len(pub.Permissions) != 2 || pub.Permissions["contents"] != "write" || pub.Permissions["id-token"] != "write" {
+		t.Errorf("%s's publish job permissions = %v, want exactly contents: write and id-token: write (cosign keyless)", consoleReleaseLinuxWorkflowPath, pub.Permissions)
+	}
+	pubJob := renderedJob(t, rawJobs, consoleReleaseLinuxWorkflowPath, "publish")
+	for _, forbidden := range []string{"secrets.", "environment:", "-----BEGIN"} {
+		if strings.Contains(pubJob, forbidden) {
+			t.Errorf("%s's publish job carries %q: it holds no Apple secret and no Linux secret, and its identity is the run's OIDC token", consoleReleaseLinuxWorkflowPath, forbidden)
+		}
+	}
+
+	// The cosign installer, at the pin release.yml and images.yml already carry:
+	// read out of release.yml rather than typed here, so a Dependabot bump that
+	// moves the applied workflows fails this instead of being copied by hand
+	// into a staged file nobody watches.
+	applied := readDoc(t, ".github/workflows/release.yml")
+	cosign := regexp.MustCompile(`sigstore/cosign-installer@[0-9a-f]{40} # v[0-9.]+`).FindString(applied)
+	if cosign == "" {
+		t.Fatalf(".github/workflows/release.yml no longer pins sigstore/cosign-installer: this test reads the pin from it")
+	}
+	if !strings.Contains(text, cosign) {
+		t.Errorf("%s does not carry %q, the cosign pin .github/workflows/release.yml uses: the keyless signing call here is the same one, so its installer is the same pin", consoleReleaseLinuxWorkflowPath, cosign)
+	}
+	for _, want := range []string{
+		"cosign sign-blob --yes --bundle=console-sha256sums.txt.sigstore.json console-sha256sums.txt",
+		"name: console-linux-assets",
+		"name: console-release-assets",
+		"console-linux-sha256sums.txt",
+		"sha256sum --strict --check console-sha256sums.txt",
+		// The refusals a re-run must still meet, verbatim from the old file.
+		"the release $CONSOLE_TAG is already published",
+		"delete it (gh release delete",
+		"could not tell whether the tag $CONSOLE_TAG exists",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s lacks %q", consoleReleaseLinuxWorkflowPath, want)
+		}
+	}
+	// The merge: one sums file over both legs, checked in the directory that
+	// ships, and a collision refused rather than overwritten.
+	for _, want := range []string{
+		`cat console-macos/console-sha256sums.txt console-linux/console-linux-sha256sums.txt > "$OUT/console-sha256sums.txt"`,
+		"refusing to publish a release that is missing a leg",
+		"refusing to overwrite one with the other",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s lacks %q: the release's sums file has to cover every asset in it", consoleReleaseLinuxWorkflowPath, want)
+		}
+	}
+	// The release carries every artifact, and the bundle: a release created
+	// without the .deb or without the signature over the sums is not one an
+	// operator can verify.
+	create := regexp.MustCompile(`(?s)gh release create "\$CONSOLE_TAG".*?gh release edit`).FindString(text)
+	if create == "" {
+		t.Fatalf("%s has no `gh release create` line: this test reads the assets it carries from it", consoleReleaseLinuxWorkflowPath)
+	}
+	for _, asset := range []string{`"$DMG"`, `"$APP_ZIP"`, `"$APPIMAGE"`, `"$DEB"`, `"$RECORD"`, `"$LINUX_RECORD"`, `"$SUMS"`, `"$BUNDLE"`} {
+		if !strings.Contains(create, asset) {
+			t.Errorf("%s's `gh release create` does not attach %s (it attaches %q): every artifact and the signature over the sums file are the release", consoleReleaseLinuxWorkflowPath, asset, strings.Join(strings.Fields(create), " "))
+		}
+	}
+	if !strings.Contains(oldText, "console-verification.txt") {
+		t.Fatalf("%s no longer records a verification file: this test's `LINUX_RECORD` half is written against it", consoleReleaseWorkflowPath)
+	}
+}
+
+// TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere: the two staged files are
+// for a person to copy in by hand, and neither can be applied by an agent. What
+// this asserts is that the place that person reads -- the staging directory's
+// README, and each file's own header -- carries the command, says what happens
+// to the staged copy afterwards, and states the one thing about the Linux
+// artifacts that must not be misread: that an AppImage is not code-signed.
+//
+// The mutations that prove it: delete a cp line, delete the `git rm` line from
+// the console-linux block, drop the "not code-signed" sentence, and drop the
+// note that console-release-linux.yml supersedes the staged console-release.yml.
+func TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
+	doc := readDoc(t, "docs/pending-workflows/README.md")
+
+	// The count and the names, in the opening line: this directory says what it
+	// holds, and now holds two more files than it did.
+	for _, want := range []string{
+		"**Three files are pending: `shared-tests.yml`**",
+		"`console-linux.yml`",
+		"`console-release-linux.yml`",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/pending-workflows/README.md lacks %q in its opening line: the directory's own heading has to say what is pending in it", want)
+		}
+	}
+
+	// The build job's section: what it is, why it is its own workflow, and the
+	// command that applies it.
+	build := consoleReadmeSection(t, doc, "## `console-linux.yml`")
+	for _, want := range []string{
+		"cp docs/pending-workflows/console-linux.yml .github/workflows/console-linux.yml",
+		"git rm docs/pending-workflows/console-linux.yml",
+		"build-only",
+		"deriveConsoleCheckNames",
+		"TestReleaseGateRequiresTheConsoleCheck",
+		"ubuntu-latest",
+		"0.0.0",
+	} {
+		if !strings.Contains(build, want) {
+			t.Errorf("docs/pending-workflows/README.md's `console-linux.yml` section lacks %q: the owner is the one who copies it in, and this is where they read what it is and why it is staged apart", want)
+		}
+	}
+
+	// The release file's section: the three commands, in order, and the reason
+	// there are three.
+	release := consoleReadmeSection(t, doc, "## `console-release-linux.yml`")
+	first := strings.Index(release, "cp docs/pending-workflows/console-release-linux.yml docs/pending-workflows/console-release.yml")
+	second := strings.Index(release, "cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml")
+	third := strings.Index(release, "git rm docs/pending-workflows/console-release-linux.yml")
+	if first < 0 || second < first || third < second {
+		t.Errorf("docs/pending-workflows/README.md's `console-release-linux.yml` section does not carry the three copy-in commands in order (the staged file, then the applied file, then the removal): %v %v %v", first, second, third)
+	}
+	for _, want := range []string{
+		"supersedes",
+		"an AppImage is not code-signed",
+		"console-sha256sums.txt.sigstore.json",
+		"TestDocsConsoleReleaseWorkflowIsStagedAndPinned",
+		"website/README.md",
+	} {
+		if !strings.Contains(release, want) {
+			t.Errorf("docs/pending-workflows/README.md's `console-release-linux.yml` section lacks %q", want)
+		}
+	}
+
+	// And each staged file's own header carries its commands: a reader who opens
+	// the file rather than the README is the likelier one.
+	for path, want := range map[string][]string{
+		consoleLinuxWorkflowPath: {
+			"cp docs/pending-workflows/console-linux.yml .github/workflows/console-linux.yml",
+			"git rm docs/pending-workflows/console-linux.yml",
+		},
+		consoleReleaseLinuxWorkflowPath: {
+			"cp docs/pending-workflows/console-release-linux.yml docs/pending-workflows/console-release.yml",
+			"cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml",
+			"git rm docs/pending-workflows/console-release-linux.yml",
+		},
+	} {
+		header := readDoc(t, path)
+		for _, line := range want {
+			if !strings.Contains(header, line) {
+				t.Errorf("%s's header lacks the copy-in line %q: the file is what the owner has open", path, line)
+			}
+		}
+	}
+
+	// The site's README counts and names the pending files too, and
+	// website/test/readme.mjs holds it to the directory in both directions.
+	// Named here so a Linux change cannot quietly leave that sentence stale.
+	site := readDoc(t, "website/README.md")
+	for _, want := range []string{
+		"now holds three pending workflows",
+		"`docs/pending-workflows/console-linux.yml`",
+		"`docs/pending-workflows/console-release-linux.yml`",
+	} {
+		if !strings.Contains(site, want) {
+			t.Errorf("website/README.md lacks %q: the site's README says what docs/pending-workflows/ holds, and website/test/readme.mjs reads the count and the names", want)
+		}
+	}
+}
+
+// TestConsoleReleaseLinuxStagedFileIsNotTheAppliedOne keeps the two staged
+// console-release files and the one under .github/workflows/ in the relation
+// this change claims for them: the *new* file is a pending change -- it has no
+// applied copy, and that is why its copy-in deletes it -- while the file it
+// supersedes is byte-identical to the one that runs, which is what the
+// 2026-10-20 change deliberately did not disturb.
+//
+// The mutation that proves it: copy console-release-linux.yml's content over
+// docs/pending-workflows/console-release.yml, which is the state the README
+// tells the owner to reach in one commit and which would make every assertion
+// below read differently.
+func TestConsoleReleaseLinuxStagedFileIsNotTheAppliedOne(t *testing.T) {
+	if _, err := os.Stat(filepath.Join("..", "..", ".github", "workflows", "console-linux.yml")); err == nil {
+		t.Errorf(".github/workflows/console-linux.yml exists: the staged build job has been copied in, so docs/pending-workflows/console-linux.yml is no longer pending and the staged copy has to go with it (docs/pending-workflows/README.md)")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+
+	applied, err := os.ReadFile(filepath.Join("..", "..", appliedConsoleReleasePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := os.ReadFile(filepath.Join("..", "..", consoleReleaseWorkflowPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(applied) != string(staged) {
+		t.Errorf("%s and %s differ. That is the 2026-10-19 state this change is deliberately not in: %s is staged as a file of its own precisely so that the byte-identity clause stays green and main does not spend the window before the copy-in refusing every tag (docs/pending-workflows/README.md)",
+			appliedConsoleReleasePath, consoleReleaseWorkflowPath, consoleReleaseLinuxWorkflowPath)
+	}
+	replacement, err := os.ReadFile(filepath.Join("..", "..", consoleReleaseLinuxWorkflowPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(replacement) == string(staged) {
+		t.Errorf("%s is byte-identical to %s: then it is not a change, and its copy-in commands are instructions to do nothing", consoleReleaseLinuxWorkflowPath, consoleReleaseWorkflowPath)
+	}
+}

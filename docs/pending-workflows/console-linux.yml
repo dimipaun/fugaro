@@ -10,6 +10,7 @@
 #
 #     cp docs/pending-workflows/console-linux.yml .github/workflows/console-linux.yml
 #     git add .github/workflows/console-linux.yml
+#     git rm docs/pending-workflows/console-linux.yml
 #     git commit -m "console: build the Linux artifacts in CI"
 #
 # **The staged copy is deleted after the copy-in**, as images.yml's is: there is
