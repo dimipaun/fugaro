@@ -179,6 +179,20 @@ func TestValidateRefusesATaskTimeoutPastTheRunningCeiling(t *testing.T) {
 	if ps := batchValidateProblems(inside, batchValidateConfig(t, batchValidateYAML), nil); len(ps) != 0 {
 		t.Errorf("a 335h task timeout on cloud-batch = %v, want none", ps)
 	}
+	// The slack is real and the bound is the field's, not the ceiling's: the
+	// job's maxRunDuration is task_timeout + TaskTimeoutSlack, so 335h59m is
+	// 14 days and a minute of maxRunDuration — refused — while 335h58m is
+	// exactly 14 days, which is the last value that fits. A check that compared
+	// the field against batch.MaxRunDuration itself would let 335h59m through
+	// (mutation: drop the subtraction).
+	over := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, "  task_timeout: 335h59m\n")
+	if ps := batchValidateProblems(over, batchValidateConfig(t, batchValidateYAML), nil); len(ps) != 1 || ps[0].Path != "batch.task_timeout" {
+		t.Errorf("a 335h59m task timeout on cloud-batch = %v, want one problem at batch.task_timeout (the slack puts its maxRunDuration past 14 days)", ps)
+	}
+	edge := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, "  task_timeout: 335h58m\n")
+	if ps := batchValidateProblems(edge, batchValidateConfig(t, batchValidateYAML), nil); len(ps) != 0 {
+		t.Errorf("a 335h58m task timeout on cloud-batch = %v, want none (its maxRunDuration is exactly 14 days)", ps)
+	}
 	if ps := batchValidateProblems(batchValidateRig(t, "e2-standard-4", backend.CloudBatch), batchValidateConfig(t, batchValidateYAML), nil); len(ps) != 0 {
 		t.Errorf("the block's own default (backend.MaxRunTime) = %v, want none", ps)
 	}
