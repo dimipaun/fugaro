@@ -331,8 +331,9 @@ function textBetween(main, from, to) {
  * promise (the owner's approved draft of 2026-10-19, "Home, draft 2 (slider)") and that
  * heading is inside its first panel — and the region between the two headings is the request
  * the hero renders under the headline (the owner's feedback of 2026-10-19), the promise, its
- * three calls to action and the slider's three tab labels: **29 words**, the number the built
- * page measures. Both readings agree here, because everything between the `h1` and that
+ * three calls to action and the slider's three tab labels: **30 words**, the number the built
+ * page measures (29 before the owner's ruling of 2026-10-20 renamed the slider's middle tab
+ * "Why Fugaro?", which is a word more than "Benefits"). Both readings agree here, because everything between the `h1` and that
  * heading is inside the hero's own section; they did not agree on the homepage of two rounds
  * ago, when the hero's section held the `h1`, the install blocks and the chat sat between it
  * and the flow's first step heading, and the container reading said 24 words where the region
@@ -943,7 +944,8 @@ test('the word reader counts what a reader reads, and nothing else', (t) => {
 /**
  * D188's own words-per-page ceiling, the number the raise above it is measured against: 250 as
  * D188 set it, and 300 since the owner's feedback of 2026-10-19 asked the homepage for a fourth
- * required block (its Benefits section, 294 words with the three before it). website/README.md
+ * required block (its benefits section — headed "Why Fugaro?" since the owner's ruling of
+ * 2026-10-20 — 294 words with the three before it). website/README.md
  * records that reading beside the words line.
  */
 export const D188_WORDS = 300
