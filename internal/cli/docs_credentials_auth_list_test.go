@@ -202,6 +202,73 @@ func TestDocsCredentialsAuthListNamesCascade(t *testing.T) {
 	namesEveryAuth(t, "README.md's provider-model refusal comment", readmeEnum, refused)
 }
 
+// TestSetupSkillCascadeOfferIsPinnedToC119: the setup skill offers
+// `agent.auth: cascade` — the value TestDocsCredentialsAuthListNamesCascade
+// requires the skill's decision line and its reference's §2 table to carry,
+// because it is on config.AgentAuths — and the value is a preview until plan
+// Task C1.19's launch wiring is in a release. The validator knows it and the
+// config reader accepts it (cascadeSince), no runner does, so a `cascade` file
+// whose effective mode is on passes `fugaro validate` and a launch and then
+// dies in the job, on the runner's own `unknown agent auth "cascade"` — the gap
+// config.CheckCascadeGateway's comment states from the validator's side, and
+// the reason the skill's offer cannot reach a release uncoupled from C1.19.
+//
+// The pin is the pair: this test reads the offer (the skill's decision line,
+// without which there is nothing to pin), the plan's C1.19 task, and the release
+// checklist's `cascadeSince` bullet — the line a release is verified against
+// before it is tagged — and requires the two documents to name the offer. So
+// the dependency cannot be dropped from either while the skill still offers the
+// value, and the offer cannot be withdrawn from the skill while the documents
+// still state what it owes.
+//
+// Mutation (run, restored): delete the paragraph naming plugin/skills/setup from
+// the plan's C1.19 task, or the sentence naming it from docs/release.md's
+// `cascadeSince` bullet, and the section reading it fails; drop `cascade` from
+// the skill's decision line and the first section fails, naming the skill.
+func TestSetupSkillCascadeOfferIsPinnedToC119(t *testing.T) {
+	auth := config.AuthCascade
+
+	// 1. The offer itself: the skill's decision line, the same one the test
+	// above reads.
+	skill := readDoc(t, "plugin/skills/setup/SKILL.md")
+	var decision string
+	for _, line := range strings.Split(skill, "\n") {
+		if strings.HasPrefix(line, "2. `agent.auth`:") {
+			decision = line
+			break
+		}
+	}
+	if decision == "" {
+		t.Fatal("plugin/skills/setup/SKILL.md carries no `2. `agent.auth`` decision line: the offer moved and this scan no longer reads it")
+	}
+	if !strings.Contains(decision, "`"+auth+"`") {
+		t.Fatalf("plugin/skills/setup/SKILL.md's decision line does not offer %q, so there is nothing for the documents below to owe: %q", auth, decision)
+	}
+
+	// 2. The plan's own task for the wiring: the work that turns the offer into
+	// a value a run can use.
+	plan := readDoc(t, "docs/credentials-service/implementation-plan.md")
+	c119 := between(plan, "### Task C1.19", "### Task C1.20")
+	if c119 == plan {
+		t.Fatal("docs/credentials-service/implementation-plan.md carries no Task C1.19 block followed by C1.20: the task moved and this scan no longer reads it")
+	}
+	if !strings.Contains(c119, "plugin/skills/setup") {
+		t.Errorf("the plan's Task C1.19 does not name plugin/skills/setup: the skill offers %q and this task is what makes the offer true, so a release can carry the offer with nothing recording what it owes", auth)
+	}
+
+	// 3. The release checklist's bullet for the value, which is what the
+	// release is verified against before it is tagged (docs/release.md's
+	// "Before you tag" list).
+	release := readDoc(t, "docs/release.md")
+	bullet := between(release, "- **Verify `cascadeSince`", "\n")
+	if bullet == release || strings.TrimSpace(bullet) == "" {
+		t.Fatal("docs/release.md carries no `Verify `cascadeSince`` bullet: the checklist moved and this scan no longer reads it")
+	}
+	if !strings.Contains(bullet, "plugin/skills/setup") || !strings.Contains(bullet, "C1.19") {
+		t.Errorf("docs/release.md's `cascadeSince` bullet names the setup skill's %q offer and Task C1.19 together or not at all, and this bullet is missing one of them: the release it gates may carry the offer while no runner reads the value", auth)
+	}
+}
+
 // between is the text after the first `after` and before the first `before`
 // following it, or s itself when either marker is absent — a caller's way of
 // telling "the sentence moved" from "the sentence says what it should".

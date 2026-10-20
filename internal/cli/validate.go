@@ -390,56 +390,51 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 // followup.allow_public refusal is the file's own business): the gateway its
 // calls are made by, and O2 — the project policy's switch.
 //
-// The mode is the run's effective one, the merge budgetProblems and
-// providerProblems read (policy.Merge of the ceiling and the file), because the
-// file's own mode is only a lower bound on the run's: a file that writes no
-// budget under an installation whose ceiling enforces has the gateway on.
+// The mode the gateway rule is judged over is the run's effective one: the
+// ceiling this file's project config builds, the published policy node's mode
+// written over it, and the file merged on top (policy.Merge, the runner's own
+// merge). All three matter. The file's own mode is only a lower bound on the
+// run's — a file that writes no budget under a ceiling that enforces has the
+// gateway on — and the node *is* the ceiling for the mode rather than a layer
+// over it: internal/runner/policy.go's policyCeiling writes pp.Budget.Mode over
+// the environment ceiling's ("the mode is the key this matters most for"), so a
+// node that observes gives every run of the project the gateway even where the
+// project config says off, and one that says off takes it away where the config
+// observes. Judging the rule without the node's mode refused files that every
+// run of them admits, for a reason — "budget.mode is not set" — that is false of
+// the project.
 //
-// The ceiling is the project config's *and* the published policy node's mode,
-// which is the part of it this function is alone in reading. The runner builds
-// its ceiling that way before the file is merged over it:
-// internal/runner/policy.go's policyCeiling writes pp.Budget.Mode over the
-// ceiling's own mode ("the mode is the key this matters most for"), so the node
-// is the ceiling for the mode rather than a layer over it — a node that observes
-// gives every run of the project the gateway even where the project config's
-// ceiling says off. Since O2 makes this function read the published policy
-// anyway, judging the gateway rule without the node's mode refuses a file that
-// every run of it admits, for a reason — "budget.mode is not set" — that is
-// false of the project. So the node is read first, and its mode, when the node
-// carries one, stands in for the ceiling's before the gateway rule is judged.
-// (The rest of the file reads no node — design §11, offline — which is why this
-// overlay is here and not in ceilingLayer.) The ceiling is this file's
-// project's, and a file that
-// belongs to no selected project config has none — the reading the rest of
-// this file gives that state — so the gateway rule is judged only where that
-// ceiling can be read at all. Judging it without one reads the file's own mode
-// as the run's, which is a problem no run of the configuration necessarily
-// has: the same file under an installation whose ceiling observes has the
-// gateway on and is valid. The state with no ceiling is refused by O2 below
-// anyway, on the reason that is true of it.
-//
-// That state is two states, and they are not one sentence. selectedProjectConfigErr
-// answers a nil config both for a machine where nothing selects one and for one
-// whose config is selected and was refused at load, and the two are what the
-// rest of this file already tells apart (unreadableProjectConfig, and
-// TestValidateReportsAProjectConfigItCouldNotRead): an operator whose own config
-// is there and unreadable is not told that none is selected, which would send
-// them to select one they have already selected. Both are refused, because O2
-// cannot be proven from either.
+// The ceiling is this file's project's, and a file that belongs to no selected
+// project config has none: another project's config holds another
+// installation's routes, ceiling and policy, so the gateway rule is judged only
+// where that ceiling can be read at all. Judging it without one reads the
+// file's own mode as the run's, which is a problem no run of the configuration
+// necessarily has. Every such state is refused by O2 below anyway, on the
+// reason that is true of it. Those states are not one sentence: nothing
+// selected and a config that is there and unreadable are told apart (the rest
+// of this file already does, and TestValidateReportsAProjectConfigItCouldNotRead
+// holds it), an installation whose config names no database is told that rather
+// than "published no policy" — a statement about the operator's file, which is
+// what sends them to `fugaro init --firebase` — and `--offline`, which is this
+// command's promise to read nothing over the network, says so instead of
+// opening the connection the flag exists to prevent.
 //
 // O2 (the owner's ruling of 2026-10-17, reconciliation.md §4) is the reason
 // this function reads the *published* policy: a repository may ask for the
 // cascade, and only the operator-written project policy — routing.claude's
-// via, O3's spelling — turns it on, so a cascade file whose policy does not
-// carry it is a problem naming exactly what to set and that only the operator
-// can set it. The read fails closed in every direction: no database to read a
-// policy from, no policy published, a policy this Fugaro cannot read (or lists
-// keys it does not know), a routing block absent or written with another via —
-// each refuses the file, with the reason it could not be read, rather than
-// letting a cascade workflow through that no run would be admitted with. The
-// launch refuses the same pair again on its own side (plan Task C1.19); this
-// is where the repository's author is told before pushing.
-func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config, lcErr error) []config.Problem {
+// via being exactly `cascade`, O3's spelling — turns it on, so a cascade file
+// whose policy does not carry it is a problem naming what to set and that only
+// the operator can set it. A via of any other value is not the switch: `direct`
+// names the direct path and `auto` keeps today's routing meaning (O3), and
+// neither gives any run a credentials cascade. The read fails closed in every
+// direction — no database to read a policy from, no policy published, a policy
+// this Fugaro cannot read or lists keys it does not know, a routing block
+// absent or written with another via, the flag that forbids the read — each
+// refuses the file rather than letting a cascade workflow through that no run
+// would be admitted with. The launch refuses the same pair again on its own
+// side (plan Task C1.19); this is where the repository's author is told before
+// pushing.
+func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config, lcErr error, offline bool) []config.Problem {
 	if cfg.Agent.Auth != config.AuthCascade {
 		return nil
 	}
@@ -462,6 +457,17 @@ func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 		}
 		return problems
 	}
+	if offline {
+		// --offline promises this command reads nothing over the network, and
+		// the published policy is a database read (projectPolicyRead): reading
+		// it here is the connection the flag exists to prevent, and it is the
+		// one a job without Google credentials cannot make anyway. The switch
+		// cannot be seen without it and a cascade file nobody has proven is
+		// enabled is refused, never passed — so this is the refusal, and it
+		// names the flag rather than the network.
+		refuse("--offline was given, so the policy this project has published was not read and whether its switch is set cannot be seen without it")
+		return problems
+	}
 	// The ceiling is readable from here on, so the gateway rule can be judged
 	// over the run's own mode. The node's mode stands in for the ceiling's, as
 	// the runner's policyCeiling does (the doc comment above); the read is the
@@ -475,6 +481,12 @@ func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 	switch {
 	case err != nil:
 		refuse("the project's published policy could not be read (" + oneLineCLI(err.Error()) + ")")
+	case lc.Budget == nil || lc.Budget.RTDBURL == "":
+		// The config names no database, so projectPolicyRead answered "not
+		// found" without a call: "this project has published no policy" would
+		// be a claim about a node nobody can read, and the fix is the
+		// database, not the policy.
+		refuse("this project config names no database, so the policy this project has published cannot be read (fugaro init --firebase writes the database's URL into it)")
 	case !found || p == nil:
 		refuse("this project has published no policy")
 	case p.Routing == nil || p.Routing.Claude == nil || p.Routing.Claude.ViaValue() != config.RouteCascade:
@@ -1550,7 +1562,7 @@ func newValidateCmd() *cobra.Command {
 				problems, warnings, notes = append(problems, pp...), append(warnings, pw...), append(notes, pn...)
 				rtp, rtn := routingProblems(cmd.Context(), ecfg, lc, routes, lcErr)
 				problems, notes = append(problems, rtp...), append(notes, rtn...)
-				problems = append(problems, cascadeProblems(cmd.Context(), ecfg, lc, lcErr)...)
+				problems = append(problems, cascadeProblems(cmd.Context(), ecfg, lc, lcErr, offline)...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -44,6 +46,53 @@ func cascadePolicy() string {
 // project config's own ceiling names none.
 func cascadePolicyWithMode(mode string) string {
 	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},"budget":{"mode":%q}}`, projectpolicy.RulesVersion, mode)
+}
+
+// cascadePolicyViaDirect is a policy whose switch is written with the value
+// D1b made the default: via: direct, an explicit "no route", which names the
+// direct path rather than leaving the block out. It is a *written* switch that
+// does not turn the cascade on, which is the shape a reader that asks only
+// "is a via written here?" mistakes for the cascade's own.
+func cascadePolicyViaDirect() string {
+	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"direct"}}}`, projectpolicy.RulesVersion)
+}
+
+// cascadePolicyViaAuto is the other value O3 left exactly as it was: via: auto
+// routes the Claude IDs the list names through the provider entry that claims
+// them (D1a/D1b — the entry, its claim and its written allow_data_to are all
+// here, so CheckRouting accepts the switch). It is a policy an installation may
+// really publish, it is not the cascade, and every run of an aurora repository
+// under it still has no credentials cascade.
+func cascadePolicyViaAuto() string {
+	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],`+
+		`"providers":{"openrouter-claude":{"kind":"anthropic-compat","base_url":"https://openrouter.ai/api/v1",`+
+		`"auth":"bearer","secret":"openrouter-claude-key","models":["anthropic/claude-sonnet-5.5"],"allow_data_to":["*"]}},`+
+		`"routing":{"claude":{"via":"auto","models":["claude-sonnet-5-5"]}}}`, projectpolicy.RulesVersion)
+}
+
+// cascadeOtherProject points this machine at a *different* installation —
+// writeProject's config for name, with its own database — and publishes policy
+// in it. The selected project config is then real, readable, and publishes the
+// cascade switch for its own runs, while the file being validated is aurora's:
+// the state a repository's author is in when their laptop is set up for another
+// project. Nothing about the other project's ceiling or switch is the file's.
+func cascadeOtherProject(t *testing.T, name, policy string) {
+	t.Helper()
+	db := gcpfake.NewRTDB(t)
+	path := writeProject(t, name, "proj-9")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString("budget: { mode: observe, per_run_usd: 5, rtdb_url: " + db.URL + " }\n" +
+		"endpoints: { no_auth: true }\n"); err != nil {
+		t.Fatal(err)
+	}
+	db.Set("fugaro/project", name)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.Set(projectpolicy.PathShared(), json.RawMessage(policy))
+	t.Setenv("FUGARO_CONFIG", path)
 }
 
 // TestValidateReadsTheGatewayModeFromThePolicyNode: the mode the gateway rule
@@ -158,19 +207,102 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 		}
 	})
 
+	t.Run("the policy's switch is another via value", func(t *testing.T) {
+		// O3 (the owner's answer of 2026-10-17) settled the switch's spelling:
+		// the cascade is turned on by routing.claude's via being *cascade*, and
+		// by nothing else. via: direct and via: auto are the two other values
+		// that block accepts, and each is a policy an installation really
+		// publishes — auto with the route entry it names, every rule
+		// CheckRouting holds it to met — so a rule that reads "a via is
+		// written here" as the switch passes the file for a policy whose runs
+		// have no credentials cascade at all. The refusal has to be O2's, not
+		// "the policy could not be read": these nodes are exactly what a
+		// published policy may be.
+		for _, c := range []struct{ name, policy string }{
+			{"via: direct", cascadePolicyViaDirect()},
+			{"via: auto", cascadePolicyViaAuto()},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				f := newLaunchBudget(t, "observe")
+				publishPolicy(t, f, c.policy)
+				out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+				if ExitCode(err) != ExitUserError {
+					t.Fatalf("exit = %d, want %d (err %v, out %q)", ExitCode(err), ExitUserError, err, out)
+				}
+				if strings.Contains(out, "could not be read") {
+					t.Fatalf("the policy was refused as unreadable rather than as the wrong switch, so this says nothing about the via rule:\n%s", out)
+				}
+				for _, want := range []string{"agent.auth", "routing.claude: {via: cascade}", "only the operator"} {
+					if !strings.Contains(out, want) {
+						t.Errorf("the refusal does not say %q:\n%s", want, out)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("another project's config is selected", func(t *testing.T) {
+		// The selected project config is another installation's and publishes
+		// the cascade switch — for *its* runs. Judging aurora's file by it
+		// would read another project's ceiling for the gateway rule and another
+		// project's policy for the switch, and report a cascade workflow valid
+		// that no run of aurora would be admitted with: the policy a run reads
+		// is its own project's, so the switch it can see is the one published
+		// for aurora, and there is none.
+		isolateProjects(t, t.TempDir())
+		cascadeOtherProject(t, "borealis", cascadePolicy())
+		out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("another project's published switch admitted aurora's cascade file: exit = %d, want %d (err %v, out %q)", ExitCode(err), ExitUserError, err, out)
+		}
+		for _, want := range []string{"agent.auth", "aurora", "routing.claude: {via: cascade}", "only the operator"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the refusal does not say %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("the policy could not be read", func(t *testing.T) {
+		// A node the installation really published and this Fugaro cannot read:
+		// the refusal has to be the read's own, not "this project has published
+		// no policy" — which is what an unread node would be reported as if the
+		// error arm were dropped, and it names a state that is false of a
+		// project whose node is there and lists a key nobody reads.
+		f := newLaunchBudget(t, "observe")
+		markRules(t, f, projectpolicy.RulesVersion)
+		f.db.Set(projectpolicy.PathShared(), json.RawMessage(
+			`{"version":`+fmt.Sprint(projectpolicy.RulesVersion)+`,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},"a_key_nobody_reads":1}`))
+		out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("exit = %d, want %d (err %v, out %q)", ExitCode(err), ExitUserError, err, out)
+		}
+		if !strings.Contains(out, "agent.auth") || !strings.Contains(out, "could not be read") {
+			t.Errorf("the refusal does not carry the read's own reason:\n%s", out)
+		}
+		if strings.Contains(out, "has published no policy") {
+			t.Errorf("a policy node that is there and unreadable is reported as none published:\n%s", out)
+		}
+	})
+
 	t.Run("no database to read one from", func(t *testing.T) {
 		// The project config names no database URL at all: there is no
-		// published policy this command could see, and it says so rather
-		// than reading the silence as an enabled cascade.
+		// published policy this command could see, and it says *that* rather
+		// than "this project has published no policy", which is false of an
+		// installation whose config names no database — the second is a
+		// statement about the node, the first about the operator's file, and
+		// only the first sends them to `fugaro init --firebase`.
 		path := budgetProject(t, "budget: { mode: observe, per_run_usd: 5 }\n", "  auth: cascade")
 		out, _, err := execute(t, "validate", path)
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("exit = %d, want %d (out %q, err %v)", ExitCode(err), ExitUserError, out, err)
 		}
-		for _, want := range []string{"agent.auth", "routing.claude: {via: cascade}", "only the operator"} {
+		for _, want := range []string{"agent.auth", "routing.claude: {via: cascade}", "only the operator", "names no database"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("the refusal does not say %q:\n%s", want, out)
 			}
+		}
+		if strings.Contains(out, "has published no policy") {
+			t.Errorf("an installation with no database configured is reported as having published no policy:\n%s", out)
 		}
 	})
 
@@ -232,6 +364,57 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 			t.Fatalf("an api-key file was refused for want of the cascade switch: %v\n%s\n%s", err, out, errOut)
 		}
 	})
+}
+
+// TestValidateCascadeReadsNoPolicyOffline: `fugaro validate --offline` promises
+// the command reads nothing over the network ("never read the runs bucket"), and
+// the cascade rule is the one place validate would otherwise break that promise:
+// the switch O2 turns the cascade on with lives in the project's *database*, so
+// a cascade file sent this command with --offline would still open a connection
+// — the thing a CI job with no Google credentials, or an operator looking at a
+// file while their database is unreachable, asked it not to do. The rule cannot
+// answer without the node (a cascade file nobody has proven is enabled is
+// refused, never passed), so it refuses and says which flag it was that kept the
+// policy out of reach.
+//
+// The counter is the fake database's own requests, which is what makes this a
+// test of the call and not only of the sentence: the control run below — the
+// same file, the same fixture, no --offline — has to move it, and the offline
+// run has to leave it where it was.
+//
+// Mutation (run, restored): drop the offline arm (read the node whatever the
+// flag says) — the offline run makes the request and the refusal is the read's
+// own, so both the counter and the message fail.
+func TestValidateCascadeReadsNoPolicyOffline(t *testing.T) {
+	f := newLaunchBudget(t, "observe")
+	publishPolicy(t, f, cascadePolicy())
+
+	before := len(f.db.Requests())
+	out, _, err := execute(t, "validate", "--offline", writeConfig(t, cascadeCLI))
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a cascade file passed --offline validation: exit = %d, want %d (err %v, out %q)", ExitCode(err), ExitUserError, err, out)
+	}
+	for _, want := range []string{"agent.auth", "--offline", "routing.claude: {via: cascade}", "only the operator"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the refusal does not say %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "could not be read") {
+		t.Errorf("the refusal is the read's own, so the read happened:\n%s", out)
+	}
+	if got := len(f.db.Requests()); got != before {
+		t.Errorf("--offline made %d request(s) to the project's database (%d before, %d after)", got-before, before, got)
+	}
+
+	// The control: without the flag the same file is judged against the same
+	// node, which is a read — so the counter above is measuring the call.
+	control := len(f.db.Requests())
+	if _, _, err := execute(t, "validate", writeConfig(t, cascadeCLI)); err != nil {
+		t.Fatalf("the control run (no --offline) refused the file: %v", err)
+	}
+	if got := len(f.db.Requests()); got == control {
+		t.Fatalf("no request was made without --offline either, so the counter above proves nothing (still %d)", got)
+	}
 }
 
 // TestValidateRefusesCascadeWithBudgetOff is the gateway rule at the surface
