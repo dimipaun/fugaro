@@ -118,3 +118,32 @@ func TestServerRefuse(t *testing.T) {
 		t.Errorf("lifted: %d", code)
 	}
 }
+
+// A service's get answers the state an enable and a disable leave it in, and
+// it does not consume the propagation count: that counts calls to the
+// service's own API, so `fugaro doctor` reading a state while an enable
+// propagates must not use one of them up.
+func TestServiceUsageGetAnswersTheState(t *testing.T) {
+	su := NewServiceUsage(t)
+	if code, body := getJSON(t, su.URL+"/v1/projects/p/services/compute.googleapis.com"); code != http.StatusOK || body["state"] != "ENABLED" {
+		t.Fatalf("an API the fake was never told about: %d %v, want ENABLED", code, body)
+	}
+	su.Disable("batch.googleapis.com")
+	if code, body := getJSON(t, su.URL+"/v1/projects/p/services/batch.googleapis.com"); code != http.StatusOK || body["state"] != "DISABLED" {
+		t.Fatalf("a disabled API: %d %v, want DISABLED", code, body)
+	}
+	su.Propagation = 2
+	resp, err := http.Post(su.URL+"/v1/projects/p/services/batch.googleapis.com:enable", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if code, body := getJSON(t, su.URL+"/v1/projects/p/services/batch.googleapis.com"); code != http.StatusOK || body["state"] != "ENABLED" {
+		t.Fatalf("after the enable: %d %v, want ENABLED", code, body)
+	}
+	// Both calls to the API that the get made are still refused: the get is
+	// not one of them.
+	if !su.refuses("batch.googleapis.com") {
+		t.Error("the get consumed a propagation call: the API's own calls are refused one fewer time")
+	}
+}
