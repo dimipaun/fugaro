@@ -30,7 +30,10 @@ import (
 // conditioned type can be made to miss its own template, and the grammar is the
 // repository's reading of a reference no source in the tree quotes, so the
 // register must not read as either measuring it or inheriting an answer for it),
-// the restore that closes the gate again, and the
+// the clause-for-clause policy comparison of step 3 — keyed on BOTH sides by the
+// role a clause belongs to, every clause of a multi-clause role included, so a
+// clause that moved to another service's condition cannot diff clean — the
+// restore that closes the gate again, and the
 // fact that Check 67 — the transitive-reach half — is not this section.
 //
 // The row and the heading carry the same facts as prose: a live check that does
@@ -348,16 +351,37 @@ func TestChecklistHasCheck68(t *testing.T) {
 	// comparison is unescaped (the HCL file spells its quotes `\"`) and has its
 	// plan-time project template filled in, or the diff reports differences
 	// that are artefacts of the file's own syntax.
+	//
+	// And the diff is keyed by the role each clause belongs to, on both sides:
+	// a bare clause list diffs clean when a clause has moved from one service's
+	// condition to another's, and which role fences which service is the design.
+	// The policy side keys EVERY clause of a role, including the second clause
+	// of a role that has two (storage has two), so it splits the expression into
+	// clauses instead of substituting a newline into the string: an
+	// interpolation over a multi-line string prefixes only its first line, and
+	// the rest would diff unprefixed — a false alarm on a correct policy.
 	for _, want := range []string{
 		"--key-id=fmgd-chk68-key",
-		`gsub(" \\|\\| "; "\n")`,
+		`split(" || ")`,
+		`(.condition.expression | split(" || "))[]`,
 		`s/\\"/"/g`,
 		`\${var.project}`,
 		"policy-clauses.txt",
+		"Every line of that diff carries the ROLE its clause belongs to",
+		"deployer_condition_<service>",
+		`/^  deployer_condition_[a-z]+ = join/`,
+		`svc = $1`,
+		`sub(/^deployer_condition_/, "", svc)`,
+		`print svc "\t" line`,
+		`sub(".*/fugaroDeployer"; "") | ascii_downcase`,
+		"select(.condition.expression)",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 68 does not carry %q: a probe built any other way cannot produce a pass", want)
 		}
+	}
+	if strings.Contains(section, `gsub(" \\|\\| "; "\n")`) {
+		t.Error("Check 68 splits the policy's expression with gsub into a multi-line string: the role key lands on the first clause only, so a role with two clauses (storage) diffs a correct policy as a mismatch")
 	}
 	if strings.Contains(section, "--display-name=\"fmgd-chk68-key\"") &&
 		!strings.Contains(section, "--key-id=fmgd-chk68-key") {

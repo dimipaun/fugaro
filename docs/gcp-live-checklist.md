@@ -4439,15 +4439,24 @@ grep -c 'fugaroDeployer' "$CHK68_TMP/policy.txt"
 
 Then print the module's own seven conditions and diff them against what came back — the same text, clause for clause, and any difference is a FACT. Two normalisations are needed on the module's side and nothing else is relaxed: the module file is HCL, so its quotes are escaped (`\"`), and its one plan-time-literal template spells the project as `${var.project}` where the API returns the project ID.
 
+**Every line of that diff carries the ROLE its clause belongs to**, and that is not decoration: a bare clause list diffs clean when a clause has moved from one service's condition to another's, and "which role fences which service" is the whole design. The module keys a clause by its local (`deployer_condition_<service>`), and the policy keys the same clause by its binding's role with the prefix stripped (`projects/<P>/roles/fugaroDeployerStorage` → `storage`), so a clause under the wrong role shows up as a removed line and an added line rather than as no change at all. One role has two clauses — storage, whose condition covers buckets and objects — and **both** of its lines carry `storage`, so a clause that moved between a multi-clause role's own two clauses is visible too.
+
 ```bash
 # The module is the WORKDIR's copy — the one the plan above was made from —
-# not the checkout's.
+# not the checkout's. awk pairs each clause with the local it follows, so the
+# key survives into the diff, one keyed line per clause.
 sed -n '/^locals {/,/^}/p' "$W/gcp/modules/installation/deployer.tf" \
-  | sed -n 's/^ *"\(.*\)",*$/\1/p' \
+  | awk '
+      /^  deployer_condition_[a-z]+ = join/ { svc = $1; sub(/^deployer_condition_/, "", svc); next }
+      /^ *"/ { line = $0; sub(/^[[:space:]]*"/, "", line); sub(/",?[[:space:]]*$/, "", line); print svc "\t" line }
+    ' \
   | sed -e 's/\\"/"/g' -e "s/\${var.project}/${P:?}/g" \
   | sort > "$CHK68_TMP/module.txt"
+# split(), not gsub(): a role with more than one clause (storage has two) must
+# put its key on EVERY clause line, and substituting inside one string would
+# key only its first line — leaving the rest to diff unprefixed.
 gcloud projects get-iam-policy "${P:?}" --format=json \
-  | jq -r '.bindings[] | select(.members[]? == "serviceAccount:'"${DEPLOYER:?}"'") | .condition.expression // empty | gsub(" \\|\\| "; "\n")' \
+  | jq -r '.bindings[] | select(.members[]? == "serviceAccount:'"${DEPLOYER:?}"'") | select(.condition.expression) | (.role | sub(".*/fugaroDeployer"; "") | ascii_downcase) as $svc | (.condition.expression | split(" || "))[] | "\($svc)\t\(.)"' \
   | sort > "$CHK68_TMP/policy-clauses.txt"
 diff "$CHK68_TMP/module.txt" "$CHK68_TMP/policy-clauses.txt"
 ```
