@@ -13,7 +13,13 @@
 //   - the caller is an installation job service account, not merely an
 //     identity that Cloud Run IAM let in: its ID token's signature is checked
 //     against Google's own certificates, and its email claim against the
-//     installation's job service accounts (the owner's answer of 2026-10-19);
+//     installation's job service accounts (the owner's answer of 2026-10-19),
+//     and an account that belongs to a *shared* project job is refused whole
+//     until the phase-3 shared-job rules are on main (C3.9, Global Constraint
+//     6). That last check is decided from the verified email and never from
+//     the caller's own X-Fugaro-Run-Job header: one service account is
+//     dedicated to one Cloud Run job, so the email is what says which job
+//     called, while the header is text the caller chose;
 //   - the run identity is a Firebase ID token this installation's project
 //     issued, signed by a key Google publishes, for uid r~<slug>~<run>, with
 //     its fx claim still ahead of us (D134);
@@ -102,7 +108,9 @@ type Request struct {
 	// JobIDToken is the Authorization header's bearer token: the job service
 	// account's Google ID token.
 	JobIDToken string
-	// Job is HeaderRunJob: the Cloud Run job the run is in.
+	// Job is HeaderRunJob: the Cloud Run job the run reports it is in. It is
+	// the caller's claim, held to the header rule and recorded, and nothing is
+	// decided from it (which job called is JobAccount's, in Identity).
 	Job string
 }
 
@@ -120,8 +128,10 @@ type Identity struct {
 	FX time.Time
 	// Launcher is the identity that minted the run (the rb claim).
 	Launcher string
-	// Job is the Cloud Run job the run reported, and JobAccount the job
-	// service account that called: the audit line's "who" (C1.13).
+	// Job is the Cloud Run job the run reported — the caller's claim, which is
+	// why JobAccount, the verified service account, is the one of the two that
+	// identifies the job — and JobAccount is the account that called: the
+	// audit line's "who" (C1.13).
 	Job        string
 	JobAccount string
 }
@@ -170,9 +180,11 @@ func (o RTDBOutcomes) OutcomeExists(ctx context.Context, day int64, slug, run st
 	return found, nil
 }
 
-// AuthConfig is the service's identity configuration. Everything in it is
-// required: a service that cannot check one of these does not start, because
-// the alternative is a service that admits what it cannot check.
+// AuthConfig is the service's identity configuration. Everything a check
+// depends on is required: a service that cannot check one of these does not
+// start, because the alternative is a service that admits what it cannot
+// check. SharedJobAccounts is the one set that may be empty, and an empty one
+// is a statement — this installation has no shared project jobs.
 type AuthConfig struct {
 	// Project is the Fugaro project (fp), e.g. "fugaro".
 	Project string
@@ -184,9 +196,11 @@ type AuthConfig struct {
 	// Audience is the audience the job's Google ID token must carry — the
 	// service's own URL, which is what Cloud Run IAM checked it against.
 	Audience string
-	// JobAccounts are the installation's job service accounts, by email: the
-	// identities that may call the service at all (the owner's answer of
-	// 2026-10-19).
+	// JobAccounts are the installation's per-repository job service accounts,
+	// by email: the identities that may call the service at all (the owner's
+	// answer of 2026-10-19). One service account is dedicated to one Cloud Run
+	// job (internal/backend/gcp's ServiceAccountID), so a verified email here
+	// is also what says which job a call comes from.
 	JobAccounts []string
 	// Keys is Google's published key set for Firebase ID tokens: the run
 	// identities this service admits.
@@ -200,23 +214,31 @@ type AuthConfig struct {
 	JobKeys KeySource
 	// Outcomes reads the write-once outcomes.
 	Outcomes OutcomeReader
-	// SharedJob reports whether a Cloud Run job name is one of the
-	// installation's shared project jobs (internal/backend/gcp's
-	// ProjectJobName over the published policy's profiles). Until the phase-3
-	// shared-job rules are on main, the service admits runs in per-repository
-	// jobs only (C3.9, Global Constraint 6), so this must be wired: nil is a
-	// service that cannot tell the two apart, which is not a service that may
-	// admit anything.
-	SharedJob func(job string) bool
+	// SharedJobAccounts are the service accounts of the installation's shared
+	// project jobs (internal/backend/gcp's ProjectServiceAccountID over the
+	// published policy's profiles). Until the phase-3 shared-job rules are on
+	// main the service admits runs in per-repository jobs only (C3.9, Global
+	// Constraint 6), so a caller that is one of these is refused whole.
+	//
+	// It is asked about the *verified* email claim, never about the
+	// X-Fugaro-Run-Job header: the header is the caller's own text, and a gate
+	// a caller can satisfy — or escape — by writing a header is not a gate.
+	// One account is dedicated to one Cloud Run job, so the email is the
+	// signal a caller cannot forge. An installation with no shared project
+	// jobs has an empty set, which is the ordinary configuration under Global
+	// Constraint 6; a caller whose account is in both this set and
+	// JobAccounts is refused, because the refusal is the safe answer.
+	SharedJobAccounts []string
 	// Now is the clock, for tests; nil means time.Now.
 	Now func() time.Time
 }
 
 // Authenticator verifies the identities a call to the service presents.
 type Authenticator struct {
-	cfg         AuthConfig
-	jobAccounts map[string]bool
-	now         func() time.Time
+	cfg            AuthConfig
+	jobAccounts    map[string]bool
+	sharedAccounts map[string]bool
+	now            func() time.Time
 }
 
 // NewAuthenticator validates the configuration and returns the verifier.
@@ -236,8 +258,6 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		return nil, errors.New("credsvc: no job key source: the caller's signature could not be checked")
 	case cfg.Outcomes == nil:
 		return nil, errors.New("credsvc: no outcome reader: the run's liveness could not be checked")
-	case cfg.SharedJob == nil:
-		return nil, errors.New("credsvc: no shared-job gate: a run in a shared project job could not be told from one in a per-repository job (C3.9)")
 	}
 	accounts := make(map[string]bool, len(cfg.JobAccounts))
 	for _, email := range cfg.JobAccounts {
@@ -246,18 +266,30 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		}
 		accounts[strings.ToLower(email)] = true
 	}
+	// An empty SharedJobAccounts is not a missing gate: under Global
+	// Constraint 6 an installation with no shared project jobs has none, and
+	// the set is what the policy's profiles say, so there is nothing to
+	// require of it here.
+	shared := make(map[string]bool, len(cfg.SharedJobAccounts))
+	for _, email := range cfg.SharedJobAccounts {
+		if email == "" {
+			return nil, errors.New("credsvc: a shared job service account is empty")
+		}
+		shared[strings.ToLower(email)] = true
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
 	}
-	return &Authenticator{cfg: cfg, jobAccounts: accounts, now: now}, nil
+	return &Authenticator{cfg: cfg, jobAccounts: accounts, sharedAccounts: shared, now: now}, nil
 }
 
 // Verify admits a call, or refuses it with ErrUnverifiedJob (the caller is
-// not one of the installation's job service accounts), ErrUnverified (the run
-// identity is not this installation's, is past its fx, is on a shared project
-// job, or names a run that has ended) or ErrUnavailable (the service could
-// not read the outcome). It never returns a partially verified identity.
+// not one of the installation's job service accounts, or is a shared project
+// job's, which Global Constraint 6 refuses whole until C3.9), ErrUnverified
+// (the run identity is not this installation's, is past its fx, or names a run
+// that has ended) or ErrUnavailable (the service could not read the outcome).
+// It never returns a partially verified identity.
 func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, error) {
 	now := a.now()
 	account, err := a.verifyJob(ctx, req.JobIDToken, now)
@@ -265,17 +297,16 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 		return Identity{}, err
 	}
 	// The run's job is checked before the run identity: a run the service
-	// cannot place is one it may not admit, and a shared project job is
-	// refused whole until C3.9 (Global Constraint 6).
+	// cannot place is one it may not admit.
+	//
+	// X-Fugaro-Run-Job is the caller's *claim* about which Cloud Run job the
+	// run is in — the platform sets it, but a launcher may override any
+	// environment variable (internal/runner's jobName) — so it is kept for the
+	// run's record and held to the header rule, and it decides nothing. Which
+	// job actually called is decided in verifyJob, from the verified account,
+	// and that is where Global Constraint 6's shared-job gate is (C3.9).
 	if !validHeaderToken(req.Job) {
 		return Identity{}, fmt.Errorf("%w: the call names no usable Cloud Run job, so the run cannot be placed", ErrUnverified)
-	}
-	if a.cfg.SharedJob(req.Job) {
-		// The job name is the caller's own header, so it is caller text like
-		// any other: the refusal says a shared job was named and does not
-		// repeat which one. An operator reads the name from the run's record,
-		// which is the service's own writing.
-		return Identity{}, fmt.Errorf("%w: the run is in a shared project job, and this service admits runs in per-repository jobs only until the phase-3 shared-job rules are on main (C3.9)", ErrUnverified)
 	}
 	id, err := a.verifyRun(ctx, req.RunIDToken, now)
 	if err != nil {
@@ -328,6 +359,21 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 		return "", fmt.Errorf("%w: the caller's ID token was not issued by Google", ErrUnverifiedJob)
 	}
 	email := claimString(claims, "email")
+	// The shared-job gate of Global Constraint 6 (C3.9) comes first, and it is
+	// decided from this verified email and never from the caller's own
+	// X-Fugaro-Run-Job header. One service account is dedicated to one Cloud
+	// Run job (internal/backend/gcp's ServiceAccountID and
+	// ProjectServiceAccountID), so the account is the job; the header is text
+	// the caller writes, and a launcher may override any environment variable,
+	// so a gate read off it would be one a caller could satisfy by writing a
+	// header. An account that is in both sets is refused rather than admitted:
+	// the refusal is the safe answer.
+	if a.sharedAccounts[strings.ToLower(email)] {
+		// The reason is named and the account is not repeated: it is the
+		// caller's own claim set, and the package doc's no-echo rule is that no
+		// refusal repeats what a caller presented.
+		return "", fmt.Errorf("%w: the caller is a shared project job's service account, and this service admits runs in per-repository jobs only until the phase-3 shared-job rules are on main (C3.9)", ErrUnverifiedJob)
+	}
 	if email == "" || !a.jobAccounts[strings.ToLower(email)] {
 		return "", fmt.Errorf("%w: the caller is not one of the installation's job service accounts", ErrUnverifiedJob)
 	}
@@ -352,8 +398,10 @@ func (a *Authenticator) verifyRun(ctx context.Context, tok string, now time.Time
 	key, err := a.cfg.Keys.Key(ctx, claimString(head, "kid"))
 	if err != nil {
 		if errors.Is(err, ErrUnknownKeyID) {
-			// A kid Google does not publish is a refusal of the token, and it
-			// is also worth saying which key was named.
+			// A kid Google does not publish is a refusal of the token, not a
+			// service failure. The key source's own message is what says so,
+			// and it names no kid: the kid is the caller's text, and the
+			// package doc's no-echo rule is that no refusal repeats it.
 			return Identity{}, fmt.Errorf("%w: %w", ErrUnverified, err)
 		}
 		return Identity{}, err
@@ -376,14 +424,21 @@ func (a *Authenticator) verifyRun(ctx context.Context, tok string, now time.Time
 
 	// The uid names the run, and the claims must agree with it: a token for
 	// one run may never be read as another's.
-	uid := claimString(claims, "user_id")
-	if sub := claimString(claims, "sub"); sub != "" {
-		if uid != "" && uid != sub {
-			return Identity{}, fmt.Errorf("%w: the run identity names two different uids", ErrUnverified)
-		}
-		uid = sub
+	//
+	// Both of the claims that carry the uid are required, and they must be the
+	// same value: sub is the uid the rules honour (auth.uid) and user_id is
+	// the copy Firebase writes beside it. Reading whichever one is present
+	// would admit a token that names the run in one claim and nothing (or
+	// something else) in the other, so a missing claim is a refusal rather
+	// than a fallback.
+	sub, uid := claimString(claims, "sub"), claimString(claims, "user_id")
+	if sub == "" || uid == "" {
+		return Identity{}, fmt.Errorf("%w: the run identity carries no uid (sub and user_id are both required)", ErrUnverified)
 	}
-	slug, run, ok := splitRunUID(uid)
+	if sub != uid {
+		return Identity{}, fmt.Errorf("%w: the run identity names two different uids", ErrUnverified)
+	}
+	slug, run, ok := splitRunUID(sub)
 	if !ok {
 		return Identity{}, fmt.Errorf("%w: the run identity's uid is not r~<slug>~<run>", ErrUnverified)
 	}

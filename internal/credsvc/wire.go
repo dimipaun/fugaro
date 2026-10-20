@@ -31,11 +31,15 @@ const (
 	// because the Authorization header is the job service account's Google
 	// ID token, which Cloud Run IAM consumes for the invoker check (F30).
 	HeaderRunIdentity = "X-Fugaro-Run-Identity"
-	// HeaderRunJob names the Cloud Run job the run is in (the job's own
-	// CLOUD_RUN_JOB, which only the platform sets — a launcher can override
-	// any environment variable, internal/runner's jobName). The service
-	// refuses a run it cannot place, and refuses a run in a shared project
-	// job until C3.9.
+	// HeaderRunJob names the Cloud Run job the run reports it is in: the job's
+	// own CLOUD_RUN_JOB. It is the caller's claim and never evidence — a
+	// launcher can override any environment variable (internal/runner's
+	// jobName) — so the service holds it to the header rule and records it in
+	// the run's record, and decides nothing from it: a run that names no
+	// usable job cannot be placed, and which job actually called is decided
+	// from the caller's verified service-account email (auth.go's verifyJob).
+	// Global Constraint 6's refusal of a run in a shared project job until
+	// C3.9 is decided there too, from the account and never from this header.
 	HeaderRunJob = "X-Fugaro-Run-Job"
 )
 
