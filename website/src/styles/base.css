@@ -98,8 +98,9 @@ a.skip-link:focus {
    * `z-index` is the header's layer, and it is the whole of why the menu is never covered:
    * a positioned box with no `z-index` paints with every other such box in tree order, and
    * the header is the first of them, so a page that draws a positioned block after it —
-   * the flow's steps, whose arrows need their `position: relative` — was painted over the
-   * open panel. The layer makes the header a stacking context and lifts it, and everything
+   * the retired four-step flow's steps, whose arrows needed their `position: relative`, and
+   * the homepage's slider, which is the positioned block that stands where they stood — was
+   * painted over the open panel. The layer makes the header a stacking context and lifts it, and everything
    * it holds, above every block a page draws (`tokens.css` names the scale; the value is
    * read from it, and `website/test/stacking.mjs` refuses a page block a layer of its own). */
   position: relative;
