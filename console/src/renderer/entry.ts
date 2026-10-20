@@ -1130,8 +1130,9 @@ export interface DashboardScope {
   readonly fugaro: unknown
   readonly document: Document
   /** navigator is the window's navigator, and it is here for one question: the
-   * rail's shortcut keys are Command + digit on macOS and Control + digit
-   * elsewhere (design section 4.1), so `isMacPlatform` has to be able to ask.
+   * rail's shortcut keys are Command-1 to Command-3 on macOS and Control-1 to
+   * Control-3 elsewhere (design section 4.1), so `isMacPlatform` has to be able
+   * to ask.
    * It is optional because a caller that drives this file under `vitest` has no
    * window -- and a scope with none answers "not macOS", which is the rule's
    * other half rather than a special case. */
@@ -1696,7 +1697,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   // modifier is the platform's (design section 4.1), so the key is read against
   // the navigator this window was handed, and a key the console has taken is
   // prevented -- a shortcut that also did whatever the platform does with it
-  // would be two actions for one keystroke.
+  // would be two actions for one keystroke. Which keys those are is
+  // `shortcutRow`'s whole answer: the first three rows and no fourth, read from
+  // the physical key rather than from the character the layout produced, and
+  // everything it answers `null` for is the window's and is not prevented here.
   const mac = isMacPlatform(navigator)
   document.addEventListener('keydown', (event: KeyboardEvent) => {
     const index = shortcutRow(event, mac)
