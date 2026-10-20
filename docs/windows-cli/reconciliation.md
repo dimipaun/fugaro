@@ -125,7 +125,7 @@ finding that answers it.
 
 | Subject the brief named | The tree | Finding |
 |---|---|---|
-| syscall / `x/sys/unix` in the CLI's packages | Two non-test packages fail to build; `x/sys/unix` appears in **five non-test files, all tests' termios helpers**, and nowhere in the CLI's own code | F1, F2, F14 |
+| syscall / `x/sys/unix` in the CLI's packages | Two non-test packages fail to build; `x/sys/unix` appears in **four test files and in no non-test file at all**, and all four are already invisible to a Windows build (two gated `//go:build darwin \|\| linux`, two `_linux`/`_darwin`-suffixed) | F1, F2, F14 |
 | `os.Chmod`, `0600`/`0700` and the checks that read them | Modes are *written*, never *checked*; on Windows a file is reported `0444` or `0666` whatever was passed | F8, F9 |
 | symlinks, `EvalSymlinks`, `Lstat` guards | The guards exist and degrade as the `_other.go` files already say; but `os.Symlink` is a **test** dependency, and Windows needs developer mode for it | F10, F11 |
 | `os.Rename` atomicity | `os.Rename` on Windows is `MoveFileEx(…, MOVEFILE_REPLACE_EXISTING)`, so the pattern holds — with two real limits | F3 |
@@ -804,7 +804,7 @@ and is excluded from every count below.
 | `os.TempDir` | 2 | 8 | as above |
 | `os.UserHomeDir` | 7 | 7 | as above |
 | `golang.org/x/term` | 5 | 6 | as above |
-| `golang.org/x/sys/unix` | **0** | 5 (test-only, `_linux`/`_darwin`-suffixed) | as above |
+| `golang.org/x/sys/unix` | **0** | 4 (four test files: `internal/cli/initsecrets_pty_test.go` and `internal/cli/secrets_pty_test.go`, both `//go:build darwin \|\| linux`, and `internal/cli/termios_linux_test.go` and `internal/cli/termios_darwin_test.go`, both filename-gated) | as above |
 | `os.DevNull` | 2 | 7 | as above |
 | `"/dev/` | **0** | 10 | as above |
 

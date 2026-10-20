@@ -551,8 +551,10 @@ moved earlier than the evidence.
 
 **Level 0 is five tasks and they are genuinely independent**: T0.1 (a
 document), T1.1 and T1.2 (the two compiler failures, two different packages),
-T1.3 (the config directories) and T2.2 (the prose). Four of the five are
-Tier A and can be reviewed together.
+T1.3 (the config directories) and T2.2 (the prose). **All five are Tier A** and
+can be read and merged without a Windows machine; T2.2 is the one whose
+*acceptance* is Tier B (a printed command is only proven by pasting it into a
+real shell), which is why §5 counts it as B.
 
 **The critical path is T1.1 → T3.x → T4.3 → T4.4**, and the reason is worth
 stating: nothing runs on Windows until T1.1 and T1.2 are both in, the four
@@ -564,10 +566,13 @@ whether that is acceptable (the plan's own answer is no: the tier in §1 is not
 promised until T6.2, and T5.2's commit is what moves the platform list).
 
 **What the critical path is *not* blocked by**: any AWS, GCP, Firebase,
-Terraform or signing credential. Every task except T4.4, T5.3 and T5.5 is
-verifiable on a Linux box plus, at the end, one `windows-latest` runner — which
-is deliberate, because the owner is the only person who can run the other
-checks and the plan must not stall on them.
+Terraform or signing credential. Every task except five is verifiable on a
+Linux box plus, at the end, one `windows-latest` runner: **T4.4** (an
+owner-run live run), **T5.3** and **T5.5** (an owner account, a bucket and a
+certificate), and **T6.1** and **T6.2** (which need the owner to copy the
+staged job into `.github/workflows/`, because no Fugaro run may write there).
+That is deliberate — the owner is the only person who can run those five, and
+the plan must not stall on them.
 
 ---
 
@@ -576,28 +581,40 @@ checks and the plan must not stall on them.
 Not days. A task is one commit's worth of work with one verification, and the
 count is what matters for the decision the owner is making.
 
+**The counting rule, stated once so the table and the task texts cannot drift:**
+a task is counted at the **highest** tier it needs, which is the tier needed to
+accept it as done. Five tasks below are split — their code is Tier A but they
+cannot be *signed off* without a Windows run — and each says so in its own
+text ("Tier A for the code, Tier B to accept"). Those five are counted here as
+Tier B or C, not as Tier A, because this table answers "who signs this off"
+rather than "who can read the diff".
+
 | Slice | Tasks | Tier A | Tier B | Tier C |
 |---|---|---|---|---|
 | 0 — say what works today | 3 | 3 | — | — |
 | 1 — compile, start, right files | 5 | 5 | — | — |
-| 2 — read-only tells the truth | 4 | 3 | 1 | — |
-| 3 — the test suite's four classes | 5 | 4 | 1 | — |
+| 2 — read-only tells the truth | 4 | 2 | 2 | — |
+| 3 — the test suite's four classes | 5 | 3 | 2 | — |
 | 4 — setup and launch | 4 | — | 3 | 1 (owner-run) |
 | 5 — release and distribution | 5 | 3 | — | 2 |
-| 6 — CI and the gate | 3 | 2 | — | 1 |
-| **Total** | **29** | **20** | **5** | **4** |
+| 6 — CI and the gate | 3 | 1 | — | 2 |
+| **Total** | **29** | **17** | **7** | **5** |
 
-**Twenty tasks need no Windows machine to accept.** Five need a Windows
-machine or a runner. Four are owner-only, and three of those four are decided
-purely by D3, D4 and D5 — which is the honest summary of this plan: the code is
-twenty tasks, and the *distribution* questions are where the owner's time
-actually goes.
+The split tasks, named so the count can be checked: Slice 2's T2.2 (Tier B to
+accept), Slice 3's T3.1 and T3.4, Slice 4's T4.1 — plus T4.4, which is Tier B
+*and* owner-run, and is counted once, as C.
+
+**Seventeen tasks need no Windows machine to accept.** Seven need a Windows
+machine or a runner. Five are owner-only — T4.4, T5.3, T5.5, T6.1 and T6.2 —
+and three of those five are decided purely by D3, D4 and D5, which is the
+honest summary of this plan: the code is seventeen tasks, and the
+*distribution* questions are where the owner's time actually goes.
 
 **The smallest useful answer is 8 tasks** (Slice 0 and Slice 1) and it makes
-`fugaro.exe --version` work. **The smallest *defensible* answer is 26** — the
-whole of Slices 0–4 plus Slice 6, without a Windows release, which is D1's
-"WSL-only" option plus a native binary that is honestly unshipped. **The
-whole thing is 29.**
+`fugaro.exe --version` work. **The smallest *defensible* answer is 24** — every
+slice except the release: Slices 0–4 (21 tasks) plus Slice 6's Windows job (3
+tasks), which is a native binary that builds, starts, reads the right files and
+has a CI job watching it, with nothing published. **The whole thing is 29.**
 
 ---
 
@@ -625,10 +642,13 @@ UNVERIFIED table, with what each one confirms.** Split by who can run them:
 | U13 the desktop console on Windows | — | out of scope (F40) |
 
 **Every check with a `runner` in that column is a candidate for the T6.1 job
-and needs no secret and no owner.** U3, U5, U6, U8, U10 and U11 need a
-terminal, a GUI or a product install and stay with the owner. That is the
-split the brief asked for, and it means T6.1 is not just a regression gate —
-it is where ten of the thirteen checks live.
+and needs no secret and no owner: six of them** — U1, U2, U4, U7, U9 and U12.
+**The remaining seven split as six owner checks and one that is out of scope**:
+U3, U5, U6, U8, U10 and U11 need a terminal, a GUI or a product install and
+stay at the owner's own machine, and U13 belongs to the console's own design
+document (F40). That is the split the brief asked for, and it means T6.1 is not
+just a regression gate — it is where six of the thirteen checks live, and the
+six it can run are the six that need no human at a screen.
 
 **U9 is the one that gates T6.2 and therefore the whole tier claim.** It is
 "run the suite once and read the entire failure list", and it is the check
