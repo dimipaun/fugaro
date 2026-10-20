@@ -28,7 +28,7 @@
 // owner's own run (`scripts/console-screenshots.sh`) is where they are
 // exercised -- see `console/README.md`.
 
-import { readFileSync, rmSync, statSync } from 'node:fs'
+import { cpSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -446,6 +446,102 @@ describe('the fixture CLI and the installation store it seeds', () => {
     } finally {
       rmSync(isolation.scratch, { recursive: true, force: true })
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 3b. A fixture the run cannot use.
+// ---------------------------------------------------------------------------
+
+describe('a fixture the run cannot use', () => {
+  /**
+   * brokenFixture is a **copy** of `test/fixtures/screenshots` with one thing
+   * done to it, and the two reasons it is a copy rather than a path that does
+   * not exist: a fixture typo is what actually happens (someone edits a
+   * document and gets an id or a key wrong), and the run has to refuse it
+   * *before a window exists* rather than start a console whose store is refused
+   * and take pictures of the refusal.
+   */
+  function brokenFixture(edit: (directory: string) => void): { directory: string; isolation: Isolation } {
+    const directory = mkdtempSync(join(tmpdir(), 'fugaro-screenshot-fixtures-'))
+    cpSync(FIXTURES, directory, { recursive: true })
+    edit(directory)
+    return { directory, isolation: newIsolation() }
+  }
+
+  function withBrokenFixture(edit: (directory: string) => void, check: (error: unknown) => void): void {
+    const { directory, isolation } = brokenFixture(edit)
+    try {
+      let thrown: unknown = null
+      try {
+        installScreenshotFixture({ fixtureDirectory: directory, isolation })
+      } catch (error) {
+        thrown = error
+      }
+      check(thrown)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+      rmSync(isolation.scratch, { recursive: true, force: true })
+    }
+  }
+
+  it('refuses a seed row whose id is not sixteen hex characters', () => {
+    withBrokenFixture(
+      (directory) => {
+        const path = join(directory, SEED_FILE_NAME)
+        const seed = JSON.parse(readFileSync(path, 'utf8')) as { installations: { id: string }[] }
+        // The console's own store rule: a row that failed it would be dropped
+        // by `readInstallationFile`, and the picker would draw two rows.
+        if (seed.installations[0] !== undefined) seed.installations[0].id = 'ACME-1'
+        writeFileSync(path, JSON.stringify(seed))
+      },
+      (error) => {
+        expect(String(error)).toMatch(/sixteen hex characters/)
+      },
+    )
+  })
+
+  it('refuses a seed with two rows sharing an id', () => {
+    withBrokenFixture(
+      (directory) => {
+        const path = join(directory, SEED_FILE_NAME)
+        const seed = JSON.parse(readFileSync(path, 'utf8')) as { installations: { id: string }[] }
+        const first = seed.installations[0]
+        const second = seed.installations[1]
+        if (first !== undefined && second !== undefined) second.id = first.id
+        writeFileSync(path, JSON.stringify(seed))
+      },
+      (error) => {
+        expect(String(error)).toMatch(/share the id/)
+      },
+    )
+  })
+
+  it('refuses a feed with no frames in it', () => {
+    withBrokenFixture(
+      (directory) => {
+        // One document rather than a list of them: the shape the feed fixture
+        // had before the sparkline needed a history, and a run that read it as
+        // frames would draw one bar.
+        const path = join(directory, FIXTURE_COMMANDS.watch)
+        const feed = JSON.parse(readFileSync(path, 'utf8')) as { frames: unknown[] }
+        writeFileSync(path, JSON.stringify(feed.frames[0] ?? {}))
+      },
+      (error) => {
+        expect(String(error)).toMatch(/non-empty "frames" list/)
+      },
+    )
+  })
+
+  it('refuses a fixture directory that is missing a document', () => {
+    withBrokenFixture(
+      (directory) => {
+        rmSync(join(directory, FIXTURE_COMMANDS['budget show']))
+      },
+      (error) => {
+        expect(String(error)).toMatch(/missing its fixture budget\.json/)
+      },
+    )
   })
 })
 

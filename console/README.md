@@ -128,6 +128,7 @@ npm run test:e2e                               # playwright, test/e2e/*.spec.ts;
 npm run test:e2e -- security                   # just the window's spec
 npm run typecheck                              # tsc --noEmit over src/, test/, tools/ and the root config files
 npm run record-fixture -- --help               # the recorder; OWNER-RUN, see "Recorded, redacted fixtures"
+npm run screenshots                            # the website's pictures; OWNER-RUN on a Mac with a display, see "The console's screenshots for the website"
 ```
 
 `npm ci` — never `npm install` — is the install step in this file, in the plan's
@@ -3643,3 +3644,113 @@ ran. Apple's icon shape: macOS draws its own rounded-rect mask over a full-bleed
 the mark is not redrawn, recoloured or inset to anticipate it — that would be editing the
 website's artwork. And any signed or notarised build: unchanged from Task 4.1's record
 above.
+
+## The console's screenshots for the website (the owner's run, fixture data only)
+
+The website's Console page carries pictures of the real application (owner ruling of
+2026-10-20), and they are taken from **fixture data** by one command the owner runs:
+
+```sh
+./scripts/console-screenshots.sh        # from the repository root
+npm run screenshots                     # the same thing, from console/
+```
+
+The script builds the console (`npm ci` then `npm run build`), then runs
+`tools/screenshots/capture.ts`. It **needs a display**: Electron opens a real window, so this
+is a run on a Mac with a desktop session and never a run in CI — the script's own header says
+so, and with no display the launch fails and the command exits non-zero. It refuses to start
+on anything but Node 22 (`package.json`'s `engines.node`; `.npmrc` sets `engine-strict=true`,
+so `npm ci` is the check) with a one-line error rather than a stack trace.
+
+### What it launches, and the checks that keep it fake
+
+The console under the camera is the **built** application, launched through the e2e suite's
+own Playwright/Electron path (`test/support/launch.ts`'s `launchConsole`, with the ETXTBSY
+retry) so its real startup handshake, resolver, `watch` supervisor and screens all run. What
+it is *not* is a console pointed at an installation. The fake CLI is the unit suite's own
+`test/unit/stub.ts`, installed into this run's scratch tree from the documents in
+`test/fixtures/screenshots/`, and it **refuses** (exit 2) any command the run did not prepare
+— so a screen whose read was not prepared is a picture of a refusal rather than of an empty
+document. Three rules are checked before a window exists, in `tools/screenshots/isolation.ts`:
+
+1. **the binary.** The console's own resolver is asked what it would run
+   (`test/support/cliStub.ts`), and the answer has to be the fixture's path exactly. A machine
+   with a real `fugaro` in `/opt/homebrew/bin` fails here, naming the path it found, because
+   two of the resolver's steps are absolute paths this run cannot change;
+2. **the paths.** `PATH`, `HOME` and `XDG_CONFIG_HOME` are written into one fresh scratch tree
+   and the window is given a fresh `--user-data-dir` under it; a launch whose environment or
+   profile names anything else — or that names the operator's real `HOME` or
+   `XDG_CONFIG_HOME` — is refused, naming the key and the path. Nothing here reads
+   `~/.config`, and the seeded `installations.json` is written into the fresh profile;
+3. **the rest of the environment.** The child's environment is built from an allow-list of
+   nine window-drawing keys, not a denylist: `FUGARO_CONFIG`, `GOOGLE_APPLICATION_CREDENTIALS`
+   and `SSH_AUTH_SOCK` cannot reach the app or the CLI it spawns, and the run's own log ends
+   with the fake child's account of every spawn.
+
+### What comes back: four pictures, a manifest, and the check on the bytes
+
+The captures land in `console/screenshots/` — **git-ignored, never committed**: a picture of a
+window is an artefact of a machine and a day, and the website's owner copies the one they want
+into `website/` deliberately. Each is 1280x800 CSS pixels at device scale factor 2 (2560x1600
+pixels), dark theme, the platform's title bar excluded (a `page.screenshot` reads the window's
+web contents). The four captures — one per window, from two launches — are:
+
+| File | Screen |
+|---|---|
+| `console-live.png` | the Live screen, with runs in flight, one that opened a pull request and one that failed |
+| `console-run.png` | the run detail the Live screen's first row names: stages, verification, findings, the log tail |
+| `console-spend.png` | the Spend screen: thirty days of daily spend, the totals and the caps |
+| `console-installations.png` | the picker, in the one state where the console opens it by itself: three installations and none chosen (D13's first run) |
+| `console-first-run.png` | **not taken.** The no-installation onboarding page is #751, which is not on `main`, so there is no such screen in this console; the manifest carries the omission and the reason rather than a silence |
+
+`tools/screenshots/png.ts` reads the PNG bytes itself and refuses a capture that is blank (the
+standard deviation of its pixel luminance, sampled, must be above `BLANK_STDDEV_FLOOR`) or is
+not exactly the size the manifest declares. It reads PNGs rather than adding an image library
+because every specifier in `package.json` is an exact pin (`test/unit/pinning.test.ts`), and
+reading its own bytes is forty lines of `node:zlib`. `tools/screenshots/manifest.ts` writes
+`screenshots/MANIFEST.json`: one entry per picture with its pixel size, its sha256 and a
+one-sentence alt text drafted from the fixture, plus what was omitted.
+
+### The tests, and the mutations each one was run against
+
+`test/unit/screenshots.test.ts` holds everything the run decides **without a window** — 43
+tests, and every rule below was seen red against a planted change before it was committed:
+
+| Claim | Mutation it was run against |
+|---|---|
+| the resolver must find the fixture binary | `assertFixtureBinary`'s equality check replaced by `return` — "answers nothing but the fixture binary from the resolver" and the accepting case both red |
+| a path outside the scratch tree is refused | `assertIsolated`'s `inside.some(...)` check disabled — red, naming the planted `HOME` |
+| the operator's own `HOME` is refused **even inside** a scratch tree | the `forbidden` entry not set — red |
+| no credential-shaped key reaches the child | `launchEnvironment`'s allow-list loop replaced by `Object.keys(ambient)` — the `GOOGLE_APPLICATION_CREDENTIALS`/`FUGARO_CONFIG`/`SSH_AUTH_SOCK`/`AWS_PROFILE` case red |
+| the fixtures are documents the console reads | the five fixtures driven through the console's **own** readers: `decodeSnapshot` for the feed's frames, `buildSpendModel` for `report`/`budget show`, `buildRunModel` for `diagnose` + `logs`. `max_reserve_usd` read from `global` instead of the top level — red |
+| the log window has no refused line | the fixture read as a bare list rather than through `parseLogEntries` — the `refused` assertion red |
+| a seed row must be sixteen hex characters | the id pattern loosened to `/^.*$/` — red |
+| two seed rows may not share an id | the duplicate check disabled — red |
+| the feed fixture must hold frames | the non-empty check disabled — red |
+| a missing fixture document is named | the wrapper's sentence replaced by the raw `ENOENT` — red |
+| the fake refuses an unknown command | `default.code` 2 → 0 — red |
+| the fake prints the version the console was built against | the version line replaced by `0.1.0` — red |
+| a manifest may not list one file twice | the duplicate check disabled — red |
+| a capture's name carries no path | `FILE_RE` loosened to `/^.*\.png$/` — red |
+| a size is a positive whole number | the `<= 0` half of the check dropped — red |
+| an entry carries an alt sentence | the empty-alt check disabled — red |
+| the manifest's key order is canonical | `screens` serialized before `window` — red |
+| a blank rectangle is refused | the `spread < BLANK_STDDEV_FLOOR` gate disabled — red |
+| a capture of the wrong size is refused | (driven directly: the test plants a 64x64 file against a 128x128 expectation) |
+| a Sub-filtered scanline is reversed | `case 1: value = raw + left` → `value = raw` — red |
+| an RGB file's channels are read apart | the green and blue bytes read from the red byte — red, two tests |
+
+The blank check is driven by a PNG **encoder** written in the test file (`node:zlib`'s
+`deflateSync`, a CRC per chunk, filters 0 and 1 really applied), because the only way to drive
+a check that reads pixels is with a picture whose pixels are known, and an image library is a
+dependency the console is not allowed to gain.
+
+### What this run cannot prove from here
+
+**The Electron launch itself.** No test in this repository opens the console's window — there
+is no display in CI, and the container this was written in has none either — so "the window
+comes up, the screen draws, the capture is not blank" is exercised by the owner's own run of
+`./scripts/console-screenshots.sh`, which is also the only thing that can produce the pictures.
+The first run is the check: a screen that does not draw fails its `waitForSelector` with the
+selector it waited for, a blank capture fails on its own numbers, and the fake's spawn report
+prints which commands the console actually asked for.

@@ -31,7 +31,7 @@
 // arrived from anything but this run's fake is the one failure this file exists
 // to make impossible to miss.
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
 import type { ElectronApplication, Page } from '@playwright/test'
@@ -258,7 +258,14 @@ export async function runCapture(options: {
   const manifest = buildManifest({ screens, omitted: OMISSIONS })
   const text = serializeManifest(manifest)
   writeFileSync(join(outDir, MANIFEST_FILE_NAME), text)
-  return { manifest: text, outDir, spawned: fixture.reports().map((report) => report.argv.join(' ')) }
+  // The fake's own account of every spawn is read **before** the scratch tree
+  // goes (it is a file in that tree), and the tree goes only here, on the path
+  // where the run finished: a run that threw leaves it behind as evidence
+  // (`isolation.ts`'s `Isolation.scratch` says so), and its Chromium profiles
+  // are megabytes this run has no reason to leave on a machine that succeeded.
+  const spawned = fixture.reports().map((report) => report.argv.join(' '))
+  rmSync(isolation.scratch, { recursive: true, force: true })
+  return { manifest: text, outDir, spawned }
 }
 
 /** openRun opens the run the picture is of, by clicking the Live screen's own
