@@ -34,6 +34,14 @@ package cli
 // not a failure, because the rename has to touch that file either way; what
 // the list freezes is which files the rename reaches.
 //
+// Mentions are matched over flattened text -- line-comment markers dropped,
+// whitespace collapsed, the normalisation docs_base_test.go's flattenDoc
+// already uses -- so a mention wrapped across a line break or across a `//`
+// counts, and the four files in this tree that name the command only in a
+// wrapped spelling are on the list. W2.6's claim that the live tree names the
+// retired command nowhere is only worth making if the scan can see the
+// wrapped spellings it is claiming about.
+//
 // W2.6 -- the task that empties the census -- flips this file's terminal
 // assertion from "the walk found something" to "`pendingRename` is empty", and
 // that is where the pin finally bites. Nothing before it may relax a row: the
@@ -133,14 +141,21 @@ var liveRoots = []string{
 // match -- the rerun line the retired command prints is
 // `fugaro init --repo . --retire`, and the deprecation warnings name
 // `init --repo` on its own.
+//
+// It is matched against flattenDoc's output and never against the raw bytes,
+// so a wrapped mention is a mention: a help string's line break inside the
+// two words, and a comment's `//` marker between them, are both whitespace by
+// the time this pattern sees them. The single space in the pattern is the
+// flattened separator, not a promise about the source.
 var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 
 // censusRoot is the repository root as this package's tests reach it.
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted, taken on main at 73a0c109. It is 308 files -- 115 non-test
-// Go files, 116 test files, 34 markdown files, 29 Terraform files, the four
+// command, sorted, taken on main at 1d325928 -- this branch's base, and the
+// tree every count below was read from. It is 312 files -- 118 non-test Go
+// files, 117 test files, 34 markdown files, 29 Terraform files, the four
 // `.tftest.hcl` fixtures beside them, the two goldens and the eight files the
 // website, the schema and the images scripts keep. Each task that renames a
 // string takes the file off this list in the same commit, and W2.6 empties it.
@@ -306,6 +321,7 @@ var pendingRename = []string{
 	"internal/cli/layer_routes_overlap_test.go",
 	"internal/cli/layer_sites_test.go",
 	"internal/cli/lswarn.go",
+	"internal/cli/managed_apply.go",
 	"internal/cli/managed_apply_test.go",
 	"internal/cli/managed_flag.go",
 	"internal/cli/managed_test.go",
@@ -315,6 +331,7 @@ var pendingRename = []string{
 	"internal/cli/project_check_test.go",
 	"internal/cli/project_cmd.go",
 	"internal/cli/project_enroll.go",
+	"internal/cli/project_job.go",
 	"internal/cli/project_job_test.go",
 	"internal/cli/project_policy_test.go",
 	"internal/cli/project_shared_test.go",
@@ -353,6 +370,7 @@ var pendingRename = []string{
 	"internal/e2e/init_test.go",
 	"internal/e2e/live_budget_test.go",
 	"internal/gateway/route.go",
+	"internal/gcpfake/firebasemgmt.go",
 	"internal/gcpfake/logging.go",
 	"internal/gcpfake/rtdb.go",
 	"internal/gcpfake/serviceusage.go",
@@ -375,6 +393,7 @@ var pendingRename = []string{
 	"internal/infra/managed/deletelist.go",
 	"internal/infra/managed/deletelist_test.go",
 	"internal/infra/managed/marker.go",
+	"internal/infra/managed/untrusted_test.go",
 	"internal/infra/project.go",
 	"internal/infra/projectcreate.go",
 	"internal/infra/projectjobs.go",
@@ -466,10 +485,22 @@ func censusExempt(rel string) bool {
 	return slices.Contains(retirementText, rel)
 }
 
-// censusNamesInit reports whether the file at path names the command. A file
-// whose first 8 KiB hold a NUL byte is binary and is skipped: the tree carries
-// two Windows binaries at its root, and a byte pattern inside a compiled
-// artifact is not a string anybody renames.
+// censusNamesInit reports whether the file at path names the command. The
+// bytes are flattened before they are matched -- line-comment markers dropped,
+// whitespace collapsed -- because prose and Go comments wrap, and a census
+// that only saw the unwrapped spelling would miss the mention the moment
+// somebody re-wrapped the sentence. Four files in this tree name the command
+// in one of those spellings and nothing else: the `fugaro managed` Long help
+// string wraps it across a line break (`internal/cli/managed_apply.go`), and
+// three comments wrap it across a `//` marker
+// (`internal/cli/project_job.go`, `internal/gcpfake/firebasemgmt.go`,
+// `internal/infra/managed/untrusted_test.go`). flattenDoc is the same
+// normalisation docs_base_test.go uses for this exact hazard, reused rather
+// than reimplemented so the two cannot disagree.
+//
+// A file whose first 8 KiB hold a NUL byte is binary and is skipped: the tree
+// carries two Windows binaries at its root, and a byte pattern inside a
+// compiled artifact is not a string anybody renames.
 func censusNamesInit(t *testing.T, path string) bool {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -483,7 +514,7 @@ func censusNamesInit(t *testing.T, path string) bool {
 	if bytes.IndexByte(head, 0) >= 0 {
 		return false
 	}
-	return initNameRE.Match(data)
+	return initNameRE.MatchString(flattenDoc(string(data)))
 }
 
 // liveInitCensus walks liveRoots and returns, sorted, every non-exempt file
