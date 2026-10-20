@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 )
 
-// Billing is a fake of the Cloud Billing call Fugaro makes: a project's
-// billing info (projects/<id>/billingInfo). A project it doesn't know is a
+// Billing is a fake of the Cloud Billing calls Fugaro makes: a project's
+// billing info (projects/<id>/billingInfo) and the accounts the caller may
+// link a project to (billingAccounts.list). A project it doesn't know is a
 // 403, as the real API answers a project the caller can't read.
 type Billing struct {
 	*Server
@@ -21,6 +24,10 @@ type Billing struct {
 	// accounts are the billing accounts the caller may link (id: open); with
 	// none registered any account is accepted.
 	accounts map[string]bool
+	// names are the display names those accounts were added with; an account
+	// added without one has none, as an account the API reports without a
+	// name.
+	names    map[string]string
 	crm      *CRM
 	hidden   map[string]bool
 	links    []Link
@@ -30,12 +37,22 @@ type Billing struct {
 // Link is an updateBillingInfo the fake accepted.
 type Link struct{ Project, Account string }
 
-var billingInfoRE = regexp.MustCompile(`^/v1/projects/([^/:]+)/billingInfo$`)
+var (
+	billingInfoRE = regexp.MustCompile(`^/v1/projects/([^/:]+)/billingInfo$`)
+	// billingAccountsRE is the account list's path. The fake answers every
+	// account it knows, closed ones included: filtering the closed ones out is
+	// the client's rule, not the API's.
+	billingAccountsRE = regexp.MustCompile(`^/v1/billingAccounts$`)
+	// billingAccountsPage is the page billingAccounts.list answers with when
+	// the query asks for none: the real API's own default and maximum.
+	billingAccountsPage = 100
+)
 
 // NewBilling starts a Cloud Billing fake that lives until the test ends.
 func NewBilling(t *testing.T) *Billing {
 	t.Helper()
-	f := &Billing{enabled: map[string]bool{}, account: map[string]string{}, accounts: map[string]bool{}, hidden: map[string]bool{}}
+	f := &Billing{enabled: map[string]bool{}, account: map[string]string{}, accounts: map[string]bool{},
+		names: map[string]string{}, hidden: map[string]bool{}}
 	f.Server = newServer(t, f.handle)
 	return f
 }
@@ -72,11 +89,19 @@ func (f *Billing) HideBilling(project string) {
 }
 
 // AddAccount makes billing account id one the caller may link projects to;
-// a closed account refuses a link with FAILED_PRECONDITION.
+// a closed account refuses a link with FAILED_PRECONDITION. It is
+// AddAccountNamed without a display name.
 func (f *Billing) AddAccount(id string, open bool) {
+	f.AddAccountNamed(id, "", open)
+}
+
+// AddAccountNamed is AddAccount with the display name billingAccounts.list
+// reports the account under ("" for none).
+func (f *Billing) AddAccountNamed(id, displayName string, open bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.accounts[id] = open
+	f.names[id] = displayName
 }
 
 // FailLinks makes every link answer code, status and msg. A code of 0 lifts it.
@@ -109,7 +134,41 @@ func (f *Billing) Links() []Link {
 	return append([]Link(nil), f.links...)
 }
 
+// listAccounts answers billingAccounts.list: every account the fake knows, in
+// ID order, paged as the query asks (pageSize, then pageToken as the offset of
+// the next page, like the other fakes' listings).
+func (f *Billing) listAccounts(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ids := make([]string, 0, len(f.accounts))
+	for id := range f.accounts {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	q := r.URL.Query()
+	size, _ := strconv.Atoi(q.Get("pageSize"))
+	if size <= 0 {
+		size = billingAccountsPage
+	}
+	start, _ := strconv.Atoi(q.Get("pageToken"))
+	start = min(max(start, 0), len(ids))
+	end := min(start+size, len(ids))
+	out := make([]any, 0, end-start)
+	for _, id := range ids[start:end] {
+		out = append(out, map[string]any{"name": "billingAccounts/" + id, "displayName": f.names[id], "open": f.accounts[id]})
+	}
+	resp := map[string]any{"billingAccounts": out}
+	if end < len(ids) {
+		resp["nextPageToken"] = strconv.Itoa(end)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (f *Billing) handle(w http.ResponseWriter, r *http.Request, req []byte) {
+	if r.Method == http.MethodGet && billingAccountsRE.MatchString(r.URL.Path) {
+		f.listAccounts(w, r)
+		return
+	}
 	m := billingInfoRE.FindStringSubmatch(r.URL.Path)
 	if m == nil || (r.Method != http.MethodGet && r.Method != http.MethodPut) {
 		f.unhandled(w, r)
