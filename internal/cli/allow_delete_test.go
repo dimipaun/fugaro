@@ -439,6 +439,56 @@ func TestAllowDeleteCommandAcceptsAQuotedIdentity(t *testing.T) {
 	}
 }
 
+// TestAllowDeleteCommandKeepsAOneSidedQuote: what is stripped is one MATCHED
+// pair, because the pair is the mark a shell or a message adds around a value
+// this command printed bare. A quote at one end only is not that mark: an
+// identity is compared byte for byte and a value in one may hold a quote, so
+// the ends are not stripped independently. Stripping them was the earlier
+// behaviour and it approved an object nobody named — with a trailing quote it
+// recorded the identity without the quote, an entry that matches no removal and
+// so clears nothing while the owner believes the address is clear.
+//
+// A leading quote alone is refused rather than completed into an identity: the
+// text after the cut must begin with "type=" like any other argument, and
+// closing that quote for the owner would be guessing at which identity they
+// meant.
+func TestAllowDeleteCommandKeepsAOneSidedQuote(t *testing.T) {
+	r := allowDeleteRig(t)
+	arg := dataApproval.address + `=type=google_storage_bucket id=data-bucket"`
+	if _, _, err := execute(t, "allow-delete", arg); err != nil {
+		t.Fatalf("a trailing quote was refused: %v", err)
+	}
+	got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
+	if !ok {
+		t.Fatal("nothing was written")
+	}
+	// The quote is a character of the identity and is recorded as itself: the
+	// bytes an entry holds are the bytes the plan would show.
+	want := `{"version":2,"gcp_project":"proj-1234","entries":[{"address":` +
+		jsonString(dataApproval.address) + `,"before":` +
+		jsonString(`type=google_storage_bucket id=data-bucket"`) + `}]}`
+	if got != want {
+		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
+	}
+	// And an argument whose only quote is the leading one is not an identity
+	// at all, so it is refused and nothing is written for it.
+	r2 := allowDeleteRig(t)
+	lead := dataApproval.address + `="type=google_storage_bucket id=data-bucket`
+	out, _, err := execute(t, "allow-delete", lead)
+	if err == nil {
+		t.Fatalf("an unpaired leading quote was accepted:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("%q: exit %d, want %d", lead, ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "an identity begins with the resource type") {
+		t.Errorf("%q was refused with the wrong reason: %v", lead, err)
+	}
+	if got, ok := allowDeleteAt(t, r2.gcs, initRunsBucket); ok {
+		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
+	}
+}
+
 // TestAllowDeleteCommandNeedsTheDefaultRunsBucket: the managed objects are
 // only ever read from the project's runs bucket under its default name — the
 // rule init's owner() and markCreated already apply — so a list recorded in a

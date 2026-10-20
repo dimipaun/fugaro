@@ -40,7 +40,15 @@ func mrc(typ string, after map[string]any) ResourceChange {
 // every fixture of the resource rules shares (managed_apply_test.go holds the
 // configuration's own).
 func managedPlan(changes ...ResourceChange) *Plan {
-	return &Plan{FormatVersion: "1.2", ResourceChanges: changes, Configuration: &Configuration{
+	// Every before view is the one terraform's state writes, the per-instance
+	// attribute of its type included (withInstance), so a fixture cannot
+	// remove an object the rule cannot identify and read the refusal that
+	// follows as the rule it meant to test.
+	views := make([]ResourceChange, len(changes))
+	for i, rc := range changes {
+		views[i] = withInstance(rc)
+	}
+	return &Plan{FormatVersion: "1.2", ResourceChanges: views, Configuration: &Configuration{
 		ProviderConfig: map[string]ProviderConfig{"google": {Name: "google", FullName: "registry.terraform.io/hashicorp/google",
 			Expressions: map[string]json.RawMessage{"project": json.RawMessage(`{"constant_value":"proj-1"}`)}}}}}
 }
@@ -1582,6 +1590,41 @@ func TestManagedCoverDropsInitAttributeChecks(t *testing.T) {
 // approval to (Task 6.3). The fixtures above are written without one — no
 // other rule reads it — so it is added here, on a copy, and never on the
 // fixture's own map, which every test in this file shares.
+// withInstance is rc with the per-instance attribute its type carries filled
+// into its before view when the fixture did not write one
+// (removalInstanceAttributes, read here as the rule reads it). A state
+// terraform wrote always carries it — the provider computes it when the object
+// is created — and a removal whose view lacks it identifies nothing and is
+// refused (tf.Approves), so a fixture that meant "the plan removes this
+// object" and left it out would be reading that refusal instead of the rule it
+// is about. The value is the fixture's own and is derived from the address, so
+// two fixtures of one type are two instances and one fixture is always the
+// same instance. A type that carries none, and a change with no before view at
+// all (a create), come back unchanged.
+func withInstance(rc ResourceChange) ResourceChange {
+	attr := removalInstanceAttributes[rc.Type]
+	if attr == "" || rc.Change.Before == nil {
+		return rc
+	}
+	if v, ok := rc.Change.Before[attr]; ok && v != nil {
+		return rc
+	}
+	before := make(map[string]any, len(rc.Change.Before)+1)
+	for k, v := range rc.Change.Before {
+		before[k] = v
+	}
+	if attr == "generation" {
+		// A bucket object's generation is a number in terraform's JSON
+		// (tf.instanceValue), and a fixture that wrote a string there would
+		// not be the shape the plan has.
+		before[attr] = float64(1758000000000000)
+	} else {
+		before[attr] = "fixture-instance:" + rc.Address
+	}
+	rc.Change.Before = before
+	return rc
+}
+
 func destroyed(rc ResourceChange) ResourceChange {
 	before := make(map[string]any, len(rc.Change.After)+1)
 	for k, v := range rc.Change.After {
@@ -1594,7 +1637,7 @@ func destroyed(rc ResourceChange) ResourceChange {
 	}
 	rc.Change.After = nil
 	rc.Change.AfterUnknown = nil
-	return rc
+	return withInstance(rc)
 }
 
 // approving is the owner's delete list holding the entry that approves rc's
@@ -1603,7 +1646,7 @@ func destroyed(rc ResourceChange) ResourceChange {
 // approved this removal" writes this and not a bare address: the address alone
 // approves nothing any more, and a test written with one would pass over a rule
 // it no longer exercises.
-func approving(rc ResourceChange) []DeleteEntry { return []DeleteEntry{ApprovalFor(rc)} }
+func approving(rc ResourceChange) []DeleteEntry { return []DeleteEntry{ApprovalFor(withInstance(rc))} }
 
 // TestManagedCoverAdmitsAListedDeleteOfAnAllowedResource: a delete of an exact
 // address on the owner's list whose resource the allowlist admits is admitted.

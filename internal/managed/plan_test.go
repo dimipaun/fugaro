@@ -89,6 +89,15 @@ func managedChange(addr, typ string, actions []string, before, after map[string]
 	return ch
 }
 
+// bucketCreated is the time_created a storage bucket's state carries: the
+// per-instance value the delete rule binds an owner's entry to
+// (tf.removalInstanceAttributes), which terraform's state always has, so that
+// a bucket fixture here is a state terraform wrote. A fixture that left it out
+// would be a removal the rule refuses for identifying nothing, which is not
+// the rule those fixtures are about (TestGateRefusesARemovalTheRuleCannotIdentify
+// is where that refusal is exercised, on purpose).
+const bucketCreated = "2026-01-02T03:04:05.678Z"
+
 // deleted is one entry of a managed plan's resource_changes for a resource the
 // plan removes: the resource in before and null in after, which is what the
 // managed cover judges the resource itself on. The null is set here rather
@@ -531,7 +540,7 @@ func TestGateRendersTheEntriesRefusalWhole(t *testing.T) {
 	r := newRig(t)
 	// The plan removes an object the owner's entry is not about: the entry
 	// names the address for the object that is gone.
-	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-other", "id": "fmgd-other"}))
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-other", "id": "fmgd-other", "time_created": bucketCreated}))
 	stale := entry(addr, "type=google_storage_bucket project="+gcpProject+" name=fmgd-gone id=fmgd-gone")
 	v := gate(t, r, spec(t, r, managedCover(), stale))
 	if v.OK {
@@ -575,6 +584,39 @@ func TestGateRendersTheEntriesRefusalWhole(t *testing.T) {
 	}
 }
 
+// TestGateRefusesARemovalTheRuleCannotIdentify: a before view of a type the
+// provider gives a per-instance value to, without that value, is not a state
+// terraform writes — and the rule refuses it however the owner's list is
+// written, because the name such a view carries is known not to be enough to
+// tell one instance of it from the next (tf.Identifies). The refusal says
+// which value is missing rather than that the plan names nothing, and the
+// address is not offered as listable: no entry can be matched against that
+// view, so sending the owner to record one would lead nowhere.
+func TestGateRefusesARemovalTheRuleCannotIdentify(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket.fmgd_data"
+	r := newRig(t)
+	before := map[string]any{"name": "fmgd-data", "id": "fmgd-data", "project": gcpProject}
+	r.managedShow(t, removing(addr, "google_storage_bucket", []string{"delete"}, before, nil))
+	// The owner's list names the address, and its entry is the strongest one
+	// the view could support: the type, the project, the name and the id are
+	// all exactly what the plan shows.
+	listed := entry(addr, "type=google_storage_bucket project="+gcpProject+" name=fmgd-data id=fmgd-data")
+	v := gate(t, r, spec(t, r, managedCover(), listed))
+	if v.OK {
+		t.Fatal("a removal whose before view carries no per-instance value was admitted")
+	}
+	ref, ok := findRefusal(v.Refusals, guardGate, addr)
+	if !ok {
+		t.Fatalf("the guard refused with no refusal at %s: %+v", addr, v.Refusals)
+	}
+	if !strings.Contains(ref.Why, "carries no time_created") {
+		t.Errorf("the guard's refusal is %q, want it to name the missing time_created", ref.Why)
+	}
+	if slices.Contains(v.Listable, addr) {
+		t.Errorf("Listable %v names %s, which no entry can be matched against", v.Listable, addr)
+	}
+}
+
 // findRefusal is the refusal one gate made about one address, and whether it
 // made one.
 func findRefusal(rs []Refusal, gate, address string) (Refusal, bool) {
@@ -612,7 +654,7 @@ func TestGateGuardErrorWithEmptyMessageIsNotOK(t *testing.T) {
 func TestGateRefusesAListedDeleteTheCoverDoesNotJudge(t *testing.T) {
 	r := newRig(t)
 	r.show(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
-		map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001"}, nil))
+		map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001", "time_created": bucketCreated}, nil))
 	v := gate(t, r, spec(t, r, judgesNothing{}, r.approving(t, planBucket)))
 	if v.OK {
 		t.Fatal("a delete of an address on the owner's list was admitted by a cover that judges no delete")
@@ -641,7 +683,7 @@ func TestGateRefusesAListedReplaceTheCoverDoesNotJudge(t *testing.T) {
 		t.Run(strings.Join(order, ","), func(t *testing.T) {
 			r := newRig(t)
 			r.show(t, removing(planBucket, "google_storage_bucket", order,
-				map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001"},
+				map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001", "time_created": bucketCreated},
 				map[string]any{"name": "fugaro-runs-" + gcpProject}))
 			v := gate(t, r, spec(t, r, judgesNothing{}, r.approving(t, planBucket)))
 			if v.OK {
@@ -668,7 +710,7 @@ func TestGateHandsTheCoverTheSameDeleteListAsTheGuard(t *testing.T) {
 	t.Cleanup(func() { guard = old })
 	r := newRig(t)
 	r.show(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
-		map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001"}, nil))
+		map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001", "time_created": bucketCreated}, nil))
 	approved := r.approving(t, planBucket)
 	if v := gate(t, r, spec(t, r, admitAll{deletes: &covered}, approved)); !v.OK {
 		t.Fatalf("a listed delete both gates admit is refused: %v", v.Refusals)
@@ -687,7 +729,7 @@ func TestGateHandsTheCoverTheSameDeleteListAsTheGuard(t *testing.T) {
 func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 	const addr = "module.managed.google_storage_bucket.fmgd_data"
 	allowed := func() map[string]any {
-		return deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-data"})
+		return deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-data", "time_created": bucketCreated})
 	}
 	r := newRig(t)
 	r.managedShow(t, allowed())
@@ -696,7 +738,7 @@ func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 	}
 	// The resource judged although the address is listed: the plan's own
 	// bucket carries the prefix, this one is Fugaro's state bucket.
-	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fugaro-tfstate-" + gcpProject}))
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fugaro-tfstate-" + gcpProject, "time_created": bucketCreated}))
 	v := gate(t, r, spec(t, r, managedCover(), r.approving(t, addr)))
 	if v.OK {
 		t.Fatal("a listed delete of a resource outside the managed prefix was admitted")
@@ -706,7 +748,7 @@ func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 	}
 	// And a resource whose type the allowlist does not carry: the address is
 	// listed, so the guard admits it and the cover's own rule is the refusal.
-	r.managedShow(t, deleted(addr, "google_compute_instance", map[string]any{"name": "fmgd-data"}))
+	r.managedShow(t, deleted(addr, "google_compute_instance", map[string]any{"name": "fmgd-data", "time_created": bucketCreated}))
 	v = gate(t, r, spec(t, r, managedCover(), r.approving(t, addr)))
 	if v.OK {
 		t.Fatal("a listed delete of a type outside the managed allowlist was admitted")
@@ -751,7 +793,7 @@ func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 func TestGateRefusesARemovalAtAnAddressApprovedForAnotherObject(t *testing.T) {
 	const addr = "module.managed.google_storage_bucket.fmgd_data"
 	r := newRig(t)
-	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-data", "id": "fmgd-data"}))
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-data", "id": "fmgd-data", "time_created": bucketCreated}))
 	approved := r.approving(t, addr)
 	if v := gate(t, r, spec(t, r, managedCover(), approved)); !v.OK {
 		t.Fatalf("the removal the owner's entry was given for is refused: %v", v.Refusals)
@@ -759,7 +801,7 @@ func TestGateRefusesARemovalAtAnAddressApprovedForAnotherObject(t *testing.T) {
 	// The address now carries another object: a bucket under another name,
 	// whose identity the entry does not hold. The entry is about the object
 	// that is gone, so it approves nothing.
-	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-other", "id": "fmgd-other"}))
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-other", "id": "fmgd-other", "time_created": bucketCreated}))
 	v := gate(t, r, spec(t, r, managedCover(), approved))
 	if v.OK {
 		t.Fatal("the entry approved a removal of an object it was not given for")
@@ -790,7 +832,7 @@ func TestGateRefusesARemovalAtAnAddressApprovedForAnotherObject(t *testing.T) {
 func TestGateAdmitsAListedAddressThePlanDoesNotCarry(t *testing.T) {
 	r := newRig(t)
 	r.managedShow(t, managedChange("module.managed.google_storage_bucket.data", "google_storage_bucket",
-		[]string{"create"}, nil, map[string]any{"name": "fmgd-data"}))
+		[]string{"create"}, nil, map[string]any{"name": "fmgd-data", "time_created": bucketCreated}))
 	if v := gate(t, r, spec(t, r, managedCover(), entry("module.managed.google_compute_instance.gone", "type=google_compute_instance id=gone"))); !v.OK {
 		t.Errorf("a listed address the plan does not carry changed the verdict: %v", v.Refusals)
 	}
@@ -843,7 +885,7 @@ func TestGateManagedCoverReceivesSpecImports(t *testing.T) {
 	const addr = "module.managed.google_storage_bucket.data"
 	id := gcpProject + "/data-bucket"
 	r := newRig(t)
-	imp := managedChange(addr, "google_storage_bucket", []string{"no-op"}, nil, map[string]any{"name": "fmgd-data"})
+	imp := managedChange(addr, "google_storage_bucket", []string{"no-op"}, nil, map[string]any{"name": "fmgd-data", "time_created": bucketCreated})
 	imp["change"].(map[string]any)["importing"] = map[string]any{"id": id}
 	r.managedShow(t, imp)
 	s := spec(t, r, managedCover())
@@ -870,7 +912,7 @@ func TestGateManagedCoverReceivesSpecImports(t *testing.T) {
 func TestGateAdmitsADeleteOnlyForAListedAddress(t *testing.T) {
 	r := newRig(t)
 	r.show(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
-		map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001"}, nil))
+		map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001", "time_created": bucketCreated}, nil))
 	if v := gate(t, r, spec(t, r, admitAll{}, r.approving(t, planBucket))); !v.OK {
 		t.Errorf("a delete of a listed address was refused: %v", v.Refusals)
 	}

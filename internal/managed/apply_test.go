@@ -450,7 +450,7 @@ func TestApplyRefusesAnAddressTheCommandLineNamed(t *testing.T) {
 	for _, addr := range []string{planBucket, "module.other.google_storage_bucket.x"} {
 		r := newApplyRig(t, plainRoot())
 		r.planWithChanges(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
-			map[string]any{"id": "bucket-0001"}, nil))
+			map[string]any{"id": "bucket-0001", "time_created": bucketCreated}, nil))
 		req := r.request(t)
 		req.Session = []string{addr}
 		// Even the owner's object holding an entry that approves the removal is
@@ -479,7 +479,7 @@ func TestApplyRefusesADeleteNoOwnerListApproves(t *testing.T) {
 	for _, allow := range [][]tf.DeleteEntry{nil, {}} {
 		r := newApplyRig(t, plainRoot())
 		r.planWithChanges(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
-			map[string]any{"id": "bucket-0001"}, nil))
+			map[string]any{"id": "bucket-0001", "time_created": bucketCreated}, nil))
 		req := r.request(t)
 		req.AllowDelete = allow
 		if _, err := Apply(context.Background(), req); !errors.Is(err, ErrRefused) {
@@ -492,7 +492,7 @@ func TestApplyRefusesADeleteNoOwnerListApproves(t *testing.T) {
 	// And the owner's list allowing it admits it, which is what the list is for.
 	r := newApplyRig(t, plainRoot())
 	r.planWithChanges(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
-		map[string]any{"id": "bucket-0001"}, nil))
+		map[string]any{"id": "bucket-0001", "time_created": bucketCreated}, nil))
 	req := r.request(t)
 	req.AllowDelete = []tf.DeleteEntry{r.approving(t, planBucket)}
 	if _, err := Apply(context.Background(), req); err != nil {
@@ -1067,7 +1067,7 @@ func TestManagedGuardRefusalNamesTheOwnersListAndNoFlag(t *testing.T) {
 	// The removal identifies its object, which is what makes the advice true:
 	// an entry the owner could write for this address would admit it, so the
 	// refusal may name the list (tf.ListableEntries).
-	r.planWithChanges(t, deleted(planBucket, "google_storage_bucket", map[string]any{"name": "fmgd-data", "id": "fmgd-data"}))
+	r.planWithChanges(t, deleted(planBucket, "google_storage_bucket", map[string]any{"name": "fmgd-data", "id": "fmgd-data", "time_created": bucketCreated}))
 	req := r.request(t)
 	_, err := Apply(context.Background(), req)
 	if !errors.Is(err, ErrRefused) {
@@ -1243,7 +1243,7 @@ func noAgentMarker(t *testing.T, s string) {
 // moved block with no target): the guard refuses it whatever the owner's list
 // says, so no list is the way past it.
 func moved(addr, from string) map[string]any {
-	ch := removing(addr, "google_storage_bucket", []string{"delete"}, map[string]any{"id": "bucket-0001"}, nil)
+	ch := removing(addr, "google_storage_bucket", []string{"delete"}, map[string]any{"id": "bucket-0001", "time_created": bucketCreated}, nil)
 	ch["previous_address"] = from
 	ch["action_reason"] = "delete_because_no_move_target"
 	return ch
@@ -1260,10 +1260,10 @@ func TestManagedRefusalOfWhatNoListClearsNamesNoListAndNoFlag(t *testing.T) {
 		says   string
 	}{
 		"moved, listed": {moved(planBucket, "module.managed.google_storage_bucket.old"),
-			[]tf.DeleteEntry{entry(planBucket, "type=google_storage_bucket id=bucket-0001")}, "moved here from module.managed.google_storage_bucket.old"},
+			[]tf.DeleteEntry{entry(planBucket, "type=google_storage_bucket id=bucket-0001 instance="+bucketCreated)}, "moved here from module.managed.google_storage_bucket.old"},
 		"moved, unlisted": {moved(planBucket, "module.managed.google_storage_bucket.old"), nil, planBucket},
 		"unknown action": {change(planBucket, "google_storage_bucket", []string{"delete", "obliterate"}, nil),
-			[]tf.DeleteEntry{entry(planBucket, "type=google_storage_bucket id=bucket-0001")}, "obliterate"},
+			[]tf.DeleteEntry{entry(planBucket, "type=google_storage_bucket id=bucket-0001 instance="+bucketCreated)}, "obliterate"},
 		"no actions": {change(planBucket, "google_storage_bucket", []string{}, nil), nil, "no actions"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1294,7 +1294,7 @@ func TestManagedRefusalOfWhatNoListClearsNamesNoListAndNoFlag(t *testing.T) {
 	// that address.
 	r := newApplyRig(t, plainRoot())
 	r.planWithChanges(t, moved(planBucket, "module.managed.google_storage_bucket.old"),
-		deleted("module.managed.google_storage_bucket.other", "google_storage_bucket", map[string]any{"name": "fmgd-other", "id": "fmgd-other"}))
+		deleted("module.managed.google_storage_bucket.other", "google_storage_bucket", map[string]any{"name": "fmgd-other", "id": "fmgd-other", "time_created": bucketCreated}))
 	_, err := Apply(context.Background(), r.request(t))
 	if err == nil || !strings.HasSuffix(err.Error(), DeleteAdvice(gcpProject)) {
 		t.Errorf("a refusal with an address the owner's list clears does not end with the advice:\n%v", err)

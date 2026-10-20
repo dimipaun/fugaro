@@ -35,7 +35,7 @@ import (
 // object was approved, and inventing an identity for it would be the hole the
 // version exists to close. Its addresses are therefore no addresses, which is
 // the fail-closed answer (see TestAllowDeleteFailsClosed's version-1 row).
-const deleteListJSON = `{"version":2,"gcp_project":"proj-1234","entries":[{"address":"google_cloud_run_v2_job.web","before":"type=google_storage_bucket id=web-0001"},{"address":"module.svc.google_storage_bucket.data","before":"type=google_storage_bucket id=data-0002"}]}`
+const deleteListJSON = `{"version":2,"gcp_project":"proj-1234","entries":[{"address":"google_cloud_run_v2_job.web","before":"type=google_storage_bucket id=web-0001 instance=2026-01-02T03:04:05.678Z"},{"address":"module.svc.google_storage_bucket.data","before":"type=google_storage_bucket id=data-0002 instance=2026-01-02T03:04:05.678Z"}]}`
 
 // approval is one fixture approval: the Terraform address the owner approved,
 // and the object the plan fixture shows there. The plan and the list are built
@@ -43,13 +43,22 @@ const deleteListJSON = `{"version":2,"gcp_project":"proj-1234","entries":[{"addr
 // not remove — which is exactly what the rule refuses.
 type approval struct{ address, id string }
 
+// fixtureCreated is the time_created the bucket fixtures' state carries: the
+// per-instance value the delete rule binds an entry to
+// (tf.removalInstanceAttributes), which a bucket's state always has, so the
+// plan fixture above is a state terraform wrote and the identity its entry
+// holds is the one the rule computes. A fixture without it would be a removal
+// the rule refuses for identifying nothing, which is not what these tests are
+// about (TestAllowDeleteFailsClosed's identity rows are).
+const fixtureCreated = "2026-01-02T03:04:05.678Z"
+
 func (a approval) entry() tf.DeleteEntry {
-	return tf.DeleteEntry{Address: a.address, Before: "type=google_storage_bucket id=" + a.id}
+	return tf.DeleteEntry{Address: a.address, Before: "type=google_storage_bucket id=" + a.id + " instance=" + fixtureCreated}
 }
 
 func (a approval) change() tf.ResourceChange {
 	return tf.ResourceChange{Address: a.address, Type: "google_storage_bucket",
-		Change: tf.Change{Actions: []string{"delete"}, Before: map[string]any{"id": a.id}}}
+		Change: tf.Change{Actions: []string{"delete"}, Before: map[string]any{"id": a.id, "time_created": fixtureCreated}}}
 }
 
 // deleteListApprovals is what the fixture above holds, in order.

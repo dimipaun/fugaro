@@ -70,6 +70,24 @@ const (
 	// silent: an installation that upgrades with such an object refuses
 	// deletes it used to allow, and the owner-run command is where the owner
 	// says so again.
+	//
+	// The version is not bumped for the per-instance value an entry's
+	// identity now carries where its type has one (tf.RemoveIdentityText): an
+	// entry an earlier build of version 2 wrote is still a version-2 entry
+	// holding an address and a before string, and it is read as one. What it
+	// buys its owner is nothing — the gate compares that string with the one a
+	// current build prints, so an entry written without the value a type has
+	// matches no removal and approves none (tf.Approves, and the refusal names
+	// the value the plan shows) — and that is the fail-closed direction, the
+	// same one the version check takes: the object is still readable, the
+	// deletes it used to allow are refused, and the owner re-approves from a
+	// current refusal. A version 3 would refuse those entries a release
+	// earlier than the comparison does, at the cost of the writer's own read
+	// reporting the whole object as unreadable, which is a worse answer for
+	// the owner (they would lose the addresses they still have rather than the
+	// identities they lack) — and the version-2 format itself arrived with
+	// Task 6.3, on a branch whose managed mode has never shipped, so there is
+	// no list anywhere that a version bump would have to migrate.
 	AllowDeleteVersion = 2
 	// allowDeleteMaxBytes bounds the read: the object is a list of Terraform
 	// addresses, and a caller that acts on it should not be reading a body

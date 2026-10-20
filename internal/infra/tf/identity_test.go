@@ -7,37 +7,59 @@ import (
 )
 
 // The identity of the object a removal takes away (design §6 item 5, plan Task
-// 6.3): the before view's type, id, name and project. These tests are the
-// rule's own review — the encoding, what a before view that identifies nothing
-// answers, and the one case the rule exists for: an approval given for one
-// object is not an approval of another one a later plan carries at the same
-// address.
+// 6.3): the before view's type, id, name and project, plus the per-instance
+// value the type carries where it has one. These tests are the rule's own
+// review — the encoding and its injectivity, what a before view that
+// identifies nothing answers, the one case the rule exists for (an approval
+// given for one object is not an approval of another one a later plan carries
+// at the same address), and the residual it does not close, pinned per type
+// and in both directions.
 
-// removal is a change that removes the object a before view describes.
+// removal is a change that removes the object a before view describes. The
+// view is the caller's own and is written out whole: a fixture that left a
+// type's per-instance attribute out would be a state terraform does not write,
+// and one that means "this object was removed" means the state terraform
+// writes (TestRemovedIdentityBindsThePerInstanceAttribute is the rule about
+// what it carries).
 func removal(typ string, before map[string]any) ResourceChange {
 	return ResourceChange{Address: "module.m." + typ + ".this", Mode: "managed", Type: typ,
 		ProviderName: "registry.terraform.io/hashicorp/google",
 		Change:       Change{Actions: []string{"delete"}, Before: before, After: nil}}
 }
 
+// bucketBefore is a bucket's before view as the provider writes one: the
+// name-derived id and name, the project, and the per-instance time_created
+// every state of a bucket carries.
+func bucketBefore(name, created string) map[string]any {
+	return map[string]any{"id": name, "name": name, "project": "proj-1", "time_created": created}
+}
+
 // TestRemovalIdentityString pins the encoding the owner's object holds and the
-// gate compares: a fixed order, a part the view does not carry left out, and a
-// value written as it is.
+// gate compares: a fixed order, a part the view does not carry left out, a
+// value written as it is, and the two characters that would make two
+// identities write one string escaped.
 func TestRemovalIdentityString(t *testing.T) {
 	for _, tc := range []struct {
 		id   RemovalIdentity
 		want string
 	}{
-		{RemovalIdentity{Type: "google_storage_bucket", Project: "p", Name: "n", ID: "i"}, "type=google_storage_bucket project=p name=n id=i"},
-		{RemovalIdentity{Type: "google_storage_bucket", ID: "i"}, "type=google_storage_bucket id=i"},
-		{RemovalIdentity{Type: "google_storage_bucket"}, "type=google_storage_bucket"},
+		{RemovalIdentity{Type: "google_storage_bucket", Project: "p", Name: "n", ID: "i", Instance: "2026-01-02T03:04:05Z"},
+			"type=google_storage_bucket project=p name=n id=i instance=2026-01-02T03:04:05Z"},
+		// A type with no per-instance attribute writes none, and one that is
+		// there is written last, after the id.
+		{RemovalIdentity{Type: "google_cloud_scheduler_job", ID: "i"}, "type=google_cloud_scheduler_job id=i"},
+		{RemovalIdentity{Type: "google_cloud_scheduler_job"}, "type=google_cloud_scheduler_job"},
 		{RemovalIdentity{}, ""},
 		// The order is the struct's and not the order a before view happens to
 		// hold its keys in: two plans of one object write one entry.
 		{RemovalIdentity{ID: "i", Name: "n", Project: "p", Type: "t"}, "type=t project=p name=n id=i"},
-		// A value is written as it is, spaces included: the comparison is on
-		// the whole string.
-		{RemovalIdentity{Type: "t", Name: "a bucket"}, "type=t name=a bucket"},
+		// A value is written as it is, except for the two characters the
+		// encoding uses: a space separates the parts and a backslash escapes,
+		// so a value holding either is escaped (identityPart) rather than
+		// written in a way another value could imitate.
+		{RemovalIdentity{Type: "t", Name: "a bucket"}, `type=t name=a\ bucket`},
+		{RemovalIdentity{Type: "t", Name: `a\b`}, `type=t name=a\\b`},
+		{RemovalIdentity{Type: "t", Name: `a \ b`}, `type=t name=a\ \\\ b`},
 	} {
 		if got := tc.id.String(); got != tc.want {
 			t.Errorf("RemovalIdentity%v.String() = %q, want %q", tc.id, got, tc.want)
@@ -45,21 +67,189 @@ func TestRemovalIdentityString(t *testing.T) {
 	}
 }
 
+// oldIdentityString is the encoding this rule wrote before it was made
+// injective: every part as "key=value", with a value written as it was and the
+// parts joined by a space. It is here for the regression below alone, which
+// fails on it: the collision it has is the reason the encoding changed, and a
+// test that only asserted the new form would keep passing if the escaping were
+// removed again for a value that happens to read the same way.
+func oldIdentityString(i RemovalIdentity) string {
+	parts := make([]string, 0, 5)
+	for _, p := range []struct{ k, v string }{
+		{"type", i.Type}, {"project", i.Project}, {"name", i.Name}, {"id", i.ID}, {"instance", i.Instance},
+	} {
+		if p.v != "" {
+			parts = append(parts, p.k+"="+p.v)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// TestRemovalIdentityStringIsInjective: two identities that differ in any part
+// write different strings, so an entry approved for one object matches one
+// object and no other. The first case is the collision the old encoding has —
+// the name "a id=b" against the pair of a name "a" with an id "b", one string
+// for two objects — and every part is covered, the per-instance value among
+// them.
+func TestRemovalIdentityStringIsInjective(t *testing.T) {
+	collision := []RemovalIdentity{
+		{Type: "t", Name: "a id=b"},
+		{Type: "t", Name: "a", ID: "b"},
+	}
+	if oldIdentityString(collision[0]) != oldIdentityString(collision[1]) {
+		t.Fatalf("the two fixtures no longer collide under the old encoding (%q, %q), so this test proves nothing",
+			oldIdentityString(collision[0]), oldIdentityString(collision[1]))
+	}
+	for _, tc := range []struct {
+		a, b RemovalIdentity
+		what string
+	}{
+		{collision[0], collision[1], "a name holding a space against a name and an id"},
+		{RemovalIdentity{Type: "t", Project: "p q", Name: "n"}, RemovalIdentity{Type: "t", Project: "p", Name: "q n"}, "a project holding a space against the part after it"},
+		{RemovalIdentity{Type: "t", Name: "n", Instance: "a id=b"}, RemovalIdentity{Type: "t", Name: "n", ID: "a id=b"}, "a per-instance value against an id of the same text"},
+		{RemovalIdentity{Type: "t", Name: `a\ b`}, RemovalIdentity{Type: "t", Name: `a\`, ID: "b"}, "a backslash against the escape that spells it"},
+		{RemovalIdentity{Type: "t", ID: "i"}, RemovalIdentity{Type: "t", Instance: "i"}, "an id against a per-instance value"},
+	} {
+		if tc.a.String() == tc.b.String() {
+			t.Errorf("%s write one string (%q) for two identities: an entry approved for one would match the other", tc.what, tc.a.String())
+		}
+	}
+	// Every part of the identity is escaped, not only some: a sweep of values
+	// that hold the encoding's own characters writes as many strings as it has
+	// values.
+	seen := map[string]string{}
+	for _, name := range []string{"a", "a b", `a\b`, `a\ b`, `a\\b`, `a b c`, ` `, `\`, `\ `} {
+		id := RemovalIdentity{Type: "t", Name: name}
+		if prev, dup := seen[id.String()]; dup {
+			t.Errorf("the names %q and %q write one string (%q)", prev, name, id.String())
+		}
+		seen[id.String()] = name
+	}
+}
+
+// TestRemovalInstanceAttributesDecideEveryManagedType: every type of the
+// managed allowlist is decided by one of the two maps and by only one — it
+// either carries a per-instance value the identity binds an entry to, or it
+// has a recorded reason it has none. A type added to managedTypes fails this
+// test until it is decided, so leaving one out is a decision and not an
+// omission, and neither map may carry a type the allowlist does not admit.
+func TestRemovalInstanceAttributesDecideEveryManagedType(t *testing.T) {
+	for _, typ := range ManagedAllowedTypes() {
+		attr, bound := removalInstanceAttributes[typ]
+		why, none := removalNoInstanceAttribute[typ]
+		switch {
+		case bound && none:
+			t.Errorf("%s is in both maps: it either has a per-instance attribute or a reason it has none, not both", typ)
+		case bound && attr == "":
+			t.Errorf("%s is in removalInstanceAttributes with no attribute named", typ)
+		case none && strings.TrimSpace(why) == "":
+			t.Errorf("%s is in removalNoInstanceAttribute with no reason it has none", typ)
+		case !bound && !none:
+			t.Errorf("%s is on the managed allowlist and neither map decides it: name the attribute that tells one instance of it from the next, or say why none does", typ)
+		}
+	}
+	for typ := range removalInstanceAttributes {
+		if !managedTypes[typ] {
+			t.Errorf("removalInstanceAttributes binds %s, which the managed allowlist does not admit: a type no managed plan may contain has no removal to bind", typ)
+		}
+	}
+	for typ := range removalNoInstanceAttribute {
+		if !managedTypes[typ] {
+			t.Errorf("removalNoInstanceAttribute decides %s, which the managed allowlist does not admit", typ)
+		}
+	}
+}
+
+// TestRemovedIdentityBindsThePerInstanceAttribute: for every type whose before
+// view carries a per-instance value, the identity reads it out of the view's
+// own attribute — the entry the refusal prints and the gate compares — and
+// that value is what tells one instance of a name from the next. A view of
+// such a type that does not carry it identifies nothing, which is the
+// fail-closed answer.
+func TestRemovedIdentityBindsThePerInstanceAttribute(t *testing.T) {
+	for _, tc := range []struct {
+		typ, attr string
+		one, next any
+		want      string
+	}{
+		{"google_storage_bucket", "time_created", "2026-01-02T03:04:05.678Z", "2026-06-07T08:09:10.111Z", "instance=2026-01-02T03:04:05.678Z"},
+		// A bucket object's generation is a NUMBER in terraform's JSON, and it
+		// is read as the decimal the plan wrote.
+		{"google_storage_bucket_object", "generation", float64(1758000000000000), float64(1758000000000001), "instance=1758000000000000"},
+		{"google_service_account", "unique_id", "104329501182774832335", "107711663860607879222", "instance=104329501182774832335"},
+		{"google_cloud_run_v2_job", "uid", "2f9a0d1e-1a1b-4c1d-9e0f-1a2b3c4d5e6f", "8c7b6a5d-4e3f-2a1b-0c9d-8e7f6a5b4c3d", "instance=2f9a0d1e-1a1b-4c1d-9e0f-1a2b3c4d5e6f"},
+		// google_apikeys_key is one of these types and not an exception: its
+		// provider id is projects/P/locations/global/keys/NAME, derived from
+		// the key's name (the fixture below is that shape), and the value
+		// that differs across a re-creation is uid.
+		{"google_apikeys_key", "uid", "6b1c5e2a-9d3f-4a7b-8c1d-2e3f4a5b6c7d", "0a9b8c7d-6e5f-4a3b-2c1d-0e9f8a7b6c5d", "instance=6b1c5e2a-9d3f-4a7b-8c1d-2e3f4a5b6c7d"},
+		{"google_secret_manager_secret", "create_time", "2026-01-02T03:04:05.678Z", "2026-06-07T08:09:10.111Z", "instance=2026-01-02T03:04:05.678Z"},
+		{"google_artifact_registry_repository", "create_time", "2026-01-02T03:04:05.678Z", "2026-06-07T08:09:10.111Z", "instance=2026-01-02T03:04:05.678Z"},
+	} {
+		t.Run(tc.typ, func(t *testing.T) {
+			one := removal(tc.typ, map[string]any{"id": "fmgd-x", "name": "fmgd-x", "project": "proj-1", tc.attr: tc.one})
+			id := RemovedIdentity(one)
+			if !id.Identifies() {
+				t.Fatalf("the before view of a %s carrying its %s identifies nothing: %v", tc.typ, tc.attr, id)
+			}
+			if !strings.Contains(id.String(), tc.want) {
+				t.Errorf("the identity of a %s is %q, want it to carry %q", tc.typ, id.String(), tc.want)
+			}
+			// The same name, the same name-derived id, the next instance:
+			// refused, with the two identities in the sentence.
+			next := removal(tc.typ, map[string]any{"id": "fmgd-x", "name": "fmgd-x", "project": "proj-1", tc.attr: tc.next})
+			ok, why := Approves([]DeleteEntry{ApprovalFor(one)}, next)
+			if ok {
+				t.Errorf("an entry approved a re-created %s at the same address: its %s differs, so the two are different objects", tc.typ, tc.attr)
+			}
+			if !strings.Contains(why, "another object") {
+				t.Errorf("the refusal of a re-created %s is %q, want it to say the entry is about another object", tc.typ, why)
+			}
+			// A before view of that type without the value: nothing identified,
+			// and the refusal says which value is missing rather than claiming
+			// the view carries no name.
+			bare := removal(tc.typ, map[string]any{"id": "fmgd-x", "name": "fmgd-x", "project": "proj-1"})
+			if RemovedIdentity(bare).Identifies() {
+				t.Errorf("a before view of a %s that carries no %s identified an object", tc.typ, tc.attr)
+			}
+			ok, why = Approves([]DeleteEntry{ApprovalFor(bare)}, bare)
+			if ok {
+				t.Fatalf("a removal whose before view carries no %s was approved", tc.attr)
+			}
+			if !strings.Contains(why, tc.attr) {
+				t.Errorf("the refusal is %q, want it to name the missing %s", why, tc.attr)
+			}
+			// And the value in another JSON shape is not read as one.
+			wrong := removal(tc.typ, map[string]any{"id": "fmgd-x", "name": "fmgd-x", "project": "proj-1", tc.attr: map[string]any{"not": "a value"}})
+			if RemovedIdentity(wrong).Identifies() {
+				t.Errorf("a %s whose %s is an object identified an object", tc.typ, tc.attr)
+			}
+		})
+	}
+}
+
 // TestRemovedIdentityReadsTheBeforeView: the identity is the change's type and
-// the before view's three identifying attributes, and a value of another type
+// the before view's three name-derived attributes, and a value of another type
 // is not read as one (a plan is JSON, and a number is not a name).
 func TestRemovedIdentityReadsTheBeforeView(t *testing.T) {
-	rc := removal("google_storage_bucket", map[string]any{"id": "fmgd-b", "name": "fmgd-b", "project": "proj-1", "location": "us"})
+	rc := removal("google_storage_bucket",
+		map[string]any{"id": "fmgd-b", "name": "fmgd-b", "project": "proj-1", "location": "us", "time_created": "2026-01-02T03:04:05Z"})
 	got := RemovedIdentity(rc)
-	want := RemovalIdentity{Type: "google_storage_bucket", Project: "proj-1", Name: "fmgd-b", ID: "fmgd-b"}
+	want := RemovalIdentity{Type: "google_storage_bucket", Project: "proj-1", Name: "fmgd-b", ID: "fmgd-b", Instance: "2026-01-02T03:04:05Z"}
 	if got != want {
 		t.Errorf("RemovedIdentity = %v, want %v", got, want)
 	}
-	if got.String() != "type=google_storage_bucket project=proj-1 name=fmgd-b id=fmgd-b" {
+	if got.String() != "type=google_storage_bucket project=proj-1 name=fmgd-b id=fmgd-b instance=2026-01-02T03:04:05Z" {
 		t.Errorf("RemovedIdentity.String() = %q", got.String())
 	}
+	// A type that carries no per-instance value reads none, whatever the view
+	// holds beside the three.
+	job := removal("google_cloud_scheduler_job", map[string]any{"id": "projects/p/locations/us-east5/jobs/fmgd-sweep", "name": "fmgd-sweep", "project": "p"})
+	if want := (RemovalIdentity{Type: "google_cloud_scheduler_job", Project: "p", Name: "fmgd-sweep", ID: "projects/p/locations/us-east5/jobs/fmgd-sweep"}); RemovedIdentity(job) != want {
+		t.Errorf("RemovedIdentity of a scheduler job = %v, want %v", RemovedIdentity(job), want)
+	}
 	// Another type in the view is not a value of one of the three.
-	if other := RemovedIdentity(removal("google_storage_bucket", map[string]any{"id": 7, "name": true})); other.Identifies() {
+	if other := RemovedIdentity(removal("google_cloud_scheduler_job", map[string]any{"id": 7, "name": true})); other.Identifies() {
 		t.Errorf("a before view whose id and name are not strings identifies %q, want nothing", other)
 	}
 	// A create carries no before, and a nil view identifies nothing either.
@@ -74,9 +264,8 @@ func TestRemovedIdentityReadsTheBeforeView(t *testing.T) {
 // carrying another object, which is what a re-created resource looks like to a
 // plan: the approval of the first must not admit it.
 func TestApprovesBindsAnEntryToTheObject(t *testing.T) {
-	first := removal("google_storage_bucket", map[string]any{"id": "fmgd-b", "name": "fmgd-b", "project": "proj-1"})
-	second := first
-	second.Change.Before = map[string]any{"id": "fmgd-b2", "name": "fmgd-b2", "project": "proj-1"}
+	first := removal("google_storage_bucket", bucketBefore("fmgd-b", "2026-01-02T03:04:05Z"))
+	second := removal("google_storage_bucket", bucketBefore("fmgd-b2", "2026-06-07T08:09:10Z"))
 	entries := []DeleteEntry{ApprovalFor(first)}
 	if ok, why := Approves(entries, first); !ok {
 		t.Fatalf("the entry of a removal does not approve it: %q", why)
@@ -95,7 +284,7 @@ func TestApprovesBindsAnEntryToTheObject(t *testing.T) {
 	}
 	// An address the list does not name is refused with no sentence of this
 	// function's: the caller has its own words for that.
-	if ok, why := Approves(entries, removal("google_apikeys_key", map[string]any{"id": "x"})); ok || why != "" {
+	if ok, why := Approves(entries, removal("google_apikeys_key", map[string]any{"id": "x", "uid": "u"})); ok || why != "" {
 		t.Errorf("an unlisted address gives (%v, %q), want (false, \"\")", ok, why)
 	}
 	if ok, why := Approves(nil, first); ok || why != "" {
@@ -104,11 +293,11 @@ func TestApprovesBindsAnEntryToTheObject(t *testing.T) {
 }
 
 // TestApprovesRefusesAnEntryThatIdentifiesNothing: an entry with no identity,
-// and a plan whose before view shows none of the three attributes, are both
-// refused — for the type alone is exactly what an address is, and an address
-// is what this rule stops being an approval.
+// and a plan whose before view identifies nothing, are both refused — for the
+// type alone is exactly what an address is, and an address is what this rule
+// stops being an approval.
 func TestApprovesRefusesAnEntryThatIdentifiesNothing(t *testing.T) {
-	rc := removal("google_storage_bucket", map[string]any{"id": "fmgd-b", "name": "fmgd-b"})
+	rc := removal("google_storage_bucket", bucketBefore("fmgd-b", "2026-01-02T03:04:05Z"))
 	if ok, _ := Approves([]DeleteEntry{{Address: rc.Address}}, rc); ok {
 		t.Error("an entry with no identity approved a removal")
 	}
@@ -125,15 +314,14 @@ func TestApprovesRefusesAnEntryThatIdentifiesNothing(t *testing.T) {
 // admitted, an entry bound to another object is refused at the address with
 // the reason, and the address alone is no longer an approval.
 func TestGuardEntriesAdmitsAListedRemovalOfItsOwnObject(t *testing.T) {
-	rc := removal("google_storage_bucket", map[string]any{"id": "fmgd-b", "name": "fmgd-b"})
+	rc := removal("google_storage_bucket", bucketBefore("fmgd-b", "2026-01-02T03:04:05Z"))
 	p := &Plan{ResourceChanges: []ResourceChange{rc}}
 	if err := GuardEntries(p, []DeleteEntry{ApprovalFor(rc)}, ""); err != nil {
 		t.Fatalf("a removal its own entry approves is refused: %v", err)
 	}
 	// The same list on another object at the same address: refused, at the
 	// address, with the two objects named.
-	other := rc
-	other.Change.Before = map[string]any{"id": "fmgd-other", "name": "fmgd-other"}
+	other := removal("google_storage_bucket", bucketBefore("fmgd-other", "2026-06-07T08:09:10Z"))
 	err := GuardEntries(&Plan{ResourceChanges: []ResourceChange{other}}, []DeleteEntry{ApprovalFor(rc)}, "")
 	if err == nil {
 		t.Fatal("the guard admitted another object at a listed address")
@@ -158,14 +346,16 @@ func TestGuardEntriesAdmitsAListedRemovalOfItsOwnObject(t *testing.T) {
 // under the entries rule that is a removal no entry approves whose object the
 // plan does identify — a mismatched entry included; a moved object, an unknown
 // action, and a before view that identifies nothing all not, because no entry
-// can be matched against the last one (an entry always carries its type).
+// can be matched against the last one (an entry always carries its type, or
+// the per-instance value its type needs).
 func TestListableEntriesIsWhatANewEntryWouldAdmit(t *testing.T) {
-	own := removal("google_storage_bucket", map[string]any{"id": "fmgd-b"})
-	other := own
-	other.Change.Before = map[string]any{"id": "fmgd-other"}
+	own := removal("google_storage_bucket", bucketBefore("fmgd-b", "2026-01-02T03:04:05Z"))
+	other := removal("google_storage_bucket", bucketBefore("fmgd-other", "2026-06-07T08:09:10Z"))
 	moved := own
 	moved.PreviousAddress = "google_storage_bucket.old"
-	weak := removal("google_storage_bucket", map[string]any{"location": "us"})
+	// A view with the name but not the per-instance value: nothing for an
+	// entry to be matched against.
+	weak := removal("google_storage_bucket", map[string]any{"name": "fmgd-b", "id": "fmgd-b"})
 	unknown := own
 	unknown.Change.Actions = []string{"delete", "obliterate"}
 	listed := own
@@ -191,11 +381,10 @@ func TestListableEntriesIsWhatANewEntryWouldAdmit(t *testing.T) {
 // "type=". A quoted identity is rejected there, so this pins the two ends
 // against each other: the text printed here is the text the command accepts.
 func TestTheRefusalsIdentityIsWhatTheOwnerPastes(t *testing.T) {
-	rc := removal("google_storage_bucket", map[string]any{"id": "fmgd-b", "name": "fmgd-b", "project": "proj-1"})
+	rc := removal("google_storage_bucket", bucketBefore("fmgd-b", "2026-01-02T03:04:05Z"))
 	entries := []DeleteEntry{ApprovalFor(rc)}
 	// The mismatched-entry sentence, from Approves itself.
-	other := rc
-	other.Change.Before = map[string]any{"id": "fmgd-other", "name": "fmgd-other", "project": "proj-1"}
+	other := removal("google_storage_bucket", bucketBefore("fmgd-other", "2026-06-07T08:09:10Z"))
 	_, why := Approves(entries, other)
 	// And the sentence for an address the list does not name, which is the
 	// cover's and the one the owner copies in the ordinary loop.
@@ -224,25 +413,56 @@ func TestTheRefusalsIdentityIsWhatTheOwnerPastes(t *testing.T) {
 }
 
 // TestAnEntryApprovesASameNamedObjectReCreatedAtTheAddress — the residual this
-// rule does not close, pinned as behaviour rather than left to be inferred.
-// For every managed type bar google_apikeys_key the provider derives the id
-// from the object's configured name, so a plan's before view cannot tell an
-// object from a re-creation of it under the same name: the entry still
-// approves the removal. What the rule closes is the address carrying a
-// DIFFERENT object, which the test above proves.
+// rule does not close, pinned as behaviour rather than left to be inferred,
+// and pinned per type: it holds for the managed types whose before view
+// carries no per-instance value (removalNoInstanceAttribute), and NOT for the
+// seven that carry one. Both directions are here, because what the residual
+// claims is exactly "these types and no others": a test of the approved
+// direction alone would keep passing if the binding were dropped for a type
+// that has one.
 func TestAnEntryApprovesASameNamedObjectReCreatedAtTheAddress(t *testing.T) {
-	// A bucket as the provider writes one: id IS the bucket name, so the two
-	// views are indistinguishable to this rule.
-	original := removal("google_storage_bucket", map[string]any{"id": "fmgd-data", "name": "fmgd-data", "project": "proj-1"})
-	recreated := removal("google_storage_bucket", map[string]any{"id": "fmgd-data", "name": "fmgd-data", "project": "proj-1"})
+	// A scheduler job is one of the types with none: its id is derived from
+	// the name and the region, it carries no output-only value of its own, so
+	// two views of the same job are the same identity and the entry survives
+	// its re-creation.
+	original := removal("google_cloud_scheduler_job",
+		map[string]any{"id": "projects/proj-1/locations/us-east5/jobs/fmgd-sweep", "name": "fmgd-sweep", "project": "proj-1"})
+	recreated := removal("google_cloud_scheduler_job",
+		map[string]any{"id": "projects/proj-1/locations/us-east5/jobs/fmgd-sweep", "name": "fmgd-sweep", "project": "proj-1"})
 	if ok, why := Approves([]DeleteEntry{ApprovalFor(original)}, recreated); !ok {
-		t.Fatalf("a same-named object at the address is refused, so the residual has changed shape: %q", why)
+		t.Fatalf("a same-named scheduler job at the address is refused, so the residual has changed shape: %q", why)
 	}
-	// A type whose id is a UID is the exception: the id differs across
-	// re-creation even when the name does not, and the entry does not survive.
-	key := removal("google_apikeys_key", map[string]any{"id": "uid-1", "name": "projects/p/keys/k"})
-	rekeyed := removal("google_apikeys_key", map[string]any{"id": "uid-2", "name": "projects/p/keys/k"})
-	if ok, _ := Approves([]DeleteEntry{ApprovalFor(key)}, rekeyed); ok {
-		t.Error("an entry approved a re-created object whose id differs, which the rule should refuse")
+	// A bucket is NOT one of them: the same name and the same name-derived id,
+	// created again, carries a different time_created and the entry does not
+	// approve the removal.
+	first := removal("google_storage_bucket", bucketBefore("fmgd-data", "2026-01-02T03:04:05Z"))
+	again := removal("google_storage_bucket", bucketBefore("fmgd-data", "2026-06-07T08:09:10Z"))
+	if ok, _ := Approves([]DeleteEntry{ApprovalFor(first)}, again); ok {
+		t.Error("an entry approved a re-created bucket whose time_created differs, which the rule should refuse")
+	}
+}
+
+// TestTheAPIKeyIdentityBindsItsUIDAndNotItsNameDerivedID: google_apikeys_key
+// was recorded as the exception to the id rule — the one managed type whose
+// provider id is not the name — and that was wrong. The provider writes
+// projects/P/locations/global/keys/NAME as the id (the shape the fixture
+// below has, and the shape the plan's before view carries), so the id names
+// the key and the value that differs across a re-creation is uid. This test
+// pins both halves, so neither the old claim nor a fixture that spelled the id
+// as a uid can come back.
+func TestTheAPIKeyIdentityBindsItsUIDAndNotItsNameDerivedID(t *testing.T) {
+	key := func(uid string) ResourceChange {
+		return removal("google_apikeys_key", map[string]any{
+			"id": "projects/proj-1/locations/global/keys/fmgd-web", "name": "fmgd-web", "project": "proj-1", "uid": uid})
+	}
+	id := RemovedIdentity(key("6b1c5e2a-9d3f-4a7b-8c1d-2e3f4a5b6c7d"))
+	if id.ID != "projects/proj-1/locations/global/keys/fmgd-web" {
+		t.Errorf("the fixture's id is %q, want the provider's name-derived shape (projects/P/locations/global/keys/NAME)", id.ID)
+	}
+	if id.Instance != "6b1c5e2a-9d3f-4a7b-8c1d-2e3f4a5b6c7d" {
+		t.Errorf("the api key's per-instance value is %q, want its uid", id.Instance)
+	}
+	if ok, _ := Approves([]DeleteEntry{ApprovalFor(key("6b1c5e2a-9d3f-4a7b-8c1d-2e3f4a5b6c7d"))}, key("0a9b8c7d-6e5f-4a3b-2c1d-0e9f8a7b6c5d")); ok {
+		t.Error("an entry approved a re-created API key whose uid differs")
 	}
 }
