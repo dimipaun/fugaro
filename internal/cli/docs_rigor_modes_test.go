@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"os/exec"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -108,8 +110,11 @@ func TestDocsRigorModesIsWritten(t *testing.T) {
 		// The claim that this folder decides nothing for the owner.
 		"**Not an approval.**",
 		// The check number this work proposes, in the index, where a reader
-		// looks for the numbers a work holds.
-		"**Check 113**",
+		// looks for the numbers a work holds. It is 119 rather than 110-118
+		// because every one of those is held by an open claim at the base
+		// (110 named by the mobile P5.3 design, 111 the setup wizard's, 112
+		// the Windows CLI's, 113-118 the voice session's six).
+		"**Check 119**",
 	}, rigorModesIndexedFiles...) {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s lacks %q", rigorModesReadme, want)
@@ -140,7 +145,7 @@ func TestDocsRigorModesIsWritten(t *testing.T) {
 		"**This gate is not passed, and nothing below is approved.**",
 		// The live check this work proposes, named in the plan as well as in the
 		// index, because a number claimed in two places is a number to check.
-		"Check 113",
+		"Check 119",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s lacks %q", rigorModesPlan, want)
@@ -288,10 +293,24 @@ func TestDocsRigorModesFindingsDecisionsAndItemsAreNumbered(t *testing.T) {
 }
 
 // TestDocsRigorModesCensusStatesItsCommands: the census carries a command in
-// every row, and the section states the scope the counts are defined over. A
-// count without its command is a figure a later reader cannot re-derive, which
-// is the rule the documents state for themselves.
+// every row, and running that command reproduces the count the row states. A
+// count without its command is a figure a later reader cannot re-derive, and a
+// command that no longer produces its figure is worse than no command at all:
+// it is a claim that looks checked. The other 47 rows this repository's folders
+// assert in prose; this one is the only place the figure can be re-derived by
+// the test itself, so it is re-derived.
+//
+// The commands are POSIX shell on purpose — `sed`, `grep`, `ls`, `wc` and
+// `git grep` — because that is what a reader copies out of the table, so the
+// guard runs them the way a reader would, from the repository root.
 func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the census's commands are POSIX shell: sed, grep, ls, wc and git grep")
+	}
+	sh, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
 	recon := readDoc(t, rigorModesRecon)
 
 	i := strings.Index(recon, rigorModesCensusHeading)
@@ -302,7 +321,7 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 	if j := strings.Index(body, "\n## 5."); j >= 0 {
 		body = body[:j]
 	}
-	rows, commands := 0, 0
+	rows, commands, checked := 0, 0, 0
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "|") {
@@ -325,12 +344,95 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 			continue
 		}
 		commands++
+
+		// The row's own figure, and the command that has to produce it.
+		want, err := strconv.Atoi(strings.TrimSpace(cells[1]))
+		if err != nil {
+			t.Errorf("%s: census row %q states %q as its count, which is not a number", rigorModesRecon, line, cells[1])
+			continue
+		}
+		cmd := rigorModesCommand(cells[2])
+		if cmd == "" {
+			t.Errorf("%s: census row %q carries no command inside its code span", rigorModesRecon, line)
+			continue
+		}
+		c := exec.Command(sh, "-c", cmd)
+		c.Dir = "../.." // the census states its commands run from the repository root
+		out, err := c.Output()
+		// `grep` and `git grep` exit 1 when they match nothing, which is what a
+		// row stating 0 legitimately does; the figure is the output, so only a
+		// command that produced none is an error.
+		if err != nil && len(out) == 0 {
+			t.Errorf("%s: census row %q: running %s: %v", rigorModesRecon, line, cmd, err)
+			continue
+		}
+		got := strings.TrimSpace(string(out))
+		checked++
+		if got != strconv.Itoa(want) {
+			t.Errorf("%s: census row %q says %d, but %s prints %q: the command has to reproduce the figure it sits beside",
+				rigorModesRecon, line, want, cmd, got)
+		}
 	}
 	if rows == 0 {
 		t.Errorf("%s: the census carries no rows", rigorModesRecon)
 	}
 	if commands != rows {
 		t.Errorf("%s: %d of %d census rows carry a command, want all of them", rigorModesRecon, commands, rows)
+	}
+	if checked == 0 {
+		t.Errorf("%s: no census command was run: the figures are the point", rigorModesRecon)
+	}
+}
+
+// rigorModesCommand is the shell command inside a census row's code span, with
+// the table's own escaping undone: a markdown cell cannot carry a bare `|`, so
+// a command that pipes writes `\|`, and what runs is the `|` a reader copies.
+func rigorModesCommand(cell string) string {
+	cell = strings.TrimSpace(cell)
+	i := strings.Index(cell, "`")
+	j := strings.LastIndex(cell, "`")
+	if i < 0 || j <= i {
+		return ""
+	}
+	return strings.ReplaceAll(cell[i+1:j], `\|`, "|")
+}
+
+// rigorModesCitedTaskRE matches a citation of one task, as the documents write
+// it ("plan T3.2", "T8.1's"). It is deliberately the whole id and not a range:
+// a range ("T3.1-T3.5") is checked endpoint by endpoint, because a range whose
+// far end does not exist is the same broken citation.
+var rigorModesCitedTaskRE = regexp.MustCompile(`T([0-9]+)\.([0-9]+)`)
+
+// TestDocsRigorModesEveryCitedTaskExists: every `T<n>.<m>` the reconciliation
+// and the index cite resolves to a task heading in the plan. This is the guard
+// the review asked for and the folder did not have: a document that cites a
+// task that does not exist is a document whose reader cannot find what it
+// points at, and a plan is edited by renumbering far more often than by
+// rewriting. It is a check over the *citation*, not over the prose around it, so
+// a reworded sentence cannot hide a dangling reference.
+func TestDocsRigorModesEveryCitedTaskExists(t *testing.T) {
+	plan := readDoc(t, rigorModesPlan)
+	exists := map[string]bool{}
+	for _, m := range rigorModesTaskRE.FindAllStringSubmatch(plan, -1) {
+		exists[m[1]] = true
+	}
+	if len(exists) == 0 {
+		t.Fatalf("%s lists no tasks to cite", rigorModesPlan)
+	}
+
+	cited := 0
+	for _, path := range []string{rigorModesRecon, rigorModesReadme, rigorModesPlan} {
+		doc := readDoc(t, path)
+		for _, m := range rigorModesCitedTaskRE.FindAllStringSubmatch(doc, -1) {
+			id := "T" + m[1] + "." + m[2]
+			cited++
+			if !exists[id] {
+				t.Errorf("%s cites %s, which is no task in %s: a citation has to resolve to a heading", path, id, rigorModesPlan)
+			}
+		}
+	}
+	if cited == 0 {
+		t.Fatalf("no document cites a task: the plan and the reconciliation are meant to point at each other")
 	}
 }
 

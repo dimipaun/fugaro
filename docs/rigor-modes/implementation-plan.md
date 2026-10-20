@@ -45,7 +45,7 @@ one of them is named so a reader can check the claim:
 | `internal/followup/trust.go` `Trust`, `Allows` | who may invoke Hotfix | F13 |
 | `internal/runner/gate.go` | the mode's `check` gate | F26 |
 | `internal/runner/outcome.go` `Decide`, `Plural` | where the mode's policy is applied | F4, F5 |
-| `internal/runner/prflow.go` `finalSection`, `reviewsPart`, `finalize`, `applyReady` | "left open by policy", and the ready PR | F28, F29 |
+| `internal/runner/prflow.go` `finalSection`, `reviewsPart`, `applyReady`, and `internal/runner/runner.go` `finalize` (which builds `PRSpec{Draft: !ready}` and calls `settlePR`) | "left open by policy", and the ready PR | F28, F29 |
 | `internal/cli/budget_preview.go` `StageBound` | the mode's ceiling | F17 |
 | `internal/cli/diagnose.go` `Diagnosis.Findings` | reading the backlog back out | F18 |
 | `internal/runner/refused.go` `workflowGuard` | the refusal a mode may never route around | F12 |
@@ -62,29 +62,36 @@ one of them is named so a reader can check the claim:
 | **5** | the task file, and Hotfix | a task may ask for a mode; Hotfix opens a ready PR | 3 |
 | **6** | cost | per-mode budget defaults; `budget preview --mode` | 3 |
 | **7** | the documentation and the practice | `docs/rigor-modes.md`, the project layer, `docs/dogfooding.md` | 4, 5, 6 |
-| **8** | the live checks, and the migration note | Check 113; the release note | 7 |
+| **8** | the live checks, and the migration note | Check 119; the release note | 7 |
 
 Slices 4, 5 and 6 are independent of each other and may be built in any order or
 in parallel (§6). Slice 7 needs all three because it documents them.
 
 ## 3. Check numbers this plan takes
 
-**This plan proposes Check 113.** The register is
+**This plan proposes Check 119.** The register is
 `docs/gcp-live-checklist.md`, and `docs/coordinator/README.md` §"The numbers
 this work holds" is the table that reads it. At `1d325928`: **Checks 1–109 are
-taken or reserved** (block by block, as that register's own row lists), **Check
-110 is claimed** by the always-on orchestrator design (PR #632, claimed and not
-merged), and **111** and **112** are named or proposed by other open work
-(`docs/mobile/voice-session/` proposes 112; `docs/windows-cli/` names 111). The
-next free number above them is therefore **113**.
+taken or reserved** (block by block, as that register's own row lists), and above
+them every number to 118 is held by an open claim:
 
-The register's own rule governs a collision, and this plan is written to it:
-**whichever of two open claims merges second renumbers itself**, to the number
-free at its own merge, and updates the register's paragraph in the same commit.
-It never renumbers a number an earlier plan has already written, and a reserved
-number is never reused. So if 111 or 112 were to move, this plan takes whatever
-is free at *its* merge — the task that writes the check (T8.1) owns that
-renumbering and the register line in the same commit.
+| Number | Who holds it, and in what state |
+| --- | --- |
+| **110** | **claimed twice over**: by the always-on orchestrator design (`docs/design/always-on-orchestrator.md`, PR #632, the claim `docs/coordinator/README.md`'s row records) and, separately, named by the mobile P5.3 design (`docs/mobile/design/voice-evaluation-switch.md`, its Q4 answered by the owner). Written by nobody, either way |
+| **111** | taken by `docs/setup-wizard/` — the billing picker's five failure modes, task W6.2 |
+| **112** | **proposed** by `docs/windows-cli/` — one owner-run first run on a real Windows machine (its PR #757 is merged) |
+| **113–118** | taken by `docs/mobile/voice-session/` — six checks, **numbered but not written**, its D219 |
+
+So the next free number is **119**, and this plan takes it. The register's own
+rule governs a collision, and this plan is written to it: **whichever of two open
+claims merges second renumbers itself**, to the number free at its own merge, and
+updates the register's paragraph in the same commit. It never renumbers a number
+an earlier plan has already written, and a reserved number is never reused. The
+five numbers above 112 are claims rather than written sections, so if the
+voice-session branch were to yield any of them this plan does **not** move up
+into the gap: it keeps 119, which is free whichever way that collision falls. The
+task that writes the check (T8.1) owns any renumbering and the register line in
+the same commit.
 
 **This plan takes no D-number.** Its decisions are **D1–D19**, folder-local and
 distinct by folder, which is the register's second row's own situation
@@ -284,15 +291,19 @@ lets it merge alone and leaves `main` green with no behaviour change at all.
 
 **T1.1 — the `rigor:` block in `fugaro.yaml`**
 - **Files.** `internal/config/config.go` (the struct), `internal/config/defaults.go`,
-  `internal/config/scope.go` (`Scopes`), `schemas/fugaro.schema.json`,
-  `internal/config/testdata/config/valid/rigor.yaml` (new corpus case),
-  `docs/project-layer.md` (the scope table's prose).
-- **Tests.** The config corpus test that walks
-  `internal/config/testdata/config/valid/` and `.../invalid/` (so a case is enough
-  to prove both directions), `internal/config/scope_test.go`'s `ScopeOf`, and
-  `TestScopeTableMatchesDocs` in `docs_project_layer_test.go`, which holds
-  `docs/project-layer.md` in step with the scope table. An invalid case with
-  `rigor: {default: "POC"}`'s near-miss (`"Poc"`) proves the vocabulary is closed.
+  `internal/config/scope.go` (the `Scopes` table), `schemas/fugaro.schema.json`,
+  `testdata/config/valid/rigor.yaml` **(new)** — the corpus is at the repository
+  root, not under `internal/config/` — and `docs/project-layer.md` (the scope
+  table's prose).
+- **Tests.** `internal/config/corpus_test.go`'s `TestCorpus`, which globs
+  `testdata/config/{valid,invalid}/*.yaml` from `internal/config` (so a new case
+  file is the whole edit), the `ScopeOf` cases in
+  `internal/config/scope_test.go`, and `TestScopeTableMatchesDocs` in
+  `internal/config/docs_scope_test.go`, which holds `docs/project-layer.md` in
+  step with the scope table — `docs/project-layer.md` itself is read by
+  `internal/cli/docs_project_layer_test.go`. A `testdata/config/invalid/rigor.yaml`
+  **(new)** carrying the near-miss (`default: "Poc"`) proves the vocabulary is
+  closed.
 - **Red step.** The corpus case is written first and fails with the strict
   decoder's "unknown field `rigor`" (`KnownFields(true)`), which is exactly F7's
   point.
@@ -368,7 +379,9 @@ before.
 
 **T2.1 — the finding item gains four optional properties**
 - **Files.** `internal/runner/verdict.go` (`VerdictSchema`, `Finding`).
-- **Tests.** `internal/runner/verdict_test.go`: a verdict in today's shape
+- **Tests.** `internal/runner/verdict_test.go` **(new)**, plus cases added to
+  `TestParseVerdict` in `internal/runner/pure_test.go`, which is where the parse
+  contract is held today: a verdict in today's shape
   (`severity` only) still parses; a scored verdict round-trips; a verdict with
   `class: "security"` parses; an out-of-range score is *not* rejected by the Go
   side (the schema constrains the model, and the Go parser stays permissive so a
@@ -383,9 +396,9 @@ before.
 
 **T2.2 — the anchors, in the review prompt**
 - **Files.** `internal/runner/prompts.go` (the review prompt's instructions).
-- **Tests.** The prompt tests in `internal/runner` (the package already asserts
-  prompt invariants): every anchor word appears once per axis, the five labels are
-  named, and the scoring instruction is present in the review prompt and absent
+- **Tests.** The prompt-invariant tests in `internal/runner/pure_test.go`
+  (`TestPromptWorkflowRule` and its siblings), plus a new case: every anchor word
+  appears once per axis, the five labels are named, and the scoring instruction is present in the review prompt and absent
   from the implement prompt — a test that catches the copy-paste that would make
   a coder score its own work.
 - **Red step.** The test asserting the anchors fails: the prompt asks for a
@@ -441,7 +454,9 @@ not change for anyone who has not configured a mode.
 - **Files.** `internal/runner/outcome.go` (`Decide` gains the split it is given),
   `internal/runner/runner.go` (the call site), `internal/rigor/table.go` (used,
   not changed, if T2.3's shape holds).
-- **Tests.** `internal/runner/outcome_test.go`: the existing four reasons are
+- **Tests.** `internal/runner/outcome_test.go` **(new)**, with cases added to
+  `TestDecide` in `internal/runner/pure_test.go` so the existing four reasons stay
+  held by the test that holds them today: the existing four reasons are
   unchanged for a run with no tolerated findings; a tolerated finding yields a
   ready PR with a reason that names the mode and the count; an unscored finding
   still fails in every mode; and **Critical is byte-identical**: the same records
@@ -528,8 +543,8 @@ not change for anyone who has not configured a mode.
 
 **T4.1 — `fugaro diagnose` shows the score and the mode**
 - **Files.** `internal/cli/diagnose.go` (`Diagnosis.Findings`, `seniorRound`,
-  the human row and `writeJSON`), `console/docs/json-contract.md` §6.1 (the
-  console's input contract).
+  the human row), `writeJSON` in `internal/cli/budget.go`, and
+  `console/docs/json-contract.md` §6.1 (the console's input contract).
 - **Tests.** A diagnose golden over a stored transcript with scored findings; the
   JSON shape asserted field by field, because the console reads it and a renamed
   field is a silent break there; and an unscored finding rendering exactly as it
@@ -619,8 +634,9 @@ not change for anyone who has not configured a mode.
 - **Commit.** `rigor: a hotfix's gate is the diff, not the agent's confidence`
 
 **T5.4 — the ready PR**
-- **Files.** `internal/runner/prflow.go` (`finalize`'s `Draft: !ready`,
-  `applyReady`), and the label naming in `internal/gitops`/`gitprov` as they
+- **Files.** `internal/runner/runner.go` (`finalize`, which builds
+  `PRSpec{Draft: !ready}` and calls `settlePR`), `internal/runner/prflow.go`
+  (`applyReady`), and the label naming in `internal/gitops`/`gitprov` as they
   stand.
 - **Tests.** A Hotfix run whose gate passed opens a **ready** PR and gets its
   labels applied (`applyReady`'s existing behaviour, asserted rather than
@@ -695,12 +711,18 @@ not change for anyone who has not configured a mode.
 ### Slice 7 — the documentation and the practice
 
 **T7.1 — `docs/rigor-modes.md`, the product document**
-- **Files.** `docs/rigor-modes.md` (new), and whatever pins product documents —
-  `docs/recipes.md`, `docs/project-layer.md` and `docs/dogfooding.md` each have
-  their own guard test, and the new document gets one in the same commit.
-- **Tests.** The new document's guard (its status line, the fact that it is a
-  product document and not a plan, and that its mode table's every mode is a mode
-  the code has); `TestScopeTableMatchesDocs` if the scope table changed.
+- **Files.** `docs/rigor-modes.md` **(new)**, and `internal/cli/docs_rigor_modes_product_test.go`
+  **(new)** — the pin. `docs/recipes.md` and `docs/project-layer.md` each have a
+  guard of their own (`internal/cli/docs_recipes_test.go`,
+  `internal/cli/docs_project_layer_test.go`), but **`docs/dogfooding.md` has
+  none**: it is only read by other folders' tests
+  (`docs_base_test.go`, `docs_project_wide_git_test.go`, `docs_providers_test.go`
+  and `docs_in_job_review_test.go`, which names it), so the new product document
+  gets its own new pin rather than an extension of an existing one.
+- **Tests.** The new pin (the document's status line, the fact that it is a
+  product document and not a plan, and that every mode in its table is a mode the
+  code has — read out of `internal/rigor`'s own vocabulary rather than restated);
+  `TestScopeTableMatchesDocs` if the scope table changed.
 - **Red step.** The guard is written first and fails on a missing document.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs' -count=1 -timeout 40m`
 - **Depends on.** T4.1, T5.4, T6.2 (it documents all three).
@@ -709,11 +731,14 @@ not change for anyone who has not configured a mode.
 
 **T7.2 — the practice the modes formalise, in `docs/dogfooding.md`**
 - **Files.** `docs/dogfooding.md` (the sentences F30 quotes, now with the mode
-  that automates each), `internal/cli/docs_*_test.go` for that document.
-- **Tests.** The existing dogfooding pin, extended to assert that each quoted
-  practice names a mode — which is what makes the mapping checkable rather than
-  prose.
-- **Red step.** The pin fails: the document does not name the modes.
+  that automates each), and `internal/cli/docs_dogfooding_test.go` **(new)** —
+  the document has no pin today, and this task is where it gets one.
+- **Tests.** The new pin, asserting that each practice F30 quotes names a mode,
+  which is what makes the mapping checkable rather than prose. It also holds the
+  sentences themselves, so the document the modes formalise cannot drift out from
+  under them.
+- **Red step.** The pin is written first and fails on the sentences carrying no
+  mode name.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs' -count=1 -timeout 40m`
 - **Depends on.** T7.1.
 - **Reviewer.** senior (in-loop).
@@ -732,7 +757,7 @@ not change for anyone who has not configured a mode.
 
 ### Slice 8 — the live checks, and the migration note
 
-**T8.1 — Check 113, written**
+**T8.1 — Check 119, written**
 - **Files.** `docs/gcp-live-checklist.md` (the section, and the register's
   paragraph), `docs/coordinator/README.md` (the check-number row, which
   `docs_coordinator_test.go` holds), and this plan's §3 if the number moved.
@@ -745,7 +770,7 @@ not change for anyone who has not configured a mode.
 - **Depends on.** T7.1, and the register being free at its merge (§3's
   renumber-second rule).
 - **Reviewer.** senior (in-loop).
-- **Commit.** `docs(live-checks): Check 113, the modes on a real repository`
+- **Commit.** `docs(live-checks): Check 119, the modes on a real repository`
 
 **T8.2 — the live checks, run** *(an owner action, not a task an agent can finish)*
 - **Files.** `docs/gcp-live-checklist.md` (the section's status line, from NOT
@@ -757,7 +782,7 @@ not change for anyone who has not configured a mode.
 - **Verification.** The five live checks in §9.
 - **Depends on.** T8.1, and a real repository configured with at least two modes.
 - **Reviewer.** **operator** — the owner, at their own terminal.
-- **Commit.** `docs(live-checks): Check 113, <result>`
+- **Commit.** `docs(live-checks): Check 119, <result>`
 
 **T8.3 — the migration note**
 - **Files.** `docs/releases/` (the 0.10.0 notes), where the default is stated:
@@ -782,7 +807,7 @@ a claim rather than a fact.
 | 4 | `fugaro budget preview --mode` against a finished run's gateway figure | the gateway's price is not in the tree |
 | 5 | a merged Hotfix PR's post-merge CI | CI fires on the provider |
 
-Checks 1–5 are **Check 113**, written by T8.1 and run by T8.2.
+Checks 1–5 are **Check 119**, written by T8.1 and run by T8.2.
 
 ## 10. Risks
 

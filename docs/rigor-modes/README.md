@@ -25,7 +25,7 @@ free-form string that no line of Go compares against anything, every finding
 blocks equally, and readiness is a single rule that `docs/recipes.md` states is
 not configurable. So the reconciliation is where the work is: it finds that the
 score has to be additive to a schema whose item is open, that the policy has to
-live *inside* `runner.Decide` rather than beside it, that the four words
+live *inside* `runner.Decide` rather than beside it, that the five words
 `blocker`/`high`/`medium`/`low`/`nit` are a vocabulary this repository does not
 have, and that Hotfix's "ship immediately" cannot mean a merge or a deploy
 because `gitprov` has no merge call and the runner never deploys. What is
@@ -54,7 +54,7 @@ and each mode names the sentence it automates.
 | **D1–D19** | this work's decisions, all written, **all open**. They are a *folder-local* namespace, distinct by folder — the same choice [docs/windows-cli/](../windows-cli/) made with its D1–D16 and [docs/setup-wizard/](../setup-wizard/) with its D1–D12. The register of every block is [docs/coordinator/README.md](../coordinator/) §"The numbers this work holds": **D1–D192 is the owner's allocation, D193 onward is free**. **Recommendation: keep D1–D19 local and distinct by folder, or move this work to D193 onward; renumbering is mechanical and changes nothing but the numbers** (O7). |
 | **O1–O7** | items for the owner that are deliberately not decisions — a measurement (calibration), two questions about the strictest mode, the drain of a ready Hotfix PR, an App permission, the CLI's own names, and the D-block above. |
 | **U1–U8** | claims this work could not check from the tree, each with what would verify it. Two of them — whether a cheap model scores reliably (U1) and whether a mode is in fact cheaper (U2) — are answered by the live checks and by the plan's T2.4, not by reading. |
-| **Check 113** | the live check this work proposes. The register is [docs/gcp-live-checklist.md](../gcp-live-checklist.md): **1–109 are taken or reserved**, **110 is claimed** by the always-on orchestrator design, and **111** and **112** are named or proposed by other open work — so 113 is the next free number, and the register's own rule applies to a collision: **whichever of two open claims merges second renumbers itself**, never a number an earlier plan has already written. |
+| **Check 119** | the live check this work proposes. The register is [docs/gcp-live-checklist.md](../gcp-live-checklist.md): **1–109 are taken or reserved**, and **110–118 are all held** — 110 claimed by the always-on orchestrator design (PR #632) and named by the mobile P5.3 design, and written by nobody either way, 111 taken by [docs/setup-wizard/](../setup-wizard/), 112 proposed by [docs/windows-cli/](../windows-cli/), and 113–118 taken by [docs/mobile/voice-session/](../mobile/voice-session/)'s six numbered checks. Those five are claims rather than written sections, so this work does **not** move up into a gap if one is yielded: 119 is free whichever way that collision falls, and the register's own rule applies — **whichever of two open claims merges second renumbers itself**, never a number an earlier plan has already written. |
 | **No new D-block, no new check range, no new schema** | the three registers this folder touches, and the reason each is written down here rather than discovered later. |
 
 ## What this folder is not

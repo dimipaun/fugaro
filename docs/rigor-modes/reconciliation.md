@@ -32,12 +32,13 @@ change are the *plan's* files, not this commit's.
 | --- | --- |
 | The score model and the per-mode thresholds | §5, D1–D4, plan T2.1–T2.4 |
 | Where mode config lives, and precedence | §5, D5, D6, D8, plan T1.1–T1.4 |
-| What each mode changes in the run loop, and the backlog | D7, D9, D10, D11, plan T3.1–T3.5 |
-| Hotfix | §5, D12–D15, plan T4.1–T4.5 |
-| Cost accounting | D16, D17, plan T5.1–T5.3 |
-| Security | §6, D18, plan T1.2, T3.1, T6.4 |
-| Tests and the live checks the owner runs | §7, plan T6.1–T6.5 |
-| Migration and the CLI/doc surface | D19, plan T0.1, T6.2, T7.1–T7.3 |
+| What each mode changes in the run loop | D7, D10, D11, plan T3.1–T3.5, T5.4 |
+| The backlog, and where a tolerated finding goes | D9, plan T3.3, T3.4, T4.1–T4.2 |
+| Hotfix | §5, D12–D15, plan T5.1–T5.5 |
+| Cost accounting | D16, D17, plan T6.1–T6.3 |
+| Security | §6, D18, plan T1.2, T1.3, T3.5, T5.3 |
+| Tests and the live checks the owner runs | §7, plan T8.1–T8.3 |
+| Migration and the CLI/doc surface | D19, plan T1.4, T7.1–T7.3, T8.3 |
 
 ## 2. Corrections to the premises this task was given
 
@@ -51,9 +52,10 @@ assumed any of them would be designing against a repository that does not exist.
 `schemas/fugaro.schema.json`'s own `properties`, and it is closed:
 `additionalProperties: false`). The reviewer is configured under `agent`
 (`agent.models.reviewer`, `agent.review_rounds`, `agent.first_line_review`). A
-`review:` block is not merely absent: `internal/config/scope_test.go`'s
-`TestScopeTableMatchesDocs` and `internal/config/testdata/config/invalid/review-allow-forks.yaml`
-are fixtures that would go red if one appeared. So the reconciliation of "the
+`review:` block is not merely absent: `internal/config/docs_scope_test.go`'s
+`TestScopeTableMatchesDocs` and the corpus case `testdata/config/invalid/review-allow-forks.yaml`
+(a file nothing in Go names — `internal/config/corpus_test.go` globs the
+directory) are fixtures that would go red if one appeared. So the reconciliation of "the
 `review` configuration" is that the reviewer's knobs are under `agent`, and that
 the word `review` at the top level of `fugaro.yaml` is taken by a refusal
 fixture, not by a feature.
@@ -165,22 +167,28 @@ that is currently thrown away (F20) plus a place to put it (D9).
 
 **F6 — Review rounds are bounded, and three inputs set the bound with a stated
 precedence.** Class: **Exists**.
-`internal/runner` holds `MaxReviewRounds = 10` and `MaxFirstLineRounds = 3`;
+`internal/recipe/recipe.go` holds `MaxReviewRounds = 10` and
+`MaxFirstLineRounds = 3` (`internal/config/config.go` holds the second of the
+two as well, for the config's own bound);
 `fugaro.yaml` sets `agent.review_rounds` (default 2, range 1..10);
 `internal/task/task.go`'s `Spec.Overrides.ReviewRounds` wins over it; a recipe's
 `max_rounds` participates through `planOf`. `docs/recipes.md` documents the
 precedence. Consequence: "max fix rounds" per mode must say which of these it
 sets. The recommendation is that a mode sets a *ceiling* that the existing
 precedence then operates beneath, so no existing task file changes meaning (D7,
-plan T1.4).
+plan T3.2).
 
 **F7 — Mode config cannot reuse a `review:` block, and adding a top-level key is
 five edits.** Class: **Wrong** (see C1) — and the five edits are the Rule part.
 `internal/config/config.go` (the struct), `internal/config/defaults.go`,
 `internal/config/scope.go`'s `Scopes` table (pinned by `TestScopeTableMatchesDocs`
-in `docs_project_layer_test.go`, which holds `docs/project-layer.md` in step),
-`schemas/fugaro.schema.json` (hand-written, `additionalProperties: false`, no
-generator) and a corpus case under `internal/config/testdata/config/valid/`.
+in `internal/config/docs_scope_test.go`, which holds `docs/project-layer.md` in
+step; `docs/project-layer.md` itself is read by
+`internal/cli/docs_project_layer_test.go`), `schemas/fugaro.schema.json`
+(hand-written, `additionalProperties: false`, no generator) and a corpus case
+under `testdata/config/valid/`, which `internal/config/corpus_test.go` picks up
+by globbing the directory — so the corpus file and nothing else is enough to add
+a case.
 Consequence: the config slice is one commit with all five, with its own red step;
 a schema-only or struct-only change is not mergeable and would go red in the
 corpus tests rather than in review (plan T1.1).
@@ -236,7 +244,8 @@ config value and no comment reaches it (D18, §6).
 `followup.trusted` (in the base branch's `fugaro.yaml`, repo-only scope) *and* a
 live `Collaborator` check on GitHub's `author_association`
 (OWNER/MEMBER/COLLABORATOR; always true on Bitbucket), and never the PR's own
-author. `followup.Select` reads the nonce-delimited comment block;
+author. `followup.Select` chooses which comment becomes work, and the
+nonce-delimited block it reads is built by `internal/followup/prompt.go`;
 `followup.allow_public` is the owner's explicit 2026-10-04 decision. Consequence:
 "who may lower a floor" and "who may invoke Hotfix" reuse this list rather than
 growing a second one, and because it is read from the base branch it is
@@ -247,7 +256,7 @@ unreachable from a fork (D8, D12).
 `followup.Select` is the only way a comment becomes work. Consequence: a
 follow-up's mode is the PR's recorded mode, and the follow-up path must be
 unable to lower it. `--mode` on a follow-up may only raise, and the design says
-so where the flag is defined rather than in prose (D6, plan T4.3).
+so where the flag is defined rather than in prose (D6, plan T5.2).
 
 **F15 — The budget is enforced in two places and the lower one wins.** Class:
 **Exists**.
@@ -327,14 +336,14 @@ enforces.
 fails to parse today, loudly. Consequence: the task asks for a rigor mode under
 a *different* key; `rigor` is the recommendation. Reusing `mode` would silently
 change what every existing task file means, and the parser's strictness is what
-turns that from a data bug into a parse error (D19, plan T4.2).
+turns that from a data bug into a parse error (D19, plan T5.1).
 
 **F23 — A new task field needs an image-skew gate.** Class: **Rule**.
 `internal/cli/recipes_skew.go`'s `…Since` constants and `checkImageSince` gate a
 task field on the image that understands it; the remedy printed to the user is
 `fugaro image refresh`. There are eleven such constants. Consequence: the task
 file's `rigor:` key cannot ship before the image that validates it, and the plan
-orders the two in one slice with the skew test as its verification (plan T4.2).
+orders the two in one slice with the skew test as its verification (plan T5.1).
 
 **F24 — The recipe loop cannot express "this finding is tolerated".** Class:
 **Gap**.
@@ -388,9 +397,9 @@ the same words the run record uses — which is what §6's audit requirement nee
 
 **F29 — Draft/ready is set once, and labels and reviewers follow it.** Class:
 **Rule**.
-`internal/runner/prflow.go`'s `finalize` builds `gitprov.PRSpec{Draft: !ready}`;
-`settlePR` and `applyReady` apply labels and reviewers *only* for a non-draft PR.
-There is no merge call in `gitprov`. Consequence: Hotfix's "ship immediately"
+`internal/runner/runner.go`'s `finalize` builds `gitprov.PRSpec{Draft: !ready}`
+and calls `settlePR`; `internal/runner/prflow.go`'s `applyReady` applies labels
+and reviewers *only* for a non-draft PR. There is no merge call in `gitprov`. Consequence: Hotfix's "ship immediately"
 cannot mean a merged PR — the provider interface has no merge path and the tool
 never deploys. It means a **ready** PR plus the operator's own merge, and
 `applyReady`'s behaviour is what makes labels and reviewers arrive (D11, D13).
@@ -406,8 +415,11 @@ in-loop reviewer is a cheap model too, so its `ship` verdict is weak … A run's
 `ship` never replaces it"; "anything that handles money or security" goes through
 a local session. Consequence: this feature formalises sentences the owner already
 wrote, and the design *quotes* them, so a mode that contradicts one is caught in
-review rather than in production. The plan's T0.1 is a document that does exactly
-this mapping.
+review rather than in production. This document is where the quotes are written
+down with a finding number each (T0.1 is the task that produced it), and T7.2 is
+the task that puts the mode that automates each practice beside its sentence in
+`docs/dogfooding.md` itself, with a pin of its own so the mapping cannot quietly
+rot.
 
 **F31 — Independent review for security-sensitive work is already written down.**
 Class: **Exists**.
@@ -447,7 +459,7 @@ score changes a model's behaviour at all; that `agent.review_rounds`'s default o
 scored row without a contract change (U7); that any workflow reacts to a merge
 (U5); that a Hotfix PR's ready state survives `settlePR` on a provider other than
 GitHub (U4); that a narrower `check` gate fits the verify timeout (U8); and that
-the gateway's prices make POC cheaper in fact (U2). Seven of those eight are the
+the gateway's prices make POC cheaper in fact (U2). Six of those eight are the
 UNVERIFIED table's, which is the point: an unverifiable claim is an item, not a
 finding.
 
@@ -455,21 +467,29 @@ finding.
 
 Every count below is stated with the command that produces it, because a count
 without its command is a figure a later reader cannot re-derive. All commands are
-run from the repository root against the tree at `1d325928`.
+run from the repository root against the working tree of this folder's own commit,
+which differs from the base `1d325928` by this folder's four documents and its pin
+test and nothing else — so one row is the folder's own: the 48 pins are 47 other
+folders' plus `internal/cli/docs_rigor_modes_test.go`.
 
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 8 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
-| Top-level `fugaro.yaml` keys | 9 | `python3 -c "import json;d=json.load(open('schemas/fugaro.schema.json'));print(len(d['properties']))"` |
-| Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `python3 -c "import json;d=json.load(open('schemas/fugaro.schema.json'));print([k for k in d['properties'] if 'review' in k])"` |
-| Config scope rows | 68 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '^\t{'` |
-| Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go'` |
-| Files in `internal/runner` that mention `Severity` at all | 3 | `git grep -l 'Severity' -- internal/runner ':!*_test.go'` |
-| Image-skew `Since` constants | 11 | `git grep -c 'Since = "' internal/cli/recipes_skew.go` |
-| Run outcomes | 3 | `git grep -ho 'Outcome[A-Za-z]* *Outcome *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 47 | `ls internal/cli/docs_*_test.go \| wc -l` |
-| Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -c '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
+| Top-level `fugaro.yaml` keys | 9 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
+| Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
+| Config scope rows | 68 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
+| Files in `internal/runner` that mention `Severity` at all | 3 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
+| Image-skew `Since` constants | 11 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 48 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 3 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
+
+Every one of those commands prints the number in the Count column and nothing
+else on stdout, so a reader — and this folder's guard — can re-run the row rather
+than trust the figure. `git grep -h` is there for the same reason: without it the
+command prints `file:count`, which is not the figure the row states.
 
 Three of those rows are worth reading rather than counting.
 
@@ -483,9 +503,10 @@ fallback), `prompts.go` (the label) and `reviewmode.go` (the label again) — th
 is the entire surface a scoring change touches inside the runner, which is why D3
 is as small as it is.
 
-The **47** is the convention this folder follows: there is no registry test over
+The **48** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and
-this folder's is `internal/cli/docs_rigor_modes_test.go`.
+this folder's is `internal/cli/docs_rigor_modes_test.go` — the forty-eighth, and
+the one row in this table that the folder's own commit moves.
 
 ## 5. Decisions for the owner
 
@@ -849,9 +870,9 @@ the `typical:` line stays empirical (≥5 real-cost runs, 30 days).** Reason:
 `internal/cli/budget_preview.go` computes a bound and says so in as many words
 (F17); a mode is a real input to that bound. What a mode is *not* is a
 prediction of what the run will spend, and the CLI already refuses to pretend
-otherwise. The plan's T5.3 adds the mode to the run record's own reporting so the
-empirical line can eventually be per mode — that is the honest path to a per-mode
-number.
+otherwise. The plan's T6.2 is the flag itself, and T6.3 adds the mode to the run
+record's own reporting so the empirical line can eventually be per mode — that is
+the honest path to a per-mode number.
 
 **Alternative: make the preview forecast per-mode cost.** Cost: it would be a
 forecast built from a ceiling times a stage bound, and the tool would be lying in
