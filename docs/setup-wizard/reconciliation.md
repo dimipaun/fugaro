@@ -704,8 +704,9 @@ two names for one thing, which is the confusion the brief opened with.
 own steps are unchanged apart from the CLI name it hands the user. One story —
 "setup" — told in two places, CLI first, is better than inventing a second word;
 and the retired-skill test (`plugin/readme_test.go`'s
-`TestReadmeNamesNoRetiredSkill`) already forbids the obvious alternative
-(`fugaro:onboard`, `fugaro:launch`, …). The skill's opening line must say which
+`TestReadmeNamesNoRetiredSkill`) already forbids the obvious alternative — a
+per-command skill named after one of the retired verbs, which its `retired`
+regex lists by name. The skill's opening line must say which
 one it is: "`fugaro setup` (the CLI) did the cloud; this skill writes
 `fugaro.yaml` and opens the pull request."
 
