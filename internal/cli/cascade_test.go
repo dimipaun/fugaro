@@ -255,25 +255,46 @@ func TestValidateCascadeSwitchReasonNeverBlamesTheGateway(t *testing.T) {
 	}
 }
 
-// shiftRelease returns rel with its patch number moved by delta ("0.9.6" and
-// -1 is "0.9.5"): the release one below cascadeSince is the image the gate has
-// to refuse, and one above it the image it has to pass. Written as a shift of
-// the constant rather than as a literal so the boundary this test pins is the
-// constant's own: a row written as "0.9.5" beside a constant of "0.9.6" is the
-// same number typed twice, and it stays green when the constant moves — which
-// is the skew the test exists to catch. A constant whose patch cannot shift is
-// not a release this gate can judge, and that is what the fatal says.
+// shiftRelease returns rel with a release number moved by delta: a release
+// below cascadeSince is the image the gate has to refuse, and one above it the
+// image it has to pass. Written as a shift of the constant rather than as a
+// literal so the boundary this test pins is the constant's own: a row written
+// as "0.9.5" beside a constant of "0.9.6" is the same number typed twice, and
+// it stays green when the constant moves — which is the skew the test exists
+// to catch.
+//
+// The constant's own patch series takes precedence — 0.9.6's neighbours are
+// 0.9.5 and 0.9.7 — and a release that opens its minor (a patch of 0, as
+// 0.10.0 does) has no patch below it at all, so the minor moves instead and
+// the patch stays: 0.9.0 below, 0.11.0 above. Both are releases the gate's own
+// numeric compare puts on the right side of the constant, which is all this
+// fixture has to be; a constant whose minor cannot shift either is not a
+// release this gate can judge, and that is what the fatal says.
 func shiftRelease(t *testing.T, rel string, delta int) string {
 	t.Helper()
 	parts := strings.Split(rel, ".")
 	if len(parts) != 3 {
 		t.Fatalf("cascadeSince = %q is not a X.Y.Z release, so no boundary can be read from it", rel)
 	}
-	patch, err := strconv.Atoi(parts[2])
-	if err != nil || patch+delta < 0 {
-		t.Fatalf("cascadeSince = %q has no release %d below/above it", rel, delta)
+	major, minor, patch := 0, 0, 0
+	var err error
+	if major, err = strconv.Atoi(parts[0]); err != nil {
+		t.Fatalf("cascadeSince = %q is not a X.Y.Z release, so no boundary can be read from it", rel)
 	}
-	return parts[0] + "." + parts[1] + "." + strconv.Itoa(patch+delta)
+	if minor, err = strconv.Atoi(parts[1]); err != nil {
+		t.Fatalf("cascadeSince = %q is not a X.Y.Z release, so no boundary can be read from it", rel)
+	}
+	if patch, err = strconv.Atoi(parts[2]); err != nil {
+		t.Fatalf("cascadeSince = %q is not a X.Y.Z release, so no boundary can be read from it", rel)
+	}
+	switch {
+	case patch+delta >= 0:
+		return fmt.Sprintf("%d.%d.%d", major, minor, patch+delta)
+	case minor+delta >= 0:
+		return fmt.Sprintf("%d.%d.%d", major, minor+delta, patch)
+	}
+	t.Fatalf("cascadeSince = %q has no release %d below/above it", rel, delta)
+	return ""
 }
 
 // TestInitRepoRefusesCascadeOnOlderBaseImage is Task C1.1's skew gate: a
@@ -446,9 +467,9 @@ func TestCascadeSkewNamesTheLayerTheValueCameFrom(t *testing.T) {
 // TestCascadeSinceIsTheReleaseTheDocsAndSchemasName: the constant's number is
 // stated to three other readers, and each of them acts on it. docs/release.md's
 // "Before you tag" bullet is what a release verifies the constant against
-// ("currently `\"0.9.6\"`"), and the two schemas' agent.auth descriptions tell
+// ("currently `\"0.10.0\"`"), and the two schemas' agent.auth descriptions tell
 // an author editing a fugaro.yaml which release stops refusing the value
-// ("Fugaro before 0.9.6 refuses the value"). A constant that moves alone leaves
+// ("Fugaro before 0.10.0 refuses the value"). A constant that moves alone leaves
 // one of those readers a number that is not the one the gate judges with — the
 // release checklist verifying a release that does not read the value, or a
 // repository author told their file is fine on an image whose runner refuses it
@@ -460,9 +481,9 @@ func TestCascadeSkewNamesTheLayerTheValueCameFrom(t *testing.T) {
 // to one the docs do not name, fails here rather than silently refusing every
 // cascade install.
 //
-// Mutation (run, restored): change cascadeSince to "0.9.7" and nothing else —
+// Mutation (run, restored): change cascadeSince to "0.10.1" and nothing else —
 // this fails naming the release checklist and both schemas, which still say
-// 0.9.6.
+// 0.10.0.
 func TestCascadeSinceIsTheReleaseTheDocsAndSchemasName(t *testing.T) {
 	var bullet string
 	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
@@ -497,6 +518,31 @@ func TestCascadeSinceIsTheReleaseTheDocsAndSchemasName(t *testing.T) {
 		if !strings.Contains(line, "before "+cascadeSince) {
 			t.Errorf("%s's agent.auth description does not say Fugaro before %s refuses the value: the schema tells an author a release the gate does not judge with", path, cascadeSince)
 		}
+	}
+}
+
+// TestCascadeSinceIsTheReleaseTheCredentialsServiceShipsIn: the four readers
+// above are held to the constant, and this one holds the constant to the
+// release the credentials service ships in — 0.10.0, which is not tagged yet
+// and is where the owner's ruling of 2026-10-20 places the whole service (this
+// value included; the line named 0.9.6 while the next release was expected to
+// be 0.9.6, and the owner renumbered it to 0.10.0).
+//
+// It is written out rather than read from anything because nothing else in the
+// tree knows which release this is: the constant, docs/release.md's bullet and
+// both schemas' descriptions can move together to a number that is not the
+// ruled one and stay green in TestCascadeSinceIsTheReleaseTheDocsAndSchemasName,
+// which compares them with each other. What a wrong number costs is the gate
+// itself: a cascade repository on an installation whose base image is 0.9.5 or
+// older would be refused by a constant naming a release that ships later than
+// the one that actually reads the value, and admitted by one naming an earlier
+// release, in both cases against the release the owner ruled for.
+//
+// Mutation (run, restored): change cascadeSince to "0.11.0" — this fails, and
+// the docs/schemas test above stays green with the labels moved to match.
+func TestCascadeSinceIsTheReleaseTheCredentialsServiceShipsIn(t *testing.T) {
+	if cascadeSince != "0.10.0" {
+		t.Errorf("cascadeSince = %q: the credentials service ships in 0.10.0 (the owner's ruling of 2026-10-20), so the gate would judge the base image against a release the value does not ship in", cascadeSince)
 	}
 }
 

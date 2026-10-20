@@ -52,7 +52,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "auth": { "enum": ["vertex", "api-key", "oauth", "cascade"], "description": "Where the run's model calls are authenticated. cascade asks for the project's credentials cascade (docs/credentials-service): it is refused with followup.allow_public, needs budget.mode observe or enforce, and is enabled only by the project policy's routing.claude: {via: cascade}, which only the operator can set. Fugaro before 0.9.6 refuses the value." },
+        "auth": { "enum": ["vertex", "api-key", "oauth", "cascade"], "description": "Where the run's model calls are authenticated. cascade asks for the project's credentials cascade (docs/credentials-service): it is refused with followup.allow_public, needs budget.mode observe or enforce, and is enabled only by the project policy's routing.claude: {via: cascade}, which only the operator can set. Fugaro before 0.10.0 refuses the value." },
         "model": { "$ref": "#/$defs/modelName" },
         "models": {
           "type": "object",

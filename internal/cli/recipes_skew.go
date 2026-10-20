@@ -297,11 +297,13 @@ const titlesSince = "0.8.5"
 // either way (refuseCascadeSkew). docs/release.md ("Before you tag") has the
 // checklist verify it equals the release that ships the value.
 //
-// It names 0.9.6, which is not tagged yet, and that is the ruling rather than
+// It names 0.10.0, which is not tagged yet, and that is the ruling rather than
 // a slip: the owner's ruling of 2026-10-20 places the whole credentials
-// service — this value included — in 0.9.6, so 0.9.6 is the release this value
-// ships in and the one whose config reader accepts it. An installation whose
-// base image is 0.9.5 or older is therefore refused, which is right: that
+// service — this value included — in the next release, which is 0.10.0 (the
+// line named 0.9.6 while the release was expected to ship as 0.9.6, and the
+// owner renumbered it), so 0.10.0 is the release this value ships in and the
+// one whose config reader accepts it. An installation whose base image is
+// 0.9.5 or older is therefore refused, which is right: that
 // runner's config.Validate does not know the value, so a cascade repository
 // deployed against it would die at bootstrap, and `fugaro init --base base`
 // — run by a binary of the release that carries the value — is the fix that
@@ -313,8 +315,9 @@ const titlesSince = "0.8.5"
 //
 // TestCascadeSinceIsTheReleaseTheDocsAndSchemasName holds it to the number
 // docs/release.md's bullet and the two schemas' agent.auth descriptions state,
-// so the constant cannot move without them.
-const cascadeSince = "0.9.6"
+// and TestCascadeSinceIsTheReleaseTheCredentialsServiceShipsIn holds it to the
+// release the service ships in, so the constant cannot move without them.
+const cascadeSince = "0.10.0"
 
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets
