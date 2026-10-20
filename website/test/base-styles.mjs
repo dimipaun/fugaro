@@ -8,25 +8,30 @@
 // page marked). The colour side — no literal in base.css, every pair it paints checked for
 // all three palettes — is in `a11y.mjs`, beside the contrast arithmetic it reuses.
 //
-// **The third subject is the flow's own layout** (changes spec of 2026-10-18, item 4):
-// `ArchitectureDiagram.astro`'s four cards are a quarter of the row each, and the row was
-// laid out from 48 rem, where a card's content box is 100 px wide and the words its own step
-// names are made of do not fit in that. A diagram that cannot print its own labels is the
-// picture failing at the one thing it is for, so the arithmetic is here, beside the other
-// layout rules: a card's content box at the breakpoint and at the page's maximum width,
-// against the width of the longest word the flow's names are built from.
+// **The third subject is the layout of the pages' own pictures** (changes spec of 2026-10-18,
+// item 4). It was the four-step flow's: `ArchitectureDiagram.astro`'s cards were a quarter of
+// the row each, laid out from 48 rem, where a card's content box was 100 px wide and the words
+// its own step names were made of did not fit in that — a diagram that cannot print its own
+// labels is the picture failing at the one thing it is for. The flow is retired (the owner's
+// ruling of 2026-10-20: the component is deleted, and the pages show the homepage's three-tab
+// slider and the run's drawing), and the same two readings are here for what replaced it: **the
+// room a step name is printed in** (`sliderLayoutFailures` reads the slider's grid, its list's
+// cap and the gutter between `main` and the list, against the longest word of the three names)
+// and **the arrows of the run's drawing**, which leave each box and land on the next
+// (`runArrowFailures` reads the cards, the gaps between them and each head's three corners).
 //
 // **Two more readings of the same kind, both of them defects a browser shows rather than a
-// preference: the arrows point the way the run travels, and a command block's copy control
-// sits at the right of the block it belongs to.** The first is `transform: rotate(90deg)` on
-// an arrow drawn pointing down, which turns it leftwards — from each step back at the one
-// before it — with no test in the repository reading the direction at all. The second is
+// preference: an arrow that points the way the run does not travel, and a command block's copy
+// control sitting at the left of the block it belongs to.** The first was `transform:
+// rotate(90deg)` on an arrow drawn pointing down, which turned it leftwards — from each step
+// back at the one before it — and it is now the drawing's own geometry: a head at the wrong end
+// of a shaft, or a shaft drawn from the later box back to the earlier one. The second is
 // `justify-content: space-between` on a row whose first child in the markup is the shared
 // control, which puts the control at the left of its command, the other way round from
 // `base.css`'s rule and from every other command block on the site. Both are read from the
 // built page as arithmetic or as a cascade, because both are invisible to a check that only
-// counts elements: `home.mjs` counts the flow's three arrows and `copy.mjs` clicks the
-// control, and neither of them says which way the one points or where the other is drawn.
+// counts elements: `slider.mjs` counts the three panels and `copy.mjs` clicks the control, and
+// neither of them says which way an arrow points or where the control is drawn.
 //
 // **And the run under the picture was one vertical timeline** (the owner's feedback of
 // 2026-10-19: "The run, step by step section does not look good"). Five steps laid out as a
@@ -636,38 +641,6 @@ function longestWord(names) {
     .at(0) ?? ''
 }
 
-// ---- the cap the measure puts on the flow's own list (changes spec item 4) ---------------
-//
-// `base.css` holds prose to the measure — `:where(p, ul, ol, dl, blockquote, figcaption)
-// { max-width: var(--measure) }` — and the flow's four steps are an `<ol>`. That cap was
-// invisible to every check in this file: the arithmetic below sizes a card from the page's
-// own column, and a browser gives the list **the smaller of the column and the cap**. The
-// measure is 68 ch, about 578 px at the body's 17 px, where the four cards and their three
-// arrows want about 720: the row was drawn inside a 578 px box, the cards came out about
-// 143 px wide, `Ephemeral cloud job` broke as `Ephemera / l cloud job`, and the picture item
-// 4 is about was the narrowest thing in its own section. The declaration that fixes it is one
-// line (`max-width: none` on `.flow-steps`), and what this reader adds is the reason it
-// cannot be dropped quietly again: it resolves the cascade for that element's `max-width` —
-// the rules that reach an `<ol class="flow-steps">`, in force at the width, highest
-// specificity first and the last one winning a tie — turns the winner into pixels, and
-// refuses any cap narrower than the row it lays out needs.
-//
-// The reader knows the selectors this site writes and no more: an element name, classes, an
-// id, `:where()`, `:is()`, `:not()`, and state pseudo-classes (`:hover` and its kind, which a
-// browser does not apply at rest). Anything else a rule could reach the list through — an
-// attribute selector, a `::pseudo-element`, an ancestor part this reader cannot check against
-// a page it is not given — is **reported rather than skipped**: a cap nobody could read is a
-// cap nobody checked, which is how this defect shipped in the first place.
-
-/**
- * The flow's list, as this reader models it: the `<ol class="flow-steps">` the component
- * writes, with no attributes beyond its class. The gate below reads the real element — name,
- * classes, id and every attribute it carries, Astro's scoping attribute included — out of the
- * built page and hands it to the reader, so `[data-astro-cid-…]` is answered rather than
- * guessed at; this is the fallback for a caller that has only a stylesheet.
- */
-const FLOW_LIST = { name: 'ol', classes: ['flow-steps'], id: null, attrs: new Map() }
-
 /** Pseudo-classes that are a state rather than a shape: a browser does not apply them at rest. */
 const STATE_PSEUDO = new Set(['hover', 'focus', 'focus-visible', 'focus-within', 'active', 'visited', 'target'])
 
@@ -913,12 +886,16 @@ function tokenText(css) {
   return out
 }
 
-/** The font size the flow's list is set in: what its `ch` lengths are measured against. */
-function elementFontPx(css) {
+/** The font size a list is set in: what its `ch` lengths are measured against. The list's own
+ *  rule when it declares one — read through the element's first class, so a list whose type is
+ *  set by its own rule measures its `ch` cap against that size rather than the body's — the
+ *  body's size otherwise, and 16 px when neither is declared. */
+function elementFontPx(css, element) {
   const tokens = lengthTokens(css)
   const rules = allRules(css)
+  const klass = (element.classes[0] ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const own = rules
-    .filter((r) => /\.flow-steps(?![\w-])/.test(r.selector))
+    .filter((r) => klass !== '' && new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector))
     .map((r) => declarations(r)['font-size'])
     .filter(Boolean)
     .pop()
@@ -954,14 +931,14 @@ function capPixels(value, tokens, pxTokens, fontPx) {
  * The `max-width` in force on a list at a viewport width: `{ px, value, selector, query }`,
  * where `px` is `Infinity` for `none` or for no rule at all — or `{ unreadable }` when a rule
  * that reaches the element carries a value or a selector this reader cannot evaluate, which
- * the caller refuses rather than reads past. It is the flow's list by default and takes any
- * other list's element (`listElement`), because the cap it reads is `base.css`'s and reaches
+ * the caller refuses rather than reads past. It takes the list's element (`listElement`), a
+ * descriptor read out of the built page, because the cap it reads is `base.css`'s and reaches
  * every `ul`, `ol` and `dl` on the site.
  */
-export function listMaxWidth(css, width, element = FLOW_LIST) {
+export function listMaxWidth(css, width, element) {
   const rules = allRules(css)
   const tokens = tokenText(css)
-  const fontPx = elementFontPx(css)
+  const fontPx = elementFontPx(css, element)
   const unreadable = []
   let best = null
   for (const rule of rules) {
@@ -994,432 +971,6 @@ export function listMaxWidth(css, width, element = FLOW_LIST) {
     return { unreadable: `${JSON.stringify(best.value)} on ${JSON.stringify(best.selector)}${best.query ? ` inside ${best.query}` : ''}` }
   }
   return { px, value: best.value, selector: best.selector, query: best.query }
-}
-
-/**
- * The flow's layout rules, as the stylesheet declares them: the row (the block that lays the
- * list out as a row of four) and the two-by-two (the block that gives it two columns), each
- * with the width its own query starts it at. The phone's column is neither — it is what a
- * list with no other layout is — so there is nothing to find for it.
- *
- * Read in one place and handed to both callers, because three checks need the same blocks:
- * the name arithmetic needs the row, the two-by-two's word arithmetic needs the grid, and the
- * arrows need both to know which shapes to check at which widths. A block that is not there is
- * `null`, and what that means is the caller's own refusal: a missing row means the picture is
- * not drawn, a missing two-by-two only means the check about it has nothing to measure.
- */
-function flowLayouts(css) {
-  const rules = allRules(css)
-  const find = (test) => rules.find((r) => /\.flow-steps(?![\w-])/.test(r.selector) && r.query && test(r))
-  const read = (rule) => {
-    if (rule === undefined) return null
-    const from = /width\s*>=\s*([\d.]+)rem/.exec(rule.query)
-    return { rule, from: from === null ? null : Number(from[1]) * 16 }
-  }
-  return {
-    row: read(find((r) => /flex-direction:row/.test(r.decls))),
-    grid: read(find((r) => declarations(r)['grid-template-columns'] !== undefined)),
-  }
-}
-
-/**
- * The shape the flow is drawn in at a viewport width: `'column'` (one card under another),
- * `'grid'` (the two-by-two) or `'row'` (four cards side by side). The browser's own reading of
- * the stylesheet — every rule that reaches the list and is in force at the width, in document
- * order, the last one that states a layout winning — so a band's own edges are read rather
- * than assumed from the breakpoints the three blocks name.
- *
- * The list starts as a column because that is what it is with no other layout: the base rule
- * declares it, and the phone's shape is not a rule of its own. A rule that lays the list out
- * in a grid is the two-by-two; `flex-direction: row` is the four-across row. Nothing else in
- * this component states a layout for `.flow-steps`, which is why a rule this reader does not
- * recognise cannot hide a fourth shape: it would have to declare one of these two properties.
- */
-export function flowLayoutAt(css, width) {
-  let shape = 'column'
-  for (const rule of allRules(css)) {
-    if (!/\.flow-steps(?![\w-])/.test(rule.selector)) continue
-    if (!appliesAt(width)(rule)) continue
-    const decls = declarations(rule)
-    if (decls['grid-template-columns'] !== undefined) shape = 'grid'
-    else if (decls['flex-direction'] === 'row') shape = 'row'
-    else if (decls['flex-direction'] === 'column') shape = 'column'
-  }
-  return shape
-}
-
-/**
- * Every way the flow's four-across row fails to render the step names it prints, for one
- * built page's stylesheet and the names that page carries. Five things are checked, and each
- * is the defect rather than a preference:
- *
- *   - **the name may wrap.** A step name held on one line is a name that overflows its card
- *     the moment the card is narrower than the name, and the cards are a quarter of the row;
- *   - **a card is wide enough for the longest word its names are made of.** With the name free
- *     to wrap, the limit is the longest single word ("Ephemeral", in the spec's item 4's own
- *     step names) at the size the name is set: the flow's own breakpoint has to be a width at
- *     which the row has that much room, and inside a card the number may not take it away;
- *   - **the longest name is one line in the row.** This is the defect the review of this
- *     branch measured at 1280 px: `Ephemeral cloud job` broke onto two lines while the three
- *     names beside it fitted on one, so that card grew and the row's bottom edge went ragged.
- *     The estimate is this file's own per-character table (`textWidth`) at the size the
- *     stylesheet sets, it is an upper bound rather than a measurement, and the check asks for
- *     a margin on top of it (`NAME_MARGIN`) — see the constant;
- *   - **the four cards are one height.** The steps stretch to the row, each card grows to fill
- *     its step (`flex: 1 1 auto` in the column-flex step), and the card's content starts at its
- *     top. Three declarations and three refusals: a row whose steps are `align-items: center`
- *     gives each card its own content's height (how card 4 came out about 30 px shorter than
- *     card 3), a card with no growth factor of its own does the same inside a step that is the
- *     row's tallest, and a card that packs its content down itself spreads the number, the name
- *     and the caption;
- *   - **the two-by-two's columns hold the longest word.** Between a phone and the full row the
- *     steps are `1 2 / 3 4`, so a card is half the column rather than a quarter — a different
- *     box, and the one a 768 px screen reads. It is checked at the width the two-by-two starts
- *     at, where its cards are narrowest.
- *
- * The width a card gets is the arithmetic the layout does: `main` is the page's column
- * (`--page-max` wide, centred, with its gutter), the classes between `main` and the figure
- * (`wrappers`, read off the page) add the gutters a page puts above the flow, the row is four
- * cards with an arrow between each pair, and a card's content box is what its padding and
- * border leave. Every one of those numbers is read from the stylesheet rather than typed here,
- * so the check follows a token that moves. Where a shortcut could make the page's own gutter
- * smaller — the homepage's `main:has(> .hero)` drops `main`'s padding, and `.home-flow` puts it
- * back — the arithmetic takes the padding the rules declare and ignores the shortcut, so the
- * width it works from is a floor rather than the page's own.
- */
-export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIST) {
-  const out = []
-  const rules = allRules(css)
-  const tokens = lengthTokens(css)
-  const declsOf = (klass, where = () => true) => rules.filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector) && where(r)).map(declarations)
-
-  // The block that lays the flow out as a row of four: without it there is no row to check,
-  // and the picture the spec asks for is missing rather than too narrow.
-  const row = flowLayouts(css).row
-  if (!row) {
-    out.push("the flow has no four-across row: item 4's picture is the four steps travelling left to right, and no rule lays them out as a row")
-    return out
-  }
-  if (row.from === null) {
-    out.push(`the flow's four-across row is not inside a min-width breakpoint (${JSON.stringify(row.rule.query)}): the width a card gets cannot be read, and a row that starts at no width is a row that starts at every width`)
-    return out
-  }
-  const at = row.from
-
-  // The name may wrap, at every width: one rule holding it on a line is the whole defect.
-  for (const rule of rules) {
-    if (!new RegExp('\\.step-name(?![\\w-])').test(rule.selector)) continue
-    if ((declarations(rule)['white-space'] ?? '').startsWith('nowrap')) {
-      out.push(`the step name is held on one line (${rule.query ? `inside ${rule.query}: ` : ''}white-space: nowrap), so a name wider than the card it sits in runs out of the card rather than wrapping`)
-    }
-  }
-  if (names.length === 0) return out
-
-  const nameSize = toPx(declsOf('step-name').map((d) => d['font-size']).filter(Boolean).pop(), tokens)
-  const number = toPx(declsOf('step-number').map((d) => d['width']).filter(Boolean).pop(), tokens)
-  const headGap = toPx(declsOf('step-head').map((d) => d['gap']).filter(Boolean).pop(), tokens)
-  const gap = toPx(declarations(row.rule)['gap'], tokens)
-
-  /**
-   * The last value a class's own rules declare for a property, among the rules in force at a
-   * width — the way a browser reads one property of one element, with the later rule winning.
-   * The width is the point: each of the flow's three layouts sets the card's padding, its
-   * border and the arrow's box differently, so "the card's padding" is a number with a width
-   * attached, and reading one number for all of them is how a rule that is not in force at the
-   * width being measured could decide what that width measures.
-   */
-  const declared = (klass, property, width) =>
-    rules
-      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector) && appliesAt(width)(r))
-      .map((r) => declarations(r)[property])
-      .filter((value) => value !== undefined)
-      .pop()
-
-  /**
-   * The card's inline padding at a width — this is the number that comes off the box the name
-   * has to print in, and it is why the shorthand is read for its inline component rather than
-   * its first: the row's cards carry `var(--space-md) var(--space-2xs)`, and a reader that
-   * took the block padding for the inline one would think the name had 32 px more than it has.
-   */
-  const cardPadAt = (width) => toPx(inlineToken(declared('step-card', 'padding', width)), tokens)
-  /** The card's border at a width, from the first component of the shorthand. */
-  const borderAt = (width) => toPx(firstToken(declared('step-card', 'border', width)), tokens)
-  /** The arrow's declared box at a width, whether or not that box takes room in the flow. */
-  const arrowBoxAt = (width) => toPx(declared('step-arrow', 'width', width), tokens)
-  /**
-   * The width the arrow takes out of a step's share of the row: its box, or **nothing** when it
-   * is absolutely positioned in the gap between two cards. That is what it is in both layouts
-   * where the cards share the width, and it is the defect this reading was added for: the arrow
-   * used to sit in the row's own flow, 32 px wide inside three of the four steps, so the
-   * fourth step's card was a quarter of the row wider than the other three.
-   */
-  const arrowWidthAt = (width) => {
-    const position = declared('step-arrow', 'position', width)
-    return position === 'absolute' || position === 'fixed' ? 0 : arrowBoxAt(width)
-  }
-
-  // Every number the arithmetic below is made of, refused here when this reader could not turn
-  // it into pixels rather than carried into the sums. `NaN` is false against every comparison,
-  // so a length read as `NaN` makes both refusals below silent: the row would be reported as
-  // fitting because the check stopped measuring it. That is not hypothetical — the card's
-  // border became `calc(var(--border-width) * 2)` when its edge grew, the reader took the
-  // first whitespace-separated word of the shorthand and read no length from it, and for as
-  // long as that lasted this check proved nothing about the names.
-  const lengths = [
-    ['the size the step names are set in (`.step-name`’s font-size)', nameSize],
-    ['the step number’s box (`.step-number`’s width)', number],
-    ['the gap between the number and the name (`.step-head`’s gap)', headGap],
-    ['the card’s padding (`.step-card`’s padding)', cardPadAt(at)],
-    ['the card’s border (`.step-card`’s border)', borderAt(at)],
-    ["the arrow's box (`.step-arrow`'s width)", arrowBoxAt(at)],
-    ["the row's gap (`.flow-steps`'s gap inside its row breakpoint)", gap],
-  ].filter(([, px]) => Number.isNaN(px))
-  if (lengths.length > 0) {
-    return [
-      `the flow-layout arithmetic cannot be read: ${lengths.map(([what]) => what).join(', ')} is not a length this check can turn into pixels, and a length it cannot read is a length nothing checked (\`NaN\` passes every comparison below) — teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (changes spec 2026-10-18, item 4)`,
-    ]
-  }
-
-  /** The inline padding a rule declares: `inlineToken` of its `padding` shorthand. */
-  const paddingInline = (rule) => toPx(inlineToken(declarations(rule)['padding']), tokens)
-
-  /**
-   * `main`'s gutter at a width: the last of its rules that applies there — the base rule and
-   * every breakpoint at or below the width. `main:has(…)`'s `padding: 0` is left out on
-   * purpose (see above): the wrappers below carry the gutter that shortcut takes away.
-   */
-  const mainPad = (width) =>
-    rules
-      .filter((r) => /(^|[,\s])main(?![\w-])/.test(r.selector) && !r.selector.includes(':has(') && appliesAt(width)(r))
-      .map(paddingInline)
-      .filter((value) => !Number.isNaN(value))
-      .pop() ?? 0
-
-  /** The gutter each wrapper class between `main` and the figure adds. */
-  const wrapperPad = wrappers.reduce((sum, klass) => {
-    const value = rules
-      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector))
-      .map(paddingInline)
-      .filter((px) => !Number.isNaN(px))
-      .pop()
-    return sum + (value ?? 0)
-  }, 0)
-
-  // The width the four-across row itself gets at a viewport: the page's column — `--page-max`
-  // less the page's gutters — or the cap the measure puts on the list, whichever is narrower.
-  // The second half is the reading the arithmetic above was missing, and the defect it missed:
-  // `.flow-steps` is a `<ol>`, `base.css` holds lists to the measure, and a browser gives the
-  // row the smaller of the two boxes rather than the column the card was sized against.
-  const column = (width) => Math.min(width, tokens.get('page-max')) - 2 * mainPad(width) - 2 * wrapperPad
-  const rowWidth = (width) => {
-    const cap = listMaxWidth(css, width, element)
-    return Math.min(column(width), Number.isNaN(cap.px) ? 0 : cap.px)
-  }
-
-  // The card's content box at a viewport: the row's width, shared between four cards, three
-  // arrows and three gaps, less the card's own padding and border — every one of those read at
-  // the width being measured, because the row block and the two-by-two block set them
-  // differently and only one of the two is in force at a time.
-  const contentBox = (width) => (rowWidth(width) - 3 * gap - 3 * arrowWidthAt(width)) / 4 - 2 * cardPadAt(width) - 2 * borderAt(width)
-
-  // The head is a row (the number beside the name) until a rule turns it into a column, which
-  // is how the name's own box is read: the number is `flex: none`, so a row takes its width and
-  // its gap out of the name at every card width.
-  const headIsColumn = (width) =>
-    rules
-      .filter((r) => /\.step-head(?![\w-])/.test(r.selector) && appliesAt(width)(r))
-      .map((r) => declarations(r)['flex-direction'] ?? '')
-      .filter(Boolean)
-      .pop() === 'column'
-
-  // The name the row has to fit on one line: the widest of the four, by the same per-character
-  // estimate everything else in this file uses. Chosen by estimated width rather than by
-  // character count, because the table is not one width per character — `Ephemeral cloud job`
-  // is the widest of item 4's four and not the longest by letters.
-  const longestName = (names_) => names_.reduce((a, b) => (textWidth(b, nameSize) > textWidth(a, nameSize) ? b : a), '')
-
-  // What the row needs of its own box: four cards wide enough for **the longest name on one
-  // line** (plus their own padding and border), the three arrows between them and the three
-  // gaps. A box narrower than this is a row the browser has to squeeze the picture into — and
-  // the longest name rather than the longest word, because the row is exactly the layout where
-  // the name is not allowed to wrap.
-  const cardNeeds = (names_) => textWidth(longestName(names_), nameSize) + 2 * cardPadAt(at) + 2 * borderAt(at)
-  const rowNeeds = (names_) => 4 * cardNeeds(names_) + 3 * (arrowWidthAt(at) + gap)
-
-  for (const width of [at, 80 * 16]) {
-    const content = contentBox(width)
-    const nameBox = headIsColumn(width) ? content : content - number - headGap
-    const needs = textWidth(longestWord(names), nameSize)
-    const cap = listMaxWidth(css, width, element)
-    if (cap.unreadable) {
-      out.push(
-        `at ${width / 16} rem the flow's list is reached by a rule this check cannot read — ${cap.unreadable} — and a cap nobody can read is a cap nobody checked: teach \`website/test/base-styles.mjs\`'s cascade reader the construct, or write the rule in a shape it reads`,
-      )
-    } else if (cap.px < rowNeeds(names)) {
-      out.push(
-        `at ${width / 16} rem the flow's list is capped at ${Math.round(cap.px)} px (max-width: ${cap.value}` +
-          `${cap.selector ? `, from ${JSON.stringify(cap.selector)}` : ''}${cap.query ? ` inside ${cap.query}` : ''}), and the four cards with their three arrows need ${Math.round(rowNeeds(names))} px: ` +
-          `the list is an \`<ol>\`, base.css holds lists to the measure, and the cap squeezes the picture into a narrower box than it is drawn for (changes spec 2026-10-18, item 4)`,
-      )
-    }
-    if (nameBox < needs) {
-      out.push(
-        `at ${width / 16} rem the flow's four-across row gives a step name ${Math.round(nameBox)} px and the longest word of the names it prints (${JSON.stringify(longestWord(names))}, at ${nameSize} px) needs ${Math.round(needs)} px: the row cannot render its own step names (changes spec 2026-10-18, item 4)`,
-      )
-    }
-
-    // The name on one line. This is the defect the review of this branch measured at 1280 px:
-    // `Ephemeral cloud job` broke onto two lines while the three names beside it fitted on one,
-    // so that card grew and the row's bottom edge went ragged. The estimate is `textWidth`'s
-    // per-character table at the size the stylesheet sets, it is an upper bound, and `NAME_MARGIN`
-    // is the second margin on top of it.
-    const nameNeeds = textWidth(longestName(names), nameSize)
-    if (nameBox < nameNeeds + NAME_MARGIN) {
-      out.push(
-        `at ${width / 16} rem the flow's four-across row gives a step name ${Math.round(nameBox)} px and the longest of the four names it prints (${JSON.stringify(longestName(names))}, ${Math.round(nameNeeds)} px by this check's per-character estimate at ${nameSize} px, and at least ${NAME_MARGIN} px of margin on top of it) does not fit on one line: ` +
-          `a name that wraps is a card taller than the three beside it, which is the ragged row the review of this branch measured (changes spec 2026-10-18, item 4)`,
-      )
-    }
-  }
-
-  // ---- the four cards are one height ------------------------------------------------------
-  //
-  // A row of cards whose bottoms do not line up reads as a broken row. The defect that shipped
-  // was `.flow-step { align-items: center }` inside the row's own breakpoint: the step's cross
-  // axis is its card, so the card took its own content's height, and the fourth card — the
-  // shortest caption of the four — ended about 30 px above the third's. What the row needs is
-  // `stretch` on the list (so the steps are one height) and on the step (so its card fills it),
-  // with the card's own content packed from its top rather than spread down it.
-  for (const width of [at, 80 * 16]) {
-    for (const [klass, what] of [
-      ['flow-steps', "the flow's row container"],
-      ['flow-step', 'a step'],
-    ]) {
-      const align = declared(klass, 'align-items', width)
-      if (align !== undefined && align !== 'stretch') {
-        out.push(
-          `at ${width / 16} rem ${what} aligns its items to \`${align}\`, and a flow whose items are aligned to anything but \`stretch\` gives each card its own content's height: the four cards of a row are one height, and the row's bottom edge is ragged otherwise (changes spec 2026-10-18, item 4)`,
-        )
-      }
-    }
-    // And the card's own growth, which is the property that makes the four one height: a step
-    // is a column-flex box, so the axis the cards are sized along is its main axis and what
-    // fills it is the card's `flex-grow` — `.step-card { flex: 1 1 auto }` — while the two
-    // `align-items` above decide the other axis and the packing below decides where the
-    // content sits. A card that does not grow keeps its own content's height inside a step
-    // that is the row's tallest, which is the ragged bottom edge the review measured, and the
-    // loop above cannot see it: nothing about `align-items` says whether the item grew.
-    const cardFlex = declared('step-card', 'flex', width)
-    const cardGrow = declared('step-card', 'flex-grow', width)
-    const grow = cardGrow ?? growthOf(cardFlex)
-    if (grow === undefined || Number.isNaN(grow)) {
-      out.push(
-        `at ${width / 16} rem the step card's growth factor cannot be read (\`flex: ${cardFlex ?? '(nothing declared)'}\`, \`flex-grow: ${cardGrow ?? '(nothing declared)'}\`), and a growth factor this check cannot read is one it cannot hold the four cards' height to: teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (changes spec 2026-10-18, item 4)`,
-      )
-    } else if (grow <= 0) {
-      out.push(
-        `at ${width / 16} rem the step card does not grow (\`flex: ${cardFlex ?? '(nothing declared)'}\`, \`flex-grow: ${cardGrow ?? '(nothing declared)'}\`), and a card is a flex item of a step that is the row's tallest: without a growth factor of its own it takes its own content's height and the four cards' bottoms do not line up (changes spec 2026-10-18, item 4)`,
-      )
-    }
-    const packing = declared('step-card', 'align-content', width) ?? declared('step-card', 'align-items', width)
-    if (packing === undefined || !['start', 'flex-start'].includes(packing)) {
-      out.push(
-        `at ${width / 16} rem the step card packs its content with \`${packing ?? '(nothing declared)'}\`: a card is stretched to the height of the row's tallest step, so without \`align-content: start\` its number, its name and its caption are spread down it instead of starting at its top (changes spec 2026-10-18, item 4)`,
-      )
-    }
-  }
-
-  // ---- and the two-by-two, where a card is half the column rather than a quarter ----------
-  //
-  // Between a phone and the full row the steps are `1 2 / 3 4`, so the box a name has to print
-  // in is a different box — half the column, its own padding, its own gap — and it is the one a
-  // 768 px screen reads. Checked at the width the two-by-two starts at, where its cards are at
-  // their narrowest; the longest word, because at half a column the name is free to wrap.
-  const grid = flowLayouts(css).grid
-  if (grid !== null && grid.from !== null) {
-    const columns = declarations(grid.rule)['grid-template-columns']
-    const count = columns.split(/\s+/).filter(Boolean).length
-    const columnGap = toPx(inlineToken(declarations(grid.rule)['gap']), tokens)
-    const pad = cardPadAt(grid.from)
-    const edge = borderAt(grid.from)
-    const unreadable = [columnGap, pad, edge].some((px) => Number.isNaN(px)) || count < 2
-    if (unreadable) {
-      out.push(
-        `the two-by-two's arithmetic cannot be read: \`${columns}\` with a gap of \`${declarations(grid.rule)['gap'] ?? ''}\` on ${JSON.stringify(grid.rule.selector)} is not a grid this check can turn into pixels, and a box it cannot measure is a box nothing checked (changes spec 2026-10-18, item 4)`,
-      )
-    } else {
-      const box = (rowWidth(grid.from) - (count - 1) * columnGap) / count - 2 * pad - 2 * edge
-      const wordNeeds = textWidth(longestWord(names), nameSize)
-      if (box < wordNeeds) {
-        out.push(
-          `at ${grid.from / 16} rem the flow is a two-by-two and a card there is ${Math.round(box)} px wide, and the longest word of the step names (${JSON.stringify(longestWord(names))}, at ${nameSize} px) needs ${Math.round(wordNeeds)} px: the picture a 768 px screen reads cannot print its own step names (changes spec 2026-10-18, item 4)`,
-        )
-      }
-    }
-  }
-  return out
-}
-
-// ---- the flow's three bands, at the widths a reader meets them (review round 3, item 3e) ---
-//
-// The flow is three layouts in three bands of width, and until now only the ends of them were
-// checked: `flowLayoutFailures` reads the block that starts the row and the block that starts
-// the two-by-two, and measures the boxes they make, but nothing held the *bands* — where each
-// one begins and ends, and what a reader at a width inside one of them actually gets. The
-// review of round 3 asked for the middle band by name: "at 768 the diagram is a tall stack
-// over 400 px", with the flow rendered as "a 2×2 grid ... stacking to one column only below
-// about 560 px". A stack of four cards is what a stylesheet with no two-by-two at all gives,
-// and the row blocks being present would not notice its absence.
-//
-// So this reads the shape in force at six widths rather than the blocks: the two pixels either
-// side of the phone's end (559 and 560, which is the review's "about 560 px" read exactly —
-// 35 rem), the width the review measured (768), the two either side of the row's start (1151
-// and 1152, since the two-by-two ends at 71.98 rem), and the desktop width the other half of
-// the round measured (1280).
-
-/** The widths the flow's bands are read at, and the shape each one is supposed to give. */
-const FLOW_BANDS = [
-  [559, 'column', 'a phone: the four steps are one column of cards, and the third band has not begun'],
-  [560, 'grid', "the two-by-two's first pixel — the review's “about 560 px”, which is 35 rem, and the width above which four stacked cards are the tall stack it measured"],
-  [768, 'grid', 'the width the review measured: `1 2` over `3 4`, four cards in two rows rather than four stacked over 400 px'],
-  [1151, 'grid', "the two-by-two's last pixel, since the row starts at 72 rem"],
-  [1152, 'row', 'the four-across row, one pixel after the two-by-two ends'],
-  [1280, 'row', 'the desktop width: the four steps stand side by side, left to right, and one band is in force'],
-]
-
-/**
- * Every way the flow's bands fail to give the reader at a width the picture the review asked
- * for, as the lines a failure lists. Two things are checked, and neither is a preference:
- *
- *   - **each band's shape**, at the widths `FLOW_BANDS` names — a phone's stack, the two-by-two
- *     a 768 px screen reads, the row. A missing two-by-two is the defect the review measured
- *     (four cards stacked over 400 px) and it leaves no trace in the blocks that are present,
- *     so it is read where a reader meets it;
- *   - **no band without a width.** A rule that lays the list out inside a query with no
- *     viewport width in it — `@supports`, `prefers-reduced-motion`, or no query at all beyond
- *     the base column — is a layout for every width, which is a fourth band nobody chose and
- *     one that would silently beat the three.
- */
-export function flowBandFailures(css) {
-  const out = []
-  for (const rule of allRules(css)) {
-    if (!/\.flow-steps(?![\w-])/.test(rule.selector)) continue
-    const decls = declarations(rule)
-    if (decls['grid-template-columns'] === undefined && decls['flex-direction'] === undefined) continue
-    if (!rule.query) continue
-    if (/width\s*[<>]=?\s*[\d.]+rem/.test(rule.query)) continue
-    out.push(
-      `the flow's list is laid out inside \`${rule.query}\`, a query with no viewport width in it: the flow has three bands (one column below 35 rem, the two-by-two to 71.98 rem, the row above that), and a layout that starts at no width is a layout that starts at every width (review round 3, item 3e; changes spec 2026-10-18, item 4)`,
-    )
-  }
-  for (const [width, shape, why] of FLOW_BANDS) {
-    const at = flowLayoutAt(css, width)
-    if (at === shape) continue
-    out.push(
-      `at ${width} px the flow's four steps are a \`${at}\` and not a \`${shape}\`: ${why} (review round 3, item 3e; changes spec 2026-10-18, item 4)`,
-    )
-  }
-  return out
 }
 
 // ---- How It Works: one left edge, and room under the title (review round 3, item 3d) ------
@@ -1571,6 +1122,372 @@ test('every run-diagram refusal fires on the defect it names', () => {
   assert.deepEqual(runDiagramFailures(pageCss(builtPages().find((entry) => entry.rel === 'index.html').html), builtPages().find((entry) => entry.rel === 'index.html').html), [], 'the homepage has no diagram, and this check has no subject there')
 })
 
+// ---- the run's arrows point the way the run travels (the drawing that took the flow's place)
+//
+// The retired gate this one stands for read the flow's four cards and the arrow each step left:
+// a shaft drawn in the gap beside a card, placed on the side the next step is on, pointing the
+// way the run travels — and it refused an arrow drawn the other way (`transform: rotate(90deg)`
+// on an arrow drawn pointing down, which turned it back at the step before it and read the four
+// steps in the opposite order). `ArchitectureDiagram.astro` is deleted with the flow (the
+// owner's ruling of 2026-10-20) and the run is now a drawing: its four boxes are cards — a row
+// of them in the wide drawing, a column in the tall one — with one arrow between each pair.
+//
+// Nothing in the repository read those six arrows. `test/how-it-works.mjs` reads the round trip
+// of the fix (`[fix ─► review(2)]`, `docs/design/v1.md` §4): that the loop is drawn, that it
+// joins the two stages it is between, and that its head's point leads its base. The straight
+// arrows between the four boxes — the picture's biggest claim, and the one a reader follows to
+// read the run at all — had no gate under them, so this reads them where the flow's gate read
+// its own: which way they point, and which box each one lands on.
+//
+// Everything below is derived from the drawing itself rather than typed here: the cards' own
+// rects, the axis they are laid out along (a row differs in `x` at one `y`, a column in `y` at
+// one `x`), the gap between two of them, and the three corners of each head. Three claims, and
+// each is the defect rather than a preference:
+//
+//   - **one arrow per gap, and it stays in its gap.** Each arrow is placed in the gap between
+//     two cards that are beside each other — the shafts are drawn inset from the card's edge in
+//     one drawing and flush with it in the other, so the reading is the gap the arrow's two
+//     ends fall in rather than the pixel they start at. A gap with two arrows is a stage the
+//     run takes twice; a gap with none is a stage it never reaches; an arrow that falls in no
+//     gap reaches across a card;
+//   - **each arrow runs the way the cards do.** The drawing's cards are the run's four boxes in
+//     order, so the arrow between two of them leaves the earlier card and lands on the later
+//     one — a head at the other end of the same shaft, or a shaft drawn from the later card
+//     back to the earlier, is the same picture read backwards (`pull request → your agent`);
+//   - **the head continues the shaft it ends.** Its base sits on the shaft's own axis and at
+//     the shaft's end, its point is ahead of that base the way the shaft runs, and the head's
+//     own axis is parallel to the shaft's — so a head drawn off to one side of the shaft, or
+//     turned round on it, is refused. An arrowhead is where the arrow points.
+//
+// The two drawings are one picture at two scales, so they carry the same number of arrows; each
+// drawing is read on its own axis, which is what makes this a reading of the drawing rather
+// than of a width.
+
+/**
+ * One of the run's drawings, as the built page carries it: the `<svg>` tag's own attributes and
+ * the markup inside it, which is what the readings below are made of. `null` on a page that
+ * carries no such drawing — those pages are not this check's subject rather than failures of it.
+ */
+function runDrawing(html, klass) {
+  const tag = new RegExp(`<svg\\b[^>]*class="[^"]*\\b${klass.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![-\\w])[^"]*"[^>]*>`).exec(html)
+  if (tag === null) return null
+  const open = html.indexOf(tag[0])
+  const close = html.indexOf('</svg>', open)
+  if (close === -1) return null
+  return { attrs: tag[0], markup: html.slice(open + tag[0].length, close) }
+}
+
+/** Whether two coordinates are the same point of a drawing, to the tenth of a unit the
+ *  component writes its own numbers to. */
+const samePoint = (a, b) => Math.abs(a - b) <= 0.5
+
+/** How far a point lies off the line through `from` and `to`, in units. */
+function offAxis(point, from, to) {
+  const length = Math.hypot(to.x - from.x, to.y - from.y)
+  if (length === 0) return Infinity
+  return Math.abs((to.x - from.x) * (from.y - point.y) - (from.x - point.x) * (to.y - from.y)) / length
+}
+
+/** The three corners of a path drawn as an arrowhead, as `{ apex, base }` — the point of the
+ *  triangle is the corner opposite its longest side, which is the base the other two sit on —
+ *  or `null` when the `d` is not three corners at all. */
+function headCorners(d) {
+  const points = [...d.matchAll(/(-?[\d.]+)[\s,]+(-?[\d.]+)/g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]) }))
+  if (points.length !== 3) return null
+  const [a, b, c] = points
+  const side = (p, q) => Math.hypot(p.x - q.x, p.y - q.y)
+  const lengths = [side(b, c), side(a, c), side(a, b)]
+  const opposite = lengths.indexOf(Math.max(...lengths))
+  return { apex: points[opposite], base: points.filter((_, index) => index !== opposite) }
+}
+
+/** The run a drawing draws: the cards its markup puts down, the arrow shafts, and the heads,
+ *  each head with its own `d`, so one this reader cannot read is reported rather than dropped. */
+function runArrowsOf(drawing) {
+  const cards = [...drawing.markup.matchAll(/<rect class="run-card"[^>]*?x="(-?[\d.]+)"[^>]*?y="(-?[\d.]+)"[^>]*?width="([\d.]+)"[^>]*?height="([\d.]+)"/g)].map((m) => ({
+    x: Number(m[1]),
+    y: Number(m[2]),
+    w: Number(m[3]),
+    h: Number(m[4]),
+  }))
+  const shafts = [...drawing.markup.matchAll(/<line class="run-arrow-line" x1="(-?[\d.]+)" y1="(-?[\d.]+)" x2="(-?[\d.]+)" y2="(-?[\d.]+)"/g)].map((m) => ({
+    from: { x: Number(m[1]), y: Number(m[2]) },
+    to: { x: Number(m[3]), y: Number(m[4]) },
+  }))
+  const heads = [...drawing.markup.matchAll(/<path class="run-arrow-head" d="([^"]+)"/g)].map((m) => ({ d: m[1], corners: headCorners(m[1]) }))
+  return { cards, shafts, heads }
+}
+
+/**
+ * Every way the run's drawing fails to point the way the run travels, for one built page's
+ * markup. Returns nothing on a page that carries no drawing, so it can be run over every page.
+ */
+export function runArrowFailures(html) {
+  if (runDrawing(html, 'run-wide') === null && runDrawing(html, 'run-tall') === null) return []
+  const out = []
+  const counts = []
+  for (const klass of ['run-wide', 'run-tall']) {
+    const drawing = runDrawing(html, klass)
+    if (drawing === null) {
+      out.push(
+        `the page carries no \`${klass}\` drawing, and the run is drawn twice — a row of boxes for a desktop and a column for a phone — so both are the picture whose arrows this reads (the owner's ruling of 2026-10-20)`,
+      )
+      continue
+    }
+    const { cards, shafts, heads } = runArrowsOf(drawing)
+    counts.push({ klass, shafts: shafts.length })
+    if (cards.length < 2) {
+      out.push(
+        `the ${klass} drawing draws ${cards.length} box card(s), and the run is four boxes with an arrow between each pair: without two cards there is no gap for an arrow to travel, and the box it lands on cannot be read (the owner's ruling of 2026-10-20)`,
+      )
+      continue
+    }
+    // The axis the drawing lays its cards along, read off the cards themselves: a row differs
+    // in `x` at one `y`, a column in `y` at one `x`. A drawing that does neither is refused
+    // rather than read on a guess.
+    const along =
+      cards.every((card) => samePoint(card.y, cards[0].y))
+        ? 'x'
+        : cards.every((card) => samePoint(card.x, cards[0].x))
+          ? 'y'
+          : null
+    if (along === null) {
+      out.push(
+        `the ${klass} drawing's cards are not laid out along one axis (their own rects are at ${cards.map((card) => `${card.x},${card.y}`).join(' / ')}), and the run's boxes are a row or a column: the arrows between them run whichever way the cards do, which is what says which box one lands on (the owner's ruling of 2026-10-20)`,
+      )
+      continue
+    }
+    const alongBox = along === 'x' ? 'w' : 'h'
+    const ordered = [...cards].sort((a, b) => a[along] - b[along])
+    /** The edges of the gap between each pair of cards beside each other, along the axis: the
+     *  earlier card's far edge and the later card's near one, in the drawing's own units. */
+    const gaps = ordered.slice(0, -1).map((card, index) => {
+      const next = ordered[index + 1]
+      return { start: card[along] + card[alongBox], end: next[along], at: index }
+    })
+    const inGap = (value, gap) => value >= gap.start - 0.5 && value <= gap.end + 0.5
+
+    if (shafts.length !== gaps.length || heads.length !== gaps.length) {
+      out.push(
+        `the ${klass} drawing has ${cards.length} cards, ${shafts.length} \`run-arrow-line\` shafts and ${heads.length} \`run-arrow-head\` heads, and each gap between two of the run's boxes carries one arrow — a shaft and the head that ends it: a gap with two arrows is a stage the run takes twice, and a gap with none is a stage it never reaches (the retired arrows gate, changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
+      )
+      continue
+    }
+
+    const taken = new Map()
+    let refused = false
+    shafts.forEach((shaft, index) => {
+      if (refused) return
+      const head = heads[index]
+      const tip = head.corners === null ? null : head.corners.apex[along]
+      const matched = gaps.filter((gap) => inGap(shaft.from[along], gap) && tip !== null && samePoint(tip, gap.end))
+      const where = `runs from ${along} ${shaft.from[along].toFixed(1)} to ${along} ${shaft.to[along].toFixed(1)}`
+      if (matched.length !== 1) {
+        out.push(
+          `the ${klass} drawing's arrow ${index + 1} ${where} and its head's point is ${head.corners === null ? 'a path this check cannot read as three corners' : `at ${along} ${head.corners.apex[along].toFixed(1)}`}, and the arrow between two boxes of the run is drawn in the gap between them, arriving at the later one: an arrow that is in no gap reaches across a box, and one whose point is not at the far end of its gap points at the box the run came from (the retired arrows gate, changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
+        )
+        refused = true
+        return
+      }
+      const gap = matched[0]
+      if (taken.has(gap.at)) {
+        out.push(
+          `the ${klass} drawing's gap between the cards at ${along} ${gap.start.toFixed(1)} and ${along} ${gap.end.toFixed(1)} carries two arrows (${taken.get(gap.at) + 1} and ${index + 1}), and the run steps from one box to the next once: a second arrow in the same gap reads the run as taking that step twice (the retired arrows gate; the owner's ruling of 2026-10-20)`,
+        )
+        refused = true
+        return
+      }
+      taken.set(gap.at, index)
+
+      // The shaft runs the way the cards do: from the earlier card towards the later one, which
+      // is the direction the gap's own two edges are in.
+      if (shaft.to[along] - shaft.from[along] <= 0) {
+        out.push(
+          `the ${klass} drawing's arrow ${index + 1} ${where}, and the gap it is drawn in runs the other way — from the card at ${along} ${gap.start.toFixed(1)} to the next at ${along} ${gap.end.toFixed(1)}: an arrow drawn from the later box back to the earlier one reads the run backwards, which is the defect the retired gate refused when a rotation turned a step's arrow back at the step before it (the retired arrows gate, changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
+        )
+        refused = true
+        return
+      }
+
+      // The head continues the shaft it ends: its base at the shaft's end and on the shaft's own
+      // axis, its point ahead of the base the way the shaft runs, and the head's own axis
+      // parallel to the shaft's.
+      if (head.corners === null) {
+        out.push(
+          `the ${klass} drawing's arrow ${index + 1} ends in an arrowhead this check cannot read as three corners (${JSON.stringify(head.d)}), and an arrowhead is a point on a base: without the corners there is no way to say which way it points (the retired arrows gate; the owner's ruling of 2026-10-20)`,
+        )
+        refused = true
+        return
+      }
+      const { apex, base } = head.corners
+      const middle = { x: (base[0].x + base[1].x) / 2, y: (base[0].y + base[1].y) / 2 }
+      const length = Math.hypot(shaft.to.x - shaft.from.x, shaft.to.y - shaft.from.y)
+      const unit = { x: (shaft.to.x - shaft.from.x) / length, y: (shaft.to.y - shaft.from.y) / length }
+      const reach = Math.hypot(apex.x - middle.x, apex.y - middle.y)
+      const ahead = (apex.x - middle.x) * unit.x + (apex.y - middle.y) * unit.y
+      const turn = reach === 0 ? Infinity : Math.abs((apex.x - middle.x) * unit.y - (apex.y - middle.y) * unit.x) / reach
+      const off = Math.max(offAxis(middle, shaft.from, shaft.to), Math.hypot(middle.x - shaft.to.x, middle.y - shaft.to.y))
+      if (off > 6 || ahead <= 0 || turn > 0.2) {
+        out.push(
+          `the ${klass} drawing's arrow ${index + 1} draws its head with its base ${off.toFixed(1)} units from the end of its own shaft (at ${middle.x.toFixed(1)},${middle.y.toFixed(1)}, the shaft ending at ${shaft.to.x.toFixed(1)},${shaft.to.y.toFixed(1)}), its point ${ahead > 0 ? `${ahead.toFixed(1)} units ahead of that base` : `${Math.abs(ahead).toFixed(1)} units behind it`}, and its own axis ${turn === Infinity ? 'of no length at all' : turn > 0.2 ? `turned ${(Math.asin(Math.min(1, turn)) * (180 / Math.PI)).toFixed(0)}° off the shaft's` : "along the shaft's"}: an arrowhead is the end of its shaft and points the way the shaft runs, and a head laid beside or across it points somewhere the run does not go (the retired arrows gate, changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
+        )
+        refused = true
+      }
+    })
+  }
+
+  // The two drawings are one picture at two scales: the same steps, and so the same number of
+  // arrows between them.
+  if (counts.length > 1 && new Set(counts.map(({ shafts }) => shafts)).size > 1) {
+    out.push(
+      `the page's drawings carry ${counts.map(({ klass, shafts }) => `${shafts} arrows in the ${klass} one`).join(' and ')}, and they are one picture at two scales: a run that steps between a different number of boxes on a phone is a second run (the owner's draft of 2026-10-19)`,
+    )
+  }
+  return out
+}
+
+test('the run’s arrows leave each box and land on the next, pointing the way the run travels', () => {
+  const failures = []
+  let checked = 0
+  for (const { rel, html } of builtPages()) {
+    if (runDrawing(html, 'run-wide') === null) continue
+    checked += 1
+    failures.push(...runArrowFailures(html).map((line) => `${rel}: ${line}`))
+  }
+  assert.ok(checked > 0, 'no built page carries the run drawing, and the owner\'s draft of 2026-10-19 puts it on How It Works')
+  assert.deepEqual(failures, [], `the run's arrows do not point the way the run travels:\n  ${failures.join('\n  ')}`)
+})
+
+test('every run-arrow refusal fires on the defect it names', () => {
+  const page = readFileSync(path.join(DIST, 'how-it-works', 'index.html'), 'utf8')
+  /** The shapes of one drawing's arrows, as the built page draws them: every case below is one
+   *  edit to the page's own markup, so a component that drew its arrows differently would fail
+   *  this fixture loudly rather than leave it passing by accident. */
+  const shapes = (klass) => {
+    const drawing = runDrawing(page, klass)
+    assert.ok(drawing, `the built page carries no \`${klass}\` drawing, and these cases are about the drawing's own arrows`)
+    return {
+      markup: drawing.markup,
+      shafts: [...drawing.markup.matchAll(/<line class="run-arrow-line"[^>]*\/>/g)].map((m) => m[0]),
+      heads: [...drawing.markup.matchAll(/<path class="run-arrow-head" d="[^"]+"\s*\/>/g)].map((m) => m[0]),
+    }
+  }
+  /** The corners of a head, as the triangle this check reads: the point and the base it is on. */
+  const partsOf = (head) => headCorners(/d="([^"]+)"/.exec(head)[1])
+  /** The same head, drawn with those corners. */
+  const redraw = (head, corners) => head.replace(/d="[^"]+"/, `d="M ${corners.map((point) => `${point.x} ${point.y}`).join(' L ')} Z"`)
+  const shift = (points, by) => points.map((point) => ({ x: point.x + by.x, y: point.y + by.y }))
+  /** The same head turned round on its own base: its point mirrored to the other side, which is
+   *  the retired gate's `rotate(90deg)` told in the drawing's own geometry. */
+  const turnRound = ({ apex, base }) => {
+    const middle = { x: (base[0].x + base[1].x) / 2, y: (base[0].y + base[1].y) / 2 }
+    return [{ x: 2 * middle.x - apex.x, y: 2 * middle.y - apex.y }, base[0], base[1]]
+  }
+  /** An arrow moved along the drawing's own axis by `dx`, both of its shapes together. */
+  const movedArrow = (shaft, head, dx) => [
+    shaft.replace(/x1="(-?[\d.]+)"/, (m, x) => `x1="${Number(x) + dx}"`).replace(/x2="(-?[\d.]+)"/, (m, x) => `x2="${Number(x) + dx}"`),
+    redraw(head, shift([partsOf(head).apex, ...partsOf(head).base], { x: dx, y: 0 })),
+  ]
+
+  const wide = shapes('run-wide')
+  const tall = shapes('run-tall')
+  const wideHead = partsOf(wide.heads[0])
+  const tallHead = partsOf(tall.heads[0])
+  const across = movedArrow(wide.shafts[0], wide.heads[0], 60)
+  const cases = [
+    // The head turned round on its own shaft: the arrow now points back at the box the run came
+    // from, which is the defect the retired gate refused.
+    [
+      'the head turned round on its shaft',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.heads[0], redraw(wide.heads[0], turnRound(wideHead)))),
+      /points at the box the run came from/,
+    ],
+    // The same head with its base drawn past its point: the point trails the base on the shaft.
+    [
+      'the head’s base drawn past its point',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.heads[0], redraw(wide.heads[0], [wideHead.apex, ...shift(wideHead.base, { x: 30, y: 0 })]))),
+      /units behind it/,
+    ],
+    // A head drawn beside the shaft it ends rather than at the end of it.
+    [
+      'the head drawn beside its shaft',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.heads[0], redraw(wide.heads[0], shift([wideHead.apex, ...wideHead.base], { x: 0, y: 20 })))),
+      /draws its head with its base .* units from the end of its own shaft/,
+    ],
+    // A head this reader cannot read as a triangle at all: a point with no base.
+    [
+      'a head that is not three corners',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.heads[0], redraw(wide.heads[0], [wideHead.apex, wideHead.base[0]]))),
+      /cannot read as three corners/,
+    ],
+    // A shaft drawn the other way: from the later card back to the earlier one, which is the
+    // same picture read backwards.
+    [
+      'a shaft drawn from the later box back',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.shafts[0], wide.shafts[0].replace(/x1="(-?[\d.]+)"([^>]*)x2="(-?[\d.]+)"/, 'x1="$3"$2x2="$1"'))),
+      /the gap it is drawn in runs the other way/,
+    ],
+    // Two arrows in one gap, and none in the next: the drawing still carries one arrow per pair
+    // of cards, so only the gaps say that the run does not take one of its steps twice.
+    [
+      'two arrows in one gap',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.shafts[1], wide.shafts[0]).replace(wide.heads[1], wide.heads[0])),
+      /carries two arrows/,
+    ],
+    // An arrow taken away: a stage the run never reaches.
+    [
+      'an arrow missing from a gap',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.shafts[1], '').replace(wide.heads[1], '')),
+      /and each gap between two of the run's boxes carries one arrow/,
+    ],
+    // An arrow moved into the middle of a card: it is in no gap, so it reaches across one.
+    [
+      'an arrow drawn across a card',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.shafts[0], across[0]).replace(wide.heads[0], across[1])),
+      /reaches across a box/,
+    ],
+    // A card moved off the row: the drawing's boxes are no longer along one axis, so which box
+    // an arrow lands on is not a fact the picture states.
+    [
+      'a card off the row',
+      () => withDrawing('run-wide', (markup) => markup.replace(/(<rect class="run-card"[^>]*?y=")(-?[\d.]+)(")/, (m, before, y, after) => `${before}${Number(y) + 60}${after}`)),
+      /not laid out along one axis/,
+    ],
+    // The tall drawing with an arrow taken away: the two drawings are one picture at two
+    // scales, and the phone's is missing a step of the run.
+    [
+      'the two drawings with a different number of arrows',
+      () => page.replace(tall.shafts[0], '').replace(tall.heads[0], ''),
+      /one picture at two scales/,
+    ],
+    // The phone's drawing with its own head turned round, read on that drawing's own axis.
+    [
+      'the tall drawing’s head turned round',
+      () => page.replace(tall.heads[0], redraw(tall.heads[0], turnRound(tallHead))),
+      /points at the box the run came from/,
+    ],
+  ]
+  /** The page with one drawing's markup replaced by a version of it. */
+  const withDrawing = (klass, instead) => {
+    const { markup } = shapes(klass)
+    assert.ok(page.includes(markup), `the built page no longer carries the ${klass} drawing's markup, and these cases replace it`)
+    return page.replace(markup, instead(markup))
+  }
+  for (const [what, instead, expected] of cases) {
+    const planted = instead()
+    assert.notEqual(planted, page, `${what} was not planted: the fixture's pattern did not match the built page`)
+    const failures = runArrowFailures(planted)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what}: the refusal did not fire, and this is what it said instead:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
+
+  // The control: the page as it is built passes, and a page with no drawing is not its subject.
+  assert.deepEqual(runArrowFailures(page), [], 'the built page does not pass the reading its own cases are drawn from')
+  const home = builtPages().find((entry) => entry.rel === 'index.html').html
+  assert.deepEqual(runArrowFailures(home), [], 'the homepage draws no run, and this check has no subject there')
+})
 // ---- the homepage's vertical rhythm: one gap, not two (review round 5) ---------------------
 //
 // The homepage's top-level blocks carry their own gutter and the room below themselves — the
@@ -1760,7 +1677,7 @@ test('the homepage’s blocks pad the gap between them once, and not twice', () 
   const failures = []
   let checked = 0
   for (const { rel, html } of builtPages()) {
-    if (!html.includes('class="home-flow"')) continue
+    if (!html.includes('class="home-slider"')) continue
     checked += 1
     failures.push(...homeRhythmFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
   }
@@ -1779,29 +1696,31 @@ test('the rhythm refusal fires on the doubled gap, and the pairs that keep the r
     // in the built page, the install's second and the page's last) and a case about the
     // install's declaration is a case about the rule the install's file declares it in.
     [
-      'an install section padding the gap the flow above it already pads',
+      'an install section padding the gap the slider above it already pads',
       plantRule('.home-install[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
-      [/\.home-benefits ends with 112 px under it and \.home-install opens with 32 px over it, so the gap between them is 144 px/],
+      [/\.home-slider ends with 112 px under it and \.home-install opens with 32 px over it, so the gap between them is 144 px/],
     ],
-    // And the same edit on the page's own rule, which is one rule for the two blocks the page
-    // places and no longer names the benefits: the chat's top padding over the hero's bottom
-    // one, and the flow's over the chat's — two pairs padded twice by the one declaration, and
-    // both refused at each of the three widths, which is what the count below holds. **The
-    // benefits are not in this rule, and that is the point of the round-6 fix**: the block is
-    // rendered by `Benefits.astro`, the page's scope does not reach it, and the rule that pads
-    // it is the component's own — which is the next case.
+    // And the same edit on the block between the two: the slider's top padding over the hero's
+    // bottom one — 32 px over 32 px, which is the pair the hero's own `--space-lg` makes. Every
+    // block on this page declares its own rule in the component that renders it (there is no
+    // page-level `<style>` on `index.astro` any more), so the two plants above and here are the
+    // two gaps the page has, each padded twice by the rule of the block below it.
     [
-      'the figures padding the gaps the blocks above them already pad',
-      plantRule('.home-chat[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
-      [/the gap between them is 64 px/, /\.home-chat ends with 112 px under it and \.home-flow opens with 32 px over it, so the gap between them is 144 px/],
+      'the slider padding the gap the hero above it already pads',
+      plantRule('.home-slider[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
+      [/the gap between them is 64 px/],
     ],
-    // The benefits' own rule, in the component that renders the section — the rule the round-6
-    // review found missing (the padding was declared on the page, where it reached nothing). The
-    // gap it pads is the one above it, and one plant refuses the one pair.
+    // **And what the reading does not reach**: the benefits panel. The section is rendered
+    // inside the slider's second panel since the owner's approved draft of 2026-10-19, so it is
+    // not a top-level block of the page and its box is not a gap between two blocks. The plant
+    // gives it a top padding anyway and the reading refuses nothing — a check that walked every
+    // section carrying a padding would report the panel's own box as a doubled gap. The
+    // `plantRule` call is also what holds the panel's rule to the build: `.home-benefits-panel`
+    // is `Benefits.astro`'s, declared when the section is rendered in a panel.
     [
-      'a benefits section padding the gap the flow above it already pads',
-      plantRule('.home-benefits[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
-      [/\.home-flow ends with 112 px under it and \.home-benefits opens with 32 px over it, so the gap between them is 144 px/],
+      'a benefits panel padding its own top, which is not a gap between two blocks',
+      plantRule('.home-benefits-panel[data-astro-cid-', (rule) => rule.replace('padding:0', 'padding:var(--space-lg) 0 0')),
+      [],
     ],
     // **The case the three widths are for.** The same doubled gap, written inside a rule that is
     // in force on a phone and nowhere else: at 1280 and 768 the page's rhythm is right and at
@@ -1853,31 +1772,40 @@ test('the rhythm refusal fires on the doubled gap, and the pairs that keep the r
 
 test('the rhythm reading refuses a block whose rule cannot reach it', () => {
   const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
-  const pageScope = html.match(/class="home-chat" data-astro-cid-(\w+)/)?.[1]
-  assert.ok(pageScope, 'the built homepage no longer carries the page’s scope on `.home-chat`, and this case re-scopes a rule to it')
+  const sliderScope = /class="home-slider"[^>]*data-astro-cid-(\w+)/.exec(html)?.[1]
+  assert.ok(sliderScope, 'the built homepage no longer carries the slider’s scope on `.home-slider`, and this case re-scopes a rule to it')
 
-  // **The defect of round 6, as it shipped**: `.home-benefits` declared in the page's `<style>`
-  // and the `<section>` rendered by `Benefits.astro`, so the rule carried the page's scope
-  // (`[data-astro-cid-lcdefpme]`), the element carried the component's, and the rule reached
-  // neither. The plant is that file's own edit, made to the rule that now belongs to the
-  // component: the selector's scope attribute swapped for the page's.
-  const rescoped = plantRule('.home-benefits[data-astro-cid-', (rule) =>
-    rule.replace(/\[data-astro-cid-\w+\]/, `[data-astro-cid-${pageScope}]`),
-  )
-  // And the other half of the same defect, from the element's side: the section with the scope
+  // **The defect of round 6, as it shipped**: a block declared by a component other than the one
+  // that renders it, so its rules carry that component's scope (`[data-astro-cid-…]`), the
+  // element carries its own, and the rules reach neither. The plant is that edit, made to a block
+  // the reading walks and to every rule that names it — the install block, whose two rules are
+  // both declared by `HomeInstall.astro`, re-scoped to the component that renders the slider.
+  // **Every** rule naming the block has to move for the refusal to fire, which is the reading's
+  // own rule and not a way around it: the refusal says the stylesheet names a block no rule
+  // reaches, and one rule that still reaches it means the block is reached. Round 6 found the
+  // shape on the benefits section when `index.astro` declared the rule; the draft of 2026-10-19
+  // puts that section inside a panel, where the reading does not walk it —
+  // `website/test/slider.mjs` holds the panel's own rule to the scope the section carries — so
+  // the case is written on a block the reading can still see.
+  const installScope = /class="home-install"[^>]*data-astro-cid-(\w+)/.exec(html)?.[1]
+  assert.ok(installScope, 'the built homepage no longer carries a scope on `.home-install`, and this case re-scopes its rules away from it')
+  assert.notEqual(installScope, sliderScope, 'the install block and the slider now carry one scope, and this case tells them apart')
+  const rescoped = TODAY().replaceAll(`[data-astro-cid-${installScope}]`, `[data-astro-cid-${sliderScope}]`)
+  assert.notEqual(rescoped, TODAY(), 'the built homepage’s stylesheet no longer names the install block’s scope, and this case re-scopes the rules that do')
+  // And the other half of the same defect, from the element's side: the block with the scope
   // attribute its component gives it removed, which is a rule that names a scope nothing on the
   // element carries. Either way the block is one the stylesheet names and no rule reaches.
-  const unscoped = html.replace(/<section class="home-benefits"([^>]*)>/, (tag, rest) => `<section class="home-benefits"${rest.replace(/ data-astro-cid-\w+/g, '')}>`)
-  assert.notEqual(unscoped, html, 'the built homepage’s benefits section no longer carries a scope attribute, and this case takes one off')
+  const unscoped = html.replace(/<section class="home-install"([^>]*)>/, (tag, rest) => `<section class="home-install"${rest.replace(/ data-astro-cid-\w+/g, '')}>`)
+  assert.notEqual(unscoped, html, 'the built homepage’s install block no longer carries a scope attribute, and this case takes one off')
 
   const cases = [
-    ['a rule scoped to the page rather than to the component that renders the block', rescoped, html, /scoped to data-astro-cid-/],
+    ['every rule naming the block scoped to the component that renders the slider rather than to the one that renders the block', rescoped, html, new RegExp(`scoped to data-astro-cid-${sliderScope}`)],
     ['a block whose scope attribute is gone', TODAY(), unscoped, /the element carries no scope attribute/],
   ]
   for (const [what, css, page, expected] of cases) {
     const failures = homeRhythmFailures(css, page)
     assert.equal(failures.length, 1, `${what}: the reading refused ${failures.length} thing(s) where this case plants one:\n  ${failures.join('\n  ') || '(nothing)'}`)
-    assert.match(failures[0], /^the homepage's \.home-benefits is named by the stylesheet/, `${what}: the refusal does not say which block it is about, or does not begin with it:\n  ${failures[0]}`)
+    assert.match(failures[0], /^the homepage's \.home-install is named by the stylesheet/, `${what}: the refusal does not say which block it is about, or does not begin with it:\n  ${failures[0]}`)
     assert.match(failures[0], expected, `${what}: the refusal does not name the scopes it read:\n  ${failures[0]}`)
   }
 
@@ -1887,242 +1815,13 @@ test('the rhythm reading refuses a block whose rule cannot reach it', () => {
   assert.deepEqual(homeRhythmFailures(TODAY(), html), [], 'the homepage as it ships carries a block its rules cannot reach')
 })
 
-// ---- the chat is one card, one conversation (review round 3, item 3a) ----------------------
-//
-// The chat was three cards across the page's column — one turn each, `auto-fit` with an 18 rem
-// minimum — and the review of round 3 found what that draws: dead space inside each card, with
-// the reader's one short line floating in the middle of a card whose height the two long ones
-// set. What a conversation is instead is **one card with one column of lines**, the speaker at
-// the left of every line, at the width a line of prose is set at everywhere else on the site.
-// The four claims the arithmetic below holds are the ones that make it that shape:
-//
-//   1. **the list is one column** — a row of anything (`repeat(auto-fit, …)`, more than one
-//      track, a `display: flex` row) is the shape the review refused;
-//   2. **the list is the card** — the border, the radius and the background are the list's,
-//      and a turn with a card of its own is the three-cards defect back again;
-//   3. **the speakers are one column** — the label column is a definite width every row
-//      shares, and the lines start at one edge down the whole conversation;
-//   4. **the two speakers are on opposite sides** — the figure is a chat, so each turn's
-//      body is drawn as a bubble, content-sized and tinted against the card, and the reader's
-//      sits at one side of the card while the agent's sits at the other (review round 5).
-//      A bubble is not the card-per-turn the third claim's era refused: those were three
-//      cards laid out across the page and stretched to the row's tallest, and this is one
-//      content-sized box inside a row of the one card.
-//
-// The third is why the column is a fixed length rather than `max-content`, and it is the one
-// claim that is easy to get wrong in a way that looks right: `max-content` on a grid container
-// is resolved **per row**, against that row's own label, so `You` and `Your agent` give two
-// different columns and the two lines under them start 60 px apart. A content-sized column
-// therefore aligns nothing, and this refuses one — and then refuses a definite column too
-// narrow for the widest label in the markup, estimated with `textWidth` at the size the labels
-// are set in, so a longer speaker name fails here rather than wrapping inside the card.
-//
-// The cap is read rather than assumed, as it is for the flow's list: the list is an `<ol>`,
-// `base.css` holds lists to the measure, and the measure is what makes the card a readable
-// width. A rule that opts the list out of it (`max-width: none`) puts the conversation back
-// across the page, which is what the failure names.
-
-/** The margin the widest speaker label must have left in the column, in px. See `NAME_MARGIN`. */
-const LABEL_MARGIN = 4
-
-/** The chat’s turns on one built page, as `{ who }` — the speaker each row is labelled with. */
-export function chatSpeakers(html) {
-  return [...walk(parse(html))]
-    .filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('chat-turn'))
-    .map((el) => {
-      const who = [...walk(el)].find((child) => (child.attrs.get('class') ?? '').split(/\s+/).includes('turn-who'))
-      return who ? textOf(who).replace(/\s+/g, ' ').trim() : ''
-    })
-}
-
-/**
- * Every way the chat fails to be one card holding one conversation, at the width the desktop
- * layout is read at, for one built page’s stylesheet and markup.
- */
-export function chatConversationFailures(css, html) {
-  const out = []
-  const speakers = chatSpeakers(html)
-  if (speakers.length < 3) {
-    return [
-      `the page prints ${speakers.length} chat turn(s), and the figure this check sizes is item 3’s three-turn chat: the conversation it asks for cannot be read from fewer turns`,
-    ]
-  }
-  const rules = allRules(css)
-  const tokens = lengthTokens(css)
-  const declared = (klass, property, width) =>
-    rules
-      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector) && appliesAt(width)(r))
-      .map((r) => declarations(r)[property])
-      .filter((value) => value !== undefined)
-      .pop()
-
-  const DESKTOP = 80 * 16
-  const PHONE = 390
-
-  // ---- 1. the list is one column of lines --------------------------------------------------
-  const columns = declared('chat-turns', 'grid-template-columns', DESKTOP)
-  const display = declared('chat-turns', 'display', DESKTOP) ?? 'block'
-  if (display === 'flex' && (declared('chat-turns', 'flex-direction', DESKTOP) ?? 'row').startsWith('row')) {
-    out.push(
-      "the chat's turns are a flex row, and a row of cards across the page is the shape the review of round 3 refused: three turns of a quarter of the page each leave dead space inside the cards, with the reader's one short line floating in the middle of a card the long ones sized (changes spec 2026-10-18, item 3a)",
-    )
-  }
-  if (columns !== undefined) {
-    const tracks = splitTop(columns, ' ')
-    const repeats = /repeat\(/.test(columns)
-    if (repeats || tracks.length !== 1) {
-      out.push(
-        `the chat's turns are laid out as ${repeats ? `\`${columns}\`` : `${tracks.length} columns`}, and the conversation is one column of lines in one card: a row of cards is what the review of round 3 found — dead space inside each card, and the reader's one short line floating in the middle of it (changes spec 2026-10-18, item 3a)`,
-      )
-    }
-  }
-
-  // ---- 2. the list is the card, and a turn is a row of it ----------------------------------
-  if (declared('chat-turns', 'background', DESKTOP) === undefined || declared('chat-turns', 'border', DESKTOP) === undefined) {
-    out.push(
-      "the conversation's own list draws no card (`background` and `border` are the card, and one of them is missing): the turns are rows of one card rather than cards of their own (changes spec 2026-10-18, item 3a)",
-    )
-  }
-  for (const klass of ['chat-turn', 'turn-who', 'turn-line', 'turn-status', 'turn-results']) {
-    for (const property of ['background', 'border', 'border-radius']) {
-      const value = declared(klass, property, DESKTOP)
-      if (value === undefined) continue
-      out.push(
-        `a .${klass} draws a card of its own (\`${property}: ${value}\`), and the conversation is one card with the turns as its rows: a card per turn is the shape the review of round 3 refused, whatever the width it is drawn at (changes spec 2026-10-18, item 3a)`,
-      )
-    }
-  }
-
-  // ---- 3. the card is a readable width, not the page ---------------------------------------
-  const cap = listMaxWidth(css, DESKTOP, listElement(html, 'chat-turns', 'item 3 puts the chat on the homepage'))
-  if (cap.unreadable) {
-    return [
-      `the chat’s turns are reached by a rule this check cannot read — ${cap.unreadable} — and a cap nobody can read is a cap nobody checked: teach the cascade reader in \`website/test/base-styles.mjs\` the construct, or write the rule in a shape it reads`,
-    ]
-  }
-  const measurePx = capPixels(tokenText(css).get('measure') ?? '', tokenText(css), lengthTokens(css), elementFontPx(css))
-  if (Number.isNaN(measurePx)) {
-    out.push("the measure this site sets prose to cannot be read from the stylesheet, so 'a readable width' is not a number this check can hold the chat's card to")
-  } else if (cap.px > measurePx) {
-    out.push(
-      `the chat's turns are drawn at ${Number.isFinite(cap.px) ? `${Math.round(cap.px)} px` : 'no cap at all'} (max-width: ${cap.value}` +
-        `${cap.selector ? `, from ${JSON.stringify(cap.selector)}` : ''}${cap.query ? ` inside ${cap.query}` : ''}), and a line of this site's prose is set at the measure, ${Math.round(measurePx)} px: the conversation is one card at a readable width rather than a figure stretched across the page (changes spec 2026-10-18, item 3a)`,
-    )
-  }
-
-  // ---- 4. the speakers are one column ------------------------------------------------------
-  const turnColumns = declared('chat-turn', 'grid-template-columns', DESKTOP)
-  if (turnColumns === undefined) {
-    out.push(
-      `no rule gives a turn two columns at ${DESKTOP / 16} rem: the speaker is a column of its own at the left of the line it introduces, and without it every line starts wherever its own name ends (changes spec 2026-10-18, item 3a)`,
-    )
-  } else {
-    const tracks = splitTop(turnColumns, ' ')
-    const label = tracks[0] ?? ''
-    const content = /^(?:max-content|min-content|auto|fit-content\(.*\)|[\d.]+fr)$/.test(label) || label.includes('fr')
-    const labelPx = content ? NaN : toPx(label, tokens)
-    const labelSize = toPx(declared('turn-who', 'font-size', DESKTOP), tokens)
-    const widest = speakers.reduce((a, b) => (textWidth(b, labelSize) > textWidth(a, labelSize) ? b : a), '')
-    const need = textWidth(widest, labelSize) + LABEL_MARGIN
-    if (tracks.length !== 2) {
-      out.push(
-        `a turn is laid out as ${tracks.length} column${tracks.length === 1 ? '' : 's'} (\`${turnColumns}\`), and a turn of the conversation is two: its speaker, and what they said (changes spec 2026-10-18, item 3a)`,
-      )
-    } else if (content) {
-      out.push(
-        `the speaker column is \`${label}\`, which a browser sizes per row against that row's own label: \`${speakers[0]}\` and the longest of the labels (${JSON.stringify(widest)}) then give two different columns, and the two lines under them start at two different places — a content-sized column aligns nothing (changes spec 2026-10-18, item 3a)`,
-      )
-    } else if (Number.isNaN(labelPx) || Number.isNaN(labelSize) || Number.isNaN(need)) {
-      out.push(
-        `the speaker column's arithmetic cannot be read: \`${label}\` at a label size of \`${declared('turn-who', 'font-size', DESKTOP) ?? '(nothing declared)'}\` is not a length this check can turn into pixels, and a length it cannot read is a length nothing checked (\`NaN\` passes every comparison) — teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (changes spec 2026-10-18, item 3a)`,
-      )
-    } else if (labelPx < need) {
-      out.push(
-        `the speaker column is ${Math.round(labelPx)} px and the widest speaker label in the markup (${JSON.stringify(widest)}, at ${labelSize} px, estimated at ${Math.round(textWidth(widest, labelSize))} px) needs ${Math.round(need)} px with the margin this check asks for: the labels are one column, so the column has to hold the widest of them on one line (changes spec 2026-10-18, item 3a)`,
-      )
-    }
-    for (const klass of ['turn-body']) {
-      const column = declared(klass, 'grid-column', DESKTOP)
-      if (column === undefined || !/^2(\s*\/\s*-?1)?$/.test(column.trim())) {
-        out.push(
-          `a .${klass} is not in the second column of its turn (\`grid-column: ${column ?? '(nothing declared)'}\`), so what the speaker said starts under its own label rather than at the edge every line of the conversation shares (changes spec 2026-10-18, item 3a)`,
-        )
-      }
-    }
-  }
-
-  // ---- 6. the two speakers are on opposite sides -------------------------------------------
-  //
-  // The figure is a chat (review round 5), so the reader's turn and the agent's are drawn on
-  // opposite sides of the card. The reading is the bubble's own `justify-self`, per speaker:
-  // the turn's body is where the alternation is written, and a rule set that leaves both
-  // speakers on one side — or stretches the body to the whole column, which is a band rather
-  // than a message — is the defect each refusal below names.
-  const bodySideAt = (speaker) => {
-    // The speaker's own rule: one that reaches a turn of that speaker — the turn's class and
-    // its `data-turn` attribute, whose bracket group may sit before or after the scope
-    // attribute the build adds — and then the turn's body inside it.
-    const token = new RegExp(`data-turn=(?:"|')?${speaker}(?:"|')?(?=[\\]\\s]|$)`)
-    const own = rules
-      .filter((r) => /\.chat-turn\b/.test(r.selector) && /\.turn-body(?![\w-])/.test(r.selector) && token.test(r.selector))
-      .filter((r) => appliesAt(DESKTOP)(r))
-      .map((r) => declarations(r)['justify-self'])
-      .filter((value) => value !== undefined)
-      .pop()
-    // The base is the rule that reaches **every** turn's body — the speaker's own rule is a
-    // different one, and it is read above rather than here: a fallback that took the last
-    // rule matching `.turn-body`, which is the reader's own, would report both speakers on
-    // the reader's side and refuse a correct stylesheet. What is left is the initial value:
-    // `normal`, which for a grid item means `stretch`.
-    const base = rules
-      .filter(
-        (r) =>
-          new RegExp(`\\.turn-body(?![\\w-])`).test(r.selector) &&
-          !/data-turn/.test(r.selector) &&
-          appliesAt(DESKTOP)(r),
-      )
-      .map((r) => declarations(r)['justify-self'])
-      .filter((value) => value !== undefined)
-      .pop()
-    return own ?? base ?? 'normal'
-  }
-  const sides = { you: bodySideAt('you'), agent: bodySideAt('agent') }
-  const atEnd = (value) => /^(?:end|right|self-end|flex-end)$/.test(String(value).trim())
-  for (const [speaker, side] of Object.entries(sides)) {
-    if (/^(?:normal|stretch|self-stretch)$/.test(String(side).trim())) {
-      out.push(
-        `the ${speaker === 'you' ? "reader's" : "agent's"} turn has no side of its own (\`justify-self: ${side}\` on its body, which for a grid item stretches it to the whole column): a turn's body is a bubble — the shape of what was said, on one side of the card or the other — and a box that fills the column is a band with a message in it (review round 5)`,
-      )
-    }
-  }
-  if (atEnd(sides.you) === atEnd(sides.agent)) {
-    out.push(
-      `the reader's turn and the agent's are drawn on the same side (their bodies' \`justify-self\` is ${JSON.stringify(sides.you)} and ${JSON.stringify(sides.agent)}): the figure is a chat, and a chat alternates — what the reader asked on one side, and what the agent did on the other (review round 5)`,
-    )
-  }
-
-  // ---- 5. on a phone the label goes above the line ------------------------------------------
-  //
-  // The label column is a fixed length, and a fixed length that suits a 1056 px card takes a
-  // third of a 390 px one. Below the layout's own breakpoint a turn is one column, so the
-  // speaker is a line above what they said; this is the end that says the desktop rule is
-  // inside a breakpoint rather than in force everywhere.
-  const phoneColumns = declared('chat-turn', 'grid-template-columns', PHONE)
-  if (phoneColumns !== undefined && splitTop(phoneColumns, ' ').length > 1) {
-    out.push(
-      `at ${PHONE} px a turn is laid out as \`${phoneColumns}\`, ${splitTop(phoneColumns, ' ').length} columns on a ${PHONE} px screen: the speaker column is a fixed length sized for a card of a thousand pixels, and below the layout's own breakpoint the label goes above the line it introduces (changes spec 2026-10-18, item 3a)`,
-    )
-  }
-  return out
-}
-
 // ---- the watch slot reserves no space until the image lands (review round 3, item 3b) ------
 
 /**
  * Every way the `fugaro watch` slot breaks the two rules that make it a slot rather than a
  * placeholder. It is empty until a later task adds the screenshot — that is item 3's own
  * arrangement and PR #622's image — and the review of round 3 found the cost of getting it
- * wrong: about 140 px of blank page between the chat and the command bar under it. So:
+ * wrong: about 140 px of blank page between the figure and the command bar under it. So:
  *
  *   - **nothing draws a box around an empty slot.** `:empty { display: none }` is what takes
  *     it out of the page while it holds nothing, and any rule that gives the slot itself a
@@ -2142,15 +1841,15 @@ export function chatConversationFailures(css, html) {
  *     without horizontal scroll" is made of, and it is the same reading `test/base-styles.mjs`
  *     takes everywhere else: the built stylesheet's own declarations.
  */
-export function chatSlotFailures(css, html) {
+export function watchSlotFailures(css, html) {
   const out = []
   const slot = [...walk(parse(html))].find((el) => el.attrs.get('data-slot') === 'watch-screenshot')
   if (!slot) return out // the markup's slot is `test/home.mjs`'s subject, not this one's
-  const own = allRules(css).filter((rule) => /\.chat-shot(?![\w-])/.test(rule.selector))
+  const own = allRules(css).filter((rule) => /\.watch-shot(?![\w-])/.test(rule.selector))
   const empty = own.find((rule) => rule.selector.includes(':empty'))
   if (empty === undefined || declarations(empty)['display'] !== 'none') {
     out.push(
-      "no rule takes the watch screenshot's slot out of the page while it is empty (`.chat-shot:empty { display: none }`): the slot holds nothing until the image lands, and an empty element that still takes space is blank page between the conversation and the command bar (review round 3, item 3b)",
+      "no rule takes the watch screenshot's slot out of the page while it is empty (`.watch-shot:empty { display: none }`): the slot holds nothing until the image lands, and an empty element that still takes space is blank page between the conversation and the command bar (review round 3, item 3b)",
     )
   }
   for (const rule of own) {
@@ -2168,7 +1867,7 @@ export function chatSlotFailures(css, html) {
   const sizes = own.filter((rule) => /(^|[^\w-])img(?![\w-])/.test(rule.selector))
   if (sizes.length === 0) {
     out.push(
-      "no rule sizes the image that goes into the watch screenshot's slot (`.chat-shot > img`): the image is a separate task's to add, and the rule that draws it belongs beside the slot so that adding it is one line of markup (review round 3, item 3b)",
+      "no rule sizes the image that goes into the watch screenshot's slot (`.watch-shot > img`): the image is a separate task's to add, and the rule that draws it belongs beside the slot so that adding it is one line of markup (review round 3, item 3b)",
     )
     return out
   }
@@ -2216,11 +1915,106 @@ export function chatSlotFailures(css, html) {
   return out
 }
 
-/** The step names one built page prints, in the flow's order. */
-function stepNames(html) {
-  return [...walk(parse(html))]
-    .filter((el) => el.name === 'h2' && (el.attrs.get('class') ?? '').split(/\s+/).includes('step-name'))
-    .map((el) => textOf(el).replace(/\s+/g, ' ').trim())
+test('the watch slot reserves no space until the image lands, and the image scales in it', () => {
+  // The slot as it ships, first: the cases below are the real rules with one thing taken out,
+  // and a case that never read the shipped stylesheet would pass on a page whose slot had no
+  // rules at all. The homepage is the page the slot is on — the "See it" panel of the slider
+  // (the owner's approved draft of 2026-10-19) — and `watchSlotFailures` returns early on a page
+  // with no slot, so this assertion is also what holds the slot to the artifact.
+  const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const css = pageCss(home)
+  assert.deepEqual(watchSlotFailures(css, home), [], 'the watch slot as it ships breaks one of the rules the cases below are about')
+
+  // The slot's two rules, each planted: the rule that takes an empty slot out of the page, and
+  // the rule that sizes the image in it.
+  const nothingPainted = css.replace(
+    /\.watch-shot\[data-astro-cid-[a-z0-9]+\]:empty\{display:none\}/,
+    '.watch-shot[data-astro-cid-6fbtmsuw]:empty{display:block}',
+  )
+  assert.notEqual(nothingPainted, css, "this fixture turns the slot's `:empty` rule into one that still draws it, and the built stylesheet no longer carries that rule")
+  const noImageRule = css.replace(/\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img[^{]*\{[^}]*\}/, '')
+  assert.notEqual(noImageRule, css, "this fixture removes the rule that sizes the image in the slot, and the built stylesheet no longer carries one")
+  // And the picture's own sizing, each planted the way the defect reads on the page: a width
+  // in pixels is the screenshot wider than the phone's column, and a height in pixels is the
+  // same screenshot squashed into a box that is not its shape.
+  const fixedWidth = css.replace(/(\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{)width:100%/, '$1width:1459px')
+  const fixedHeight = css.replace(/(\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{width:100%;)height:auto/, '$1height:441px')
+  assert.notEqual(fixedWidth, css, "this fixture fixes the watch screenshot's width in pixels, and the built stylesheet no longer sizes it with a percentage")
+  assert.notEqual(fixedHeight, css, "this fixture fixes the watch screenshot's height in pixels, and the built stylesheet no longer lets it follow the file's ratio")
+  // The same defect one breakpoint down: the base rule still tracks the column, and a media
+  // query answers a phone with a fixed width instead — the shape a "just for small screens"
+  // override takes, and the one a check that read only the declarations in front of it would
+  // miss.
+  const imgSelector = /(\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\])/.exec(css)?.[1]
+  assert.ok(imgSelector, "this fixture needs the rule that sizes the image in the watch slot, and the built stylesheet no longer carries one to read its selector from")
+  const phoneWidth = `${css}\n@media (max-width:40rem){${imgSelector}{width:900px}}`
+  const cases = [
+    ['the slot left in the page while it is empty', nothingPainted, /takes the watch screenshot's slot out of the page/],
+    ['the screenshot fixed in width inside a breakpoint', phoneWidth, /a length in units is a box the picture does not grow out of/],
+    ['a box drawn around the empty slot', `${css}\n.watch-shot{min-height:140px}`, /gives the watch screenshot's slot a `min-height/],
+    ['the image rule removed with the slot still empty', noImageRule, /no rule sizes the image that goes into the watch screenshot's slot/],
+    ['the screenshot given a fixed width', fixedWidth, /the picture is a 1459 px-wide capture of a terminal/],
+    ['the screenshot given a fixed height', fixedHeight, /the picture's height has to follow the file's own ratio/],
+  ]
+  for (const [what, stylesheet, expected] of cases) {
+    const failures = watchSlotFailures(stylesheet, home)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what}: the refusal did not fire, and this is what it said instead:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
+})
+
+// ---- the homepage's slider: the block the flow's own arithmetic moved to -------------------
+//
+// The homepage's section is the owner's approved draft of 2026-10-19 — one slider with three
+// tabs — and the four-step flow that stood in its place is retired with it (the owner's ruling
+// of 2026-10-20: `ArchitectureDiagram.astro` is deleted, and the gates for what the pages show
+// now take the retired ones' place). The two gates below are the ones the flow's layout carried,
+// read on the block that replaced it, and they are the two claims that were never about the
+// flow: **a step name has to fit the column it is printed in**, and **a block does not change
+// shape with the viewport unless the design says so**.
+//
+// The first is the retired gate's centre of gravity (`.flow-steps`'s four cards in a quarter of
+// the row each, where a card's content box was 100 px wide and "Ephemeral cloud job" did not
+// print in it). The slider's three names are printed in the third track of a grid, beside the
+// step's number and its icon, and the box they get is arithmetic: the page's column, less the
+// gutters between `main` and the list, less the list's own cap (it is an `<ol>`, and `base.css`
+// holds lists to the measure), less the step's padding and border, less the grid's two gaps,
+// less the number's own track and the icon's. Every one of those numbers comes out of the built
+// stylesheet rather than being typed here, so a token that moves moves this with it. The gutter
+// is read the way the flow's arithmetic read it: the declared padding of `main` and of every
+// block between it and the list, *ignoring* the homepage's `main:has(> .hero)` shortcut (which
+// drops `main`'s padding and lets each block put its own back), so the box this works from is
+// narrower than the page's own — the direction a *fits* question should err in.
+//
+// The second is the retired band gate (`flowBandFailures` read the shape in force at six widths
+// and refused a layout inside a query with no viewport width in it). The slider has no bands to
+// read: the tabs are the mechanism and the fragment is the state, so which panel a reader is
+// shown is **never** the viewport's business, and a rule that shows or hides a panel from a
+// media query is a second mechanism the tabs do not know about — a tab that does nothing at
+// some widths, or a panel that appears without the reader asking for it. Both shapes of that
+// defect are refused: a query about the width, and a query the width does not decide (which
+// would show or hide a panel at every width).
+//
+// The names may wrap — that is the first thing the retired gate read, and it is why the limit
+// here is the longest single *word* rather than the longest name — so the one declaration that
+// takes the wrapping away is refused on its own.
+
+/** The widths the slider is read at: a phone, the site's chrome breakpoint, and the desktop
+ *  width the other gates measure the site at. Nothing about the slider answers to the viewport,
+ *  so these are three readings of one layout rather than three bands. */
+const SLIDER_WIDTHS = [360, 768, 1280]
+
+/** The classes between `main` and the slider's step list on one built page: the gutters its own
+ *  width arithmetic has to take off the column. */
+function sliderWrappers(html) {
+  const list = [...walk(parse(html))].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('easy-steps'))
+  const out = []
+  for (let node = list?.parent; node && node.name !== 'main'; node = node.parent) {
+    out.push(...(node.attrs?.get('class') ?? '').split(/\s+/).filter(Boolean))
+  }
+  return out
 }
 
 /**
@@ -2243,789 +2037,243 @@ export function listElement(html, klass, what) {
   }
 }
 
-/** The flow's list element on one built page. */
-export function flowListElement(html) {
-  return listElement(html, 'flow-steps', 'item 4 puts the flow on the homepage and on How It Works')
+/** The text of every element of one built page that carries `klass`, in document order. */
+function textOfEach(html, klass) {
+  return [...walk(parse(html))]
+    .filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes(klass))
+    .map((el) => textOf(el).replace(/\s+/g, ' ').trim())
 }
 
-/** The classes between `main` and the flow's figure on one built page: the gutters it sits in. */
-function flowWrappers(html) {
-  const figure = [...walk(parse(html))].find((el) => el.name === 'figure' && (el.attrs.get('class') ?? '').split(/\s+/).includes('flow'))
+/**
+ * Every way the homepage's slider fails to render the step names it prints, or fails to keep
+ * the panel a reader chose, for one built page's stylesheet and markup. Returns nothing on a
+ * page that carries no slider, so it can be run over every built page.
+ */
+export function sliderLayoutFailures(css, html) {
   const out = []
-  for (let node = figure?.parent; node && node.name !== 'main'; node = node.parent) {
-    out.push(...(node.attrs?.get('class') ?? '').split(/\s+/).filter(Boolean))
+  const rules = allRules(css)
+  const tokens = lengthTokens(css)
+  const declared = (klass, property, width) =>
+    rules
+      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector) && appliesAt(width)(r))
+      .map((r) => declarations(r)[property])
+      .filter((value) => value !== undefined)
+      .pop()
+
+  // The names may wrap, at every width: one rule holding them on a line is the defect.
+  for (const rule of rules) {
+    if (!/\.step-name(?![\w-])/.test(rule.selector)) continue
+    if (!(declarations(rule)['white-space'] ?? '').startsWith('nowrap')) continue
+    out.push(
+      `the step name is held on one line (${rule.query ? `inside ${rule.query}: ` : ''}white-space: nowrap), and the name is printed in the third track of a grid beside the step's number and its icon: that track is a fraction of a phone's page, so a name that cannot wrap runs out of the panel rather than onto a second line (the retired four-across gate's first reading, changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
+    )
+  }
+
+/** A media query about the viewport's width, in either of the two shapes the site writes:
+ *  the built `(width<=59.25rem)` range form and the classic `(max-width:40rem)`. A query that
+ *  is about something else — `prefers-reduced-motion`, `min-resolution`, `hover` — is not about
+ *  the width, and a `display` inside one is a mechanism that acts at every width. */
+const ABOUT_WIDTH = /(?:min-width|max-width|width\s*[<>]=?)\s*:?\s*[\d.]+(?:rem|px)/
+
+  // The panel a reader is shown is the fragment's, at every width — the tab is a link to the
+  // panel's own id, and the stylesheet's `:target` rules are what shows it. A `display` on a
+  // panel inside a media query is the viewport deciding instead, in one of two shapes: a query
+  // about the width (a band at which the tabs stop working, or a panel appears unasked), or a
+  // query the width does not decide (which does it at every width).
+  for (const rule of rules) {
+    if (!/\.panel(?![\w-])|#home-panel-/.test(rule.selector)) continue
+    const display = declarations(rule)['display']
+    if (display === undefined || !rule.query) continue
+    out.push(
+      ABOUT_WIDTH.test(rule.query)
+        ? `the slider's panels are given \`display: ${display}\` inside \`${rule.query}\`, a query about the viewport's width, and the panel a reader is shown is the one the fragment names at every width: a query here is a band in which a tab does nothing, or a panel appears without the reader asking for it (the retired band gate, review round 3 item 3e; the owner's ruling of 2026-10-20)`
+        : `the slider's panels are given \`display: ${display}\` inside \`${rule.query}\`, a query with no viewport width in it, and a panel shown or hidden at no particular width is one shown or hidden at every width — a mechanism the reader's tab does not know about (the retired band gate, review round 3 item 3e; the owner's ruling of 2026-10-20)`,
+    )
+  }
+
+  const names = textOfEach(html, 'step-name')
+  if (names.length === 0) return out
+  const numbers = textOfEach(html, 'step-number')
+  const list = listElement(html, 'easy-steps', "the slider's steps are one list, and the box its names are printed in is read from the list's own cap")
+
+  /**
+   * The inline padding a block declares: `inlineToken` of its `padding` shorthand. The survey
+   * of wrappers above uses the class's own last rule rather than a rule in force at a width,
+   * which is an over-estimate when a breakpoint gives the block a smaller gutter — the
+   * direction to be wrong in, since the box this reads is a floor.
+   */
+  const wrapperPad = sliderWrappers(html).reduce((sum, klass) => {
+    const value = rules
+      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector))
+      .map((r) => toPx(inlineToken(declarations(r)['padding']), tokens))
+      .filter((px) => !Number.isNaN(px))
+      .pop()
+    return sum + (value ?? 0)
+  }, 0)
+
+  /** `main`'s gutter at a width: the last of its rules that applies there, with the homepage's
+   *  `main:has(…)` shortcut left out on purpose (see the section comment). */
+  const mainPad = (width) =>
+    rules
+      .filter((r) => /(^|[,\s])main(?![\w-])/.test(r.selector) && !r.selector.includes(':has(') && appliesAt(width)(r))
+      .map((r) => toPx(inlineToken(declarations(r)['padding']), tokens))
+      .filter((px) => !Number.isNaN(px))
+      .pop() ?? 0
+
+  for (const width of SLIDER_WIDTHS) {
+    const columns = declared('easy-step', 'grid-template-columns', width)
+    const nameSize = toPx(declared('step-name', 'font-size', width), tokens)
+    const numberSize = toPx(declared('step-number', 'font-size', width), tokens)
+    const iconBox = toPx(declared('step-icon', 'width', width), tokens)
+    const columnGap = toPx(inlineToken(declared('easy-step', 'column-gap', width) ?? declared('easy-step', 'gap', width)), tokens)
+    const stepPad = toPx(inlineToken(declared('easy-step', 'padding', width)), tokens)
+    const stepBorder = toPx(firstToken(declared('easy-step', 'border', width)), tokens)
+    const pageMax = tokens.get('page-max')
+
+    // Every number the arithmetic below is made of, refused here when this reader could not
+    // turn it into pixels rather than carried into the sums: `NaN` is false against every
+    // comparison below, so a length read as `NaN` makes the refusals silent — the panel would
+    // be reported as fitting because the check stopped measuring it.
+    const unreadable = [
+      ['the grid the step is laid out in (`.easy-step`’s grid-template-columns)', columns],
+      ['the size the step names are set in (`.step-name`’s font-size)', nameSize],
+      ['the size the step number is set in (`.step-number`’s font-size)', numberSize],
+      ['the icon’s track (`.step-icon`’s width)', iconBox],
+      ['the gap between the tracks (`.easy-step`’s column-gap)', columnGap],
+      ['the step’s padding (`.easy-step`’s padding)', stepPad],
+      ['the step’s border (`.easy-step`’s border)', stepBorder],
+      ['the page’s own ceiling (`--page-max`)', pageMax],
+    ].filter(([, value]) => value === undefined || (typeof value === 'number' && Number.isNaN(value)))
+    if (unreadable.length > 0) {
+      out.push(
+        `at ${width} px the slider's arithmetic cannot be read: ${unreadable.map(([what]) => what).join(', ')} is not a length this check can turn into pixels (or, for the grid, no track list at all), and a length it cannot read is a length nothing checked (\`NaN\` passes every comparison below) — teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (changes spec 2026-10-18, item 4; the owner's ruling of 2026-10-20)`,
+      )
+      continue
+    }
+    if (numbers.length === 0) {
+      out.push(
+        `the slider prints step names and no step number, and the number is the first track of the grid the name is printed in: what the number's own track takes out of the name cannot be read from a page that carries none (the owner's ruling of 2026-10-20)`,
+      )
+      continue
+    }
+
+    // The name's own track: the one the stylesheet puts the name in, and the one that has to
+    // be the grid's remaining room. An `auto` (or `max-content`) track is sized by the name
+    // itself, so a name wider than the page does not wrap — it widens the grid past the
+    // gutter, which is the same defect the retired gate measured, told the other way round.
+    const tracks = splitTop(columns, ' ')
+    const last = tracks[tracks.length - 1] ?? ''
+    if (tracks.length < 3) {
+      out.push(
+        `at ${width} px the step is a grid of \`${columns}\`, and the step's number, its icon and its name are three tracks: a grid with ${tracks.length} of them does not place the name beside the other two (the owner's ruling of 2026-10-20)`,
+      )
+    } else if (!/fr\)?\s*$/.test(last) || !/^minmax\(\s*0/.test(last)) {
+      out.push(
+        `at ${width} px the name's track of the step's grid is \`${last}\` (\`grid-template-columns: ${columns}\`), and the name's track is the grid's remaining room — \`minmax(0, 1fr)\`: a track sized by the name itself is a name wider than the page widening the grid past the column it is in rather than wrapping inside it (the retired four-across gate's card arithmetic, told the other way round; changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
+      )
+    }
+
+    // The box the name is printed in: the page's column — the viewport, capped by `--page-max`
+    // — less `main`'s gutter and the gutters of the blocks between it and the list, less the
+    // cap the list itself carries, less the step's own padding and border, less the two gaps,
+    // less the number's track (the widest number the page prints, at the size the stylesheet
+    // sets it) and the icon's.
+    const cap = listMaxWidth(css, width, list)
+    if (cap.unreadable) {
+      out.push(
+        `at ${width} px the slider's list is reached by a rule this check cannot read — ${cap.unreadable} — and a cap nobody can read is a cap nobody checked: teach \`website/test/base-styles.mjs\`'s cascade reader the construct, or write the rule in a shape it reads (the owner's ruling of 2026-10-20)`,
+      )
+      continue
+    }
+    const numberBox = Math.max(...numbers.map((number) => textWidth(number, numberSize)))
+    const box = Math.min(Math.min(width, pageMax) - 2 * mainPad(width) - 2 * wrapperPad, cap.px)
+    const room = box - 2 * stepPad - 2 * stepBorder - 2 * columnGap - numberBox - iconBox
+    const needs = textWidth(longestWord(names), nameSize)
+    if (room < needs) {
+      out.push(
+        `at ${width} px the slider prints its step names in ${Math.round(room)} px (the column is ${Math.round(box)} px, less the step's padding and border, the grid's two gaps, the number's track at ${numberBox.toFixed(1)} px and the icon's ${iconBox} px), and the longest word of the three names it prints (${JSON.stringify(longestWord(names))}, at ${nameSize} px) needs ${Math.round(needs)} px: a name is free to wrap here, so the word is what has to fit, and a word that does not fit runs out of the panel (the retired four-across gate's name arithmetic, changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
+      )
+    }
   }
   return out
 }
 
-test('the four-across flow has room for the step names it prints', () => {
-  const failures = []
-  let checked = 0
+test('the slider prints its step names in the room it gives them, and answers to the fragment', () => {
+  // The homepage is the page the slider is on (the owner's approved draft of 2026-10-19) and
+  // the pages that carry no slider are not this check's subject — `sliderLayoutFailures`
+  // returns early on them — so a homepage without one has to be refused rather than passed.
+  const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  assert.ok(/class="[^"]*easy-steps/.test(home), 'the homepage carries no `easy-steps` list, and the slider is where the homepage\'s three steps are (the owner\'s approved draft of 2026-10-19)')
+  assert.ok(textOfEach(home, 'step-name').length > 0, 'the homepage prints no `step-name`, and the slider\'s first panel is the three steps of using Fugaro')
+  assert.deepEqual(sliderLayoutFailures(pageCss(home), home), [], 'the slider as it ships breaks one of the rules the cases below are about')
   for (const { rel, html } of builtPages()) {
-    const names = stepNames(html)
-    if (names.length === 0) continue
-    checked += 1
-    failures.push(...flowLayoutFailures(pageCss(html), names, flowWrappers(html), flowListElement(html)).map((line) => `${rel}: ${line}`))
-    failures.push(...flowBandFailures(pageCss(html)).map((line) => `${rel}: ${line}`))
-  }
-  assert.ok(checked > 0, 'no built page carries the flow, and item 4 puts it on the homepage and on How It Works')
-  assert.deepEqual(failures, [], `the flow cannot render its own step names:\n  ${failures.join('\n  ')}`)
-})
-
-test('the flow is a stack, a two-by-two and a row — each in its own band of width', () => {
-  const css = pageCss(readFileSync(path.join(DIST, 'index.html'), 'utf8'))
-  assert.deepEqual(flowBandFailures(css), [], 'the band rule fails on the built stylesheet, so the cases below are not proving what they name')
-
-  const cases = [
-    // The defect the review of round 3 measured, and the one this gate exists for: no
-    // two-by-two at all, which leaves the four cards as the tall stack the review counted at
-    // 768 px. The blocks that start the two-by-two and the row are both still there — this is
-    // the shape whose absence nothing else in the file would notice.
-    [
-      'a flow with no two-by-two at all',
-      css.replace(/@media \(width>=35rem\) and \(width<=71\.98rem\)\{\.flow-steps[^{]*\{[^}]*\}/, ''),
-      /at 768 px the flow's four steps are a `column`/,
-    ],
-    // And the same band one rem early: the stack ends at 35 rem, which is the review's "about
-    // 560 px", and a two-by-two that begins at 30 rem gives a 559 px reader it instead.
-    [
-      'a two-by-two beginning below the phone’s own end',
-      css.replace('(width>=35rem) and (width<=71.98rem)', '(width>=30rem) and (width<=71.98rem)'),
-      /at 559 px the flow's four steps are a `grid`/,
-    ],
-    // A band with no width in its query at all: the two-by-two moved out of the widths it is
-    // for, so it is a layout for every width — a fourth band nobody chose, and one that takes
-    // the phone's own stack away.
-    [
-      'a two-by-two in a query with no viewport width in it',
-      css.replace('(width>=35rem) and (width<=71.98rem)', '(min-resolution: 2dppx)'),
-      /a query with no viewport width in it/,
-    ],
-    // The row itself, starting past the desktop width the review measured.
-    // The row's own band starting past the desktop width the review measured, which leaves the
-    // three bands with a hole in them: the two-by-two has ended and the row has not begun, so a
-    // 1280 px reader gets the phone's stack back.
-    [
-      'a row that starts after the desktop width',
-      css.replace('@media (width>=72rem){.flow-steps', '@media (width>=90rem){.flow-steps'),
-      /at 1280 px the flow's four steps are a `column`/,
-    ],
-    // The phone's own column given a second column of its own: the base rule lays the list
-    // out, and laying it out as a grid there is a two-by-two at every width below the band.
-    [
-      'a phone’s stack given two columns',
-      css.replace(
-        /\.flow-steps(\[data-astro-cid-[a-z0-9]+\])\{flex-direction:column;max-width:none/,
-        '.flow-steps$1{grid-template-columns:1fr 1fr;max-width:none',
-      ),
-      /at 559 px the flow's four steps are a `grid`/,
-    ],
-  ]
-  for (const [what, planted, expected] of cases) {
-    assert.notEqual(planted, css, `${what} was not planted: the case's pattern did not match the built stylesheet`)
-    const failures = flowBandFailures(planted)
-    assert.ok(failures.some((line) => expected.test(line)), `${what} was not refused (${expected}); the rule said:\n  ${failures.join('\n  ') || '(nothing)'}`)
+    if (rel === 'index.html') continue
+    assert.deepEqual(sliderLayoutFailures(pageCss(html), html), [], `${rel} carries no slider and the check's subject there is the panels it does carry`)
   }
 })
 
-test('the chat is one card holding one conversation, at a readable width', () => {
-  const failures = []
-  let checked = 0
-  for (const { rel, html } of builtPages()) {
-    if (!html.includes('class="chat-turn"')) continue
-    checked += 1
-    failures.push(...chatConversationFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
-    failures.push(...chatSlotFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
-  }
-  assert.ok(checked > 0, 'no built page carries the chat, and item 3 puts it on the homepage')
-  assert.deepEqual(failures, [], `the chat is not the one conversation card the page asks for:\n  ${failures.join('\n  ')}`)
-})
-
-test('every chat-conversation refusal fires on the defect it names', () => {
+test('every slider refusal fires on the defect it names', () => {
   const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
   const css = pageCss(home)
-
-  /** Today's stylesheet with one declaration added to the first rule whose selector matches. */
-  const declaring = (pattern, property) => {
-    const next = css.replace(pattern, (match) => `${match.slice(0, -1)};${property}}`)
-    assert.notEqual(next, css, `this fixture adds \`${property}\` to the first rule matching ${pattern}, and the built stylesheet no longer carries one`)
-    return next
+  /** The page's own rule for a selector, as the built stylesheet writes it (Astro scopes a
+   *  component's rules with `[data-astro-cid-…]`, so the fixture edits the rule the page
+   *  carries rather than one written here). */
+  const ruleText = (selector) => {
+    const pattern = new RegExp(`(?:^|[},])\\s*(${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(\\[[^\\]]*\\])?\\{([^}]*)\\}`)
+    const match = pattern.exec(css)
+    assert.ok(match, `the homepage's stylesheet carries no \`${selector}\` rule, and the cases below are about the page's own rules`)
+    return match[0]
   }
-  const onChatTurns = (property) => declaring(/\.chat-turns\[data-astro-cid-[a-z0-9]+\]\{[^}]*\}/, property)
-
+  const change = (selector, from, to) => {
+    const text = ruleText(selector)
+    assert.ok(text.includes(from), `\`${selector}\` no longer declares ${JSON.stringify(from)}, and this fixture replaces it`)
+    return css.replace(text, text.replace(from, to))
+  }
   const cases = [
-    // The defect the review of round 3 found: the turns are three cards across the page.
-    ['the row of cards comes back', onChatTurns('grid-template-columns:repeat(auto-fit,minmax(18rem,1fr))'), /laid out as `repeat\(auto-fit/, home],
-    // And the other way of writing the same row: a flex row of the same cards.
-    ['the turns are a flex row', onChatTurns('display:flex;flex-direction:row'), /a flex row/, home],
-    // And the cap opted out of, which puts the conversation back across the page.
-    ['the measure opted out of', onChatTurns('max-width:none'), /a line of this site's prose is set at the measure/, home],
-    // A card per turn, which is the same defect drawn with borders.
+    // The name held on one line: the retired gate's first reading, and the one declaration that
+    // takes the wrapping away.
+    ['the step name held on one line', `${css}\n.step-name{white-space:nowrap}`, /is held on one line/],
+    // A band of width at which a panel is shown whatever the fragment says: the tabs stop
+    // working there, and the panel appears unasked.
     [
-      'a card per turn',
-      declaring(/\.chat-turn\[data-astro-cid-[a-z0-9]+\]\{[^}]*\}/, 'background:var(--surface)'),
-      /draws a card of its own/,
-      home,
+      'a panel shown inside a query about the width',
+      `${css}\n@media (max-width:40rem){.panel{display:block}}`,
+      /inside `@media \(max-width:40rem\)`, a query about the viewport's width/,
     ],
-    // The speaker column sized by the row's own content, which aligns nothing.
+    // And the same defect in a query the width does not decide, which does it at every width.
     [
-      'a content-sized speaker column',
-      plant('grid-template-columns:7rem minmax(0,1fr)', 'grid-template-columns:max-content minmax(0,1fr)'),
-      /a content-sized column aligns nothing/,
-      home,
+      'a panel hidden inside a query with no width in it',
+      `${css}\n@media (prefers-reduced-motion:reduce){.panel{display:none}}`,
+      /inside `@media \(prefers-reduced-motion:reduce\)`, a query with no viewport width in it/,
     ],
-    // And a definite column too narrow for the widest label — the mutation-proved end of the
-    // arithmetic above: the widest speaker label in the markup no longer fits on one line.
+    // The name's track sized by the name itself, so a long name widens the grid rather than
+    // wrapping in it.
     [
-      'a speaker column too narrow for the labels',
-      plant('grid-template-columns:7rem minmax(0,1fr)', 'grid-template-columns:2rem minmax(0,1fr)'),
-      /the widest speaker label in the markup/,
-      home,
+      'the name’s track sized by the name',
+      change('.easy-step', 'grid-template-columns:auto auto minmax(0,1fr)', 'grid-template-columns:auto auto auto'),
+      /the name's track of the step's grid is `auto`/,
     ],
-    // A line that starts under its own label rather than at the shared edge. The body is one
-    // element, so one rule carries what a speaker said and one refusal names it.
-    ['a line outside the second column', plant('{grid-column:2}', '{grid-column:1}'), /is not in the second column/, home],
-    // And the two ends of the chat's alternation (review round 5): the reader's bubble moved
-    // onto the agent's side, and a body left with no side at all — stretched to the column.
-    ['both speakers on one side', plant('justify-self:end', 'justify-self:start'), /drawn on the same side/, home],
-    ['a turn with no side of its own', plant('justify-self:start', 'justify-self:stretch'), /stretches it to the whole column/, home],
-    // The desktop column in force on a phone, where it would take a third of the screen.
+    // A grid that does not place the name beside the other two at all.
     [
-      'the two columns in force at 390 px',
-      declaring(/\.chat-turn\[data-astro-cid-[a-z0-9]+\]\{[^}]*\}/, 'grid-template-columns:7rem minmax(0,1fr)'),
-      /below the layout's own breakpoint/,
-      home,
+      'a grid with two tracks',
+      change('.easy-step', 'grid-template-columns:auto auto minmax(0,1fr)', 'grid-template-columns:auto minmax(0,1fr)'),
+      /are three tracks: a grid with 2 of them/,
     ],
-    // And the page's own side: fewer than the three turns item 3's figure draws.
-    ['a page whose chat is not the figure’s three turns', css, /prints 2 chat turn\(s\)/, home.replace('class="chat-turn"', 'class="chat-turn-solo"')],
+    // The box the names are printed in squeezed to a strip: the list capped far below its own
+    // measure, which is the cap a browser would give the names.
+    ['the list capped into a strip', change('.easy-steps', 'max-width:var(--measure)', 'max-width:6rem'), /the longest word of the three names it prints/],
+    // A track this reader cannot measure: the icon in `em`s, which is a length `toPx` refuses
+    // rather than a length it reads as nothing.
+    ['an icon track in a unit this check cannot read', change('.step-icon', 'width:28px', 'width:2em'), /arithmetic cannot be read/],
   ]
-  for (const [what, stylesheet, expected, html, count = 1] of cases) {
-    assert.deepEqual(
-      chatConversationFailures(stylesheet, html).map((line) => (expected.test(line) ? 'fired' : line)),
-      Array(count).fill('fired'),
-      `${what}: the refusal did not fire, and this is what it said instead`,
-    )
-  }
-
-  // The slot's two rules, each planted: the rule that takes an empty slot out of the page, and
-  // the rule that sizes the image a later task adds.
-  const nothingPainted = css.replace(
-    /\.chat-shot\[data-astro-cid-[a-z0-9]+\]:empty\{display:none\}/,
-    '.chat-shot[data-astro-cid-6fbtmsuw]:empty{display:block}',
-  )
-  assert.notEqual(nothingPainted, css, "this fixture turns the slot's `:empty` rule into one that still draws it, and the built stylesheet no longer carries that rule")
-  const noImageRule = css.replace(/\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img[^{]*\{[^}]*\}/, '')
-  assert.notEqual(noImageRule, css, "this fixture removes the rule that sizes the image in the slot, and the built stylesheet no longer carries one")
-  // And the picture's own sizing, each planted the way the defect reads on the page: a width
-  // in pixels is the screenshot wider than the phone's column, and a height in pixels is the
-  // same screenshot squashed into a box that is not its shape.
-  const fixedWidth = css.replace(/(\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{)width:100%/, '$1width:1459px')
-  const fixedHeight = css.replace(/(\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{width:100%;)height:auto/, '$1height:441px')
-  assert.notEqual(fixedWidth, css, "this fixture fixes the watch screenshot's width in pixels, and the built stylesheet no longer sizes it with a percentage")
-  assert.notEqual(fixedHeight, css, "this fixture fixes the watch screenshot's height in pixels, and the built stylesheet no longer lets it follow the file's ratio")
-  // The same defect one breakpoint down: the base rule still tracks the column, and a media
-  // query answers a phone with a fixed width instead — the shape a "just for small screens"
-  // override takes, and the one a check that read only the declarations in front of it would
-  // miss.
-  const imgSelector = /(\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\])/.exec(css)?.[1]
-  assert.ok(imgSelector, "this fixture needs the rule that sizes the image in the watch slot, and the built stylesheet no longer carries one to read its selector from")
-  const phoneWidth = `${css}\n@media (max-width:40rem){${imgSelector}{width:900px}}`
-  const slotCases = [
-    ['the slot left in the page while it is empty', nothingPainted, /takes the watch screenshot's slot out of the page/],
-    ['the screenshot fixed in width inside a breakpoint', phoneWidth, /a length in units is a box the picture does not grow out of/],
-    ['a box drawn around the empty slot', `${css}\n.chat-shot{min-height:140px}`, /gives the watch screenshot's slot a `min-height/],
-    ['the image rule removed with the slot still empty', noImageRule, /no rule sizes the image that goes into the watch screenshot's slot/],
-    ['the screenshot given a fixed width', fixedWidth, /the picture is a 1459 px-wide capture of a terminal/],
-    ['the screenshot given a fixed height', fixedHeight, /the picture's height has to follow the file's own ratio/],
-  ]
-  for (const [what, stylesheet, expected] of slotCases) {
-    const failures = chatSlotFailures(stylesheet, home)
+  for (const [what, stylesheet, expected] of cases) {
+    assert.notEqual(stylesheet, css, `${what} was not planted: the fixture's pattern did not match the built stylesheet`)
+    const failures = sliderLayoutFailures(stylesheet, home)
     assert.ok(
       failures.some((line) => expected.test(line)),
       `${what}: the refusal did not fire, and this is what it said instead:\n  ${failures.join('\n  ') || '(nothing)'}`,
     )
   }
-})
-
-test('every flow-layout refusal fires on the defect it names', () => {
-  const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
-  const names = stepNames(home)
-  const wrappers = flowWrappers(home)
-  const element = flowListElement(home)
-  assert.ok(names.length === 4, `the homepage prints ${names.length} step names, and the flow is the spec's four steps`)
-  const cases = [
-    // The defect this reader was written for, and the one the picture shipped with: the
-    // measure — `base.css`'s `:where(p, ul, ol, dl, blockquote, figcaption) { max-width:
-    // var(--measure) }` — reaching the flow's own list, because the list is an `<ol>`. A card
-    // is sized against the page's column and the browser gives the row 578 px, so the four
-    // cards and their arrows are drawn in a box narrower than they need.
-    [
-      'the measure’s cap on the flow’s list',
-      plant('flex-direction:column;max-width:none', 'flex-direction:column'),
-      /is capped at \d+ px/,
-    ],
-    // A length the reader cannot turn into pixels is refused rather than carried into the sums:
-    // `clamp()` is a font size a browser resolves and this check cannot, and reading it as
-    // `NaN` would make every comparison below pass without measuring anything.
-    [
-      'a step-name font size this reader cannot turn into pixels',
-      // Anchored at the class, because `font-size: var(--font-size-lg)` with the same weight
-      // beside it is written by four of the site's rules and only one of them is the step name;
-      // `TODAY().replace` rather than `plant` so the fixture names the rule and not a hash the
-      // next build of the component would change.
-      TODAY().replace(
-        /(\.step-name\[data-astro-cid-[a-z0-9]+\]\{[^}]*?)font-size:var\(--font-size-lg\)/,
-        '$1font-size:clamp(1rem,2vw,1.5rem)',
-      ),
-      /is not a length this check can turn into pixels/,
-    ],
-    // A cap written in a shape the reader cannot evaluate is refused rather than skipped: a
-    // selector it cannot read may be the one that squeezes the list.
-    [
-      'a rule that reaches the list in a shape this reader cannot read',
-      TODAY().replace(/\.flow-steps(\[data-astro-cid-)/, '.flow-steps:nth-child(2)$1'),
-      /reached by a rule this check cannot read/,
-    ],
-    // The defect as it shipped: the name on one line, in a card a quarter of the row wide.
-    [
-      'a step name held on one line',
-      plant('color:var(--text);overflow-wrap:anywhere;margin:0}', 'color:var(--text);white-space:nowrap;overflow-wrap:anywhere;margin:0}'),
-      /held on one line/,
-    ],
-    // And the layout that made it overflow: the four-across row starting at 48 rem, where a
-    // card is a quarter of a column of 768 px and cannot print its longest name on one line.
-    [
-      'the four-across row starting before a card can hold a name',
-      TODAY().replace(/(width>=72rem)\)\{\.flow-steps/, '(width>=48rem){.flow-steps'),
-      /does not fit on one line/,
-    ],
-    // The name's own size, which is the other half of that arithmetic: the step up the type
-    // scale this branch took the name *down* from, put back. `Ephemeral cloud job` at 24 px is
-    // wider than a quarter of the row, so this is the defect the review measured at 1280 px —
-    // and the case is the mutation the name's size is proved by.
-    [
-      'a step name one step up the type scale, which no longer fits the row',
-      TODAY().replace(
-        /(\.step-name\[data-astro-cid-[a-z0-9]+\]\{[^}]*?)font-size:var\(--font-size-lg\)/,
-        '$1font-size:var(--font-size-xl)',
-      ),
-      /does not fit on one line/,
-    ],
-    // The number is `flex: none` *beside* the name, which is the phone's own head: from 35 rem
-    // up the head is a column and the number costs the name nothing. Planting the row's head
-    // back as a row is the box the number takes out of the name.
-    [
-      'a step number that takes the name’s width',
-      plant('flex-direction:column;align-items:flex-start}', 'align-items:flex-start}'),
-      /does not fit on one line/,
-    ],
-    // The ragged row itself, which is the second defect the review measured: the steps aligned
-    // to their centre, so each card takes its own content's height instead of the row's.
-    [
-      'a row whose steps are centred rather than stretched',
-      plant('align-items:stretch;gap:var(--space-sm);flex-direction:row', 'align-items:center;gap:var(--space-sm);flex-direction:row'),
-      /aligns its items to `center`/,
-    ],
-    // And the other half of it: the cards stretch to their step, so a card whose own content is
-    // spread down it is the same ragged look with the row's height in every card.
-    [
-      'a card that spreads its content down the row’s height',
-      plant('align-content:start;gap:var(--space-xs)', 'align-content:space-between;gap:var(--space-xs)'),
-      /packs its content with `space-between`/,
-    ],
-    // The card's own growth factor, which is the third thing that makes the four one height and
-    // the one the two `align-items` readings cannot see: the step is a *column*-flex box, so
-    // the axis the cards share the row's height along is its main axis, and a card that does not
-    // grow takes its own content's height inside a step that is the tallest of the four. `none`
-    // is the shorthand that says so, and the reader has to read it: a browser resolves it to
-    // `0 0 auto`, which no first-component-as-a-number reader sees.
-    // The anchor is the card's own run of declarations rather than `flex:auto` alone, which a
-    // browser reads as `1 1 auto`: the minified stylesheet writes the same shorthand for the
-    // command block's `<pre>`, and a fixture that replaced the first occurrence would edit that
-    // one and leave this case asserting a page it never changed.
-    [
-      'a card that does not grow to its step’s height',
-      plant('background:var(--surface);flex:auto;display:grid', 'background:var(--surface);flex:none;display:grid'),
-      /the step card does not grow/,
-    ],
-    // And the same card padded by a four-value shorthand, whose room at the sides is the *left*
-    // value: `top right bottom left` is what the shorthand means, and the right value is `0`,
-    // so a reader that took the second component would call this a card with no inline padding
-    // and pass a name that has 7 rem of it on one side.
-    [
-      'a card whose four-value padding is read from the wrong side',
-      plant('padding:var(--space-md) var(--space-2xs)', 'padding:var(--space-md) 0 var(--space-md) var(--space-3xl)'),
-      /cannot render its own step names/,
-    ],
-    // The two-by-two's own arithmetic: its cards are half the column, and padding wide enough
-    // takes the longest word out of one.
-    [
-      'a two-by-two whose cards are padded past their own names',
-      plant('padding:var(--space-md) var(--space-sm)', 'padding:var(--space-md) var(--space-3xl)'),
-      /a card there is \d+ px wide/,
-    ],
-    // The arrows, which are the rest of the same picture: the one that shipped wrong turns the
-    // drawn-down arrow a quarter turn clockwise, which points it back along the row. The first
-    // occurrence is the two-by-two's turn and the last is the row's, so each is a case of its
-    // own — and a check that read one arrow for the whole page would pass both.
-    [
-      'the two-by-two’s row arrows turned the wrong way',
-      plant('transform:rotate(-90deg)', 'transform:rotate(90deg)'),
-      /points left at 35 rem/,
-    ],
-    [
-      'the row’s arrows turned the wrong way',
-      plant('transform:rotate(-90deg)', 'transform:rotate(90deg)', 'last'),
-      /points left at 72 rem/,
-    ],
-    [
-      'the two-by-two’s row arrows never turned at all',
-      plant(';transform:rotate(-90deg)', ''),
-      /points down at 35 rem/,
-    ],
-    [
-      'a row whose arrows were never turned at all',
-      plant(';transform:rotate(-90deg)', '', 'last'),
-      /points down at 72 rem/,
-    ],
-    // The one arrow the two-by-two draws downwards: left alone it is right (the drawing points
-    // down), and turned with the other two it points along the row instead of down the side.
-    [
-      'the two-by-two’s downward arrow turned along its row',
-      plant(
-        'margin:calc(var(--space-lg) / 2 - var(--space-2xs)) 0 0 calc(-1 * var(--space-2xs));top:100%;left:50%}',
-        'transform:rotate(-90deg);margin:calc(var(--space-lg) / 2 - var(--space-2xs)) 0 0 calc(-1 * var(--space-2xs));top:100%;left:50%}',
-      ),
-      /points right at 35 rem/,
-    ],
-    [
-      'an arrow turned sideways in the column',
-      plant('{width:1.5rem;height:2rem;margin:var(--space-2xs) auto;display:block}', '{transform:rotate(-90deg);width:1.5rem;height:2rem;margin:var(--space-2xs) auto;display:block}'),
-      /points right below the flow’s first breakpoint/,
-    ],
-    // **The defect of review round 4, and the reason this gate reads the box as well as the
-    // angle:** the two-by-two drawn `1 2` over `3 4`, which is what the stylesheet says with
-    // the two placements taken out and the grid left to its own row-major order. The wrap
-    // arrow is still below step 2 and still points down — and step 3 is not below step 2 any
-    // more, it is in the next row and the other column, so the arrow lands on step 4. Every
-    // check in this file passed on that picture for as long as it was shipped.
-    [
-      'the two-by-two left in its own row-major order, with the wrap arrow below step 2',
-      TODAY().replace(/\{grid-area:2\/2\}/, '{}').replace(/\{grid-area:2\/1\}/, '{}'),
-      /step 2 and step 3, its successor, are not beside each other/,
-    ],
-    // The other half of the same reading: the steps beside each other and the arrow on the
-    // wrong side of its card. Step 3's arrow moved to its right, where step 4 is not.
-    [
-      'a wrap arrow drawn on the far side of the step it leaves',
-      TODAY().replace(
-        /\.flow-step\[data-astro-cid-[a-z0-9]+\]:nth-child\(3\) \.step-arrow\[data-astro-cid-[a-z0-9]+\]\{[^}]*\}/,
-        '.flow-step:nth-child(3) .step-arrow{top:50%;left:100%;margin:calc(-1 * var(--space-2xs)) 0 0 calc(var(--space-md) / 2 - var(--space-2xs));transform:rotate(-90deg)}',
-      ),
-      /leaves the right of its card/,
-    ],
-    // And a box this reader cannot place against the card at all: step 2's arrow moved to the
-    // middle of its card, where it is over the card rather than in a gap beside it.
-    [
-      'an arrow centred over its own card',
-      TODAY().replace(
-        /(\.flow-step\[data-astro-cid-[a-z0-9]+\]:nth-child\(2\) \.step-arrow\[data-astro-cid-[a-z0-9]+\]\{[^}]*?)top:100%/,
-        '$1top:50%',
-      ),
-      /is drawn in a box this check cannot place against its card/,
-    ],
-    // And a placement the cell reader cannot evaluate: a `span` is a cell this check would have
-    // to guess, and a guessed cell is every check below it guessed too.
-    [
-      'a step placed with a span this reader cannot count',
-      TODAY().replace('{grid-area:2/2}', '{grid-area:2/span 1}'),
-      /the cells the four steps occupy .* cannot be read/,
-    ],
-  ]
-  for (const [what, css, expected] of cases) {
-    const failures = [...flowLayoutFailures(css, names, wrappers, element), ...arrowDirectionFailures(css, home)]
-    assert.ok(failures.some((f) => expected.test(f)), `${what} was not refused (${expected}); the rule said:\n  ${failures.join('\n  ') || '(nothing)'}`)
-  }
-  assert.deepEqual(flowLayoutFailures(TODAY(), names, wrappers, element), [], 'the flow-layout rule fails on the built stylesheet, so the cases above are not proving what they name')
-  assert.deepEqual(arrowDirectionFailures(TODAY(), home), [], 'the arrow-direction rule fails on the built page, so the cases above are not proving what they name')
-})
-
-// ---- the arrows point the way the run travels (changes spec item 4) ----------------------
-
-/**
- * The direction the flow's arrow is drawn in, as a vector in the SVG's own coordinates (y
- * grows downwards, as it does in the box a path is drawn in): the **shaft**, the straight line
- * down the middle of the picture. The shaft rather than the head, because a head is a chevron
- * — two strokes meeting at a point — and a rotation turns the whole picture together, so the
- * shaft's own direction is the thing a rotation swings. `null` rather than a guess when the
- * markup has no arrow or no straight shaft: this check's whole subject is the arrow's
- * direction, so a picture it cannot read is a picture it has to refuse.
- */
-function arrowDrawnVector(html) {
-  const svg = [...walk(parse(html))].find((el) => el.name === 'svg' && hasClass(el, 'step-arrow'))
-  return svg ? arrowShaft(svg) : null
-}
-
-/** The drawn direction of one arrow `<svg>`: the same reading, for the step that carries it. */
-function arrowShaft(svg) {
-  for (const path of walk(svg)) {
-    const d = (path.attrs.get('d') ?? '').replace(/\s+/g, ' ').trim()
-    const shaft = /^M\s*(-?[\d.]+)\s+(-?[\d.]+)\s+V\s*(-?[\d.]+)$/.exec(d)
-    if (shaft) return { x: 0, y: Math.sign(Number(shaft[3]) - Number(shaft[2])) }
-  }
-  return null
-}
-
-/** Whether an element carries a class, by the space-separated list its `class` attribute holds. */
-function hasClass(el, name) {
-  return (el.attrs.get('class') ?? '').split(/\s+/).includes(name)
-}
-
-/**
- * The flow's steps on one built page, each with the arrow it carries: `step` is its place in
- * the run, `drawn` whether the step has an arrow at all (the last one has none — it is where
- * the run ends), and `vector` the direction that arrow is drawn in, or `null` when its shaft
- * is not a straight `M … V …` line this check can read. Read per step rather than once for the
- * page, because the three layouts address the arrows separately: the two-by-two turns two of
- * them along its rows and leaves the second pointing down.
- */
-function flowArrows(html) {
-  const steps = [...walk(parse(html))].filter((el) => el.name === 'li' && hasClass(el, 'flow-step'))
-  return steps.map((step, index) => {
-    const svg = [...walk(step)].find((el) => el.name === 'svg' && hasClass(el, 'step-arrow'))
-    return { step: index + 1, drawn: svg !== undefined, vector: svg === undefined ? null : arrowShaft(svg) }
-  })
-}
-
-/** A vector turned by a CSS `rotate()` angle. Positive is clockwise, on a y-downs axis. */
-function turn(vector, degrees) {
-  const radians = (degrees * Math.PI) / 180
-  return {
-    x: vector.x * Math.cos(radians) - vector.y * Math.sin(radians),
-    y: vector.x * Math.sin(radians) + vector.y * Math.cos(radians),
-  }
-}
-
-/** Which way a vector points, by its larger component. */
-function points(vector) {
-  if (Math.abs(vector.x) >= Math.abs(vector.y)) return vector.x >= 0 ? 'right' : 'left'
-  return vector.y >= 0 ? 'down' : 'up'
-}
-
-/**
- * Which cell each step occupies in one of the flow's three shapes, in the run's order, as
- * `[{ column, row }, …]` with 1-based numbers — or `{ unreadable }` when the stylesheet
- * states something this reader cannot turn into a cell.
- *
- * The phone's column and the four-across row are not read out of the stylesheet: they are the
- * run's order drawn one way or the other, so the cells are `1, 2, 3, 4` down one column or
- * across one row. **The two-by-two is read**, because that is where the run wraps and where
- * the drawing and the DOM order can disagree: the grid's own `grid-template-columns` gives the
- * number of columns, each step's `grid-area`/`grid-row`/`grid-column` (whatever the minifier
- * left of them) gives the cells the stylesheet places by hand, and the steps it does not place
- * are auto-placed the way a browser does it — the first free cell in row-major order, in the
- * run's order. A placement in a shape this reader cannot evaluate (`span 2`, a named line, a
- * negative index, half a placement) is refused rather than guessed: a cell this reader gets
- * wrong is a cell every check below gets wrong with it.
- */
-export function flowCells(css, shape, width, steps = 4) {
-  const numbers = Array.from({ length: steps }, (_, i) => i + 1)
-  if (shape === 'column') return numbers.map((n) => ({ column: 1, row: n }))
-  if (shape === 'row') return numbers.map((n) => ({ column: n, row: 1 }))
-
-  const rules = allRules(css)
-  const list = rules.find(
-    (r) => /\.flow-steps(?![\w-])/.test(r.selector) && declarations(r)['grid-template-columns'] !== undefined,
-  )
-  if (list === undefined) return { unreadable: 'no rule states the two-by-two’s `grid-template-columns`' }
-  const tracks = declarations(list)['grid-template-columns'].trim().split(/\s+/)
-  if (tracks.length < 2 || tracks.some((track) => !/^[\d.]+(?:fr|rem|px)$/.test(track))) {
-    return { unreadable: `the two-by-two’s tracks, \`${declarations(list)['grid-template-columns']}\`, are not a list of lengths this check can count` }
-  }
-
-  /** The declarations in force on step `n`'s own `<li>` at the width: the base rule, then the step's own. */
-  const declsOf = (n) => {
-    const out = {}
-    for (const rule of rules) {
-      if (!appliesAt(width)(rule)) continue
-      const nth = /\.flow-step(?![\w-])[^{]*:nth-child\(\s*(\d+)\s*\)/.exec(rule.selector)
-      const base = /\.flow-step(?![\w-])(?![^{]*:nth-child)/.test(rule.selector)
-      if (nth ? Number(nth[1]) !== n : !base) continue
-      Object.assign(out, declarations(rule))
-    }
-    return out
-  }
-
-  /** A step's stated cell, `null` when it states none, or `{ unreadable }` when it is a shape this reader cannot read. */
-  const stated = (decls) => {
-    const area = decls['grid-area']
-    const row = decls['grid-row']
-    const column = decls['grid-column']
-    if (area !== undefined) {
-      const parts = area.split('/').map((part) => part.trim())
-      if (parts.length === 2 && parts.every((part) => /^\d+$/.test(part))) {
-        return { row: Number(parts[0]), column: Number(parts[1]) }
-      }
-      return { unreadable: `\`grid-area: ${area}\` on a step` }
-    }
-    if (row === undefined && column === undefined) return null
-    if (!/^\d+$/.test((row ?? '').trim()) || !/^\d+$/.test((column ?? '').trim())) {
-      return { unreadable: `\`grid-row: ${row ?? '(nothing)'}; grid-column: ${column ?? '(nothing)'}\` on a step` }
-    }
-    return { row: Number(row), column: Number(column) }
-  }
-
-  const cells = {}
-  const taken = new Set()
-  for (const n of numbers) {
-    const at = stated(declsOf(n))
-    if (at !== null && at.unreadable !== undefined) return at
-    if (at === null) continue
-    cells[n] = at
-    taken.add(`${at.row}/${at.column}`)
-  }
-  // The browser's own auto-placement, for the steps the stylesheet does not place: the first
-  // free cell, scanning row by row and left to right, in the run's order.
-  for (const n of numbers) {
-    if (cells[n] !== undefined) continue
-    let row = 1
-    let column = 1
-    while (taken.has(`${row}/${column}`)) {
-      column += 1
-      if (column > tracks.length) {
-        column = 1
-        row += 1
-      }
-    }
-    cells[n] = { row, column }
-    taken.add(`${row}/${column}`)
-  }
-  return numbers.map((n) => cells[n])
-}
-
-/**
- * Which way step `b` sits from step `a`, as the **side of `a`'s card** it is on: `'right'`,
- * `'left'`, `'bottom'` or `'top'`, and `null` when the two are not neighbours at all — a step
- * in the next row and another column, which no arrow drawn out of one of `a`'s four sides can
- * point at. The sides are the card's rather than the compass's, because that is the thing the
- * stylesheet writes: an arrow is drawn at a `left`, a `top` or in the flow below its card.
- * `SIDE_OF_ARROW` below is the same four, in the words an arrow's own direction is read in.
- */
-function towards(a, b) {
-  if (a.row === b.row && b.column === a.column + 1) return 'right'
-  if (a.row === b.row && b.column === a.column - 1) return 'left'
-  if (a.column === b.column && b.row === a.row + 1) return 'bottom'
-  if (a.column === b.column && b.row === a.row - 1) return 'top'
-  return null
-}
-
-/** The side of a card a step sits on, in the words an arrow's direction is read in. */
-const SIDE_OF_ARROW = { right: 'right', left: 'left', bottom: 'down', top: 'up' }
-
-/** How a step that sits on one side of another is described, for the refusals below. */
-const WHERE_NEXT = { right: 'to its right', left: 'to its left', bottom: 'below it', top: 'above it' }
-
-/**
- * Every way the flow's arrows fail to point at the step after theirs, for one built page: the
- * direction is read for **each step** and at **each of the three layouts**, because the arrows
- * are addressed per step and the run travels differently in each shape.
- *
- *   - **The phone's column**: one step under the next, so every arrow points down. A sideways
- *     arrow in a column draws an order the list does not have.
- *   - **The two-by-two**: the run wraps, so the arrows follow the wrap. Where the next step is
- *     is not a rule of this file but a reading of the grid — `flowCells` — so a two-by-two that
- *     puts step 3 beside step 2 and step 4 under it (or any other arrangement) is checked
- *     against its own placements rather than against `1 2 / 3 4`.
- *   - **The row**: the run travels left to right and each arrow points right. This is the one
- *     that shipped wrong: the arrow is drawn pointing down, `rotate(90deg)` is clockwise, and
- *     the arrow between each pair therefore pointed back at the step before it — four steps
- *     drawn in reverse by the one mark that says which way the run goes. A positive angle is
- *     clockwise on the axis the picture is drawn on, so the turn that points right is negative
- *     (`rotate(-90deg)`, or `270deg` written the long way round).
- *
- * **Two things are read for each arrow, and the second is the one that was missing.** The
- * *direction* it points is the markup's own shaft turned by the rotation in force; the *box it
- * is drawn in* is where its own `top`/`left`/margins put it, which is what says which of its
- * card's four sides the arrow leaves from. Both have to agree with the side the next step is
- * on. Reading only the direction is what let the two-by-two's wrap arrow ship drawn below step
- * 2 — pointing down, and down was what the run does next — while step 3 sat in the *other*
- * column: the arrow landed on step 4, the picture read `1 -> 2 -> 4`, and every check here
- * passed, because an angle alone cannot tell the two cells apart (review round 4).
- *
- * The width each layout is read at comes out of the stylesheet — the row's own breakpoint and
- * the two-by-two's — rather than out of this file, so a layout that moves its breakpoint is
- * read where it now starts. The rotation and the box are the last rules **that reach that
- * step's arrow** among those in force, which is how a browser reads them. An arrow whose
- * `transform` is neither `none` nor a plain `rotate(<angle>)`, and one whose box is not on a
- * side of its card this reader can name, are refused rather than passed: both would be a guess,
- * and which step the arrow points at is the subject.
- */
-export function arrowDirectionFailures(css, html) {
-  const out = []
-  const rules = allRules(css)
-  const arrows = flowArrows(html)
-  if (arrows.every(({ vector }) => vector === null)) {
-    out.push(
-      "the flow draws no arrow this check can read (an SVG classed `step-arrow` with a straight `M … V …` shaft), and the arrow between two steps is what says which way the run travels (changes spec 2026-10-18, item 4)",
-    )
-    return out
-  }
-
-  const arrowRules = rules.filter((r) => /\.step-arrow(?![\w-])/.test(r.selector))
-
-  /**
-   * Whether one of those rules reaches the arrow of step `n`. The layouts address single
-   * arrows — `:nth-child(2)` is the two-by-two's arrow down its right-hand side, the odd
-   * indices its two along the rows — so a rule that says so is about that arrow and not about
-   * the four. A selector with no `:nth-child()` in it reaches every step; one whose argument
-   * this reader cannot evaluate (`2n+1`, say) is read the same way, because the shapes the flow
-   * writes are `odd`, `even` and a single number, and a rule about every arrow is the base rule
-   * that sets its box.
-   */
-  const reachesStep = (selector, step) => {
-    const nth = /:nth-child\(\s*([^)]*)\)/.exec(selector)
-    if (!nth) return true
-    const arg = nth[1].trim()
-    if (arg === 'odd') return step % 2 === 1
-    if (arg === 'even') return step % 2 === 0
-    return /^\d+$/.test(arg) ? Number(arg) === step : true
-  }
-
-  /** Every declaration in force on step `n`'s arrow at a width, the last rule that states one winning. */
-  const declsAt = (width, step) => {
-    const out = {}
-    for (const rule of arrowRules) {
-      if (!appliesAt(width)(rule)) continue
-      if (!reachesStep(rule.selector, step)) continue
-      Object.assign(out, declarations(rule))
-    }
-    return out
-  }
-
-  /** The `transform` in force on step `n`'s arrow at a width, in degrees: `null` when it is not a rotation. */
-  const rotationAt = (width, step) => {
-    const value = (declsAt(width, step)['transform'] ?? 'none').trim()
-    if (value === 'none' || value === '') return 0
-    const rotate = /^rotate\(\s*(-?[\d.]+)deg\s*\)$/.exec(value)
-    return rotate ? Number(rotate[1]) : null
-  }
-
-  /**
-   * Which side of its own card step `n`'s arrow leaves from at a width: the box the
-   * stylesheet draws, read rather than the angle. An arrow left in the flow sits under its
-   * card (the phone's column, and what the base rule gives every layout); one positioned
-   * absolutely is on the side its own `top`/`left` and margin put it, and `null` when the
-   * combination is one this reader cannot name — the box would be inside the card or centred
-   * over it, and which neighbour it points at would be a guess.
-   */
-  const sideAt = (width, step) => {
-    const decls = declsAt(width, step)
-    if (decls['position'] !== 'absolute') return 'bottom'
-    const left = (decls['left'] ?? '').trim()
-    const top = (decls['top'] ?? '').trim()
-    // The box's near edge against the card's own edge is what makes the side: `left: 100%` is
-    // the card's right edge, `top: 100%` its bottom, and `left: 0` with a negative margin is
-    // the card's left edge with the box pushed out into the gap beside it.
-    if (left === '100%') return 'right'
-    if (top === '100%') return 'bottom'
-    const negative = (value) => /^-\s*[\d.]/.test(value) || /^calc\(\s*-/.test(value)
-    if (left === '0' || left === '0px' || negative(left)) {
-      const marginLeft = (decls['margin-left'] ?? shorthandParts(decls['margin'] ?? '')[3] ?? '').trim()
-      return negative(marginLeft) || negative(left) ? 'left' : null
-    }
-    return null
-  }
-
-  // The layouts the arrows are read at, and the shape each one draws the four steps in. The
-  // column is below the flow's first breakpoint, and it is hard-coded the way it always was: it
-  // is what the flow is with neither of the other two blocks in force, so there is no rule to
-  // read a start from — the two-by-two is the block that ends it.
-  const layouts = flowLayouts(css)
-  const bands = [
-    { width: 390, shape: 'column', where: 'below the flow’s first breakpoint, where the four steps are a column' },
-  ]
-  if (layouts.grid !== null && layouts.grid.from !== null) {
-    bands.push({ width: layouts.grid.from, shape: 'grid', where: `at ${layouts.grid.from / 16} rem, where the four steps are a two-by-two` })
-  }
-  if (layouts.row !== null && layouts.row.from !== null) {
-    for (const width of [layouts.row.from, 80 * 16]) {
-      bands.push({ width, shape: 'row', where: `at ${width / 16} rem, where the four steps are a row` })
-    }
-  }
-  if (layouts.row === null) return out // `flowLayoutFailures` names the missing row; there is no row to read here
-
-  for (const band of bands) {
-    // Where each step is in this shape, which is what "the next step" means here: the run's
-    // order is the DOM's, and the shape is the stylesheet's, and the two can disagree — the
-    // two-by-two is where they do.
-    const cells = flowCells(css, band.shape, band.width, arrows.length)
-    if (cells.unreadable !== undefined) {
-      out.push(
-        `the cells the four steps occupy ${band.where} cannot be read — ${cells.unreadable} — and which step an arrow points at is a cell this check has to know (changes spec 2026-10-18, item 4; review round 4)`,
-      )
-      continue
-    }
-
-    for (const { step, drawn, vector } of arrows) {
-      // A step with no arrow is the flow's own shape — the last step is where the run ends —
-      // and the count of arrows is `website/test/home.mjs`'s check rather than this one's.
-      if (!drawn) continue
-      if (vector === null) {
-        out.push(
-          `the arrow out of step ${step} is not a shaft this check can read (a straight \`M … V …\` line), so the direction it points is a guess (changes spec 2026-10-18, item 4)`,
-        )
-        continue
-      }
-      const expected = towards(cells[step - 1], cells[step])
-      const next = step + 1
-      if (expected === null) {
-        const at = (cell) => `row ${cell.row}, column ${cell.column}`
-        out.push(
-          `step ${step} and step ${next}, its successor, are not beside each other ${band.where} (step ${step} is at ${at(cells[step - 1])}, step ${next} at ${at(cells[step])}): the arrow out of step ${step} leaves one of its card's sides, and the step it lands on is whichever cell is on that side — with the two-by-two drawn \`1 2\` over \`3 4\` the arrow below step 2 lands on step 4 and the picture reads \`1 -> 2 -> 4\`, with step 3 skipped and step 4 carrying two arrows (changes spec 2026-10-18, item 4; review round 4)`,
-        )
-        continue
-      }
-      const rotation = rotationAt(band.width, step)
-      if (rotation === null) {
-        out.push(
-          `the arrow out of step ${step}'s transform, ${band.where}, is not a rotation this check can read, so the direction it leaves the arrow pointing is a guess (changes spec 2026-10-18, item 4)`,
-        )
-        continue
-      }
-      const side = sideAt(band.width, step)
-      if (side === null) {
-        out.push(
-          `the arrow out of step ${step} is drawn in a box this check cannot place against its card ${band.where}, so the side it leaves from — and the step it lands on — is a guess (changes spec 2026-10-18, item 4; review round 4)`,
-        )
-        continue
-      }
-      if (side !== expected) {
-        out.push(
-          `the arrow out of step ${step} leaves the ${side} of its card ${band.where}, and step ${next} is ${WHERE_NEXT[expected]}: the arrow is drawn in the gap between two steps, so an arrow on the wrong side points at a step that is not the next one (changes spec 2026-10-18, item 4; review round 4)`,
-        )
-      }
-      const way = points(turn(vector, rotation))
-      const travels = SIDE_OF_ARROW[expected]
-      if (way === travels) continue
-      const how = rotation === 0 ? 'no rotation at all' : `transform: rotate(${rotation}deg), which turns the arrow the markup draws pointing down ${rotation > 0 ? 'clockwise' : 'anticlockwise'}`
-      out.push(
-        `the arrow out of step ${step} points ${way} ${band.where} (${how}), and there the run travels ${travels}: item 4's run goes left to right along a row and down a column, and an arrow drawn the other way reads the four steps in the opposite order (changes spec 2026-10-18, item 4)`,
-      )
-    }
-  }
-  return out
-}
-
-test('the flow’s arrows point the way the run travels', () => {
-  const failures = []
-  let checked = 0
-  for (const { rel, html } of builtPages()) {
-    if (arrowDrawnVector(html) === null) continue
-    checked += 1
-    failures.push(...arrowDirectionFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
-  }
-  assert.ok(checked > 0, 'no built page carries the flow’s arrow, and item 4 draws one between each pair of the four steps')
-  assert.deepEqual(failures, [], `the flow’s arrows do not point the way the run travels:\n  ${failures.join('\n  ')}`)
 })
 
 // ---- a copy control sits at the right of the block it belongs to (base.css) --------------
@@ -3101,7 +2349,7 @@ export function sideBySideCopyBlocks(css, html, width = 80 * 16) {
  * same thing from the other end and is let through.
  *
  * The review of round 3 (item 3c) is why this is one rule and not two: the install cards used
- * to put the control in a row *above* their command while the chat's watch bar put it beside
+ * to put the control in a row *above* their command while the watch bar put it beside
  * one, and two placements for one control read as two different components. So the blocks
  * this returns are now every command block on the page, and a block that stops sharing the
  * row is a second placement the case below fails on rather than a shape this rule ignores.
@@ -3130,9 +2378,10 @@ test('the copy-control placement rule reads every command block, and refuses the
   const css = TODAY()
   const blocks = copyBlocks(css, home)
   const sideBySide = sideBySideCopyBlocks(css, home)
-  assert.ok(
-    blocks.length >= 3,
-    `the homepage carries ${blocks.length} command block(s) with a control and a command, and it renders the two install cards and the chat's watch bar (changes spec 2026-10-18, items 3 and 4)`,
+  assert.equal(
+    blocks.length,
+    2,
+    `the homepage carries ${blocks.length} command block(s) with a control and a command, and it renders two: the install block at the foot of the page and the watch block in the slider's third panel (the owner's approved draft of 2026-10-19; changes spec 2026-10-18, items 3 and 4)`,
   )
   // One placement for all of them: the review of round 3 found the install cards putting the
   // control above their command while the watch bar put it beside one, so a block that does
@@ -3143,19 +2392,20 @@ test('the copy-control placement rule reads every command block, and refuses the
     `the homepage's command blocks ${JSON.stringify(blocks.map((block) => `${block.klass}:${block.display}/${block.direction}`))} do not all read the same way, and one control has one placement on this site (changes spec 2026-10-18, item 3c)`,
   )
   assert.ok(
-    sideBySide.some((block) => block.klass === 'chat-watch' && block.direction === 'row-reverse' && block.atStart),
+    sideBySide.some((block) => block.klass === 'watch-block' && block.direction === 'row-reverse' && block.atStart),
     `the check finds no side-by-side command block on the homepage (it found ${JSON.stringify(sideBySide)}), so the cases below would pass without reading the block they are about (changes spec 2026-10-18, item 3)`,
   )
   assert.ok(
     sideBySide.some((block) => block.klass === 'command-block'),
-    `the check does not read the install cards' own blocks (it found ${JSON.stringify(sideBySide)}), and item 3c is about the placement inside them`,
+    `the check does not read the install block's own markup (it found ${JSON.stringify(sideBySide)}), and item 3c is about the placement inside it`,
   )
   assert.deepEqual(copyControlPlacementFailures(css, home), [], 'the placement rule fails on the built homepage, so the case below is not proving what it names')
 
   // The defect as it shipped in the watch bar: a plain row, so the control — first in the
   // markup — is drawn at the left of the command. `.command-block`'s `row-reverse` is the
-  // site's only one, so removing it leaves every command block on the homepage a plain row
-  // and the check has to refuse all of them rather than the bar alone.
+  // site's only one, and both of the homepage's blocks carry that class, so removing it leaves
+  // every command block on the page a plain row and the check has to refuse all of them rather
+  // than the watch block alone.
   const notReversed = plant('flex-direction:row-reverse;', '')
   const failures = copyControlPlacementFailures(notReversed, home)
   assert.equal(
@@ -3211,7 +2461,7 @@ export function installCommandFailures(css) {
   const out = []
   // Every rule that styles a command block's own `<pre>`, **wherever the block is**. The
   // homepage's install commands carry a class of their own, and every other command block on the
-  // site — Getting Started's install cards, the chat's watch command — is reached by
+  // site — Getting Started's install cards, the slider's watch command — is reached by
   // `base.css`'s `.command-block > pre`. Reading only the homepage's class left the site's other
   // install commands held by nothing, which is where this rule's own defect then reappeared: the
   // `pre` gives up the width of the copy control beside it, so the page whose whole job is the

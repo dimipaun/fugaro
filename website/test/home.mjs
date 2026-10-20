@@ -1,5 +1,6 @@
-// website/test/home.mjs — the hero, the chat, the flow and the run detail (website plan,
-// Task W1.4; website changes spec of 2026-10-18, items 2, 3 and 4).
+// website/test/home.mjs — the hero, the benefits, the slider and the run detail (website plan,
+// Task W1.4; website changes spec of 2026-10-18, items 2, 3 and 4; the owner's approved draft
+// "Home, draft 2 (slider)", 2026-10-19).
 //
 // The two pages this task writes are the first pages the site has, and they are the pages
 // where a marketing site is most likely to say something the product cannot back. So every
@@ -13,33 +14,30 @@
 //      be a sentence of README.md, and its install commands have to be the commands
 //      `website/data/install.yaml` carries for the paths it renders — never typed into the
 //      component (Global Constraint 6, W1.4 step 1).
-//   3. **The chat is the workflow, and every line its turns speak is a document's own**
-//      (changes spec item 3). The request is the spec's example and the agent's two lines are
-//      the `parallelism` and `working` skills' own sentences — read from those files rather
-//      than imagined, since a chat is where a page invents what a product says. Two things on
-//      the figure are not quotations, and they are held as what they are instead: the three
-//      `Pull request n of 3` labels, the illustration's own labels for work a run would
-//      report, and the status line under the agent's answer, the illustration's own label for
-//      the launch (`Fugaro: launching 3 jobs`), which no skill prints — the launch is what the
-//      agent did, and the line the reader is shown is the picture's, not a sentence quoted
-//      from `plugin/skills/parallelism/SKILL.md`. That is why the caption may not call the
-//      figure's lines quotations, and why the case below refuses a status line that *is* a
-//      sentence of the document its turn cites. The hero offers one command to
-//      copy besides the install paths, `fugaro watch`, and the old `fugaro run` example is
-//      asserted gone; the slot for the screenshot a separate task adds is asserted to be
-//      marked, and **the owner's real capture is asserted to be in it** (owner spec of
-//      2026-10-18, item 5; PR #622) — the slot's own hook, a non-empty `alt`, the capture's
-//      declared dimensions and a same-origin path, so the page carries the wordmark and the
-//      working terminal and nothing else.
-//   4. **The flow carries the changes spec's four steps, in order**, one short line each,
-//      from one component on both pages: the names, and the caption of each step, are read
-//      out of the spec's own item 4 and of the section of a document of this repository the
-//      step cites, in that section's order — three of the four captions are lines of the
-//      README, so a source alone would let them be shuffled among the steps. `ArchitectureDiagram.astro` supersedes D185's
-//      step names; the run's own detail — the stages, the caps, the trust boundary — is on How
-//      It Works under `RunDiagram.astro`, whose labels are held to the documents they cite by
-//      `test/how-it-works.mjs`, and whose absence from the homepage is a case of its own
-//      (changes spec item 4).
+//   3. **The prompt line is the request, quoted from the document it cites** (changes spec item
+//      3; the owner's feedback of 2026-10-19). The request is the spec's own example, read from
+//      `src/lib/agent-request.mjs` and held back to the document the page names in
+//      `data-source`, rather than imagined — the page shows the reader a line that document
+//      writes. The chat the same item asked for left the site with `AgentChat.astro` when the
+//      owner's approved draft of 2026-10-19 ("Home, draft 2 (slider)") folded it into the
+//      slider's first panel, so what this file holds to the repository instead is the run the
+//      reader is shown: the watch block, which is the one command the page offers to copy
+//      besides the install command (`fugaro watch`, with the old `fugaro run` example asserted
+//      gone by `runExampleFailures` over every command block and every word of the built
+//      homepage — the two shapes it came back in), and the slot for the screenshot, which is
+//      asserted to be marked and to hold
+//      **the owner's real capture** (owner spec of 2026-10-18, item 5; PR #622) — the slot's
+//      own hook, a non-empty `alt`, the capture's declared dimensions and a same-origin path,
+//      so the page carries the wordmark and the working terminal and nothing else.
+//   4. **The run is How It Works' picture of it, and the homepage carries the slider instead**
+//      (changes spec of 2026-10-18, item 4; the owner's ruling of 2026-10-20). The four-step
+//      flow and its component, `ArchitectureDiagram.astro`, are retired, and what this file
+//      held the flow to is held to what took its place: the drawing's four boxes are the
+//      spec's item 4's four names in the ruling's order, every word on the figure — the labels
+//      inside each drawing and the two lists of the run in words under it — is a line of the
+//      section it cites, in that section's order, and the homepage's block is the slider, whose
+//      three steps and three panels are read on the page. The run's stages and its caps are on
+//      How It Works, where `test/how-it-works.mjs` holds them to the documents they cite.
 //   5. **Neither page names a claim the product cannot back**: no console download, no
 //      Windows/WSL support, no "~2 h", no ballpark ranges (F50, D102, W1.4 step 4). The
 //      video slot is checked against `site.yaml`'s own flag rather than against today's
@@ -66,7 +64,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { findAll, parse, textOf, walk } from './lib/html.mjs'
+import { cssDeclarations, cssRules, findAll, filesUnder, parse, textOf, walk } from './lib/html.mjs'
 import { buildCopy } from './lib/build.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -122,7 +120,7 @@ function text(html) {
 
 /**
  * A node's text as a reader receives it: the decoration the page marks `aria-hidden` left
- * out (the flow's step numbers are drawing, not words), entities decoded,
+ * out (the slider's step numbers and its icons are drawing, not words), entities decoded,
  * runs of whitespace one space. This is what the page says, which is what the checks below
  * hold to the repository.
  */
@@ -150,7 +148,12 @@ function classText(html, className) {
  * whitespace along with it.
  */
 function normalize(markdown) {
-  return markdown.replace(/[`*]/g, '').replace(/\s+/g, '')
+  // The typographic quotes are folded to their plain ones, the way `website/test/how-it-works.mjs`
+  // folds them: the site's markdown pipeline sets a repository's `'` as `’` on the page, so a
+  // label the page quotes from a document is the document's own line written in the type the
+  // page sets it in, and a comparison that kept the two apart would refuse every quotation with
+  // an apostrophe in it.
+  return markdown.replace(/[`*]/g, '').replace(/[‘’]/g, "'").replace(/\s+/g, '')
 }
 
 /** README.md's tagline: the line under its `# Fugaro` title, emphasis stripped (F48). */
@@ -180,11 +183,12 @@ function promiseLines() {
 
 /**
  * One `## <heading>` section of a document of this repository, up to the next `## ` — the
- * same reader `ArchitectureDiagram.astro` uses at build time, so the check and the build
- * resolve a section the same way. A heading's code span is a marker rather than part of its
- * name, which is why the search reads the headings with their backticks off: the section the
- * pull request's caption cites is `## Checkpoint pushes (\`git.pr.checkpoints\`)` and the key
- * in it is part of the name.
+ * reader the retired four-step flow's build-time caption guard used, kept here for the two
+ * places this file resolves a section: the design record's account of the watch screenshot, and
+ * `quotedSection` below, which holds the picture of the run's labels to theirs. A heading's code
+ * span is a marker rather than part of its name, which is why the search reads the headings with
+ * their backticks off: a section citing `## Checkpoint pushes (\`git.pr.checkpoints\`)` carries
+ * the key in its name.
  */
 function section(document, heading) {
   const text = repoFile(document)
@@ -217,6 +221,15 @@ function installPathBlock(id) {
 /** The commands an install path prints: its `commands:` block scalar bodies. */
 function installPathCommands(id) {
   return [...installPathBlock(id).matchAll(/^ {8}(.*)$/gm)].map((m) => m[1].trim()).filter(Boolean)
+}
+
+/** An install path's note, with a folded scalar's line breaks read as the spaces they are. */
+function installPathNote(id) {
+  const folded = /^ {4}note: >-\n((?: {6}.*\n?)+)/m.exec(installPathBlock(id))
+  const plain = /^ {4}note: (\S.*)$/m.exec(installPathBlock(id))
+  const note = folded ? folded[1].split('\n').map((line) => line.trim()).join(' ') : plain?.[1]
+  assert.ok(note, `website/data/install.yaml's ${id} path carries no note, and the homepage prints the note under the command`)
+  return note.trim()
 }
 
 /**
@@ -277,184 +290,258 @@ function item4() {
 }
 
 /**
- * The sections a caption may be quoted from, by the name a step cites. A section rather than
- * the whole file: three of the four captions are lines of README.md, so held to the file
- * alone they could be shuffled among the steps and each would still be a quotation. Inside
- * one section the captions must also come in the order the section writes them, which is what
- * keeps two steps quoting the same section from swapping.
+ * One section of a document of this repository, as a label of the picture is held to it: the
+ * heading a name cites (`## <heading>`, or a `### <heading>` like `docs/gcp-setup.md`'s
+ * `Run, watch, diagnose`, read at the level it is written and up to the next heading of that
+ * level or higher), or the whole document when the name cites no section. A section rather than
+ * the whole file, because several of the picture's labels are lines of README.md, and held to
+ * the file alone they could be shuffled with every one of them still a quotation; inside one
+ * section the labels must also come in the order the section writes them, which is what keeps
+ * two labels quoting one section from swapping. `text` is null when the name cites no such
+ * document or section — this returns rather than asserting, because a label attributed to a
+ * section that is not there is one of the defects the check reports.
  *
- * The fourth cites `docs/git-providers.md`'s section on checkpoint pushes (the owner's
- * feedback of 2026-10-19): the pull request's caption is about when the pull request opens,
- * which is that document's fact rather than the README's, whose own line about the push is a
- * sentence about the branch.
+ * This is the retired four-step flow's own reader, kept with its subject: the flow held each of
+ * its captions to the section its `data-source` named, and the picture of the run that took the
+ * flow's place is held to its labels the same way (the owner's ruling of 2026-10-20).
  */
-function captionSources() {
-  return {
-    'README.md#Getting started': readmeSection('Getting started'),
-    'README.md#Why Fugaro': readmeSection('Why Fugaro'),
-    'README.md#How it works': readmeSection('How it works'),
-    'docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)': section('docs/git-providers.md', 'Checkpoint pushes (git.pr.checkpoints)'),
-    'docs/design/v1.md': repoFile('docs/design/v1.md'),
-  }
+function quotedSection(source) {
+  const at = /^([^#]+)#(.+)$/.exec(source)
+  const file = path.join(REPO, at ? at[1] : source)
+  if (!existsSync(file)) return { text: null }
+  const whole = readFileSync(file, 'utf8')
+  if (!at) return { text: whole }
+  const found = [...whole.matchAll(/^(#+) (.+)$/gm)].find((match) => match[2].replace(/`/g, '') === at[2])
+  if (!found) return { text: null }
+  const level = found[1].length
+  const rest = whole.slice(found.index)
+  const next = [...rest.matchAll(/^(#+) /gm)].find((match) => match.index > 0 && match[1].length <= level)
+  return { text: next ? rest.slice(0, next.index) : rest }
 }
 
-/** A built page's flow, as the elements it renders: the steps in order, with their arrows. */
-function flowOf(html) {
-  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
+/**
+ * The picture of the run, as one built page carries it: the figure, the name of each box of each
+ * drawing in the order the drawing prints them, the labels on each drawing, the list of words
+ * under the figure, and — the retired flow's own reading, still read here because what a page
+ * must *not* carry is as much of this check's subject as what it must — how many `ol.flow-steps`
+ * the page renders.
+ */
+function pictureOf(html) {
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
   const doc = parse(html)
-  const flows = findAll(doc, (el) => el.name === 'ol' && classes(el).includes('flow-steps'))
-  const out = { flows: flows.length, steps: [], arrows: 0 }
-  for (const flow of flows) {
-    for (const el of walk(flow)) {
-      if (el.name === 'svg' && classes(el).includes('step-arrow')) out.arrows += 1
-      if (el.name !== 'li' || !classes(el).includes('flow-step')) continue
-      const inner = (selector) => {
-        const node = [...walk(el)].find((child) => classes(child).includes(selector))
-        return node ? textOf(node).replace(/\s+/g, ' ').trim() : ''
-      }
-      out.steps.push({
-        name: el.attrs.get('data-step') ?? '',
-        source: el.attrs.get('data-source') ?? '',
-        // The heading and the caption are the step as a reader sees it; `data-step` is this
-        // check's own hook, and the two are held together below rather than one trusted for
-        // the other.
-        heading: inner('step-name'),
-        caption: inner('step-caption'),
-        // A list inside a step is a sub-list of it — the annotations D185 kept on the job
-        // step, which item 4's one-line-each picture does not carry.
-        nested: [...walk(el)].filter((child) => child.name === 'li').length,
+  const figures = findAll(doc, (el) => el.name === 'figure' && classes(el).includes('run-diagram'))
+  const words = findAll(doc, (el) => el.name === 'section' && classes(el).includes('run-words'))
+  const out = {
+    figures: figures.length,
+    flows: findAll(doc, (el) => el.name === 'ol' && classes(el).includes('flow-steps')).length,
+    drawings: [],
+    words: [],
+    // The regions a citation is read in: each drawing, and each list under the figure. A cursor
+    // per region rather than one per page, because the lists say the same run again — the second
+    // list quotes lines of the sections the first one quoted, and the phone drawing repeats the
+    // desktop drawing label for label — so one cursor across the page would refuse the second
+    // telling of a fact for being the second.
+    regions: [],
+    details: words.length,
+  }
+  for (const figure of figures) {
+    for (const svg of walk(figure)) {
+      if (svg.name !== 'svg') continue
+      out.drawings.push({
+        wide: classes(svg).includes('run-wide'),
+        // A box's name is its `run-name` text, joined: the drawing breaks a long name across
+        // two `<text>` lines ("Ephemeral" then "cloud job"), and the name a reader reads is
+        // both of them.
+        names: findAll(svg, (el) => el.name === 'g' && classes(el).includes('run-box')).map((box) =>
+          [...walk(box)]
+            .filter((el) => el.name === 'text' && classes(el).includes('run-name'))
+            .map((el) => textOf(el).trim())
+            .join(' '),
+        ),
+        labels: [...walk(svg)]
+          .filter((el) => el.name === 'g' && classes(el).includes('run-label'))
+          .map((el) => ({ source: el.attrs.get('data-source') ?? '', text: textOf(el).trim() })),
+      })
+      const drawing = out.drawings[out.drawings.length - 1]
+      out.regions.push({ where: `the ${drawing.wide ? 'wide' : 'tall'} drawing`, labels: drawing.labels })
+    }
+  }
+  for (const block of words) {
+    for (const list of findAll(block, (el) => (el.name === 'ol' || el.name === 'ul') && classes(el).some((name) => name.startsWith('run-')))) {
+      const klass = classes(list)
+      const labels = [...walk(list)]
+        .filter((el) => classes(el).some((name) => name === 'run-fact-text' || name === 'run-also-item'))
+        .map((el) => ({ source: el.attrs.get('data-source') ?? '', text: textOf(el).replace(/\s+/g, ' ').trim() }))
+      out.words.push(...labels)
+      out.regions.push({
+        where: klass.includes('run-facts') ? 'the facts under the picture' : klass.includes('run-also') ? 'the second list under the picture' : `the ${klass.join(' ')} list`,
+        labels,
       })
     }
   }
   return out
 }
 
-/** A step's slug as a heading: `data-step` is lowercase, a heading is not. */
-function capitalize(name) {
-  return name ? name[0].toUpperCase() + name.slice(1) : ''
-}
-
 /**
- * Every way a page's flow falls short of the changes spec's item 4, as the lines a reader
- * sees. Pure, over one page's HTML, so the built pages are checked with it and the refusals
- * below are proved with it: a fixture that breaks one rule has to make exactly that line
- * appear.
+ * Every way one built page's picture of a run falls short of what replaced the retired
+ * four-step flow (the owner's ruling of 2026-10-20), as the lines a reader sees. Pure, over one
+ * page's HTML, so the built pages are checked with it and the refusals below are proved with it.
  *
- * The ruling's part is the four names in order. The captions are held to the *section* each
- * step cites, in that section's order — `reached` is a cursor per section that only moves
- * forward, so two steps quoting one section can only quote it in the order it writes them.
- * Held to their files alone the captions are lines of the repository and can be shuffled
- * among the steps with every one of them still a quotation, while the page then says Fugaro
- * is where the pull request opens.
+ * The two claims the retired gate made are made here of the picture that took its place. Its
+ * first was that the page's steps are the changes spec's item 4's four names, in the ruling's
+ * order — now the drawing's four boxes, which are the same steps drawn rather than listed. Its
+ * second was that every caption is a line of the section its step cites, in that section's order
+ * — now every word on the figure: the labels drawn inside each drawing, and the two lists of the
+ * same run in words under it. A caption held to its file alone could be shuffled among the steps
+ * with every one of them still a quotation, so the cursor is kept, and it is per region — one
+ * drawing, and each list under the figure: the phone drawing carries the same labels as the
+ * desktop one in the same order, and the second list quotes lines of the sections the first one
+ * quoted, so a single cursor across the page would refuse the second telling of a fact for being
+ * the second rather than for being wrong.
+ *
+ * And the flow itself: a page that renders `ol.flow-steps` again is rendering the component the
+ * ruling deleted, which is why a page carrying one is refused here rather than passed for
+ * having, along with it, a picture that is right.
  */
-function flowFailures(html, ruling, sources) {
+export function pictureFailures(html, ruling) {
   const out = []
-  const flow = flowOf(html)
-  if (flow.flows !== 1) return [`the page renders ${flow.flows} flows, and it renders one: the flow is the picture of the run (P8, spec item 4)`]
-
-  const names = flow.steps.map((step) => step.name)
-  const wanted = ruling.steps.map((name) => name.toLowerCase())
-  if (names.join(' | ') !== wanted.join(' | ')) {
+  const picture = pictureOf(html)
+  if (picture.flows > 0) {
     out.push(
-      `the flow's steps are ${JSON.stringify(names)}, and the changes spec's item 4 names ${JSON.stringify(ruling.steps)}, in that order: a step added, dropped or reordered is a claim about how a run works (changes spec 2026-10-18, item 4)`,
+      `the page renders ${picture.flows} \`ol.flow-steps\`, and the four-step flow is retired: the owner's ruling of 2026-10-20 deletes \`ArchitectureDiagram.astro\` and its flow, and the picture of a run is How It Works' drawing with the run in words under it`,
+    )
+  }
+  if (picture.figures !== 1) {
+    out.push(
+      `the page renders ${picture.figures} pictures of a run, and it renders one: the run is one figure drawn at two scales, with the same run in words under it (the owner's draft of 2026-10-19; changes spec 2026-10-18, item 4)`,
+    )
+    return out
+  }
+  if (picture.details !== 1) {
+    out.push(
+      `the page renders ${picture.details} lists of the run in words, and it renders one: the picture is the drawing and the list under it, which is what a reader who skips the figure reads (the owner's draft of 2026-10-19; changes spec 2026-10-18, item 4)`,
     )
   }
 
-  const reached = new Map()
-  for (const [index, step] of flow.steps.entries()) {
-    const where = `the ${JSON.stringify(step.name)} step`
-    if (!step.caption) out.push(`${where} carries no caption, and every step has one short line saying what happens there (changes spec 2026-10-18, item 4)`)
-    if (!(step.source in sources)) {
-      out.push(`${where} attributes its caption to ${JSON.stringify(step.source)}, and a caption is held to a section of a document this repository carries (changes spec 2026-10-18, item 4)`)
-    } else {
-      const line = normalize(step.caption)
-      const from = reached.get(step.source) ?? 0
-      const at = normalize(sources[step.source]).indexOf(line, from)
+  for (const drawing of picture.drawings) {
+    const where = `the ${drawing.wide ? 'wide' : 'tall'} drawing`
+    if (drawing.names.join(' | ') !== ruling.steps.join(' | ')) {
+      out.push(
+        `${where} draws the boxes ${JSON.stringify(drawing.names)}, and the changes spec's item 4 names ${JSON.stringify(ruling.steps)}, in that order: the four boxes are the run's four steps, and a step added, dropped, renamed or reordered is a claim about how a run works (changes spec 2026-10-18, item 4; the owner's ruling of 2026-10-20)`,
+      )
+    }
+    if (drawing.labels.length === 0) {
+      out.push(
+        `${where} carries no labelled text, and the picture is its labels: a drawing whose words moved out of it says nothing (the owner's draft of 2026-10-19)`,
+      )
+    }
+  }
+
+  for (const region of picture.regions) {
+    const reached = new Map()
+    for (const label of region.labels) {
+      const held = quotedSection(label.source)
+      if (held.text === null) {
+        out.push(
+          `${region.where} attributes the label ${JSON.stringify(label.text)} to ${JSON.stringify(label.source)}, and a label is held to a section of a document this repository carries (Global Constraint 6; changes spec 2026-10-18, item 4)`,
+        )
+        continue
+      }
+      const line = normalize(label.text)
+      const from = reached.get(label.source) ?? 0
+      const at = normalize(held.text).indexOf(line, from)
       if (at === -1) {
         out.push(
-          `${where}'s caption ${JSON.stringify(step.caption)} does not appear in ${step.source} at or after the step before it: every caption is the repository's own words, in the order their document writes them (changes spec 2026-10-18, item 4; Global Constraint 6)`,
+          `${region.where}'s label ${JSON.stringify(label.text)} does not appear in ${label.source} at or after the label before it: every word of the picture is the repository's own words in the order their document writes them, and a paraphrase — or a line that moved above another — is the page inventing what the product says (Global Constraint 6, RF11; changes spec 2026-10-18, item 4)`,
         )
       } else {
-        reached.set(step.source, at + line.length)
+        reached.set(label.source, at + line.length)
       }
     }
-    // The name a reader sees, which is the heading: `data-step` is this check's own hook, and
-    // a heading that stopped matching the spec would leave the visible flow saying something
-    // the ruling does not.
-    const named = ruling.steps[index] ?? ''
-    if (step.heading !== named) {
-      out.push(
-        `${where}'s heading reads ${JSON.stringify(step.heading)}, and the changes spec's item 4 names it ${JSON.stringify(named)}: the heading is the name a reader sees (changes spec 2026-10-18, item 4)`,
-      )
-    }
-    // One short line per step, and no sub-list under one of them: item 4 asks for the picture
-    // with the minimum of copy, and the two annotations D185 hung on the job step are detail
-    // that belongs in the How It Works page's explanation rather than in the picture.
-    if (step.nested > 0) {
-      out.push(
-        `${where} carries ${step.nested} nested list item(s), and every step is one short line: the picture carries the four steps and nothing under them (changes spec 2026-10-18, item 4)`,
-      )
-    }
-  }
-
-  if (flow.arrows !== flow.steps.length - 1) {
-    out.push(
-      `the flow carries ${flow.arrows} arrows between ${flow.steps.length} steps, and it carries one between each pair: the spec's picture is a flow, and the arrows are what draw it (P8, spec item 4)`,
-    )
   }
   return out
 }
 
+const REDUCED_MOTION = /prefers-reduced-motion\s*:\s*reduce/i
+const ALLOWS_MOTION = /prefers-reduced-motion\s*:\s*no-preference/i
+/** A declaration that stops motion rather than starting it. */
+const STOPS = /^(none|auto|0m?s|1ms)\b/
 /**
- * A page carrying nothing but a flow, for the refusals below. The heading is the step's name
- * as the component writes it — capitalised from `data-step`, which is how the two are held
- * together — so the fixture page passes the same checks the built pages do; `heading` and
- * `nested` are the overrides the "a reader sees something else" cases break.
+ * What a reduce rule writes to take a kind of motion away, by the property it writes it in: a
+ * duration, delay or scroll behaviour set to nothing, and an animation's iteration count set to
+ * the one play it is given (the site's own guard writes `animation-iteration-count: 1`).
  */
-function flowPage(steps) {
-  const body = steps
-    .map((step, index) => {
-      const nested = step.nested ? `<ul class="step-annotations">${step.nested}</ul>` : ''
-      const arrow =
-        index < steps.length - 1 && step.arrow !== false
-          ? '<svg class="step-arrow" aria-hidden="true" focusable="false"><path class="arrow-line" d="M12 1 V 25"></path></svg>'
-          : ''
-      return `<li class="flow-step" data-step="${step.name}" data-source="${step.source}"><div class="step-card"><div class="step-head"><span class="step-number" aria-hidden="true">${index + 1}</span><h2 class="step-name">${step.heading ?? capitalize(step.name)}</h2></div><p class="step-caption">${step.caption}</p>${nested}</div>${arrow}</li>`
-    })
-    .join('')
-  return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1><figure class="flow"><ol class="flow-steps">${body}</ol></figure></main></body></html>`
+const NEUTRALISERS = {
+  'animation-duration': STOPS,
+  'animation-delay': STOPS,
+  'animation-iteration-count': /^(0|1)\b/,
+  'transition-duration': STOPS,
+  'transition-delay': STOPS,
+  'scroll-behavior': /^auto\b/,
 }
+/** The scroll-driven reveal the retired flow brought its steps in with. */
+const SCROLL_TIMELINE = ['animation-timeline', 'scroll-timeline', 'view-timeline']
 
 /**
- * The four steps as the page renders them, for the fixture cases: a copy of the markup, with
- * the repository's own lines in the sections the component cites and in the component's order.
+ * Every way one built page keeps motion for a reader who asked for less of it. The retired
+ * flow's own gate (W1.4 step 3, D105) asked the page to bring its steps in on a scroll-driven
+ * animation behind a `@supports` guard and a `prefers-reduced-motion: no-preference` query;
+ * that animation is retired with the flow (the owner's ruling of 2026-10-20), and neither of the
+ * two things that took its place moves at all — the slider's three panels are the fragment's and
+ * the drawing is a still picture. So what is left to hold is the page's remaining motion, every
+ * declaration of it: smooth scrolling, and the transitions on the copy control and the links.
+ * Each one has to be covered by the page's own answer to a reader who asks for less — a
+ * `prefers-reduced-motion: reduce` rule that sets it to nothing, either on the declaration's own
+ * selector or on the universal `*, :before, :after` guard — and the scroll-driven reveal is
+ * refused outright, because a page that reveals itself as a reader scrolls it is the flow's
+ * mechanism back under another name.
  */
-function fixtureSteps() {
-  return [
-    { name: 'your agent', source: 'README.md#Getting started', caption: "the plugin's working skill launches, watches and diagnoses runs" },
-    { name: 'fugaro', source: 'README.md#Why Fugaro', caption: 'it uses your Google Cloud project and your model credentials' },
-    { name: 'ephemeral cloud job', source: 'README.md#How it works', caption: 'one execution per task, then gone' },
-    {
-      name: 'pull request',
-      source: 'docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)',
-      caption: 'the first checkpoint opens the draft PR, marked not verified',
-    },
-  ]
+export function pageMotionFailures(css) {
+  const out = []
+  const rules = cssRules(css)
+  const reduce = rules.filter((rule) => rule.conditions.some((condition) => REDUCED_MOTION.test(condition)) && rule.selector)
+  const universal = reduce.filter((rule) => rule.selector.split(',').some((part) => part.trim() === '*'))
+  const stops = (rs, property) => rs.some((rule) => cssDeclarations(rule.body).some(([p, v]) => p === property && NEUTRALISERS[property].test(v)))
+  const covered = {
+    animation: stops(universal, 'animation-duration') && stops(universal, 'animation-iteration-count'),
+    transition: stops(universal, 'transition-duration'),
+    'scroll-behavior': stops(universal, 'scroll-behavior'),
+  }
+  const neutralised = (selector, kind) =>
+    reduce.some(
+      (rule) =>
+        rule.selector === selector &&
+        cssDeclarations(rule.body).some(([p, v]) => (p === kind || p === `${kind}-name` || p === `${kind}-duration`) && (NEUTRALISERS[p] ?? STOPS).test(v)),
+    )
+
+  for (const rule of rules) {
+    if (!rule.selector || rule.selector.startsWith('@')) continue
+    const declared = cssDeclarations(rule.body)
+    for (const [property, value] of declared) {
+      if (SCROLL_TIMELINE.includes(property) && !/^none\b/.test(value.trim())) {
+        out.push(
+          `${rule.selector}${rule.conditions.length > 0 ? ` (inside ${rule.conditions.join(' and ')})` : ''} declares ${property}: ${value}, and the page is not revealed by scrolling: the flow's scroll-driven animation is retired with the flow (the owner's ruling of 2026-10-20), and the slider's panels are the fragment's while the drawing is a still picture (W1.4 step 3, D105)`,
+        )
+      }
+    }
+    // A rule inside one of the two motion queries is the page's own handling of motion: a
+    // `reduce` rule *is* the answer, and a `no-preference` rule only ever runs for a reader who
+    // allows motion.
+    if (rule.conditions.some((condition) => REDUCED_MOTION.test(condition) || ALLOWS_MOTION.test(condition))) continue
+    for (const [property, value] of declared) {
+      let kind = null
+      if ((property === 'animation' || property === 'animation-name') && !/^none\b/.test(value)) kind = 'animation'
+      if ((property === 'transition' || property === 'transition-duration') && !STOPS.test(value)) kind = 'transition'
+      if (property === 'scroll-behavior' && /smooth/.test(value)) kind = 'scroll-behavior'
+      if (kind === null || covered[kind] || neutralised(rule.selector, kind)) continue
+      out.push(
+        `${rule.selector} declares ${property}: ${value}, and no prefers-reduced-motion: reduce rule neutralises it: motion is for a reader who allows it, and the reader who asks for less is answered by a rule that sets it to nothing (W1.4 step 3, D105)`,
+      )
+    }
+  }
+  return out
 }
 
-/**
- * Two steps quoting one section, for the ordering case: each step of the flow cites a section
- * of its own since the pull request's caption moved to `docs/git-providers.md` (the owner's
- * feedback of 2026-10-19), and the rule that a section's lines come in the section's order is
- * what has to keep holding. The lines are README.md's `## How it works` own — the job's line
- * from its diagram, and step 4's clause about the draft — in the order the section writes
- * them, so the pair is a real pair of that section's lines and not a shape invented here.
- */
-function sharedSectionSteps() {
-  const steps = fixtureSteps()
-  steps[3] = { ...steps[3], source: 'README.md#How it works', caption: 'a draft opens at the first push (marked not verified)' }
-  return steps
-}
 
 test("the hero headline is README.md's tagline line, byte for byte", () => {
   const tagline = readmeTagline()
@@ -498,6 +585,15 @@ function readmeReasons() {
 
 /** The document the benefits section is quoted from, as the page and the component cite it. */
 const BENEFITS_SOURCE = 'README.md#Why Fugaro'
+
+/**
+ * The benefits section's heading, exactly: the owner's ruling of 2026-10-20 names it "Why
+ * Fugaro?" — capital W and F and the question mark — because the four points under it are the
+ * reasons the README argues under that heading, and the section is the answer to the question
+ * rather than a list of "benefits". Held as one string and read twice (the heading, and the
+ * tab label `slider.mjs` pairs with it), so the two halves of the rename cannot drift apart.
+ */
+const BENEFITS_TITLE = 'Why Fugaro?'
 
 /**
  * The attributes of an element as one stable string, without the build's own scope attribute:
@@ -604,6 +700,8 @@ function benefitsOf(html) {
 /**
  * Every failure of the benefits' rule, as the lines a reader of this file sees:
  *
+ *   - **the section is headed "Why Fugaro?"**, the owner's own name for it since the ruling of
+ *     2026-10-20, and the same string the slider's tab carries;
  *   - **the page renders the README's reasons, all of them and in the README's order** — one
  *     benefit per reason, named with the README's own name for it (the number off, which is
  *     the README's device for counting and not part of the name). A reason the page drops is a
@@ -634,9 +732,9 @@ export function benefitFailures(benefits, reasons) {
   if (benefits.sections !== 1) {
     return [`the page renders ${benefits.sections} benefits sections, and it renders one: the section is the README's four reasons and not a figure (the owner's feedback of 2026-10-19)`]
   }
-  if (benefits.title !== 'Benefits') {
+  if (benefits.title !== BENEFITS_TITLE) {
     out.push(
-      `the benefits section is headed ${JSON.stringify(benefits.title)}, and the section a reader looks for is headed "Benefits": the heading is the site's own label for the block, the way "Install" is the install block's (the owner's feedback of 2026-10-19)`,
+      `the benefits section is headed ${JSON.stringify(benefits.title)}, and the section a reader looks for is headed ${JSON.stringify(BENEFITS_TITLE)}: the heading is the site's own label for the block, the way "Install" is the install block's, and it is the question the README's four reasons answer (the owner's ruling of 2026-10-20)`,
     )
   }
   if (benefits.source !== BENEFITS_SOURCE) {
@@ -701,7 +799,7 @@ export function benefitFailures(benefits, reasons) {
     }
     if (!icon.focusable) {
       out.push(
-        `${where}: its icon is not marked out of the tab order (focusable="false"), which is the other half of the decoration contract this site already writes on a drawing — \`a11y.mjs\` holds the flow's arrows to the same pair — and an icon is decoration on both (the owner's feedback of 2026-10-19)`,
+        `${where}: its icon is not marked out of the tab order (focusable="false"), which is the other half of the decoration contract this site already writes on a drawing — \`a11y.mjs\` holds the slider's step icons to the same pair — and an icon is decoration on both (the owner's feedback of 2026-10-19)`,
       )
     }
     if (icon.reference !== '') {
@@ -737,7 +835,7 @@ function iconMarkup(body, marks = 'aria-hidden="true" focusable="false"') {
 const FIXTURE_GLYPHS = ['M1 1h2v2', 'M3 3h2v2', 'M5 5h2v2', 'M7 7h2v2']
 
 /** A page carrying nothing but a benefits section, for the refusals above. */
-function benefitsPage(items, { title = 'Benefits', source = BENEFITS_SOURCE, sections = 1 } = {}) {
+function benefitsPage(items, { title = BENEFITS_TITLE, source = BENEFITS_SOURCE, sections = 1 } = {}) {
   const body = items
     .map(
       (item, index) =>
@@ -800,10 +898,19 @@ test('the benefits refusals fire on a paraphrase, a shuffled line and a dropped 
     'a benefit renamed by the page is not refused',
   )
 
+  // The heading is pinned to the character: the plant is the owner's own words without the
+  // question mark, so a rename that read the ruling as a phrase rather than as the exact
+  // string is refused.
   assert.match(
     benefitFailures(benefitsOf(benefitsPage(good, { title: 'Why Fugaro' })), reasons).join('\n'),
     /is headed "Why Fugaro"/,
-    'a section that lost its heading is not refused',
+    'a section headed with the old label, or with the new one minus its question mark, is not refused',
+  )
+
+  assert.match(
+    benefitFailures(benefitsOf(benefitsPage(good, { title: 'Benefits' })), reasons).join('\n'),
+    /is headed "Benefits"/,
+    'the label this section carried before the owner\'s ruling of 2026-10-20 is not refused',
   )
 
   assert.match(
@@ -910,17 +1017,22 @@ function heroPrompt(page) {
     : { text: decode(readableText(prompt)).replace(/\s+/g, ' ').trim(), source: prompt.attrs.get('data-source') ?? '' }
 }
 
-test("the hero's prompt line is the request, and the chat's first turn is the same sentence", () => {
+test("the hero's prompt line is the request, quoted from the document it cites", () => {
   // The owner's feedback of 2026-10-19: the home page has to say, in as few words as
   // possible, that a reader drives Fugaro through the coding agent they already have, and the
   // fewest words are the request — "Maybe just the `> Fan out these three bug fixes.`". Two
   // facts are read off the built page, and the second is what makes the line a quotation
   // rather than copy: it is a line of the document its `data-source` cites (Global Constraint
-  // 6, D102 — a page renders a fact and never restates one), and it is the same sentence the
-  // chat's first turn speaks, which is the one place the page shows what happens to it. The
-  // two renderings read one string (`src/lib/agent-request.mjs`), and this case is what holds
-  // the artifact to that: a hero that typed its own version of the request would show the
-  // reader asking for one thing and the agent answering about another.
+  // 6, D102 — a page renders a fact and never restates one), and it is the string
+  // `website/src/lib/agent-request.mjs` holds, which is where the line is held to that
+  // document at build time. The hero renders the module's export rather than typing the
+  // sentence, and this case is what holds the artifact to that: a hero that typed its own
+  // version of the request would show the reader a line the module does not carry.
+  //
+  // The module had a second renderer until the owner's approved draft of 2026-10-19 ("Home,
+  // draft 2 (slider)") folded the chat into the slider: the chat's first turn spoke the same
+  // sentence, and the case held the two renderings to each other. The pin is on the string,
+  // so it reads the module's export and not a second copy of the line on the page.
   const page = builtPage('')
   const prompt = heroPrompt(page)
   assert.ok(prompt, "the hero renders no prompt line, and the owner's feedback of 2026-10-19 puts the request under the headline as what the page is about")
@@ -934,17 +1046,26 @@ test("the hero's prompt line is the request, and the chat's first turn is the sa
     `the hero's prompt line ${JSON.stringify(prompt.text)} is not a line of ${prompt.source}: the line is the repository's own example of a request, not a sentence written for the page (changes spec 2026-10-18, item 3; Global Constraint 6)`,
   )
 
-  const turns = chat(page)
-  assert.ok(turns.length > 0, 'the homepage renders no chat, and the hero\'s prompt line is the chat\'s own first turn (changes spec 2026-10-18, item 3)')
+  // **The line the page renders is the module's own string**, and the citation is the
+  // module's too. Read off the module's source rather than imported: the module imports
+  // `../content.ts` to find the repository root, and the test runner has no TypeScript loader
+  // — the same reading `base-styles.mjs` and `budget.mjs` do of the components they are about.
+  const module = repoFile('website/src/lib/agent-request.mjs')
+  const request = /export const REQUEST = '([^']*)'/.exec(module)
+  const source = /export const REQUEST_SOURCE = '([^']*)'/.exec(module)
+  assert.ok(
+    request && source,
+    'website/src/lib/agent-request.mjs no longer exports the request and the document it is quoted from, and the hero renders both (the owner\'s feedback of 2026-10-19; changes spec 2026-10-18, item 3)',
+  )
   assert.equal(
     prompt.text,
-    turns[0].line,
-    `the hero's prompt line reads ${JSON.stringify(prompt.text)} and the chat's first turn reads ${JSON.stringify(turns[0].line)}: they are one sentence, so the reader is not shown one request under the headline and a different one in the conversation (the owner's feedback of 2026-10-19)`,
+    request[1],
+    `the hero's prompt line reads ${JSON.stringify(prompt.text)} and src/lib/agent-request.mjs holds ${JSON.stringify(request[1])}: the hero renders the module's string rather than typing its own version of the request (the owner's feedback of 2026-10-19)`,
   )
   assert.equal(
     prompt.source,
-    turns[0].source,
-    `the hero's prompt line cites ${JSON.stringify(prompt.source)} and the chat's first turn cites ${JSON.stringify(turns[0].source)}: one sentence is quoted from one document, and two citations would be two places to keep in step`,
+    source[1],
+    `the hero's prompt line cites ${JSON.stringify(prompt.source)} and src/lib/agent-request.mjs names ${JSON.stringify(source[1])}: one sentence is quoted from one document, and two citations would be two places to keep in step (Global Constraint 6)`,
   )
 })
 
@@ -998,41 +1119,61 @@ test('the homepage names the promise in its title, its description and its cards
   assert.equal((page.match(/<meta name="twitter:description"/g) ?? []).length, 0)
 })
 
-test('the homepage renders the install commands install.yaml carries, and types none of them', () => {
+test("the homepage offers one install command, install.yaml's own, and types none of it", () => {
   const page = builtPage('')
-  // Read as a document rather than sliced with a regex: each path's block holds a copy
-  // control as well as its commands (P6), and a non-greedy `<div>…</div>` would stop at the
-  // control's own closing tag and check half a block. The paths are the homepage's own section
-  // since the changes spec of 2026-10-18 (item 4): they used to be in the hero, and the block
-  // is `HomeInstall.astro`'s now.
-  const blocks = [...walk(parse(page))].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('home-install-path'))
+  // Read as a document rather than sliced with a regex: the block holds a copy control as well
+  // as the command (P6), and a non-greedy `<div>…</div>` would stop at the control's own
+  // closing tag and check half a block.
+  //
+  // **One path rather than the file's five.** The owner's approved draft of 2026-10-19 ("Home,
+  // draft 2 (slider)") replaces the two install cards the page used to end with by one "Get
+  // started" button and the command most readers run: a reader choosing between Homebrew and
+  // `go install` before they have decided to install anything is the choice the draft takes
+  // away, and `/getting-started/` still lays every path out with what each one sets up. The
+  // path rendered here is `HomeInstall.astro`'s `HOME_PATH`, and this case reads the command
+  // out of the file that carries it rather than out of the component.
+  const section = findAll(parse(page), (el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('home-install'))[0]
+  assert.ok(section, "the homepage carries no install block, and the page ends with the one command most readers run (the owner's approved draft of 2026-10-19)")
+  assert.equal(
+    section.attrs.get('data-source'),
+    'website/data/install.yaml',
+    `the homepage's install block cites ${JSON.stringify(section.attrs.get('data-source'))}, and the command and the note under it are that file's (W0.1, W1.4 step 1; Global Constraint 6)`,
+  )
 
-  assert.equal(blocks.length, 2, `the homepage renders ${blocks.length} install paths, and it shows the two commands the plan names (W1.4 step 1)`)
+  const commands = [...walk(section)]
+    .filter((el) => el.name === 'pre')
+    .map((el) => textOf(el).trim())
+  assert.deepEqual(
+    commands,
+    [installPathCommands('homebrew')[0]],
+    `the homepage's install commands are ${JSON.stringify(commands)}, and website/data/install.yaml's quick path prints ${JSON.stringify(installPathCommands('homebrew')[0])} and nothing else: a command typed into the component is a second copy of the install text, and the one that drifts (W0.1, W1.4 step 1)`,
+  )
+  assert.equal(
+    classText(page, 'home-install-note'),
+    installPathNote('homebrew'),
+    'the note under the homepage\'s install command is not the quick path\'s own note: the file carries what the path sets up, and the component renders it (W0.1, Global Constraint 6)',
+  )
 
-  // And they are not in the hero: item 4 puts the promise and its one call to action above the
-  // picture and the commands below it, so a command back in the hero is the shape the review
-  // of this branch asked to have changed.
+  // **And the one control is the button**, which is the draft's call to action: one link, to
+  // the page where the paths are laid out. A second link here — the `go install` card's, or a
+  // release page's — is the choice the draft takes off this page.
+  const links = [...walk(section)].filter((el) => el.name === 'a').map((el) => [textOf(el).trim(), el.attrs.get('href')])
+  assert.deepEqual(
+    links,
+    [['Get started', '/getting-started/']],
+    `the homepage's install block carries the links ${JSON.stringify(links)}, and the draft gives it one: the button that leads to the page where every path is laid out (the owner's approved draft of 2026-10-19)`,
+  )
+
+  // And the command is not in the hero: item 4 puts the promise and its one call to action
+  // above the picture and the commands below it, so a command back in the hero is the shape the
+  // review of this branch asked to have changed.
   const hero = findAll(parse(page), (el) => el.name === 'section' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero'))[0]
   assert.ok(hero, 'the homepage has no hero section, and the promise and its call to action are the hero (P5, D102)')
   assert.equal(
     [...walk(hero)].filter((el) => el.name === 'pre').length,
     0,
-    'the hero prints a command, and item 4 gives the hero the promise and its call to action: the commands are the install section below the picture (changes spec 2026-10-18, item 4)',
+    'the hero prints a command, and item 4 gives the hero the promise and its call to action: the command is the install block below the slider (changes spec 2026-10-18, item 4)',
   )
-
-  for (const block of blocks) {
-    const id = block.attrs.get('data-path')
-    assert.ok(id, 'an install path on the homepage names no id, so nothing says which path of install.yaml it is')
-
-    const commands = [...walk(block)]
-      .filter((el) => el.name === 'pre')
-      .map((el) => textOf(el).trim())
-    assert.deepEqual(
-      commands,
-      installPathCommands(id),
-      `the homepage's ${id} commands are not the ones website/data/install.yaml carries for that path: a command typed into the component is a second copy of the install text, and the one that drifts (W0.1, W1.4 step 1)`,
-    )
-  }
 })
 
 test('the hero renders a player only when site.yaml says the video exists', () => {
@@ -1097,397 +1238,164 @@ test('the hero offers the console from its call to action only while the flag is
   )
 })
 
-// ---- the chat (changes spec of 2026-10-18, item 3) ---------------------------------------
+// ---- the watch block, and the capture (changes spec of 2026-10-18, item 3) ---------------
+
+// The homepage's one command block and the screenshot beside it. Both were the chat's: the
+// owner's approved draft of 2026-10-19 ("Home, draft 2 (slider)") folds the chat into the
+// slider's third panel, which shows the reader what a run looks like from the outside —
+// `fugaro watch` on their own machine, and the real screen. The illustration of a
+// conversation left the site with `AgentChat.astro`; what stayed is the pair a reader can
+// act on, so the cases below read the panel the draft puts them in.
+
+/** The old hero example, the transcript item 3 removes from the hero ("Remove `fugaro run`
+ * from the hero example"): the launch line a reader was once meant to type, with the task the
+ * spec's own example asks for. It is read as one string so that the gate and this comment
+ * cannot drift from each other. */
+const RETIRED_EXAMPLE = 'add a --verbose flag to the export command'
 
 /**
- * The documents a line of the chat may be quoted from, by the name the turn cites: the spec,
- * whose item 3 gives the request, and the two skills, which are what the agent does with one.
- */
-function chatSources() {
-  return {
-    'docs/website/redesign/changes-spec-2026-10-18.md': repoFile('docs/website/redesign/changes-spec-2026-10-18.md'),
-    'plugin/skills/parallelism/SKILL.md': repoFile('plugin/skills/parallelism/SKILL.md'),
-    'plugin/skills/working/SKILL.md': repoFile('plugin/skills/working/SKILL.md'),
-  }
-}
-
-const CHAT_CLASSES = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
-
-/**
- * The chat a built page renders: its turns in order, each with the lines it carries — the
- * reader's request, the agent's answer and the status line under it, and the results it
- * reports back with. One array, so the rules below read the chat the way a reader does.
+ * The homepage's commands and its words against item 3's one rule: **the command the reader is
+ * offered is `fugaro watch`, and the manual `fugaro run` line is not on the page**.
  *
- * `line` is what a turn *says* and is held to the document it cites; `status` is the
- * illustration's own label for what the agent did (changes spec of 2026-10-18, item 3: the
- * launch is "shown as a subtle tool-call / status line, not a command the user typed"), and
- * the rule below refuses it as a quotation the same way it refuses the result labels.
- */
-function chat(page) {
-  return [...walk(parse(page))]
-    .filter((el) => el.name === 'li' && CHAT_CLASSES(el).includes('chat-turn'))
-    .map((el) => {
-      const inside = (selector) => {
-        const node = [...walk(el)].find((child) => CHAT_CLASSES(child).includes(selector))
-        return node ? decode(readableText(node)).replace(/\s+/g, ' ').trim() : ''
-      }
-      return {
-        turn: el.attrs.get('data-turn') ?? '',
-        source: el.attrs.get('data-source') ?? '',
-        who: inside('turn-who'),
-        line: inside('turn-line'),
-        status: inside('turn-status'),
-        results: [...walk(el)]
-          .filter((child) => CHAT_CLASSES(child).includes('turn-result'))
-          .map((child) => decode(readableText(child)).replace(/\s+/g, ' ').trim()),
-      }
-    })
-}
-
-/**
- * Every failure of the chat's rule, as the lines a reader of this file sees, in two halves:
+ * The commands are the page's `<pre>` blocks and the words are the page's text, both read over
+ * the whole homepage rather than over a section: the retired hero example came back as a
+ * command block a reader could copy and as a transcript in prose, and a gate that read one
+ * shape would let the other through. It is a fact about the page, which is what makes it
+ * readable here — the case in `copy.mjs` that refuses the word `run` knows about commands the
+ * page *offers* and not about a line the site publishes as prose.
  *
- *   - **every line a turn *speaks* — its `line` — is a line of the document that turn cites**,
- *     and the lines of a document come in the order that document writes them. The chat is an
- *     illustration drawn from the repository rather than a recording of a session, so a line a
- *     skill does not write — or one that moved ahead of the line before it — is the page
- *     putting words in the agent's mouth that the agent's own skill does not have (changes
- *     spec item 3, Global Constraint 6);
- *   - **the figure's own labels are not quotations.** `status` (the agent's launch line) and
- *     `results` (the `Pull request n of 3` labels) are the illustration's, and the caption
- *     says so: a run that has not happened has no pull request numbers, and a launch line a
- *     reader is meant to read as a status is not a sentence either skill prints. So neither
- *     may be a line of the document its turn cites, which is what would make them quotations
- *     while the caption denied it.
- *
- * Written as a function over a chat so a fixture can prove it refuses.
+ * The two branches are the two ways the example returns, and each has a plant in the case
+ * below: a `<pre>` whose command is a `fugaro run` invocation, and the transcript's own words
+ * anywhere in the page's text. Neither can be seen by the page's byte budget — which only
+ * tells a reader that *something* moved — so this is where the example is held gone.
  */
-export function chatFailures(turns, sources) {
+function runExampleFailures(html) {
   const out = []
-  const reached = new Map() // document -> how far into it the line before this one reached
-  for (const [index, turn] of turns.entries()) {
-    const where = `turn ${index + 1} of the chat, ${JSON.stringify(turn.line)}`
-    if (!turn.line) {
-      out.push(`${where}, has no text: the chat is the illustration, and a turn with nothing in it is a bubble a reader cannot read`)
-      continue
+  const commands = [...walk(parse(html))]
+    .filter((el) => el.name === 'pre')
+    .map((el) => text(readableText(el)))
+  for (const command of commands) {
+    if (/^fugaro run\b/.test(command)) {
+      out.push(
+        `the homepage offers ${JSON.stringify(command)} as a command the reader can copy, and a \`fugaro run\` line is the manual path the documentation keeps rather than what the reader types (changes spec 2026-10-18, item 3)`,
+      )
     }
-    const document = sources[turn.source]
-    if (!document) {
-      out.push(`${where}, cites ${JSON.stringify(turn.source)}, which is not a document this check reads: every line says which document it is quoted from`)
-      continue
-    }
-    const line = turn.line
-    if (line) {
-      const quoted = normalize(line)
-      const at = normalize(document).indexOf(quoted, reached.get(turn.source) ?? 0)
-      if (at === -1) {
-        out.push(
-          `the chat's line ${JSON.stringify(line)} does not appear in ${turn.source} at or after the line before it: every line a turn of the chat speaks is the document's own words, in the order it writes them (changes spec 2026-10-18, item 3; Global Constraint 6)`,
-        )
-      } else {
-        reached.set(turn.source, at + quoted.length)
-      }
-    }
-    for (const [what, label] of [
-      ['status line', turn.status],
-      ...(turn.results ?? []).map((result) => ['result label', result]),
-    ]) {
-      if (!label) continue
-      if (normalize(document).includes(normalize(label))) {
-        out.push(
-          `the chat's ${what} ${JSON.stringify(label)} is a line of ${turn.source}, and the figure's own labels are not quotations: the caption says the picture is an illustration, which is what makes it honest about a launch line and three pull request numbers that no skill has printed (changes spec 2026-10-18, item 3; D184)`,
-        )
-      }
-    }
+  }
+  if (text(html).includes(RETIRED_EXAMPLE)) {
+    out.push(
+      `the homepage still carries the old hero example, the \`fugaro run "${RETIRED_EXAMPLE}"\` transcript (changes spec 2026-10-18, item 3: "Remove \`fugaro run\` from the hero example")`,
+    )
   }
   return out
 }
 
-test('the homepage chat is the workflow, and every line its turns speak is the document it cites', () => {
-  const turns = chat(builtPage(''))
-
-  // Item 3's illustration, turn for turn: the request, the agent's answer with the launch it
-  // runs, and the report a few minutes later. A page that grew a fourth turn, or lost one, is
-  // a page this check would otherwise go on accepting.
-  assert.equal(turns.length, 3, `the homepage chat renders ${turns.length} turns, and item 3's illustration is three (changes spec 2026-10-18, item 3)`)
-  assert.deepEqual(
-    turns.map((turn) => turn.turn),
-    ['you', 'agent', 'agent'],
-    `the chat's turns are ${JSON.stringify(turns.map((turn) => turn.turn))}, and the reader's request comes first, with the agent answering it (changes spec 2026-10-18, item 3)`,
-  )
-  assert.ok(turns[0].who, 'the chat does not say who is speaking, and a reader who cannot tell the two voices apart has not been shown the workflow (changes spec 2026-10-18, item 3)')
-  assert.ok(turns[1].status, "the agent's answer carries no status line, and item 3 asks for the launch to show as a subtle tool-call / status line rather than as a command the reader typed (changes spec 2026-10-18, item 3)")
-  assert.equal(
-    turns[2].results.length,
-    3,
-    `the agent reports back with ${turns[2].results.length} results, and item 3's illustration fans three pieces of work out (changes spec 2026-10-18, item 3)`,
-  )
-
-  const failures = chatFailures(turns, chatSources())
-  assert.deepEqual(failures, [], `the lines the homepage chat's turns speak are not the documents' own words (changes spec 2026-10-18, item 3):\n  ${failures.join('\n  ')}`)
-})
-
-test('the chat rule refuses a line the document it cites does not write', () => {
-  const sources = chatSources()
-  const turns = chat(builtPage(''))
-  assert.deepEqual(chatFailures(turns, sources), [], 'the rule refuses the page it is written for, so every refusal below is the one thing it breaks')
-
-  // A line with a word added to it: not a line of the skill, and the defect this rule exists
-  // for — a chat that paraphrases what the agent says rather than quoting its skill.
-  const paraphrased = turns.map((turn, index) => (index === 1 ? { ...turn, line: 'I will run each fix in its own job.' } : turn))
-  assert.match(chatFailures(paraphrased, sources).join('\n'), /does not appear in plugin\/skills\/parallelism\/SKILL\.md/)
-
-  // A line from the wrong document: the words are the repository's, and they are not this
-  // turn's skill. The chat says which document each turn answers from, so this fails.
-  const elsewhere = turns.map((turn, index) =>
-    index === 1 ? { ...turn, source: 'plugin/skills/working/SKILL.md' } : turn,
-  )
-  assert.match(chatFailures(elsewhere, sources).join('\n'), /does not appear in plugin\/skills\/working\/SKILL\.md/)
-
-  // The other half of the rule, and the half the launch line is about: the figure's own
-  // labels may not be quotations. A status line that turned out to be a sentence of the
-  // skill its turn cites would be a second thing the caption said was an illustration while
-  // the page quoted it — and it is the shape a future edit would take, since the obvious way
-  // to write a launch line is to copy the invocation the skill documents.
-  const quotedStatus = turns.map((turn, index) =>
-    index === 1 ? { ...turn, status: 'fugaro run --batch <name> --run-id <id> --task-file -' } : turn,
-  )
-  assert.match(
-    chatFailures(quotedStatus, sources).join('\n'),
-    /status line .* is a line of plugin\/skills\/parallelism\/SKILL\.md/,
-    'a status line that is a sentence of the skill its turn cites was not refused, and the caption says the figure\'s labels are the illustration\'s own (changes spec 2026-10-18, item 3; D184)',
-  )
-
-  // And the same for a result label, the class of text the rule was written for.
-  const quotedResult = turns.map((turn, index) => (index === 2 ? { ...turn, results: [...turn.results, 'It always ends with a pull request'] } : turn))
-  assert.match(
-    chatFailures(quotedResult, sources).join('\n'),
-    /result label .* is a line of plugin\/skills\/working\/SKILL\.md/,
-    'a result label that is a line of the skill its turn cites was not refused (changes spec 2026-10-18, item 3; D184)',
-  )
-
-  // A turn citing a document nothing reads, and a turn with no text at all.
-  assert.match(chatFailures([{ ...turns[0], source: 'website/content/cli-reference.md' }], sources).join('\n'), /not a document this check reads/)
-  assert.match(chatFailures([{ ...turns[0], line: '' }], sources).join('\n'), /has no text/)
-})
-
-test('the homepage launches through the agent, and the one command it offers the reader is fugaro watch', () => {
-  // Item 3's acceptance, read off the built page: a first-time reader has to come away with
-  // "my agent runs this", and the only command the page offers to copy besides the install
-  // paths is `fugaro watch`. The old hero example — a `fugaro run` line the reader was meant
-  // to type — is the thing this case is written to notice coming back.
-  //
-  // **The commands are read off the whole homepage rather than off a `.hero` section.** The
-  // changes spec of 2026-10-18 (item 4, and the review of this branch) takes the chat and the
-  // install paths out of the hero and puts them under the picture, so the hero holds the
-  // promise and its call to action and nothing else; what a reader is offered to copy is a
-  // fact about the page. A case that read a `.hero` section would pass on a page that offered
-  // a `fugaro run` line anywhere else in it.
-  const page = parse(builtPage(''))
-  const commands = [...walk(page)].filter((el) => el.name === 'pre').map((el) => decode(readableText(el)).trim())
-  assert.ok(
-    commands.includes('fugaro watch'),
-    `the homepage's command blocks are ${JSON.stringify(commands)}, and \`fugaro watch\` is the one command the reader is asked for (changes spec 2026-10-18, item 3)`,
-  )
-  assert.ok(
-    !commands.some((command) => /^fugaro run\b/.test(command)),
-    `the homepage offers ${JSON.stringify(commands)} as commands the reader can copy, and a \`fugaro run\` line is the manual path the documentation keeps rather than what the reader types (changes spec 2026-10-18, item 3)`,
-  )
-  assert.ok(
-    !text(builtPage('')).includes('add a --verbose flag to the export command'),
-    'the homepage still carries the old hero example, the `fugaro run "add a --verbose flag to the export command"` transcript (changes spec 2026-10-18, item 3: "Remove `fugaro run` from the hero example")',
-  )
-
-  // The launch is the agent's, drawn as a subdued line: a paragraph with no copy control of
-  // its own — what the reader copies here is `fugaro watch`, not the launch.
-  const status = findAll(page, (el) => CHAT_CLASSES(el).includes('turn-status'))[0]
-  assert.ok(status, "the homepage's chat carries no status line, and item 3 asks for the launch to show as a subtle tool-call / status line (changes spec 2026-10-18, item 3)")
-  assert.equal(status.name, 'p', `the status line is a <${status.name}>, and a command block is what a reader is offered to copy: the agent's launch is a line of the illustration (changes spec 2026-10-18, item 3)`)
-  assert.equal(
-    [...walk(status)].filter((el) => el.attrs.has('data-copy-button') || el.attrs.has('data-copy')).length,
-    0,
-    'the status line carries a copy control, and the reader did not type this line: the homepage offers exactly one command to copy (changes spec 2026-10-18, item 3)',
-  )
-  // And what it says is a status rather than a command: no `fugaro run` invocation, no flags,
-  // and one short line. The exact words are the illustration's own (item 3 gives
-  // "Fugaro: launching 3 jobs" as an example rather than as a caption to match), so this case
-  // holds the shape and not the sentence.
-  const said = decode(readableText(status)).replace(/\s+/g, ' ').trim()
-  assert.doesNotMatch(
-    said,
-    /\bfugaro\s+run\b|--[a-z]/,
-    `the status line ${JSON.stringify(said)} is a command, and the launch is what the agent did rather than something the reader types (changes spec 2026-10-18, item 3)`,
-  )
-  assert.ok(
-    said.length > 0 && said.length <= 40,
-    `the status line is ${said.length} characters (${JSON.stringify(said)}), and it is one short line under the agent's answer rather than a sentence: the launch is a status (changes spec 2026-10-18, item 3)`,
-  )
-})
-
-test('the chat says on the page that it is an illustration, and claims no more than that', () => {
-  // D184's rule for the transcript this replaces, kept for the chat: the page says what the
-  // figure is rather than leaving a reader to take an illustration for a session that
-  // happened. And it claims nothing about where the lines come from, because the figure is
-  // not all quotations: the request is item 3's own example of one, and the three results are
-  // the illustration's labels. The caption this case was written for said "every line is the
-  // repository's own words, from the skills the agent reads", which is false about both of
-  // those, and the words themselves are refused by `website/test/wording.mjs` — on the built
-  // page and in the site's sources, so the sentence cannot come back through a component.
+test('the watch block is the command the reader keeps, and it copies itself', () => {
   const page = builtPage('')
-  const caption = classText(page, 'chat-caption')
+  const command = classText(page, 'watch-command')
 
-  assert.ok(caption, 'the homepage chat carries no caption, and item 3 admits the illustration only as a labelled one rather than as a recording (changes spec 2026-10-18, item 3; D184)')
-  assert.match(caption, /illustration/i, `the chat's caption ${JSON.stringify(caption)} does not say the chat is an illustration (changes spec 2026-10-18, item 3)`)
-  assert.match(caption, /not a recording/i, `the chat's caption ${JSON.stringify(caption)} does not say the lines are not a recording of a session (D184)`)
-  assert.doesNotMatch(
-    caption,
-    /own words|quotation|quoted|verbatim/i,
-    `the chat's caption ${JSON.stringify(caption)} claims the figure's lines are quotations, and two of the things a reader reads in it are not: the request is item 3's own example, and the three results are labels for work a run would report. The caption says what the picture is and where the agent's behaviour comes from; it does not vouch for where every line came from (changes spec 2026-10-18, item 3; Global Constraint 6)`,
-  )
-  assert.match(
-    caption,
-    /skills/i,
-    `the chat's caption ${JSON.stringify(caption)} does not say where the agent's behaviour comes from, and the one thing about the figure a reader can check is that the agent's lines are its skills' (changes spec 2026-10-18, item 3)`,
-  )
-
-  // And it sits **directly under the conversation** (review round 3, item 3a). It used to be
-  // the figure's last child with the watch block — the heading "Watch it run", the slot, the
-  // command bar and the skill's note — between it and the turns, so a reader met the caption
-  // after the heading of a different thing. It is the figure's last child still (that is the
-  // content model: a `figcaption` comes first or last), and the watch block is the figure's
-  // sibling now, so "last child" and "under the conversation" are the same place.
-  const parsed = parse(page)
-  const figure = findAll(parsed, (el) => el.name === 'figure' && CHAT_CLASSES(el).includes('chat'))[0]
-  assert.ok(figure, 'the homepage renders no <figure class="chat">, and the caption is the figure\'s own name (changes spec 2026-10-18, item 3)')
-  const named = [...walk(figure)].find((el) => CHAT_CLASSES(el).includes('chat-caption'))
-  const children = (figure.children ?? []).filter((child) => child.name !== undefined)
-  assert.equal(
-    children[children.length - 1],
-    named,
-    "the chat's caption is not the figure's last child, and a `figcaption` is a figure's first or last child: this is the shape the HTML content model allows, and it is kept because the caption has to be reachable under the conversation (changes spec 2026-10-18, item 3a)",
-  )
-  const order = [...walk(parsed)]
-  const heading = order.find((el) => CHAT_CLASSES(el).includes('chat-watch-title'))
-  assert.ok(
-    heading === undefined || order.indexOf(named) < order.indexOf(heading),
-    "the chat's caption comes after the `fugaro watch` heading, and the review of round 3 found it there: the caption is what the conversation above it is, so it belongs at the foot of the conversation rather than under the heading of the block below it (changes spec 2026-10-18, item 3a)",
-  )
-
-  // And the fact the caption may not claim, read off the figure itself: the results are not
-  // lines of the document the turn that reports them cites. They are the illustration's own
-  // labels — a run that has not happened has no pull request numbers — so a caption that
-  // called them quotations would be false, and a future edit that made them quotations of a
-  // document would make this case fail until the caption said so.
-  const report = chat(page).at(-1)
-  assert.ok(report, 'the homepage chat renders no turns, so the results the caption is about cannot be read')
-  const document = chatSources()[report.source]
-  assert.ok(document, `the chat's last turn cites ${JSON.stringify(report.source)}, which is not a document this check reads`)
-  for (const result of report.results) {
-    assert.ok(
-      !normalize(document).includes(normalize(result)),
-      `the chat's result ${JSON.stringify(result)} is a line of ${report.source}, and the caption's reading of the figure is that the results are the illustration's own labels rather than quotations (changes spec 2026-10-18, item 3; D184)`,
-    )
-  }
-
-  // And the same for the status line, the other thing on the figure that is not a quotation:
-  // it is the illustration's label for the launch, so it may not be a sentence of the skill
-  // its turn cites either. `chatFailures` refuses both; this case reads the built page for
-  // the same thing, which is what makes the caption's reading true of the page a reader gets.
-  const launch = chat(page).find((turn) => turn.status)
-  assert.ok(launch, 'the homepage chat renders no status line, and the launch is the line the caption does not claim as a quotation')
-  const launchDocument = chatSources()[launch.source]
-  assert.ok(launchDocument, `the chat's launching turn cites ${JSON.stringify(launch.source)}, which is not a document this check reads`)
-  assert.ok(
-    !normalize(launchDocument).includes(normalize(launch.status)),
-    `the chat's status line ${JSON.stringify(launch.status)} is a line of ${launch.source}, and the caption's reading of the figure is that the launch line is the illustration's own rather than a quotation (changes spec 2026-10-18, item 3; D184)`,
-  )
-})
-
-test('the design record quotes the caption the site ships', () => {
-  // The record tells a reader what the chat's caption says, and it quotes the sentence to do
-  // it. A quote rots the moment the caption is rewritten, and this one has outlived a caption
-  // already: review round 5 cut the caption to one sentence, and the record went on quoting
-  // the long one — a sentence that existed nowhere on the site, and nothing said so, because
-  // the caption's own case above reads the built page and never the record. The record is a
-  // description of this branch's artifact (P9), so what it quotes of the artifact is held to
-  // the artifact here, in the file that already holds the caption to its shape.
-  const caption = classText(builtPage(''), 'chat-caption')
-  assert.ok(caption, 'the homepage chat carries no caption, so there is nothing for the design record to quote (changes spec 2026-10-18, item 3)')
-  const record = repoFile('docs/website/redesign/README.md')
-  assert.ok(
-    normalize(record).includes(normalize(caption)),
-    `docs/website/redesign/README.md does not quote the caption the built page ships. The page says ${JSON.stringify(caption)}; the record's reading of the caption quotes a sentence that is not on the site. The record describes the site this branch builds, so the sentence it quotes moves with the caption (P9, changes spec 2026-10-18, item 3)`,
-  )
-})
-
-test('the watch snippet is the command the reader keeps, and it copies itself', () => {
-  const page = builtPage('')
-  const command = classText(page, 'chat-watch-command')
-
-  assert.equal(command, 'fugaro watch', `the hero's watch snippet reads ${JSON.stringify(command)}, and the one command the reader is asked for is \`fugaro watch\` (changes spec 2026-10-18, item 3)`)
+  assert.equal(command, 'fugaro watch', `the "See it" panel's command reads ${JSON.stringify(command)}, and the one command the reader is asked for is \`fugaro watch\` (changes spec 2026-10-18, item 3)`)
   assert.ok(
     repoFile('README.md').includes(command),
-    `the snippet offers ${JSON.stringify(command)}, which README.md does not print: the command is the documentation's rather than one written for the page (Global Constraint 9)`,
+    `the panel offers ${JSON.stringify(command)}, which README.md does not print: the command is the documentation's rather than one written for the page (Global Constraint 9)`,
   )
 
   // And it is a command block like every other one on the site: one control, on the command
   // (P6, D183). The skill's own line about what the screen shows goes under it, quoted.
-  const block = [...walk(parse(page))].find((el) => CHAT_CLASSES(el).includes('chat-watch'))
-  assert.ok(block?.attrs.has('data-copy'), "the watch snippet is in no [data-copy] block, and it is a command a reader copies like any other (P6)")
+  const block = [...walk(parse(page))].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('watch-block'))
+  assert.ok(block?.attrs.has('data-copy'), 'the watch block is in no [data-copy] block, and it is a command a reader copies like any other (P6)')
   assert.equal(
     [...walk(block)].filter((el) => el.attrs.has('data-copy-button')).length,
     1,
-    "the watch snippet does not carry exactly one copy control (P6, D183)",
+    'the watch block does not carry exactly one copy control (P6, D183)',
   )
-  const note = classText(page, 'chat-watch-note')
+  const note = classText(page, 'watch-note')
   assert.ok(
     normalize(repoFile('plugin/skills/working/SKILL.md')).includes(normalize(note)),
-    `the note under the snippet, ${JSON.stringify(note)}, is not a line of plugin/skills/working/SKILL.md: the page quotes the skill rather than describing what the screen does (Global Constraint 6)`,
+    `the note under the command, ${JSON.stringify(note)}, is not a line of plugin/skills/working/SKILL.md: the page quotes the skill rather than describing what the screen does (Global Constraint 6)`,
   )
 })
 
-test('the watch screenshot is in the slot the changes spec marks, named, sized and served from here', () => {
-  // Item 3 asks for a clearly marked slot right after the chat; the owner's spec of
-  // 2026-10-18 item 5 and PR #622 supply the picture, and it is the owner's real capture of
-  // `fugaro watch` running on their own installation, published as it was taken (D190 waived
-  // by the owner for this one image, `docs/website/redesign/README.md`). So the slot holds the
-  // image now, and what this case is about is that it holds THE image and holds it so it can
-  // be read: a picture no reader can identify, or one that shifts the block under it when the
-  // file lands, or one fetched from somebody else's host, are the three ways this goes wrong.
+test('the homepage offers the reader fugaro watch and not the retired fugaro run example', () => {
+  const page = builtPage('')
+  const commands = [...walk(parse(page))].filter((el) => el.name === 'pre').map((el) => text(readableText(el)))
+  assert.ok(
+    commands.includes('fugaro watch'),
+    `the homepage's command blocks are ${JSON.stringify(commands)}, and read off the whole page rather than off a section: what a reader is offered to copy is a fact about the page, and \`fugaro watch\` is the command item 3 asks for`,
+  )
+  const failures = runExampleFailures(page)
+  assert.deepEqual(
+    failures,
+    [],
+    `the homepage carries the retired \`fugaro run\` example, which item 3 removes from the hero:\n  ${failures.join('\n  ')}`,
+  )
+
+  // And each way it comes back is refused, one plant per branch. The first is the example as a
+  // command block — what the retired hero carried, and what a page that copied the
+  // documentation's manual path would ship; the second is the transcript as prose, which no
+  // command-block reading sees and which is why the words are swept too.
+  const asCommand = page.replace(
+    '<pre class="watch-command"',
+    `<pre class="planted">fugaro run --batch demo</pre>\n<pre class="watch-command"`,
+  )
+  assert.match(
+    runExampleFailures(asCommand).join('\n'),
+    /the homepage offers "fugaro run --batch demo" as a command the reader can copy/,
+    'a `fugaro run` line put back among the page\'s command blocks is not refused, so the manual path is free to return as something the reader is asked to type',
+  )
+  const asProse = page.replace(
+    /<\/main>/,
+    `<p>Launch the run yourself with \`fugaro run "${RETIRED_EXAMPLE}"\`.</p></main>`,
+  )
+  assert.match(
+    runExampleFailures(asProse).join('\n'),
+    /the homepage still carries the old hero example, the `fugaro run "add a --verbose flag to the export command"` transcript/,
+    'the retired hero example put back as prose is not refused, and a transcript is not a command block: the example would ship again with every other gate green',
+  )
+})
+
+test('the watch screenshot is in the slot the "See it" panel marks, named, sized and served from here', () => {
+  // The owner's spec of 2026-10-18 item 5 and PR #622 supply the picture, and it is the
+  // owner's real capture of `fugaro watch` running on their own installation, published as it
+  // was taken (D190 waived by the owner for this one image, `docs/website/redesign/README.md`).
+  // So the slot holds the image, and what this case is about is that it holds THE image and
+  // holds it so it can be read: a picture no reader can identify, or one that shifts the block
+  // under it when the file lands, or one fetched from somebody else's host, are the three ways
+  // this goes wrong.
   const page = parse(builtPage(''))
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
   const slot = findAll(page, (el) => el.attrs.get('data-slot') === 'watch-screenshot')[0]
-  assert.ok(slot, 'the homepage carries no [data-slot="watch-screenshot"], and item 3 asks for a clearly marked slot for the `fugaro watch` screenshot (changes spec 2026-10-18, item 3)')
+  assert.ok(slot, 'the homepage carries no [data-slot="watch-screenshot"], and the capture of the `fugaro watch` screen needs a marked slot to be checked in (changes spec 2026-10-18, item 3)')
   for (const attribute of ['src', 'srcset', 'href', 'style', 'aria-label', 'role']) {
     assert.ok(!slot.attrs.has(attribute), `the slot carries ${attribute}, and the hook this check reads is \`data-slot\` alone (changes spec 2026-10-18, item 3)`)
   }
 
-  // "right after the chat": the slot opens the block under the conversation, directly beneath
-  // the heading of the thing the screenshot shows — the `fugaro watch` screen — so it is where
-  // item 3 puts it. It used to sit inside the chat's figure, between the turns and the watch
-  // bar; the review of round 3 moved the caption to the foot of the conversation (item 3a),
-  // and a `figcaption` is a figure's first or last child, so the watch block — heading, slot,
-  // bar, note — is the figure's sibling and carries the slot with it.
-  const heading = findAll(page, (el) => CHAT_CLASSES(el).includes('chat-watch-title'))[0]
-  assert.ok(heading, 'the homepage carries no "Watch it run" heading, and the screenshot slot and the command below it belong to a named block (changes spec 2026-10-18, item 3)')
-  const siblings = (heading.parent.children ?? []).filter((child) => child.name !== undefined)
+  // **It is in the third panel, and it opens it.** The owner's approved draft of 2026-10-19
+  // puts the capture in the "See it" tab, and the panel reads: its heading, then the picture,
+  // then the command the reader runs to see the same screen. Held as structure — the panel's
+  // own children — rather than as a class name, because the panel is what a reader switches to,
+  // and a picture moved into the "Why Fugaro?" panel is a picture under a heading about something
+  // else.
+  const panel = findAll(page, (el) => el.attrs.get('id') === 'home-panel-see')[0]
+  assert.ok(panel, 'the homepage carries no #home-panel-see, and the capture is what the draft\'s "See it" tab shows (the owner\'s approved draft of 2026-10-19)')
+  let inPanel = false
+  for (let parent = slot.parent; parent; parent = parent.parent) if (parent === panel) inPanel = true
+  assert.ok(inPanel, 'the watch screenshot is not in the "See it" panel, and the draft puts the capture in the tab a reader opens to see what a run looks like (the owner\'s approved draft of 2026-10-19)')
+  const children = (panel.children ?? []).filter((child) => child.name !== undefined)
+  const heading = children.find((child) => child.name === 'h2')
+  assert.ok(heading, 'the "See it" panel carries no heading, and the picture and the command below it belong to a named block (the owner\'s approved draft of 2026-10-19)')
   assert.equal(
-    siblings[siblings.indexOf(heading) + 1],
+    children[children.indexOf(heading) + 1],
     slot,
-    'the slot for the watch screenshot is not the element after the `fugaro watch` heading, and item 3 puts it right after the chat, with the command bar below it (changes spec 2026-10-18, item 3)',
+    'the slot for the watch screenshot is not the element after the "See it" heading: the panel reads heading, picture, command (the owner\'s approved draft of 2026-10-19)',
   )
-  const figure = findAll(page, (el) => el.name === 'figure' && CHAT_CLASSES(el).includes('chat'))[0]
-  assert.ok(figure, 'the homepage renders no <figure class="chat">, and the conversation and its caption are the figure (changes spec 2026-10-18, item 3)')
-  for (let parent = slot.parent; parent; parent = parent.parent) {
-    assert.notEqual(
-      parent,
-      figure,
-      "the watch screenshot is inside the chat's figure, and the caption under the conversation is the figure's last child: an image after it is markup the HTML content model rejects, and the picture belongs to the `fugaro watch` block it is of (changes spec 2026-10-18, item 3a)",
-    )
-  }
+  assert.ok(
+    !classes(slot).includes('watch-block') && findAll(page, (el) => classes(el).includes('watch-block'))[0],
+    'the watch command block is gone from the page, and the panel offers the reader the command that shows them the screen the picture is of (changes spec of 2026-10-18, item 3)',
+  )
 
-  // **The picture is IN the slot**, exactly one of it: the slot is where item 3 put the
-  // screenshot, and an image beside the slot is a picture this page renders outside the place
-  // the page says it renders it.
+  // **The picture is IN the slot**, exactly one of it: the slot is where the capture goes, and
+  // an image beside the slot is a picture this page renders outside the place the page says it
+  // renders it.
   const images = [...walk(slot)].filter((el) => el.name === 'img')
   assert.equal(
     images.length,
@@ -1525,7 +1433,7 @@ test('the watch screenshot is in the slot the changes spec marks, named, sized a
   )
 
   // **And the dimensions are the capture's own**, so the browser reserves the box before the
-  // file arrives and the command bar under it does not jump — which is the whole reason the
+  // file arrives and the command under it does not jump — which is the whole reason the
   // attributes are there. They are held to the capture `docs/website/redesign/README.md`
   // records rather than to themselves: a declared box of the wrong SHAPE — `1459 x 440`, one
   // pixel off the height, or the two numbers swapped — reserves the wrong box and scales the
@@ -1556,7 +1464,8 @@ test('the watch screenshot is in the slot the changes spec marks, named, sized a
   // **The page's pictures are these two and no others**: the wordmark in the header and the
   // owner's screenshot. A homepage that grew a third `<img>` — an illustration, an icon, a
   // picture of a screen the run does not have — is what this last assertion is for (Global
-  // Constraint 9; D107's rule for the hero's video).
+  // Constraint 9; D107's rule for the hero's video). The slider's three step icons are inline
+  // SVG rather than files, so they are not pictures in this reading and carry no `src`.
   const pictures = [...walk(page)]
     .filter((el) => ['img', 'picture', 'video', 'source'].includes(el.name))
     .map((el) => el.attrs.get('src') ?? el.attrs.get('srcset') ?? '')
@@ -1567,196 +1476,335 @@ test('the watch screenshot is in the slot the changes spec marks, named, sized a
   )
 })
 
-test("the flow carries the changes spec's four steps, on the homepage", () => {
+test('the design record quotes the caption the site ships', () => {
+  // The record tells a reader what the "See it" panel's caption says, and it quotes the
+  // sentence to do it. A quote rots the moment the caption is rewritten, and this one has
+  // outlived a caption already: it quoted the chat's, and the owner's approved draft of
+  // 2026-10-19 ("Home, draft 2 (slider)") moved the picture and its caption into the slider's
+  // third panel and deleted the component the record still pointed at. The record is a
+  // description of this branch's artifact (P9, D102), so what it quotes of the artifact is
+  // held to the artifact here, in the file that already holds the caption to its shape.
+  const page = builtPage('')
+  const caption = classText(page, 'watch-note')
+  assert.ok(caption, 'the "See it" panel carries no caption under its command, so there is nothing for the design record to quote (the owner\'s approved draft of 2026-10-19)')
+  const record = repoFile('docs/website/redesign/README.md')
+  assert.ok(
+    normalize(record).includes(normalize(caption)),
+    `docs/website/redesign/README.md does not quote the caption the built page ships. The page says ${JSON.stringify(caption)}; the record's account of the caption quotes a sentence that is not on the site. The record describes the site this branch builds, so the sentence it quotes moves with the caption (P9, D102; Global Constraint 6)`,
+  )
+
+  // And where the record says the picture is, which is a pointer at the tree and rots the same
+  // way a quote does: the record's section on the capture named
+  // `website/src/components/AgentChat.astro` while that component rendered the slot, and the
+  // draft of 2026-10-19 moved the slot into the slider's third panel and deleted the file. So
+  // every component path the section points at has to be a component this tree has, and the one
+  // that renders the slot has to be among them — read from the tree rather than from the record.
+  const renders = filesUnder(path.join(SITE, 'src/components'))
+    .filter((file) => readFileSync(path.join(SITE, 'src/components', file), 'utf8').includes('data-slot="watch-screenshot"'))
+  assert.deepEqual(
+    renders,
+    ['HomeSlider.astro'],
+    `the watch screenshot's slot is rendered by ${JSON.stringify(renders)}, and the record's account of where the picture is is read against that component (P9; the owner's approved draft of 2026-10-19)`,
+  )
+  const where = section('docs/website/redesign/README.md', 'The fugaro watch screenshot (owner spec of 2026-10-18, item 5)')
+  const pointers = [...new Set([...where.matchAll(/website\/src\/components\/([\w.-]+\.astro)/g)].map((m) => m[1]))]
+  assert.ok(
+    pointers.length > 0,
+    `docs/website/redesign/README.md's section on the capture names no component of website/src/components, and the record has to say where the picture is: the picture is in the slot ${renders[0]} renders (P9; the owner's approved draft of 2026-10-19)`,
+  )
+  for (const component of pointers) {
+    assert.ok(
+      existsSync(path.join(SITE, 'src/components', component)),
+      `docs/website/redesign/README.md's section on the capture points at website/src/components/${component}, and this tree has no such component: the record describes the site this branch builds, so its pointers move with the tree (P9; the owner's approved draft of 2026-10-19)`,
+    )
+  }
+  assert.ok(
+    pointers.includes(renders[0]),
+    `docs/website/redesign/README.md's section on the capture names ${JSON.stringify(pointers)} and not ${renders[0]}, the component that renders the watch screenshot's slot: the record's account of where the picture is is a pointer at the tree (P9; the owner's approved draft of 2026-10-19)`,
+  )
+})
+
+// ---- the picture of the run: the gates the retired four-step flow left behind ----------------
+//
+// The owner's ruling of 2026-10-20 retires `ArchitectureDiagram.astro` and the four-step flow
+// with it, and asks for the gates that read the flow to be replaced, one for one, by gates that
+// read what the pages show now. The four tests below are the flow's four gates, kept as gates
+// and moved onto the picture that took the flow's place on `/how-it-works/` — the drawing and
+// the run in words under it — and onto the block that took its place on the homepage, the
+// slider. Where the flow's gate read the flow's four steps, these read the drawing's four boxes;
+// where it read the flow's captions, these read every word on the figure; where it read the
+// flow's scroll-driven reveal, these read the motion the two pages actually keep.
+
+test("the run is How It Works' own picture of one, and the homepage carries the slider instead", () => {
   const ruling = item4()
   assert.equal(ruling.steps.length, 4, `the changes spec's item 4 names ${ruling.steps.length} steps, and the picture draws four (changes spec 2026-10-18, item 4)`)
 
-  // The homepage's flow sits under the hero, which is where P8 puts it: the picture of a run
-  // above the tagline would be the first thing a reader meets, before anything has said what
-  // Fugaro is. Held as "outside the hero and after it" rather than as an offset in the page's
-  // text: a flow rendered inside the hero — under the chat, say — starts after the hero's
-  // opening tag too, and is the same defect.
+  // **One page carries the picture.** The owner's approved draft of 2026-10-19 ("Home, draft 2
+  // (slider)") is the homepage's three blocks — the hero, the slider and the call to action —
+  // and the picture of a run is not one of them: it is `/how-it-works/`'s opening, where the
+  // four steps have the room to be drawn and where the run in words under them is. The homepage
+  // is where the retired flow's absence is read, because the flow is what stood in the slider's
+  // place; `website/test/how-it-works.mjs` reads the same fact from the other side, refusing a
+  // diagram on any page but that one.
   const home = parse(builtPage(''))
-  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
-  const hero = findAll(home, (el) => el.name === 'section' && classes(el).includes('hero'))[0]
-  const figure = findAll(home, (el) => el.name === 'figure' && classes(el).includes('flow'))[0]
-  assert.ok(hero, 'the homepage has no hero section, and the flow is placed below it (P8)')
-  assert.ok(figure, 'the homepage renders no <figure class="flow">, and the flow is the picture item 4 asks for (P8, spec item 4)')
-  let insideHero = false
-  for (let parent = figure.parent; parent; parent = parent.parent) if (parent === hero) insideHero = true
-  assert.ok(!insideHero, 'the homepage renders its flow inside the hero section: the picture of the run goes below the hero, not within it (P8)')
-  const order = [...walk(home)]
-  assert.ok(order.indexOf(hero) < order.indexOf(figure), 'the homepage renders its flow above the hero: the picture of the run goes below the hero (P8)')
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
+  assert.equal(
+    findAll(home, (el) => el.name === 'figure' && classes(el).includes('run-diagram')).length,
+    0,
+    `the homepage renders a <figure class="run-diagram">, and the draft's homepage is the hero, the slider and the call to action: the picture of the run is /how-it-works/'s opening (the owner's approved draft of 2026-10-19; changes spec 2026-10-18, item 4)`,
+  )
+  assert.equal(
+    pictureOf(builtPage('')).flows,
+    0,
+    'the homepage renders the retired four-step flow: the owner\'s ruling of 2026-10-20 deletes `ArchitectureDiagram.astro` and the flow with it, and the block that stands in its place is the slider (website/test/slider.mjs holds the slider\'s own shape)',
+  )
 
-  // The homepage's flow, and only the homepage's. The four steps used to be on both pages,
-  // one figure rendered by one component; the owner's approved draft for How It Works
-  // (2026-10-19) replaced that page's body with the run's own diagram — the stages a run
-  // works through, which the four steps do not draw — and `test/how-it-works.mjs` is the gate
-  // for it. The flow is the homepage's picture now, and a page that quietly grew a second
-  // copy of it would be a second picture to keep in step with the first.
-  const failures = flowFailures(builtPage(''), ruling, captionSources())
-  assert.deepEqual(failures, [], `the homepage's flow is not the one the changes spec's item 4 describes:\n  ${failures.join('\n  ')}`)
-  for (const route of ['how-it-works']) {
-    const page = builtPage(route)
-    assert.equal(
-      findAll(parse(page), (el) => el.name === 'figure' && (el.attrs.get('class') ?? '').split(/\s+/).includes('flow')).length,
-      0,
-      'the How It Works page renders the homepage\'s four-step flow: the owner\'s draft puts the run\'s own diagram there, and `test/how-it-works.mjs` holds it (owner\'s draft of 2026-10-19)',
+  // And the slider is the block in its place, read as the retired gate read the picture: three
+  // tabs, three panels, all of them in the HTML a reader receives, each tab a link to the panel
+  // it shows. A homepage whose tabs pointed at nothing would be a homepage whose blocks a reader
+  // without JavaScript cannot reach — which is what the flow's own gate said about the figure
+  // when it asked a page to render exactly one of them.
+  const tabs = findAll(home, (el) => el.name === 'a' && classes(el).includes('tab')).map((el) => el.attrs.get('href') ?? '')
+  const panels = findAll(home, (el) => classes(el).includes('panel')).map((el) => el.attrs.get('id') ?? '')
+  assert.equal(
+    tabs.length,
+    3,
+    `the homepage's slider offers ${tabs.length} tabs, and the draft's first panel is the three steps of using Fugaro beside a Benefits tab and a See it tab (the owner's approved draft of 2026-10-19; changes spec 2026-10-18, item 4)`,
+  )
+  assert.equal(
+    panels.length,
+    3,
+    `the homepage's slider carries ${panels.length} panels, and every tab it offers is a link to a panel: a tab that points at nothing shows nothing (the owner's approved draft of 2026-10-19)`,
+  )
+  assert.deepEqual(
+    tabs,
+    panels.map((id) => `#${id}`),
+    `the homepage's tabs point at ${JSON.stringify(tabs)} and its panels are ${JSON.stringify(panels.map((id) => `#${id}`))}: each tab is the link to the panel in its place, so the block is reachable without the script (the owner's approved draft of 2026-10-19)`,
+  )
+
+  // **And the picture is item 4's four steps, drawn**: the drawing's boxes, its labels, the run
+  // in words under it, and the section the words are the detail of.
+  const drawn = pictureOf(builtPage('how-it-works'))
+  assert.equal(
+    drawn.figures,
+    1,
+    `the /how-it-works/ page renders ${drawn.figures} pictures of a run, and it renders one: the picture is the page's opening (the owner's approved draft of 2026-10-19)`,
+  )
+  const failures = pictureFailures(builtPage('how-it-works'), ruling)
+  assert.deepEqual(
+    failures,
+    [],
+    `the /how-it-works/ page's picture of a run is not the one the changes spec's item 4 describes:\n  ${failures.join('\n  ')}`,
+  )
+
+  // The run in words is the detail, and the detail is not on the homepage: item 4 removes the
+  // duplicate text-heavy "how it works" section from the homepage and leaves the explanation to
+  // the page that opens with the picture. A section that came back would be a second description
+  // of the run to keep in step with the first. (This is the retired gate's count of
+  // `section.run-detail`, moved onto the section that carries the same detail now: the
+  // run-detail section went with the flow in PR #726, and the list under the picture is what
+  // stands in its place.)
+  assert.equal(
+    pictureOf(builtPage('')).details,
+    0,
+    'the homepage renders the run in words: item 4 removes the duplicate text-heavy "how it works" section from the homepage and leaves the detail to the How It Works page, where it is the list under the picture (changes spec 2026-10-18, item 4)',
+  )
+  assert.equal(
+    drawn.details,
+    1,
+    'the How It Works page renders no run in words under its picture, and item 4 puts the detail under the picture there: the drawing alone is a picture a reader who cannot see it is told nothing by (changes spec 2026-10-18, item 4)',
+  )
+})
+
+test("the flow's scroll-driven reveal is retired with it, and every motion the pages keep answers a reader who asks for less", () => {
+  // The retired gate (W1.4 step 3, D105) held the flow's reveal to two guards: a
+  // `@supports (animation-timeline: view())` feature query and a
+  // `@media (prefers-reduced-motion: no-preference)` preference query. The reveal is retired
+  // with the flow, and the gate that read it is replaced by the rule the two readings below
+  // state: the mechanism is refused outright, because neither thing that took the flow's place
+  // animates — the slider's panels are the fragment's and the drawing is a still picture — and
+  // the motion the pages do keep (smooth scrolling, and the transitions on the copy control and
+  // the links) is covered on each page by its own answer to a reader who asks for less.
+  for (const route of ['', 'how-it-works']) {
+    const where = route === '' ? '/' : `/${route}/`
+    const css = builtCSS(builtPage(route))
+    assert.deepEqual(
+      pageMotionFailures(css),
+      [],
+      `the ${where} page keeps motion a reader who asked for less would still be given:\n  ${pageMotionFailures(css).join('\n  ')}`,
+    )
+    const flat = css.replace(/\s+/g, '')
+    for (const property of ['animation-timeline', 'scroll-timeline', 'view-timeline']) {
+      assert.ok(
+        !flat.includes(`${property}:`),
+        `the ${where} page declares \`${property}\`, and the page is not revealed by scrolling: the flow's scroll-driven animation is retired with the flow (the owner's ruling of 2026-10-20; W1.4 step 3, D105)`,
+      )
+    }
+    assert.ok(
+      !/@keyframes/.test(flat),
+      `the ${where} page declares a \`@keyframes\` animation, and neither thing that replaced the flow animates: the slider's three panels are the fragment's and the drawing is a still picture (the owner's ruling of 2026-10-20; W1.4 step 3, D105)`,
     )
   }
 })
 
-test('the flow refusals fire on the defect each one names', () => {
-  // The cases below are the check's own proof: the fixture page passes, and each fixture
-  // that breaks one rule of the flow makes exactly that rule's line appear. Without them a
-  // check that read no steps at all would pass every page.
-  const ruling = item4()
-  const sources = captionSources()
-  const failing = (steps) => flowFailures(flowPage(steps), ruling, sources)
-
-  assert.deepEqual(failing(fixtureSteps()), [], 'the fixture page does not pass the check it is the control for')
-
-  const dropped = fixtureSteps().slice(0, -1)
-  assert.ok(
-    failing(dropped).some((line) => /steps are .*and the changes spec's item 4 names/.test(line)),
-    'a step removed from the flow passes the check: the four steps are what item 4 draws, and a fifth or a missing one has to fail',
+test("every word of the picture is a line of the section it cites, in that section's order", () => {
+  // The same rule `pictureFailures` applies, said here one page at a time and with the page's
+  // name in the message, because this is the acceptance a reader can check: the figure and the
+  // run in words under it say what the repository says, in the order the repository says it.
+  // The retired gate read the flow's four captions this way; the labels drawn inside the figure
+  // and the list of the same run under it are what stands in their place, and the slider's own
+  // three lines are held to their sections the same way by `website/test/slider.mjs`'s
+  // `stepFailures`, which is the homepage's side of this acceptance.
+  const where = '/how-it-works/'
+  const picture = pictureOf(builtPage('how-it-works'))
+  const regions = picture.regions.map((region) => ({ ...region, where: `${where}'s ${region.where}` }))
+  assert.equal(
+    regions.length,
+    4,
+    `the ${where} page's picture is read as ${regions.length} regions and the page carries four — the wide drawing, the tall drawing, the facts under them and the second list under those: a reading that found fewer would pass the page on labels it never read (the owner's draft of 2026-10-19)`,
   )
 
-  const reordered = [...fixtureSteps()]
-  ;[reordered[2], reordered[3]] = [reordered[3], reordered[2]]
-  assert.ok(
-    failing(reordered).some((line) => /steps are .*and the changes spec's item 4 names/.test(line)),
-    "two steps swapped pass the check: the order is the run's order, and a flow that drew the pull request before the job describes a run that cannot happen",
-  )
-
-  const paraphrased = fixtureSteps().map((step, i) => (i === 2 ? { ...step, caption: 'The agent works in the container.' } : step))
-  assert.ok(
-    failing(paraphrased).some((line) => /does not appear in README\.md#How it works/.test(line)),
-    'a caption written for the page passes the check: every caption is a line of the section it cites (Global Constraint 6, RF11)',
-  )
-
-  const elsewhere = fixtureSteps().map((step, i) => (i === 0 ? { ...step, source: 'website/content/cli-reference.md' } : step))
-  assert.ok(
-    failing(elsewhere).some((line) => /held to a section of a document this repository carries/.test(line)),
-    'a caption attributed to a document the flow may not quote passes the check: every caption comes from a section this check reads',
-  )
-
-  // Two steps of one section, each quoting a line of it: a check that held each caption to
-  // its section and no further would let them swap, and the page would then say the run opens
-  // a pull request that is done, then gone. The shipped flow cites four sections, so the pair
-  // is built here out of README.md's own `## How it works` lines — the job's and step 4's —
-  // and the rule is what has to keep holding for the day two steps share a section again.
-  const pair = sharedSectionSteps()
-  const swapped = pair.map((step, i) => (i === 2 ? { ...step, caption: pair[3].caption } : i === 3 ? { ...step, caption: pair[2].caption } : step))
-  assert.deepEqual(failing(pair), [], 'the two steps quoting one section do not pass the check their own case is about')
-  assert.ok(
-    failing(swapped).some((line) => /at or after the step before it/.test(line)),
-    'the job step\'s caption and the pull request step\'s swapped pass the check: each is still a line of README.md\'s "## How it works", and the order is what keeps each on the step it describes',
-  )
-
-  // The heading a reader sees, which is not the `data-step` this check reads: a page whose
-  // headings said something else entirely would otherwise pass on its attributes alone.
-  const retitled = fixtureSteps().map((step, i) => (i === 2 ? { ...step, heading: 'A container does the work' } : step))
-  assert.ok(
-    failing(retitled).some((line) => /heading reads .*and the changes spec's item 4 names it/.test(line)),
-    "a step heading replaced with a sentence of the page's own passes the check: the heading is the name a reader reads, and item 4 names it",
-  )
-
-  // Item 4's picture is four steps with one short line each, and D185's two annotations under
-  // the job step are detail that moved into the How It Works page's explanation.
-  const annotated = fixtureSteps().map((step, i) =>
-    i === 2 ? { ...step, nested: '<li class="annotation"><span class="annotation-name">cache</span></li>' } : step,
-  )
-  assert.ok(
-    failing(annotated).some((line) => /carries 1 nested list item\(s\)/.test(line)),
-    'a sub-list under a step passes the check: the picture carries the four steps and nothing under them (changes spec 2026-10-18, item 4)',
-  )
-
-  const arrowless = fixtureSteps().map((step, i) => (i === 1 ? { ...step, arrow: false } : step))
-  assert.ok(
-    failing(arrowless).some((line) => /carries 2 arrows between 4 steps/.test(line)),
-    'a step with no arrow after it passes the check: the picture is a flow, and the arrows are what make it one',
-  )
-
-  // And the reader itself: a page that renders no flow is the failure a check reading
-  // "no steps" would otherwise report as success.
-  assert.deepEqual(
-    flowFailures('<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1></main></body></html>', ruling, sources),
-    ['the page renders 0 flows, and it renders one: the flow is the picture of the run (P8, spec item 4)'],
-  )
-})
-
-test('the flow moves on scroll only for a reader who allows motion', () => {
-  // Both pages, because the flow is on both and each page ships the component's CSS.
-  const css = ['', 'how-it-works'].map((route) => builtCSS(builtPage(route))).join('\n')
-
-  // The animation is a scroll-driven one on the steps, and the reduced-motion path is the
-  // flow itself: a reader whose system asks for less motion gets every step in place,
-  // because the animation that brings a step in is inside a guard that never opens for
-  // them. That is why the guard is checked here rather than a fill mode (W1.4 step 3, D105).
-  assert.match(
-    css,
-    /animation-timeline:\s*view\(\)/,
-    'the flow has no scroll-driven animation, and W1.4 step 3 asks for one that reveals the steps as the reader reaches them',
-  )
-  assert.match(
-    css.replace(/\s+/g, ''),
-    /@supports\(animation-timeline:view\(\)\)/,
-    'the scroll-driven animation is not behind a feature query: a browser that cannot run it has to render the flow as it stands rather than render nothing',
-  )
-  assert.match(
-    css.replace(/\s+/g, ''),
-    /@media\(prefers-reduced-motion:no-preference\)/,
-    'the scroll-driven animation is not behind a preference query, so a reader who asked for less motion would get a flow that fades in as they scroll it (D105, W1.4 step 3)',
-  )
-})
-
-test("every caption in the flow is a line of the section its step cites, in that section's order", () => {
-  // The same rule `flowFailures` applies, said here one page at a time and with the page's
-  // name in the message, because this is the acceptance a reader can check: the four steps say
-  // what the repository says, in the order the repository says it. Three of the four quote a
-  // section of README.md, and the pull request's caption quotes `docs/git-providers.md`'s
-  // checkpoint pushes, which is the document that says when the pull request opens; a
-  // section's own order is the cursor below, and it is what a second step quoting the same
-  // section obeys.
-  const ruling = item4()
-  const sources = captionSources()
-
-  // The homepage, where the flow is: the How It Works page carries the run's own diagram
-  // instead (the owner's draft of 2026-10-19, `test/how-it-works.mjs`).
-  for (const route of ['']) {
-    const where = route === '' ? '/' : `/${route}/`
-    const flow = flowOf(builtPage(route))
-
-    assert.equal(
-      flow.steps.length,
-      4,
-      `the ${where} page's flow renders ${flow.steps.length} steps, and the changes spec's item 4 names four (changes spec 2026-10-18, item 4)`,
+  for (const region of regions) {
+    assert.ok(
+      region.labels.length > 0,
+      `nothing is labelled in ${region.where}, and the picture is its words: a region this check reads as empty is a region this check passes without reading (the owner's draft of 2026-10-19)`,
     )
-    assert.deepEqual(
-      flow.steps.map((step) => step.heading),
-      ruling.steps,
-      `the ${where} page's flow is headed ${JSON.stringify(flow.steps.map((step) => step.heading))}, and item 4 names ${JSON.stringify(ruling.steps)}: the headings are the names a reader reads (changes spec 2026-10-18, item 4)`,
-    )
-
     const reached = new Map()
-    for (const step of flow.steps) {
-      const section = sources[step.source] ?? ''
-      assert.ok(
-        step.source in sources,
-        `the ${where} page's ${JSON.stringify(step.name)} step attributes its caption to ${JSON.stringify(step.source)}, and a caption is held to a section of a document this repository carries (changes spec 2026-10-18, item 4)`,
+    for (const label of region.labels) {
+      const held = quotedSection(label.source)
+      assert.notEqual(
+        held.text,
+        null,
+        `${region.where} attributes the label ${JSON.stringify(label.text)} to ${JSON.stringify(label.source)}, and a label is held to a section of a document this repository carries (changes spec 2026-10-18, item 4)`,
       )
-      const line = normalize(step.caption)
-      const from = reached.get(step.source) ?? 0
-      const at = normalize(section).indexOf(line, from)
+      const line = normalize(label.text)
+      const from = reached.get(label.source) ?? 0
+      const at = normalize(held.text).indexOf(line, from)
       assert.notEqual(
         at,
         -1,
-        `the ${where} page's ${JSON.stringify(step.name)} caption ${JSON.stringify(step.caption)} does not appear in ${step.source} at or after the step before it: every caption in the flow is the repository's own words in the order their section writes them, rather than the page's (changes spec 2026-10-18, item 4; Global Constraint 6)`,
+        `${region.where}'s label ${JSON.stringify(label.text)} does not appear in ${label.source} at or after the label before it: every word of the picture is the repository's own words in the order their document writes them, rather than the page's — and a line that moved above another is the page describing a run the repository does not (changes spec 2026-10-18, item 4; Global Constraint 6, RF11)`,
       )
-      reached.set(step.source, at + line.length)
+      reached.set(label.source, at + line.length)
     }
   }
+})
+
+test('the picture refusals fire on the defect each one names', () => {
+  // The cases below are the check's own proof: the fixture page — the built page's own figure and
+  // the built page's own run in words, side by side — passes, and each fixture that breaks one
+  // rule makes exactly that rule's line appear. Without them a check that read no boxes and no
+  // labels at all would pass every page, which is the failure mode a replacement gate this new
+  // has (the owner's ruling of 2026-10-20).
+  const ruling = item4()
+  const page = builtPage('how-it-works')
+  const figure = /<figure class="run-diagram"[\s\S]*?<\/figure>/.exec(page)
+  const words = /<section class="run-words"[\s\S]*?<\/section>/.exec(page)
+  assert.ok(figure && words, "the built /how-it-works/ page carries no `figure.run-diagram` and `section.run-words`, and the fixtures below are drawn from the page's own markup")
+  const fixture = (body) => `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1>${body}</main></body></html>`
+  const picturePage = (figureMarkup = figure[0], wordsMarkup = words[0]) => fixture(figureMarkup + wordsMarkup)
+  const failing = (html) => pictureFailures(html, ruling)
+  const control = picturePage()
+  assert.deepEqual(failing(control), [], 'the fixture page does not pass the check it is the control for')
+
+  // The four boxes, which are the ruling's four names: one renamed, two exchanged, one with no
+  // name at all.
+  const renamed = picturePage(figure[0].replace('>Your agent</text>', '>Your helper</text>'), words[0])
+  assert.notEqual(renamed, control, 'the fixture did not rename a box: the page\'s own markup carries no `>Your agent</text>`')
+  assert.ok(
+    failing(renamed).some((line) => /draws the boxes .*and the changes spec's item 4 names/.test(line)),
+    'a box renamed passes the check: the four boxes are the steps item 4 names, and a name the ruling does not carry is a claim about how a run works',
+  )
+
+  const tag = (name) => new RegExp(`<text class="run-name"[^>]*>${name}</text>`)
+  const swap = (html, one, other) => {
+    const first = tag(one).exec(html)
+    const second = tag(other).exec(html)
+    assert.ok(first && second, `the built page's figure names no \`${one}\` and \`${other}\` box, and this fixture exchanges them`)
+    return html.replace(first[0], '\u0000').replace(second[0], first[0]).replace('\u0000', second[0])
+  }
+  assert.ok(
+    failing(picturePage(swap(figure[0], 'Your agent', 'Fugaro'), words[0])).some((line) => /draws the boxes .*and the changes spec's item 4 names/.test(line)),
+    "two boxes swapped pass the check: the order is the run's order, and a picture that drew Fugaro asking for the work describes a run that cannot happen",
+  )
+  assert.ok(
+    failing(picturePage(figure[0].replace('>Your agent</text>', '></text>'), words[0])).some((line) => /draws the boxes \[\"\"/.test(line)),
+    'a box left with no name passes the check: every box of the picture is named, and a box whose name is gone says nothing about the step it draws',
+  )
+
+  // The labels: one paraphrased, one attributed to a section that is not there, and two of one
+  // section exchanged — each still the repository's words if the *file* were what bounded them.
+  const paraphrased = picturePage(figure[0].replace('>Fan out these three</text>', '>Fan out these two</text>'), words[0])
+  assert.notEqual(paraphrased, control, 'the fixture did not paraphrase a label: the page\'s own markup carries no `>Fan out these three</text>`')
+  assert.ok(
+    failing(paraphrased).some((line) => /does not appear in docs\/website\/redesign\/changes-spec-2026-10-18\.md at or after the label before it/.test(line)),
+    'a paraphrased label passes the check: every word of the picture is the repository\'s own (Global Constraint 6, RF11)',
+  )
+
+  const elsewhere = picturePage(figure[0].replace('data-source="plugin/skills/parallelism/SKILL.md"', 'data-source="plugin/skills/parallelism/SKILL.md#Nope"'), words[0])
+  assert.notEqual(elsewhere, control, 'the fixture did not misattribute a label: the page\'s own markup carries no `data-source="plugin/skills/parallelism/SKILL.md"`')
+  assert.ok(
+    failing(elsewhere).some((line) => /a label is held to a section of a document this repository carries/.test(line)),
+    'a label attributed to a section that does not exist passes the check: a label is quoted from a section this check reads',
+  )
+
+  // Two labels of one section, each quoting a line of it, in the order the section writes them:
+  // a check that held each label to its section and no further would let them swap, and the page
+  // would then say the draft opens before the job that opens it. The cursor is what keeps each
+  // label where the document put it, and the pair below is README.md's `## How it works` own two
+  // lines, moved into each other's place in the list under the picture.
+  const spanAt = (markup, text) => {
+    const at = markup.indexOf(text)
+    assert.notEqual(at, -1, `the built page's words list carries no ${JSON.stringify(text)}, and this fixture moves it`)
+    const start = markup.lastIndexOf('<span', at)
+    return markup.slice(start, markup.indexOf('</span>', at) + '</span>'.length)
+  }
+  const jobLine = spanAt(words[0], 'Cloud Run job per repository workflow')
+  const draftLine = spanAt(words[0], 'a draft opens at the first push')
+  const moved = words[0].replace(draftLine, '').replace(jobLine, draftLine + jobLine)
+  const swapped = picturePage(figure[0], moved)
+  assert.notEqual(swapped, control, 'the fixture did not move a line: the page\'s own words list carries no such spans')
+  assert.ok(
+    failing(swapped).some((line) => /at or after the label before it/.test(line)),
+    "the draft's line and the job's line swapped pass the check: each is still a line of README.md's \"## How it works\", and the order is what keeps each on the step it describes",
+  )
+
+  // And the reader itself: a page that renders no picture is the failure a check reading "no
+  // boxes" would otherwise report as success, and a page that renders the retired flow again is
+  // rendering the component the ruling deleted.
+  assert.ok(
+    failing(picturePage('', words[0])).some((line) => /renders 0 pictures of a run/.test(line)),
+    'a page with no figure passes the check: the page that carries the run is the page whose picture this check reads',
+  )
+  assert.ok(
+    failing(picturePage(figure[0] + '<ol class="flow-steps"><li class="flow-step">a step</li></ol>', words[0])).some((line) => /renders 1 `ol\.flow-steps`/.test(line)),
+    'a page that renders the retired flow again passes the check: the ruling deletes the component, and the flow is not a second description the pages may keep',
+  )
+  assert.ok(
+    failing(picturePage(figure[0], '')).some((line) => /renders 0 lists of the run in words/.test(line)),
+    'a page whose run in words is gone passes the check: the drawing alone is a picture a reader who cannot see it is told nothing by (changes spec 2026-10-18, item 4)',
+  )
+
+  // The motion gate: the page's own answer to a reader who asks for less, and the scroll-driven
+  // reveal the flow brought its steps in with.
+  const guard = '@media (prefers-reduced-motion:reduce){*,:before,:after{scroll-behavior:auto!important;transition-duration:1ms!important;transition-delay:0s!important;animation-duration:1ms!important;animation-iteration-count:1!important;animation-delay:0s!important}}'
+  assert.deepEqual(pageMotionFailures('.copy-button{transition:color var(--duration-fast)}html{scroll-behavior:smooth}' + guard), [], 'a page whose motion is guarded does not pass the motion check its own cases are about')
+  assert.ok(
+    pageMotionFailures('.copy-button{transition:color var(--duration-fast)}').some((line) => /transition: color var\(--duration-fast\), and no prefers-reduced-motion: reduce rule neutralises it/.test(line)),
+    'a transition with no reduce rule passes the motion check: motion is for a reader who allows it (W1.4 step 3, D105)',
+  )
+  assert.ok(
+    pageMotionFailures('html{scroll-behavior:smooth}').some((line) => /scroll-behavior: smooth, and no prefers-reduced-motion: reduce rule neutralises it/.test(line)),
+    'smooth scrolling with no reduce rule passes the motion check: the reader who asks for less is given a page that does not slide under them (W1.4 step 3, D105)',
+  )
+  assert.ok(
+    pageMotionFailures(`.step-card{animation-timeline:view()}${guard}`).some((line) => /declares animation-timeline: view\(\), and the page is not revealed by scrolling/.test(line)),
+    "the flow's scroll-driven reveal passes the motion check as long as it is guarded: the flow is retired and neither thing in its place animates, so the mechanism is refused rather than guarded (the owner's ruling of 2026-10-20)",
+  )
+  assert.ok(
+    pageMotionFailures(`${guard}.step-card{animation:reveal 2s} .step-card:hover{transition:none}`).length === 0,
+    'a neutralised animation and a disabled transition are both refused by the motion check, and neither is motion a reader is given',
+  )
 })
 
 
@@ -1829,6 +1877,107 @@ test('the tokens the pages name are the ones the design layer declares', () => {
     [],
     `the pages ask for ${undeclared.join(', ')}, and nothing in the artifact declares it: the declaration is invalid at computed-value time, so the style silently does not apply — a token name the design layer does not have is exactly this defect (W1.2, W1.4)`,
   )
+})
+
+/** The homepage's own controls, and what each one is, as a failure names it. */
+const CONTROL_TARGETS = [
+  ['hero-cta', "the hero's filled call to action"],
+  ['hero-cta-quiet', "the hero's quiet call to action"],
+  ['home-install-button', 'the button under the slider'],
+]
+
+/**
+ * Every way a homepage control misses the target size the owner's brief of 2026-10-19
+ * measures it against, as the lines a reader of a failure gets. **Every control the page asks
+ * a reader to tap is at least 44 px tall**, and the page's own controls are the hero's two
+ * links in the action row and the one button under the slider (`HomeInstall.astro`); the
+ * slider's three tabs are `test/slider.mjs`'s, which reads them at the widths the page is
+ * read at, so this reading is about the controls outside the slider.
+ *
+ * A minimum rather than a measurement, and that is the point: the hero's filled link is its
+ * own line height plus its padding, which comes to a fraction of a pixel short of the target
+ * with nothing in the markup to say so — a defect no reading of the markup can see and no
+ * rendered measurement in this repository can take, which is why the rule declares the minimum
+ * and this reading looks for the declaration. A rule inside a media query does not count: the
+ * minimum has to hold at every width, so the rule it is declared in is one with no condition
+ * over it.
+ */
+export function controlTargetFailures(css, controls = CONTROL_TARGETS) {
+  const tokens = new Map([...css.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;}]+)/g)].map((m) => [m[1], m[2].trim()]))
+  const px = (value) => {
+    const trimmed = (value ?? '').trim()
+    const named = /^var\((--[a-z0-9-]+)\)$/.exec(trimmed)
+    const resolved = named ? (tokens.get(named[1]) ?? '') : trimmed
+    const m = /^([\d.]+)px$/.exec(resolved.trim())
+    return m ? Number(m[1]) : null
+  }
+  // Whether a position in the stylesheet is inside a block: at the top level every rule is in
+  // force at every width, and a rule inside a media query is not.
+  const depthAt = (index) => {
+    let depth = 0
+    for (let i = 0; i < index; i++) {
+      if (css[i] === '{') depth++
+      else if (css[i] === '}') depth--
+    }
+    return depth
+  }
+
+  const out = []
+  for (const [klass, what] of controls) {
+    const heights = []
+    for (const match of css.matchAll(new RegExp(`\\.${klass}(?![\\w-])[^{}]*\\{([^}]*)\\}`, 'g'))) {
+      if (depthAt(match.index) !== 0) continue
+      const declared = /min-height\s*:\s*([^;}]+)/.exec(match[1])
+      const height = px(declared?.[1])
+      if (height !== null) heights.push(height)
+    }
+    if (!heights.some((height) => height >= 44)) {
+      out.push(
+        `${what} is ${heights.length ? `a ${Math.max(...heights)} px target` : 'no declared target'}, and the owner's brief of 2026-10-19 measures every control the page asks a reader to tap against 44 px`,
+      )
+    }
+  }
+  return out
+}
+
+test('every control the homepage asks a reader to tap is at least 44 px tall', () => {
+  assert.deepEqual(
+    controlTargetFailures(builtCSS(builtPage(''))),
+    [],
+    'a control on the homepage is under the 44 px target the owner’s brief of 2026-10-19 measures every control against',
+  )
+})
+
+test('a control under the target is refused, wherever its minimum is missing or out of force', (t) => {
+  // Each plant is one of the ways the minimum stops holding: taken off the rule that declares
+  // it, moved into a media query where it is in force at one width rather than at every one,
+  // and declared under the target. All three are defects a reading of the markup cannot see,
+  // which is why the reading is of the declaration.
+  const css = builtCSS(builtPage(''))
+  const ruleOf = (klass) => new RegExp(`\\.${klass}(?![\\w-])[^{}]*\\{[^}]*\\}`)
+  const withoutMinimum = (klass) => css.replace(ruleOf(klass), (rule) => rule.replace(/min-height\s*:\s*[^;}]+;?/, ''))
+  const cases = [
+    ['the minimum taken off the hero’s filled link', withoutMinimum('hero-cta'), /the hero's filled call to action is no declared target/],
+    ['the minimum taken off the hero’s quiet link', withoutMinimum('hero-cta-quiet'), /the hero's quiet call to action is no declared target/],
+    [
+      'the button’s minimum moved into a media query, where it holds at one width and not at every one',
+      `${withoutMinimum('home-install-button')}@media (min-width:48rem){.home-install-button{min-height:56px}}`,
+      /the button under the slider is no declared target/,
+    ],
+    [
+      'a minimum declared under the target',
+      css.replace(ruleOf('hero-cta'), (rule) => rule.replace('min-height:44px', 'min-height:20px')),
+      /the hero's filled call to action is a 20 px target/,
+    ],
+  ]
+  for (const [what, planted, expected] of cases) {
+    assert.notEqual(planted, css, `${what} left the stylesheet as it is, so the plant is not a plant`)
+    const failures = controlTargetFailures(planted)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what} was not refused by the sentence that names it:\n  ${failures.join('\n  ') || '(nothing refused)'}`,
+    )
+  }
 })
 
 test('neither page names a claim the product cannot back', () => {

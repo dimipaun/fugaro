@@ -1,28 +1,25 @@
 // website/src/lib/agent-request.mjs — the one line the site shows a reader typing at their
 // agent (website changes spec of 2026-10-18, item 3; the owner's feedback of 2026-10-19).
 //
-// Two components render it, and they are the two places the site makes the same claim:
+// One component renders it — the hero's prompt line (`Hero.astro`), which is the owner's
+// feedback of 2026-10-19: the home page has to say, in as few words as possible, that a reader
+// drives Fugaro through the coding agent they already have, and the fewest words that say it are
+// the line they type, with nothing around it. It was two places until the draft of 2026-10-19
+// folded the chat out of the page: the line was also the chat's first turn (`AgentChat.astro`),
+// where it was what the reader said before the agent answered with the runs it launched
+// (changes spec item 3).
 //
-//   - the chat's first turn (`AgentChat.astro`), where it is what the reader says before the
-//     agent answers with the runs it launched (changes spec item 3), and
-//   - the hero's prompt line (`Hero.astro`), which is the owner's feedback of 2026-10-19:
-//     the home page has to say, in as few words as possible, that a reader drives Fugaro
-//     through the coding agent they already have — and the fewest words that say it are the
-//     line they type, with nothing around it.
-//
-// **One string rather than two copies.** The hero's line and the chat's first turn are the same
-// sentence: a reader meets it under the promise and then again as the first thing they say. Two
-// literals would be two lines to keep in step, and the day they drifted the page would show the
-// reader asking for one thing and then being answered about another. So both read this module,
-// and `website/test/home.mjs` holds the two rendered lines to each other and to the document
-// below from outside the build.
+// **The line lives here rather than in the component that renders it** so that the claim and the
+// document behind it are one file: the line is a quotation, and the guard at the foot of this
+// module is what holds it to the spec. `website/test/home.mjs` reads the rendered line and its
+// `data-source` back off the built page, so the artifact is held to the same document from
+// outside the build.
 //
 // **It is a line of the changes spec, held to it here.** Item 3 writes the request as its own
 // example of what a reader says to their agent, so the line is a quotation rather than copy
 // written for the page (Global Constraint 6, D102: a page renders a fact and never restates
 // one). A string that stopped being a line of that document — a spec that reworded its example,
-// or a component that typed a sentence of its own — stops the build naming the file, which is
-// the same guard `AgentChat.astro` keeps over the rest of the conversation.
+// or a component that typed a sentence of its own — stops the build naming the file.
 //
 // Standard library only, plus the repository root the content pipeline already works out: this
 // module is read by the build, and it computes one comparison. The root is imported rather than

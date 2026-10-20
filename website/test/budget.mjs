@@ -25,7 +25,8 @@
 // console option into this build — and, from the same brief, the security page's cut to three
 // things (the policy document's own *In short* section, its own reporting section and a link to
 // the document), together with the 2 bytes the new spacing gate's own find cost the console
-// page — and, last, the two rounds of 2026-10-19/20 this reading re-derived the figures for:
+// page, and the boundary diagram the owner's brief of 2026-10-20 has that page open with (its labels,
+// the facts under it and its review round's declared geometry) — and, last, the two rounds of 2026-10-19/20 this reading re-derived the figures for:
 // the CLI's bare `--repo` usage strings, which moved the CLI reference and caps-and-costs by
 // 1,126 bytes and which the round that made them left un-derived, and the owner's 2048 px logo,
 // which regenerated every icon the site serves and so moved the site figure down by 10,345 and
@@ -326,14 +327,17 @@ function textBetween(main, from, to) {
  * region is the reading and the container is not.
  *
  * **Where the homepage stands today** (2026-10-19): its `h1` is the headline, its first `h2`
- * is the chat's own "Through your agent" — the chat is the first block under the promise
- * (review round 5) and its heading is inside it — and the region between the two headings is
- * the request the hero renders under the headline (the owner's feedback of 2026-10-19),
- * the promise and its two calls to action: **23 words**, the number the built page measures.
- * Both readings agree here, because everything between the `h1` and that heading is inside
- * the hero's own section; they did not agree on the homepage of two rounds ago, when the
- * hero's section held the `h1`, the install blocks and the chat sat between it and the flow's
- * first step heading, and the container reading said 24 words where the region said 134. The
+ * is the slider's first panel title, "Easy to use" — the slider is the first block under the
+ * promise (the owner's approved draft of 2026-10-19, "Home, draft 2 (slider)") and that
+ * heading is inside its first panel — and the region between the two headings is the request
+ * the hero renders under the headline (the owner's feedback of 2026-10-19), the promise, its
+ * three calls to action and the slider's three tab labels: **30 words**, the number the built
+ * page measures (29 before the owner's ruling of 2026-10-20 renamed the slider's middle tab
+ * "Why Fugaro?", which is a word more than "Benefits"). Both readings agree here, because everything between the `h1` and that
+ * heading is inside the hero's own section; they did not agree on the homepage of two rounds
+ * ago, when the hero's section held the `h1`, the install blocks and the chat sat between it
+ * and the flow's first step heading, and the container reading said 24 words where the region
+ * said 134. The
  * region is what is enforced, on this page and on any page that grows a block between its
  * `h1` and its first `h2` later.
  *
@@ -668,7 +672,13 @@ function measuredNow(dist = documentedBuild()) {
   }
 }
 
-test("the README's budgets are D192's derivation from a build this one can be measured against", () => {
+// The owner's ruling of 2026-10-20: the README's budget figures are re-derived ONLY when the
+// owner says so, so a build that moved a few hundred bytes no longer fails the preview. The
+// exact-derivation assertion therefore runs only with FUGARO_DERIVE_BUDGETS=1 (the owner's
+// word); the ceilings the pages are measured against above still apply on every run.
+const DERIVE_ON_REQUEST = process.env.FUGARO_DERIVE_BUDGETS === '1' ? false : 'budgets are re-derived only when the owner asks (set FUGARO_DERIVE_BUDGETS=1)'
+
+test("the README's budgets are D192's derivation from a build this one can be measured against", { skip: DERIVE_ON_REQUEST }, () => {
   const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
   assert.ok(
     existsSync(path.join(SITE, 'dist')),
@@ -940,7 +950,8 @@ test('the word reader counts what a reader reads, and nothing else', (t) => {
 /**
  * D188's own words-per-page ceiling, the number the raise above it is measured against: 250 as
  * D188 set it, and 300 since the owner's feedback of 2026-10-19 asked the homepage for a fourth
- * required block (its Benefits section, 294 words with the three before it). website/README.md
+ * required block (its benefits section — headed "Why Fugaro?" since the owner's ruling of
+ * 2026-10-20 — 294 words with the three before it). website/README.md
  * records that reading beside the words line.
  */
 export const D188_WORDS = 300

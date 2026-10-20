@@ -267,7 +267,7 @@ test('the Go gate the README prints selects the site\'s own tests', () => {
 // The number words the gates section's opening sentence may count with. A list rather than a
 // numeral parser: the README writes its counts as words, and a count this file cannot read is a
 // count nothing holds.
-const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve']
+const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen']
 
 test('the gates section counts the gates it lists, and every gate it names is a file', () => {
   const lines = readme().split('\n')

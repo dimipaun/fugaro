@@ -98,8 +98,9 @@ a.skip-link:focus {
    * `z-index` is the header's layer, and it is the whole of why the menu is never covered:
    * a positioned box with no `z-index` paints with every other such box in tree order, and
    * the header is the first of them, so a page that draws a positioned block after it —
-   * the flow's steps, whose arrows need their `position: relative` — was painted over the
-   * open panel. The layer makes the header a stacking context and lifts it, and everything
+   * the retired four-step flow's steps, whose arrows needed their `position: relative`, and
+   * the homepage's slider, which is the positioned block that stands where they stood — was
+   * painted over the open panel. The layer makes the header a stacking context and lifts it, and everything
    * it holds, above every block a page draws (`tokens.css` names the scale; the value is
    * read from it, and `website/test/stacking.mjs` refuses a page block a layer of its own). */
   position: relative;
@@ -393,7 +394,7 @@ a.skip-link:focus {
 
 /* ---- 2b. the copy control (redesign part P6, D183) --------------------------------------- */
 
-/* Every command the site prints — the hero's install blocks and its chat's `fugaro watch`
+/* Every command the site prints — the homepage's install command, the slider's `fugaro watch`
  * snippet, the getting-started page's, the usage lines on the caps guide and every code block
  * of the rendered CLI reference — carries one of these, and the markup is written once in
  * `src/lib/copy-control.mjs`. The control is emitted `hidden` and `public/scripts/site.js`
@@ -403,7 +404,7 @@ a.skip-link:focus {
  * **A command block is one row, and the control sits beside the command at its top right.**
  * That is the whole placement, and it is one rule here rather than a shape each component
  * invents, because the two placements the site shipped — a control row *above* the command in
- * the install cards, the control *beside* it in the chat's watch bar — read as two different
+ * the install cards, the control *beside* it in the slider's watch bar — read as two different
  * components doing the same thing (review round 3, item 3c). The control comes first in the
  * markup and this component does not get to reorder it, so the row is reversed: the main axis
  * starts at the right, the control lands at the main-start end — the right — and the command
