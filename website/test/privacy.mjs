@@ -27,7 +27,11 @@
 //      the app carries the reports (`telemetryFailures`). The sentences a reader is owed are
 //      listed rather than trusted — what is sent, what is never sent, the app versions that
 //      carry the reports having no switch to turn them off, and what a reader can do instead,
-//      Google as the holder, and Google's own policy linked rather than restated. Everything
+//      Google as the holder, and Google's own policy linked rather than restated. One of them
+//      is read as its SENTENCE rather than as its phrase: the clause naming the two other
+//      tools, because that phrase is true of the website too — so the sentence saying the
+//      website carries none of the reports, the page contradicting its own first half, is
+//      refused rather than passing on the phrase. Everything
 //      else that collects is still refused, by name, over the whole of `mobile/`: the page
 //      names two reporters, so a third one would be a flow nobody was told
 //      about (`collectingFailures`). The names are listed rather than asked for by pattern,
@@ -209,7 +213,17 @@ export const TELEMETRY_PLAN = 'docs/plans/2026-10-19-mobile-telemetry.md'
 /** The sentence that says which version of the app this paragraph is about. */
 const EARLIER_BUILDS = /\b(?:earlier|previous|older) builds?\b[^.]*\bnothing\b/i
 
-/** What the page's reporting paragraph must say, and what makes each sentence true. */
+/**
+ * What the page's reporting paragraph must say, and what makes each sentence true.
+ *
+ * `page` is the phrase the paragraph has to carry, and the phrase is enough for every claim
+ * but one. The clause about the reports the OTHER tools carry is the exception, and it carries
+ * two extra fields — `names`, the tools the clause has to name, and `notName`, the subject it
+ * must not name — because its phrase is true of a sentence whose subject is wrong: "The website
+ * and its pages carry none of these reports." carries the phrase, and a software-part clause
+ * calling the website unmeasured is the page contradicting its own first half. So that claim is
+ * held to its SENTENCE, read by `sentenceWith`, and not to its phrase.
+ */
 export const TELEMETRY_CLAIMS = Object.freeze([
   { page: 'crash', why: 'Crashlytics reports crashes, and the page may not round that to "usage"' },
   { page: 'logs, diagnostics and app performance data', why: "the allow-list the owner's ruling of 2026-10-19 settled: a crash report is the crash's logs, its diagnostics and its performance data" },
@@ -223,7 +237,7 @@ export const TELEMETRY_CLAIMS = Object.freeze([
   { page: 'no switch inside the app', why: "the owner's ruling of 2026-10-19: the versions that carry these reports send them whether or not a reader wants them sent, so the page has to say there is no switch rather than leave the reader looking for one" },
   { page: 'uninstalling the app stops them', why: "uninstalling is the one thing that stops the reports, so the page owes a reader that sentence and not a switch the app does not have" },
   { page: 'not installing it avoids them', why: 'a reader who has not installed the app is owed the other half: the reports arrive with the installation, and not installing the version is what keeps them away' },
-  { page: 'carry none of these reports', why: "the reports are the app's alone: the two other tools the software part covers carry none of them, and the page says so rather than leaving a reader of that part to guess. The clause names those two and not the website, whose own measurement is part one's subject — a software-part sentence calling the website unmeasured would contradict the half above it, and the flag that decides that half is not this gate's to read" },
+  { page: 'carry none of these reports', why: "the reports are the app's alone: the two other tools the software part covers carry none of them, and the page says so rather than leaving a reader of that part to guess. The clause names those two and not the website, whose own measurement is part one's subject — a software-part sentence calling the website unmeasured would contradict the half above it, and the flag that decides that half is not this gate's to read", names: ['command line tool', 'console'], notName: 'website' },
   { page: 'Google holds', why: "the data is held by Google as Firebase's processor for the Fugaro project, which is what the page says rather than restating Google's policy" },
 ])
 
@@ -263,6 +277,25 @@ function sectionTextOf(main, title) {
     .map(textOf)
     .join(' ')
     .replace(/\s+/g, ' ')
+}
+
+/**
+ * The sentence of `page` that carries `needle`, with its whitespace collapsed, or null when the
+ * page carries no such needle.
+ *
+ * A sentence ends at `.`, `!` or `?` followed by a space, which is how the page's prose writes
+ * them. That is enough for the one claim read this way: the clause about the reports the other
+ * tools carry is a single sentence of a single paragraph, and it is the sentence, not the
+ * phrase inside it, that has to be about the right subject.
+ */
+function sentenceWith(page, needle) {
+  const flat = page.replace(/\s+/g, ' ')
+  const at = flat.indexOf(needle)
+  if (at < 0) return null
+  const marks = ['. ', '! ', '? ']
+  const before = marks.map((mark) => flat.lastIndexOf(mark, at)).filter((i) => i >= 0)
+  const after = marks.map((mark) => flat.indexOf(mark, at + needle.length)).filter((i) => i >= 0)
+  return flat.slice(before.length ? Math.max(...before) + 2 : 0, after.length ? Math.min(...after) + 1 : flat.length)
 }
 
 /** The package names an app's dependency list declares, as its `dependencies` and `devDependencies`. */
@@ -311,6 +344,27 @@ export function telemetryFailures({ page, packageJSON, planExists }) {
     for (const claim of TELEMETRY_CLAIMS) {
       if (!page.includes(claim.page)) {
         out.push(`the privacy page does not say ${JSON.stringify(claim.page)} about the app's reporting: ${claim.why}`)
+        continue
+      }
+      // A claim that carries a subject is read as its sentence rather than as its phrase, and
+      // the clause about the other tools is the one that does: its phrase is true of a sentence
+      // about the website as well as of the sentence about the command line tool and the
+      // console, and only one of those two sentences is a software-part statement. So the tools
+      // the clause has to name are looked for in that sentence, and the subject it must not
+      // name is refused there — a page that swapped the subject kept the phrase and lost the
+      // meaning, which is exactly what the case below plants.
+      const sentence = sentenceWith(page, claim.page)
+      for (const name of claim.names ?? []) {
+        if (!sentence.includes(name)) {
+          out.push(
+            `the privacy page's clause about the other tools does not name the ${name}: the clause says which of the software's tools carry none of these reports, and the software part is about the command line tool, the console and the phone app — a clause naming neither of the two tools is a clause about nothing`,
+          )
+        }
+      }
+      if (claim.notName && sentence.includes(claim.notName)) {
+        out.push(
+          `the privacy page's clause about the other tools names the ${claim.notName}: part one of this page is the website, and it discloses the site's own Google Analytics measurement under the consent that part states — a software-part clause calling the website unmeasured is the page contradicting its own first half, and the flag that decides that half is not this gate's to read`,
+        )
       }
     }
     if (!EARLIER_BUILDS.test(page)) {
@@ -920,6 +974,52 @@ test("the page naming a reporter the repository does not hold, or the app holdin
       `a page that lost ${what} was not refused for that claim: ${failures.join('\n')}`,
     )
   }
+  // And the clause about the other tools, held to its SENTENCE and not to its phrase. The case
+  // above plants the phrase absent; this one keeps the phrase and swaps the subject for the
+  // website, which is the defect the always-on round fixed and which the phrase alone let back
+  // in: the sentence reads "The website and its pages carry none of these reports." and every
+  // check that only asked whether the phrase was on the page stayed green.
+  const websiteSubject = page.replace(
+    'The command line tool and the console are unaffected: they carry none of these reports.',
+    'The website and its pages carry none of these reports.',
+  )
+  assert.notEqual(websiteSubject, page, 'the fixture did not replace the clause, so this case proves nothing')
+  const websiteFailures = telemetryFailures({ ...base, page: websiteSubject })
+  for (const tool of ['command line tool', 'console']) {
+    assert.ok(
+      websiteFailures.some((line) => line.includes(`does not name the ${tool}`)),
+      `a clause that stopped naming the ${tool} was not refused: ${websiteFailures.join('\n')}`,
+    )
+  }
+  assert.ok(
+    websiteFailures.some((line) => /clause about the other tools names the website/.test(line)),
+    `a software-part clause calling the website unmeasured was accepted, which is the page contradicting its own first half: ${websiteFailures.join('\n')}`,
+  )
+
+  // The two halves on their own, so neither is the other's to prove: a clause that names the
+  // website BESIDE the two tools keeps both tool names and is still refused for its subject,
+  // and a clause that names the two tools and no website at all is not refused for anything.
+  const withWebsite = page.replace(
+    'The command line tool and the console are unaffected: they carry none of these reports.',
+    'The website, the command line tool and the console are unaffected: they carry none of these reports.',
+  )
+  assert.notEqual(withWebsite, page, 'the fixture did not add the website to the clause, so this case proves nothing')
+  const withWebsiteFailures = telemetryFailures({ ...base, page: withWebsite })
+  assert.deepEqual(
+    withWebsiteFailures.filter((line) => /does not name the/.test(line)),
+    [],
+    `a clause naming the command line tool and the console was refused for not naming them: ${withWebsiteFailures.join('\n')}`,
+  )
+  assert.ok(
+    withWebsiteFailures.some((line) => /clause about the other tools names the website/.test(line)),
+    `a clause that names the website beside the two tools was accepted: ${withWebsiteFailures.join('\n')}`,
+  )
+  assert.deepEqual(
+    telemetryFailures({ ...base, page }).filter((line) => /clause about the other tools/.test(line)),
+    [],
+    'the shipped clause names the two tools and not the website, and the rule refuses it anyway',
+  )
+
   const unlinked = telemetryFailures({ ...base, page: page.replace(FIREBASE_PRIVACY, 'https://example.net/policy') })
   assert.match(unlinked.join('\n'), /does not link Google's own Firebase privacy policy/)
 

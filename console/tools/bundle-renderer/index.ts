@@ -57,12 +57,13 @@
 // two lists equal.
 //
 // **The stylesheet step (Task 6.2; design section 5.2), and why it is here.**
-// The console's style is four source files under `src/renderer/theme/`, and the
-// served root is a flat allow-list (`SERVED_FILES`), so the four are emitted as
-// **one** file, `dist/bundle/console.css`, served at `/console.css` and linked
-// from each of the three documents. One file and not four, for the reason the
-// scripts are bundled. The step is in this tool because this tool already owns
-// the output directory.
+// The console's style is the theme directory's whole contents -- every `.css`
+// under `src/renderer/theme/`, named by `THEME_STYLESHEETS` below and by nothing
+// else -- and the served root is a flat allow-list (`SERVED_FILES`), so the
+// directory's files are emitted as **one** file, `dist/bundle/console.css`,
+// served at `/console.css` and linked from each of the three documents. One file
+// and not one per source file, for the reason the scripts are bundled. The step
+// is in this tool because this tool already owns the output directory.
 //
 // It reads the theme directory and refuses, with the same `BundleRefusal`:
 //
@@ -458,20 +459,34 @@ export function bundleRenderer(options: BundleOptions): void {
  * the cascade needs: the vocabulary, then the values, then the rules that read
  * them (design section 5.2).
  *
- * **The list grows with the files, one entry per task, and the refusal below is
- * what forces that rather than tidiness.** A listed file that is missing is a
- * build failure, so a task that named all four files before the last two exist
- * would turn `npm run build` red the moment it merged. The list is therefore
- * introduced by the task that lands the first two files (Task 6.2, this step)
- * and each later task appends its own in the commit that creates it:
- * `base.css` in Task 6.3 and `screens.css` in Task 6.4.
+ * **The list grows with the files, and the refusal below is what forces each
+ * task to land its entry beside the file rather than tidiness.** A listed file
+ * that is missing is a build failure, so a task that named a file another task
+ * has not created yet would turn `npm run build` red the moment it merged. The
+ * list is therefore introduced naming the files the directory already holds --
+ * Task 6.1 wrote `tokens.css` and `palette.css` with no list, and Task 6.2 (this
+ * step) introduces the list that names them -- and each later task appends the
+ * file it creates, in the commit that creates it: every intermediate state is a
+ * real build of the files that exist.
  *
  * It is `readonly` and frozen, and it is the list the tests read rather than a
  * second copy of it: `test/unit/bundle.test.ts` checks `console.css` against
- * *this list*, so the case is true here with two files in it and stays true when
- * 6.3 and 6.4 append theirs.
+ * *this list*, so the case is true of the directory as it stands and stays true
+ * as each task appends its file.
  */
-export const THEME_STYLESHEETS: readonly string[] = Object.freeze(['tokens.css', 'palette.css'])
+export const THEME_STYLESHEETS: readonly string[] = Object.freeze([
+  'tokens.css',
+  'palette.css',
+  // Task 6.3's: the reset, the document, the chrome and the focus rules. The
+  // entry that landed with the file, in one commit, because the refusal above
+  // fires in both directions -- a listed file that is missing and an unlisted
+  // `.css` that is present are both a build failure.
+  'base.css',
+  // Task 6.4's: the per-screen rules. After this task the list is the theme
+  // directory's whole contents and stays still, which is what the two refusals
+  // above enforce from both sides.
+  'screens.css',
+])
 
 /** StylesheetOptions is what the stylesheet step is given: the theme directory
  * it reads and the one file it writes. Both are absolute paths, like

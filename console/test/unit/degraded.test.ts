@@ -435,6 +435,49 @@ describe('the no-Firebase screen', () => {
       expect((tree as FakeScreen).getAttribute('data-kind')).toBe('no-firebase')
     }
   })
+
+  it('gives every figure it draws the alignment hook, and gives it to no other cell', () => {
+    // Design §2.10's gap, closed by the styling work (plan Task 6.4): five
+    // screens have a `numberCell` and this one prepended no class at all, so the
+    // degraded screen's figures had no tabular-figures and no right-align hook
+    // while every other screen's did. The hook is `degraded-num`, the rule that
+    // reads it is in `theme/screens.css` beside the other four, and this is the
+    // case that fails if the prepend is removed.
+    const model = buildNoFirebaseModel(theDegradedDocument())
+    const tree = renderNoFirebase(factory, model, 'light')
+    // The feed age is drawn only when the console has a frame to age, so it is
+    // asserted on a model that has one: the same document, handed a feed.
+    const frame = theLiveFrames()[0]
+    if (frame === undefined) throw new Error('the synthetic fixture has no live frame')
+    const fed = renderNoFirebase(factory, { ...model, feed: aFeed(frame, 90) }, 'light')
+    const figures = [
+      'degraded-runs',
+      'degraded-model-usd',
+      'degraded-model-notional-usd',
+      'degraded-compute-usd',
+      'degraded-total-usd',
+      'degraded-compute-unknown',
+      'degraded-run-model',
+      'degraded-run-compute',
+      'degraded-run-total',
+    ]
+    for (const figure of figures) {
+      // `span` only, and `degraded-runs` is why: §2.7 gives the list and the
+      // count on it the same class, so the region comes first in document order
+      // and only the `span` is a reading.
+      const nodes = all(tree, figure).filter((node) => node.tag === 'span')
+      expect(nodes.length, `.${figure} is not drawn as a reading at all, so the case is vacuous for it`).toBeGreaterThan(0)
+      for (const node of nodes) expect(node.classes, `.${figure} carries no degraded-num`).toContain('degraded-num')
+    }
+    // And the hook is the readings' rather than the screen's: a cell that draws
+    // a document string is not a number and may not carry it.
+    for (const text of ['degraded-project', 'degraded-mode', 'degraded-run-id', 'degraded-run-created', 'degraded-since-at']) {
+      for (const node of all(tree, text)) expect(node.classes, `.${text} is not a figure`).not.toContain('degraded-num')
+    }
+    const age = one(fed, 'degraded-since-age')
+    expect(age.classes).toContain('degraded-num')
+    expect(one(fed, 'degraded-since-at').classes).not.toContain('degraded-num')
+  })
 })
 
 describe('the stale Live screen', () => {
@@ -598,6 +641,14 @@ describe('the stale Live screen', () => {
 })
 
 describe('the console with no binary to read', () => {
+  it('gives the one figure it draws the same alignment hook as the degraded screen', () => {
+    // The searched count is this screen's only reading, and it comes through the
+    // same `numberCell` as the degraded screen's figures -- so it carries the
+    // same hook (design §2.10: the hook is the helper's, not the screen's).
+    const tree = renderUnavailable(factory, anAbsentState(), 'light')
+    expect(one(tree, 'unavailable-searched-count').classes).toContain('degraded-num')
+  })
+
   it('names what is needed, the install command and the picker, and draws no dashboard', () => {
     const state = anAbsentState()
     expect(state.installCommand).toBe(FUGARO_INSTALL_COMMAND)

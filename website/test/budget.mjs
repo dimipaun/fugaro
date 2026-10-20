@@ -98,8 +98,9 @@
 // back in step with it; the console's release turning `features.console_downloads` on;
 // Getting Started's three bands; the console's screenshot slider; the run on How It Works
 // becoming one vertical timeline; the caps-and-costs rework; the changelog's product
-// summaries; the homepage's prompt line, benefits, pull request caption and the benefits'
-// block rule; the privacy statement's software part, the phone app's reporting written into
+// summaries; the homepage's prompt line, benefits, pull request caption, the benefits'
+// block rule and the four icons and the type step the points were given after it; the privacy
+// statement's software part, the phone app's reporting written into
 // it and the deletion section carved out from under it; the app's reporting made always-on, with
 // no switch in the app (the owner's ruling of 2026-10-19); the security page cut to three
 // things, with its review rounds; and the header put on a layer of its own — each re-derived
