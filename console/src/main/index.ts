@@ -130,10 +130,10 @@ function serveBundle(): void {
  * handshakeInstallation is the stored **active** installation the startup
  * handshake reads (Task 3.4b, steps 3 and 4), or `null` when there is none.
  *
- * With one, its `binaryPath` is the **only** binary the handshake reads
- * (`resolveInstalledBinary`: no fallthrough to any other `fugaro`, review B1)
- * and its project (and config path, when stored) is the spawn target, so the
- * bare `version` spawn records which installation it was for. With none, the
+ * With one, its `binaryPath` -- when the store still carries that optional
+ * override -- is the first candidate rule 4 asks about, and its project (and
+ * config path, when stored) is the spawn target, so the bare `version` spawn
+ * records which installation it was for. With none, the
  * console makes **no guess**: not `FUGARO_PROJECT`, not the working directory's
  * checkout, never the CLI's config -- `resolveHandshakeBinary` runs Task 3.3's
  * project-less read against rule 4's resolution, the dashboard answers
@@ -141,14 +141,14 @@ function serveBundle(): void {
  */
 function handshakeInstallation(): {
   readonly id: string
-  readonly binaryPath: string
+  readonly binaryPath?: string | undefined
   readonly target: SpawnTarget
 } | null {
   const chosen = picker?.installation()
   if (chosen === undefined || !chosen.chosen) return null
   return {
     id: chosen.id,
-    binaryPath: chosen.binary,
+    ...(chosen.binary === undefined ? {} : { binaryPath: chosen.binary }),
     target: Object.freeze({
       project: chosen.project,
       ...(chosen.config === undefined ? {} : { configPath: chosen.config }),

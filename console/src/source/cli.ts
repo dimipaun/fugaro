@@ -217,7 +217,6 @@ export class NoInstallation extends SourceRefusal {
 export function noInstallationState(options: {
   readonly reason: string
   readonly configuredPath?: string | undefined
-  readonly appEnv?: Readonly<Record<string, string | undefined>>
   readonly home?: string
 }): NoInstallationState {
   return {
@@ -226,7 +225,6 @@ export function noInstallationState(options: {
     installCommand: FUGARO_INSTALL_COMMAND,
     searched: binDirectories({
       ...(options.configuredPath === undefined ? {} : { configuredPath: options.configuredPath }),
-      appEnv: options.appEnv ?? {},
       ...(options.home === undefined ? {} : { home: options.home }),
     }),
     configuredPath: options.configuredPath === undefined || options.configuredPath === '' ? null : options.configuredPath,
@@ -314,7 +312,6 @@ export class CliSource implements FugaroSource {
         noInstallationState({
           reason: resolution.reason,
           configuredPath: options.configuredBinaryPath,
-          appEnv: env,
           ...(options.home === undefined ? {} : { home: options.home }),
         }),
       )
@@ -657,7 +654,6 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     new NoInstallation(
       noInstallationState({
         reason: 'no installation is chosen, so there is no binary for the console to read',
-        ...(deps.appEnv === undefined ? {} : { appEnv: deps.appEnv }),
         ...(deps.home === undefined ? {} : { home: deps.home }),
       }),
     )

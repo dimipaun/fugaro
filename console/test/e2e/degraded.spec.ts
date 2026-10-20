@@ -401,24 +401,22 @@ function asNoBinaryState(state: NoInstallationState): NoBinaryState {
   return state
 }
 
-/** anAbsentState resolves no binary at all: an empty temporary directory as the
- * only `PATH` entry, the same directory as the configured home so `~/.local/bin`
- * cannot be the owner's, and one search prefix inside it. It is a real
+/** anAbsentState resolves no binary at all: the same directory as the configured
+ * home so `~/.local/bin` cannot be the owner's, and one search prefix inside it
+ * -- an empty temporary directory, so nothing is executable in it. It is a real
  * resolution -- `resolveBinary` walks what it is given and refuses when nothing
  * is executable -- narrowed so that the answer does not depend on whether the
  * machine running this spec has a `fugaro` installed in `/opt/homebrew/bin`. */
 async function anAbsentState(directory: string): Promise<NoBinaryState> {
   const bin = join(directory, 'bin')
-  const appEnv = { PATH: bin }
   const resolution = await resolveBinary({
     prefixes: [bin],
-    appEnv,
     home: directory,
     directory,
     target: { project: 'fugaro' },
   })
   if (resolution.ok) throw new Error('the spec resolved a binary it did not install')
-  return asNoBinaryState(noInstallationState({ reason: resolution.reason, appEnv, home: directory }))
+  return asNoBinaryState(noInstallationState({ reason: resolution.reason, home: directory }))
 }
 
 test.describe('the console with nothing to read', () => {

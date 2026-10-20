@@ -239,7 +239,6 @@ function aRefusedState(): RefusedState {
 function anAbsentState(): NoBinaryState {
   return noInstallationState({
     reason: 'no fugaro binary was found: looked at /usr/local/bin/fugaro, /usr/bin/fugaro',
-    appEnv: {},
     home: '/nonexistent-home',
   })
 }

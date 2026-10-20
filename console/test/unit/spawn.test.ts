@@ -895,16 +895,41 @@ describe('binary resolution', () => {
     ])
   })
 
-  it('never takes a relative PATH entry as a place to find the binary', () => {
-    // A relative entry (`bin`, `.`, `./tools`, or the empty entry, which POSIX
-    // reads as the current directory) resolves against whatever the app's own
-    // working directory happens to be, which is nothing the operator chose.
-    const candidates = binDirectories({
-      appEnv: { PATH: 'bin::./tools:.:/usr/sbin' },
-      home: '/Users/owner',
-      prefixes: [],
+  it('never takes the app’s own PATH as a place to find the binary', async () => {
+    // The owner's ruling of 2026-10-20 (design section 3.4 rule 4): the console
+    // resolves the `fugaro` that is *installed*, and the environment the app
+    // happened to be launched with is not a place anything is installed. The
+    // candidate list is the configured path and the well-known prefixes, and a
+    // `fugaro` that exists only on the app's `PATH` is not found at all.
+    const base = freshDirectory()
+    const onPath = join(base, 'path-bin')
+    const stub = installStub(onPath, { commands: { version: { stdout: '9.9.9\n' } } })
+    const resolution = await resolveBinary({
+      appEnv: { PATH: onPath },
+      directory: base,
+      target: { project: PROJECT },
+      prefixes: [join(base, 'prefix-a', 'bin')],
     })
-    expect([...candidates]).toEqual(['/usr/sbin/fugaro'])
+    expect(resolution.ok).toBe(false)
+    // The refusal names the one place it looked, and the app's PATH is not in
+    // it: this is what the absent-binary screen shows as "searched".
+    expect(resolution.ok === false && resolution.reason).toContain(join(base, 'prefix-a', 'bin', 'fugaro'))
+    expect(resolution.ok === false && resolution.reason).not.toContain(onPath)
+    // The stub never ran: it was never a candidate.
+    expect(stub.calls()).toBe(0)
+  })
+
+  it('has no appEnv parameter, so the app’s PATH cannot re-enter the order', () => {
+    // The type is part of the guard: this file's resolution order had a third
+    // step (every absolute entry of the app's own `PATH`) and removing it from
+    // the signature is what keeps it out. A test that only asserted the
+    // candidate list could be satisfied by a `PATH` walk added under another
+    // name; this one fails the day the parameter comes back.
+    const source = readFileSync(new URL('../../src/main/spawn.ts', import.meta.url), 'utf8')
+    const signature = source.slice(source.indexOf('export function binDirectories('))
+    const body = signature.slice(0, signature.indexOf('\n}'))
+    expect(body).not.toContain('appEnv')
+    expect(body).not.toContain('PATH')
   })
 
   it('never lists a relative configured path as a place to find the binary', () => {
@@ -914,19 +939,19 @@ describe('binary resolution', () => {
     // installation's. A relative configured path is therefore not a place to
     // look -- and `resolveBinary` refuses it rather than falling through.
     expect([
-      ...binDirectories({ configuredPath: 'bin/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+      ...binDirectories({ configuredPath: 'bin/fugaro', home: '/Users/owner', prefixes: [] }),
     ]).toEqual([])
     expect([
-      ...binDirectories({ configuredPath: './tools/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+      ...binDirectories({ configuredPath: './tools/fugaro', home: '/Users/owner', prefixes: [] }),
     ]).toEqual([])
     expect([
-      ...binDirectories({ configuredPath: '~/tools/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+      ...binDirectories({ configuredPath: '~/tools/fugaro', home: '/Users/owner', prefixes: [] }),
     ]).toEqual([])
   })
 
   it('puts an absolute configured path first, with the well-known prefixes after it', () => {
     expect([
-      ...binDirectories({ configuredPath: '/opt/fugaro/bin/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+      ...binDirectories({ configuredPath: '/opt/fugaro/bin/fugaro', home: '/Users/owner', prefixes: [] }),
     ]).toEqual(['/opt/fugaro/bin/fugaro'])
   })
 
@@ -971,7 +996,7 @@ describe('binary resolution', () => {
     expect(resolution.ok && resolution.source).toBe('configured')
   })
 
-  it('walks the well-known prefixes in order, and only then the app’s PATH', async () => {
+  it('walks the well-known prefixes in order, and stops there', async () => {
     const base = freshDirectory()
     const first = join(base, 'prefix-a', 'bin')
     const second = join(base, 'prefix-b', 'bin')
@@ -993,17 +1018,26 @@ describe('binary resolution', () => {
     expect(both.ok && both.version).toBe('3.0.0')
   })
 
-  it('falls through the well-known prefixes to the app’s own PATH, as the last step', async () => {
+  it('refuses when the only `fugaro` is the one the app’s PATH points at', async () => {
+    // The other half of the test above, at the end of the walk rather than in
+    // the middle: every well-known prefix is empty, the app's `PATH` holds a
+    // working stub, and the resolution still refuses. This is the mutation that
+    // matters -- reintroducing the `PATH` step makes this test find the stub.
     const base = freshDirectory()
     const onPath = join(base, 'path-bin')
     const stub = installStub(onPath, { commands: { version: { stdout: '9.9.9\n' } } })
+    const prefix = join(base, 'prefix-a', 'bin')
     const resolution = await resolveBinary({
-      appEnv: { PATH: `${join(base, 'nowhere')}:${onPath}` },
+      appEnv: { PATH: `${join(base, 'nowhere')}:${onPath}`, HOME: base },
+      home: base,
       directory: base,
       target: { project: PROJECT },
-      prefixes: [join(base, 'prefix-a', 'bin')],
+      prefixes: [prefix],
     })
-    expect(resolution.ok && resolution.path).toBe(stub.binary)
+    expect(resolution.ok).toBe(false)
+    expect(resolution.ok === false && resolution.path).toBeNull()
+    expect(resolution.ok === false && resolution.reason).toContain(join(prefix, 'fugaro'))
+    expect(stub.calls()).toBe(0)
   })
 
   it('resolves ~/.local/bin for the home directory it was given', async () => {

@@ -538,10 +538,12 @@ describe('a choose in the picker (Task 3.4b, step 5)', () => {
 // The startup handshake's resolution (Task 3.4b, steps 3 and 4; review B1, S4)
 // ---------------------------------------------------------------------------
 
-describe('the startup handshake reads the active installation, and only it', () => {
+describe('the startup handshake resolves rule 4 for the active installation', () => {
   /** machine is a scratch "machine": a well-known prefix and a PATH entry, each
-   * holding a `fugaro` that answers an in-range version -- the binaries a
-   * fallthrough would find. */
+   * holding a `fugaro` that answers an in-range version. The prefix is what the
+   * resolution is allowed to find; the PATH entry is the one nothing may ever
+   * ask for (owner's ruling of 2026-10-20, rule 4), so every test here asserts
+   * it was never run. */
   function machine() {
     const root = mkdtempSync(join(tmpdir(), 'fugaro-handshake-'))
     const wellKnown = installStub(join(root, 'opt', 'bin'), { commands: { version: { stdout: `${CLI_VERSION_BUILT_AGAINST}\n` } } })
@@ -581,24 +583,37 @@ describe('the startup handshake reads the active installation, and only it', () 
     return { root, wellKnown, onPath, read, records }
   }
 
-  it('refuses a missing stored binary as not-found, and asks no other fugaro (B1)', async () => {
+  // The owner's ruling of 2026-10-20 replaces review B1's "no fallthrough": a
+  // store's `binary` is an **optional override**, not a pin, because the console
+  // resolves the `fugaro` that is installed on this machine and asks the
+  // operator for nothing. So a stored path that has gone is not a refusal -- it
+  // is the first candidate of rule 4's order that did not answer, and the walk
+  // carries on to the well-known locations. What B1 protects is unchanged in
+  // substance: the app's own `PATH` is still never asked.
+  it('falls through a stored binary that has gone, to the installed one', async () => {
     const m = machine()
     const resolution = await m.read({ binaryPath: join(m.root, 'gone', 'fugaro'), target: { project: 'gone' } })
-    expect(resolution.ok).toBe(false)
-    expect(versionReadFrom(resolution)).toEqual({ ok: false, failure: 'not-found' })
-    // The fallthrough the review reproduced: neither in-range binary was asked.
-    expect(m.wellKnown.reports()).toEqual([])
+    expect(resolution).toMatchObject({ ok: true, path: m.wellKnown.binary, source: 'well-known' })
+    // The binary that answered is the installed one, and it was asked with the
+    // installation's project -- the log still says which installation this
+    // `version` was for.
+    expect(m.wellKnown.reports().map((report) => report.argv)).toEqual([['version']])
+    expect(m.records().map((record) => [record.argv[0], record.argv[1], record.project])).toEqual([
+      [m.wellKnown.binary, 'version', 'gone'],
+    ])
+    // ...and the app's own `PATH` entry was never asked, gone stored path or not.
     expect(m.onPath.reports()).toEqual([])
-    expect(m.records()).toEqual([])
   })
 
-  it('refuses a stored binary that is not executable as unreadable, and asks no other fugaro', async () => {
+  it('falls through a stored binary that is not executable, to the installed one', async () => {
     const m = machine()
     const plain = join(m.root, 'plain-fugaro')
     writeFileSync(plain, '#!/bin/sh\necho 0.8.1\n', { mode: 0o644 })
     const resolution = await m.read({ binaryPath: plain, target: { project: 'acme' } })
-    expect(versionReadFrom(resolution)).toEqual({ ok: false, failure: 'unreadable' })
-    expect(m.wellKnown.reports()).toEqual([])
+    expect(resolution).toMatchObject({ ok: true, path: m.wellKnown.binary })
+    // The unreadable candidate is not *run* either: a file without an execute
+    // bit is not a candidate at all.
+    expect(resolution.ok && resolution.version).toBe(CLI_VERSION_BUILT_AGAINST)
     expect(m.onPath.reports()).toEqual([])
   })
 

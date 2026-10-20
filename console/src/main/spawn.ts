@@ -36,7 +36,11 @@
 //      the app's working directory and run against the child's, which is a
 //      refusal and not a fallback (review of Task 4.1) -- then
 //      `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`,
-//      `/usr/bin`, and only then `PATH`. The path and the version it reported
+//      `/usr/bin`, and **nothing else: the app's own inherited `PATH` is never
+//      searched** (owner's ruling of 2026-10-20: the console asks the operator
+//      for nothing, and resolves the `fugaro` that is *installed*). The
+//      configured path is an optional override a store may already carry, never
+//      a question the first run asks. The path and the version it reported
 //      are the header's ("the resolved absolute path and the version it reports
 //      are shown in the header"), and **a candidate that exists but whose version
 //      cannot be read is refused rather than skipped**: falling through to the
@@ -110,11 +114,15 @@ export const CONFIG_FLAG = '--config'
 export const DIR_FLAG = '--dir'
 
 /**
- * WELL_KNOWN_BINARY_PREFIXES is rule 4's order, minus the last step: a
- * configured path first (`SpawnTarget.binaryPath`), then these directories in
- * this order, and only then every entry of the app's own `PATH`. `~/.local/bin`
- * is spelled as a prefix here and joined with the home directory at resolution
- * time, because the home directory is an argument rather than a constant.
+ * WELL_KNOWN_BINARY_PREFIXES is rule 4's order, and it is the whole of it: a
+ * configured path first (`SpawnTarget.binaryPath`, which is the optional
+ * override an installation may carry), then these directories in this order.
+ * The app's own inherited `PATH` is **not** a step after them (owner's ruling of
+ * 2026-10-20): the console never asks the operator where the binary is, so the
+ * only places it looks are the ones a `fugaro` install actually writes to.
+ * `~/.local/bin` is spelled as a prefix here and joined with the home directory
+ * at resolution time, because the home directory is an argument rather than a
+ * constant.
  */
 export const WELL_KNOWN_BINARY_PREFIXES: readonly string[] = Object.freeze([
   '/opt/homebrew/bin',
@@ -684,13 +692,17 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
 
 /**
  * binDirectories is the resolution order of rule 4: the configured path, then
- * the well-known prefixes, then every entry of the app's own `PATH`. It is
- * exported because the order is the rule, and a test that could not read the
- * order could not assert it.
+ * the well-known prefixes -- and there is no third step. It is exported because
+ * the order is the rule, and a test that could not read the order could not
+ * assert it.
+ *
+ * There is deliberately **no `appEnv` parameter**: the app's own inherited
+ * `PATH` used to be the last step here, and taking it out of the signature is
+ * what keeps it out of the order -- a future edit cannot put the app's `PATH`
+ * back without changing every caller as well as this function.
  */
 export function binDirectories(options: {
   readonly configuredPath?: string | undefined
-  readonly appEnv: Readonly<Record<string, string | undefined>>
   readonly home?: string
   /** `prefixes` replaces `WELL_KNOWN_BINARY_PREFIXES` for a test that cannot
    * create `/opt/homebrew/bin`. It is the *list* that is injectable, never the
@@ -700,8 +712,8 @@ export function binDirectories(options: {
 }): readonly string[] {
   const home = options.home ?? homedir()
   const candidates: string[] = []
-  // Only an absolute one, for the same reason as the `PATH` entries below. This
-  // list is what `isExecutableFile` is asked about, and that question is put to
+  // Only an absolute one, for the same reason as the well-known prefixes below.
+  // This list is what `isExecutableFile` is asked about, and that question is put to
   // the *app's* working directory; the child then runs with the installation's
   // directory as its cwd, and `argv[0]` is this string. A relative configured
   // path would therefore be checked in one place and run in another -- a
@@ -714,13 +726,6 @@ export function binDirectories(options: {
   for (const prefix of options.prefixes ?? WELL_KNOWN_BINARY_PREFIXES) {
     const base = prefix.startsWith('~') ? join(home, prefix.slice(2)) : prefix
     candidates.push(join(base, FUGARO_BINARY_NAME))
-  }
-  const path = options.appEnv['PATH'] ?? ''
-  // Only absolute entries: a relative one (`bin`, `.`, or the empty entry,
-  // which POSIX reads as `.`) resolves against the app's own working directory,
-  // which is nothing the operator chose.
-  for (const entry of path.split(':')) {
-    if (entry !== '' && isAbsolute(entry)) candidates.push(join(entry, FUGARO_BINARY_NAME))
   }
   return Object.freeze(dedupe(candidates))
 }
@@ -1201,10 +1206,10 @@ export type BinaryResolution =
       readonly path: string
       readonly version: string
       /** `configured` when the candidate is the path the installation named,
-       * `well-known` for every other candidate rule 4's list produced -- a
-       * prefix or a `PATH` entry, which is one set of "where else it can be"
-       * and stays one word so that no caller can read a distinction the
-       * resolution does not make. */
+       * `well-known` for every other candidate rule 4's list produced -- the
+       * well-known prefixes, which are one set of "where else it can be" and
+       * stay one word so that no caller can read a distinction the resolution
+       * does not make. */
       readonly source: 'configured' | 'well-known'
     }
   | { readonly ok: false; readonly path: string | null; readonly reason: string }
@@ -1221,6 +1226,11 @@ export type BinaryResolution =
  * for the same reason: it would be checked against the app's own working
  * directory and then run against the child's, so the file that answered the
  * version check need not be the file that runs.
+ *
+ * The configured path is a *candidate* and not a decision (owner's ruling of
+ * 2026-10-20, §3.4 rule 4): a store that already carries one is asked first, and
+ * if it has gone the walk carries on to the well-known locations rather than
+ * refusing. The console never asks the operator for a binary path.
  */
 export async function resolveBinary(options: {
   readonly configuredPath?: string | undefined
@@ -1247,7 +1257,6 @@ export async function resolveBinary(options: {
   }
   const candidates = binDirectories({
     configuredPath: options.configuredPath,
-    appEnv: options.appEnv,
     ...(options.home === undefined ? {} : { home: options.home }),
     ...(options.prefixes === undefined ? {} : { prefixes: options.prefixes }),
   })
@@ -1272,65 +1281,28 @@ export async function resolveBinary(options: {
 }
 
 /**
- * resolveInstalledBinary reads **exactly one** binary: the one an installation
- * names. It never walks rule 4's list.
- *
- * That is the difference from `resolveBinary` with a `configuredPath`, and it is
- * the whole point (desktop-console plan Task 3.4b, step 4: "its handshake decides
- * the window"). `resolveBinary` skips a configured path that is missing or not
- * executable and carries on to `/opt/homebrew/bin`, `/usr/local/bin`,
- * `~/.local/bin` and `PATH` -- so a stored installation whose binary had gone
- * would have its window decided by some *other* `fugaro`, while the header still
- * named the stored path (review of 3.4b, B1). Here a stored binary that is not
- * there answers `path: null` (the handshake's `not-found`), one that is there
- * but is not an executable regular file answers its own path (`unreadable`), and
- * a probe that fails answers its reason -- and in every case nothing else on the
- * machine is asked.
- */
-export async function resolveInstalledBinary(options: {
-  readonly binaryPath: string
-  readonly appEnv: Readonly<Record<string, string | undefined>>
-  readonly directory: string
-  readonly target: SpawnTarget
-  readonly spawner?: ChildSpawner
-  readonly log?: SpawnLogWriter
-  readonly timeoutMs?: number
-}): Promise<BinaryResolution> {
-  const path = options.binaryPath
-  if (path === '' || !isAbsolute(path)) {
-    return { ok: false, path, reason: `the installation's binary path is not absolute: ${path}` }
-  }
-  if (!existsSync(path)) {
-    return { ok: false, path: null, reason: `the installation's binary is not there: ${path}` }
-  }
-  if (!isExecutableFile(path)) {
-    return { ok: false, path, reason: `the installation's binary is not an executable file: ${path}` }
-  }
-  const plan = planFor('cli.version', {}, {
-    target: options.target,
-    binaryPath: path,
-    directory: options.directory,
-    appEnv: options.appEnv,
-  })
-  const probe = await probeVersion(plan, options)
-  if (!probe.ok) return { ok: false, path, reason: probe.reason }
-  return { ok: true, path, version: probe.version, source: 'configured' }
-}
-
-/**
  * resolveHandshakeBinary is the startup handshake's resolution, in the one
  * place a unit test can drive it (`src/main/index.ts` imports the Electron
  * runtime and cannot be imported under `vitest`).
  *
- * With an active installation it reads that installation's binary and nothing
- * else (`resolveInstalledBinary`), with that installation's project as the
- * target, so the spawn log records which installation the bare `version` was
- * for. With none it is Task 3.3's read: rule 4's resolution with the
- * project-less target -- and **no** project from anywhere else, not
- * `FUGARO_PROJECT`, not the working directory (D13: no guess).
+ * With an active installation it is rule 4's own walk with that installation's
+ * optional override asked first, and that installation's project as the target,
+ * so the spawn log records which installation the bare `version` was for. With
+ * none, the same walk with the project-less target -- and **no** project from
+ * anywhere else, not `FUGARO_PROJECT`, not the working directory (D13: no
+ * guess).
+ *
+ * An installation's binary is an *override* and never a pin (owner's ruling of
+ * 2026-10-20, §3.4 rule 4): the console resolves the `fugaro` that is installed
+ * on this machine, so a store entry that names a path which has since gone is
+ * not a refusal but the next candidate in the order. That replaces the narrower
+ * `resolveInstalledBinary` this function used to call for an active
+ * installation, which stopped at the stored path (review of 3.4b, B1): correct
+ * while the path was the operator's choice and asked for on first run, wrong now
+ * that the first run asks for nothing.
  */
 export async function resolveHandshakeBinary(options: {
-  readonly installation: { readonly binaryPath: string; readonly target: SpawnTarget } | null
+  readonly installation: { readonly binaryPath?: string | undefined; readonly target: SpawnTarget } | null
   readonly appEnv: Readonly<Record<string, string | undefined>>
   readonly directory: string
   readonly spawner?: ChildSpawner
@@ -1343,20 +1315,19 @@ export async function resolveHandshakeBinary(options: {
     directory: options.directory,
     ...(options.spawner === undefined ? {} : { spawner: options.spawner }),
     ...(options.log === undefined ? {} : { log: options.log }),
+    ...(options.home === undefined ? {} : { home: options.home }),
+    ...(options.prefixes === undefined ? {} : { prefixes: options.prefixes }),
   }
   if (options.installation !== null) {
-    return resolveInstalledBinary({
+    return resolveBinary({
       ...shared,
-      binaryPath: options.installation.binaryPath,
+      ...(options.installation.binaryPath === undefined
+        ? {}
+        : { configuredPath: options.installation.binaryPath }),
       target: options.installation.target,
     })
   }
-  return resolveBinary({
-    ...shared,
-    target: NO_INSTALLATION_TARGET,
-    ...(options.home === undefined ? {} : { home: options.home }),
-    ...(options.prefixes === undefined ? {} : { prefixes: options.prefixes }),
-  })
+  return resolveBinary({ ...shared, target: NO_INSTALLATION_TARGET })
 }
 
 /**
