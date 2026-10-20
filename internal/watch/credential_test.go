@@ -162,18 +162,17 @@ func TestWatchShowsWaitingUntil(t *testing.T) {
 
 // The waiting sentence's width is a figure three places outside this file
 // state, and it has to be the width this test measures: rowFlags' comment in
-// render.go, the tier-3 comment above, and console/docs/json-contract.md's
-// `waiting_until` row — which is the published console contract, so a reader
-// outside this repository decides a layout from it.
+// render.go, the tier-3 comment above, and the `waiting_until` row of the
+// console's published JSON contract — a document under the console tree, so a
+// reader outside this repository decides a layout from it.
 //
 // The review found all three saying 55 for a sentence that is 59, and the
 // reason nothing caught it is that the conclusion each draws is the same at
 // either figure: 59 is past every FLAGS column this table has (30 at its
 // widest), so the row shortens the sentence and the detail carries it, which is
 // what the tests around this one pin. A figure that nothing measures drifts, so
-// this measures it — the prefix and the stamp are the two halves, and if
-// stampText's layout ever changes, the three places that state the sum are what
-// have to change with it.
+// this measures it — the flag the plain table builds, and not a copy of the
+// sentence here that could drift from the one the three comments are about.
 func TestTheWaitingSentenceIsAsWideAsTheThreePlacesSayIt(t *testing.T) {
 	const stated = 59
 	resume := t0.Add(15 * time.Minute)
@@ -182,11 +181,9 @@ func TestTheWaitingSentenceIsAsWideAsTheThreePlacesSayIt(t *testing.T) {
 	 "r1":`+agent("acme/app", "waiting for a turn", fmt.Sprintf(`,"waiting_until":%d`, ms(resume)))+`}}`, t0)
 	v := Build(s, t0, Config{})
 
-	// The flag itself, built the way the plain table builds it — not a copy of
-	// the sentence, which could drift from the one the three comments are about.
 	got := flags(v.Repos[0].Runs[0], "!")
 	if len(got) != stated {
-		t.Fatalf("the waiting flag is %d columns (%q); rowFlags' comment, the tier-3 comment and console/docs/json-contract.md say %d",
+		t.Fatalf("the waiting flag is %d columns (%q); rowFlags' comment, the tier-3 comment and the console's JSON contract say %d",
 			len(got), got, stated)
 	}
 }
