@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -153,8 +152,14 @@ func projectPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy
 		return nil, false, err
 	}
 	if found && len(p.UnknownKeys) > 0 {
+		// The names are the node's own (a hand-writable object), so they are
+		// printed the way every other name of that provenance in this package
+		// is printed: through pluginwire.Printable, which is what
+		// unknownPolicyKeysText does. The launch gate reads this policy and
+		// shows the operator this sentence, so an unescaped name here would
+		// rewrite the terminal line of a `fugaro run` refusal.
 		return nil, false, userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (fugaro upgrade)",
-			projectpolicy.PathShared(), strings.Join(p.UnknownKeys, ", "))
+			projectpolicy.PathShared(), unknownPolicyKeysText(p.UnknownKeys))
 	}
 	return p, found, nil
 }

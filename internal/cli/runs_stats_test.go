@@ -347,6 +347,64 @@ func TestRunsStatsNeverGuessesFromTheTask(t *testing.T) {
 	}
 }
 
+// TestRunsStatsOwnViewIsTheLaunchsNotTheTasks is the divergence the command's
+// help and the view's comment state: the private view holds the runs whose
+// LAUNCH recorded the caller (launch.json's launched_by), while runs ls --mine
+// lists the runs whose TASK names them (task.json's requested_by). The fixture
+// makes the two disagree -- two runs whose tasks both name the caller, one of
+// which recorded no launcher -- so a change that made this view match ls would
+// put the second run, whose figures are nobody's, into the caller's own row.
+func TestRunsStatsOwnViewIsTheLaunchsNotTheTasks(t *testing.T) {
+	f := newCloudFixture(t)
+	userStatsPlace(t, f, "dana@example.com", []string{"user:dana@example.com"}, nil)
+	day := time.Now().UTC()
+	seed := func(n int, launchedBy string) string {
+		t.Helper()
+		id := userStatsID(day, n)
+		seedUserRun(t, f, id, launchedBy, userRec(runstore.StatusSucceeded, 1.00, runstore.BasisAPIList))
+		if err := runstore.Open(statsBucket(t, f), appSlug, id).CreateTask(context.Background(), &task.Spec{
+			Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web",
+			Task: "the caller's own task", RequestedBy: "dana@example.com",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	mine := seed(0, "dana@example.com")
+	silent := seed(1, "")
+
+	// runs ls --mine lists both: it filters the task's requested_by, which
+	// names the caller for each.
+	out, _, err := execute(t, "runs", "ls", "--json", "--mine", "--since", "0")
+	if err != nil {
+		t.Fatalf("runs ls --mine: %v", err)
+	}
+	if !strings.Contains(out, mine) || !strings.Contains(out, silent) {
+		t.Fatalf("runs ls --mine = %s, want both %s and %s: the filter is the task's requester", out, mine, silent)
+	}
+
+	// runs stats --view own counts one: only the run whose launch recorded
+	// the caller. The other is 'unknown' -- no launcher's figures -- and a
+	// private view shows no such row.
+	doc := runsStats(t)
+	if doc.View != "own" {
+		t.Fatalf("view = %q, want the private one", doc.View)
+	}
+	if len(doc.Rows) != 1 || doc.Rows[0].User != "dana@example.com" {
+		t.Fatalf("rows = %+v, want one dana row: the own view is the launch's, not the task's", doc.Rows)
+	}
+	if got := doc.Rows[0].Runs; got != 1 {
+		t.Errorf("the caller's own runs = %d, want 1 (the task-named run with no launcher is not theirs)", got)
+	}
+	if len(doc.Totals) != 1 || doc.Totals[0].Runs != 1 {
+		t.Errorf("totals = %+v, want the caller's one run alone", doc.Totals)
+	}
+	raw, _ := json.Marshal(doc)
+	if strings.Contains(string(raw), userstats.UnknownUser) {
+		t.Errorf("the unattributed row reached a private view: %s", raw)
+	}
+}
+
 // TestRunsStatsVisibilityIsTheRuling is the owner's ruling in all four of its
 // cases: an operator sees everyone, a plain launcher sees their own row alone
 // and may opt in, an installation whose lists place nobody stays private, and

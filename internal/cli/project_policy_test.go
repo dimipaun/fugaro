@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -238,11 +240,18 @@ func (c policyWriteFails) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // TestProjectPolicyPublishPrintsNoDiffItDidNotWrite: the diff is a claim about
 // the node, so it goes out after the write that makes it true. On a write that
-// failed the operator reads the failure and "nothing was written", not a full
-// diff of a policy the node does not hold — a diff printed first reads as a
-// change that happened (the review finding on this change; `project repos
+// failed the operator reads the failure and that the node is as it was, not a
+// full diff of a policy the node does not hold — a diff printed first reads as
+// a change that happened (the review finding on this change; `project repos
 // edit` prints its line after its write for the same reason,
 // TestProjectReposEditRefusesAConcurrentWriter).
+//
+// "The node is as it was" and not "nothing was written" is deliberate, and it
+// is the other half of the review finding this change answers: the admissions
+// are a second write, narrowed before this one, and a failure here does not
+// undo them — so the sentence names what *this* write did not do, and the
+// admissions are named beside it when there were any (this fixture has none;
+// TestPolicyAdmissionsAreTightenedBeforeTheSharedNode is the case with them).
 func TestProjectPolicyPublishPrintsNoDiffItDidNotWrite(t *testing.T) {
 	f := newProjectFixture(t, "")
 	budgetTransport = policyWriteFails{rt: http.DefaultTransport}
@@ -252,8 +261,11 @@ func TestProjectPolicyPublishPrintsNoDiffItDidNotWrite(t *testing.T) {
 	if err == nil {
 		t.Fatal("a write the database refused was reported as a successful publish")
 	}
-	if !strings.Contains(err.Error(), "nothing was written") {
-		t.Errorf("err = %v, want it to say nothing was written", err)
+	if !strings.Contains(err.Error(), projectpolicy.PathShared()+" is as it was") {
+		t.Errorf("err = %v, want it to say the node is as it was", err)
+	}
+	if strings.Contains(err.Error(), "nothing was written") {
+		t.Errorf("err = %v claims nothing was written: the admissions are another write, and this message does not know they were not made", err)
 	}
 	for _, marker := range []string{"not published yet", "allow_repos", "set "} {
 		if strings.Contains(out, marker) {
@@ -2460,6 +2472,69 @@ func TestProjectPolicyPublishRefusesToDropARoutingBlock(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyPublishRefusesToTurnTheCascadeOff: deleting routing.claude
+// from the operator's config means "the cascade is off", and a publish is the
+// one place that difference is settled — so it refuses, rather than keeping a
+// switch the config no longer writes. The cascade is not a route (it decides
+// which credential carries a Claude call, never where the call goes:
+// projectpolicy.RouteCascade, O3, D150), so it is refused with a sentence
+// written for the cascade — what the switch hands out, and the ways to say it
+// goes on purpose.
+//
+// This is the independent review's major finding on 653decaf: that commit read
+// "a via other than direct" as the routes only, which stopped refusing the
+// cascade, and the publish then kept it in silence.
+func TestProjectPolicyPublishRefusesToTurnTheCascadeOff(t *testing.T) {
+	f := newProjectFixtureWith(t, projectProvidersYAML, "routing:\n  claude:\n    via: cascade\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	pol := publishedPolicy(t, f)
+	if pol.Routing == nil || pol.Routing.Claude == nil || pol.Routing.Claude.ViaValue() != config.RouteCascade {
+		t.Fatalf("the fixture did not publish the cascade this case is about: %+v\n%s", pol.Routing, nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	before := nodeJSON(t, f, projectpolicy.PathShared())
+
+	// The config loses the switch: that turns the cascade off, and a publish
+	// must not decide it did not mean that.
+	rewriteRoutingBlock(t, f, "")
+	_, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("the publish went through and kept the cascade the config no longer writes:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	for _, want := range []string{"credentials cascade", "claude via cascade", "via: cascade", "via: direct", "--remove-routing"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if now := nodeJSON(t, f, projectpolicy.PathShared()); now != before {
+		t.Errorf("the refused publish changed the node:\n%s", now)
+	}
+
+	// The remedy that keeps it: write the switch again.
+	rewriteRoutingBlock(t, f, "routing:\n  claude:\n    via: cascade\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("the remedy the refusal names does not work: %v", err)
+	}
+	if pol := publishedPolicy(t, f); pol.Routing == nil || pol.Routing.Claude.ViaValue() != config.RouteCascade {
+		t.Errorf("the config's cascade did not come back: %+v", pol.Routing)
+	}
+
+	// The remedy that ends it: --remove-routing, and the diff prints the drop
+	// rather than making it quietly.
+	rewriteRoutingBlock(t, f, "")
+	out, _, err := execute(t, "project", "policy", "publish", "--remove-routing")
+	if err != nil {
+		t.Fatalf("--remove-routing did not drop the cascade: %v", err)
+	}
+	if !strings.Contains(out, "- routing.claude.via: cascade") {
+		t.Errorf("the diff does not print the removal of the cascade:\n%s", out)
+	}
+	if _, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing"); ok {
+		t.Errorf("the node still carries a routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+}
+
 // rewriteRoutingBlock rewrites the fixture's project config with its routing:
 // block (from its key to the first line that is not indented under it) replaced
 // by block; "" drops it. The block the fixture wrote is the last thing in the
@@ -3134,5 +3209,93 @@ func TestProjectPolicyPublishKeepsCloneURLs(t *testing.T) {
 	}
 	if !strings.Contains(shown, canonical+" → "+url) {
 		t.Errorf("policy show does not print the clone_urls entry:\n%s", shown)
+	}
+}
+
+// TestPolicyRefusalsEscapeTheNodesKeyNames: the top-level key names a refusal
+// prints come from the node, which is a hand-writable object
+// (projectpolicy.Policy.UnknownKeys is whatever the strict decode could not
+// place). A member name is legal JSON whatever it holds: a bidi override
+// (U+202E), a zero-width space (U+200B) or a line separator is not
+// unicode.IsControl, and projectpolicy's checkTopLevelNames refuses duplicates
+// and case-variants of the keys this Fugaro knows, never a name's shape —
+// so a node an operator did not write can rewrite the terminal line it is
+// printed in, which is exactly why the rest of this package prints a name of
+// that provenance through pluginwire.Printable.
+//
+// All three readers of the node are checked, because each words its own
+// refusal: refuseUnknownPolicyKeys (policy show, project show, repos ls),
+// publishedPolicyOf (the publish, which drops the keys), and projectPolicyRead
+// — the launch gate's own read, which is what refuses a `fugaro run` before
+// anything of it exists.
+//
+// Mutation (verified, run and restored): print the keys with
+// `strings.Join(p.UnknownKeys, ", ")` again — each join belongs to its own
+// reader, so the half that reads through it fails with the raw bidi override
+// back in the message (in project_cmd.go it takes the first two halves, in
+// projectPolicyRead the launch gate's).
+func TestPolicyRefusalsEscapeTheNodesKeyNames(t *testing.T) {
+	f := newProjectFixture(t, "")
+	// The name the node carries: a bidi override inside it and a zero-width
+	// space after the visible word, which is how a key named `future_key`
+	// prints as something else entirely.
+	const hostile = "future‮key​"
+	// The form pluginwire.Printable must produce, written out independently of
+	// it: the runes as their `\u` escape text, which is what a terminal prints
+	// without acting on.
+	const escaped = "future\\u202ekey\\u200b"
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+		hostile:       true,
+	})
+	for _, tc := range []struct {
+		what   string
+		args   []string
+		wantIn string
+	}{
+		{"policy show, which refuses the node it cannot read whole", []string{"project", "policy", "show"}, "never takes effect"},
+		{"the publish, which refuses to drop the keys it does not know", []string{"project", "policy", "publish", "--yes"}, "publishing would drop them"},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			_, _, err := execute(t, tc.args...)
+			if err == nil {
+				t.Fatalf("%s: %v was accepted", tc.what, tc.args)
+			}
+			assertEscapedRefusal(t, err.Error(), tc.wantIn, hostile, escaped)
+		})
+	}
+	t.Run("the launch gate, which refuses a run against the node", func(t *testing.T) {
+		lc, err := localcfg.Load(f.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Called the way run_allowlist.go's launchPolicyGates calls it: the
+		// memoized read, its error worded by policyReadErr, which is the
+		// sentence a refused `fugaro run` prints.
+		var once policyReadOnce
+		_, _, rerr := once.read(context.Background(), lc)
+		err = policyReadErr(rerr)
+		if err == nil {
+			t.Fatal("a launch against a node with an unknown key was accepted")
+		}
+		assertEscapedRefusal(t, err.Error(), "never takes effect", hostile, escaped)
+	})
+}
+
+// assertEscapedRefusal checks one refusal of the unknown policy keys: that it
+// is the refusal about them (wantIn), that the node's name is printed escaped,
+// and that the raw name is nowhere in the line.
+func assertEscapedRefusal(t *testing.T, msg, wantIn, hostile, escaped string) {
+	t.Helper()
+	if !strings.Contains(msg, wantIn) {
+		t.Fatalf("the refusal is not the one about the unknown key (%q): %s", wantIn, msg)
+	}
+	if !strings.Contains(msg, escaped) {
+		t.Errorf("the node's key name is not escaped in the refusal: %q missing from %s", escaped, msg)
+	}
+	if strings.Contains(msg, hostile) {
+		t.Errorf("the node's key name reaches the terminal raw, so the line's reading is the node's to choose: %q in %s", hostile, msg)
 	}
 }

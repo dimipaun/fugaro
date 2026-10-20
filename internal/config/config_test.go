@@ -680,6 +680,82 @@ func TestAgentOAuthToken(t *testing.T) {
 	}
 }
 
+// TestAgentOf is the reader internal/cli judges a launch's Claude account with
+// (agentAtRef: the fugaro.yaml at the ref a run checks out, read out of the
+// launcher's git objects). It reads the document's own agent block, applies the
+// auth default the rest of Fugaro applies (DefaultAgentAuth — a resolved config
+// says "vertex" for a file that names none, so this reader must not say ""),
+// and answers "cannot tell" for bytes no reader of this Fugaro could resolve —
+// which is not the same answer as "names no account".
+//
+// Mutation (run, restore): return the block as decoded, without the auth
+// default — the no-auth cases read "" here while every resolved config says
+// "vertex", and claudeAccountAllowed then stops refusing an account named for a
+// workflow whose own file names no oauth auth.
+func TestAgentOf(t *testing.T) {
+	for _, tc := range []struct {
+		why       string
+		data      string
+		wantAuth  string
+		wantToken string
+		wantOK    bool
+	}{
+		{
+			why:       "both keys as written",
+			data:      "version: 1\nproject: example\ngit: { provider: github }\nagent: { auth: oauth, oauth_token: acme-personal }\nworkflows:\n  app: { commands: { build: b } }\n",
+			wantAuth:  "oauth",
+			wantToken: "acme-personal",
+			wantOK:    true,
+		},
+		{
+			why:      "an agent block that names no auth carries the default",
+			data:     "version: 1\nproject: example\ngit: { provider: github }\nagent: { oauth_token: acme-personal }\nworkflows:\n  app: { commands: { build: b } }\n",
+			wantAuth: DefaultAgentAuth, wantToken: "acme-personal", wantOK: true,
+		},
+		{
+			why:      "no agent block at all names no account",
+			data:     "version: 1\nproject: example\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: b } }\n",
+			wantAuth: DefaultAgentAuth, wantOK: true,
+		},
+		{
+			// The file a launch most often reads: one that needs the project
+			// layer for its workflow, which no plain Resolve could answer for.
+			// agent.oauth_token is repository-scope, so it is here.
+			why:      "a file that needs a layer still says which account it names",
+			data:     "version: 1\nproject: example\ngcp_project: proj-1234\nagent: { auth: oauth, oauth_token: acme-personal }\nworkflows:\n  app: { profile: p, commands: { build: b } }\n",
+			wantAuth: "oauth", wantToken: "acme-personal", wantOK: true,
+		},
+		{
+			why:    "an unknown key is cannot tell, not names no account",
+			data:   "version: 1\nproject: example\ngit: { provider: github }\nagent: { auth: oauth, oauth_token: acme-personal }\nnonsense: 1\nworkflows:\n  app: { commands: { build: b } }\n",
+			wantOK: false,
+		},
+		{
+			why:    "a duplicate key is cannot tell too",
+			data:   "version: 1\nproject: example\ngit: { provider: github }\nagent: { auth: oauth, auth: api-key }\nworkflows:\n  app: { commands: { build: b } }\n",
+			wantOK: false,
+		},
+		{
+			why:    "an oauth_token that is not a string is cannot tell",
+			data:   "version: 1\nproject: example\ngit: { provider: github }\nagent: { auth: oauth, oauth_token: [a, b] }\nworkflows:\n  app: { commands: { build: b } }\n",
+			wantOK: false,
+		},
+	} {
+		t.Run(tc.why, func(t *testing.T) {
+			a, ok := AgentOf([]byte(tc.data))
+			if ok != tc.wantOK {
+				t.Fatalf("AgentOf ok = %v, want %v (%q)", ok, tc.wantOK, tc.data)
+			}
+			if !ok {
+				return
+			}
+			if a.Auth != tc.wantAuth || a.OAuthToken != tc.wantToken {
+				t.Errorf("AgentOf = {auth: %q, oauth_token: %q}, want {%q, %q}", a.Auth, a.OAuthToken, tc.wantAuth, tc.wantToken)
+			}
+		})
+	}
+}
+
 const profileBase = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web: { commands: { build: make, test: make test } }\n"
 
 func TestProfileKeysDecode(t *testing.T) {

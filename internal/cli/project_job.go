@@ -452,11 +452,19 @@ func checkProjectJobAccountCovers(p *projectpolicy.Policy, profile, provider, ac
 // exists to refuse would go through. Even the plain-ref fallback is a fact
 // about the repository rather than about the working tree.
 //
-// Only the auth is judged on the ref: launchProjectJobFor still takes the
-// workflow, the checkout mode and the profile from the working tree's
-// resolution (co), and a difference there fails closed in the run (the
+// The workflow, the checkout mode and the profile still come from the working
+// tree's resolution (co), and a difference there fails closed in the run (the
 // runner's job-profile and job-binding checks refuse it, or the run lacks the
-// credential) rather than launching on another account.
+// credential). The condition's own agent.oauth_token is not one of those: it
+// is repository-scope (named-oauth-tokens T2), it is what selects the account
+// axis of this launch's job, and it is therefore read from the same document
+// as the auth — claudeAccountFor, at spec build, where the --token flag
+// overrides it and the ref's answer stands over the working tree's — so that
+// the account this function's caller resolves and the account the run's own
+// task.json carries cannot be two different documents' answers. The value that
+// reaches this point is spec.OAuthToken, the run's own, whatever the working
+// tree says. The layer is not read for it either way: no project layer may
+// name an account.
 //
 // Nothing is fetched to make the read: a fetch is a network write into a
 // repository this command does not own. A checkout that does not hold the ref

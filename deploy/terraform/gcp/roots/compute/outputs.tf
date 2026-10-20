@@ -9,6 +9,15 @@ output "preload_image" {
   value = module.compute.preload_image
 }
 
+# The label each generation in that family records its socket gid under, the
+# module's output passed through unchanged (the root is a thin thing: see
+# TestComputeOutputsCoverTheRoot). It travels beside the family because that is
+# what reading the gid takes: the family names the image and this names the
+# label on it.
+output "preload_socket_gid_label" {
+  value = module.compute.preload_socket_gid_label
+}
+
 output "reaper_account" {
   value = module.compute.reaper_account
 }

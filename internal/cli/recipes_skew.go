@@ -129,10 +129,11 @@ const catalogSince = "0.7.5"
 const catalogShipped = false
 
 // managedDeployerShipped is false until the release that ships a managed
-// deployer IAM can actually create: 0.9.5, by the owner's ruling of
-// 2026-10-19, which moved the redesign off 0.9.0 (the ruling of 2026-10-18,
-// "Gate it off by default; redesign for 0.9.0"). 0.9.0 therefore ships with
-// the scoped role still gated off, as 0.8.6 and 0.8.7 do. The deployer's
+// deployer IAM can actually create: 0.9.6, by the owner's ruling of
+// 2026-10-20, which moved the redesign off 0.9.5 (the ruling of 2026-10-19 had
+// moved it off 0.9.0, where the ruling of 2026-10-18 put it: "Gate it off by
+// default; redesign for 0.9.0"). 0.9.0 and 0.9.5 therefore ship with the
+// scoped role still gated off, as 0.8.6 and 0.8.7 do. The deployer's
 // scoped role is bound under an fmgd- prefix condition that GCP rejects as
 // written (17 logical operators where IAM allows 12, resource.name.contains()
 // is not a supported function, and resource.name is not supported for most of
@@ -169,35 +170,22 @@ func refuseManagedNotShipped() error {
 	return userErr("%s", managedDisabled)
 }
 
-// batchProvisionShipped is false until a later release, the one that
-// redesigns the Batch backend's reaper: the Cloud Batch backend is excluded
-// from 0.9.0 (the owner's ruling of 2026-10-18), so no release this tree names
-// carries the fix yet. The compute module fugaro init --provision-batch
-// applies gives the reaper a custom role naming batch.jobs.cancel, which is
-// not a permission GCP has (it lists batch.jobs.create, delete, get and list
-// only), so creating that role fails and the apply cannot complete. While it
-// is false, init refuses --provision-batch with batchProvisionDisabled before
-// any cloud call. deploy/terraform's TestCustomRolePermissionsAreAllowedByGoogle
-// names batch.jobs.cancel as its one known-invalid permission for this reason;
-// docs/release.md's "Before you tag" checklist verifies the constant.
-const batchProvisionShipped = false
-
-// batchProvisionOpen is batchProvisionShipped, a variable for the same reason
-// as managedDeployerOpen.
-var batchProvisionOpen = batchProvisionShipped
-
-// batchProvisionDisabled is init's refusal of --provision-batch while
-// batchProvisionShipped is false.
-const batchProvisionDisabled = "--provision-batch is disabled in this release: the Batch backend's reaper role names batch.jobs.cancel, a permission Google does not have, so its provisioning cannot complete (docs/design/compute-backend.md); it returns in a later release, and the installation's ordinary steps are unaffected"
-
-// refuseBatchProvisionNotShipped is batchProvisionDisabled as an error, nil
-// once the Batch provisioning ships.
-func refuseBatchProvisionNotShipped() error {
-	if batchProvisionOpen {
-		return nil
-	}
-	return userErr("%s", batchProvisionDisabled)
-}
+// batchProvisionShipped is true as of 0.9.5, the release that fixed the
+// compute module the stage behind it applies. Until then it was false because
+// the module's reaper role named batch.jobs.cancel -- not a permission GCP
+// has, so the role could not be created and the apply could not complete --
+// and init refused --provision-batch before any cloud call. 0.9.5 is the
+// release whose reaper role is the five permissions GCP defines and whose
+// queue deadline deletes rather than cancels (internal/backend/batch/reap.go),
+// so the role is creatable and the stage completes; the flag's own tests are
+// where the stage is exercised.
+//
+// There is deliberately no batchProvisionOpen, no batchProvisionDisabled and
+// no refuseBatchProvisionNotShipped beside it: an open gate nothing closes and
+// a refusal nothing can reach are names a later reader re-opens, which is
+// exactly what the pair existed to prevent. The managed gate above keeps its
+// pair because it is still closed.
+const batchProvisionShipped = true
 
 // artifactsSince is the first fugaro release whose runner implements a
 // mode: artifact recipe: it reads the task's mode field

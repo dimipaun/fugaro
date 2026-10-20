@@ -321,6 +321,15 @@ func DeriveAccounts(profiles map[string]Profile, accounts map[string]config.Clau
 		var list []string
 		for _, profileName := range named[ref] {
 			provider := profiles[profileName].Provider
+			// A profile that names an account without naming a provider has
+			// no provider to qualify the account's repositories with, and it
+			// is refused for the field it is missing rather than for the
+			// slug: this runs before the document is judged (see
+			// providerRequired), and Canonical('', slug) would otherwise
+			// report the repository as the problem.
+			if provider == "" {
+				return nil, providerRequired("projectpolicy: profiles." + profileName)
+			}
 			for _, slug := range slugs {
 				canonical, err := Canonical(provider, slug)
 				if err != nil {

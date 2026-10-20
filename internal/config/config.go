@@ -774,6 +774,36 @@ func Parse(data []byte) (*Config, []Problem) {
 	return c, ps
 }
 
+// AgentOf reads the agent block out of a fugaro.yaml's own bytes, and says
+// whether the file could be read at all.
+//
+// It is the repository's own block: both keys it carries are repository-scope
+// (docs/design/named-oauth-tokens.md T2 for agent.oauth_token, which no project
+// layer may name, and layered-config.md for agent.auth, whose layer a caller
+// merges itself), so the file's bytes are the whole answer here and a file that
+// needs a layer for something else still says what it says — which is why this
+// reads the plain, strict decode and not Resolve, and why internal/cli can
+// judge a launch on the fugaro.yaml at the ref the run checks out without
+// resolving that run's whole config. Auth carries the default the rest of
+// Fugaro applies (DefaultAgentAuth), so a file that names no auth reads the
+// same here as in a resolved config; everything else is exactly as written.
+//
+// ok is false for bytes this Fugaro cannot read as a fugaro.yaml at all (a
+// decode the strict reader refuses, an unknown field, a duplicate key): that is
+// "cannot tell", which is not the same answer as "names no account" — and it is
+// the answer a run whose own file is one of those gets too, since the runner
+// resolves that same file with the same strict decode inside the job.
+func AgentOf(data []byte) (Agent, bool) {
+	c, ps := decodeRepo(data)
+	if c == nil || len(ps) > 0 {
+		return Agent{}, false
+	}
+	if c.Agent.Auth == "" {
+		c.Agent.Auth = DefaultAgentAuth
+	}
+	return c.Agent, true
+}
+
 // decodeRepo decodes a fugaro.yaml strictly, without defaults or
 // validation: the repository layer alone, with today's line-numbered
 // errors.

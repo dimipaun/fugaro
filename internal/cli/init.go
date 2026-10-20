@@ -879,9 +879,12 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// (internal/managed/statebucket.go: OperatorStateRole, without which the
 	// apply's inventory read is denied for every operator). It
 	// belongs here for the same reason the marker does: it is setup on the
-	// operator's own credentials, in the managed creation and nowhere else.
-	// The region is the installation's, so the managed state sits where the
-	// rest of the project's storage does. Like the marker, this never changes
+	// operator's own credentials, by the run that creates the project, and no
+	// other command in the tree writes it. "The creation" here is every
+	// project this run creates and not the --managed one alone — the step is
+	// not gated on the flag, for the reason the paragraph below gives for the
+	// mark. The region is the installation's, so the managed state sits where
+	// the rest of the project's storage does. Like the marker, this never changes
 	// the outcome of the run — a project that is marked but has no state
 	// bucket is the fail-closed direction (a managed apply finds nowhere to
 	// keep its state and says so, rather than writing it somewhere else).
@@ -1017,15 +1020,12 @@ func (o *initOptions) checkOnboardRepo() error {
 
 // check refuses flag combinations that mean nothing.
 func (o *initOptions) check() error {
-	// Two features this release cannot complete, refused first and before
-	// any cloud call (managedDeployerShipped, batchProvisionShipped).
+	// The one feature this release cannot complete, refused first and before
+	// any cloud call (managedDeployerShipped). --provision-batch was refused
+	// here too until 0.9.5, when the compute module's reaper role stopped
+	// naming a permission Google does not have (batchProvisionShipped).
 	if o.managed {
 		if err := refuseManagedNotShipped(); err != nil {
-			return err
-		}
-	}
-	if o.provisionBatch {
-		if err := refuseBatchProvisionNotShipped(); err != nil {
 			return err
 		}
 	}
@@ -2310,9 +2310,12 @@ func (r *initRun) printResult() error {
 // checkRepo refuses flag combinations that mean nothing for --repo.
 func (o *initOptions) checkRepo() error {
 	if o.provisionBatch {
-		if err := refuseBatchProvisionNotShipped(); err != nil {
-			return err
-		}
+		// This run validates here and never reaches check(), so the pair has
+		// to be refused here as well: --repo onboards a repository's own root
+		// and --provision-batch applies the installation's compute root, which
+		// is why the flag's help says it excludes --repo. Accepted, it would
+		// onboard the repository and drop the provisioning the user named.
+		return userErr("--provision-batch provisions the installation's Batch compute backend, which is an apply of the installation's own root: it excludes --repo (run fugaro init --provision-batch for the installation, then fugaro init --repo for the repository)")
 	}
 	if o.anchor {
 		return userErr("--anchor and --repo exclude one another: --anchor writes the gcp_project line of an onboarded repository's checkout (run fugaro init --anchor there), and fugaro init --repo does not write it")

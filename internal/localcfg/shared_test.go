@@ -76,6 +76,17 @@ routing:
 claude_accounts:
   acme-personal:
     allow_data_to: [acme/web]
+batch:
+  image: us-central1-docker.pkg.dev/my-project/fugaro/acme-web:1.2.3
+  machine_type: e2-standard-4
+  boot_image: projects/my-project/global/images/family/fugaro-base-1
+  network: projects/my-project/global/networks/fugaro-runs
+  subnetwork: projects/my-project/regions/us-central1/subnetworks/fugaro-runs
+  service_account: fugaro-batch@my-project.iam.gserviceaccount.com
+  secrets:
+    GITHUB_TOKEN: projects/my-project/secrets/github-token
+  socket_gid: 412
+  task_timeout: 6h
 max_parallel: 7
 endpoints: { run: "http://127.0.0.1:1/", no_auth: true }
 update_check: false
@@ -98,7 +109,11 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "routing:", "claude-sonnet-5-5", "base_branch", "service_account", "claude_accounts:", "acme-personal", "update_check"} {
+	// The build account's own email rather than the word "service_account":
+	// batch.service_account is published (it is an installation fact, not the
+	// deprecated build one), so the forbidden word would fail on the block
+	// this file now carries.
+	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "routing:", "claude-sonnet-5-5", "base_branch", "fugaro-build@my-project.iam.gserviceaccount.com", "claude_accounts:", "acme-personal", "update_check"} {
 		if strings.Contains(string(out), forbidden) {
 			t.Errorf("published file contains %q:\n%s", forbidden, out)
 		}
@@ -155,6 +170,59 @@ func TestMergeSharedLocalRepoWinsAndNewIsAdded(t *testing.T) {
 	}
 	if local.Repos["acme/web"].BaseBranch != "dev" || existing.Repos["acme/old"].BaseBranch != "main" {
 		t.Error("MergeShared cleared an input's base_branch")
+	}
+}
+
+// TestMergeSharedKeepsThePublishedBatchBlock: the batch block is published —
+// it is the installation's facts (the image a run's job runs, its machine
+// type, the network and subnetwork its VMs are placed in, the account they run
+// as, the socket gid), not one machine's — so it is a pointer like budget: and
+// watch:, and a publish from a machine whose own config has no batch: block
+// must not erase what another machine onboarded. Without the keep-rule in
+// MergeShared the publisher writes its own nil pointer over the published one,
+// silently: the runs bucket's copy is the only place a teammate's batch facts
+// live, and every read takes the published file's.
+//
+// Mutation (verified, run and restored): delete `if out.Batch == nil {
+// out.Batch = published.Batch }` from MergeShared: the first assertion fails
+// on a nil block, and no other test does.
+func TestMergeSharedKeepsThePublishedBatchBlock(t *testing.T) {
+	block := "batch:\n  image: us-central1-docker.pkg.dev/my-project/fugaro/acme-web:1\n  service_account: fugaro-batch@my-project.iam.gserviceaccount.com\n  socket_gid: 412\n"
+	existing := sharedBase(t, block)
+	local := sharedBase(t, "")
+	got := MergeShared(existing, local)
+	if got.Batch == nil || got.Batch.SocketGID != 412 || got.Batch.ServiceAccount != "fugaro-batch@my-project.iam.gserviceaccount.com" {
+		t.Fatalf("a publish from a machine with no batch: block dropped the published one: %+v", got.Batch)
+	}
+	out, err := got.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "socket_gid: 412") {
+		t.Errorf("the merged file carries no batch block:\n%s", out)
+	}
+	// The publisher's own block wins when it has one: a pointer field takes
+	// the local value, and a machine that provisioned its own compute root is
+	// the one whose gid is right for its own image.
+	local = sharedBase(t, strings.Replace(block, "412", "998", 1))
+	if got := MergeShared(existing, local); got.Batch == nil || got.Batch.SocketGID != 998 {
+		t.Errorf("the local batch block must win: %+v", got.Batch)
+	}
+	// Shared() carries it: what MergeShared merges from is what readers get.
+	if s := existing.Shared(); s.Batch == nil || s.Batch.SocketGID != 412 {
+		t.Errorf("Shared() dropped the batch block: %+v", s.Batch)
+	}
+	// A published object with none leaves the local one alone, and neither
+	// side having one writes no batch: key at all (an empty block would be a
+	// block that parses and means nothing).
+	if got := MergeShared(sharedBase(t, ""), local); got.Batch == nil || got.Batch.SocketGID != 998 {
+		t.Errorf("a published object with no batch block dropped the local one: %+v", got.Batch)
+	}
+	if got := MergeShared(nil, sharedBase(t, "")); got.Batch != nil {
+		t.Errorf("no batch block on either side became %+v", got.Batch)
+	}
+	if out, _ := MergeShared(nil, sharedBase(t, "")).Marshal(); strings.Contains(string(out), "batch") {
+		t.Errorf("the merged file carries a batch key nobody set:\n%s", out)
 	}
 }
 
