@@ -519,7 +519,7 @@ func censusExempt(rel string) bool {
 var censusOutputDirs = []string{
 	// website/.gitignore
 	"website/node_modules",
-	"website/dist",
+	websiteBuildDir,
 	"website/.astro",
 	// The console's own .gitignore, spelled through consoleDirName rather than
 	// as one literal: the boundary's mention rule (docs_console_boundary_test.go)
