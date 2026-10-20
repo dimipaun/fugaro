@@ -89,8 +89,11 @@ func dirName(ctx context.Context) string {
 
 // adcPath is where the application default credentials are, through the one
 // builder the CLI shares (adcpath.go's adcFilePath: F29 — this copy had no
-// $XDG_CONFIG_HOME step, so it disagreed with the rest of the CLI whenever
-// that variable was set). Tests replace it.
+// $XDG_CONFIG_HOME step where the other two had one, so the wizard and the
+// rest of the CLI disagreed whenever that variable was set; the step itself
+// was wrong on every platform, because gcloud reads $CLOUDSDK_CONFIG and no
+// XDG variable, and all three put the file under `.config` on Windows). Tests
+// replace it.
 var adcPath = func() string {
 	p, err := adcFilePath(os.Getenv, runtime.GOOS)
 	if err != nil {
