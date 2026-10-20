@@ -680,15 +680,23 @@ func TestTheIdentityARefusalPrintsIsOneAnEntryCanHold(t *testing.T) {
 	if !strings.Contains(msg, want) {
 		t.Errorf("the refusal the apply returns does not carry the identity whole:\n%s\nwant it to hold\n%s", msg, want)
 	}
+	// The owner copies the printed text out of the sentence, so what the copy
+	// holds is the identity AND the sentence's own closing bracket, and nothing
+	// else: the command that records it takes that one bracket off (internal/cli's
+	// approveArgument, TestAllowDeleteCommandTakesTheSentenceBracketOffAPaste),
+	// which is only a rule it can have because an identity holds no parenthesis
+	// of its own (tf.identityValue). Read any deeper into the sentence — or with
+	// the bracket left on — and the entry that comes out matches nothing, which
+	// is the loop that cannot close.
 	i := strings.LastIndex(msg, "and the plan removes ")
 	if i < 0 {
 		t.Fatalf("the refusal names no object:\n%s", msg)
 	}
-	printed := strings.TrimSuffix(msg[i+len("and the plan removes "):], ")")
-	if printed != want {
-		t.Errorf("the refusal prints\n%q\nand the plan's identity is\n%q", printed, want)
+	copied := msg[i+len("and the plan removes "):]
+	if copied != want+")" {
+		t.Errorf("the refusal's copy is\n%q\nwant the plan's identity %q followed by the sentence's own bracket", copied, want)
 	}
-	if ok, why := tf.Approves([]tf.DeleteEntry{{Address: addr, Before: printed}}, rc); !ok {
+	if ok, why := tf.Approves([]tf.DeleteEntry{{Address: addr, Before: want}}, rc); !ok {
 		t.Errorf("the identity a refusal printed approves nothing (%s), so the loop the delete list works by cannot close", why)
 	}
 }

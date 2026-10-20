@@ -66,6 +66,13 @@ func TestRemovalIdentityString(t *testing.T) {
 		{RemovalIdentity{Type: "t", Name: "a bucket"}, `type=t name=a\x20bucket`},
 		{RemovalIdentity{Type: "t", Name: `a\b`}, `type=t name=a\\b`},
 		{RemovalIdentity{Type: "t", Name: `a \ b`}, `type=t name=a\x20\\\x20b`},
+		// A parenthesis is escaped although it has a printable form: every
+		// refusal prints an identity inside a sentence's own parenthetical, so
+		// a value's ")" written as itself would sit beside the sentence's and
+		// the owner copying the text out could not tell the two apart
+		// (identityValue).
+		{RemovalIdentity{Type: "t", Name: "a(b)"}, `type=t name=a\x28b\x29`},
+		{RemovalIdentity{Type: "t", Name: "b)"}, `type=t name=b\x29`},
 	} {
 		if got := tc.id.String(); got != tc.want {
 			t.Errorf("RemovalIdentity%v.String() = %q, want %q", tc.id, got, tc.want)
@@ -548,7 +555,7 @@ func TestThePrintedIdentityIsTheIdentityAnEntryHolds(t *testing.T) {
 // ends of the loop rest on, asserted over every position a space can sit in a
 // part: an identity this encoder writes holds printable ASCII, has no space
 // but the ones between its parts, two of them never in a row, and none at
-// either end.
+// either end, and it holds NO parenthesis.
 //
 // Each clause is a printer or a reader of this program. safetext rebuilds a
 // line with strings.Fields (safetext.fieldRewrite), which collapses a run of
@@ -561,9 +568,17 @@ func TestThePrintedIdentityIsTheIdentityAnEntryHolds(t *testing.T) {
 // of an identity, because no identity begins or ends with one. A TERMINAL
 // takes what is printable ASCII as it is. Every value here is a value the
 // representation would break on if the escaping did not cover it.
+//
+// No parenthesis, because every refusal prints an identity inside a sentence of
+// its own — "…(the plan removes type=… id=…)" — and the owner copies that text
+// out of the refusal: the last character of the copy is the sentence's own ")"
+// and not the object's, which is only true if no identity can hold one
+// (identityValue, and internal/cli's approveArgument, which takes that one
+// bracket off a paste and refuses an argument that still holds one).
 func TestAnIdentityIsOnePrintableLineWithSingleSpaces(t *testing.T) {
 	values := []string{
 		"", "a", " a", "a ", " ", "   ", "a b", "a  b", "\ta", "a\t", "a\n", "\r", "\\", "a\\ b", "\\ ", "a\\b",
+		"(", ")", "(a)", "a)", "b(a", "((", "))",
 	}
 	for _, v := range values {
 		ids := []RemovalIdentity{
@@ -587,6 +602,9 @@ func TestAnIdentityIsOnePrintableLineWithSingleSpaces(t *testing.T) {
 			if strings.Contains(text, "  ") {
 				t.Errorf("the identity %q holds two spaces in a row, which a printer rebuilds as one", text)
 			}
+			if strings.ContainsAny(text, "()") {
+				t.Errorf("the identity %q holds a parenthesis, which is the punctuation of the sentence a refusal prints it in", text)
+			}
 			for _, r := range text {
 				if r != ' ' && (r < 0x21 || r > 0x7e) {
 					t.Errorf("the identity %q holds %U, which no printer of this program leaves alone", text, r)
@@ -596,17 +614,25 @@ func TestAnIdentityIsOnePrintableLineWithSingleSpaces(t *testing.T) {
 	}
 }
 
-// printedIdentity is the identity a mismatch refusal ends by naming, as its
-// reader would copy it out of the sentence — the loop, taken literally rather
-// than reconstructed from the fixture.
-func printedIdentity(t *testing.T, why string) string {
+// printedTail is what a mismatch refusal ends by naming, copied out of the
+// sentence the way its reader copies it: everything after the sentence's own
+// words, the closing bracket of its parenthetical included. It is the literal
+// copy and not the identity reconstructed from the fixture, because the loop
+// the delete list works by is textual — what the reader ends up with is what
+// this returns, and the sentence's bracket is part of it.
+//
+// It is a TAIL and not an identity for that reason: the bracket at its end
+// belongs to the sentence, which is what makes it safe for the command that
+// records a paste to take that one bracket off (internal/cli's
+// approveArgument), and what an identity must hold no parenthesis for.
+func printedTail(t *testing.T, why string) string {
 	t.Helper()
 	const mark = "and the plan removes "
 	i := strings.LastIndex(why, mark)
 	if i < 0 {
 		t.Fatalf("the refusal does not name the object the plan removes: %q", why)
 	}
-	return strings.TrimSuffix(why[i+len(mark):], ")")
+	return why[i+len(mark):]
 }
 
 // TestTheMismatchRefusalNamesAnIdentityAnEntryCanHold: the same contract for
@@ -621,11 +647,19 @@ func TestTheMismatchRefusalNamesAnIdentityAnEntryCanHold(t *testing.T) {
 	if ok {
 		t.Fatal("an entry for another object approved the removal")
 	}
-	printed := printedIdentity(t, why)
-	if want := RemovedIdentity(plan).String(); printed != want {
-		t.Errorf("the sentence names %q, want the identity %q", printed, want)
+	printed := printedTail(t, why)
+	want := RemovedIdentity(plan).String()
+	// The copy is the identity and then the sentence's own closing bracket, and
+	// nothing else: the owner who copies the printed text arrives at the
+	// command with exactly this, and one bracket is what that command takes off
+	// (TestAllowDeleteCommandRecordsTheIdentityARefusalPrints, which runs the
+	// paste this fixture describes). A tail holding anything more — the
+	// fixture's own text, a second bracket — would be a text the command had to
+	// read by a rule of its own rather than by the identity's.
+	if printed != want+")" {
+		t.Errorf("the sentence ends %q, want the identity %q followed by the sentence's own \")\"", printed, want)
 	}
-	if ok, why := Approves([]DeleteEntry{{Address: plan.Address, Before: printed}}, plan); !ok {
+	if ok, why := Approves([]DeleteEntry{{Address: plan.Address, Before: strings.TrimSuffix(printed, ")")}}, plan); !ok {
 		t.Errorf("the identity copied out of the refusal does not approve the removal: %s", why)
 	}
 }

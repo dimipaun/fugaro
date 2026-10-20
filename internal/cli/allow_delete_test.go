@@ -957,6 +957,99 @@ func TestAllowDeleteCommandRecordsTheIdentityARefusalPrints(t *testing.T) {
 	}
 }
 
+// TestAllowDeleteCommandTakesTheSentenceBracketOffAPaste: what a refusal
+// prints is a sentence of this program's own with the identity inside it — "…
+// (the plan removes type=… id=…)" — so an owner who copies the printed text
+// out, which is what this command's help tells them to do, arrives at the
+// command with the sentence's closing bracket still on the end. It is taken
+// off, and only one, and the entry recorded is the one that approves the
+// removal.
+//
+// The other direction is pinned too: an argument that still holds a parenthesis
+// after that is refused, loudly, rather than recorded. An identity holds none
+// (tf.identityValue escapes both), so it is not an identity, and recording it
+// would be an entry the owner reads as an approval and that clears nothing —
+// the loop that cannot close.
+func TestAllowDeleteCommandTakesTheSentenceBracketOffAPaste(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket.fmgd_data"
+	rc := refusalRemoval("fmgd-data")
+	// The sentence a refusal prints, and the text its reader copies out of it:
+	// everything after the sentence's own words (tf.Approves and the cover say
+	// the same thing in the same shape, internal/infra/tf/managed_cover.go).
+	_, why := tf.Approves([]tf.DeleteEntry{{Address: addr, Before: "type=google_storage_bucket id=another-object"}}, rc)
+	const mark = "and the plan removes "
+	i := strings.LastIndex(why, mark)
+	if i < 0 {
+		t.Fatalf("the refusal does not name the object the plan removes: %q", why)
+	}
+	tail := why[i+len(mark):]
+	if want := tf.RemoveIdentityText(rc) + ")"; tail != want {
+		t.Fatalf("the refusal's copy is %q, want the identity followed by the sentence's own bracket (%q)", tail, want)
+	}
+
+	for _, tc := range []struct {
+		name, before string
+	}{
+		{"the copied tail, bracket and all", tail},
+		{"the copied tail, quoted and bracketed", `"` + tail + `"`},
+		{"the copied tail with a space after it", tail + " "},
+		{"the identity bare, as the sentence names it", strings.TrimSuffix(tail, ")")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := allowDeleteRig(t)
+			if out, _, err := execute(t, "allow-delete", addr+"="+tc.before); err != nil {
+				t.Fatalf("the text a refusal printed was refused: %v\n%s", err, out)
+			}
+			got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
+			if !ok {
+				t.Fatal("nothing was written")
+			}
+			var obj struct {
+				Version int              `json:"version"`
+				Entries []tf.DeleteEntry `json:"entries"`
+			}
+			if err := json.Unmarshal([]byte(got), &obj); err != nil {
+				t.Fatalf("the object is not a delete list (%v):\n%s", err, got)
+			}
+			want := tf.ApprovalFor(rc)
+			if len(obj.Entries) != 1 || obj.Entries[0] != want {
+				t.Errorf("the object holds %+v, want the one entry that approves the removal (%+v)", obj.Entries, want)
+			}
+			if ok, why := tf.Approves(obj.Entries, rc); !ok {
+				t.Errorf("the entry recorded from the paste does not approve the removal: %s", why)
+			}
+		})
+	}
+
+	// A parenthesis the sentence's bracket being taken off does not account
+	// for: this is not an identity, and it is refused rather than recorded.
+	for _, tc := range []struct{ name, before string }{
+		// One bracket comes off and no more, and only at that end: a second
+		// bracket is a text this command has no reading of, and so is one in
+		// the middle of an identity.
+		{"a second bracket", tail + ")"},
+		{"a bracket inside the identity", "type=google_storage_bucket name=(fmgd-data)"},
+		{"a bracketed identity and the sentence's bracket", "(" + tail + ")"},
+	} {
+		t.Run("refused "+tc.name, func(t *testing.T) {
+			r := allowDeleteRig(t)
+			out, _, err := execute(t, "allow-delete", addr+"="+tc.before)
+			if err == nil {
+				t.Fatalf("an argument that is not an identity was accepted:\n%s", out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+			}
+			if strings.HasPrefix(tc.before, "type=") && !strings.Contains(err.Error(), "parenthesis") {
+				t.Errorf("the refusal does not say what is wrong with it: %v", err)
+			}
+			if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); ok {
+				t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
+			}
+		})
+	}
+}
+
 // TestAllowDeleteCommandRefusesAnIdentityTooLongToMatch: this command cannot
 // tell which removals a plan shows, but it can tell when an identity is one no
 // removal is ever identified by — a refusal prints an identity of at most

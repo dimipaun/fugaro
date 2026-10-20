@@ -87,16 +87,22 @@ another object later — another name, a renamed or replaced resource, one moved
 in from elsewhere — is not approved by it, so an entry an earlier apply already
 used admits nothing more. The identity is compared character for character with
 the one the plan's before view shows, so copy it from the refusal rather than
-retyping it; it is printed there bare, and one matched pair of double quotes
-around it is stripped if you paste it quoted anyway, because a shell or a
-message may have added them (a quote at one end only is a character of the
-identity, and is kept). The two ends agree byte for byte because the identity
-is written in an escaped form — a space in a value as \x20, a backslash as \\,
-and any other byte with no printable form as \xHH — so that what a refusal
-prints is exactly what a plan shows. An identity longer than 8192 characters is
-refused here and by the plan: no refusal prints one, and the plan refuses the
-removal rather than matching a printed part of it, so recording it would be an
-approval that deletes nothing.
+retyping it. A refusal prints it inside a sentence of its own, so copy the
+identity up to and not including the ')' that closes that sentence's
+parenthetical — pasting that bracket as well is forgiven, once, since the
+sentence put it there; one matched pair of double quotes is stripped the same
+way, because a shell or a message may have added them (a quote at one end only
+is a character of the identity, and is kept). What is not forgiven is any other
+parenthesis: an identity holds none — a value's '(' and ')' are escaped with
+everything else this program's printers would touch — so an argument that still
+holds one is refused rather than recorded as an entry that would match no
+removal. The two ends agree byte for byte because the identity is written in an
+escaped form — a space in a value as \x20, a backslash as \\, a parenthesis as
+\x28 and \x29, and any other byte with no printable form as \xHH — so that what
+a refusal prints is exactly what a plan shows. An identity longer than 8192
+characters is refused here and by the plan: no refusal prints one, and the plan
+refuses the removal rather than matching a printed part of it, so recording it
+would be an approval that deletes nothing.
 
 What the identity tells apart, and what it does not, said here rather than left
 to be discovered. For the seven managed types whose state carries a value the
@@ -324,28 +330,41 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 // TestAnIdentityIsOnePrintableLineWithSingleSpaces), so what the trim removes
 // here is a shell's or a paste's own space and never the identity's.
 //
-// One MATCHED pair of double quotes around the identity is stripped before that
-// comparison, because it is a mark a sentence can have and an identity cannot:
-// this command prints the identity bare (tf.RemoveIdentityText), and an owner
-// who quotes the whole argument at their shell — or who copies from a message
-// in which someone else quoted it — would otherwise record an approval whose
-// identity carries two characters the plan never shows, and it would match
-// nothing. Only one pair, and only a pair: a quote at one end alone is a
-// character the identity has — an identity is compared byte for byte, and a
-// value in it may hold one — so stripping the two ends independently, as this
-// did, recorded an approval of an object the plan does not remove and refused
-// the plan the owner meant to approve. The stripped text is then required to
-// begin with "type=" like any other, so the fail-closed direction is unchanged:
-// a quoted identity that is not an identity is still refused.
+// Two marks a paste can carry are stripped before that comparison, because both
+// are marks a sentence has and an identity cannot (trimPasteMarks): one MATCHED
+// pair of double quotes around the identity — this command prints the identity
+// bare (tf.RemoveIdentityText), and an owner who quotes the whole argument at
+// their shell, or who copies from a message in which someone else quoted it,
+// would otherwise record an approval whose identity carries two characters the
+// plan never shows — and the closing bracket of the refusal sentence's own
+// parenthetical, which every refusal that prints an identity ends with ("the
+// plan removes type=… id=…"). Only one of each, and each only as a mark: a
+// quote at one end alone is a character the identity has, an identity is
+// compared byte for byte, and stripping the ends independently, as this once
+// did, recorded an approval of an object the plan does not remove. An identity
+// holds no parenthesis at all (tf.identityValue escapes both), so a bracket
+// this trim does not account for is not an identity's and the argument is
+// refused rather than recorded. The stripped text is then required to begin
+// with "type=" like any other, so the fail-closed direction is unchanged: a
+// quoted or bracketed tail that is not an identity is still refused.
 func approveArgument(arg string) (tf.DeleteEntry, error) {
 	address, before, cut := strings.Cut(strings.TrimSpace(arg), "=")
-	address, before = strings.TrimSpace(address), strings.TrimSpace(before)
-	before = trimOneQuotedPair(before)
+	address, before = strings.TrimSpace(address), trimPasteMarks(strings.TrimSpace(before))
 	switch {
 	case !cut || address == "":
 		return tf.DeleteEntry{}, userErr("an argument is an address and the identity of the object approved there, written ADDRESS=IDENTITY, as in 'module.web.google_storage_bucket.data=type=google_storage_bucket project=proj-1234 name=data id=data-bucket instance=2026-01-02T03:04:05.678Z': the identity is the one a refused apply printed for the object the address removes, and nothing was written")
 	case !strings.HasPrefix(before, "type="):
 		return tf.DeleteEntry{}, userErr("an identity begins with the resource type the plan showed, as in 'type=google_storage_bucket project=… name=… id=…', and the text after the first '=' in this argument does not: the argument is cut at its first '=', so an address whose own text holds an '=' cannot be approved this way (nothing was written; approve it from a plan whose address has none, or rename the resource)")
+	case strings.ContainsAny(before, "()"):
+		// A refusal prints the identity inside a sentence of its own, "…(the
+		// plan removes type=… id=…)", so the copy an owner makes can end with
+		// the sentence's own bracket — the one trimPasteMarks takes off. An
+		// identity holds no parenthesis of its own (tf.identityValue escapes
+		// both), so one that is left is a text this command cannot read as an
+		// identity, and recording it would write an entry the owner reads as an
+		// approval and that clears nothing: the loop the delete list works by
+		// — refuse, copy, approve — would not close, and would not say so.
+		return tf.DeleteEntry{}, userErr("an identity holds no parenthesis: every value in one is escaped (a '(' and a ')' among them, as \\x28 and \\x29), because a refusal prints the identity inside a sentence of its own and the copy ends with that sentence's closing bracket — which is taken off this argument, once. This one still holds a parenthesis after that, so it is not an identity as a refusal printed one: copy the text again, up to and not including that bracket (nothing was written)")
 	case len(before) > tf.RemovalIdentityPrintMax:
 		// The one thing this command can tell about an identity without the
 		// plan: a longer one is refused by the gate whatever the plan shows
@@ -355,6 +374,31 @@ func approveArgument(arg string) (tf.DeleteEntry, error) {
 		return tf.DeleteEntry{}, userErr("an identity of %d characters is longer than the %d a plan can print and match (tf.RemovalIdentityPrintMax): no removal is identified by one, so approving it would record an entry that deletes nothing, and nothing was written", len(before), tf.RemovalIdentityPrintMax)
 	}
 	return tf.DeleteEntry{Address: address, Before: before}, nil
+}
+
+// trimPasteMarks is s without the marks a paste of a refusal's text carries and
+// an identity cannot: the closing bracket of the sentence's own parenthetical,
+// which every refusal that prints an identity ends with, and one matched pair
+// of double quotes around the identity (trimOneQuotedPair).
+//
+// At most one of each, in the order the copy can have them: the sentence's
+// bracket may sit outside a pair of quotes someone added around the whole text
+// (the pair first, then the bracket) or be the mark the pair was added inside
+// of ("…\"id\")" — the bracket first, then the pair). A second bracket is left
+// where it is, deliberately: no identity holds one (tf.identityValue escapes
+// both parentheses), so it is not a mark but a text this command refuses
+// (approveArgument), which is the same answer it gives a paste that is not an
+// identity at all — and the answer a silently recorded entry that clears
+// nothing could not give.
+func trimPasteMarks(s string) string {
+	s = trimOneQuotedPair(s)
+	if t := strings.TrimSuffix(s, ")"); t != s {
+		// The bracket is the sentence's, so a pair of quotes can still sit
+		// inside it: the pair around the identity somebody quoted for a message
+		// whose sentence then bracketed the quotation.
+		s = trimOneQuotedPair(t)
+	}
+	return s
 }
 
 // trimOneQuotedPair is s without one pair of double quotes around it, and s

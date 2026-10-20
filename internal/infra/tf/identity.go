@@ -255,9 +255,10 @@ func (i RemovalIdentity) String() string {
 // than the one an entry holds, and the loop refusal → copy → allow-delete
 // could never close. So every byte a value holds that those transforms would
 // not leave alone is escaped as well: a byte outside printable ASCII becomes
-// \xHH, a space among them. An ordinary identity — a type, a project, a
-// DNS-shaped name, a provider id — holds none of them and reads exactly as it
-// always did.
+// \xHH, a space among them, and a parenthesis too (identityValue), because the
+// sentence prints the identity inside a parenthetical of its own. An ordinary
+// identity — a type, a project, a DNS-shaped name, a provider id — holds none
+// of them and reads exactly as it always did.
 func identityPart(k, v string) string {
 	return k + "=" + identityValue(v)
 }
@@ -284,6 +285,18 @@ func identityPart(k, v string) string {
 // (approveArgument) and a terminal all leave it exactly as it is
 // (TestAnIdentityIsOnePrintableLineWithSingleSpaces).
 //
+// A parenthesis is escaped (as \x28 and \x29) although it has a printable form,
+// and for a different reason: every refusal prints an identity INSIDE a
+// sentence of this program's own, whose parenthetical closes with ")" right
+// after it — "…(the plan removes type=… id=…)" — and the text a refusal prints
+// is the text its reader copies into fugaro allow-delete. An identity holding a
+// ")" of its own would end that sentence in two brackets the reader (and the
+// command, which takes the sentence's one bracket off a paste) could not tell
+// apart, so a ")" at that end of an argument is the sentence's and never the
+// object's, and one the command cannot account for that way is refused rather
+// than recorded (approveArgument) — which is what keeps a paste from being
+// accepted as an entry that matches no removal.
+//
 // The result is one line of printable ASCII with no byte safetext.Field,
 // safetext.MultiLine or a terminal has anything to say about, so what is
 // printed is what an entry holds — and the escaping stays injective: a
@@ -291,7 +304,7 @@ func identityPart(k, v string) string {
 // "\x41" in a value writes "\\x41", so no two values escape to one text.
 func identityValue(v string) string {
 	if !strings.ContainsFunc(v, func(r rune) bool {
-		return r == '\\' || r < 0x21 || r > 0x7e
+		return r == '\\' || r == '(' || r == ')' || r < 0x21 || r > 0x7e
 	}) {
 		return v
 	}
@@ -302,7 +315,7 @@ func identityValue(v string) string {
 		switch c := v[i]; {
 		case c == '\\':
 			b.WriteString(`\\`)
-		case c < 0x21 || c > 0x7e:
+		case c == '(' || c == ')' || c < 0x21 || c > 0x7e:
 			b.WriteString(`\x`)
 			b.WriteByte(hex[c>>4])
 			b.WriteByte(hex[c&0xf])
