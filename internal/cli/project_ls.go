@@ -72,7 +72,9 @@ type projectListDoc struct {
 type projectListEntry struct {
 	// Name is the project name: projects/<name>.yaml's file name, which is
 	// what `--project` takes. It is known for every config that is there at
-	// all, including one that could not be read.
+	// all, including one that could not be read. It needs no escaping of its
+	// own: localcfg.Projects lists only names config.ProjectNameRE matches,
+	// a grammar of letters, digits and dashes.
 	Name string `json:"name"`
 	// Installation is the installation's name as the config carries it
 	// (localcfg.Config.Name, the field an installation's own name never
@@ -212,6 +214,15 @@ func buildProjectList(ctx context.Context, getenv func(string) string) projectLi
 			continue
 		}
 		entry.Installation, entry.GCPProject, entry.Region = lc.Name, lc.GCPProject, lc.Region
+		// Belt and braces: the loader's own validation already holds these
+		// three to name/ID/region grammars (localcfg's validate), so no
+		// control character can reach them today. They go through the
+		// printable escaping anyway — every string in this document is one
+		// the process did not write, and a grammar relaxed later must not
+		// silently make the document a terminal's input.
+		entry.Installation = pluginwire.Printable(entry.Installation)
+		entry.GCPProject = pluginwire.Printable(entry.GCPProject)
+		entry.Region = pluginwire.Printable(entry.Region)
 		for _, r := range known.ProjectCheckouts(name) {
 			pc := projectCheckout{
 				Provider: pluginwire.Printable(r.Provider),
