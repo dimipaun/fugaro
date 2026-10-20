@@ -311,7 +311,7 @@ function boxContents(b: { name: string; labels: Label[]; stages?: boolean }, ind
         parts.push(`<path class="run-loop-line" d="M ${(pad + pillW - 28).toFixed(1)} ${from.toFixed(1)} H ${rail.toFixed(1)} V ${to.toFixed(1)} H ${head.toFixed(1)}" />`)
         parts.push(`<path class="run-loop-head" d="M ${head.toFixed(1)} ${(to - 6).toFixed(1)} L ${(head - 9).toFixed(1)} ${to.toFixed(1)} L ${head.toFixed(1)} ${(to + 6).toFixed(1)} Z" />`)
         parts.push(
-          `<text class="run-text run-loop" x="${(rail + 6).toFixed(1)}" y="${((from + to) / 2).toFixed(1)}" font-size="${(f.stage - 2).toFixed(1)}">${LOOP}</text>`,
+          `<text class="run-text run-loop" x="${(rail + 6).toFixed(1)}" y="${((from + to) / 2).toFixed(1)}" font-size="${f.stage}">${LOOP}</text>`,
         )
       }
     }
