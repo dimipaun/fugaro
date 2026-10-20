@@ -63,6 +63,7 @@ import {
   VIEW_PANEL_CLASS,
   bootDashboard,
   isMacPlatform,
+  SHORTCUT_ROWS,
   shortcutRow,
   tabStop,
   tabTarget,
@@ -1103,18 +1104,27 @@ describe('the installation rail’s keyboard', () => {
     const { bridge } = fakeBridge({})
     const document = await boot(bridge, new FakeDocument())
     const row = railRow(document)
-    const pressed = document.press('1', { ctrl: true })
+    // **The first row's key is pressed as AZERTY produces it**: the code is the number row's
+    // and the character is `&`, which is the keystroke the hint asks for on that layout and
+    // the one a mapping reading `key` would drop.
+    const pressed = document.press('&', { ctrl: true }, 'Digit1')
     expect(pressed.defaultPrevented, 'the console left its own shortcut key to the window').toBe(true)
     expect(row.attributes.get('aria-selected')).toBe('true')
     expect(row.attributes.get('tabindex')).toBe('0')
     expect(document.activeElement, 'the shortcut did not reach the row it named').toBe(row)
-    // A position no row is drawn at addresses nothing -- and the key is still the console's,
-    // so it is still prevented rather than left to the platform.
-    expect(document.press('2', { ctrl: true }).defaultPrevented).toBe(true)
+    // A position no row is drawn at addresses nothing -- and the key is still one of the
+    // three the design grants, so it is still prevented rather than left to the platform.
+    expect(document.press('2', { ctrl: true }, 'Digit2').defaultPrevented).toBe(true)
     expect(row.attributes.get('aria-selected')).toBe('true')
     // Command + digit is macOS's spelling and not this platform's, so it is not the
     // console's key here: nothing is taken and nothing is selected.
-    expect(document.press('1', { meta: true }).defaultPrevented).toBe(false)
+    expect(document.press('1', { meta: true }, 'Digit1').defaultPrevented).toBe(false)
+    // And the design's bound reaches the wiring, not just the mapping: a key above the
+    // three rows is not taken at all, so the window keeps it. `Digit4` and `Numpad1` are the
+    // two spellings the mapping refuses, and neither is prevented here.
+    expect(document.press('4', { ctrl: true }, 'Digit4').defaultPrevented).toBe(false)
+    expect(document.press('1', { ctrl: true }, 'Numpad1').defaultPrevented).toBe(false)
+    expect(document.activeElement).toBe(row)
   })
 
   it('reads Command on macOS, where the platform’s modifier is the other one', async () => {
@@ -1124,8 +1134,8 @@ describe('the installation rail’s keyboard', () => {
     // The same key that is the console's elsewhere is not the console's here, and the one
     // that is not elsewhere is here -- both directions, because a rule that accepted either
     // modifier everywhere would pass a one-directional case.
-    expect(document.press('1', { ctrl: true }).defaultPrevented).toBe(false)
-    expect(document.press('1', { meta: true }).defaultPrevented).toBe(true)
+    expect(document.press('1', { ctrl: true }, 'Digit1').defaultPrevented).toBe(false)
+    expect(document.press('1', { meta: true }, 'Digit1').defaultPrevented).toBe(true)
     expect(document.activeElement).toBe(row)
     expect(row.attributes.get('aria-selected')).toBe('true')
   })
@@ -1192,7 +1202,6 @@ describe('the keyboard’s own rules, apart from the DOM', () => {
     expect(shortcutRow(keyEvent('1', { ctrl: true }), false)).toBe(0)
     expect(shortcutRow(keyEvent('2', { ctrl: true }), false)).toBe(1)
     expect(shortcutRow(keyEvent('3', { ctrl: true }), false)).toBe(2)
-    expect(shortcutRow(keyEvent('9', { ctrl: true }), false)).toBe(8)
     expect(shortcutRow(keyEvent('1', { meta: true }), true)).toBe(0)
     // Both halves of the platform rule: the modifier that is not this platform's is not a
     // second spelling, and a digit held with both is a key two rules claim.
@@ -1205,9 +1214,52 @@ describe('the keyboard’s own rules, apart from the DOM', () => {
     expect(shortcutRow(keyEvent('1'), true)).toBeNull()
     // `0` addresses no row: the hint's own sentence is "1 2 3", and a zero-based key would
     // be the off-by-one in the other direction.
-    expect(shortcutRow(keyEvent('0', { ctrl: true }), false)).toBeNull()
-    expect(shortcutRow(keyEvent('a', { ctrl: true }), false)).toBeNull()
-    expect(shortcutRow(keyEvent('Enter', { ctrl: true }), false)).toBeNull()
+    expect(shortcutRow(keyEvent('0', { ctrl: true }, 'Digit0'), false)).toBeNull()
+    expect(shortcutRow(keyEvent('a', { ctrl: true }, 'KeyA'), false)).toBeNull()
+    expect(shortcutRow(keyEvent('Enter', { ctrl: true }, 'Enter'), false)).toBeNull()
+  })
+
+  it('reads the physical key, so the operator’s layout does not spell the shortcut away', () => {
+    // **The code is what is read and the character is not** (design section 4.1 grants
+    // Command/Control + *digit*): `code` names the key the finger is on and `key` is what the
+    // layout produces from it, so the first row's key answers the first row on AZERTY -- where
+    // the unshifted `1` key produces `&` and a mapping that read `key` would do nothing at all
+    // to the very keystroke the rail's hint tells the operator to press.
+    expect(shortcutRow(keyEvent('&', { ctrl: true }, 'Digit1'), false)).toBe(0)
+    expect(shortcutRow(keyEvent('"', { ctrl: true }, 'Digit3'), false)).toBe(2)
+    expect(shortcutRow(keyEvent('&', { meta: true }, 'Digit1'), true)).toBe(0)
+    // And the other direction: a character that *is* a digit is not the console's key when the
+    // physical key is not the number row's, which is what makes this a read of `code` rather
+    // than a read of `key` with a second spelling added.
+    expect(shortcutRow(keyEvent('1', { ctrl: true }, 'KeyQ'), false)).toBeNull()
+    expect(shortcutRow(keyEvent('2', { ctrl: true }, 'Digit9'), false)).toBeNull()
+    // `Numpad1` is a different physical key and **not** a spelling of `Digit1`: the design
+    // grants the number row's digits and names no keypad key, so admitting one would be
+    // inventing a binding no ruling made.
+    expect(shortcutRow(keyEvent('1', { ctrl: true }, 'Numpad1'), false)).toBeNull()
+    // An event with no code at all answers nothing rather than throwing.
+    expect(shortcutRow(keyEvent('1', { ctrl: true }, ''), false)).toBeNull()
+  })
+
+  it('addresses the three rows the design grants and no fourth', () => {
+    // Design section 4.1 grants **Command-1 to Command-3** on macOS and **Control-1 to
+    // Control-3** elsewhere -- "the first three rows the rail draws", which is the hint's own
+    // sentence ("Switch with the shortcut keys 1 2 3") -- so keys 4 to 9 are not the console's
+    // key: they are neither selected nor prevented, and the window keeps them.
+    expect(SHORTCUT_ROWS).toBe(3)
+    for (const position of [1, 2, 3]) {
+      expect(
+        shortcutRow(keyEvent(String(position), { ctrl: true }, `Digit${position}`), false),
+        `Control-${position} is one of the three keys the design grants`,
+      ).toBe(position - 1)
+    }
+    for (const position of [4, 5, 6, 7, 8, 9]) {
+      expect(
+        shortcutRow(keyEvent(String(position), { ctrl: true }, `Digit${position}`), false),
+        `Control-${position} addresses a row the design grants no key for`,
+      ).toBeNull()
+      expect(shortcutRow(keyEvent(String(position), { meta: true }, `Digit${position}`), true)).toBeNull()
+    }
   })
 
   it('reads the platform out of the navigator the scope carries', () => {

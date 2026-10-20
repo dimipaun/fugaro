@@ -31,8 +31,10 @@
 // for the same reason the click is**: a tablist's behaviour is a listener on a
 // node, and a suite that could not dispatch a key could not tell a roving
 // `tabindex` that works from one that is only written down. So `press` fires a
-// node's `keydown` listeners with the key and the two modifiers the console
-// reads, and `focus` records the node as the document's active element -- which
+// node's `keydown` listeners with **both fields of a key**, because the console
+// reads both: `code`, the physical key the shortcut keys are mapped on, and
+// `key`, the character the layout produced from it -- plus the two modifiers.
+// And `focus` records the node as the document's active element, which
 // is the observable the arrow keys are held to, since a roving `tabindex` that
 // moved the attribute and left the keyboard where it was would be a tablist that
 // looks right and is not.
@@ -45,6 +47,7 @@ import { CLI_HARD_FLOOR_VERSION, CLI_VERSION_BUILT_AGAINST, SUPPORTED_CLI_MINORS
  * differ only in what the case cares about. */
 export interface FakeEvent {
   readonly key: string
+  readonly code: string
   readonly metaKey: boolean
   readonly ctrlKey: boolean
   readonly defaultPrevented: boolean
@@ -54,9 +57,10 @@ export interface FakeEvent {
 /** fakeEvent builds one, with `defaultPrevented` flipped by its own
  * `preventDefault` -- which is what lets a case assert that the console took the
  * key rather than letting the window scroll under it. */
-function fakeEvent(key: string, metaKey: boolean, ctrlKey: boolean): FakeEvent {
+function fakeEvent(key: string, code: string, metaKey: boolean, ctrlKey: boolean): FakeEvent {
   const event = {
     key,
+    code,
     metaKey,
     ctrlKey,
     defaultPrevented: false,
@@ -73,10 +77,20 @@ export interface FakeModifiers {
   readonly ctrl?: boolean
 }
 
+/** codeOf is the physical key a case gets when it spells only a character: the
+ * number row's digit for a digit, and the character itself otherwise. A real
+ * keyboard event carries both, and they differ wherever the layout does -- the
+ * unshifted `1` key of an AZERTY keyboard produces `&`, and a keypad key is
+ * `Numpad1` while producing `1` -- so **a case that cares which physical key was
+ * pressed passes the code itself** rather than relying on this default. */
+function codeOf(key: string): string {
+  return /^[0-9]$/.test(key) ? `Digit${key}` : key
+}
+
 /** keyEvent builds the keyboard event the console's mappings are driven with, for
  * a case that has no node to dispatch one on. */
-export function keyEvent(key: string, modifiers: FakeModifiers = {}): FakeEvent {
-  return fakeEvent(key, modifiers.meta === true, modifiers.ctrl === true)
+export function keyEvent(key: string, modifiers: FakeModifiers = {}, code = codeOf(key)): FakeEvent {
+  return fakeEvent(key, code, modifiers.meta === true, modifiers.ctrl === true)
 }
 
 /** FakeNode is one element of the fake document. */
@@ -162,15 +176,16 @@ export class FakeNode {
 
   /** click fires this node's click listeners, in the order they were added. */
   click(): void {
-    for (const listener of this.listeners.get('click') ?? []) listener(fakeEvent('', false, false))
+    for (const listener of this.listeners.get('click') ?? []) listener(fakeEvent('', '', false, false))
   }
 
   /** press fires this node's keydown listeners with one key and the modifiers a
    * case holds down, and answers the event, so a case can assert that the
    * console took the key (`defaultPrevented`) rather than leaving it to the
-   * window. */
-  press(key: string, modifiers: FakeModifiers = {}): FakeEvent {
-    const event = keyEvent(key, modifiers)
+   * window. `code` is the physical key, which a real event carries beside the
+   * character the layout produced from it (`codeOf` is the default). */
+  press(key: string, modifiers: FakeModifiers = {}, code = codeOf(key)): FakeEvent {
+    const event = keyEvent(key, modifiers, code)
     for (const listener of this.listeners.get('keydown') ?? []) listener(event)
     return event
   }
@@ -215,15 +230,17 @@ export class FakeDocument {
   setVisibility(state: string): void {
     this.visibilityState = state
     for (const listener of this.listeners.get('visibilitychange') ?? []) {
-      listener(fakeEvent('', false, false))
+      listener(fakeEvent('', '', false, false))
     }
   }
 
   /** press fires the document's own keydown listeners: the rail's shortcut keys
    * are the document's and not a node's -- they reach a row from wherever the
-   * operator is (design section 4.3) -- so this is where a case drives them. */
-  press(key: string, modifiers: FakeModifiers = {}): FakeEvent {
-    const event = keyEvent(key, modifiers)
+   * operator is (design section 4.3) -- so this is where a case drives them.
+   * `code` is the physical key (`codeOf` is the default), and it is the field the
+   * shortcut keys read. */
+  press(key: string, modifiers: FakeModifiers = {}, code = codeOf(key)): FakeEvent {
+    const event = keyEvent(key, modifiers, code)
     for (const listener of this.listeners.get('keydown') ?? []) listener(event)
     return event
   }

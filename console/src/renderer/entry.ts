@@ -37,7 +37,9 @@
 //     tablists get the WAI-ARIA behaviour -- the view navigation and the
 //     installation rail's list (design section 4.3) -- and the rail's rows are
 //     addressable by position with the shortcut keys (design section 4.1:
-//     Command+digit on macOS, Control+digit elsewhere). Every write is an
+//     Command-1 to Command-3 on macOS, Control-1 to Control-3 elsewhere, read
+//     from the **physical** key so that the operator's layout cannot spell them
+//     away). Every write is an
 //     attribute (`role`, `aria-selected`, `tabindex`) and no style is written,
 //     which is why the CSP and `ElementLike` are untouched; the two events are
 //     a `keydown` on a drawn control and one on the document, the second being
@@ -503,9 +505,17 @@ export function drawInstallation(factory: SkewFactory, reply: unknown): SkewElem
 // ---------------------------------------------------------------------------
 
 /**
- * KeyEventLike is the keyboard event this file reads: the key, the two
- * modifiers the shortcut keys are spelled with, and `preventDefault`, which is
- * how a key the console has taken stops being the window's.
+ * KeyEventLike is the keyboard event this file reads: **the two fields a key
+ * has** -- `code`, the physical key, and `key`, the character the operator's
+ * layout produced from it -- the two modifiers the shortcut keys are spelled
+ * with, and `preventDefault`, which is how a key the console has taken stops
+ * being the window's.
+ *
+ * Both of the key's fields are here because **the two handlers read different
+ * ones**: a tablist's arrow, Home, End and Enter are characters the layout does
+ * not change (`event.key`), while the shortcut keys are *positions on the
+ * keyboard* and are read as `event.code`, since the unshifted `1` key of an
+ * AZERTY keyboard produces `&` (see `shortcutRow`).
  *
  * It is declared structurally rather than as `KeyboardEvent` for the reason
  * every seam in this file is: the wiring is driven under `vitest` with a fake
@@ -514,6 +524,7 @@ export function drawInstallation(factory: SkewFactory, reply: unknown): SkewElem
  * can hand it to a listener typed as this.
  */
 export interface KeyEventLike {
+  readonly code: string
   readonly key: string
   readonly metaKey: boolean
   readonly ctrlKey: boolean
@@ -587,17 +598,39 @@ export function tabStop(selected: boolean): '0' | '-1' {
 }
 
 /**
+ * SHORTCUT_ROWS is how many rows the shortcut keys address: **the first three
+ * the rail draws**, which is the whole of what design section 4.1 grants
+ * ("**Command-1** to **Command-3** on macOS and **Control-1** to **Control-3**
+ * elsewhere address the first three rows **the rail draws**") and the hint's own
+ * sentence ("Switch with the shortcut keys 1 2 3"). A fourth key is **not the
+ * console's key**: it is neither selected nor prevented, so the window keeps it
+ * rather than the console swallowing a keystroke no ruling gave it.
+ */
+export const SHORTCUT_ROWS = 3
+
+/**
  * shortcutRow is the row a shortcut key addresses, or `null` for a key that is
- * not one. The design's rule (section 4.1) is **Command + digit on macOS and
- * Control + digit elsewhere**, and both halves of it are load-bearing: the
- * modifier the platform does not use answers `null` rather than being accepted
- * as a second spelling, and a digit held with both modifiers answers `null`
- * too, because a key that two rules claim is a key whose rule is not this one.
+ * not one. The design's rule (section 4.1) is **Command-1 to Command-3 on macOS
+ * and Control-1 to Control-3 elsewhere**, and every half of it is load-bearing:
+ * the modifier the platform does not use answers `null` rather than being
+ * accepted as a second spelling, a digit held with both modifiers answers `null`
+ * too, because a key that two rules claim is a key whose rule is not this one,
+ * and a position above `SHORTCUT_ROWS` answers `null` because the design grants
+ * three rows and no fourth.
+ *
+ * **`event.code` is read and `event.key` deliberately is not.** `code` is the
+ * *physical* key -- the number row's `Digit1` -- while `key` is the character
+ * the operator's layout produces from it, and on AZERTY the unshifted `1` key
+ * produces `&`: a mapping that read `key` would do nothing at all to the
+ * keystroke the rail's hint tells that operator to press. The field is also what
+ * makes `Numpad1`, which produces the character `1`, **not** a spelling of
+ * `Digit1` -- the design grants the number row's digits and names no keypad key,
+ * so admitting one would be a binding nobody ruled on.
  *
  * The digit is the row's **position, one-based** -- `1` is the first row the
- * rail draws -- which is the hint's own sentence ("Switch with the shortcut keys
- * 1 2 3"). An index no row is drawn at addresses nothing; the caller bounds it,
- * so a rail of one row answers the first key and no other.
+ * rail draws -- which is the hint's own sentence. An index no row is drawn at
+ * addresses nothing (the rail addresses only the rows it draws), so a rail of
+ * one row answers the first key and no other.
  *
  * `mac` is a parameter rather than a read: `isMacPlatform` is the one place the
  * window's platform is asked about, and this function stays a mapping a case can
@@ -607,8 +640,11 @@ export function shortcutRow(event: KeyEventLike, mac: boolean): number | null {
   const modifier = mac ? event.metaKey : event.ctrlKey
   const other = mac ? event.ctrlKey : event.metaKey
   if (!modifier || other) return null
-  if (!/^[1-9]$/.test(event.key)) return null
-  return Number(event.key) - 1
+  const digit = /^Digit([1-9])$/.exec(event.code)
+  if (digit === null) return null
+  const position = Number(digit[1])
+  if (position > SHORTCUT_ROWS) return null
+  return position - 1
 }
 
 /**
