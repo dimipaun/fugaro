@@ -802,7 +802,14 @@ owner would have to. Setting the variable is not the only thing the Android side
 needs — a brand-new Play app's **first** release has to be uploaded once through
 the Play Console's own UI, because neither the Play API nor `eas submit` can
 create it, and the Play service-account credential has to be on the EAS project
-(`mobile/README.md`, "Building for internal testing").
+(`mobile/README.md`, "Building for internal testing"). Nothing has to be done to
+it to leave Android off, which is why it is not in the list below; to turn it on,
+**[per repo]**:
+
+```sh
+# Not a secret, and it carries no value of anyone's: it is a switch.
+gh variable set MOBILE_ANDROID_ENABLED --repo "$REPO" --body true
+```
 
 ### Before it can run: the two things the owner creates
 

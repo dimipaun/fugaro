@@ -667,6 +667,7 @@ func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 		{"website/README.md", "the first of the two follow-up edits a copy-in needs"},
 		{"opening line", "the second: this document's own opening line counts and names the pending files"},
 		{"`" + mobileReleaseAndroidSwitch + "`", "the repository variable that turns the Android job on, by name"},
+		{"gh variable set " + mobileReleaseAndroidSwitch, "the command that turns the Android job on, which is the whole of what \"one repository setting\" means"},
 		{"[per repo]", "a label saying where a step is done"},
 		{"[per Expo account]", "the label for the step done in the owner's own Expo account"},
 		{mobileReleasePinTestName, "the check that pins the staged file"},
