@@ -204,6 +204,30 @@ func TestSweepDoesNotDateTheOutcomeAheadOfToday(t *testing.T) {
 	}
 }
 
+// The launch-day bound has to hold in the branch where the run id is dated
+// ahead of this clock too. There the launch day itself is not a day any scan
+// reads, so what the outcome must not do is fall back to the run-written
+// heartbeat's own, older day: a run id dated ahead of the clock *and* a
+// heartbeat days old is the W2 hole from the far side — the entry is swept,
+// the outcome lands where the scan for a run id like that ([today-1, today],
+// checkLive) does not look, and the run stays admitted until its fx.
+func TestSweepKeepsAFutureDatedRunsOutcomeInsideTheScannedWindow(t *testing.T) {
+	e := newSweepEnv(t)
+	future := sweepNow.AddDate(0, 0, 1).Format("20060102-150405") + "-aaaa"
+	e.entry(future, 72*time.Hour)
+	e.sweep()
+
+	today := budget.Day(sweepNow)
+	hbDay := budget.Day(sweepNow.Add(-72 * time.Hour))
+	if e.has(fmt.Sprintf("outcomes/%d/%s/%s", hbDay, sweepSlug, future)) {
+		t.Errorf("the outcome was dated %d, the run's own heartbeat's day: no liveness scan reads it", hbDay)
+	}
+	if !e.has(fmt.Sprintf("outcomes/%d/%s/%s", today, sweepSlug, future)) &&
+		!e.has(fmt.Sprintf("outcomes/%d/%s/%s", today-1, sweepSlug, future)) {
+		t.Errorf("no outcome inside the window a liveness scan reads ([%d, %d]) for %s", today-1, today, future)
+	}
+}
+
 func TestSweepMarksCrashedKeepsCounted(t *testing.T) {
 	e := newSweepEnv(t)
 	day := budget.Day(sweepNow)
