@@ -323,8 +323,8 @@ added or removed without this sentence moving fails there:
 
   - **The homepage's prompt line** (the owner's feedback of 2026-10-19) moved the site
     figure alone, 1,028,085 → **1,028,787**, by **702 bytes**: the request the hero renders under
-    the headline, the `>` mark in front of it and the two rules that draw it as the chat's own
-    bubble — the homepage's inline stylesheet and its HTML. Nothing outside the homepage moved,
+    the headline, the `>` mark in front of it and the rules that draw it as a line a reader
+    types — the homepage's inline stylesheet and its HTML. Nothing outside the homepage moved,
     because the three files that changed all render on that one page, so the page weight and
     the script stand where they stood.
   - **The benefits** (the same feedback) moved the site figure alone again,
@@ -591,6 +591,19 @@ added or removed without this sentence moving fails there:
     The page's words went 239 → **133** against the ceiling the budget states, which is the
     room "Adding a console screenshot" below counts. The page weight and the script did not
     move: the heaviest page is the docs hub, and the console page is not it.
+  - **The homepage became the hero, one three-tab slider and one Get started button** (the
+    owner's approved draft "Home, draft 2 (slider)", 2026-10-19), and it moved the site figure
+    alone, 975,034 → **968,916**, by **6,118 bytes**. All of it is on the homepage: the chat's
+    conversation left the site with `AgentChat.astro` — its markup and the rules that drew it,
+    which the page inlined — the flow's figure and its stylesheet went with the rest of the
+    page's middle, and the two install cards became one button and one command. The slider's own
+    rules, the `fugaro watch` capture's slot and the 44 px minimum the owner's brief measures
+    every control against — which the hero's two links were a fraction of a pixel short of on
+    their padding and their line height alone — came back onto the page, which is why the move is
+    a net 6,118 bytes rather than the whole of what left. The page weight and the script did not
+    move: the heaviest page is the docs hub, which renders none of this, and the site ships the
+    same one script. The word ceiling is `privacy`'s own page, which the draft did not touch; the
+    homepage's own words are well under it. The clone figure moved by the same bytes.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -636,9 +649,11 @@ added or removed without this sentence moving fails there:
     are inside the `h1`'s own container — on the homepage as it was, with its install
     commands and its chat between the hero and the flow's first step heading, they were 24
     words from that container and 134 from the plan's region, and the stricter one is the
-    one enforced). On the homepage today the first `h2` is the chat's own *Through your
-    agent* — the chat is the first block under the promise — and the region is the request
-    the hero renders under the headline, the promise and its two calls to action: 23 words. A
+    one enforced). On the homepage today the first `h2` is the slider's first panel title,
+    *Easy to use*, and the region is the request the hero renders under the headline, the
+    promise, its three calls to action and the slider's three tab labels — the tabs sit above
+    the panel heading the region stops at, so the labels a reader chooses between are part of
+    what they read before the first section: 29 words. A
     page that carries blocks between its `h1` and
     its first `h2` is a page whose lead those blocks are part of, so the fix for a long lead
     is a shorter lead or an earlier first `h2`, never a reader that looks somewhere else. A page
@@ -697,11 +712,12 @@ added or removed without this sentence moving fails there:
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
   word ceilings' business, and no test here sees a viewport (D187). The ordering underneath it
   is a statement about the built pages, though, and it is this file's rules: the homepage's lead
-  region holds four elements — the promise, the row of links under it, and the two links in that
-  row — and the `h2` it stops at is the chat's own *Through your agent*: the illustration the
-  page puts directly under the promise is that heading's own block, sitting between the `h1` and
-  the `h2` that opens it, so the gate takes those elements out of the region before reading it.
-  The chat, the diagram and the install block are the sections that open after the lead region;
+  region holds the request the hero renders under the headline, the promise, the row of links
+  under it and the links in that row — and the `h2` it stops at is the slider's own first panel
+  title: the block the page puts directly under the promise is that heading's own block, sitting
+  between the `h1` and the `h2` that opens it, so the gate takes those elements out of the region
+  before reading it. The slider and the install block are the sections that open after the lead
+  region;
   Getting Started's install section opens with its commands, with the
   sentence about them still there after the paths; and on every route that prints a command —
   three of the eleven today, and the other eight are skipped rather than asserted about — the
@@ -713,6 +729,15 @@ added or removed without this sentence moving fails there:
   refusals are kept the way the other gates keep theirs: a case writes a synthetic `dist` with
   each defect planted beside a page that keeps every rule, and each rule was mutation-proved by
   removing it from the function and watching that case fail.
+- `test/slider.mjs` — the homepage's one slider (the draft of 2026-10-19, P5/P8): the block is
+  three tabs and three panels, every panel is in the HTML a reader receives, each tab is a
+  fragment link to the panel beside it and the stylesheet shows the panel the fragment names —
+  read one tab at a time, so a stylesheet that pairs the Benefits tab with the See it panel is
+  refused rather than counted as three pairs present. It also refuses a script in the block, the
+  `role="tab"`/`aria-selected` pair that describes a widget whose selection is scripted, a tab
+  under the owner's 44 px target, a tab row that cannot wrap, a rule that takes the focus ring
+  off the tabs, a panel wider than a 360 px phone's content box, and a step whose line is not the
+  repository's own sentence about it in the order its document writes them.
 - `test/meta.mjs` — the provenance-phrase gate (D186): a page must not explain why its own
   text exists, so D186's phrase list (`rendered from`, `generated rather than written`, …) is
   refused in the text a reader reads, on every built page. It is the one defect the other
@@ -1226,19 +1251,22 @@ five of the documents the site renders sit elsewhere in the repository, and the 
 them there.
 
 - **The changes spec**, `docs/website/redesign/changes-spec-2026-10-18.md` — the reader's
-  own request in the hero's chat is item 3's example of one, quoted from the ruling that
-  asked for the chat (`src/components/AgentChat.astro`).
-- **The two skills the agent reads**, `plugin/skills/parallelism/SKILL.md` and
-  `plugin/skills/working/SKILL.md` — the agent's two answers in that chat, and the line about
-  what the watch screen shows. The launch status line is *not* one of them: it is the
-  illustration's own label, and the build refuses it if it turns out to be a sentence of the
-  skill its turn cites (`AgentChat.astro`). Item 3's acceptance is that the
-  agent's lines "show the real shape of the skills' behaviour", and every line a turn of the
+  own request in the hero's prompt line is item 3's example of one, quoted from the ruling
+  that asked for it (`src/components/Hero.astro`, through `src/lib/agent-request.mjs`, which
+  is where the line is held to that document at build time).
+- **The skill the reader's screen is described by**, `plugin/skills/working/SKILL.md` — the
+  line about what the watch screen shows, under the command in the slider's "See it" panel.
+  The two answers the chat's illustration spoke, and the launch status line it printed, left
+  the site with `AgentChat.astro` when the owner's approved draft of 2026-10-19 ("Home, draft
+  2 (slider)") folded the chat into the slider: the status line was the illustration's own
+  label rather than a document's line, and the build refused it if it turned out to be a
+  sentence of the skill its turn cited. Item 3's acceptance is that the
+  agent's lines "show the real shape of the skills' behaviour", and every line the
   illustration *speaks* is a line of the document it cites, so the build reads those files and
   stops, naming the file, when a line is not in one of them. (The three `Pull request n of 3`
-  labels are the illustration's own rather than a document's lines — a run that has not
-  happened has no numbers to quote — and the caption labels the figure an illustration rather
-  than claiming its lines are quotations.) **This is why a test build's copy of the
+  labels were the illustration's own rather than a document's lines — a run that has not
+  happened has no numbers to quote — and the caption labelled the figure an illustration
+  rather than claiming its lines are quotations.) **This is why a test build's copy of the
   repository carries `plugin/skills/`**: `test/lib/build.mjs` and the five test files that
   stage their own copy skip only the parts of `plugin/` a build does not read
   (`READ_UNDER_PLUGIN`).

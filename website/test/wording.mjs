@@ -40,14 +40,18 @@
 // (`FILES_THAT_KEEP_IT` and the case that reads it) rather than left to the gate's own
 // sweep to miss.
 //
-// **The second rule: the claim the chat's caption may not make.** The hero's chat is an
+// **The second rule: the claim a figure's caption may not make.** The hero's chat was an
 // illustration, and its caption said "every line is the repository's own words, from the
-// skills the agent reads" — which is false about two of the things the figure prints (the
+// skills the agent reads" — which is false about two of the things the figure printed (the
 // request is item 3's own example, and the three `Pull request n of 3` labels are the
-// illustration's own). The caption now says what the picture is and where the agent's
-// behaviour comes from, and `RETIRED_CLAIMS` below refuses the phrases the false sentence was
-// made of — in the same three places, and with its own refusal case, because a caption that
-// is only fixed once is a caption that comes back the next time somebody rewrites the figure.
+// illustration's own). The caption was rewritten to say what the picture is and where the
+// agent's behaviour comes from, and `RETIRED_CLAIMS` below refuses the phrases the false
+// sentence was made of — in the same three places, and with its own refusal case, because a
+// caption that is only fixed once is a caption that comes back the next time somebody
+// rewrites a figure. The figure itself left the site with `AgentChat.astro` when the owner's
+// approved draft of 2026-10-19 ("Home, draft 2 (slider)") folded the chat into the slider's
+// first panel; the rule stays, because the claim is one any figure could make again — the
+// screenshot of a run and the flow's captions are the two a rewording would reach for.
 //
 // A gate whose refusals have never been seen to fire is a gate nobody knows the shape of, so
 // each part below has a case that plants the word — or the claim — where its rule looks and
@@ -108,18 +112,18 @@ export const SKILLS_THAT_CARRY_IT = ['parallelism', 'routing', 'working']
 export const FILES_THAT_KEEP_IT = ['content/cli-reference.md']
 
 /**
- * The claim the hero's chat caption may not make again, in the two halves a rewording would
- * come back through. It said "every line is the repository's own words, from the skills the
- * agent reads", and it is false about two of the things the figure prints: the request is
- * item 3's own example (a line of the changes spec, not of a skill), and the three
- * `Pull request n of 3` labels are the illustration's own — a run that has not happened has
- * no pull request numbers to quote. The figure is an illustration, the caption says so, and
- * the only lines in it a document vouches for are the ones the agent speaks.
+ * The claim a figure's caption may not make again, in the two halves a rewording would come
+ * back through. The hero's chat caption said "every line is the repository's own words, from
+ * the skills the agent reads", and it was false about two of the things the figure printed:
+ * the request is item 3's own example (a line of the changes spec, not of a skill), and the
+ * three `Pull request n of 3` labels are the illustration's own — a run that has not happened
+ * has no pull request numbers to quote. The figure is an illustration, the caption said so,
+ * and the only lines in it a document vouches for are the ones the agent speaks.
  *
  * The two patterns are the claim's own phrases rather than the whole sentence, because the
  * sentence can be reworded and the claim cannot: "the repository's own words" is also true of
  * the flow's captions and the run's steps, which are quotations of README.md, so the phrase
- * is refused only in the shape that claims it of *every line* — the chat's own sentence.
+ * is refused only in the shape that claims it of *every line* — the caption's own sentence.
  */
 export const RETIRED_CLAIMS = [
   {
@@ -137,7 +141,7 @@ export const RETIRED_CLAIMS = [
  * says the same thing about the same defect.
  */
 const CLAIM_WHY =
-  'the chat is an illustration: its request is item 3\'s own example and its three results are labels for work a run would report, so only the lines the agent speaks are its skills\' words and the caption may not vouch for the rest (changes spec 2026-10-18, item 3; Global Constraint 6)'
+  'the figure is an illustration: its request is item 3\'s own example and its three results are labels for work a run would report, so only the lines the agent speaks are its skills\' words and the caption may not vouch for the rest (changes spec 2026-10-18, item 3; Global Constraint 6)'
 
 /**
  * The head's text that a reader meets outside the page: the `<title>`, the description and
@@ -248,7 +252,7 @@ function siteSources() {
   return files
 }
 
-test("no built page outside D188's three carries the retired word 'worker' or the chat's retired claim", () => {
+test("no built page outside D188's three carries the retired word 'worker' or the retired claim", () => {
   const failures = wordingFailures(DIST)
   assert.deepEqual(failures, [], `the built site carries wording this gate refuses:\n  ${failures.join('\n  ')}`)
 })
@@ -365,7 +369,7 @@ test('the word is refused in README.md and in the site’s own sources', () => {
   assert.ok(failures[0].startsWith('data/faq.yaml '), failures.join('\n'))
 })
 
-test('the chat’s retired claim is refused where the caption is written, and in the sources', (t) => {
+test('the retired claim is refused where a caption is written, and in the sources', (t) => {
   // The caption as it shipped, on a built page: the sentence claimed every line of the figure
   // was a quotation, and two of them are not. A wording that comes back anywhere a reader
   // reads it — a component's caption, a data file's answer — fails here with the file named.
@@ -380,15 +384,18 @@ test('the chat’s retired claim is refused where the caption is written, and in
   }
 
   // The same sentence in the site's own sources, which is where a caption is written: a
-  // component that puts the claim back in fails before the next build, not after it.
+  // component that puts the claim back in fails before the next build, not after it. The
+  // component named here is the site's other caption, the one on the console page's
+  // screenshot: `AgentChat.astro`, whose caption this rule was written for, left the site
+  // with the owner's approved draft of 2026-10-19.
   const sources = {
-    'src/components/AgentChat.astro': `<figcaption>${shipped}</figcaption>\n`,
+    'src/components/ScreenshotSlider.astro': `<figcaption>${shipped}</figcaption>\n`,
     'src/components/ArchitectureDiagram.astro': '<p>every caption in the flow is the repository\'s own words</p>\n',
   }
   const inSources = sourceWordingFailures(sources)
   assert.equal(inSources.length, RETIRED_CLAIMS.length, `the claim in a component was not refused:\n${inSources.join('\n')}`)
   assert.ok(
-    inSources.every((line) => line.startsWith('src/components/AgentChat.astro ')),
+    inSources.every((line) => line.startsWith('src/components/ScreenshotSlider.astro ')),
     `the gate refused a true sentence about the flow's captions, which are quotations of README.md:\n${inSources.join('\n')}`,
   )
 })

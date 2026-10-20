@@ -399,10 +399,11 @@ here goes stale the way the byte budgets did before D192.
   fixed the same way (`max-width: none`), with `website/test/base-styles.mjs`'s new
   `chatRowFailures` reading the smallest column and the gap out of the grid rule and the cap
   out of the cascade. (That gate and the two-column chat are both gone again: the third fix
-  round made the chat one conversation card at the measure's own width, and the gate that
-  reads it now is `chatConversationFailures` — see the reading below. The history is kept
-  here because the round that found the hole was the round that measured the page rather
-  than read it.) The `go install` command, which the same review found clipped at
+  round made the chat one conversation card at the measure's own width, and the fourth round's
+  `chatConversationFailures` read that card's stylesheet — and the card, the chat and that gate
+  all left the site with the owner's draft of 2026-10-19, which is the reading at the foot of
+  this file. The history is kept here because the round that found the hole was the round that
+  measured the page rather than read it.) The `go install` command, which the same review found clipped at
   `...@late`, wraps now (`white-space: pre-wrap`, `overflow-wrap: anywhere`) on both install
   cards, and `installCommandFailures` refuses a command block that clips instead. The agent's
   launch is the status line `Fugaro: launching 3 jobs` rather than a command block, which is
@@ -434,20 +435,25 @@ here goes stale the way the byte budgets did before D192.
     by the accent's own left border. The caption moved out from under "Watch it run" to
     directly under the conversation, and the whole watch block — heading, item 5's slot, the
     command bar, the note — is now a sibling of the figure rather than inside it, so the
-    caption can be the figure's last child. What reads that markup is `website/test/home.mjs`,
-    not the stylesheet gate: it reads the caption as the figure's last child, the caption's
+    caption can be the figure's last child. What read that markup was `website/test/home.mjs`,
+    not the stylesheet gate: it read the caption as the figure's last child, the caption's
     words (`chat-caption`, an illustration and not a recording), and the slot as the element
-    after the watch heading. `chatConversationFailures` reads the stylesheet — the one-column
+    after the watch heading. `chatConversationFailures` read the stylesheet — the one-column
     turn list, the card, the measure's cap, the speaker column and the two speakers' sides —
-    and nothing about the caption.
+    and nothing about the caption. The chat is not on the page any more (the draft of
+    2026-10-19, below), so neither is that case; the slot the picture is in is the slider's
+    now, and `website/test/home.mjs` reads it there.
   - **the empty slot takes no page** (item 3b). `[data-slot="watch-screenshot"]` with no rule
     of its own was a box of blank page between the conversation and the command bar, which is
     the ~140 px the review measured. `.chat-shot:empty { display: none }` takes it out until
     PR #622's image lands — and it is kept now that the image is in the slot, because it is the
-    rule that keeps a placeholder from coming back — and `chatSlotFailures` refuses a slot rule
-    that gives it height, padding, a border or a background, and holds the rule that sizes the
+    rule that keeps a placeholder from coming back — and `chatSlotFailures` refused a slot rule
+    that gives it height, padding, a border or a background, and held the rule that sizes the
     image (`.chat-shot > img`) to scaling it: a width that is a percentage of the column and a
-    height that follows the file's ratio.
+    height that follows the file's ratio. The slot moved into the slider's "See it" panel with
+    the draft of 2026-10-19 and its class moved with it (`.watch-shot`); the same rules, read
+    by `website/test/base-styles.mjs`'s `watchSlotFailures` under the new name, are what hold
+    the picture to the column it sits in.
   - **How It Works has one left edge, and room under its title** (item 3d). The detail section
     carried `var(--space-md)` of inline padding of its own on top of `main`'s gutter, so "The
     run, step by step" and the five steps were 24 px right of the `h1` and of the flow between
@@ -525,12 +531,15 @@ here goes stale the way the byte budgets did before D192.
   `--ground` against the card with a `--border` outline and a radius, the reader's at the right
   edge and the agent's at the left, with the agent's name in `--accent-on-dark` — the accent's
   left rail the third round put on the agent's row is gone, because a rail and a bubble on
-  opposite sides drew two marks for one thing. `chatConversationFailures` refuses a turn whose
+  opposite sides drew two marks for one thing. `chatConversationFailures` refused a turn whose
   body has no side of its own (a grid item's `normal` is `stretch`, which draws a band rather
-  than a message) and refuses both speakers on one side; the third round's refusal of a card on
-  `.chat-turn` itself stands, and a bubble is not that: those were three cards across the page,
+  than a message) and refused both speakers on one side; the third round's refusal of a card on
+  `.chat-turn` itself stood, and a bubble is not that: those were three cards across the page,
   each stretched to the row's tallest, and this is one content-sized box in a row of the one
-  card. **The flow's cards lost three of their four cyan edges** — the sides and the bottom are
+  card. (The chat, its bubbles, its caption and `chatConversationFailures` all left the
+  homepage with the owner's draft of 2026-10-19 — the reading at the foot of this file — so the
+  flow's cards and the footer's label are the parts of this round still on the site.)
+  **The flow's cards lost three of their four cyan edges** — the sides and the bottom are
   `--border` at one pixel and the top rail is the accent at 4 px — which is the review's
   "calmer borders": what makes the picture prominent is the section, the card's size, the
   surface and the numbers, not an outline on every edge. **The footer's link label is the
@@ -621,23 +630,28 @@ reads them from there and holds them to the build it makes itself — no figure 
 here, for the reason the byte-budget bullet above gives. Placing the two assets and the `<img>`
 moved the site figure and nothing else (above).
 
-**It is on the homepage now** (`website/src/components/AgentChat.astro`): the slot
-`[data-slot="watch-screenshot"]` under the chat holds it, so the block that was empty until the asset
-existed is the picture the owner took. The markup declares the capture's logical size (1459 x 441, the
-2x file's own ratio) so the box is reserved before the file arrives, `loading="lazy"` because the block
-sits under the whole conversation and nothing above the fold waits on it, and the `alt` is the gist of
-`fugaro-watch.txt` — the transcription ships as the text a reader gets when the picture does not.
-`website/test/home.mjs` holds all four (in the slot, a non-empty `alt`, the declared dimensions, and no
-external URL), and `website/test/base-styles.mjs`'s `chatSlotFailures` holds the sizing that makes it
-scale — a width that is a percentage of the column it sits in and a height that follows the file's own
-ratio, refused if either becomes a pixel count (the two planted cases). The rendered page was measured in
-a headless Chromium over the built site at 1280, 768 and 375: `scrollWidth` is the viewport's width at all
-three (no horizontal scroll, the picture being the page's own and nothing else overflowing), and the
-screenshot lays out at 750 x 228, 722 x 220 and 329 x 101 px — the column's width and the capture's ratio
-at each. Whether the rendered page matches the owner's design is the owner's check (70a-70c, D190), as no
-gate here can see an image: at 375 px the picture is a quarter of the width of the screen it captures, so
-its small print is not readable at that width and the transcription beside it is what a reader reads
-instead.
+**It is on the homepage now, in the slider's "See it" panel** (`website/src/components/HomeSlider.astro`;
+the owner's draft of 2026-10-19, the reading at the foot of this file): the panel's `div.watch-shot` is
+the slot `[data-slot="watch-screenshot"]`, and the panel reads heading, picture, command — the block that
+was empty until the asset existed is the picture the owner took. It was `AgentChat.astro`'s slot until
+that draft folded the chat into the slider's first panel and deleted the component, and the picture moved
+with the slot. The markup declares the capture's logical size (1459 x 441, the 2x file's own ratio) so the
+box is reserved before the file arrives, `loading="lazy"` because the picture is behind the third tab and
+nothing on the first screen waits on it, and the `alt` is the gist of `fugaro-watch.txt` — the
+transcription ships as the text a reader gets when the picture does not. `website/test/home.mjs` holds all
+four (in the slot, a non-empty `alt`, the declared dimensions, and no external URL) and holds the slot to
+its place in the panel, and `website/test/base-styles.mjs`'s `watchSlotFailures` holds the sizing that
+makes it scale — a width that is a percentage of the panel it sits in and a height that follows the file's
+own ratio, refused if either becomes a pixel count (the two planted cases). The rendered page was measured
+in a headless Chromium over the built site at 1280, 768 and 375 while the picture sat in the chat's block:
+`scrollWidth` was the viewport's width at all three (no horizontal scroll, the picture being the page's own
+and nothing else overflowing), and the picture laid out at 750 x 228, 722 x 220 and 329 x 101 px — the
+column's width and the capture's ratio at each. That reading is the chat's block and not this one: the
+panel is `display: none` until its tab is chosen, so the picture's width inside it is a fact of a page with
+a tab chosen, and what holds it is the pair of declarations `watchSlotFailures` reads. Whether the rendered
+page matches the owner's design is the owner's check (70a-70c, D190), as no gate here can see an image: at
+the phone's column the picture is about a quarter of the width of the screen it captures, so its small
+print is not readable there and the transcription beside it is what a reader reads instead.
 
 ## The 2026-10-19 brief: the phone's menu and the console in the call to action
 
@@ -1083,3 +1097,74 @@ down).
   and whether the page then looks right is the owner's reading of it (70a–70c, D190): this run
   cannot see a rendered page, no screenshot is committed here, and the gate says what the
   drawing contains and how large its labels come out rather than what it looks like.
+
+## The 2026-10-19 home draft: one slider with three tabs, and one Get started button
+
+The owner approved a **second canvas draft for the homepage** the same day as the brief and the
+feedback above — **"Home, draft 2 (slider)"**, 2026-10-19 — and it is the authority the page and
+its gates cite by name (`website/src/pages/index.astro`, `HomeSlider.astro`, `HomeInstall.astro`,
+`how-it-works.astro`, and `website/test/{home,slider,fold,budget,a11y,wording}.mjs`). The canvas
+is not a file of this repository and no agent opened it: what it asked for is recorded here, from
+the draft's own text, and every reading it does not spell out is a decision of this branch's,
+in the commit that made it.
+
+- **The page is three blocks, and the page renders exactly those three.** `index.astro` is
+  `Hero.astro`, then `HomeSlider.astro`, then `HomeInstall.astro`. The hero is the headline
+  (README.md's tagline), the prompt line the feedback of the same day asked for
+  (`> Fan out these three bug fixes.`, the string `src/lib/agent-request.mjs` holds to the
+  changes spec), the one-line promise (README.md's subline) and the two links under them. The
+  install block is the page's **last** section, which is where the draft puts it: the commands
+  are no longer under the promise.
+- **One slider with three tabs, and all three panels in the HTML.** `HomeSlider.astro` renders
+  `.home-slider`, a row of three fragment links — "Easy to use", "Benefits", "See it" — and the
+  three panels they open. *Easy to use* is the draft's own three lines (you tell your agent,
+  Fugaro runs it in your cloud, you get a draft pull request), each with one inline SVG and the
+  repository's sentence about it under it, held to README.md's sections at build time and read
+  again by `website/test/slider.mjs`'s `stepFailures`. *Benefits* is `Benefits.astro`
+  unchanged, rendered into the panel (`inPanel`), because the README's four reasons and their
+  icons were already the thing this panel is for. *See it* is the owner's real `fugaro watch`
+  capture above the command, and under the command the panel's caption: `fugaro watch` is the
+  live screen of spend, repositories and running agents. — `plugin/skills/working/SKILL.md`'s own
+  line, which `home.mjs` reads back to that file. The picture and its transcription are the
+  section above's subject.
+- **The tabs are fragment links and not radio inputs, and the site's own privacy statement is
+  why.** The draft allows either. A radio group would put three `input` elements on the
+  homepage, and the site makes two claims that would then be false: the privacy statement's
+  "It has no account, form or comment box.", and `website/test/consent.mjs`, which refuses a
+  `form`, an `input`, a `textarea` or a `select` on **every** built page. So the tabs are
+  `<a href="#home-panel-…">`, one rule shows each panel, and the first panel is shown while no
+  fragment is chosen: the page needs no JavaScript to be read or used, every panel's text is in
+  the HTML a reader receives, and the tabs are keyboard operable as links with the focus ring
+  the rest of the site's links carry. What that costs is recorded in the component: a radio
+  group is announced as three choices and its arrow keys move between them, and a row of
+  fragment links is announced as three links. `website/test/slider.mjs` holds the shape —
+  three tabs, three panels, the panel the fragment names, no script that switches them.
+- **The install block is one button, and the command under it is read from the data file.**
+  `HomeInstall.astro` renders one large link to `/getting-started/` with the brew command under
+  it, from `website/data/install.yaml` through `HOME_PATH` — the same reader the two install
+  cards used, so the command is still never typed twice and the two cards are gone.
+- **Every control the page asks a reader to tap is at least 44 px tall**, which is the size the
+  owner's brief of 2026-10-19 measures every control against. The tabs and the install button
+  already were; the hero's two links were a fraction of a pixel short of it on their padding and
+  their line height alone, so they declare `min-height: 44px` and `website/test/home.mjs`'s
+  `controlTargetFailures` reads the rule — including the case where the minimum sits inside a
+  media query that is not in force, which is a minimum a phone does not get.
+- **What left the page.** `AgentChat.astro` is deleted rather than hidden: a component no page
+  renders is a component whose build-time guards stop running, and every line the site still
+  publishes is still held to the document it quotes. `ArchitectureDiagram.astro` is off the
+  homepage because the draft's page is those three blocks and the picture of the run is not one
+  of them — the slider's first panel is the flow the reader is shown — and it still draws
+  `/how-it-works/`, which is now the one page that renders it. The checks that were about the
+  chat were replaced by checks about what replaced it (`website/test/slider.mjs` is new;
+  `home.mjs`, `fold.mjs`, `budget.mjs`, `wording.mjs` and `base-styles.mjs` were re-pointed in
+  the same commit), not dropped.
+- **What the gates hold, and what they cannot.** The page's order, the three tabs and the three
+  panels, the panel each fragment shows, the absence of a script, the 44 px targets — read at
+  360 px and at 1280 px, so a minimum that holds at one of the two and not the other is refused —
+  and the steps' provenance are `website/test/slider.mjs`'s five rules, with twenty-two planted
+  cases under them; the hero's links against `features.console_downloads`, the prompt line's
+  source, the watch block and the capture's slot are `home.mjs`'s; the lead's word count is
+  `budget.mjs`'s and the byte figures are `website/README.md`'s, re-derived from the gate's own
+  build in the commit that moved them (D192). **Whether the page looks like the owner's draft
+  is the owner's check** (70a–70c, P9, D190): no gate here can see an image, and no screenshot
+  is committed.

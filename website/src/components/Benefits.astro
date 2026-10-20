@@ -224,9 +224,24 @@ const GLYPH_SHAPES = /<(?:path|circle|ellipse|rect|line|polyline|polygon)\b/
     )
   }
 }
+
+/**
+ * **Where the section's gutter stands down.** A page that renders this section as a block of
+ * its own gets the gutter and the room below with it (the rule below, and the round-6 fix that
+ * put it here). The homepage renders it inside a panel of `HomeSlider.astro`, where the panel
+ * is the block: the two gutters would stack, and the section's text would sit 32 px inside the
+ * other panels'. So the caller says so, and the section's own rule is what stands down. It is
+ * decided here rather than reached into from the panel with a `:global` selector, for the
+ * reason the round-6 fix is about: a block's rule belongs where the block is rendered.
+ */
+const { inPanel = false } = Astro.props
 ---
 
-<section class="home-benefits" aria-labelledby="benefits-title" data-source={SOURCE}>
+<section
+  class:list={['home-benefits', inPanel && 'home-benefits-panel']}
+  aria-labelledby="benefits-title"
+  data-source={SOURCE}
+>
   <h2 class="benefits-title" id="benefits-title">Benefits</h2>
   <ul class="benefit-list">
     {
@@ -281,6 +296,15 @@ const GLYPH_SHAPES = /<(?:path|circle|ellipse|rect|line|polyline|polygon)\b/
     max-width: var(--page-max);
     margin: 0 auto;
     padding: 0 var(--space-md) var(--space-3xl);
+  }
+
+  /* Inside the homepage's slider the panel is the block (see `inPanel` above): the section
+     keeps its heading, its list and its glyphs, and gives up the column and the room that the
+     panel around it already carries. */
+  .home-benefits-panel {
+    max-width: none;
+    margin: 0;
+    padding: 0;
   }
 
   /* The section's own label, one step above the point names under it and above the size the

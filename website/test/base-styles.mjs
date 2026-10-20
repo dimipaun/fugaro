@@ -1083,9 +1083,10 @@ export function flowLayoutAt(css, width) {
  * cards with an arrow between each pair, and a card's content box is what its padding and
  * border leave. Every one of those numbers is read from the stylesheet rather than typed here,
  * so the check follows a token that moves. Where a shortcut could make the page's own gutter
- * smaller — the homepage's `main:has(> .hero)` drops `main`'s padding, and `.home-flow` puts it
- * back — the arithmetic takes the padding the rules declare and ignores the shortcut, so the
- * width it works from is a floor rather than the page's own.
+ * smaller — the homepage's `main:has(> .hero)` drops `main`'s padding, and each block on that
+ * page puts its own gutter back — the arithmetic takes the padding the rules
+ * declare and ignores the shortcut, so the width it works from is a floor rather than the
+ * page's own.
  */
 export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIST) {
   const out = []
@@ -1760,7 +1761,7 @@ test('the homepage’s blocks pad the gap between them once, and not twice', () 
   const failures = []
   let checked = 0
   for (const { rel, html } of builtPages()) {
-    if (!html.includes('class="home-flow"')) continue
+    if (!html.includes('class="home-slider"')) continue
     checked += 1
     failures.push(...homeRhythmFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
   }
@@ -1779,29 +1780,31 @@ test('the rhythm refusal fires on the doubled gap, and the pairs that keep the r
     // in the built page, the install's second and the page's last) and a case about the
     // install's declaration is a case about the rule the install's file declares it in.
     [
-      'an install section padding the gap the flow above it already pads',
+      'an install section padding the gap the slider above it already pads',
       plantRule('.home-install[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
-      [/\.home-benefits ends with 112 px under it and \.home-install opens with 32 px over it, so the gap between them is 144 px/],
+      [/\.home-slider ends with 112 px under it and \.home-install opens with 32 px over it, so the gap between them is 144 px/],
     ],
-    // And the same edit on the page's own rule, which is one rule for the two blocks the page
-    // places and no longer names the benefits: the chat's top padding over the hero's bottom
-    // one, and the flow's over the chat's — two pairs padded twice by the one declaration, and
-    // both refused at each of the three widths, which is what the count below holds. **The
-    // benefits are not in this rule, and that is the point of the round-6 fix**: the block is
-    // rendered by `Benefits.astro`, the page's scope does not reach it, and the rule that pads
-    // it is the component's own — which is the next case.
+    // And the same edit on the block between the two: the slider's top padding over the hero's
+    // bottom one — 32 px over 32 px, which is the pair the hero's own `--space-lg` makes. Every
+    // block on this page declares its own rule in the component that renders it (there is no
+    // page-level `<style>` on `index.astro` any more), so the two plants above and here are the
+    // two gaps the page has, each padded twice by the rule of the block below it.
     [
-      'the figures padding the gaps the blocks above them already pad',
-      plantRule('.home-chat[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
-      [/the gap between them is 64 px/, /\.home-chat ends with 112 px under it and \.home-flow opens with 32 px over it, so the gap between them is 144 px/],
+      'the slider padding the gap the hero above it already pads',
+      plantRule('.home-slider[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
+      [/the gap between them is 64 px/],
     ],
-    // The benefits' own rule, in the component that renders the section — the rule the round-6
-    // review found missing (the padding was declared on the page, where it reached nothing). The
-    // gap it pads is the one above it, and one plant refuses the one pair.
+    // **And what the reading does not reach**: the benefits panel. The section is rendered
+    // inside the slider's second panel since the owner's approved draft of 2026-10-19, so it is
+    // not a top-level block of the page and its box is not a gap between two blocks. The plant
+    // gives it a top padding anyway and the reading refuses nothing — a check that walked every
+    // section carrying a padding would report the panel's own box as a doubled gap. The
+    // `plantRule` call is also what holds the panel's rule to the build: `.home-benefits-panel`
+    // is `Benefits.astro`'s, declared when the section is rendered in a panel.
     [
-      'a benefits section padding the gap the flow above it already pads',
-      plantRule('.home-benefits[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
-      [/\.home-flow ends with 112 px under it and \.home-benefits opens with 32 px over it, so the gap between them is 144 px/],
+      'a benefits panel padding its own top, which is not a gap between two blocks',
+      plantRule('.home-benefits-panel[data-astro-cid-', (rule) => rule.replace('padding:0', 'padding:var(--space-lg) 0 0')),
+      [],
     ],
     // **The case the three widths are for.** The same doubled gap, written inside a rule that is
     // in force on a phone and nowhere else: at 1280 and 768 the page's rhythm is right and at
@@ -1853,31 +1856,40 @@ test('the rhythm refusal fires on the doubled gap, and the pairs that keep the r
 
 test('the rhythm reading refuses a block whose rule cannot reach it', () => {
   const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
-  const pageScope = html.match(/class="home-chat" data-astro-cid-(\w+)/)?.[1]
-  assert.ok(pageScope, 'the built homepage no longer carries the page’s scope on `.home-chat`, and this case re-scopes a rule to it')
+  const sliderScope = /class="home-slider"[^>]*data-astro-cid-(\w+)/.exec(html)?.[1]
+  assert.ok(sliderScope, 'the built homepage no longer carries the slider’s scope on `.home-slider`, and this case re-scopes a rule to it')
 
-  // **The defect of round 6, as it shipped**: `.home-benefits` declared in the page's `<style>`
-  // and the `<section>` rendered by `Benefits.astro`, so the rule carried the page's scope
-  // (`[data-astro-cid-lcdefpme]`), the element carried the component's, and the rule reached
-  // neither. The plant is that file's own edit, made to the rule that now belongs to the
-  // component: the selector's scope attribute swapped for the page's.
-  const rescoped = plantRule('.home-benefits[data-astro-cid-', (rule) =>
-    rule.replace(/\[data-astro-cid-\w+\]/, `[data-astro-cid-${pageScope}]`),
-  )
-  // And the other half of the same defect, from the element's side: the section with the scope
+  // **The defect of round 6, as it shipped**: a block declared by a component other than the one
+  // that renders it, so its rules carry that component's scope (`[data-astro-cid-…]`), the
+  // element carries its own, and the rules reach neither. The plant is that edit, made to a block
+  // the reading walks and to every rule that names it — the install block, whose two rules are
+  // both declared by `HomeInstall.astro`, re-scoped to the component that renders the slider.
+  // **Every** rule naming the block has to move for the refusal to fire, which is the reading's
+  // own rule and not a way around it: the refusal says the stylesheet names a block no rule
+  // reaches, and one rule that still reaches it means the block is reached. Round 6 found the
+  // shape on the benefits section when `index.astro` declared the rule; the draft of 2026-10-19
+  // puts that section inside a panel, where the reading does not walk it —
+  // `website/test/slider.mjs` holds the panel's own rule to the scope the section carries — so
+  // the case is written on a block the reading can still see.
+  const installScope = /class="home-install"[^>]*data-astro-cid-(\w+)/.exec(html)?.[1]
+  assert.ok(installScope, 'the built homepage no longer carries a scope on `.home-install`, and this case re-scopes its rules away from it')
+  assert.notEqual(installScope, sliderScope, 'the install block and the slider now carry one scope, and this case tells them apart')
+  const rescoped = TODAY().replaceAll(`[data-astro-cid-${installScope}]`, `[data-astro-cid-${sliderScope}]`)
+  assert.notEqual(rescoped, TODAY(), 'the built homepage’s stylesheet no longer names the install block’s scope, and this case re-scopes the rules that do')
+  // And the other half of the same defect, from the element's side: the block with the scope
   // attribute its component gives it removed, which is a rule that names a scope nothing on the
   // element carries. Either way the block is one the stylesheet names and no rule reaches.
-  const unscoped = html.replace(/<section class="home-benefits"([^>]*)>/, (tag, rest) => `<section class="home-benefits"${rest.replace(/ data-astro-cid-\w+/g, '')}>`)
-  assert.notEqual(unscoped, html, 'the built homepage’s benefits section no longer carries a scope attribute, and this case takes one off')
+  const unscoped = html.replace(/<section class="home-install"([^>]*)>/, (tag, rest) => `<section class="home-install"${rest.replace(/ data-astro-cid-\w+/g, '')}>`)
+  assert.notEqual(unscoped, html, 'the built homepage’s install block no longer carries a scope attribute, and this case takes one off')
 
   const cases = [
-    ['a rule scoped to the page rather than to the component that renders the block', rescoped, html, /scoped to data-astro-cid-/],
+    ['every rule naming the block scoped to the component that renders the slider rather than to the one that renders the block', rescoped, html, new RegExp(`scoped to data-astro-cid-${sliderScope}`)],
     ['a block whose scope attribute is gone', TODAY(), unscoped, /the element carries no scope attribute/],
   ]
   for (const [what, css, page, expected] of cases) {
     const failures = homeRhythmFailures(css, page)
     assert.equal(failures.length, 1, `${what}: the reading refused ${failures.length} thing(s) where this case plants one:\n  ${failures.join('\n  ') || '(nothing)'}`)
-    assert.match(failures[0], /^the homepage's \.home-benefits is named by the stylesheet/, `${what}: the refusal does not say which block it is about, or does not begin with it:\n  ${failures[0]}`)
+    assert.match(failures[0], /^the homepage's \.home-install is named by the stylesheet/, `${what}: the refusal does not say which block it is about, or does not begin with it:\n  ${failures[0]}`)
     assert.match(failures[0], expected, `${what}: the refusal does not name the scopes it read:\n  ${failures[0]}`)
   }
 
@@ -1887,242 +1899,13 @@ test('the rhythm reading refuses a block whose rule cannot reach it', () => {
   assert.deepEqual(homeRhythmFailures(TODAY(), html), [], 'the homepage as it ships carries a block its rules cannot reach')
 })
 
-// ---- the chat is one card, one conversation (review round 3, item 3a) ----------------------
-//
-// The chat was three cards across the page's column — one turn each, `auto-fit` with an 18 rem
-// minimum — and the review of round 3 found what that draws: dead space inside each card, with
-// the reader's one short line floating in the middle of a card whose height the two long ones
-// set. What a conversation is instead is **one card with one column of lines**, the speaker at
-// the left of every line, at the width a line of prose is set at everywhere else on the site.
-// The four claims the arithmetic below holds are the ones that make it that shape:
-//
-//   1. **the list is one column** — a row of anything (`repeat(auto-fit, …)`, more than one
-//      track, a `display: flex` row) is the shape the review refused;
-//   2. **the list is the card** — the border, the radius and the background are the list's,
-//      and a turn with a card of its own is the three-cards defect back again;
-//   3. **the speakers are one column** — the label column is a definite width every row
-//      shares, and the lines start at one edge down the whole conversation;
-//   4. **the two speakers are on opposite sides** — the figure is a chat, so each turn's
-//      body is drawn as a bubble, content-sized and tinted against the card, and the reader's
-//      sits at one side of the card while the agent's sits at the other (review round 5).
-//      A bubble is not the card-per-turn the third claim's era refused: those were three
-//      cards laid out across the page and stretched to the row's tallest, and this is one
-//      content-sized box inside a row of the one card.
-//
-// The third is why the column is a fixed length rather than `max-content`, and it is the one
-// claim that is easy to get wrong in a way that looks right: `max-content` on a grid container
-// is resolved **per row**, against that row's own label, so `You` and `Your agent` give two
-// different columns and the two lines under them start 60 px apart. A content-sized column
-// therefore aligns nothing, and this refuses one — and then refuses a definite column too
-// narrow for the widest label in the markup, estimated with `textWidth` at the size the labels
-// are set in, so a longer speaker name fails here rather than wrapping inside the card.
-//
-// The cap is read rather than assumed, as it is for the flow's list: the list is an `<ol>`,
-// `base.css` holds lists to the measure, and the measure is what makes the card a readable
-// width. A rule that opts the list out of it (`max-width: none`) puts the conversation back
-// across the page, which is what the failure names.
-
-/** The margin the widest speaker label must have left in the column, in px. See `NAME_MARGIN`. */
-const LABEL_MARGIN = 4
-
-/** The chat’s turns on one built page, as `{ who }` — the speaker each row is labelled with. */
-export function chatSpeakers(html) {
-  return [...walk(parse(html))]
-    .filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('chat-turn'))
-    .map((el) => {
-      const who = [...walk(el)].find((child) => (child.attrs.get('class') ?? '').split(/\s+/).includes('turn-who'))
-      return who ? textOf(who).replace(/\s+/g, ' ').trim() : ''
-    })
-}
-
-/**
- * Every way the chat fails to be one card holding one conversation, at the width the desktop
- * layout is read at, for one built page’s stylesheet and markup.
- */
-export function chatConversationFailures(css, html) {
-  const out = []
-  const speakers = chatSpeakers(html)
-  if (speakers.length < 3) {
-    return [
-      `the page prints ${speakers.length} chat turn(s), and the figure this check sizes is item 3’s three-turn chat: the conversation it asks for cannot be read from fewer turns`,
-    ]
-  }
-  const rules = allRules(css)
-  const tokens = lengthTokens(css)
-  const declared = (klass, property, width) =>
-    rules
-      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector) && appliesAt(width)(r))
-      .map((r) => declarations(r)[property])
-      .filter((value) => value !== undefined)
-      .pop()
-
-  const DESKTOP = 80 * 16
-  const PHONE = 390
-
-  // ---- 1. the list is one column of lines --------------------------------------------------
-  const columns = declared('chat-turns', 'grid-template-columns', DESKTOP)
-  const display = declared('chat-turns', 'display', DESKTOP) ?? 'block'
-  if (display === 'flex' && (declared('chat-turns', 'flex-direction', DESKTOP) ?? 'row').startsWith('row')) {
-    out.push(
-      "the chat's turns are a flex row, and a row of cards across the page is the shape the review of round 3 refused: three turns of a quarter of the page each leave dead space inside the cards, with the reader's one short line floating in the middle of a card the long ones sized (changes spec 2026-10-18, item 3a)",
-    )
-  }
-  if (columns !== undefined) {
-    const tracks = splitTop(columns, ' ')
-    const repeats = /repeat\(/.test(columns)
-    if (repeats || tracks.length !== 1) {
-      out.push(
-        `the chat's turns are laid out as ${repeats ? `\`${columns}\`` : `${tracks.length} columns`}, and the conversation is one column of lines in one card: a row of cards is what the review of round 3 found — dead space inside each card, and the reader's one short line floating in the middle of it (changes spec 2026-10-18, item 3a)`,
-      )
-    }
-  }
-
-  // ---- 2. the list is the card, and a turn is a row of it ----------------------------------
-  if (declared('chat-turns', 'background', DESKTOP) === undefined || declared('chat-turns', 'border', DESKTOP) === undefined) {
-    out.push(
-      "the conversation's own list draws no card (`background` and `border` are the card, and one of them is missing): the turns are rows of one card rather than cards of their own (changes spec 2026-10-18, item 3a)",
-    )
-  }
-  for (const klass of ['chat-turn', 'turn-who', 'turn-line', 'turn-status', 'turn-results']) {
-    for (const property of ['background', 'border', 'border-radius']) {
-      const value = declared(klass, property, DESKTOP)
-      if (value === undefined) continue
-      out.push(
-        `a .${klass} draws a card of its own (\`${property}: ${value}\`), and the conversation is one card with the turns as its rows: a card per turn is the shape the review of round 3 refused, whatever the width it is drawn at (changes spec 2026-10-18, item 3a)`,
-      )
-    }
-  }
-
-  // ---- 3. the card is a readable width, not the page ---------------------------------------
-  const cap = listMaxWidth(css, DESKTOP, listElement(html, 'chat-turns', 'item 3 puts the chat on the homepage'))
-  if (cap.unreadable) {
-    return [
-      `the chat’s turns are reached by a rule this check cannot read — ${cap.unreadable} — and a cap nobody can read is a cap nobody checked: teach the cascade reader in \`website/test/base-styles.mjs\` the construct, or write the rule in a shape it reads`,
-    ]
-  }
-  const measurePx = capPixels(tokenText(css).get('measure') ?? '', tokenText(css), lengthTokens(css), elementFontPx(css))
-  if (Number.isNaN(measurePx)) {
-    out.push("the measure this site sets prose to cannot be read from the stylesheet, so 'a readable width' is not a number this check can hold the chat's card to")
-  } else if (cap.px > measurePx) {
-    out.push(
-      `the chat's turns are drawn at ${Number.isFinite(cap.px) ? `${Math.round(cap.px)} px` : 'no cap at all'} (max-width: ${cap.value}` +
-        `${cap.selector ? `, from ${JSON.stringify(cap.selector)}` : ''}${cap.query ? ` inside ${cap.query}` : ''}), and a line of this site's prose is set at the measure, ${Math.round(measurePx)} px: the conversation is one card at a readable width rather than a figure stretched across the page (changes spec 2026-10-18, item 3a)`,
-    )
-  }
-
-  // ---- 4. the speakers are one column ------------------------------------------------------
-  const turnColumns = declared('chat-turn', 'grid-template-columns', DESKTOP)
-  if (turnColumns === undefined) {
-    out.push(
-      `no rule gives a turn two columns at ${DESKTOP / 16} rem: the speaker is a column of its own at the left of the line it introduces, and without it every line starts wherever its own name ends (changes spec 2026-10-18, item 3a)`,
-    )
-  } else {
-    const tracks = splitTop(turnColumns, ' ')
-    const label = tracks[0] ?? ''
-    const content = /^(?:max-content|min-content|auto|fit-content\(.*\)|[\d.]+fr)$/.test(label) || label.includes('fr')
-    const labelPx = content ? NaN : toPx(label, tokens)
-    const labelSize = toPx(declared('turn-who', 'font-size', DESKTOP), tokens)
-    const widest = speakers.reduce((a, b) => (textWidth(b, labelSize) > textWidth(a, labelSize) ? b : a), '')
-    const need = textWidth(widest, labelSize) + LABEL_MARGIN
-    if (tracks.length !== 2) {
-      out.push(
-        `a turn is laid out as ${tracks.length} column${tracks.length === 1 ? '' : 's'} (\`${turnColumns}\`), and a turn of the conversation is two: its speaker, and what they said (changes spec 2026-10-18, item 3a)`,
-      )
-    } else if (content) {
-      out.push(
-        `the speaker column is \`${label}\`, which a browser sizes per row against that row's own label: \`${speakers[0]}\` and the longest of the labels (${JSON.stringify(widest)}) then give two different columns, and the two lines under them start at two different places — a content-sized column aligns nothing (changes spec 2026-10-18, item 3a)`,
-      )
-    } else if (Number.isNaN(labelPx) || Number.isNaN(labelSize) || Number.isNaN(need)) {
-      out.push(
-        `the speaker column's arithmetic cannot be read: \`${label}\` at a label size of \`${declared('turn-who', 'font-size', DESKTOP) ?? '(nothing declared)'}\` is not a length this check can turn into pixels, and a length it cannot read is a length nothing checked (\`NaN\` passes every comparison) — teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (changes spec 2026-10-18, item 3a)`,
-      )
-    } else if (labelPx < need) {
-      out.push(
-        `the speaker column is ${Math.round(labelPx)} px and the widest speaker label in the markup (${JSON.stringify(widest)}, at ${labelSize} px, estimated at ${Math.round(textWidth(widest, labelSize))} px) needs ${Math.round(need)} px with the margin this check asks for: the labels are one column, so the column has to hold the widest of them on one line (changes spec 2026-10-18, item 3a)`,
-      )
-    }
-    for (const klass of ['turn-body']) {
-      const column = declared(klass, 'grid-column', DESKTOP)
-      if (column === undefined || !/^2(\s*\/\s*-?1)?$/.test(column.trim())) {
-        out.push(
-          `a .${klass} is not in the second column of its turn (\`grid-column: ${column ?? '(nothing declared)'}\`), so what the speaker said starts under its own label rather than at the edge every line of the conversation shares (changes spec 2026-10-18, item 3a)`,
-        )
-      }
-    }
-  }
-
-  // ---- 6. the two speakers are on opposite sides -------------------------------------------
-  //
-  // The figure is a chat (review round 5), so the reader's turn and the agent's are drawn on
-  // opposite sides of the card. The reading is the bubble's own `justify-self`, per speaker:
-  // the turn's body is where the alternation is written, and a rule set that leaves both
-  // speakers on one side — or stretches the body to the whole column, which is a band rather
-  // than a message — is the defect each refusal below names.
-  const bodySideAt = (speaker) => {
-    // The speaker's own rule: one that reaches a turn of that speaker — the turn's class and
-    // its `data-turn` attribute, whose bracket group may sit before or after the scope
-    // attribute the build adds — and then the turn's body inside it.
-    const token = new RegExp(`data-turn=(?:"|')?${speaker}(?:"|')?(?=[\\]\\s]|$)`)
-    const own = rules
-      .filter((r) => /\.chat-turn\b/.test(r.selector) && /\.turn-body(?![\w-])/.test(r.selector) && token.test(r.selector))
-      .filter((r) => appliesAt(DESKTOP)(r))
-      .map((r) => declarations(r)['justify-self'])
-      .filter((value) => value !== undefined)
-      .pop()
-    // The base is the rule that reaches **every** turn's body — the speaker's own rule is a
-    // different one, and it is read above rather than here: a fallback that took the last
-    // rule matching `.turn-body`, which is the reader's own, would report both speakers on
-    // the reader's side and refuse a correct stylesheet. What is left is the initial value:
-    // `normal`, which for a grid item means `stretch`.
-    const base = rules
-      .filter(
-        (r) =>
-          new RegExp(`\\.turn-body(?![\\w-])`).test(r.selector) &&
-          !/data-turn/.test(r.selector) &&
-          appliesAt(DESKTOP)(r),
-      )
-      .map((r) => declarations(r)['justify-self'])
-      .filter((value) => value !== undefined)
-      .pop()
-    return own ?? base ?? 'normal'
-  }
-  const sides = { you: bodySideAt('you'), agent: bodySideAt('agent') }
-  const atEnd = (value) => /^(?:end|right|self-end|flex-end)$/.test(String(value).trim())
-  for (const [speaker, side] of Object.entries(sides)) {
-    if (/^(?:normal|stretch|self-stretch)$/.test(String(side).trim())) {
-      out.push(
-        `the ${speaker === 'you' ? "reader's" : "agent's"} turn has no side of its own (\`justify-self: ${side}\` on its body, which for a grid item stretches it to the whole column): a turn's body is a bubble — the shape of what was said, on one side of the card or the other — and a box that fills the column is a band with a message in it (review round 5)`,
-      )
-    }
-  }
-  if (atEnd(sides.you) === atEnd(sides.agent)) {
-    out.push(
-      `the reader's turn and the agent's are drawn on the same side (their bodies' \`justify-self\` is ${JSON.stringify(sides.you)} and ${JSON.stringify(sides.agent)}): the figure is a chat, and a chat alternates — what the reader asked on one side, and what the agent did on the other (review round 5)`,
-    )
-  }
-
-  // ---- 5. on a phone the label goes above the line ------------------------------------------
-  //
-  // The label column is a fixed length, and a fixed length that suits a 1056 px card takes a
-  // third of a 390 px one. Below the layout's own breakpoint a turn is one column, so the
-  // speaker is a line above what they said; this is the end that says the desktop rule is
-  // inside a breakpoint rather than in force everywhere.
-  const phoneColumns = declared('chat-turn', 'grid-template-columns', PHONE)
-  if (phoneColumns !== undefined && splitTop(phoneColumns, ' ').length > 1) {
-    out.push(
-      `at ${PHONE} px a turn is laid out as \`${phoneColumns}\`, ${splitTop(phoneColumns, ' ').length} columns on a ${PHONE} px screen: the speaker column is a fixed length sized for a card of a thousand pixels, and below the layout's own breakpoint the label goes above the line it introduces (changes spec 2026-10-18, item 3a)`,
-    )
-  }
-  return out
-}
-
 // ---- the watch slot reserves no space until the image lands (review round 3, item 3b) ------
 
 /**
  * Every way the `fugaro watch` slot breaks the two rules that make it a slot rather than a
  * placeholder. It is empty until a later task adds the screenshot — that is item 3's own
  * arrangement and PR #622's image — and the review of round 3 found the cost of getting it
- * wrong: about 140 px of blank page between the chat and the command bar under it. So:
+ * wrong: about 140 px of blank page between the figure and the command bar under it. So:
  *
  *   - **nothing draws a box around an empty slot.** `:empty { display: none }` is what takes
  *     it out of the page while it holds nothing, and any rule that gives the slot itself a
@@ -2142,15 +1925,15 @@ export function chatConversationFailures(css, html) {
  *     without horizontal scroll" is made of, and it is the same reading `test/base-styles.mjs`
  *     takes everywhere else: the built stylesheet's own declarations.
  */
-export function chatSlotFailures(css, html) {
+export function watchSlotFailures(css, html) {
   const out = []
   const slot = [...walk(parse(html))].find((el) => el.attrs.get('data-slot') === 'watch-screenshot')
   if (!slot) return out // the markup's slot is `test/home.mjs`'s subject, not this one's
-  const own = allRules(css).filter((rule) => /\.chat-shot(?![\w-])/.test(rule.selector))
+  const own = allRules(css).filter((rule) => /\.watch-shot(?![\w-])/.test(rule.selector))
   const empty = own.find((rule) => rule.selector.includes(':empty'))
   if (empty === undefined || declarations(empty)['display'] !== 'none') {
     out.push(
-      "no rule takes the watch screenshot's slot out of the page while it is empty (`.chat-shot:empty { display: none }`): the slot holds nothing until the image lands, and an empty element that still takes space is blank page between the conversation and the command bar (review round 3, item 3b)",
+      "no rule takes the watch screenshot's slot out of the page while it is empty (`.watch-shot:empty { display: none }`): the slot holds nothing until the image lands, and an empty element that still takes space is blank page between the conversation and the command bar (review round 3, item 3b)",
     )
   }
   for (const rule of own) {
@@ -2168,7 +1951,7 @@ export function chatSlotFailures(css, html) {
   const sizes = own.filter((rule) => /(^|[^\w-])img(?![\w-])/.test(rule.selector))
   if (sizes.length === 0) {
     out.push(
-      "no rule sizes the image that goes into the watch screenshot's slot (`.chat-shot > img`): the image is a separate task's to add, and the rule that draws it belongs beside the slot so that adding it is one line of markup (review round 3, item 3b)",
+      "no rule sizes the image that goes into the watch screenshot's slot (`.watch-shot > img`): the image is a separate task's to add, and the rule that draws it belongs beside the slot so that adding it is one line of markup (review round 3, item 3b)",
     )
     return out
   }
@@ -2245,7 +2028,7 @@ export function listElement(html, klass, what) {
 
 /** The flow's list element on one built page. */
 export function flowListElement(html) {
-  return listElement(html, 'flow-steps', 'item 4 puts the flow on the homepage and on How It Works')
+  return listElement(html, 'flow-steps', 'item 4 puts the flow on How It Works, which is the page that opens with the picture')
 }
 
 /** The classes between `main` and the flow's figure on one built page: the gutters it sits in. */
@@ -2273,7 +2056,9 @@ test('the four-across flow has room for the step names it prints', () => {
 })
 
 test('the flow is a stack, a two-by-two and a row — each in its own band of width', () => {
-  const css = pageCss(readFileSync(path.join(DIST, 'index.html'), 'utf8'))
+  // The page that renders the flow: the CSS is inlined per page, and the homepage has rendered
+  // no flow since the owner's approved draft of 2026-10-19.
+  const css = pageCss(readFileSync(path.join(DIST, 'how-it-works', 'index.html'), 'utf8'))
   assert.deepEqual(flowBandFailures(css), [], 'the band rule fails on the built stylesheet, so the cases below are not proving what they name')
 
   const cases = [
@@ -2328,118 +2113,49 @@ test('the flow is a stack, a two-by-two and a row — each in its own band of wi
   }
 })
 
-test('the chat is one card holding one conversation, at a readable width', () => {
-  const failures = []
-  let checked = 0
-  for (const { rel, html } of builtPages()) {
-    if (!html.includes('class="chat-turn"')) continue
-    checked += 1
-    failures.push(...chatConversationFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
-    failures.push(...chatSlotFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
-  }
-  assert.ok(checked > 0, 'no built page carries the chat, and item 3 puts it on the homepage')
-  assert.deepEqual(failures, [], `the chat is not the one conversation card the page asks for:\n  ${failures.join('\n  ')}`)
-})
-
-test('every chat-conversation refusal fires on the defect it names', () => {
+test('the watch slot reserves no space until the image lands, and the image scales in it', () => {
+  // The slot as it ships, first: the cases below are the real rules with one thing taken out,
+  // and a case that never read the shipped stylesheet would pass on a page whose slot had no
+  // rules at all. The homepage is the page the slot is on — the "See it" panel of the slider
+  // (the owner's approved draft of 2026-10-19) — and `watchSlotFailures` returns early on a page
+  // with no slot, so this assertion is also what holds the slot to the artifact.
   const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
   const css = pageCss(home)
-
-  /** Today's stylesheet with one declaration added to the first rule whose selector matches. */
-  const declaring = (pattern, property) => {
-    const next = css.replace(pattern, (match) => `${match.slice(0, -1)};${property}}`)
-    assert.notEqual(next, css, `this fixture adds \`${property}\` to the first rule matching ${pattern}, and the built stylesheet no longer carries one`)
-    return next
-  }
-  const onChatTurns = (property) => declaring(/\.chat-turns\[data-astro-cid-[a-z0-9]+\]\{[^}]*\}/, property)
-
-  const cases = [
-    // The defect the review of round 3 found: the turns are three cards across the page.
-    ['the row of cards comes back', onChatTurns('grid-template-columns:repeat(auto-fit,minmax(18rem,1fr))'), /laid out as `repeat\(auto-fit/, home],
-    // And the other way of writing the same row: a flex row of the same cards.
-    ['the turns are a flex row', onChatTurns('display:flex;flex-direction:row'), /a flex row/, home],
-    // And the cap opted out of, which puts the conversation back across the page.
-    ['the measure opted out of', onChatTurns('max-width:none'), /a line of this site's prose is set at the measure/, home],
-    // A card per turn, which is the same defect drawn with borders.
-    [
-      'a card per turn',
-      declaring(/\.chat-turn\[data-astro-cid-[a-z0-9]+\]\{[^}]*\}/, 'background:var(--surface)'),
-      /draws a card of its own/,
-      home,
-    ],
-    // The speaker column sized by the row's own content, which aligns nothing.
-    [
-      'a content-sized speaker column',
-      plant('grid-template-columns:7rem minmax(0,1fr)', 'grid-template-columns:max-content minmax(0,1fr)'),
-      /a content-sized column aligns nothing/,
-      home,
-    ],
-    // And a definite column too narrow for the widest label — the mutation-proved end of the
-    // arithmetic above: the widest speaker label in the markup no longer fits on one line.
-    [
-      'a speaker column too narrow for the labels',
-      plant('grid-template-columns:7rem minmax(0,1fr)', 'grid-template-columns:2rem minmax(0,1fr)'),
-      /the widest speaker label in the markup/,
-      home,
-    ],
-    // A line that starts under its own label rather than at the shared edge. The body is one
-    // element, so one rule carries what a speaker said and one refusal names it.
-    ['a line outside the second column', plant('{grid-column:2}', '{grid-column:1}'), /is not in the second column/, home],
-    // And the two ends of the chat's alternation (review round 5): the reader's bubble moved
-    // onto the agent's side, and a body left with no side at all — stretched to the column.
-    ['both speakers on one side', plant('justify-self:end', 'justify-self:start'), /drawn on the same side/, home],
-    ['a turn with no side of its own', plant('justify-self:start', 'justify-self:stretch'), /stretches it to the whole column/, home],
-    // The desktop column in force on a phone, where it would take a third of the screen.
-    [
-      'the two columns in force at 390 px',
-      declaring(/\.chat-turn\[data-astro-cid-[a-z0-9]+\]\{[^}]*\}/, 'grid-template-columns:7rem minmax(0,1fr)'),
-      /below the layout's own breakpoint/,
-      home,
-    ],
-    // And the page's own side: fewer than the three turns item 3's figure draws.
-    ['a page whose chat is not the figure’s three turns', css, /prints 2 chat turn\(s\)/, home.replace('class="chat-turn"', 'class="chat-turn-solo"')],
-  ]
-  for (const [what, stylesheet, expected, html, count = 1] of cases) {
-    assert.deepEqual(
-      chatConversationFailures(stylesheet, html).map((line) => (expected.test(line) ? 'fired' : line)),
-      Array(count).fill('fired'),
-      `${what}: the refusal did not fire, and this is what it said instead`,
-    )
-  }
+  assert.deepEqual(watchSlotFailures(css, home), [], 'the watch slot as it ships breaks one of the rules the cases below are about')
 
   // The slot's two rules, each planted: the rule that takes an empty slot out of the page, and
-  // the rule that sizes the image a later task adds.
+  // the rule that sizes the image in it.
   const nothingPainted = css.replace(
-    /\.chat-shot\[data-astro-cid-[a-z0-9]+\]:empty\{display:none\}/,
-    '.chat-shot[data-astro-cid-6fbtmsuw]:empty{display:block}',
+    /\.watch-shot\[data-astro-cid-[a-z0-9]+\]:empty\{display:none\}/,
+    '.watch-shot[data-astro-cid-6fbtmsuw]:empty{display:block}',
   )
   assert.notEqual(nothingPainted, css, "this fixture turns the slot's `:empty` rule into one that still draws it, and the built stylesheet no longer carries that rule")
-  const noImageRule = css.replace(/\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img[^{]*\{[^}]*\}/, '')
+  const noImageRule = css.replace(/\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img[^{]*\{[^}]*\}/, '')
   assert.notEqual(noImageRule, css, "this fixture removes the rule that sizes the image in the slot, and the built stylesheet no longer carries one")
   // And the picture's own sizing, each planted the way the defect reads on the page: a width
   // in pixels is the screenshot wider than the phone's column, and a height in pixels is the
   // same screenshot squashed into a box that is not its shape.
-  const fixedWidth = css.replace(/(\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{)width:100%/, '$1width:1459px')
-  const fixedHeight = css.replace(/(\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{width:100%;)height:auto/, '$1height:441px')
+  const fixedWidth = css.replace(/(\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{)width:100%/, '$1width:1459px')
+  const fixedHeight = css.replace(/(\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{width:100%;)height:auto/, '$1height:441px')
   assert.notEqual(fixedWidth, css, "this fixture fixes the watch screenshot's width in pixels, and the built stylesheet no longer sizes it with a percentage")
   assert.notEqual(fixedHeight, css, "this fixture fixes the watch screenshot's height in pixels, and the built stylesheet no longer lets it follow the file's ratio")
   // The same defect one breakpoint down: the base rule still tracks the column, and a media
   // query answers a phone with a fixed width instead — the shape a "just for small screens"
   // override takes, and the one a check that read only the declarations in front of it would
   // miss.
-  const imgSelector = /(\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\])/.exec(css)?.[1]
+  const imgSelector = /(\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\])/.exec(css)?.[1]
   assert.ok(imgSelector, "this fixture needs the rule that sizes the image in the watch slot, and the built stylesheet no longer carries one to read its selector from")
   const phoneWidth = `${css}\n@media (max-width:40rem){${imgSelector}{width:900px}}`
-  const slotCases = [
+  const cases = [
     ['the slot left in the page while it is empty', nothingPainted, /takes the watch screenshot's slot out of the page/],
     ['the screenshot fixed in width inside a breakpoint', phoneWidth, /a length in units is a box the picture does not grow out of/],
-    ['a box drawn around the empty slot', `${css}\n.chat-shot{min-height:140px}`, /gives the watch screenshot's slot a `min-height/],
+    ['a box drawn around the empty slot', `${css}\n.watch-shot{min-height:140px}`, /gives the watch screenshot's slot a `min-height/],
     ['the image rule removed with the slot still empty', noImageRule, /no rule sizes the image that goes into the watch screenshot's slot/],
     ['the screenshot given a fixed width', fixedWidth, /the picture is a 1459 px-wide capture of a terminal/],
     ['the screenshot given a fixed height', fixedHeight, /the picture's height has to follow the file's own ratio/],
   ]
-  for (const [what, stylesheet, expected] of slotCases) {
-    const failures = chatSlotFailures(stylesheet, home)
+  for (const [what, stylesheet, expected] of cases) {
+    const failures = watchSlotFailures(stylesheet, home)
     assert.ok(
       failures.some((line) => expected.test(line)),
       `${what}: the refusal did not fire, and this is what it said instead:\n  ${failures.join('\n  ') || '(nothing)'}`,
@@ -2448,11 +2164,31 @@ test('every chat-conversation refusal fires on the defect it names', () => {
 })
 
 test('every flow-layout refusal fires on the defect it names', () => {
-  const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  // The page that renders the flow, which is `/how-it-works/` alone since the owner's approved
+  // draft of 2026-10-19 took the picture off the homepage: the CSS is inlined per page, so the
+  // rules below are only in this page's stylesheet.
+  const home = readFileSync(path.join(DIST, 'how-it-works', 'index.html'), 'utf8')
   const names = stepNames(home)
   const wrappers = flowWrappers(home)
   const element = flowListElement(home)
-  assert.ok(names.length === 4, `the homepage prints ${names.length} step names, and the flow is the spec's four steps`)
+  assert.ok(names.length === 4, `the How It Works page prints ${names.length} step names, and the flow is the spec's four steps`)
+
+  // The fixtures below are edits to *this* page's stylesheet, and the module's `TODAY()` and
+  // `plant()` are the homepage's: the flow's rules are on `/how-it-works/` alone since the
+  // owner's approved draft of 2026-10-19 took the picture off the homepage, and a `plant` that
+  // read `index.html` would find no fragment to remove and fail for the wrong reason. Shadowing
+  // the two here keeps every `plant(...)` and `TODAY()` in the case list below reading the page
+  // the flow is on.
+  const flowCss = pageCss(home)
+  const TODAY = () => flowCss
+  const plant = (from, to, which = 'first') => {
+    assert.ok(flowCss.includes(from), `this fixture is built by removing ${JSON.stringify(from)} from the built stylesheet, and the stylesheet no longer carries it`)
+    if (which === 'last') {
+      const at = flowCss.lastIndexOf(from)
+      return flowCss.slice(0, at) + to + flowCss.slice(at + from.length)
+    }
+    return flowCss.replace(from, to)
+  }
   const cases = [
     // The defect this reader was written for, and the one the picture shipped with: the
     // measure — `base.css`'s `:where(p, ul, ol, dl, blockquote, figcaption) { max-width:
@@ -3101,7 +2837,7 @@ export function sideBySideCopyBlocks(css, html, width = 80 * 16) {
  * same thing from the other end and is let through.
  *
  * The review of round 3 (item 3c) is why this is one rule and not two: the install cards used
- * to put the control in a row *above* their command while the chat's watch bar put it beside
+ * to put the control in a row *above* their command while the watch bar put it beside
  * one, and two placements for one control read as two different components. So the blocks
  * this returns are now every command block on the page, and a block that stops sharing the
  * row is a second placement the case below fails on rather than a shape this rule ignores.
@@ -3130,9 +2866,10 @@ test('the copy-control placement rule reads every command block, and refuses the
   const css = TODAY()
   const blocks = copyBlocks(css, home)
   const sideBySide = sideBySideCopyBlocks(css, home)
-  assert.ok(
-    blocks.length >= 3,
-    `the homepage carries ${blocks.length} command block(s) with a control and a command, and it renders the two install cards and the chat's watch bar (changes spec 2026-10-18, items 3 and 4)`,
+  assert.equal(
+    blocks.length,
+    2,
+    `the homepage carries ${blocks.length} command block(s) with a control and a command, and it renders two: the install block at the foot of the page and the watch block in the slider's third panel (the owner's approved draft of 2026-10-19; changes spec 2026-10-18, items 3 and 4)`,
   )
   // One placement for all of them: the review of round 3 found the install cards putting the
   // control above their command while the watch bar put it beside one, so a block that does
@@ -3143,19 +2880,20 @@ test('the copy-control placement rule reads every command block, and refuses the
     `the homepage's command blocks ${JSON.stringify(blocks.map((block) => `${block.klass}:${block.display}/${block.direction}`))} do not all read the same way, and one control has one placement on this site (changes spec 2026-10-18, item 3c)`,
   )
   assert.ok(
-    sideBySide.some((block) => block.klass === 'chat-watch' && block.direction === 'row-reverse' && block.atStart),
+    sideBySide.some((block) => block.klass === 'watch-block' && block.direction === 'row-reverse' && block.atStart),
     `the check finds no side-by-side command block on the homepage (it found ${JSON.stringify(sideBySide)}), so the cases below would pass without reading the block they are about (changes spec 2026-10-18, item 3)`,
   )
   assert.ok(
     sideBySide.some((block) => block.klass === 'command-block'),
-    `the check does not read the install cards' own blocks (it found ${JSON.stringify(sideBySide)}), and item 3c is about the placement inside them`,
+    `the check does not read the install block's own markup (it found ${JSON.stringify(sideBySide)}), and item 3c is about the placement inside it`,
   )
   assert.deepEqual(copyControlPlacementFailures(css, home), [], 'the placement rule fails on the built homepage, so the case below is not proving what it names')
 
   // The defect as it shipped in the watch bar: a plain row, so the control — first in the
   // markup — is drawn at the left of the command. `.command-block`'s `row-reverse` is the
-  // site's only one, so removing it leaves every command block on the homepage a plain row
-  // and the check has to refuse all of them rather than the bar alone.
+  // site's only one, and both of the homepage's blocks carry that class, so removing it leaves
+  // every command block on the page a plain row and the check has to refuse all of them rather
+  // than the watch block alone.
   const notReversed = plant('flex-direction:row-reverse;', '')
   const failures = copyControlPlacementFailures(notReversed, home)
   assert.equal(
@@ -3211,7 +2949,7 @@ export function installCommandFailures(css) {
   const out = []
   // Every rule that styles a command block's own `<pre>`, **wherever the block is**. The
   // homepage's install commands carry a class of their own, and every other command block on the
-  // site — Getting Started's install cards, the chat's watch command — is reached by
+  // site — Getting Started's install cards, the slider's watch command — is reached by
   // `base.css`'s `.command-block > pre`. Reading only the homepage's class left the site's other
   // install commands held by nothing, which is where this rule's own defect then reappeared: the
   // `pre` gives up the width of the copy control beside it, so the page whose whole job is the
