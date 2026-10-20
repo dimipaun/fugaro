@@ -97,10 +97,11 @@ func ValidTier(tier string) bool {
 
 // jobNameRE is the shape of a Cloud Run job name as this repository builds
 // them: internal/backend/gcp's JobName/ProjectJobName sanitize to lower-case
-// letters, digits and hyphens, and cap the name at 49 characters (maxJobName,
-// Cloud Run's own 63 minus room for an execution token). Cloud Run itself
-// requires a name to start with a letter and end with a letter or a digit.
-var jobNameRE = regexp.MustCompile(`^[a-z](?:[a-z0-9-]{0,47}[a-z0-9])?$`)
+// letters, digits and hyphens. Cloud Run itself requires a name to start with a
+// letter and to end with a letter or a digit. The length is ValidJobName's, at
+// maxJobNameBytes, so that the two rules are one rule each: this one says what
+// a name is made of and the bound says how long it may be.
+var jobNameRE = regexp.MustCompile(`^[a-z](?:[a-z0-9-]*[a-z0-9])?$`)
 
 // ValidJobName reports whether s may be the Cloud Run job a call reports it is
 // in (HeaderRunJob). It is a narrower rule than the header-value rule on
@@ -468,13 +469,17 @@ func SetCredentialHeaders(h http.Header, tier, name string) error {
 
 // CredentialHeaders reads the tier and the credential's name back, and holds
 // them to the rules they were written by (review finding M2). ok is true only
-// for a pair this contract could have sent; an answer that carries one of the
-// two without the other, an unknown tier or a name that is not one clean
-// value is an error rather than a pair — the tier settles a call against the
-// caps (C1.16) and the name is what the run records (C1.19), so a caller that
+// for a pair this contract could have sent: an answer that carries one of the
+// two without the other, an unknown tier or a name that is not one clean value
+// is an error rather than a pair — the tier settles a call against the caps
+// (C1.16) and the name is what the run records (C1.19), so a caller that
 // guessed at either would be reading an answer the service did not give. An
 // answer that carries neither is (…, false, nil): most answers are not a
 // credential's.
+//
+// A lone header needs no rule of its own: a missing tier is not one of A, B or
+// C, and a missing name is not one clean header value, so each is refused by
+// the rule for the half that is missing.
 //
 // The error names the field and never the value: both arrive as header text
 // from another process.
@@ -482,9 +487,6 @@ func CredentialHeaders(h http.Header) (tier, name string, ok bool, err error) {
 	tier, name = h.Get(HeaderTier), h.Get(HeaderCredential)
 	if tier == "" && name == "" {
 		return "", "", false, nil
-	}
-	if tier == "" || name == "" {
-		return "", "", false, errors.New("credsvc: the answer carries a tier and a credential name only together")
 	}
 	if !ValidTier(tier) {
 		return "", "", false, errors.New("credsvc: the answer's tier is not one of A, B or C")
