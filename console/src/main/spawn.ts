@@ -1335,7 +1335,11 @@ export async function resolveBinary(options: {
     return {
       ok: false,
       path: options.configuredPath,
-      reason: `the configured binary path is not absolute: ${options.configuredPath} -- give an absolute path, so the file that is checked is the file that runs`,
+      // The sentence names the file and the field, and asks for nothing: the
+      // ruling of 2026-10-20 removed every screen that took a binary path, so
+      // "give an absolute path" would describe an affordance the console no
+      // longer draws. The one place an override can come from is the field.
+      reason: `the binaryPath in installations.json is not absolute: ${options.configuredPath} -- that field names the file the console runs, so it is read as written and never against a working directory`,
     }
   }
   const candidates = binDirectories({

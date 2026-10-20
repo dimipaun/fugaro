@@ -45,7 +45,7 @@ import {
   invokeOperation,
 } from '../../src/preload/installations'
 import { createInstallationPicker } from '../../src/main/picker'
-import { INSTALLATIONS_MENU_LABEL, PICKER_ENTRY_URL, pickerOptions, pickerPreloadPath } from '../../src/main/picker'
+import { INSTALLATIONS_MENU_LABEL, OPEN_EXTERNAL_FAILED, PICKER_ENTRY_URL, pickerOptions, pickerPreloadPath } from '../../src/main/picker'
 import { GETTING_STARTED_URL, FUGARO_INSTALL_COMMAND, FUGARO_SETUP_COMMAND } from '../../src/main/onboarding'
 import { ALLOWED_EXTERNAL_HOSTS, consoleWebPreferences, validateExternalUrl } from '../../src/main/window'
 import {
@@ -782,6 +782,26 @@ describe('the picker’s external link', () => {
       expect(reply.ok).toBe(false)
       if (!reply.ok) expect(reply.reason).toContain('no browser here')
     })
+  })
+
+  it('reports a handover the platform declined, rather than a success that drew nothing', async () => {
+    // `openExternalValidated` answers a **boolean**, and `false` is how it says
+    // that nothing was opened: a URL its own allow-list refused, or a handover
+    // the operating system did not take (no handler for `https:`, a dismissed
+    // prompt). The reply used to be `ok: true` either way -- and the renderer
+    // draws the `reason` of a refusal and nothing else, so the operator clicked
+    // "Open the getting-started guide" and watched a window do nothing.
+    const built = pickerOver({
+      prefixes: [seededStub().directory],
+      openExternal: () => Promise.resolve(false),
+    })
+    const reply = (await answer(built.ipcMain, 'openExternal')) as ConsoleReply
+    expect(reply).toEqual({ ok: false, reason: OPEN_EXTERNAL_FAILED })
+    // Non-vacuity: the sentence is the console's own and it is drawn, so it says
+    // what happened without naming a URL, a host or a reason this process cannot
+    // know.
+    expect(OPEN_EXTERNAL_FAILED).toBe('the console could not open the link in the browser')
+    expect(OPEN_EXTERNAL_FAILED).not.toContain(GETTING_STARTED_URL)
   })
 })
 

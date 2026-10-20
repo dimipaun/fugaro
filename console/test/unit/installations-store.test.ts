@@ -49,6 +49,7 @@ import {
   installationOperationFor,
   nodeInstallationFs,
   probeInstallation,
+  withResolvedBinary,
 } from '../../src/main/installations'
 import type { InstallationFs, StoredInstallation } from '../../src/main/installations'
 // The pairing check the store runs is the **source layer's own**
@@ -821,6 +822,78 @@ describe('the registry', () => {
 // ---------------------------------------------------------------------------
 // The picker's argument schema: five rows, and what each one may carry
 // ---------------------------------------------------------------------------
+
+describe('the header’s binary', () => {
+  it('names the binary this run resolved, and not the path the store remembers', () => {
+    // The defect this case exists for: a record this console wrote carries an id
+    // and a project and **no binary**, so a header that read the store alone had
+    // nothing to draw while the console was driving `/usr/local/bin/fugaro` --
+    // and a legacy record whose stored override has gone made the console name a
+    // path it was not running, because rule 4's configured path is a *candidate*
+    // and the walk carries on (owner's ruling of 2026-10-20).
+    const record = {
+      chosen: true as const,
+      id: '0123456789abcdef',
+      project: 'fugaro',
+      cliVersion: null,
+      mode: 'unknown' as const,
+    }
+    expect(withResolvedBinary(record, '/usr/local/bin/fugaro')).toEqual({
+      ...record,
+      binary: '/usr/local/bin/fugaro',
+    })
+
+    const legacy = { ...record, binary: '/nowhere/fugaro' }
+    expect(withResolvedBinary(legacy, '/opt/homebrew/bin/fugaro')).toEqual({
+      ...legacy,
+      binary: '/opt/homebrew/bin/fugaro',
+    })
+  })
+
+  it('falls back to the store only when nothing has resolved in this run', () => {
+    // The two cases where the resolution is absent, and both of them are answered
+    // by the record: nothing has read a binary for this installation yet in this
+    // run, and an empty string is a resolution that named no file.
+    const record = {
+      chosen: true as const,
+      id: '0123456789abcdef',
+      project: 'fugaro',
+      binary: '/nowhere/fugaro',
+      cliVersion: null,
+      mode: 'unknown' as const,
+    }
+    expect(withResolvedBinary(record, undefined)).toEqual(record)
+    expect(withResolvedBinary(record, '')).toEqual(record)
+    // And a record with no binary of its own gains no key: absent is the
+    // ordinary case, and an invented one would be a path no file backs.
+    const bare = {
+      chosen: true as const,
+      id: '0123456789abcdef',
+      project: 'fugaro',
+      cliVersion: null,
+      mode: 'unknown' as const,
+    }
+    const joined = withResolvedBinary(bare, undefined)
+    expect(Object.keys(joined).sort()).toEqual(['chosen', 'cliVersion', 'id', 'mode', 'project'])
+    expect('binary' in joined).toBe(false)
+  })
+
+  it('leaves D13’s no-installation answer alone', () => {
+    // `chosen: false` names no file at all: it is the store's sentence, and the
+    // store's refusal when the file could not be read. A resolution for some
+    // other project -- which is what a stale map entry would be -- must not put a
+    // binary on an answer that says nothing is chosen.
+    const none = { chosen: false as const, sentence: 'no installation has been chosen' }
+    expect(withResolvedBinary(none, '/usr/local/bin/fugaro')).toBe(none)
+    const refused = {
+      chosen: false as const,
+      sentence: 'no installation has been chosen',
+      refusal: 'the file could not be read',
+      path: '/tmp/installations.json',
+    }
+    expect(withResolvedBinary(refused, '/usr/local/bin/fugaro')).toBe(refused)
+  })
+})
 
 describe('the picker’s argument schema', () => {
   it('has the five rows the picker has, and they are the whole surface', () => {

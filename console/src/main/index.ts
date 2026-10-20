@@ -54,6 +54,8 @@ import type { ConsoleHandlers } from './ipc'
 import { handlersFor } from '../source/source'
 import { createBoundSource } from '../source/cli'
 import type { BoundInstallation } from '../source/cli'
+import { withResolvedBinary } from './installations'
+import type { ActiveInstallation } from './installations'
 import type { CliCompatibility } from '../shared/version'
 
 // Before `whenReady` resolves, which is the only window Electron gives for it:
@@ -191,6 +193,13 @@ async function readCliVersion(): Promise<VersionRead> {
       directory: privateWorkingDirectory(),
       log,
     })
+    // The startup's own resolution is remembered for this run, exactly as a
+    // choose's is: it is the binary this process is about to drive, and the one
+    // fact the dashboard's header needs -- which the *store* cannot answer,
+    // because this console never stores the path it resolves (owner's ruling of
+    // 2026-10-20) and a record whose override has gone resolves somewhere else
+    // entirely.
+    if (chosen !== null && resolution.ok) resolvedBinaries.set(chosen.target.project, resolution.path)
     return versionReadFrom(resolution)
   } finally {
     handshakeFor = chosen === null ? null : chosen.id
@@ -246,6 +255,49 @@ function storedCompatibility(): CliCompatibility {
  * removal is answered by the next read rather than by a value captured when the
  * surface was registered.
  */
+/**
+ * installationState is D13's tuple as the **header** reads it: the store's
+ * record with the binary this run resolved for it.
+ *
+ * The precedence is the resolution's and not the store's, and that is the whole
+ * point of the function. A record's `binaryPath` is an **optional override** that
+ * rule 4 merely *asks first* (owner's ruling of 2026-10-20): when the file has
+ * gone, the walk carries on to `/opt/homebrew/bin`, `/usr/local/bin`,
+ * `~/.local/bin` and `/usr/bin` and drives one of those. A header that read the
+ * store alone would name a path this process is not running -- and, for a record
+ * this console wrote itself, would name nothing at all and be drawn as "a line
+ * the console will not draw", because those records carry no binary. The
+ * resolution is remembered in `resolvedBinaries`, which is where both the choose
+ * and the startup handshake put it, so this is a fact of the run rather than a
+ * second guess at rule 4's order.
+ *
+ * `chosen: false` (and `undefined`, before the picker exists) is passed through
+ * as the store answered it: D13's no-installation sentence, and the store's own
+ * refusal when the file could not be read.
+ */
+function installationState(): ActiveInstallation | undefined {
+  const chosen = picker?.installation()
+  if (chosen === undefined) return undefined
+  // `withResolvedBinary` is where the direction of the join is decided and
+  // unit-tested; this file only supplies the two values.
+  const resolved = chosen.chosen ? resolvedBinaries.get(chosen.project) : undefined
+  return withResolvedBinary(chosen, resolved)
+}
+
+/**
+ * activeBinding is the installation the source is bound to: the same state, as
+ * the source layer's `BoundInstallation`.
+ *
+ * It reads the store directly, in the order the *store* means: the optional
+ * override first, so rule 4 asks about that file first and the source's own
+ * `InstallationRef` keeps its provenance word (`configured`), and the resolution
+ * this run made otherwise, so the child is pinned to the binary the header names
+ * rather than to a second walk of rule 4 that could land somewhere else.
+ * `installationState` reads the same two values in the header's order -- the
+ * resolution first -- and the two land on the same file in every case: where a
+ * record carries an override that is still there, the resolution *is* that path,
+ * and where it has gone, both fall through to the same well-known location.
+ */
 function activeBinding(): BoundInstallation | null {
   const chosen = picker?.installation()
   if (chosen === undefined || !chosen.chosen) return null
@@ -254,10 +306,6 @@ function activeBinding(): BoundInstallation | null {
   return {
     id: chosen.id,
     project: chosen.project,
-    // The store's optional override first -- and, when the record has none, the
-    // binary rule 4 resolved for this installation **in this run** (see
-    // `resolvedBinaries`). Passing the resolved path on is what keeps the
-    // dashboard's header naming the binary the console is actually driving.
     ...(binaryPath === undefined || binaryPath === '' ? {} : { binaryPath }),
     ...(chosen.config === undefined ? {} : { configPath: chosen.config }),
     ...(chosen.checkout === undefined ? {} : { checkout: chosen.checkout }),
@@ -266,15 +314,18 @@ function activeBinding(): BoundInstallation | null {
 }
 
 /**
- * resolvedBinaries is where a choose's resolved binary is remembered **for this
- * run**, keyed by project name, and it is deliberately not the store: the store
- * holds the operator's choices, and the path rule 4 resolved is a fact of a run
- * (owner's ruling of 2026-10-20). Storing it would pin the console to a binary
- * the operator never named -- and an upgrade that moves `fugaro` would leave the
- * store pointing at nothing.
+ * resolvedBinaries is where the binary rule 4 resolved for an installation is
+ * remembered **for this run**, keyed by project name, and it is deliberately not
+ * the store: the store holds the operator's choices, and the path rule 4
+ * resolved is a fact of a run (owner's ruling of 2026-10-20). Storing it would
+ * pin the console to a binary the operator never named -- and an upgrade that
+ * moves `fugaro` would leave the store pointing at nothing.
  *
- * The picker hands the path to `onChosen` after the handshake, which is where
- * it is a fact and not a guess.
+ * **Two things write it, and they are the two moments a resolution happens**:
+ * the startup handshake (`readCliVersion`, for the record's own project) and a
+ * choose (the picker hands its path to `onChosen`, after the handshake that made
+ * it a fact). Both are read back by `installationState` -- the dashboard header
+ * -- and by `activeBinding`, so the console names, and drives, one binary.
  */
 const resolvedBinaries = new Map<string, string>()
 
@@ -325,10 +376,11 @@ async function openExternalFromShell(raw: unknown): Promise<void> {
 const gated: ConsoleHandlers = {
   ...handlersFor(boundSource, {
     openExternal: openExternalFromShell,
-    // `installation.current` (Task 3.4b): the picker's store, read at message
-    // time. Before the picker exists the answer is `handlersFor`'s own
-    // no-installation state.
-    installation: () => picker?.installation(),
+    // `installation.current` (Task 3.4b): the picker's store joined with the
+    // binary this run resolved for it, read at message time (see
+    // `installationState`). Before the picker exists the answer is
+    // `handlersFor`'s own no-installation state.
+    installation: () => installationState(),
   }),
   'startup.compatibility': startupCompatibility(storedCompatibility),
 }

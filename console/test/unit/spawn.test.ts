@@ -1024,6 +1024,15 @@ describe('binary resolution', () => {
     expect(resolution.ok === false && resolution.path).toBe('bin/fugaro')
     expect(resolution.ok === false && resolution.reason).toMatch(/not absolute/)
     expect(resolution.ok === false && resolution.reason).toContain('bin/fugaro')
+    // The sentence names the store's file and the field it read (review of this
+    // branch): the operator who sees this line has to be able to find the value
+    // that caused it, and after the ruling of 2026-10-20 no screen ever asks for
+    // a binary path -- so the message must not ask for one either.
+    // Spelled out, so a rename of the constant cannot move the message away from
+    // the file the operator actually has on disk.
+    expect(resolution.ok === false && resolution.reason).toContain('installations.json')
+    expect(resolution.ok === false && resolution.reason).toContain('binaryPath')
+    expect(resolution.ok === false && resolution.reason).not.toMatch(/give an absolute path/)
     // Nothing was spawned: the refusal is before the walk, so the stub in the
     // prefix never ran.
     expect(stub.calls()).toBe(0)

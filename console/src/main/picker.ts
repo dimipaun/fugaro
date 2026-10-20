@@ -106,6 +106,17 @@ export const PICKER_WINDOW_TITLE = 'Fugaro console — installations'
  */
 export const PICKER_WINDOW_SIZE = Object.freeze({ width: 720, height: 520 })
 
+/**
+ * OPEN_EXTERNAL_FAILED is what the link row answers when nothing was opened,
+ * and it is a sentence rather than an empty success: the renderer draws the
+ * main process's `reason` and nothing else, so a swallowed `false` would leave
+ * an operator who clicked "Open the getting-started guide" with a window that
+ * did nothing and said nothing. It names no URL and no host -- the reason a
+ * handover failed is the operating system's, and this console does not pretend
+ * to know it.
+ */
+export const OPEN_EXTERNAL_FAILED = 'the console could not open the link in the browser'
+
 /** MenuLike is the slice of Electron's `Menu` this file uses. */
 export interface MenuLike {
   buildFromTemplate(template: readonly unknown[]): unknown
@@ -690,14 +701,24 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         return serially(() => setInstallationCheckout(args['project'] ?? '', args['checkout']))
       case 'remove':
         return serially(async () => removeInstallation(args['project'] ?? ''))
-      case 'openExternal':
+      case 'openExternal': {
         // The URL is this process's own constant and the operation takes **no
         // arguments at all** (requirement 4): `GETTING_STARTED_URL` never
         // crosses the IPC boundary, so a frame on the picker's document cannot
         // ask the operating system to open a link of its choosing. The one path
         // is `openExternalValidated(shell, ...)`, handed in as `deps`.
-        await deps.openExternal(GETTING_STARTED_URL)
+        //
+        // **Its boolean decides the reply.** `openExternalValidated` returns
+        // whether anything was opened -- a URL its allow-list refused, and a
+        // handover the platform declined (no handler for `https:`, a dismissed
+        // prompt), both answer `false` -- and a screen that reported success for
+        // those would draw nothing at all while the operator waits for a browser
+        // that is not coming. The renderer surfaces `reason` and only `reason`,
+        // which is why this is a refusal and not a field of a successful reply.
+        const opened = await deps.openExternal(GETTING_STARTED_URL)
+        if (!opened) return { ok: false, reason: OPEN_EXTERNAL_FAILED }
         return { ok: true, data: { opened: GETTING_STARTED_URL } }
+      }
     }
   }
 

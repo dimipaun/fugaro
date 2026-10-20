@@ -963,6 +963,34 @@ export type ActiveInstallation =
       readonly mode: InstallationMode
     }
 
+/**
+ * withResolvedBinary joins a stored record with the binary rule 4 resolved for
+ * it **in this run** (`resolved`), and it is the header's answer: the file the
+ * console is actually driving.
+ *
+ * The resolution wins over the store's field, and that direction is the whole
+ * point. A record's `binaryPath` is an **optional override** that rule 4 merely
+ * *asks first* (owner's ruling of 2026-10-20): a console that read the store
+ * alone would name a path it is not running the moment that file goes away and
+ * the walk carries on to `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`
+ * and `/usr/bin`. For a record this console wrote itself there is nothing to
+ * read at all -- `choose` stores an id and a project and no path -- so the
+ * header would have no binary to draw while the console is driving one.
+ *
+ * `resolved` is `undefined` in exactly two cases, and both are answered by the
+ * store: nothing has resolved a binary for this installation in this run yet,
+ * and the file's own field is then the best answer there is (a legacy record,
+ * before any read).
+ *
+ * A `chosen: false` answer carries no binary at all and is returned unchanged:
+ * it is D13's sentence and the store's refusal, and neither names a file.
+ */
+export function withResolvedBinary(active: ActiveInstallation, resolved: string | undefined): ActiveInstallation {
+  if (!active.chosen) return active
+  const binary = resolved === undefined || resolved === '' ? active.binary : resolved
+  return binary === undefined || binary === '' ? active : { ...active, binary }
+}
+
 /** InstallationRegistry is the store as the rest of the app uses it.
  *
  * Every method but `load` names an installation by its **project name**, which

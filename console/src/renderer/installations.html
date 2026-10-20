@@ -70,7 +70,10 @@
         what `fugaro config list --json` printed, and the two screens below the
         heading are drawn when there is nothing to list. A test fails if the
         form's controls come back --
-        `console/test/unit/installations-ipc.test.ts`, "the form is gone".
+        `console/test/unit/installations-view.test.ts`, "the form is gone: the
+        console asks the operator for no binary and no config" -- and the surface
+        itself is pinned at five operations in
+        `console/test/unit/installations-ipc.test.ts`.
       -->
       <p id="picker-status">Reading the installation list…</p>
       <section id="picker-onboarding"></section>
