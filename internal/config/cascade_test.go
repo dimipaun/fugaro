@@ -31,6 +31,10 @@ workflows:
 // (internal/config/defaults.go): the validator, the layer's own auth key and
 // the launcher's check of a run's spec all read it, so a value it accepts is
 // never one of them refuses as unknown.
+//
+// Mutation (run, restored): drop "cascade" from AgentAuths in defaults.go —
+// this test fails on KnownAgentAuth, and TestLayerAcceptsCascade fails on the
+// layer's own defaults.agent.auth, which is the same list read twice.
 func TestValidateAcceptsCascade(t *testing.T) {
 	if !KnownAgentAuth(AuthCascade) {
 		t.Fatalf("KnownAgentAuth(%q) = false, want true: AgentAuths = %v", AuthCascade, AgentAuths)
@@ -62,6 +66,9 @@ func TestValidateAcceptsCascade(t *testing.T) {
 // file), which is why this is a function of a mode rather than a rule inside
 // Validate: a file that writes no budget under an installation whose ceiling
 // enforces is a cascade workflow whose gateway is on.
+//
+// Mutation (run, restored): return nil from CheckCascadeGateway — the "" and
+// "off" rows fail, naming the modes it no longer refuses.
 func TestCascadeRefusedWithBudgetOff(t *testing.T) {
 	a := Agent{Auth: AuthCascade}
 	for _, mode := range []string{"", "off"} {
@@ -98,6 +105,10 @@ func TestCascadeRefusedWithBudgetOff(t *testing.T) {
 // together, at the key that has to go. The same allow_public under any other
 // auth stays valid: this is a rule about the pair, not about public
 // follow-ups.
+//
+// Mutation (run, restored): drop the validateCascadeFollowup call from
+// Validate — the pair parses and the refusal's key, "%s" and "cascade" all
+// disappear with it.
 func TestCascadeRefusedWithAllowPublic(t *testing.T) {
 	public := func(auth string) string {
 		return strings.Replace(cascadeYAML,
@@ -165,6 +176,12 @@ defaults:
 // cannot know which credential that will be, so the pin a provider serves is
 // refused outright: the fix is `agent.auth: api-key` for the run that names
 // one. A cascade file whose pins no provider claims is untouched.
+//
+// Mutation (run, restored): drop the `case AuthCascade` arm of the switch in
+// providers.go — the pin is still refused, but for vertex's reason
+// ("vertex serves Claude only"), and the assertions on "OAuth" and on the
+// cascade's own sentence fail. The arm is the refusal; the fallthrough is the
+// reason it must not be reached with.
 func TestCheckProviderAuthCascadeNeverSendsOAuthToAProvider(t *testing.T) {
 	providers := map[string]ModelProvider{"openrouter": okProvider()}
 	ps := CheckProviderAuth(Agent{Auth: AuthCascade, Models: ModelRoles{Coder: "deepseek/deepseek-v4-flash"}}, providers)
