@@ -106,18 +106,35 @@ func TestCascadeRefusedWithBudgetOff(t *testing.T) {
 // auth stays valid: this is a rule about the pair, not about public
 // follow-ups.
 //
+// The negative half is only worth anything if the file it parses really pairs
+// that auth with allow_public, so each row asserts the parsed config is the
+// one it meant to build (auth and allow_public both). The helper refuses to
+// return a string it did not rewrite for the same reason: a needle built from
+// the auth being asked for ("auth: "+auth) matches only the cascade row, and
+// the other three rows then parse the cascade fixture unchanged — three
+// assertions about vertex, api-key and oauth that were really assertions
+// about a cascade file with no followup block at all.
+//
 // Mutation (run, restored): drop the validateCascadeFollowup call from
 // Validate — the pair parses and the refusal's key, "%s" and "cascade" all
-// disappear with it.
+// disappear with it. Mutation (make validateCascadeFollowup refuse
+// allow_public for every auth instead of only the cascade, i.e. drop the
+// `a.Auth != AuthCascade` half): the negative rows fail, naming the auth the
+// rule has no business refusing.
 func TestCascadeRefusedWithAllowPublic(t *testing.T) {
-	public := func(auth string) string {
-		return strings.Replace(cascadeYAML,
-			"agent:\n  auth: "+auth+"\n",
+	public := func(t *testing.T, auth string) string {
+		t.Helper()
+		const needle = "agent:\n  auth: " + AuthCascade + "\n"
+		out := strings.Replace(cascadeYAML, needle,
 			"agent:\n  auth: "+auth+"\nfollowup:\n  allow_public: true\n", 1)
+		if out == cascadeYAML {
+			t.Fatalf("the fixture no longer spells %q: the rewrite matched nothing, so every row would parse the cascade file itself", needle)
+		}
+		return out
 	}
 	// Parse validates, so the pair is refused there: the file has to be
 	// written with another auth to be read at all.
-	_, problems := Parse([]byte(public(AuthCascade)))
+	_, problems := Parse([]byte(public(t, AuthCascade)))
 	got := problemsText(problems)
 	if !strings.Contains(got, "followup.allow_public") {
 		t.Fatalf("cascade with followup.allow_public was not refused at followup.allow_public: %s", got)
@@ -128,9 +145,15 @@ func TestCascadeRefusedWithAllowPublic(t *testing.T) {
 		}
 	}
 	for _, auth := range []string{"vertex", "api-key", "oauth"} {
-		c, problems := Parse([]byte(public(auth)))
+		c, problems := Parse([]byte(public(t, auth)))
 		if len(problems) > 0 {
 			t.Fatalf("%s: refused at parse time: %s", auth, problemsText(problems))
+		}
+		// The row is about the pair, so the pair has to be in the file: this
+		// is the assertion the three vacuous rows above could not make.
+		if c.Agent.Auth != auth || !c.Followup.AllowPublic {
+			t.Fatalf("%s: the file parsed as auth %q with allow_public = %v, so this row is not about %s with a public follow-up at all",
+				auth, c.Agent.Auth, c.Followup.AllowPublic, auth)
 		}
 		if got := problemsText(Validate(c)); got != "" {
 			t.Errorf("auth %q with followup.allow_public was refused: %s", auth, got)
