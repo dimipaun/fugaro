@@ -311,8 +311,8 @@ Writing the answers approves no task.
 
 ### Task C0.3: Checks 90 and 91, written into the register — docs
 
-**Files.** `docs/gcp-live-checklist.md` (two register rows and two sections; the paragraph that records reserved numbers gains this work's block 90–99, with 93 reserved and unused).
-**What the owner types.**
+**Files.** `docs/gcp-live-checklist.md` (two register rows and two sections; the paragraph that records reserved numbers gains this work's block 90–99, with 93 reserved and unused), `scripts/live-checks/check90.sh` and `check91.sh` with their tests, and `docs/credentials-service/check90-steps.md` / `check91-steps.md` (the step text, as the appendix each section links to).
+**What the owner types.** Each check is ONE script the owner runs — `bash scripts/live-checks/check90.sh`, `bash scripts/live-checks/check91.sh` — which does every step below, asks for nothing an agent may hold (Check 90's setup-token is typed at a hidden prompt, never printed, never on a command line), cleans up on every path including Ctrl-C, and prints a `CHECK 90 RESULT` / `CHECK 91 RESULT` block to paste back.
 - **Check 90** (no cloud): build the throwaway proxy from a scratch directory outside any repository (a short program the section gives in full, listening on loopback, logging header **names** only, never values, replacing the incoming `Authorization`/`x-api-key` with the token read from a file the owner created with `claude setup-token`); start it; run `ANTHROPIC_BASE_URL=http://127.0.0.1:<port> claude -p "say ok"` with a placeholder credential in the environment; then a long prompt; then the same with the proxy dropping each optional header in turn. `FACT:` lines: the call succeeded or not; the header names that had to pass; the status, error type and reset headers of any usage-limit or rate-limit response seen (U3); Claude Code's timeout and retry behaviour on a proxy that delays (U4); the token's stated validity (U2). Restore: delete the scratch directory; the token file is the owner's to keep or delete.
 - **Check 91** (installation `fugaro`, sandbox): a hard-coded `P` guard; deploy a throwaway Cloud Run service (`gcloud run deploy fugaro-chk91 … --project="${P:?}" --no-allow-unauthenticated --timeout=3600`) running a minimal streaming relay to a fake upstream that emits SSE for N minutes; call it with `gcloud auth print-identity-token`; record time-to-first-byte (cold and warm), whether events arrive unbuffered, the longest stream that completed, and the largest request body accepted on HTTP/1 and on HTTP/2. Restore: delete the service and its image; the final assertion's lines read `0`.
 **Tests.** None (a document). **Red step.** n/a (docs).
@@ -322,12 +322,12 @@ Writing the answers approves no task.
 
 ### Task C0.4: Check 90 — OWNER-RUN
 
-**Files.** None (the owner records the FACT lines in the register). **Depends on.** C0.3. **Verification.** The owner runs Check 90 on the owner's own machine and Check 90 is recorded in the register. **Reviewer.** owner. **No agent performs any step.**
+**Files.** None (the owner runs `scripts/live-checks/check90.sh` and records the block it prints in the register). **Depends on.** C0.3. **Verification.** The owner runs Check 90 on the owner's own machine and Check 90 is recorded in the register. **Reviewer.** owner. **No agent performs any step.**
 **If it fails:** Global Constraint 4.
 
 ### Task C0.5: Check 91 — OWNER-RUN
 
-**Files.** None. **Depends on.** C0.3. **Verification.** The owner runs Check 91 on installation `fugaro`, its Restore ends in the all-`0` assertion, and Check 91 is recorded in the register. **Reviewer.** owner. **No agent performs any step.**
+**Files.** None (the owner runs `scripts/live-checks/check91.sh`, whose own Restore ends in the all-`0` assertion). **Depends on.** C0.3. **Verification.** The owner runs Check 91 on installation `fugaro`, its Restore ends in the all-`0` assertion, and Check 91 is recorded in the register. **Reviewer.** owner. **No agent performs any step.**
 
 ### Task C0.6: `creds/` denied to every run token, pinned against today's rules — SECURITY-SENSITIVE (test only)
 
