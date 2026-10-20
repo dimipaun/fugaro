@@ -854,10 +854,18 @@ describe('the manifest', () => {
   })
 
   it('asks for a capture the size the manifest declares', () => {
-    expect(CAPTURE_PIXELS).toEqual({
-      width: CAPTURE_WINDOW.width * CAPTURE_WINDOW.deviceScaleFactor,
-      height: CAPTURE_WINDOW.height * CAPTURE_WINDOW.deviceScaleFactor,
-    })
+    // **Literals, not the expression that defines them.** The first version of
+    // this test asserted `CAPTURE_PIXELS` equalled `CAPTURE_WINDOW.width *
+    // CAPTURE_WINDOW.deviceScaleFactor` -- which is exactly what `screens.ts`
+    // computes it from, so the assertion held whatever the numbers became and
+    // the test could not fail (review of 2026-10-20, medium finding). The
+    // numbers are written out here instead: 1280x800 CSS pixels at device scale
+    // factor 2 is a 2560x1600 PNG, and a run that changed either half of that
+    // would be changing the pictures the website draws.
+    expect(CAPTURE_WINDOW.width).toBe(1280)
+    expect(CAPTURE_WINDOW.height).toBe(800)
+    expect(CAPTURE_WINDOW.deviceScaleFactor).toBe(2)
+    expect(CAPTURE_PIXELS).toEqual({ width: 2560, height: 1600 })
   })
 })
 
