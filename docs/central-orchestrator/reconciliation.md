@@ -22,10 +22,14 @@ sentence turns on, for the reason `docs/coordinator/README.md` gives for its own
   spec, a reconciliation and a plan, and says no code, no Terraform and no workflow is
   touched. This pull request writes four Markdown files under
   `docs/central-orchestrator/` and nothing else. In particular it writes **no guard test**:
-  every other plan folder in this tree pins itself with one (`internal/cli/docs_coordinator_test.go`,
-  `internal/cli/docs_rigor_modes_test.go`, `internal/cli/docs_windows_cli_test.go`), and this
-  folder's own guard is listed as Task 0.1 in the implementation plan instead, to be added by
-  a later code-bearing pull request.
+  the folder-per-work convention in this tree is a guard package beside the CLI —
+  `ls internal/cli/docs_*_test.go | wc -l` is **49** at `2f8b4dca`, from
+  `internal/cli/docs_coordinator_test.go` to `internal/cli/docs_windows_cli_test.go` — and
+  this folder's own guard is listed as **P0** in the implementation plan instead, to be added
+  by a later code-bearing pull request. Nothing else needs registering: there is no
+  docs-folder registry (`internal/clidoc/` holds the CLI reference generator and
+  `internal/cli/docs_base_test.go` the shared helpers), so no existing test names this folder
+  and none fails for its absence.
 - **C2 — "Firebase" is two stores in this tree, and the spec's word covers both.** The
   budget database is the **Realtime Database**, read through `internal/rtdb/`
   (`internal/rtdb/client.go` `Get`, `GetETag`, `PutIfMatch`, `Patch`, `Stream`, `ServerNow`).
