@@ -168,6 +168,26 @@ func TestSweepDoesNotTrustRunWrittenTimes(t *testing.T) {
 	}
 }
 
+// A run's own heartbeat may not date the outcome the sweeper writes. The entry
+// is run-written (the rules' AMOUNT && RBOK allows any non-negative number), so
+// a hostile run can set updatedAt before its launch day and land its outcome on
+// a day a liveness scan never reads — the run then stays admitted until its fx,
+// which is the W2 hole reached through the sweeper. The launch day is the run
+// id's, which no run token writes.
+func TestSweepDatesTheOutcomeNoEarlierThanTheLaunchDay(t *testing.T) {
+	e := newSweepEnv(t)
+	e.entry(runA, 3*24*time.Hour) // heartbeat three days before the run id's day
+	e.sweep()
+	if !e.has(outcomePath(runA)) {
+		t.Fatalf("no outcome on the run's launch day (%d) for %s: the sweeper dated it from the run's own heartbeat",
+			budget.Day(sweepNow), runA)
+	}
+	hbDay := budget.Day(sweepNow.Add(-3 * 24 * time.Hour))
+	if e.has(fmt.Sprintf("outcomes/%d/%s/%s", hbDay, sweepSlug, runA)) {
+		t.Errorf("the outcome was dated %d, from the run's own heartbeat, before the run launched", hbDay)
+	}
+}
+
 func TestSweepMarksCrashedKeepsCounted(t *testing.T) {
 	e := newSweepEnv(t)
 	day := budget.Day(sweepNow)

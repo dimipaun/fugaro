@@ -90,6 +90,20 @@ func signJWTAlg(t *testing.T, key *rsa.PrivateKey, kid, alg string, claims map[s
 	return signing + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
 
+// signRawJWT signs a token whose header and payload segments are the test's own
+// JSON text, so a test can present a segment the encoder would never produce: a
+// header that is one object and then another, say. Everything else is signJWT.
+func signRawJWT(t *testing.T, key *rsa.PrivateKey, head, payload string) string {
+	t.Helper()
+	signing := base64.RawURLEncoding.EncodeToString([]byte(head)) + "." + base64.RawURLEncoding.EncodeToString([]byte(payload))
+	sum := sha256.Sum256([]byte(signing))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, sum[:])
+	if err != nil {
+		t.Fatalf("signing: %v", err)
+	}
+	return signing + "." + base64.RawURLEncoding.EncodeToString(sig)
+}
+
 // staticKeys is a KeySource over a fixed set: the shape of a cached key set,
 // with the same "not here" answer the real one gives.
 type staticKeys map[string]*rsa.PublicKey
@@ -103,6 +117,12 @@ func (s staticKeys) Key(_ context.Context, kid string) (*rsa.PublicKey, error) {
 	}
 	return k, nil
 }
+
+// errKeys is a KeySource that cannot answer at all: the shape of Google's key
+// endpoint being unreachable.
+type errKeys struct{ err error }
+
+func (e errKeys) Key(context.Context, string) (*rsa.PublicKey, error) { return nil, e.err }
 
 // fakeDB is the installation's state as the service's reader sees it: the
 // nodes the database holds, keyed by the path the reader asks for. Modelling
@@ -169,7 +189,12 @@ type fixture struct {
 // testNow is the instant every test's clock stands at.
 func testNow() time.Time { return time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC) }
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t *testing.T) *fixture { return newFixtureWith(t, nil) }
+
+// newFixtureWith is newFixture with the service's configuration under the
+// test's control, for the tests that need one wired differently: an account
+// list in another spelling, a key source that cannot answer.
+func newFixtureWith(t *testing.T, mutate func(*AuthConfig)) *fixture {
 	t.Helper()
 	now := testNow()
 	f := &fixture{
@@ -182,8 +207,7 @@ func newFixture(t *testing.T) *fixture {
 		keys:    staticKeys{testKid: &testKey().PublicKey},
 		jobKeys: staticKeys{testJobKid: &testKey().PublicKey},
 	}
-	var err error
-	f.auth, err = NewAuthenticator(AuthConfig{
+	cfg := AuthConfig{
 		Project:           testProject,
 		FirebaseProject:   testFirebase,
 		Audience:          testAudience,
@@ -193,7 +217,12 @@ func newFixture(t *testing.T) *fixture {
 		Outcomes:          RTDBOutcomes{DB: f.db},
 		SharedJobAccounts: []string{testSharedSA},
 		Now:               func() time.Time { return f.now },
-	})
+	}
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	var err error
+	f.auth, err = NewAuthenticator(cfg)
 	if err != nil {
 		t.Fatalf("NewAuthenticator: %v", err)
 	}
@@ -634,23 +663,40 @@ func TestVerifyRefusesSharedJobRun(t *testing.T) {
 	// the caller's claim — recorded, never the gate — and the account is what
 	// says which job the run is in.
 	f2 := newFixture(t)
-	if _, err := f2.verify(f2.runToken(), f2.jobToken(), "fugaro-p-profile-one-anthropic-acct-one-0123456789ab"); err != nil {
+	if _, err := f2.verify(f2.runToken(), f2.jobToken(), "fugaro-p-profile-one-anthropic-acct-one-0123456"); err != nil {
 		t.Fatalf("Verify refused a run whose caller is an admitted job account: %v", err)
 	}
 
-	// A run that names no job, or one that is not a single clean header value,
-	// still cannot be placed: the name goes into the run's own record (C1.13),
-	// so it is held to the header rule.
+	// A run that names no job, or one that is not a Cloud Run job name of this
+	// installation, still cannot be placed: the name goes into the run's own
+	// record (C1.13) and its audit line, so it is held to the job-name rule —
+	// every job this installation can have is internal/backend/gcp's sanitized
+	// [a-z0-9-] at most 49 bytes (review finding m3).
 	unplaceable := map[string]string{
-		"no job at all":             "",
-		"a newline in the job name": "fugaro-aurora\nX-Evil: 1",
-		"a job name past the bound": strings.Repeat("j", maxHeaderTokenBytes+1),
+		"no job at all":                        "",
+		"a newline in the job name":            "fugaro-aurora\nX-Evil: 1",
+		"a job name past the job-name bound":   strings.Repeat("j", maxJobNameBytes+1),
+		"a job name past the header bound":     strings.Repeat("j", maxHeaderTokenBytes+1),
+		"a job name with an upper-case letter": "Fugaro-Aurora-Review",
+		"a job name with a quote in it":        `fugaro-aurora-review"`,
+		"a job name with a semicolon in it":    "fugaro-aurora-review;rm -rf /",
+		"a job name starting with a digit":     "1fugaro-aurora-review",
+		"a job name ending in a hyphen":        "fugaro-aurora-review-",
+		"a job name with an underscore":        "fugaro_aurora_review",
 	}
 	for name, job := range unplaceable {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
-			if _, err := f.verify(f.runToken(), f.jobToken(), job); !errors.Is(err, ErrUnverified) {
+			_, err := f.verify(f.runToken(), f.jobToken(), job)
+			if !errors.Is(err, ErrUnverified) {
 				t.Fatalf("err = %v, want ErrUnverified for a run that cannot be placed", err)
+			}
+			// The refusal names the rule and never the value the caller chose.
+			if job != "" && strings.Contains(err.Error(), job) {
+				t.Errorf("err = %q repeats the job name the caller presented", err)
+			}
+			if paths := f.db.paths; len(paths) != 0 {
+				t.Errorf("paths read = %v, want none: an unplaceable run is refused before its identity is checked", paths)
 			}
 		})
 	}
@@ -666,8 +712,12 @@ func TestVerifyRefusesForeignIDTokenEmail(t *testing.T) {
 			c["email"] = "someone@example.invalid"
 		},
 		"an unverified email": func(c map[string]any) { c["email_verified"] = false },
-		"no email at all":     func(c map[string]any) { delete(c, "email") },
-		"another audience":    func(c map[string]any) { c["aud"] = "https://another-service.example.invalid" },
+		// The claim must be there and be true: an ID token that says nothing
+		// about the email's verification is refused rather than read as
+		// verified (a missing claim is not a yes).
+		"no email_verified claim at all": func(c map[string]any) { delete(c, "email_verified") },
+		"no email at all":                func(c map[string]any) { delete(c, "email") },
+		"another audience":               func(c map[string]any) { c["aud"] = "https://another-service.example.invalid" },
 		"an expired token": func(c map[string]any) {
 			c["exp"] = testNow().Add(-time.Minute).Unix()
 		},
@@ -842,6 +892,160 @@ func TestVerifyRefusesWhenTheOutcomeCannotBeRead(t *testing.T) {
 	}
 }
 
+// A key source the service cannot read is a service failure, not a refusal of
+// the caller (review finding m5): the caller's ID token is checked against
+// Google's own published certificates, and a set that could not be read is
+// ErrUnavailable — which the wire answers as state_unavailable, a halt — rather
+// than ErrUnverifiedJob, which would tell a job whose account is configured
+// that its identity was refused.
+func TestVerifyReportsAJobKeyOutageAsUnavailable(t *testing.T) {
+	f := newFixtureWith(t, func(c *AuthConfig) { c.JobKeys = errKeys{ErrUnavailable} })
+	_, err := f.verify(f.runToken(), f.jobToken(), f.job)
+	if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrUnverifiedJob) {
+		t.Fatalf("err = %v, want ErrUnavailable and not ErrUnverifiedJob", err)
+	}
+	// The run's own key source is the other half of the same rule.
+	f2 := newFixtureWith(t, func(c *AuthConfig) { c.Keys = errKeys{ErrUnavailable} })
+	_, err = f2.verify(f2.runToken(), f2.jobToken(), f2.job)
+	if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrUnverified) {
+		t.Fatalf("err = %v, want ErrUnavailable and not ErrUnverified", err)
+	}
+}
+
+// A presented token is bounded before it is parsed. The tokens below are well
+// formed, signed by a key the service knows, and valid in every claim: they are
+// refused for their size alone, and the bound is what makes that a refusal
+// rather than a token this service parses 8 KiB of caller-chosen claims out of
+// (the review's mutation survivor: with the bound gone, this token is admitted).
+func TestVerifyRefusesATokenPastTheSizeBound(t *testing.T) {
+	padding := func(c map[string]any) { c["pad"] = strings.Repeat("p", maxTokenBytes) }
+
+	t.Run("the run identity", func(t *testing.T) {
+		f := newFixture(t)
+		tok := f.runToken(padding)
+		if len(tok) <= maxTokenBytes {
+			t.Fatalf("the token is %d bytes, want more than %d: the test would be vacuous", len(tok), maxTokenBytes)
+		}
+		_, err := f.verify(tok, f.jobToken(), f.job)
+		if !errors.Is(err, ErrUnverified) {
+			t.Fatalf("err = %v, want ErrUnverified", err)
+		}
+		if paths := f.db.paths; len(paths) != 0 {
+			t.Errorf("paths read = %v, want none: an oversized token is refused before its claims are read", paths)
+		}
+	})
+
+	t.Run("the caller's identity", func(t *testing.T) {
+		f := newFixture(t)
+		tok := f.jobToken(padding)
+		if len(tok) <= maxTokenBytes {
+			t.Fatalf("the token is %d bytes, want more than %d: the test would be vacuous", len(tok), maxTokenBytes)
+		}
+		_, err := f.verify(f.runToken(), tok, f.job)
+		if !errors.Is(err, ErrUnverifiedJob) {
+			t.Fatalf("err = %v, want ErrUnverifiedJob", err)
+		}
+	})
+}
+
+// A JWT segment is one JSON object and nothing after it. The tokens below are
+// signed with the test's own key and are otherwise the tokens this service
+// admits, so read half-way they are a live run: what is refused is the second
+// JSON value, which the decoder would otherwise drop without a word.
+func TestVerifyRefusesASegmentWithTrailingBytes(t *testing.T) {
+	f := newFixture(t)
+	f.verifyOK() // the same claims, without the trailing value, are admitted
+	claims, err := json.Marshal(f.runClaims())
+	if err != nil {
+		t.Fatalf("marshalling the claims: %v", err)
+	}
+	head := `{"alg":"RS256","kid":"` + testKid + `","typ":"JWT"}`
+
+	t.Run("trailing bytes after the claims", func(t *testing.T) {
+		f := newFixture(t)
+		tok := signRawJWT(t, testKey(), head, string(claims)+`{"extra":1}`)
+		if _, err := f.verify(tok, f.jobToken(), f.job); !errors.Is(err, ErrUnverified) {
+			t.Fatalf("err = %v, want ErrUnverified", err)
+		}
+	})
+
+	t.Run("trailing bytes after the header", func(t *testing.T) {
+		f := newFixture(t)
+		tok := signRawJWT(t, testKey(), head+`{"extra":1}`, string(claims))
+		if _, err := f.verify(tok, f.jobToken(), f.job); !errors.Is(err, ErrUnverified) {
+			t.Fatalf("err = %v, want ErrUnverified", err)
+		}
+	})
+}
+
+// The caller's ID token is held to its own validity window, as the run
+// identity's is: one issued in the future and one that is not valid yet are
+// refused, and one a clock a little ahead of ours issued is not — the bound is
+// the clock skew, not the instant.
+func TestVerifyRefusesAnIDTokenThatIsNotValidYet(t *testing.T) {
+	cases := map[string]func(map[string]any){
+		"issued in the future": func(c map[string]any) { c["iat"] = testNow().Add(time.Hour).Unix() },
+		"not valid yet":        func(c map[string]any) { c["nbf"] = testNow().Add(time.Hour).Unix() },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			_, err := f.verify(f.runToken(), f.jobToken(mutate), f.job)
+			if !errors.Is(err, ErrUnverifiedJob) {
+				t.Fatalf("err = %v, want ErrUnverifiedJob", err)
+			}
+		})
+	}
+
+	// Within the skew, and with no nbf at all (Google's ID tokens carry none):
+	// admitted. This is what says the check is a skew and not "iat must be in
+	// the past".
+	t.Run("within the clock skew", func(t *testing.T) {
+		f := newFixture(t)
+		if _, err := f.verify(f.runToken(), f.jobToken(func(c map[string]any) {
+			c["iat"] = testNow().Add(clockSkew / 2).Unix()
+			c["nbf"] = testNow().Add(-time.Minute).Unix()
+		}), f.job); err != nil {
+			t.Fatalf("Verify refused a token inside the clock skew: %v", err)
+		}
+	})
+}
+
+// The identity carries the *configured* spelling of the caller's account, not
+// the claim's: JobAccount is the audit line's "who" (C1.13), and a claim that
+// differs from the configuration only in case must not put the caller's own
+// text there (review nit).
+func TestVerifyCarriesTheConfiguredAccountSpelling(t *testing.T) {
+	const configured = "Fugaro-Job@Aurora-Dev.iam.gserviceaccount.com"
+	f := newFixtureWith(t, func(c *AuthConfig) { c.JobAccounts = []string{configured} })
+	id, err := f.verify(f.runToken(), f.jobToken(), f.job)
+	if err != nil {
+		t.Fatalf("Verify refused the account's own address in another case: %v", err)
+	}
+	if id.JobAccount != configured {
+		t.Errorf("job account = %q, want the configured spelling %q", id.JobAccount, configured)
+	}
+}
+
+// The fold that matches an account is ASCII-only. Go's strings.ToLower folds by
+// Unicode rules, so U+212A KELVIN SIGN becomes 'k' and an address spelled with
+// it would be matched against the ASCII account it is not (review nit). The
+// configured account here is the ASCII one, and the claim spells it with the
+// Kelvin sign.
+func TestVerifyRefusesANonASCIIEmail(t *testing.T) {
+	const ascii = "kjob@aurora-dev.iam.gserviceaccount.com"
+	f := newFixtureWith(t, func(c *AuthConfig) { c.JobAccounts = []string{ascii} })
+	_, err := f.verify(f.runToken(), f.jobToken(func(c map[string]any) {
+		c["email"] = "Kjob@aurora-dev.iam.gserviceaccount.com"
+	}), f.job)
+	if !errors.Is(err, ErrUnverifiedJob) {
+		t.Fatalf("err = %v, want ErrUnverifiedJob: a Unicode fold is not an account match", err)
+	}
+	if strings.Contains(err.Error(), "job@") {
+		t.Errorf("err = %q repeats the address the caller presented", err)
+	}
+}
+
 // A run id that names no launch time cannot be checked day by day, so it is
 // refused; and one claiming a launch older than any run can be is refused
 // rather than scanned.
@@ -913,9 +1117,10 @@ func TestVerifyBoundsTheLaunchDayScan(t *testing.T) {
 
 	// A run id dated ahead of this service's clock is placed at today and not
 	// in the future: a run id is whoever minted it's text, and this service's
-	// clock being behind is not evidence that the run has not started. So a run
-	// dated tomorrow whose outcome is written today is refused — with the clamp
-	// gone the scan runs zero days and the run is admitted.
+	// clock being behind is not evidence that the run has not started. The
+	// window widens rather than narrowing to one day: the day an outcome is
+	// written under is the database's (the rules' DAYOK allows today or
+	// yesterday), so both of the days an outcome can be on are read.
 	t.Run("a launch day ahead of today", func(t *testing.T) {
 		f := newFixture(t)
 		today := budget.Day(f.now)
@@ -925,8 +1130,28 @@ func TestVerifyBoundsTheLaunchDayScan(t *testing.T) {
 		if !errors.Is(err, ErrUnverified) {
 			t.Fatalf("err = %v, want a refusal: the run's outcome is written today", err)
 		}
-		if days := f.db.daysAsked(); len(days) != 1 || days[0] != today {
-			t.Errorf("days scanned = %v, want only today (%d)", days, today)
+		// The scan starts at today and never in the future, where no outcome of
+		// a run that has already ended can be.
+		if days := f.db.daysAsked(); len(days) == 0 || days[0] != today {
+			t.Errorf("days scanned = %v, want today (%d) first", days, today)
+		}
+	})
+
+	// The other day of that window, which is the one a clamp to today loses
+	// (review finding m1): a run id dated ahead of our clock, whose outcome is
+	// on the day our clock calls yesterday. The run has ended, and a scan of
+	// today alone admits it.
+	t.Run("a launch day ahead of today, an outcome yesterday", func(t *testing.T) {
+		f := newFixture(t)
+		today := budget.Day(f.now)
+		f.run = f.now.AddDate(0, 0, 1).Format("20060102-150405") + "-ee55"
+		f.db.set(budget.PathOutcome(today-1, f.slug, f.run))
+		_, err := f.verify(f.runToken(), f.jobToken(), f.job)
+		if !errors.Is(err, ErrUnverified) {
+			t.Fatalf("err = %v, want a refusal: the run's outcome is written yesterday", err)
+		}
+		if days := f.db.daysAsked(); len(days) != 2 || days[0] != today || days[1] != today-1 {
+			t.Errorf("days scanned = %v, want today (%d) and yesterday (%d)", days, today, today-1)
 		}
 	})
 }
@@ -953,6 +1178,23 @@ func TestNewAuthenticatorRefusesAnIncompleteConfig(t *testing.T) {
 		"no outcomes":         func(c *AuthConfig) { c.Outcomes = nil },
 		"an empty shared job account": func(c *AuthConfig) {
 			c.SharedJobAccounts = []string{testSharedSA, ""}
+		},
+		// The accounts are matched by an ASCII fold, so an address that is not
+		// ASCII could never be matched — verifyJob refuses a non-ASCII claim
+		// rather than folding it — and two entries that are one address in two
+		// cases make the spelling the audit line carries arbitrary. Both are
+		// configuration errors rather than gates that silently admit nobody.
+		"a job account that is not ASCII": func(c *AuthConfig) {
+			c.JobAccounts = []string{"Kob@aurora-dev.iam.gserviceaccount.com"}
+		},
+		"two job accounts that differ only in case": func(c *AuthConfig) {
+			c.JobAccounts = []string{testJobSA, strings.ToUpper(testJobSA)}
+		},
+		"a shared account that is not ASCII": func(c *AuthConfig) {
+			c.SharedJobAccounts = []string{"Kob@aurora-dev.iam.gserviceaccount.com"}
+		},
+		"a job account with a space in it": func(c *AuthConfig) {
+			c.JobAccounts = []string{"fugaro job@aurora-dev.iam.gserviceaccount.com"}
 		},
 	}
 	for name, mutate := range cases {
@@ -1004,9 +1246,27 @@ func TestRTDBOutcomesReadsTheWriteOncePath(t *testing.T) {
 	if _, err := (RTDBOutcomes{DB: fake}).OutcomeExists(context.Background(), day, slug, run); err == nil {
 		t.Error("a failed read was reported as an answer")
 	}
-	// A segment budget.PathOutcome would panic on is refused, not panicked on.
-	if _, err := (RTDBOutcomes{DB: fake}).OutcomeExists(context.Background(), day, "", run); err == nil {
-		t.Error("an empty slug was accepted as a path segment")
+	// A segment budget.PathOutcome would panic on is refused, not panicked on,
+	// and the read is never made: both halves of the uid are held to
+	// token.ValidSegment, because both become part of the path. A guard on one
+	// of them is a path a caller can steer.
+	for name, segments := range map[string][2]string{
+		"an empty slug":              {"", run},
+		"an empty run id":            {slug, ""},
+		"a slug with a separator":    {"aurora/app", run},
+		"a run id with a tilde":      {slug, "r~run"},
+		"a slug with a control byte": {"aurora\x00app", run},
+		"a slug with a space":        {"aurora app", run},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := &fakeGetter{found: true}
+			if _, err := (RTDBOutcomes{DB: g}).OutcomeExists(context.Background(), day, segments[0], segments[1]); err == nil {
+				t.Fatal("a segment that is not a usable path segment was accepted")
+			}
+			if g.path != "" {
+				t.Errorf("path read = %q, want none: a segment that cannot be a path is refused, not escaped into one", g.path)
+			}
+		})
 	}
 }
 
@@ -1275,6 +1535,17 @@ func TestGoogleKeysFailClosed(t *testing.T) {
 	// never checked against keys this service could not read.
 	t.Run("an unreachable endpoint", func(t *testing.T) {
 		keys := NewGoogleKeys(WithKeysEndpoint("http://127.0.0.1:0/keys"), WithKeysClock(testNow))
+		if _, err := keys.Key(context.Background(), testKid); !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("err = %v, want ErrUnavailable", err)
+		}
+	})
+
+	// An endpoint that is not a URL at all is the same refusal, and not an
+	// untyped error: a key source is one of the two the service refuses a call
+	// on, and every caller of Key switches on ErrUnavailable to tell a service
+	// failure from a refusal of the token (review nit).
+	t.Run("an endpoint that is not a URL", func(t *testing.T) {
+		keys := NewGoogleKeys(WithKeysEndpoint("http://[::1]:namedport/keys"), WithKeysClock(testNow))
 		if _, err := keys.Key(context.Background(), testKid); !errors.Is(err, ErrUnavailable) {
 			t.Fatalf("err = %v, want ErrUnavailable", err)
 		}

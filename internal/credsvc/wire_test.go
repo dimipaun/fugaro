@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -86,7 +87,10 @@ func TestExhaustedUntilWirePastResetHasNoRetryAfter(t *testing.T) {
 // one: another status, another error type, or a typed answer with no reset.
 func TestReadExhaustedUntilRefusesWhatIsNotTheTypedAnswer(t *testing.T) {
 	reset := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
-	_, _, body := ExhaustedUntil{ResetAt: reset, Tried: []Tried{{Name: "acct-one", Tier: TierA}}}.Wire(reset)
+	_, _, body, err := ExhaustedUntil{ResetAt: reset, Tried: []Tried{{Name: "acct-one", Tier: TierA, Reason: ReasonExhausted}}}.Wire(reset)
+	if err != nil {
+		t.Fatalf("Wire: %v", err)
+	}
 
 	// wantErr separates the two ways of not being the typed answer: a well
 	// formed body of another kind is a plain "not this" (the runner carries
@@ -121,9 +125,144 @@ func TestCredentialHeadersRoundTrip(t *testing.T) {
 	if err := SetCredentialHeaders(h, TierB, "anthropic-key"); err != nil {
 		t.Fatalf("SetCredentialHeaders: %v", err)
 	}
-	tier, name := CredentialHeaders(h)
+	tier, name, ok, err := CredentialHeaders(h)
+	if err != nil || !ok {
+		t.Fatalf("CredentialHeaders = (%q, %q, %v, %v), want the pair", tier, name, ok, err)
+	}
 	if tier != TierB || name != "anthropic-key" {
 		t.Fatalf("CredentialHeaders = (%q, %q), want (%q, %q)", tier, name, TierB, "anthropic-key")
+	}
+	// An answer that carries neither is not a pair: most answers are not a
+	// credential's.
+	if tier, name, ok, err := CredentialHeaders(http.Header{}); ok || err != nil || tier != "" || name != "" {
+		t.Fatalf("an answer with neither header = (%q, %q, %v, %v), want no pair and no error", tier, name, ok, err)
+	}
+}
+
+// The pair is validated when it is READ, not only when it is written (review
+// finding M2): C1.16 settles a call against the caps from the tier (A is
+// notional, B and C are real money) and C1.19 records the name, so a reader
+// that took a raw header value would be reading an answer the service did not
+// give. A tier of another release, a name with a space in it, a name past the
+// bound, and either half without the other are all refused.
+func TestCredentialHeadersRefusesWhatSetCredentialHeadersWouldNotWrite(t *testing.T) {
+	cases := map[string]http.Header{
+		"an unknown tier":     {HeaderTier: {"Z"}, HeaderCredential: {"acct-one"}},
+		"a lower-case tier":   {HeaderTier: {"b"}, HeaderCredential: {"acct-one"}},
+		"no tier":             {HeaderCredential: {"acct-one"}},
+		"no name":             {HeaderTier: {TierA}},
+		"a name with a space": {HeaderTier: {TierA}, HeaderCredential: {"acct one"}},
+		"a name with a newline": {HeaderTier: {TierA},
+			HeaderCredential: {"acct-one\nX-Evil: 1"}},
+		"a name past the bound": {HeaderTier: {TierA},
+			HeaderCredential: {strings.Repeat("a", maxCredentialNameBytes+1)}},
+	}
+	for name, h := range cases {
+		t.Run(name, func(t *testing.T) {
+			tier, cred, ok, err := CredentialHeaders(h)
+			if ok || err == nil {
+				t.Fatalf("CredentialHeaders(%v) = (%q, %q, %v, %v), want a refusal", h, tier, cred, ok, err)
+			}
+			// The error names the field, never the value: both are header text
+			// from another process.
+			for _, v := range []string{"acct one", "X-Evil", "Z"} {
+				if strings.Contains(err.Error(), v) {
+					t.Errorf("err = %q repeats the header's value %q", err, v)
+				}
+			}
+		})
+	}
+}
+
+// Every tier of the wire is a tier, and nothing else is (ValidTier is what
+// both sides of the pair above are held to).
+func TestValidTier(t *testing.T) {
+	for _, tier := range []string{TierA, TierB, TierC} {
+		if !ValidTier(tier) {
+			t.Errorf("ValidTier(%q) = false", tier)
+		}
+	}
+	for _, tier := range []string{"", "a", "b", "D", "tier-a", " A"} {
+		if ValidTier(tier) {
+			t.Errorf("ValidTier(%q) = true", tier)
+		}
+	}
+}
+
+// A tried entry is what the run's halt message is built from, so it is held to
+// the contract's rules on both sides (review finding M3): a name that is not
+// one, a tier outside the set, and a reason outside the closed set are refused
+// when the answer is built and when it is read.
+func TestTriedEntriesAreValidatedOnBothSides(t *testing.T) {
+	reset := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	bad := map[string]Tried{
+		"a name that is not one":   {Name: "acct one", Tier: TierA, Reason: ReasonExhausted},
+		"a name with a newline":    {Name: "acct\none", Tier: TierA, Reason: ReasonExhausted},
+		"no name":                  {Tier: TierA, Reason: ReasonExhausted},
+		"an unknown tier":          {Name: "acct-one", Tier: "Z", Reason: ReasonExhausted},
+		"no tier":                  {Name: "acct-one", Reason: ReasonExhausted},
+		"a reason outside the set": {Name: "acct-one", Tier: TierA, Reason: "because"},
+		"a reason with a newline": {Name: "acct-one", Tier: TierA,
+			Reason: "exhausted\nINJECTED line"},
+		"no reason": {Name: "acct-one", Tier: TierA},
+	}
+	for name, tr := range bad {
+		t.Run(name, func(t *testing.T) {
+			// The build side: nothing is rendered, so nothing can carry it.
+			if _, _, body, err := (ExhaustedUntil{ResetAt: reset, Tried: []Tried{tr}}).Wire(reset); err == nil {
+				t.Fatalf("Wire rendered a tried entry it must refuse: %s", body)
+			}
+			// The read side: the same entry, in a body that is otherwise the
+			// typed answer, is refused rather than handed to the runner.
+			raw, err := json.Marshal(WireError{Error: ErrorExhaustedUntil, ResetAt: reset.UnixMilli(),
+				Tried: []Tried{tr}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok, err := ReadExhaustedUntil(StatusExhaustedUntil, raw); ok || err == nil {
+				t.Fatalf("ReadExhaustedUntil accepted %+v", tr)
+			}
+		})
+	}
+
+	// The good entry, and a reason from the closed set, still round-trips: the
+	// rules refuse what the contract does not carry, not the contract.
+	good := Tried{Name: "acct-one", Tier: TierC, Reason: ReasonStopped}
+	_, _, body, err := ExhaustedUntil{ResetAt: reset, Tried: []Tried{good}}.Wire(reset)
+	if err != nil {
+		t.Fatalf("Wire refused a good tried entry: %v", err)
+	}
+	got, ok, err := ReadExhaustedUntil(StatusExhaustedUntil, body)
+	if err != nil || !ok || len(got.Tried) != 1 || got.Tried[0] != good {
+		t.Fatalf("round trip = (%v, %v, %v), want %v", got, ok, err, good)
+	}
+}
+
+// An answer the contract cannot read must not be built (review finding M3):
+// Wire refuses a zero ResetAt, which is exactly the body ReadExhaustedUntil
+// refuses, and WriteExhaustedUntil answers a typed state_unavailable refusal
+// rather than a wait for an instant nobody can read.
+func TestWireRefusesAnAnswerItCouldNotReadBack(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	if _, _, body, err := (ExhaustedUntil{}).Wire(now); err == nil {
+		t.Fatalf("Wire rendered an answer with no reset instant: %s", body)
+	}
+
+	buf := &headerWriter{h: http.Header{}}
+	WriteExhaustedUntil(buf, ExhaustedUntil{}, now)
+	if buf.status != StatusUnavailable {
+		t.Errorf("status = %d, want %d", buf.status, StatusUnavailable)
+	}
+	got, err := ReadWireError(buf.status, buf.body)
+	if err != nil {
+		t.Fatalf("the fallback refusal is not readable: %v", err)
+	}
+	if got.Error != ErrorStateUnavailable {
+		t.Errorf("error = %q, want %q", got.Error, ErrorStateUnavailable)
+	}
+	// It is a refusal, not a wait: the runner must not read it as one.
+	if _, ok, err := ReadExhaustedUntil(buf.status, buf.body); ok {
+		t.Errorf("the fallback refusal was read as a wait (%v)", err)
 	}
 }
 
@@ -292,6 +431,36 @@ func TestWireErrorCarriesTheTypeAndNoIdentity(t *testing.T) {
 	if _, err := ReadWireError(http.StatusOK, buf.body); err == nil {
 		t.Error("ReadWireError accepted a 2xx as a refusal")
 	}
+	// A body that names no error type is not a refusal this code can act on:
+	// the runner switches on the type, so a body without one is an error
+	// rather than an empty refusal.
+	for _, body := range []string{`{}`, `{"message":"something went wrong"}`, `{"error":""}`} {
+		if _, err := ReadWireError(StatusUnverified, []byte(body)); err == nil {
+			t.Errorf("ReadWireError accepted %s, which names no error type", body)
+		}
+	}
+	// The body decodes strictly (Convention 6): a field this release does not
+	// know is refused rather than ignored, and so is anything after the value.
+	// A decoder's own message names the byte it choked on, so the error this
+	// code returns must not carry it — the body is another writer's text.
+	for _, body := range []string{
+		`{"error":"state_unavailable","unknown_field":1}`,
+		`{"error":"state_unavailable"} {"error":"state_unavailable"}`,
+		`{"error":"state_unavailable"} trailing`,
+		"{\"error\":\"state_unavailable\",\"tried\":[{\"name\":\"a\",\"tier\":\"A\",\"reason\":\"exhausted\",\"extra\":1}]}",
+		"{\"error\":\"unverified_run_identity\",\"message\":\"a\x01b\"}",
+	} {
+		_, err := ReadWireError(StatusUnverified, []byte(body))
+		if err == nil {
+			t.Errorf("ReadWireError accepted %s", body)
+			continue
+		}
+		for _, leak := range []string{"unknown_field", "trailing", "\x01", "extra"} {
+			if strings.Contains(err.Error(), leak) {
+				t.Errorf("err = %q carries the body's own text %q", err, leak)
+			}
+		}
+	}
 	// The type field is spelled as the wire's key is, so the value cannot also
 	// have an Error method; the type must therefore be readable as a field.
 	if w.Error != ErrorUnverifiedRunIdentity {
@@ -314,4 +483,134 @@ func (w *headerWriter) WriteHeader(status int) {
 func (w *headerWriter) Write(b []byte) (int, error) {
 	w.body = append(w.body, b...)
 	return len(b), nil
+}
+
+// A Cloud Run job name is a narrower thing than a header value (review finding
+// m3): the value is recorded in the run's record and in the audit line, and
+// every job name this installation can have is [a-z0-9-] and at most 49
+// characters. The header-value rule is wider on purpose and stays as it is.
+func TestValidJobNameIsTheJobNameRuleAndNotTheHeaderRule(t *testing.T) {
+	for _, ok := range []string{
+		"fugaro-aurora-app-review",
+		"fugaro-p-profile-one-anthropic-acct-one-ab12cd34",
+		"a",
+		"a1",
+		"job-1",
+	} {
+		if !ValidJobName(ok) {
+			t.Errorf("ValidJobName(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{
+		"",                                     // empty
+		"Fugaro-Job",                           // upper case: not a Cloud Run name
+		"1job",                                 // starts with a digit
+		"-job",                                 // starts with a hyphen
+		"job-",                                 // ends with a hyphen
+		"job name",                             // a space
+		"job\ttab",                             // a control
+		"job\"quote",                           // what the header rule allows and a name cannot be
+		"job\\backslash",                       // likewise
+		"job$dollar",                           // likewise
+		"job;semis",                            // likewise
+		"job`tick`",                            // likewise
+		"job/nested",                           // likewise
+		strings.Repeat("a", maxJobNameBytes+1), // past Cloud Run's own bound
+	} {
+		if ValidJobName(bad) {
+			t.Errorf("ValidJobName(%q) = true, want false", bad)
+		}
+	}
+	// The two rules are not the same rule: the header rule accepts values a job
+	// name can never be.
+	for _, s := range []string{`job"quote`, "job\\backslash", "job$dollar", "job;semis", "job`tick`"} {
+		if !validHeaderToken(s) {
+			t.Errorf("validHeaderToken(%q) = false, want true: it is the header rule", s)
+		}
+		if ValidJobName(s) {
+			t.Errorf("ValidJobName(%q) = true: the job-name rule is narrower", s)
+		}
+	}
+}
+
+// request builds the HTTP request a call presents, so a test can leave one
+// header out, send one twice, or spell the scheme another way.
+func request(auth, run, job string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "https://creds.example.invalid/", nil)
+	if auth != "" {
+		r.Header.Set("Authorization", auth)
+	}
+	if run != "" {
+		r.Header.Set(HeaderRunIdentity, run)
+	}
+	if job != "" {
+		r.Header.Set(HeaderRunJob, job)
+	}
+	return r
+}
+
+// The contract owns the request's headers (review finding m7): one value per
+// header, the bearer scheme spelled as RFC 6750 spells it, and a job name that
+// could be one. What it does not do is trust the tokens — that is Verify's.
+func TestRequestFromHTTPTakesOneValuePerHeader(t *testing.T) {
+	const tok = "header.payload.signature"
+	got, err := RequestFromHTTP(request("Bearer "+tok, tok, "fugaro-aurora-app-review"))
+	if err != nil {
+		t.Fatalf("RequestFromHTTP: %v", err)
+	}
+	want := Request{RunIDToken: tok, JobIDToken: tok, Job: "fugaro-aurora-app-review"}
+	if got != want {
+		t.Fatalf("RequestFromHTTP = %+v, want %+v", got, want)
+	}
+
+	// A header the call did not send, a scheme spelled another way, a token
+	// that is not one, and a job name that is not one: each refused, and the
+	// error names the header rather than the value.
+	refused := map[string]*http.Request{
+		"no Authorization":      request("", tok, "fugaro-aurora-app-review"),
+		"no run identity":       request("Bearer "+tok, "", "fugaro-aurora-app-review"),
+		"no job":                request("Bearer "+tok, tok, ""),
+		"no bearer scheme":      request(tok, tok, "fugaro-aurora-app-review"),
+		"a lower-case scheme":   request("bearer "+tok, tok, "fugaro-aurora-app-review"),
+		"an upper-case scheme":  request("BEARER "+tok, tok, "fugaro-aurora-app-review"),
+		"another scheme":        request("Basic "+tok, tok, "fugaro-aurora-app-review"),
+		"an empty bearer token": request("Bearer ", tok, "fugaro-aurora-app-review"),
+		"a token with a space":  request("Bearer "+tok+" x", tok, "fugaro-aurora-app-review"),
+		"an oversized token": request("Bearer "+strings.Repeat("a", maxTokenBytes+1), tok,
+			"fugaro-aurora-app-review"),
+		"an oversized run identity": request("Bearer "+tok, strings.Repeat("a", maxTokenBytes+1),
+			"fugaro-aurora-app-review"),
+		"a job name that is not one": request("Bearer "+tok, tok, "fugaro-aurora-app-review\nX-Evil: 1"),
+	}
+	for name, r := range refused {
+		t.Run(name, func(t *testing.T) {
+			if _, err := RequestFromHTTP(r); err == nil {
+				t.Fatal("RequestFromHTTP accepted a request it must refuse")
+			}
+		})
+	}
+
+	// A header sent twice is a caller sending two identities: there is nothing
+	// to pick between, so it is refused rather than resolved by order.
+	for _, hdr := range []string{"Authorization", HeaderRunIdentity, HeaderRunJob} {
+		t.Run("two "+hdr, func(t *testing.T) {
+			r := request("Bearer "+tok, tok, "fugaro-aurora-app-review")
+			r.Header.Add(hdr, "a-second-value")
+			if _, err := RequestFromHTTP(r); err == nil {
+				t.Fatalf("RequestFromHTTP accepted two %s headers", hdr)
+			}
+		})
+	}
+
+	// The error never carries a value the caller presented.
+	r := request("Bearer "+tok, tok, "job with a space")
+	_, err = RequestFromHTTP(r)
+	if err == nil {
+		t.Fatal("RequestFromHTTP accepted a job name with a space")
+	}
+	for _, leak := range []string{tok, "job with a space"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("err = %q carries the caller's %q", err, leak)
+		}
+	}
 }

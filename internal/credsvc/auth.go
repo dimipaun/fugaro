@@ -110,8 +110,11 @@ type Request struct {
 	// account's Google ID token.
 	JobIDToken string
 	// Job is HeaderRunJob: the Cloud Run job the run reports it is in. It is
-	// the caller's claim, held to the header rule and recorded, and nothing is
-	// decided from it (which job called is JobAccount's, in Identity).
+	// the caller's claim, held to the job-name rule (ValidJobName — the shape
+	// every Cloud Run job of this installation has, which is narrower than the
+	// header rule because the value is recorded and displayed; review finding
+	// m3) and recorded, and nothing is decided from it (which job called is
+	// JobAccount's, in Identity).
 	Job string
 }
 
@@ -202,6 +205,13 @@ type AuthConfig struct {
 	// answer of 2026-10-19). One service account is dedicated to one Cloud Run
 	// job (internal/backend/gcp's ServiceAccountID), so a verified email here
 	// is also what says which job a call comes from.
+	//
+	// Each must be a printable ASCII email address, and a claim is matched
+	// against them by ASCII lower case (foldEmail): an address that is not
+	// ASCII, or two entries that are the same address in different cases, is a
+	// configuration error rather than a gate. The spelling configured here is
+	// what Identity.JobAccount carries and what the audit line writes, so the
+	// "who" an operator reads is the "who" they configured.
 	JobAccounts []string
 	// Keys is Google's published key set for Firebase ID tokens: the run
 	// identities this service admits.
@@ -236,8 +246,11 @@ type AuthConfig struct {
 
 // Authenticator verifies the identities a call to the service presents.
 type Authenticator struct {
-	cfg            AuthConfig
-	jobAccounts    map[string]bool
+	cfg AuthConfig
+	// jobAccounts maps a presented email, folded to ASCII lower case, to the
+	// configured spelling of that account: the fold is how a claim is matched
+	// and the spelling is what the identity carries.
+	jobAccounts    map[string]string
 	sharedAccounts map[string]bool
 	now            func() time.Time
 }
@@ -260,12 +273,26 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 	case cfg.Outcomes == nil:
 		return nil, errors.New("credsvc: no outcome reader: the run's liveness could not be checked")
 	}
-	accounts := make(map[string]bool, len(cfg.JobAccounts))
+	// The accounts are held to the rule the presented email is held to (a
+	// printable ASCII address), and the map carries the configured spelling
+	// beside the folded key: the spelling is what the identity's JobAccount and
+	// the audit line carry, and the fold is what a presented claim is matched
+	// by. An account that is not ASCII could never be matched — verifyJob
+	// refuses a non-ASCII claim rather than folding it — so it is a
+	// configuration error here rather than a gate that silently admits nobody.
+	accounts := make(map[string]string, len(cfg.JobAccounts))
 	for _, email := range cfg.JobAccounts {
-		if email == "" {
-			return nil, errors.New("credsvc: a job service account is empty")
+		folded, ok := foldEmail(email)
+		if !ok {
+			return nil, errors.New("credsvc: a job service account is not a printable ASCII email address")
 		}
-		accounts[strings.ToLower(email)] = true
+		if prev, dup := accounts[folded]; dup {
+			if prev != email {
+				return nil, errors.New("credsvc: two job service accounts are the same address in different cases")
+			}
+			continue
+		}
+		accounts[folded] = email
 	}
 	// An empty SharedJobAccounts is not a missing gate: under Global
 	// Constraint 6 an installation with no shared project jobs has none, and
@@ -273,10 +300,11 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 	// require of it here.
 	shared := make(map[string]bool, len(cfg.SharedJobAccounts))
 	for _, email := range cfg.SharedJobAccounts {
-		if email == "" {
-			return nil, errors.New("credsvc: a shared job service account is empty")
+		folded, ok := foldEmail(email)
+		if !ok {
+			return nil, errors.New("credsvc: a shared job service account is not a printable ASCII email address")
 		}
-		shared[strings.ToLower(email)] = true
+		shared[folded] = true
 	}
 	now := cfg.Now
 	if now == nil {
@@ -303,11 +331,20 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 	// X-Fugaro-Run-Job is the caller's *claim* about which Cloud Run job the
 	// run is in — the platform sets it, but a launcher may override any
 	// environment variable (internal/runner's jobName) — so it is kept for the
-	// run's record and held to the header rule, and it decides nothing. Which
-	// job actually called is decided in verifyJob, from the verified account,
-	// and that is where Global Constraint 6's shared-job gate is (C3.9).
-	if !validHeaderToken(req.Job) {
-		return Identity{}, fmt.Errorf("%w: the call names no usable Cloud Run job, so the run cannot be placed", ErrUnverified)
+	// run's record and held to the job-name rule (ValidJobName), and it decides
+	// nothing. Which job actually called is decided in verifyJob, from the
+	// verified account, and that is where Global Constraint 6's shared-job gate
+	// is (C3.9).
+	//
+	// The rule is the job-name rule and not the general header rule (review
+	// finding m3): every job name this installation can have is
+	// internal/backend/gcp's sanitized [a-z0-9-] at most 49 bytes, while the
+	// header rule would accept a quote, a backslash, a '$' or a ';' — values no
+	// job of this installation can be named, carried into the run's record and
+	// its audit line. The run's placement is a fact about the platform, so a
+	// value that could not be one is refused rather than recorded.
+	if !ValidJobName(req.Job) {
+		return Identity{}, fmt.Errorf("%w: the call names no Cloud Run job name, so the run cannot be placed", ErrUnverified)
 	}
 	id, err := a.verifyRun(ctx, req.RunIDToken, now)
 	if err != nil {
@@ -363,6 +400,18 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 		return "", fmt.Errorf("%w: the caller's ID token was not issued by Google", ErrUnverifiedJob)
 	}
 	email := claimString(claims, "email")
+	// The email is folded to lower case *as ASCII* before it is matched, and an
+	// address that is not printable ASCII is refused rather than folded
+	// (review nit). strings.ToLower is Unicode-aware, so it folds characters
+	// that merely look like the ones a service account's address is made of —
+	// U+212A KELVIN SIGN lowercases to 'k', U+0130 to 'i' — and a claim whose
+	// spelling the issuer let the caller choose would then be matched against
+	// an account it is not. Every Google service account address is ASCII, so
+	// nothing a real caller presents is lost by the rule.
+	folded, ok := foldEmail(email)
+	if !ok {
+		return "", fmt.Errorf("%w: the caller's email claim is not a service account address", ErrUnverifiedJob)
+	}
 	// The shared-job gate of Global Constraint 6 (C3.9) comes first, and it is
 	// decided from this verified email and never from the caller's own
 	// X-Fugaro-Run-Job header. One service account is dedicated to one Cloud
@@ -372,13 +421,14 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 	// so a gate read off it would be one a caller could satisfy by writing a
 	// header. An account that is in both sets is refused rather than admitted:
 	// the refusal is the safe answer.
-	if a.sharedAccounts[strings.ToLower(email)] {
+	if a.sharedAccounts[folded] {
 		// The reason is named and the account is not repeated: it is the
 		// caller's own claim set, and the package doc's no-echo rule is that no
 		// refusal repeats what a caller presented.
 		return "", fmt.Errorf("%w: the caller is a shared project job's service account, and this service admits runs in per-repository jobs only until the phase-3 shared-job rules are on main (C3.9)", ErrUnverifiedJob)
 	}
-	if email == "" || !a.jobAccounts[strings.ToLower(email)] {
+	account, ok := a.jobAccounts[folded]
+	if !ok {
 		return "", fmt.Errorf("%w: the caller is not one of the installation's job service accounts", ErrUnverifiedJob)
 	}
 	if verified, ok := claims["email_verified"].(bool); !ok || !verified {
@@ -387,7 +437,34 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 	if exp, ok := claimInt(claims, "exp"); !ok || !now.Before(time.Unix(exp, 0)) {
 		return "", fmt.Errorf("%w: the caller's ID token has expired", ErrUnverifiedJob)
 	}
-	return email, nil
+	// The token's own validity window, checked as verifyRun checks the run
+	// identity's: a token issued in the future, or one that is not valid yet,
+	// is not one this service admits (review nit). Google's ID tokens carry an
+	// iat; a nbf is checked when it is there.
+	if iat, ok := claimInt(claims, "iat"); ok && time.Unix(iat, 0).After(now.Add(clockSkew)) {
+		return "", fmt.Errorf("%w: the caller's ID token is issued in the future", ErrUnverifiedJob)
+	}
+	if nbf, ok := claimInt(claims, "nbf"); ok && time.Unix(nbf, 0).After(now.Add(clockSkew)) {
+		return "", fmt.Errorf("%w: the caller's ID token is not valid yet", ErrUnverifiedJob)
+	}
+	// The account this returns is the configured spelling, not the claim's:
+	// the two are the same address in whatever case the token carries, and the
+	// one this service writes to its audit line (C1.13) is the one an operator
+	// configured and can search for (review nit).
+	return account, nil
+}
+
+// foldEmail folds an email address to lower case as ASCII, reporting false for
+// anything that is not printable ASCII (no space, 0x21 to 0x7e) within the
+// header bound. The ASCII-only rule is printableHeaderValue's, and it is why
+// this is not strings.ToLower alone: that folds by Unicode rules, and a Unicode
+// fold turns characters that merely look like a letter of an address into that
+// letter.
+func foldEmail(email string) (string, bool) {
+	if !printableHeaderValue(email, maxHeaderTokenBytes) {
+		return "", false
+	}
+	return strings.ToLower(email), true
 }
 
 // verifyRun checks the run's budget identity and its liveness.
@@ -482,12 +559,21 @@ func (a *Authenticator) checkLive(ctx context.Context, slug, run string, now tim
 	}
 	today := budget.Day(now)
 	if launch > today {
-		// A launch day ahead of ours is this service's clock being behind,
-		// not evidence that the run has not started.
-		launch = today
+		// A launch day ahead of ours is this service's clock being behind the
+		// minter's, not evidence that the run has not started. The scan then
+		// starts a day earlier than today rather than at today: the day an
+		// outcome is written under is the *database's* (the rules' DAYOK allows
+		// today or yesterday, and todayExpr is the rules server's now), so a
+		// run id minted a day ahead of our clock can have its outcome on the
+		// day our clock calls yesterday — and a scan clamped to today alone
+		// would look at one of the two days an outcome can be written on and
+		// admit a run that has ended (review finding m1). Widening the window
+		// can only find an outcome that is there: the outcome is written once
+		// and never removed, so an extra day read can never admit a live run.
+		launch = today - 1
 	}
 	if today-launch > maxRunDays {
-		return fmt.Errorf("%w: the run id names a launch %d days ago, older than any identity's fx can reach", ErrUnverified, today-launch)
+		return fmt.Errorf("%w: the run id names a launch older than any identity's fx can reach", ErrUnverified)
 	}
 	for day := today; day >= launch; day-- {
 		exists, err := a.cfg.Outcomes.OutcomeExists(ctx, day, slug, run)
@@ -560,6 +646,11 @@ func decodeJWT(tok string) (head, claims map[string]any, err error) {
 	return head, claims, nil
 }
 
+// decodeSegment decodes one JWT segment: base64url, then exactly one JSON
+// object. A segment that carries anything after the object is refused rather
+// than half-read (review nit): a token whose payload is one claim set and then
+// another is not a token whose claims are the ones that were signed, and the
+// decoder would otherwise hand back the first and drop the rest without a word.
 func decodeSegment(s string) (map[string]any, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(s, "="))
 	if err != nil {
@@ -570,6 +661,9 @@ func decodeSegment(s string) (map[string]any, error) {
 	var out map[string]any
 	if err := dec.Decode(&out); err != nil {
 		return nil, errors.New("credsvc: a JWT segment is not a JSON object")
+	}
+	if dec.More() {
+		return nil, errors.New("credsvc: a JWT segment carries more than one JSON value")
 	}
 	return out, nil
 }
@@ -703,7 +797,11 @@ func (g *GoogleKeys) Key(ctx context.Context, kid string) (*rsa.PublicKey, error
 func (g *GoogleKeys) fetch(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.url, nil)
 	if err != nil {
-		return fmt.Errorf("credsvc: building the key request: %w", err)
+		// A URL this code cannot build a request for is the key set being
+		// unreadable, which is ErrUnavailable and not an untyped error: every
+		// caller of Key switches on that sentinel to tell a service failure
+		// from a refusal of the token (review nit).
+		return fmt.Errorf("%w: Google's key endpoint is not a usable URL", ErrUnavailable)
 	}
 	resp, err := g.hc.Do(req)
 	if err != nil {
