@@ -1,6 +1,7 @@
 package mailbox
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -263,6 +264,296 @@ func TestSchemaVectorRefusals(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The second shared artifact both ends consume: bounds.test.js reads it on the
+// JavaScript side, this test on the Go side.
+const boundsVectorsPath = "../../shared/mailbox-schema/vectors.bounds.json"
+
+// TestTheSharedBoundVectorsHold replays shared/mailbox-schema/vectors.bounds.json.
+// The merged vectors.json pins no bound — no case in it sits on one — so a bound
+// moved by one survived on both ends: `> TargetMax` narrowed to `>= TargetMax`
+// refused a 200-code-unit repository here and in the module, and widened to
+// `> TargetMax+1` accepted a 201-code-unit one, with every Go test and all 51
+// node tests green. That file is the fix, and this replay is the Go half of it.
+//
+// Every accepts row is judged TWICE: the row itself must be accepted, and — when
+// the file carries a "past" spec — the same row with one more code unit (or the
+// entry `add` on the list) at the path it names must be refused with the code it
+// names. That is what pins a bound rather than a region around one, and it is why
+// a narrowed bound fails the first half of a row and a widened bound fails the
+// second.
+func TestTheSharedBoundVectorsHold(t *testing.T) {
+	file := loadBoundVectors(t)
+	accepts := list(t, file["accepts"], "accepts")
+	refusals := list(t, file["refusals"], "refusals")
+	if len(accepts) != 14 || len(refusals) != 10 {
+		t.Fatalf("vectors.bounds.json carries %d accepts and %d refusals, not 14 and 10: the file, not the replay, is what changed",
+			len(accepts), len(refusals))
+	}
+
+	past := 0
+	for _, entry := range accepts {
+		vector := object(t, entry, "accept")
+		name := text(t, vector["name"], "name")
+		why := text(t, vector["why"], "why")
+		t.Run(name, func(t *testing.T) {
+			record := boundVectorRecord(t, vector["value"])
+			if refusal := boundVectorVerdict(t, vector, record); refusal != nil {
+				t.Errorf("the value at the bound itself is refused %s: %s", refusal, why)
+			}
+			spec, carried := vector["past"]
+			if !carried {
+				return
+			}
+			past++
+			grown, at, code := onePastTheBound(t, vector["value"], object(t, spec, "past"))
+			refusal := boundVectorVerdict(t, vector, grown)
+			if refusal == nil {
+				t.Errorf("a value one step past the bound at %s is accepted, and the file refuses it %s: %s", at, code, why)
+				return
+			}
+			if refusal.Code != code || refusal.Field != at {
+				t.Errorf("the value one step past the bound at %s is refused %s, and the file pins %s at %s: %s",
+					at, refusal, code, at, why)
+			}
+		})
+	}
+	if past != 13 {
+		t.Errorf("the file carries %d rows with a bound to walk, not 13: the file, not the replay, is what changed", past)
+	}
+
+	for _, entry := range refusals {
+		vector := object(t, entry, "refusal")
+		name := text(t, vector["name"], "name")
+		t.Run(name, func(t *testing.T) {
+			why := text(t, vector["why"], "why")
+			wantCode := Code(text(t, vector["code"], "code"))
+			wantField := text(t, vector["field"], "field")
+			refusal := boundVectorVerdict(t, vector, boundVectorRecord(t, vector["value"]))
+			if refusal == nil {
+				t.Fatalf("the value is accepted, and the vector file refuses it with %s (%s) (%s)", wantCode, wantField, why)
+			}
+			if refusal.Code != wantCode || refusal.Field != wantField {
+				t.Errorf("the refusal is %s, the vector file pins %s (%s) (%s)", refusal, wantCode, wantField, why)
+			}
+		})
+	}
+}
+
+// loadBoundVectors reads the bound vectors with the package's own decoder, the
+// same way the merged file is read.
+func loadBoundVectors(t *testing.T) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(boundsVectorsPath)
+	if err != nil {
+		t.Fatalf("reading %s: %v", boundsVectorsPath, err)
+	}
+	record, err := Decode(data)
+	if err != nil {
+		t.Fatalf("decoding %s: %v", boundsVectorsPath, err)
+	}
+	return record
+}
+
+// boundVectorRecord reads one row's value the way the wire would: through the
+// package's own decoder, so a row is judged as a decoded record and not as a Go
+// literal.
+func boundVectorRecord(t *testing.T, value any) Record {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshalling a vector value: %v", err)
+	}
+	record, err := Decode(data)
+	if err != nil {
+		t.Fatalf("decoding a vector value: %v", err)
+	}
+	return record
+}
+
+// boundVectorVerdict judges a row as the record its own "record" field names.
+func boundVectorVerdict(t *testing.T, vector map[string]any, record Record) *Refusal {
+	t.Helper()
+	if text(t, vector["record"], "record") == "heartbeat" {
+		_, refusal := ValidateHeartbeat(record)
+		return refusal
+	}
+	_, refusal := ValidateMessage(record)
+	return refusal
+}
+
+// onePastTheBound returns the row's value one step past its bound — one more
+// code unit at the path the spec names, the entry `add` on the list at that
+// path, or nought in the number there — with the path and the code the file says
+// the result must be refused with.
+func onePastTheBound(t *testing.T, value any, spec map[string]any) (Record, string, Code) {
+	t.Helper()
+	at := text(t, spec["at"], "past.at")
+	mode := text(t, spec["mode"], "past.mode")
+	code := Code(text(t, spec["code"], "past.code"))
+
+	copy := cloneVectorValue(t, value)
+	container, key, index, isIndex := vectorParent(t, copy, at)
+	switch mode {
+	case "grow":
+		got, ok := vectorAt(t, copy, at).(string)
+		if !ok {
+			t.Fatalf("the row's value at %s is not a string, so it has no code unit to add", at)
+		}
+		vectorSet(t, container, key, index, isIndex, got+"x")
+	case "zero":
+		vectorSet(t, container, key, index, isIndex, json.Number("0"))
+	case "append":
+		entries, ok := vectorAt(t, copy, at).([]any)
+		if !ok {
+			t.Fatalf("the row's value at %s is not a list, so it has no entry to add", at)
+		}
+		add, carried := spec["add"]
+		if !carried {
+			t.Fatalf("the append spec at %s does not say which entry it adds", at)
+		}
+		vectorSet(t, container, key, index, isIndex, append(entries, add))
+	default:
+		t.Fatalf("the spec's mode %q is not one this replay knows", mode)
+	}
+	return boundVectorRecord(t, copy), at, code
+}
+
+// cloneVectorValue is a deep copy through the decoder, so a mutation cannot
+// reach the fixture the next row reads.
+func cloneVectorValue(t *testing.T, value any) any {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshalling a vector value: %v", err)
+	}
+	var copy any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&copy); err != nil {
+		t.Fatalf("copying a vector value: %v", err)
+	}
+	return copy
+}
+
+// asVectorObject is the fixture's object shape: the file's top level is a Record
+// and everything under it a plain map.
+func asVectorObject(value any) (map[string]any, bool) {
+	switch object := value.(type) {
+	case Record:
+		return map[string]any(object), true
+	case map[string]any:
+		return object, true
+	}
+	return nil, false
+}
+
+// vectorStep splits one dotted path step — `agents[0]`, `repo` — into the name
+// and the indices after it.
+func vectorStep(t *testing.T, step string) (string, []int) {
+	t.Helper()
+	name := step
+	var indices []int
+	if open := strings.IndexByte(step, '['); open >= 0 {
+		name = step[:open]
+		rest := step[open:]
+		for rest != "" {
+			close := strings.IndexByte(rest, ']')
+			if !strings.HasPrefix(rest, "[") || close < 0 {
+				t.Fatalf("the path step %q has an index that does not close", step)
+			}
+			n, err := strconv.Atoi(rest[1:close])
+			if err != nil {
+				t.Fatalf("the path step %q has an index that is not a number: %v", step, err)
+			}
+			indices = append(indices, n)
+			rest = rest[close+1:]
+		}
+	}
+	return name, indices
+}
+
+// vectorAt walks a dotted path over the fixture's two shapes and returns what it
+// names, failing loudly rather than inventing a value.
+func vectorAt(t *testing.T, value any, path string) any {
+	t.Helper()
+	node := value
+	for _, step := range strings.Split(path, ".") {
+		name, indices := vectorStep(t, step)
+		if name != "" {
+			object, ok := asVectorObject(node)
+			if !ok {
+				t.Fatalf("the path %s walks into %T, which has no field %q", path, node, name)
+			}
+			got, carried := object[name]
+			if !carried {
+				t.Fatalf("the path %s names the field %q, which the fixture does not have", path, name)
+			}
+			node = got
+		}
+		for _, index := range indices {
+			entries, ok := node.([]any)
+			if !ok || index >= len(entries) {
+				t.Fatalf("the path %s walks into %T at [%d]", path, node, index)
+			}
+			node = entries[index]
+		}
+	}
+	return node
+}
+
+// vectorParent resolves a path to the container its last step lives in and the
+// key within it, which is what a writer needs.
+func vectorParent(t *testing.T, value any, path string) (any, string, int, bool) {
+	t.Helper()
+	parts := strings.Split(path, ".")
+	leaf := parts[len(parts)-1]
+	node := value
+	if len(parts) > 1 {
+		node = vectorAt(t, value, strings.Join(parts[:len(parts)-1], "."))
+	}
+	name, indices := vectorStep(t, leaf)
+	if name != "" {
+		if len(indices) == 0 {
+			return node, name, 0, false
+		}
+		object, ok := asVectorObject(node)
+		if !ok {
+			t.Fatalf("the path %s names %q under %T", path, name, node)
+		}
+		got, carried := object[name]
+		if !carried {
+			t.Fatalf("the path %s names the field %q, which the fixture does not have", path, name)
+		}
+		node = got
+	}
+	for _, index := range indices[:len(indices)-1] {
+		entries, ok := node.([]any)
+		if !ok || index >= len(entries) {
+			t.Fatalf("the path %s walks into %T at [%d]", path, node, index)
+		}
+		node = entries[index]
+	}
+	return node, "", indices[len(indices)-1], true
+}
+
+// vectorSet writes one value into the container vectorParent resolved.
+func vectorSet(t *testing.T, container any, key string, index int, isIndex bool, value any) {
+	t.Helper()
+	if !isIndex {
+		object, ok := asVectorObject(container)
+		if !ok {
+			t.Fatalf("the path's container is %T, which has no field %q to write", container, key)
+		}
+		object[key] = value
+		return
+	}
+	entries, ok := container.([]any)
+	if !ok || index >= len(entries) {
+		t.Fatalf("the path's container is %T, which has no [%d] to write", container, index)
+	}
+	entries[index] = value
 }
 
 // TestTheRefusalCodesNoRefusalVectorCarries is the other half of the replay
