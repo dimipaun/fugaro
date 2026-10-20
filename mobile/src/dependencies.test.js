@@ -37,6 +37,15 @@
 //     the pair rather than resolving it. The two root entries are compared
 //     entry for entry, so the manifest and the lock cannot disagree here, and
 //     `lockfileVersion` is 3.
+//   * **the imports that leave `mobile/` are visible to Metro.** Declaring a
+//     package is only half of what makes a bundle; the other half is
+//     `metro.config.cjs`, and the app needs it because it imports `shared/` --
+//     paths above Metro's project root, which is `mobile/`. With the file gone,
+//     `npx expo export` stops at `Unable to resolve module
+//     ../../../shared/confirm/index.js` (reproduced with an emptied Metro cache,
+//     and again with a warm one: `metro.config.cjs`'s header has the commands).
+//     That is a one-line setting nobody would notice losing, so it is asserted
+//     here rather than left to whoever next runs an export.
 //
 // **The comments come out first, and that is not a convenience.** This tree's
 // prose names packages the app deliberately does **not** use --
@@ -62,7 +71,7 @@
 
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import test from 'node:test';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -147,6 +156,40 @@ function packageOf(specifier) {
   if (specifier.startsWith('.') || specifier.startsWith('/')) return null;
   if (specifier.startsWith('@')) return specifier.split('/').slice(0, 2).join('/');
   return specifier.split('/')[0];
+}
+
+/**
+ * Every relative specifier in the app's own files that resolves outside
+ * `mobile/` -- the imports Metro cannot reach unless the directory is watched.
+ * The destination is returned too, so the test can say *where* it went and not
+ * only that something left.
+ */
+function leavingSpecifiers(files) {
+  const found = [];
+  for (const [file, text] of Object.entries(files)) {
+    for (const specifier of specifiers(text)) {
+      if (!specifier.startsWith('.') && !specifier.startsWith('/')) continue;
+      const target = resolve(join(ROOT, dirname(file)), specifier);
+      if (target !== ROOT && !target.startsWith(ROOT + sep)) found.push({ file, specifier, target });
+    }
+  }
+  return found;
+}
+
+/**
+ * Whether a Metro config adds the repository root to `watchFolders`, in either
+ * of the two shapes that do it: a binding for the parent directory
+ * (`const repoRoot = path.resolve(projectRoot, '..')`) used in the list, or the
+ * call written inline in the list itself. A helper of the file's text so the
+ * test can hand it both shapes and a wrong one -- the positive control.
+ */
+function readsTheRepoRoot(text) {
+  const src = code(text);
+  const list = /config\.watchFolders\s*=\s*\[([^\]]*)\]/.exec(src);
+  if (list === null) return false;
+  if (/path\.resolve\(\s*\w+\s*,\s*['"]\.\.['"]\s*\)/.test(list[1])) return true;
+  const bound = /const\s+(\w+)\s*=\s*path\.resolve\(\s*\w+\s*,\s*['"]\.\.['"]\s*\)/.exec(src);
+  return bound !== null && new RegExp(`\\b${bound[1]}\\b`).test(list[1]);
 }
 
 /** The three the SDK is made of, and what a build does without each. */
@@ -272,6 +315,67 @@ test('the lockfile is the manifest npm ci installs, and it is lockfileVersion 3'
     assert.ok(
       Object.keys(locked).some((path) => path === `node_modules/${name}`),
       `${name} is in the locked tree`,
+    );
+  }
+});
+
+test('the config that makes the imports leaving mobile/ visible is still there', () => {
+  // The positive control first: `readsTheRepoRoot` is a reading of the config's
+  // text, so it is handed a correct one in both of the shapes that occur, and a
+  // wrong one, before it is trusted against the real file. Without this, "the
+  // config watches the repo root" would be a claim a broken regex also passes.
+  assert.equal(readsTheRepoRoot('config.watchFolders = [];\n'), false, 'an empty list watches nothing');
+  assert.equal(
+    readsTheRepoRoot("config.watchFolders = [path.resolve(__dirname, 'node_modules')];\n"),
+    false,
+    'the dependency tree is not the repository root',
+  );
+  assert.equal(
+    readsTheRepoRoot("const repoRoot = path.resolve(projectRoot, '..');\nconfig.watchFolders = [repoRoot];\n"),
+    true,
+    'a binding for the parent directory counts',
+  );
+  assert.equal(
+    readsTheRepoRoot("config.watchFolders = [path.resolve(__dirname, '..')];\n"),
+    true,
+    'and so does the call written inline',
+  );
+  // ... and the file the app actually ships passes it.
+  const configPath = join(ROOT, 'metro.config.cjs');
+  const config = readFileSync(configPath, 'utf8');
+  assert.equal(
+    readsTheRepoRoot(config),
+    true,
+    'metro.config.cjs must add the repository root to watchFolders: without it `npx expo export` stops at '
+      + '"Unable to resolve module ../../../shared/confirm/index.js"',
+  );
+  // Why the file is `.cjs`: Metro `require`s its config, and `package.json` is
+  // `"type": "module"`, so a `.js` file would be read as ESM and fail to load.
+  assert.equal(MANIFEST.type, 'module', 'the `.cjs` extension is what keeps this the only CommonJS file');
+  // The other half: something in the app really does leave `mobile/`, so the
+  // config above is not watching a directory nothing imports from. Every such
+  // specifier must land in the repository root or under it -- an import into a
+  // sibling checkout would be a path this test cannot name.
+  const files = Object.fromEntries(sourceFiles().map((file) => [file, readFileSync(join(ROOT, file), 'utf8')]));
+  const leaving = leavingSpecifiers(files);
+  assert.ok(leaving.length >= 3, `expected the app's imports into shared/, found ${leaving.length}`);
+  // The three `metro.config.cjs`'s header names as the failure it was written
+  // for. The list is not pinned exactly -- `shared/` is imported from a dozen
+  // files and pinning the count would make every new one edit this test -- so
+  // the assertion is that the ones the config's own reasoning rests on are
+  // still here, and that nothing leaves the repository.
+  const named = leaving.map(({ file, specifier }) => `${file}: ${specifier}`);
+  for (const one of [
+    'src/demo/index.js: ../../../shared/confirm/index.js',
+    'src/demo/index.js: ../../../shared/prompts/index.js',
+    'src/demo/transport.js: ../../../shared/mailbox-schema/index.js',
+  ]) {
+    assert.ok(named.includes(one), `${one} is one of the imports watchFolders exists for`);
+  }
+  for (const { file, specifier, target } of leaving) {
+    assert.ok(
+      target.startsWith(resolve(ROOT, '..') + sep),
+      `${file} imports ${specifier}, which resolves to ${target} -- outside the repository`,
     );
   }
 });

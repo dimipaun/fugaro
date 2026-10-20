@@ -20,6 +20,28 @@
 // it, because declaring them is what makes a bundle possible for the first
 // time.
 //
+// **How to check that this file is still needed, and why the answer is not
+// "try it without the cache".** The failure above is reproduced from a clean
+// tree by deleting this file and emptying Metro's cache first:
+//
+//   mv metro.config.cjs /tmp/ && rm -rf /tmp/metro-cache /tmp/metro-file-map-expo-* dist
+//   npx expo export --platform ios        # -> Unable to resolve module .../shared/confirm/index.js
+//
+// Three neighbouring cases were tried and **all three also fail**, so a warmer
+// cache does not hide the problem and neither does dev mode:
+//
+//   * deleting this file with the cache left warm from a run that HAD it;
+//   * `npx expo export --dev --platform ios` without it;
+//   * `EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo export --platform ios` without
+//     it — Expo's own monorepo default (`getWatchFolders`) returns an empty
+//     list here, because it looks for a workspace root above `mobile/` and
+//     finds no root `package.json` with a `workspaces` field to add.
+//
+// Restored, both platforms bundle again, and `dist/` is written. `watchFolders`
+// is the whole of the difference, so its content is asserted by a test rather
+// than left to a run: `src/dependencies.test.js` fails if this file is missing
+// or if it stops adding the repository root to `watchFolders`.
+//
 // **Why `.cjs`, and not `.js`.** `mobile/package.json` is `"type": "module"`,
 // so a `metro.config.js` would be read as an ES module while Metro loads its
 // config with `require`. `.cjs` says "this one file is CommonJS" without

@@ -117,8 +117,8 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 | --- | --- |
 | `index.js` | The entry. The one file that knows what a device is: it imports `expo`, `expo-secure-store`, `@react-native-async-storage/async-storage`, `react` and `react-native`, builds the two ports, the store and the demo controller, wires the two screens and registers the root. No decisions of its own, and no test (see "What is not verified"). |
 | `package.json`, `package-lock.json` | The manifest and the tree `npm ci` installs. The dependencies are the packages `index.js` and `src/` actually import — `expo`, `react`, `react-native`, `expo-secure-store` and `@react-native-async-storage/async-storage` — and no more: `src/dependencies.test.js` fails on an undeclared import and on a manifest that lacks `expo`, `react` or `react-native`. |
-| `metro.config.cjs` | Metro's config, and the one entry in it that matters: `watchFolders` includes the **repository root**, because the app imports `shared/` (`../../../shared/confirm/index.js` and its siblings) and Metro's project root is `mobile/`. Without it the bundle fails to resolve them — see the file's header. `.cjs`, because `package.json` is `"type": "module"`. |
-| `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. Two fields are what SDK 58 needs: `plugins: ["expo-secure-store"]` (the module that holds D111's two items, whose config plugin is what configures it for a native build — `npx expo install` asks for it) and no `edgeToEdgeEnabled`/`newArchEnabled` (`npx expo-doctor` refuses both: edge-to-edge and the new architecture are what SDK 58 builds, and the flags that used to ask for them are gone — the whole change was `expo-doctor` reporting them). |
+| `metro.config.cjs` | Metro's config, and the one entry in it that matters: `watchFolders` includes the **repository root**, because the app imports `shared/` (`../../../shared/confirm/index.js` and its siblings) and Metro's project root is `mobile/`. Without it the bundle fails to resolve them — `npx expo export` stops at `Unable to resolve module ../../../shared/confirm/index.js` — so it is not removable, and `src/dependencies.test.js` fails if it goes. `.cjs`, because `package.json` is `"type": "module"`. |
+| `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. Two fields are what SDK 58 needs: `plugins: ["expo-secure-store"]` (the module that holds D111's two items, whose config plugin is what configures it for a native build — `npx expo install` asks for it) and **no `edgeToEdgeEnabled` and no `newArchEnabled`**: `npx expo-doctor` reports each of the two as `Additional property "…" is not allowed` against the SDK 58 schema (one error per run, so removing the first is what makes the second visible — 19/20, then 19/20, then 20/20). Both flags ask for what SDK 58 builds anyway: edge-to-edge is mandatory from Android 16 (Expo's own `withEdgeToEdge` says so), and the new architecture is the only architecture. |
 | `app.config.js` | **The build-time config** (P4.4), and the one place the two release identities come from: it resolves `FUGARO_IOS_BUNDLE_ID` and `FUGARO_ANDROID_PACKAGE` from the environment over `app.json`'s `expo` object — see "Building for internal testing" and `src/app-config.ids.test.js`. |
 | `eas.json` | The EAS profiles: `development`, `preview` and `internal` (the store profile Check 89 builds and submits with). No credential path, no credential value and no identity value — see `src/eas-config.test.js`. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
@@ -1370,12 +1370,19 @@ the two apart -- so it is written down here rather than claimed as a kill.
   ever read the owner's real ones.
   **This includes P4.4's two files**: `app.config.js` is exercised as a
   function of a base config and an environment (which is what its tests call
-  it with), and **Expo's own loader has never read it** — the `({ config }) =>`
-  form and the ESM `export default` are what that loader does (`@expo/config`'s
-  `evalConfig` resolves `result.default` and then calls it with a request whose
-  `config` is the `app.json` `expo` object with Expo's defaults filled in,
-  `Config.ts`), but the shape was read off the loader's source and has not been
-  through a real `expo start`. `eas.json` is parsed and asserted as JSON; **no `eas` command
+  it with), and **Expo's own loader has read it — as of this task, and only with
+  the CLI's own reads**: with both variables exported in the shell,
+  `npx expo config --type public --json` returns
+  `ios.bundleIdentifier = com.example.testapp` and
+  `android.package = com.example.testapp` — the values the two variables held,
+  resolved through this file, which is what proves the `({ config }) =>` form
+  and the ESM `export default` are what `@expo/config`'s `evalConfig` calls (it
+  resolves `result.default` and calls it with the `app.json` `expo` object as
+  `config`, `Config.ts`). `npx expo export` reads the same file the same way.
+  What is still unverified is the rest of the path: **no `expo start` and no
+  `eas build`** have resolved it, and the value that has been through the loader
+  is a shell test value, never the owner's own identity.
+  `eas.json` is parsed and asserted as JSON; **no `eas` command
   has been run**, so the profiles are as correct as the register's text says
   they must be and not as correct as a build would show — including the two
   claims about `eas-cli` that the local build path rests on (that it resolves
@@ -1447,11 +1454,12 @@ the two apart -- so it is written down here rather than claimed as a kill.
   re-write* is asserted here only as the double's model of them.
 * **Metro, and the `shared/` imports.** `src/mailbox/` imports
   `../../../shared/mailbox-schema/index.js`, `../../../shared/presence/index.js`
-  and `../../../shared/digest/redact.js`; node resolves them (the tests run) and
-  the D119 boundary rule allows them, but **bundling `mobile/` and `shared/`
-  together needs a Metro `watchFolders` entry that no task has added yet.**
-  There has been no `expo start` here, so that wiring is unverified — see
-  `src/mailbox/README.md`.
+  and `../../../shared/digest/redact.js`; node resolves them (the tests run), the
+  D119 boundary rule allows them, and **Metro resolves them too** — that was the
+  missing half until this task added `metro.config.cjs`, whose `watchFolders`
+  entry is the repository root, and `npx expo export` now bundles `shared/` into
+  both platforms' bundles. There has still been no `expo start` here, so the
+  *dev server* is unverified — see `src/mailbox/README.md`.
 * **The Realtime Database itself (P3.2).** No database client is installed: the
   reader takes a port — `{ subscribe(path, { onValue, onError }) }` — and every
   test hands it a fake that records the paths it is asked for. So **no listener
