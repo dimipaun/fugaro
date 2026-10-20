@@ -1378,7 +1378,17 @@ func newValidateCmd() *cobra.Command {
 			layer, layerWarnings := validateLayerLines(rf)
 			var warnings, notes []config.Problem
 			if cfg != nil {
-				problems = append(config.Check(cfg, filepath.Dir(path)), computeProblems(cfg)...)
+				problems = append(config.Check(cfg, filepath.Dir(path)), computeProblems(cfg, lc)...)
+				// The Batch backend's offline checks (plan
+				// 2026-10-19-compute-backend.md Task 8 step 4, design §4.4).
+				// They return nothing for every other project: the backend
+				// name they are about is refused by internal/localcfg until
+				// the enable task, so no installation reaches them today.
+				// The recipe is the one this checkout resolves the way a
+				// launch would (agent.recipe, else the default): its mode is
+				// what decides whether a run of this repository produces
+				// artifacts, which is the boundary Global Constraint 13 keeps.
+				problems = append(problems, batchValidateProblems(lc, cfg, localRecipe(filepath.Dir(path), cfg))...)
 				// The project config, and the two route tables the rules below
 				// read: routes, the run's own — the owner's with the checkout
 				// layer's claude_models merged in (layerRoutes), so a
