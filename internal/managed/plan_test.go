@@ -527,6 +527,69 @@ func TestPlanRefusalsCarryTheAddressAndTheRule(t *testing.T) {
 	}
 }
 
+// A cover item's content is a rule's own words, and one of those words carries
+// a "): " of its own: the managed list's reason for google_compute_router_nat
+// names the owner-run root in parentheses and goes on to say why
+// ("(modules/compute/network.tf): the NAT is the runs' egress path, ...").
+// The two shapes are told apart by the ACTIONS between the address's
+// parentheses and that ": " — the guard's, and only the guard's
+// (tf.ActionsText) — and not by the first "): " in the item, so this item's why
+// is its whole content. A reader that cut at the first "): " instead would take
+// "Fugaro's own compute-backend network (modules/compute/network.tf" for the
+// actions and hand the owner a rule with that parenthesis dropped: the verdict
+// the owner decides on would misquote the gate, and nothing else in the suite
+// would notice.
+//
+// The item, the content and the reason are all read off the real cover and its
+// real plan here rather than spelled out, so this test cannot drift from the
+// rule it is about — and the premise it rests on (the content really carries a
+// "): ") is asserted, so a reason reworded without one fails this test loudly
+// instead of leaving it vacuous.
+func TestPlanRefusalsReadACoverItemsContentWhole(t *testing.T) {
+	const addr = "module.managed.google_compute_router_nat.runs"
+	r := newRig(t)
+	r.managedShow(t, managedChange(addr, "google_compute_router_nat", []string{"delete", "create"},
+		map[string]any{"name": "managed-nat", "id": "managed-nat", "project": gcpProject},
+		map[string]any{"name": "managed-nat", "project": gcpProject}))
+
+	// The removal is one the owner's list approves, so the guard admits it and
+	// the refusal below is the cover's rule about the resource itself.
+	approved := r.approving(t, addr)
+	v := gate(t, r, spec(t, r, managedCover(), approved))
+	if v.OK {
+		t.Fatal("a type the managed list drops was admitted")
+	}
+
+	// The same cover the gate was handed, read for its own items.
+	c := managedCover()
+	c.AllowDelete = []tf.DeleteEntry{approved}
+	var item string
+	for _, it := range c.NotCovered(r.plan(t), nil) {
+		if strings.HasPrefix(it, addr+" (") && strings.HasSuffix(it, ")") {
+			item = it
+			break
+		}
+	}
+	if item == "" {
+		t.Fatalf("the cover's items carry nothing at %s: the fixture is not the one this test is about", addr)
+	}
+	content := item[len(addr)+2 : len(item)-1]
+	if !strings.Contains(content, "): ") {
+		t.Fatalf("this test is about a rule whose own words carry a \")): \" — a cover item with a parenthesis inside its content — and %s's reason no longer has one: %q", addr, content)
+	}
+
+	ref, ok := findRefusal(v.Refusals, coverGate, addr)
+	if !ok {
+		t.Fatalf("the cover refused %s with no refusal at its address: %+v", addr, v.Refusals)
+	}
+	if ref.Why != content {
+		t.Errorf("the cover refusal for %s carries\n%q\nwant the item's whole content\n%q", addr, ref.Why, content)
+	}
+	if got := refusals(coverGate, []string{item}); len(got) != 1 || got[0].Why != content || got[0].Address != addr {
+		t.Errorf("refusals(%q) = %+v; want one refusal at %s carrying the content whole", item, got, addr)
+	}
+}
+
 // The entries rule's refusal is rendered whole, and this is the test that pins
 // it: a guard item is "<address> (<actions>): <why>", and the why this rule
 // writes — the list's own entry and the object the plan removes, each in

@@ -1847,10 +1847,20 @@ func TestManagedCoverReplacesAreJudgedLikeDeletes(t *testing.T) {
 			}
 			// The unlisted replace, whose resources are both the plan's own:
 			// the list is the whole of the refusal, and the resource rules
-			// have nothing to say about it.
-			if out := managedTestCover().NotCovered(managedPlan(replacing(prefixed, prefixed)), nil); len(out) != 1 ||
-				!strings.Contains(out[0], "not on the owner's delete list") {
+			// have nothing to say about it. The refusal prints the identity of
+			// the object the plan removes beside the address, because that is
+			// what an entry of the owner's list has to name and the address
+			// alone stopped being an entry (Task 6.3): an owner sent to record
+			// the address would write a list that approves nothing. The
+			// identity is read back from RemoveIdentityText, the rule's own
+			// answer, rather than spelled out here.
+			unlisted := managedPlan(replacing(prefixed, prefixed))
+			out := managedTestCover().NotCovered(unlisted, nil)
+			if len(out) != 1 || !strings.Contains(out[0], "not on the owner's delete list") {
 				t.Fatalf("an unlisted replace of two allowed resources gives %q, want the delete-list rule", out)
+			}
+			if id := RemoveIdentityText(unlisted.ResourceChanges[0]); !strings.Contains(out[0], id) {
+				t.Errorf("the refusal is %q, want the identity the owner's entry must carry named in it (%s)", out[0], id)
 			}
 		})
 	}
