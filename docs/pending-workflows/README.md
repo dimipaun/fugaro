@@ -1,9 +1,11 @@
 # Pending workflow changes
 
-**One file is pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task P4.3; see `## shared-tests.yml` below). **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508), and `images.yml` was copied in and its staged copy removed in `6b57ba9` (`## images.yml` below is the record of that change, not a pending request). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+**Three files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task P4.3; see `## shared-tests.yml` below), **`console-linux.yml`** (the console's Linux build check, 2026-10-20; see `## console-linux.yml` below) **and `console-release-linux.yml`** (the console's signing pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged `console-release.yml`; see `## console-release-linux.yml` below). **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508), and `images.yml` was copied in and its staged copy removed in `6b57ba9` (`## images.yml` below is the record of that change, not a pending request). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
 - **`shared-tests.yml`** — the whole CI job for `shared/`'s tests, mobile plan Task **P4.3**: a `main`-filtered push and pull request under `shared/**`, `contents: read`, `npm ci` and `npm test` on Node 22 and Node 26, and every `shared/*/mutation-proof.sh` in the package, every action pinned by full commit SHA. `shared/` is outside the Go module, so no job in `ci.yml` runs it. Staged by a Fugaro run that cannot push a `.github/workflows/**` change; see `## shared-tests.yml` below, which also records what the job will report on `main` today.
 - **`website-preview.yml`** and **`website-promote.yml`** — the website's two new workflows, both `workflow_dispatch`-only: one builds a chosen ref and deploys it to a Firebase Hosting preview channel of the site's own project and prints the preview URL, the other promotes an existing preview channel to live and is the owner's alone (`environment: website-live` plus a guard on `github.actor`). Staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Read `docs/website/preview-promote.md` first**: it carries the owner-only one-time setup (the Workload Identity Federation pool and provider, the deployer service account and its Firebase Hosting roles, the `website-live` environment and the three repository variables) that both files need before they can run at all.
+- **`console-linux.yml`** — the console's **Linux build check**: one job on `ubuntu-latest` that packs the AppImage and the `.deb` on every pull request and every push to `main` and uploads them, holding no secret at all. Staged by the 2026-10-20 run that packages the console for Linux (the owner's ruling: Linux for 0.10.0, unsigned). It is its own workflow rather than a second job in `console-tests.yml` because the release gate's required-check list is derived from that file's job set; see `## console-linux.yml` below.
+- **`console-release-linux.yml`** — the console's signing, notarisation and publishing pipeline **with the Linux legs added**: a third job that builds and verifies the unsigned AppImage and `.deb`, and a `publish` that merges both legs, signs one merged `console-sha256sums.txt` keyless with cosign and attaches everything to `console-vX.Y.Z`. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-linux.yml` below.
 - **`images.yml` — applied, not pending.** The signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`, was staged here by a Fugaro run that cannot push a `.github/workflows/**` change, then copied into `.github/workflows/images.yml` and `git rm`'d from here in `6b57ba9`. `## images.yml` below is the record of that change and of the timing it had to meet, not something still to copy.
 
 **`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, it runs unconditionally on every pull request and every push to `main`, and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
@@ -27,7 +29,7 @@ git rm docs/pending-workflows/website-preview.yml docs/pending-workflows/website
 git commit -m "..."
 ```
 
-There is nothing else to copy in: the `images.yml` commands that used to follow this block were run in `6b57ba9`, and its staged file is gone.
+The two commands above are the website pair's. The `images.yml` commands that used to follow this block were run in `6b57ba9` and its staged file is gone; **two further files are pending as of 2026-10-20 — `console-linux.yml` and `console-release-linux.yml` — and each section below carries its own copy-in block**, the release one with an extra command, because it also replaces the staged `console-release.yml`.
 
 **The website pair's own copy-in steps, in order.** (1) Do the one-time setup
 in `docs/website/preview-promote.md` first — the workflows refuse to run
@@ -520,6 +522,167 @@ Two things a reader must not take from those tests: the pinned SHAs are read
 against upstream by the person copying the file in (see "Before you copy" below —
 Dependabot does not watch this directory), and the first real run is Check 59a's
 and 59b's (plan Task 4.3), which are owner-run on a Mac.
+
+## `console-linux.yml`
+
+The desktop console's **Linux build check**, staged on **2026-10-20** by the run
+that packaged the console for Linux (the owner's ruling of that date: *"yes,
+Linux for 0.10.0, unsigned"*; design D10 and section 9.4, and
+`docs/plans/2026-10-15-desktop-console.md`'s phase 4). One job, `console-linux`,
+on `ubuntu-latest`: `contents: read`, **no environment and no secret at all**,
+the pinned toolchain (`npm ci --ignore-scripts`), Electron's own download
+verified against the three checksums `console/package.json` pins, `npm run
+build`, then `npm run package:linux` — which is `electron-builder --linux
+--publish never`, with no `npx` in front of it — an assertion that exactly one
+`.AppImage` and one `.deb` came out, and `upload-artifact`. It runs on every
+pull request and every push to `main`, with no path filter: a Linux packaging
+path exercised only on a tag is one that breaks silently between releases.
+
+**Why it is its own workflow rather than a second job in `console-tests.yml`.**
+The task that wrote it asked for "a new `console-linux` job for the existing CI
+workflow", and it is a separate file for one reason, which is a test rather than
+a taste: **the release gate's required-check list is derived from
+`console-tests.yml`'s job set.** `TestReleaseGateRequiresTheConsoleCheck`
+(`internal/cli/docs_desktop_console_test.go`) reads that workflow and asserts
+that `scripts/release-gate.sh`'s `names=(...)` array is exactly the check names
+it reports plus `test`, `terraform` and `rules` — and `deriveConsoleCheckNames`
+**refuses a workflow with more than one job** ("this test cannot tell which of
+several jobs that is"). A second job there would therefore not be a packaging
+change at all: it would change which checks gate a release tag, and it would
+have to land together with a widened derivation and an edited `names=` line.
+That is a real decision — arguably the Linux build *should* gate a release — but
+it is the owner's, and it is not one to fold silently into a packaging change.
+The task asked for a **build-only** job, and build-only is what this file is:
+nothing here is in the gate's list, so a red run here is information and not a
+blocked release.
+
+**Owner, if you want it to gate releases**, all three edits in one commit, or
+the test that holds them together fails: paste the `console-linux` job into
+`.github/workflows/console-tests.yml` as a second job; add `console-linux` to
+the `#   ` comment block and the `names=(...)` array in
+`scripts/release-gate.sh`; and widen `deriveConsoleCheckNames` so it reads a
+workflow with several jobs.
+
+**What it proves about the fuses, and what it does not.** `afterPack`
+(`console/dist/main/fuses.js`) flips the six and reads the wire back, so a pack
+whose flips did not take fails here and produces no artifact at all. It does
+**not** re-read the wire out of the packed AppImage or `.deb`: that is
+`console-release-linux.yml`'s linux job, on the shipped bytes, because that is
+the claim a release makes.
+
+**The version it packs is `0.0.0`.** Nothing stamps `console/package.json` in CI
+and nothing should — only a release knows the version, and
+`console-release.yml` stamps it from the tag with
+`-c.extraMetadata.version` — so the artifacts here are named
+`Fugaro.Console-0.0.0-linux-x64.AppImage` and `.deb`. They are a build check,
+not a release candidate.
+
+**To copy it in**, from the repository root (and then delete the staged copy, as
+`images.yml`'s was: there is no byte-identity test for this file, because it is
+a new workflow with nothing to be identical to):
+
+```sh
+cp docs/pending-workflows/console-linux.yml .github/workflows/console-linux.yml
+git add .github/workflows/console-linux.yml
+git rm docs/pending-workflows/console-linux.yml
+git commit -m "console: build the Linux artifacts in CI"
+```
+
+**One follow-up edit belongs in that commit**: the last section of
+`website/README.md` counts and names the files still pending in this directory,
+and `website/test/readme.mjs` holds that sentence to the directory in both
+directions. The sentence it needs after both of 2026-10-20's files are applied
+is in `## console-release-linux.yml` below.
+
+## `console-release-linux.yml`
+
+**This file supersedes `## console-release.yml` above.** It is that file with
+the Linux legs added — a third job and a `publish` that merges both legs — so it
+is copied over the staged `console-release.yml` **and** into
+`.github/workflows/console-release.yml`, which is why its copy-in has one more
+command than usual. Staged on **2026-10-20** by the same run and for the same
+ruling (the owner: *"yes, Linux for 0.10.0, unsigned"*).
+
+What it adds, and nothing else in the file moved:
+
+1. **A third job, `linux`**, on the pinned `ubuntu-24.04`, with `contents: read`
+   and `checks: read` and **no environment and no secret** — there is nothing to
+   sign with, so there is nothing to protect. It runs the same three gate checks
+   through the same `scripts/release-gate.sh`, installs the same pinned
+   toolchain, downloads Electron against the same
+   `electron-v44.7.2-linux-x64.zip` checksum, builds with the same pinned packer
+   (`npm run package:linux`, `--publish never`), and then verifies **what
+   ships**: the SHA-256 of the `.AppImage` and the `.deb`, the `.deb` opened with
+   `dpkg-deb --info`/`--contents`/`--extract`, the AppImage unpacked with its own
+   runtime's `--appimage-extract` (no FUSE mount, no display), and the Electron
+   fuse wire read back with `@electron/fuses` out of the executable **inside
+   each artifact** — the one thing the pack-time hook cannot say about the
+   packaged result. It uploads them as `console-linux-assets` with
+   `console-linux-verification.txt` and `console-linux-sha256sums.txt`.
+2. **`publish` now `needs: [release, linux]`**, downloads both artifacts,
+   re-checks each leg against its own sums file, merges the two legs into one
+   asset set with **one** `console-sha256sums.txt`, signs that file keyless with
+   cosign (`id-token: write`, `cosign sign-blob --yes --bundle`, the same call
+   GoReleaser makes for the CLI's archives) into
+   `console-sha256sums.txt.sigstore.json`, and attaches everything to
+   `console-vX.Y.Z`. The merge refuses a run where a leg is empty or where both
+   legs would ship the same file name, and re-runs `sha256sum --strict --check`
+   on the merged file **in the directory that ships**.
+
+**The unsigned claim, plainly: an AppImage is not code-signed.** There is no
+Linux signing key and none is planned (D4 is macOS, D10 is Windows/Later), so
+the AppImage and the `.deb` carry no signature of their own. What proves they
+are the bytes this repository built is `console-sha256sums.txt` — which covers
+every asset in the release — and the Sigstore bundle beside it, which is signed
+by this workflow's own OIDC identity rather than by a key of the owner's. A
+release note saying "signed" of the Linux artifacts would be false.
+
+**To copy it in**, from the repository root — the first command is the one that
+keeps `console-release.yml` and its staged copy byte-identical, which is what
+`TestDocsConsoleReleaseWorkflowIsStagedAndPinned` asserts:
+
+```sh
+cp docs/pending-workflows/console-release-linux.yml docs/pending-workflows/console-release.yml
+cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml
+git rm docs/pending-workflows/console-release-linux.yml
+git add -A
+git commit -m "console: build, verify and attach the Linux artifacts on a version tag"
+```
+
+`docs/pending-workflows/console-release.yml` and
+`.github/workflows/console-release.yml` are **byte-identical today** — the
+2026-10-19 change above has been copied in — and this file is that text with the
+Linux legs added. So the first command above leaves the two identical again, and
+the byte-identity clause
+(`TestDocsConsoleReleaseWorkflowIsStagedAndPinned`) is never red in between: this
+staging does **not** put `main` in the refused-every-tag state the 2026-10-19
+change was merged in. That is the reason it is staged as a file of its own
+rather than as an edit to the staged `console-release.yml`, which is what the
+2026-10-19 change did.
+
+**One follow-up edit belongs in that commit.** The last section of
+`website/README.md` says how many workflows this directory still holds pending
+and names them, and `website/test/readme.mjs` fails in both directions — a
+staged file the README does not name, or a name for a file that is not staged —
+and it reads the count as a word. With both of 2026-10-20's files applied and
+their staged copies removed, this directory holds one pending workflow again and
+that sentence becomes:
+
+```
+`docs/pending-workflows/` now holds one pending workflow,
+`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+P4.3), which is not this site's: …
+```
+
+**What cannot be checked here.** The linux job's steps run on a runner: this
+directory's staged files are read by tests on a machine with no
+`electron-builder` run, no `dpkg-deb` and no AppImage runtime, so the pack, the
+`--appimage-extract`, the `dpkg-deb` reading and the three fuse read-backs are
+Check 59a's to confirm on a real run, like the macOS pipeline's own first run.
+What *is* asserted offline is the workflow's shape: three jobs, the permissions
+each holds, `publish`'s `needs`, the action pins, that every `run:` step is
+valid shell, and that the two staged console-release files differ only where
+this change says they do.
 
 ## `website-preview.yml` and `website-promote.yml`
 

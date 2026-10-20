@@ -1,0 +1,178 @@
+# STAGED, NOT APPLIED (2026-10-20). This file is the console's **Linux build
+# check**: it packs the AppImage and the .deb on every pull request and every
+# push to main, and uploads them. **No agent copies, edits, renames or deletes
+# it** -- GitHub rejects a Fugaro push that touches .github/workflows/**, so an
+# agent run cannot deliver a workflow change at all, and every workflow change
+# in this repository is staged here for a human
+# (docs/pending-workflows/README.md).
+#
+# To apply it, from the repository root:
+#
+#     cp docs/pending-workflows/console-linux.yml .github/workflows/console-linux.yml
+#     git add .github/workflows/console-linux.yml
+#     git commit -m "console: build the Linux artifacts in CI"
+#
+# **The staged copy is deleted after the copy-in**, as images.yml's is: there is
+# no byte-identity test for this file, because it is a new workflow with nothing
+# to be identical to. (`console-tests.yml` and `console-release.yml` are kept
+# staged instead, because named tests read the staged copies and assert they
+# match the applied ones.)
+#
+# WHY THIS IS ITS OWN WORKFLOW, AND NOT A SECOND JOB IN console-tests.yml
+#
+# The brief for this change asked for "a new `console-linux` job for the
+# existing CI workflow". It is a separate file for one reason, and the reason is
+# a test rather than a taste: **the release gate's required-check list is
+# derived from console-tests.yml's job set.**
+# `TestReleaseGateRequiresTheConsoleCheck` (internal/cli/docs_desktop_console_
+# test.go) reads that workflow, and `deriveConsoleCheckNames` **refuses a
+# workflow with more than one job** -- "this test cannot tell which of several
+# jobs that is" -- and asserts that scripts/release-gate.sh's `names=(...)`
+# array is exactly those derived names plus `test`, `terraform` and `rules`.
+# A second job there would therefore not be a packaging change at all: it would
+# be a change to which checks gate a release tag, and it would have to land
+# together with a rewritten derivation and an edited `names=` line.
+#
+# That is a real decision -- arguably the Linux build SHOULD gate a release --
+# but it is the owner's, it is not this task's, and it is not a thing to fold
+# silently into a packaging change. The brief asked for a **build-only** job,
+# and build-only is exactly what this file is: nothing here is in the gate's
+# list, so a red run here is information and not a blocked release.
+# **Owner, if you want it to gate**: paste the `console-linux` job below into
+# .github/workflows/console-tests.yml as a second job, add `console-linux` to
+# the `#   ` comment block and the `names=(...)` array in
+# scripts/release-gate.sh, and widen `deriveConsoleCheckNames` so it reads a
+# workflow with several jobs. All three edits in one commit, or the test that
+# holds them together fails.
+#
+# WHAT THIS FILE IS
+#
+#   - It runs on every pull request and every push to main, with **no path
+#     filter**: a Linux packaging path that is only exercised on a tag is a
+#     packaging path that breaks silently between releases, which is the
+#     failure this job exists to catch. (The no-path-filter rule in design
+#     section 9.4 is about required checks; this one is not required, and it
+#     still carries no filter, because the console is the thing being built.)
+#   - It holds **no secret of any kind**, and it never will: it packs
+#     unsigned. There is nothing to sign an AppImage with, and this project has
+#     no Linux signing key (design section 5.1, D4 and D10; the owner's ruling
+#     of 2026-10-20). The signing, notarising and publishing job is
+#     console-release.yml, a separate file that runs only on a version tag,
+#     because a job that runs on every pull request must not sit next to
+#     release credentials (design section 9.4).
+#   - It is **build-only**. What it proves about the Electron fuses is what the
+#     packer's own hook proves: `afterPack` (`console/dist/main/fuses.js`)
+#     flips the six fuses and reads the wire back, so a pack whose flips did
+#     not take fails *here* and produces no artifact at all. It does not re-read
+#     the wire out of the packed AppImage and .deb -- console-release.yml's
+#     linux job does that, on the shipped bytes, because that is the claim the
+#     release makes.
+#   - **The version it packs is 0.0.0.** Nothing stamps console/package.json in
+#     CI and nothing should: only a release knows the version, and
+#     console-release.yml stamps it from the tag with
+#     `-c.extraMetadata.version`. So the artifacts here are named
+#     `Fugaro.Console-0.0.0-linux-x64.AppImage` and `.deb`, and they are a
+#     build check, not a candidate for a release.
+#   - x64 only, which is what `build.linux.target` pins in
+#     console/package.json: the same packer on the same runner, with the same
+#     fuses, and no cross-architecture build that nothing here can launch.
+
+name: console-linux
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The workflow inherits nothing: `contents: read` is all it needs to check the
+# repository out, and it is declared here and on the job so that neither can
+# gain a permission without an edit that a reviewer sees.
+permissions:
+  contents: read
+
+jobs:
+  console-linux:
+    name: console-linux
+    # ubuntu-latest, and not a pinned image: this job's subject is the
+    # *packaging* path, and the two things about it that must not move --
+    # electron-builder's version and Electron's own -- are pinned by the
+    # lockfile and by `build.electronDownload.checksums` in
+    # console/package.json, not by the runner image. (console-release.yml pins
+    # ubuntu-24.04, because there the runner image is part of what was
+    # verified for a tag.)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The Node version comes from console/package.json's `engines.node`, the
+      # field test/unit/pinning.test.ts keeps an exact pin: a version written
+      # here a second time would be a pin that can disagree with the one the
+      # console's own tests enforce.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: console/package.json
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      # `npm ci` from the committed lockfile, with lifecycle scripts off: the
+      # console's dependencies are exactly the ones the lockfile pins
+      # (test/unit/pinning.test.ts asserts the set), and a postinstall script is
+      # something this repository does not run from CI.
+      - name: install the pinned toolchain
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      # Electron's own download of its distribution, verified against the pinned
+      # package's `checksums.json`: `electron-v<version>-linux-x64.zip` is one of
+      # the three hashes `build.electronDownload.checksums` pins. Then the build
+      # the packer packs (`npm run build` is what writes the file
+      # package.json's `main` points at).
+      - name: download Electron and build the app
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          set -euo pipefail
+          node node_modules/electron/install.js
+          npm run build
+      # `npm run package:linux` is `electron-builder --linux --publish never`,
+      # with no `npx` in front of it: the packer is the lockfile's exact
+      # electron-builder and nothing else, and `--publish never` is in the
+      # script rather than in this line so no invocation can add one.
+      #
+      # The `CSC_*` variables are unset rather than merely unset-by-default:
+      # this job has no signing material and must not acquire any by inheriting
+      # a variable from the runner's environment, and
+      # `CSC_IDENTITY_AUTO_DISCOVERY=false` is the packer's own switch for
+      # "look for no identity at all".
+      - name: build the Linux artifacts
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          set -euo pipefail
+          unset CSC_LINK CSC_NAME CSC_KEY_PASSWORD || true
+          npm run package:linux
+          shopt -s nullglob
+          appimages=(release/*.AppImage)
+          debs=(release/*.deb)
+          if [ "${#appimages[@]}" -ne 1 ] || [ "${#debs[@]}" -ne 1 ]; then
+            echo "::error::want exactly one .AppImage and one .deb under console/release, found ${#appimages[@]} and ${#debs[@]}"
+            exit 1
+          fi
+          ls -l "${appimages[0]}" "${debs[0]}"
+      # The artifacts are the point of the job, so they are kept: a run that
+      # went red for a reason further down the pipeline, or a reviewer who wants
+      # to open the AppImage, has them. `if-no-files-found: error` because a
+      # build that produced nothing and still uploaded successfully is the one
+      # outcome this job must not be able to report.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: console-linux
+          path: |
+            console/release/*.AppImage
+            console/release/*.deb
+          if-no-files-found: error
+          retention-days: 7
