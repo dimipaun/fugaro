@@ -1,6 +1,7 @@
 package creds
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -114,6 +115,55 @@ func TestResetReplacesTheBackoff(t *testing.T) {
 		if got := Exhaust(Mark{}, now, bad, set); got.State != StateBackedOff {
 			t.Fatalf("an exhaustion reporting %s left %q; want a backoff", bad, got.State)
 		}
+	}
+}
+
+// A 401 puts a credential out until the operator clears it (D139, C1.21), and
+// nothing a busy token reports afterwards takes it off: two calls on one shared
+// token can answer 401 and 429 in either order, and the 429 arriving second must
+// not put a refused token back in rotation after its reset.
+func TestBrokenSurvivesAUsageLimitAndAFailedProbe(t *testing.T) {
+	set := Settings{BackoffInitial: 15 * time.Minute, BackoffCap: time.Hour}
+	broken := Break(now.Add(-time.Hour))
+
+	for _, m := range []Mark{
+		Exhaust(broken, now, now.Add(time.Minute), set), // a reset was reported
+		Exhaust(broken, now, time.Time{}, set),          // no reset: a backoff
+		ProbeFailed(broken, now, set),
+	} {
+		if !m.Broken() || !m.Since.Equal(broken.Since) {
+			t.Fatalf("a transition on a broken mark left %+v; want the mark that was there", m)
+		}
+	}
+
+	// The same two transitions through the Selector, which is how C1.11 and
+	// C1.12 record them.
+	st := newFakeStore()
+	st.setMark(a1.Name, broken)
+	s := selector(st, set)
+	if _, err := s.Exhausted(ctx, a1.Name, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a1.Name); !m.Broken() {
+		t.Fatalf("a usage limit recorded through the service's write left %+v; want the 401 to stand", m)
+	}
+	if _, err := s.ProbeFailed(ctx, a1.Name); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a1.Name); !m.Broken() {
+		t.Fatalf("a failed probe recorded through the service's write left %+v; want the 401 to stand", m)
+	}
+	if _, _, err := s.Select(ctx, run, []Credential{a1}); !errors.Is(err, ErrNoCredential) {
+		t.Fatalf("the selection of a broken credential = %v; want the refusal that takes an operator", err)
+	}
+
+	// Cleared is the one transition that leaves it, and it is the operator's
+	// (C1.21) or a successful probe's (C1.12).
+	if _, err := s.Cleared(ctx, a1.Name); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a1.Name); !m.Available() {
+		t.Fatalf("the clear left %+v; want available", m)
 	}
 }
 

@@ -47,7 +47,9 @@
 package creds
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -306,17 +308,33 @@ type RTDBStore struct {
 	Attempts int
 }
 
-// Marks implements Store. A node that is not an object (a hand-edited mark, a
-// node a newer release wrote differently) fails the decode and is an error
-// rather than an empty set: a selection that cannot read the marks must fail
-// closed, never read "no marks" as "everything is available".
+// Marks implements Store. A node that is not an object, or an object carrying a
+// member this release does not model, fails the decode and is an error rather
+// than an empty set: a selection that cannot read the marks must fail closed,
+// never read "no marks" as "everything is available".
+//
+// The read goes through a raw message and decodeStrict rather than straight
+// into the map (as the previous shape did), and the difference is not
+// cosmetic: encoding/json ignores a key it does not know, so a mark node a
+// newer release wrote differently — {"status":"broken"} where this release
+// reads {"state":...} — would decode to the ZERO Mark, which is an available
+// and usable credential. That is the exact fail-open this method's contract
+// forbids, and DisallowUnknownFields is what refuses it. projectpolicy decodes
+// its own documents the same way, for the same reason.
 func (s *RTDBStore) Marks(ctx context.Context) (map[string]Mark, error) {
-	raw := map[string]Mark{}
+	raw := json.RawMessage{}
 	if _, _, err := s.db().GetETag(ctx, pathMarks, &raw); err != nil {
 		return nil, fmt.Errorf("creds: reading the marks: %w", err)
 	}
-	out := make(map[string]Mark, len(raw))
-	for k, m := range raw {
+	if len(raw) == 0 {
+		return map[string]Mark{}, nil
+	}
+	read, err := decodeStrict[map[string]Mark](raw)
+	if err != nil {
+		return nil, fmt.Errorf("creds: reading the marks: %w", err)
+	}
+	out := make(map[string]Mark, len(read))
+	for k, m := range read {
 		name, err := budget.Unkey(k)
 		if err != nil {
 			return nil, fmt.Errorf("creds: a mark node is keyed %q, which is not an escaped name: %w", k, err)
@@ -339,12 +357,19 @@ func (s *RTDBStore) UpdateMark(ctx context.Context, name string, f func(prev Mar
 // the reader fills both back into the value, so a caller gets the whole lease
 // and not just its half.
 func (s *RTDBStore) Leases(ctx context.Context) ([]Lease, error) {
-	raw := map[string]map[string]Lease{}
+	raw := json.RawMessage{}
 	if _, _, err := s.db().GetETag(ctx, pathLeases, &raw); err != nil {
 		return nil, fmt.Errorf("creds: reading the leases: %w", err)
 	}
-	out := make([]Lease, 0, len(raw))
-	for sk, runs := range raw {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	read, err := decodeStrict[map[string]map[string]Lease](raw)
+	if err != nil {
+		return nil, fmt.Errorf("creds: reading the leases: %w", err)
+	}
+	out := make([]Lease, 0, len(read))
+	for sk, runs := range read {
 		slug, err := budget.Unkey(sk)
 		if err != nil {
 			return nil, fmt.Errorf("creds: a lease node is keyed %q, which is not an escaped slug: %w", sk, err)
@@ -403,6 +428,22 @@ func (s *RTDBStore) RoundRobin(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("creds: advancing the round-robin counter: %w", err)
 	}
 	return used, nil
+}
+
+// decodeStrict decodes a node this package owns, refusing any member it does
+// not model. It exists because the client's own GetETag is a plain
+// json.Unmarshal, which silently drops a key it does not know — and a dropped
+// key is a zero field, which for a Mark means "available". A node written by a
+// newer release, or by hand, must stop the read instead (projectpolicy decodes
+// its documents with DisallowUnknownFields for the same reason).
+func decodeStrict[T any](raw json.RawMessage) (T, error) {
+	var v T
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&v); err != nil {
+		return v, fmt.Errorf("the node carries something this release does not model: %w", err)
+	}
+	return v, nil
 }
 
 func (s *RTDBStore) db() DB { return s.DB }

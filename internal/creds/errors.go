@@ -49,6 +49,20 @@ func (e *ExhaustedUntil) Error() string {
 // fallback: the caller answers it typed and issues no credential (D143).
 var ErrNoCredential = errors.New("creds: no candidate is usable and none becomes usable: every candidate is broken (clearing a broken mark is the operator's)")
 
+// ErrFallbackForbidden is what a selection answers when no shared subscription
+// credential can serve the call and the caller offered one that the
+// paid-fallback policy does not admit: the project's API key, under
+// `fallback: oauth-only` (the default, D152). Reaching for it would start
+// spending the project's money, so the call is refused instead.
+//
+// It is kept apart from ErrNoCredential deliberately, because the two tell an
+// operator different things: ErrNoCredential says a token was refused and needs
+// replacing or clearing (C1.21), and this says the platform declined to spend
+// and that only a written `fallback: auto` changes that. A subscription token
+// that has died is exactly the case where the difference matters most: the run
+// halts and says why, rather than quietly failing over to the paid key.
+var ErrFallbackForbidden = errors.New("creds: no shared subscription credential can serve this call, and the project's paid key is not spent without a written `fallback: auto` (D152)")
+
 // ErrNoCandidates is what a selection answers when it was offered nothing to
 // select from. It is a refusal rather than an empty answer, because an empty
 // candidate set is a caller's mistake (a policy read that found no account,

@@ -3,6 +3,7 @@ package creds
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -49,6 +50,12 @@ func (f *fakeStore) setLease(r Run, l Lease) {
 	defer f.mu.Unlock()
 	l.Slug, l.Run = r.Slug, r.ID
 	f.leases[key(r)] = l
+}
+
+func (f *fakeStore) mark(name string) Mark {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.marks[name]
 }
 
 func (f *fakeStore) lease(r Run) (Lease, bool) {
@@ -418,6 +425,134 @@ func TestWaitOrSwitchAtTheTierBoundary(t *testing.T) {
 	}
 }
 
+// D152 is a rule about spending, and it has to hold on every path out of
+// Select — not only where the wait-or-switch threshold is applied. A dead
+// subscription token is exactly the case it exists for: the platform refuses
+// and says why, rather than starting to spend the project's money on the API
+// key it was also offered.
+func TestOAuthOnlyNeverReachesThePaidTier(t *testing.T) {
+	st := newFakeStore()
+	st.setMark(a1.Name, Break(now))
+
+	// The zero Settings is oauth-only (state.go), and the paid key is on offer:
+	// the call is refused, and refused with the error that says a policy wrote
+	// this and only a policy changes it.
+	_, _, err := selector(st, Settings{}).Select(ctx, run, []Credential{a1, b1})
+	if !errors.Is(err, ErrFallbackForbidden) {
+		t.Fatalf("with every shared token broken under oauth-only the selection = %v; want ErrFallbackForbidden", err)
+	}
+
+	// The same state under `auto` takes the paid key — so what the assertion
+	// above pins is the policy and not the broken mark.
+	c, _, err := selector(st, Settings{Fallback: Auto}).Select(ctx, run, []Credential{a1, b1})
+	if err != nil || c.Name != b1.Name {
+		t.Fatalf("the same call under auto = %q, %v; want the paid %q", c.Name, err, b1.Name)
+	}
+
+	// Offered nothing but the paid key, oauth-only refuses rather than serving.
+	_, _, err = selector(st, Settings{}).Select(ctx, Run{Slug: run.Slug, ID: "r2"}, []Credential{b1})
+	if !errors.Is(err, ErrFallbackForbidden) {
+		t.Fatalf("a call only the paid key could serve = %v; want ErrFallbackForbidden", err)
+	}
+
+	// A run already placed on the paid key — by a policy that was `auto` — does
+	// not keep spending after the policy is turned back: its call moves to a
+	// shared credential (D152's rule is not weaker for being mid-run).
+	sticky := newFakeStore()
+	if err := sticky.SetCurrent(ctx, run, b1.Name); err != nil {
+		t.Fatal(err)
+	}
+	c, _, err = selector(sticky, Settings{}).Select(ctx, run, []Credential{a1, b1})
+	if err != nil || c.Name != a1.Name {
+		t.Fatalf("a run sticky on the paid key = %q, %v; want it moved to %q", c.Name, err, a1.Name)
+	}
+	if cur, _, err := sticky.Current(ctx, run); err != nil || cur != a1.Name {
+		t.Fatalf("the run's current credential = %q, %v; want %q", cur, err, a1.Name)
+	}
+}
+
+// The probe handoff (C1.12) is a field of the answer and nothing else carries
+// it: a caller that reads "usable in 0s" as "go" sends real work to a token
+// that answered 429. So a backed-off credential whose wait has passed answers
+// Probe=true with no sleep, and a run holding its slot does not turn that into
+// a sleep either — both facts are true and both are reported.
+func TestBackedOffMarkAsksForAProbeNotASleep(t *testing.T) {
+	st := newFakeStore()
+	st.setMark(a1.Name, Exhaust(Mark{}, now.Add(-16*time.Minute), time.Time{},
+		Settings{BackoffInitial: 15 * time.Minute, BackoffCap: time.Hour}))
+
+	_, wait, err := selector(st, Settings{}).Select(ctx, run, []Credential{a1})
+	var eu *ExhaustedUntil
+	if !errors.As(err, &eu) {
+		t.Fatalf("the selection = %v; want an ExhaustedUntil answer", err)
+	}
+	if !eu.Probe {
+		t.Fatal("a backed-off credential whose wait has passed was not handed off for a probe (C1.12)")
+	}
+	if wait != 0 {
+		t.Fatalf("the wait = %s; want 0: the wait has passed, and a caller given a negative or positive sleep here probes nothing", wait)
+	}
+
+	// The same credential, now held by another run: the probe is still the
+	// instruction, and the wait is when it could at best be used.
+	st.setLease(Run{Slug: run.Slug, ID: "other"}, Lease{Credential: a1.Name, Until: now.Add(30 * time.Minute)})
+	_, wait, err = selector(st, Settings{}).Select(ctx, run, []Credential{a1})
+	if !errors.As(err, &eu) || !eu.Probe || wait != 30*time.Minute {
+		t.Fatalf("a backed-off credential held by another run = %s, probe=%v; want the probe and the lease's 30m", wait, eu.Probe)
+	}
+}
+
+// The answer carries the EARLIEST time a candidate becomes usable — the number
+// C1.10 puts on the wire and D152's threshold compares — over both reasons a
+// candidate is not usable: its mark, and the leases holding it.
+func TestWaitAnswersTheEarliestOfTheCandidates(t *testing.T) {
+	st := newFakeStore()
+	st.setMark(a1.Name, Mark{State: StateExhausted, Since: now, Until: now.Add(40 * time.Minute)})
+	st.setMark(a2.Name, Mark{State: StateExhausted, Since: now, Until: now.Add(10 * time.Minute)})
+
+	// The window control off, so what each credential waits for is the reset it
+	// reported and nothing else: this test is about which of the two times is
+	// answered, not about the window.
+	set := noWindow()
+	set.WaitThreshold = time.Hour
+	_, wait, err := selector(st, set).Select(ctx, run, []Credential{a1, a2})
+	var eu *ExhaustedUntil
+	if !errors.As(err, &eu) {
+		t.Fatalf("the selection = %v; want an ExhaustedUntil answer", err)
+	}
+	if want := now.Add(10 * time.Minute); wait != 10*time.Minute || !eu.At.Equal(want) {
+		t.Fatalf("the wait = %s until %s; want 10m until %s — the earliest reset, not the latest", wait, eu.At, want)
+	}
+
+	// Two runs hold one credential: the wait is the earlier of the two expiries.
+	held := newFakeStore()
+	held.setLease(Run{Slug: run.Slug, ID: "other-1"}, Lease{Credential: a1.Name, Until: now.Add(30 * time.Minute)})
+	held.setLease(Run{Slug: run.Slug, ID: "other-2"}, Lease{Credential: a1.Name, Until: now.Add(5 * time.Minute)})
+	_, wait, err = selector(held, Settings{}).Select(ctx, run, []Credential{a1})
+	if !errors.As(err, &eu) || wait != 5*time.Minute || !eu.At.Equal(now.Add(5*time.Minute)) {
+		t.Fatalf("the wait for a credential two runs hold = %s until %s; want the earlier expiry, 5m", wait, eu.At)
+	}
+
+	// The comparison itself, so a flipped one is caught here and not only
+	// through a selection.
+	leases := []Lease{
+		{Slug: run.Slug, Run: "other-1", Credential: a1.Name, Until: now.Add(30 * time.Minute)},
+		{Slug: run.Slug, Run: "other-2", Credential: a1.Name, Until: now.Add(5 * time.Minute)},
+	}
+	if at, ok := EarliestExpiry(leases, a1.Name, now, run); !ok || !at.Equal(now.Add(5*time.Minute)) {
+		t.Fatalf("EarliestExpiry = %s, %v; want the earlier of the two expiries", at, ok)
+	}
+	// A lapsed lease is nobody's hold, and one run's own expired hold is not a
+	// wait either.
+	lapsed := append(leases, Lease{Slug: run.Slug, Run: "gone", Credential: a1.Name, Until: now.Add(-time.Minute)})
+	if at, ok := EarliestExpiry(lapsed, a1.Name, now, run); !ok || !at.Equal(now.Add(5*time.Minute)) {
+		t.Fatalf("EarliestExpiry with a lapsed lease = %s, %v; want 5m", at, ok)
+	}
+	if _, ok := EarliestExpiry(leases, a1.Name, now, Run{Slug: run.Slug, ID: "other-1"}); !ok {
+		t.Fatal("EarliestExpiry found no hold for a run that is not the only holder")
+	}
+}
+
 // A run's own hold on a credential must never be the reason it cannot stay on
 // it: the sticky path of the run that holds the last slot under the cap.
 func TestOwnLeaseNeverBlocksTheRunThatHoldsIt(t *testing.T) {
@@ -432,5 +567,120 @@ func TestOwnLeaseNeverBlocksTheRunThatHoldsIt(t *testing.T) {
 	c, _, err = s.Select(ctx, run, []Credential{a1})
 	if err != nil || c.Name != a1.Name {
 		t.Fatalf("the second selection = %q, %v; want the run to keep the credential it holds the last slot of", c.Name, err)
+	}
+}
+
+// The Selector's write surface is the API C1.11 and C1.12 drive: a usage limit,
+// a failed probe, a 401 and a clear, each recorded through the store's
+// compare-and-set, each computed from the mark the store holds NOW rather than
+// from one a caller read earlier.
+func TestSelectorWritesTheMarksItOwns(t *testing.T) {
+	set := Settings{BackoffInitial: 15 * time.Minute, BackoffCap: time.Hour}
+	st := newFakeStore()
+	s := selector(st, set)
+
+	// A usage limit carrying the reset the response reported.
+	if _, err := s.Exhausted(ctx, a1.Name, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a1.Name); m.State != StateExhausted || !m.Until.Equal(now.Add(time.Hour)) || !m.Since.Equal(now) {
+		t.Fatalf("the mark a usage limit left = %+v", m)
+	}
+
+	// A failed probe doubles the wait and holds the exhaustion's date.
+	if _, err := s.ProbeFailed(ctx, a1.Name); err != nil {
+		t.Fatal(err)
+	}
+	m := st.mark(a1.Name)
+	if m.State != StateBackedOff || m.Backoff != 15*time.Minute {
+		t.Fatalf("the mark a failed probe left = %+v; want a 15m backoff", m)
+	}
+	if _, err := s.ProbeFailed(ctx, a1.Name); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a1.Name); m.Backoff != 30*time.Minute {
+		t.Fatalf("the second failed probe left a wait of %s; want 30m (doubling from the mark, not restarting)", m.Backoff)
+	}
+
+	// A clear is the same write a successful probe makes, and it forgets the
+	// wait in force.
+	if _, err := s.Cleared(ctx, a1.Name); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a1.Name); !m.Available() || m.Backoff != 0 {
+		t.Fatalf("the mark a clear left = %+v; want available, remembering nothing", m)
+	}
+
+	// A 401, and then the two transitions a busy token can report while the 401
+	// is on the credential: neither takes it off (C1.21).
+	if _, err := s.Broken(ctx, a1.Name); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a1.Name); !m.Broken() || !m.Since.Equal(now) {
+		t.Fatalf("the mark a 401 left = %+v", m)
+	}
+	if _, err := s.Exhausted(ctx, a1.Name, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ProbeFailed(ctx, a1.Name); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a1.Name); !m.Broken() {
+		t.Fatalf("a usage limit and a failed probe after a 401 left %+v; want the broken mark untouched", m)
+	}
+	if _, _, err := s.Select(ctx, run, []Credential{a1}); !errors.Is(err, ErrNoCredential) {
+		t.Fatalf("the selection of the credential = %v; want the refusal that needs an operator", err)
+	}
+	if _, err := s.Cleared(ctx, a1.Name); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a1.Name); !m.Available() {
+		t.Fatalf("the operator's clear left %+v; want available", m)
+	}
+
+	// Mark and Record are handed what the store holds at the write, and Record
+	// is handed the settings in force beside it: a closure that computed from a
+	// value the caller read earlier is how one call's mark erases another's.
+	st.setMark(a2.Name, Mark{State: StateExhausted, Since: now.Add(-time.Hour), Until: now.Add(-time.Minute)})
+	if _, err := s.Mark(ctx, a2.Name, func(prev Mark, found bool) (Mark, error) {
+		if !found {
+			return Mark{}, errors.New("the closure was handed a mark that was not found")
+		}
+		if !prev.Since.Equal(now.Add(-time.Hour)) {
+			return Mark{}, fmt.Errorf("the closure was handed %s; want the mark the store holds", prev.Since)
+		}
+		return Cleared(), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a2.Name); !m.Available() {
+		t.Fatalf("Mark left %+v", m)
+	}
+	if _, err := s.Record(ctx, a2.Name, func(prev Mark, _ bool, in Settings) (Mark, error) {
+		if in.BackoffCap != time.Hour || in.Window != DefaultWindow || !in.stops() {
+			return Mark{}, fmt.Errorf("the closure was handed %+v; want the settings the selector enforces", in)
+		}
+		return Exhaust(prev, now, time.Time{}, in), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a2.Name); m.State != StateBackedOff || m.Backoff != 15*time.Minute {
+		t.Fatalf("Record left %+v", m)
+	}
+
+	// The guards: a nameless credential and an absent change are refused before
+	// the store is touched.
+	writes := st.updates
+	if _, err := s.Mark(ctx, "", func(Mark, bool) (Mark, error) { return Cleared(), nil }); err == nil {
+		t.Fatal("a mark was written for a credential with no name")
+	}
+	if _, err := s.Mark(ctx, a1.Name, nil); err == nil {
+		t.Fatal("a mark was written with no change to make")
+	}
+	if _, err := s.Exhausted(ctx, "", now); err == nil {
+		t.Fatal("a usage limit was recorded for a credential with no name")
+	}
+	if st.updates != writes {
+		t.Fatalf("the store was written to %d times by refused calls", st.updates-writes)
 	}
 }

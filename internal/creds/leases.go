@@ -21,6 +21,43 @@ import "time"
 // one behind, and no release call is needed for the switch or for the run's
 // end. The credential is a field of the lease, so the runs holding a given
 // credential are one scan of the subtree.
+//
+// # The cap is best effort, and here is the bound
+//
+// The cap is read-then-write with no serialization across runs: a selection
+// reads the lease subtree, counts the live holds, and writes its OWN run's
+// lease — the compare-and-set is on that node, and RTDB has no transaction
+// spanning the credential's other holders. So two instances selecting two
+// different runs against one credential at the same instant can both read the
+// same count, both pass Free, and both take a slot. The cap can therefore be
+// exceeded by up to the number of instances selecting at once, and it is
+// exceeded for at most one lease TTL: the over-held slots lapse with the leases
+// that made them, because a live run refreshes only its own.
+//
+// That is a deliberate trade and not an oversight. Counting exactly would take
+// a per-credential counter node updated conditionally — a second contended
+// write on every selection, in a path whose whole point is that a slot is never
+// stuck by an instance that died. What the cap is for is D142's owner headroom:
+// keeping N runs from hammering one donor's subscription. Best effort gets
+// that; exactness would buy a bound of a handful of concurrent selections at
+// the cost of a hot node. C1.11 is where the policy's number meets this
+// behaviour; if an exact cap is ever required, it is a counter node with the
+// same ETag discipline as creds/roundrobin, and this paragraph is what says so.
+//
+// # Nothing prunes a lapsed lease
+//
+// Lapsed leases are ignored by Live and by Holds, so they hold nothing — but
+// they are not deleted either, and nothing in this release deletes them. Two
+// nodes per run that ever made a call therefore accumulate for the life of the
+// project (creds/leases/<slug>/<run> and creds/current/<slug>/<run>), and every
+// selection reads the whole lease subtree, so the cost of a selection grows
+// with the number of runs the project has ever had. No task in the plan covers
+// sweeping them, so this paragraph is the record: a later task owes either a
+// delete-on-completion (the service knows when a run ends, C1.10) or an RTDB
+// TTL policy on creds/leases, and until then the growth is unbounded and the
+// scan is paid on every call. The node is small (a name and a timestamp) and a
+// run is one node, so the failure arrives with the project's history rather
+// than with a day's traffic — but it arrives.
 type Lease struct {
 	// Slug and Run are the run the lease belongs to. They are carried by the
 	// node's path, not by its value (json:"-"), and a reader fills them in.

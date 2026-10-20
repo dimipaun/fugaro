@@ -347,6 +347,38 @@ func TestStoreRefusesAMarkItCannotRead(t *testing.T) {
 	}
 }
 
+// A node carrying a member this release does not model stops the read. The
+// alternative is the worst failure this package has: encoding/json drops a key
+// it does not know, so {"status":"broken"} — a mark a newer release wrote, or a
+// hand-edit — used to decode to the ZERO Mark, which is available and usable.
+// A broken credential read as an available one is fail-open, and the contract
+// on Marks says the opposite.
+func TestStoreRefusesAMarkItDoesNotModel(t *testing.T) {
+	db := newFakeDB()
+	db.nodes[pathMarks] = json.RawMessage(`{"shared-1":{"status":"broken","until":"2026-10-20T13:00:00Z"}}`)
+	if _, err := (&RTDBStore{DB: db}).Marks(ctx); err == nil {
+		t.Fatal("a mark node with a member this release does not model read as an available credential")
+	}
+
+	db2 := newFakeDB()
+	db2.nodes[pathLeases] = json.RawMessage(`{"acme":{"r1":{"credential":"shared-1","expires":"2026-10-20T13:00:00Z"}}}`)
+	if _, err := (&RTDBStore{DB: db2}).Leases(ctx); err == nil {
+		t.Fatal("a lease node with a member this release does not model read as a hold")
+	}
+
+	// Strictness is about the members, not a blanket refusal: a mark this
+	// release wrote reads back whole, Backoff included.
+	db3 := newFakeDB()
+	db3.put(PathMark(a1.Name), Mark{State: StateBackedOff, Until: now.Add(time.Hour), Since: now, Backoff: time.Minute})
+	marks, err := (&RTDBStore{DB: db3}).Marks(ctx)
+	if err != nil {
+		t.Fatalf("a mark this release wrote did not read back: %v", err)
+	}
+	if m := marks[a1.Name]; m.State != StateBackedOff || m.Backoff != time.Minute || !m.Since.Equal(now) {
+		t.Fatalf("the mark read back as %+v", m)
+	}
+}
+
 // The round-robin counter hands out the value it consumed and leaves the next
 // one behind, and a lost race hands out the value that was actually there: two
 // instances breaking a tie at once must get two different values.

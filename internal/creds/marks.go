@@ -132,6 +132,13 @@ func (m Mark) Ready(now time.Time, set Settings) (time.Time, bool) {
 // saying when it comes back — but Since moves, because the credential *was*
 // exhausted again.
 func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
+	if prev.Broken() {
+		// A credential that answered 401 is out until the operator clears it
+		// (C1.21), and a usage limit is not a clear: two calls on one shared
+		// token can answer 401 and 429 in either order, and the 429 arriving
+		// second must not put a refused token back in rotation.
+		return prev
+	}
 	if !reset.IsZero() && reset.After(now) {
 		return Mark{State: StateExhausted, Until: reset, Since: now}
 	}
@@ -145,6 +152,13 @@ func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 // one it was set for — so a credential that has been backed off for hours is
 // still "least recently exhausted" after the one exhausted a minute ago.
 func ProbeFailed(prev Mark, now time.Time, set Settings) Mark {
+	if prev.Broken() {
+		// For the same reason Exhaust refuses a broken mark: a probe is never
+		// run on a broken credential (NeedsProbe is false for one), so this is
+		// the racing case — a probe of a token that answered 401 in between —
+		// and it must not be the write that takes the 401 off.
+		return prev
+	}
 	set = set.withDefaults()
 	wait := set.BackoffInitial
 	if prev.Backoff > 0 {
@@ -167,5 +181,8 @@ func Cleared() Mark { return Mark{State: StateAvailable} }
 
 // Break is the mark a 401 leaves (D139). It carries the time it was noticed
 // and nothing else: there is no reset to wait for, and the credential is out
-// until an operator replaces the token and clears the mark (C1.21).
+// until an operator replaces the token and clears the mark (C1.21). Cleared is
+// the only transition that leaves it: a usage limit and a failed probe are
+// refused on a broken mark rather than overwriting it, so nothing a busy token
+// reports can put a refused one back in rotation.
 func Break(now time.Time) Mark { return Mark{State: StateBroken, Since: now} }

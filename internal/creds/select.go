@@ -67,8 +67,13 @@ type Selector struct {
 //     becomes usable at `wait`: answer the typed refusal (C1.10) and let the
 //     runner wait (C1.17), or, when Probe is set, probe first (C1.12).
 //   - ("", 0, ErrNoCredential) — nothing can be used and nothing becomes usable:
-//     every candidate is broken and clearing one is the operator's (C1.21).
-//     The caller refuses; it never falls back to something else (D143).
+//     every admitted candidate is broken and clearing one is the operator's
+//     (C1.21). The caller refuses; it never falls back to something else
+//     (D143).
+//   - ("", 0, ErrFallbackForbidden) — the credentials that could serve the call
+//     are all of a tier this policy does not admit (tier B under `oauth-only`,
+//     D152). A refusal, and a different one from the above, because the fix is
+//     a policy and not a token.
 //   - another error — the state could not be read or written. Fail closed: an
 //     unreadable state is not an empty one.
 //
@@ -77,7 +82,10 @@ type Selector struct {
 // Nothing here reads an admission (that is C1.11's, from what C1.2 publishes)
 // and nothing here invents a credential the caller did not offer. The order
 // within a tier does not matter; the tier does, and a candidate whose tier is
-// not one this release selects is refused rather than skipped.
+// not one this release selects is refused rather than skipped. A tier B
+// candidate offered under `oauth-only` is not refused — it carries no mistake —
+// but it is never selected, and a call that nothing else can serve is answered
+// with ErrFallbackForbidden.
 func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential) (Credential, time.Duration, error) {
 	set := s.Settings.withDefaults()
 	now := s.now()
@@ -107,7 +115,7 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 		return Credential{}, 0, err
 	}
 	if found {
-		if c, ok := lookup(cs, cur); ok && free(c, marks, leases, run, now, set) {
+		if c, ok := lookup(cs, cur); ok && reachable(c, set) && free(c, marks, leases, run, now, set) {
 			if err := s.take(ctx, run, c, now, set); err != nil {
 				return Credential{}, 0, err
 			}
@@ -115,8 +123,12 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 		}
 	}
 
-	// The cascade, cheapest tier first.
-	for _, tier := range []Tier{TierA, TierB} {
+	// The cascade, cheapest tier first, and only the tiers this policy admits
+	// (tiers): under oauth-only the paid tier is not in the cascade at all, so
+	// no path below — not the cascade, not the fallback at the end — can return
+	// a tier B credential, and a call that only the paid key could serve is
+	// refused with ErrFallbackForbidden rather than served (D152).
+	for _, tier := range set.tiers() {
 		group := groupOf(cs, tier)
 		if len(group) == 0 {
 			continue
@@ -139,30 +151,75 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 		}
 		// Nothing in this tier can be used now. Whether the run waits or moves
 		// to the next tier is D152's wait-or-switch rule, and it is here because
-		// this is where the wait is known: under oauth-only there is nothing to
-		// fail over to, so the run waits for the earliest reset whatever the
-		// threshold says; under auto it waits while the wait is inside the
-		// threshold and fails over beyond it.
+		// this is where the wait is known: it waits while the wait is inside the
+		// threshold and moves on beyond it. Under oauth-only there is no next
+		// tier in this loop — and so nothing to switch to — which is the whole
+		// of the threshold's being "ignored" under that policy: the wait is
+		// returned whatever its length.
 		at, probe, ok := earliest(group, marks, leases, run, now, set)
 		if !ok {
 			// Every credential of this tier is broken: there is no wait to
 			// answer with, and the next tier may still serve the call.
 			continue
 		}
-		if wait := waitUntil(now, at); !set.Fallback.Spends() || wait <= set.WaitThreshold {
+		if wait := waitUntil(now, at); wait <= set.WaitThreshold {
 			return Credential{}, wait, &ExhaustedUntil{At: at, Wait: wait, Probe: probe}
 		}
 	}
 
-	// Neither tier could serve the call and neither answered with a wait inside
-	// the threshold. A credential is still coming back somewhere — the run waits
-	// for the earliest one rather than fail: D143's halt is for a service that
-	// cannot be reached, not for accounts that are exhausted.
-	if at, probe, ok := earliest(cs, marks, leases, run, now, set); ok {
+	// Neither admitted tier could serve the call and neither answered with a
+	// wait inside the threshold. A credential of an admitted tier is still
+	// coming back somewhere — the run waits for the earliest one rather than
+	// fail: D143's halt is for a service that cannot be reached, not for
+	// accounts that are exhausted.
+	// A wait among the credentials this policy admits is still a wait, whatever
+	// the threshold said: the threshold decides whether to move on to another
+	// tier, and there is no other tier left to move to.
+	allowed := reachableOnly(cs, set)
+	if at, probe, ok := earliest(allowed, marks, leases, run, now, set); ok {
 		wait := waitUntil(now, at)
 		return Credential{}, wait, &ExhaustedUntil{At: at, Wait: wait, Probe: probe}
 	}
+	if len(allowed) < len(cs) {
+		// Nothing this policy admits can serve the call — every one of them is
+		// broken, or there are none — and the caller offered a tier it does not
+		// admit. The run is refused with the error that names the policy and
+		// the word that would change it (D152), rather than with the one that
+		// says a token needs an operator: a subscription token that has died is
+		// exactly when the two answers differ.
+		return Credential{}, 0, ErrFallbackForbidden
+	}
 	return Credential{}, 0, ErrNoCredential
+}
+
+// tiers is the cascade's order under this policy: tier A always, tier B only
+// when the policy spends. It is the one place the paid tier is admitted, so
+// "oauth-only never spends" is a property of this function rather than of a
+// check below it — the earlier shape of this code gated only the wait-vs-switch
+// decision and fell through to the paid key whenever every shared token was
+// broken, which is exactly when the platform must refuse (D152).
+func (s Settings) tiers() []Tier {
+	if s.Fallback.Spends() {
+		return []Tier{TierA, TierB}
+	}
+	return []Tier{TierA}
+}
+
+// reachable reports whether a credential is of a tier this policy admits. It is
+// what the sticky path is checked against as well: a run placed on the paid key
+// while the policy was `auto` does not keep spending after the operator turns
+// the policy back to `oauth-only` — its call waits for a shared credential, or
+// is refused, and the run is moved when one is taken.
+func reachable(c Credential, set Settings) bool {
+	return c.Tier == TierA || set.Fallback.Spends()
+}
+
+// reachableOnly is the candidates this policy admits, in the order offered.
+func reachableOnly(cs []Credential, set Settings) []Credential {
+	if set.Fallback.Spends() {
+		return cs
+	}
+	return groupOf(cs, TierA)
 }
 
 // Mark applies a state change to one credential's mark, under the store's
@@ -323,16 +380,22 @@ func earliest(cs []Credential, marks map[string]Mark, leases []Lease, run Run, n
 		if !ok {
 			continue
 		}
+		// Probe is what the MARK needs, and it is decided before a lease has a
+		// chance to push the time later: a backed-off credential whose wait has
+		// passed needs probing whether or not another run is holding its slot,
+		// and a caller told to sleep instead would never probe it.
+		needs := !at.After(now) && m.NeedsProbe(now)
 		if !Free(leases, c.Name, now, run, set.concurrency()) {
 			// The cap is the other reason a credential is not usable, and it
 			// lifts when the holding lease lapses. It can only push the time
 			// later, never earlier: a credential both exhausted and held waits
-			// for the later of the two.
+			// for the later of the two. So with both in play the answer carries
+			// both facts — probe it, and it could be used at best at `at` — and
+			// neither is a lie.
 			if exp, ok := EarliestExpiry(leases, c.Name, now, run); ok && exp.After(at) {
 				at = exp
 			}
 		}
-		needs := !at.After(now) && m.NeedsProbe(now)
 		if !found || at.Before(best) {
 			best, probe, found = at, needs, true
 		}
