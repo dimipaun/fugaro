@@ -987,6 +987,22 @@ compatibility surface — `internal/clidoc` generates `website/content/cli-refer
 pinned by `internal/clidoc/cliref_test.go`'s `TestCliReferenceIsCurrent` — so the
 name should be settled before the flag ships, not after.
 
+**O7 — This folder's D-block is local, and the register's own rule is the reason
+to say so out loud.** `docs/coordinator/README.md` §"The numbers this work holds"
+is the one table in this repository that allocates D-numbers: **D1–D192 is the
+owner's allocation, block by block**, the highest number written anywhere in
+`docs/` is **D192**, and **D193 onward is free**. This folder numbers its
+decisions **D1–D19** anyway, which collides numerically with
+`docs/setup-wizard/`'s D1–D12 and `docs/windows-cli/`'s D1–D16 —
+the same choice the newer of those two made and recorded in its own index
+("**Recommendation: keep D1–D16 local and distinct by folder, or move this work
+to D193 onward; renumbering is mechanical and changes nothing but the numbers**").
+The recommendation here is the same: keep D1–D19 **folder-local**, distinct by
+folder, or move this work to **D193 onward** if the owner prefers one sequence.
+Either way the register line should be updated in the same commit that settles
+it, because a reader who greps for `D7` gets this folder's D7 and
+`docs/windows-cli/`'s D7 and has no way to tell them apart except the path.
+
 ## 9. UNVERIFIED
 
 Claims that this reconciliation could not check from the tree, with what would be
