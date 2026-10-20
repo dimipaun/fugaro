@@ -50,6 +50,11 @@ func newReaperRig(t *testing.T, withBatch bool) *reaperRig {
 	t.Cleanup(func() { reaperComputeRoot = old })
 
 	dir := t.TempDir()
+	// Selection must see only this rig's config: the repository this test
+	// runs in is itself a fugaro checkout (fugaro.yaml names project fugaro),
+	// so without an isolated projects directory a developer's own config
+	// could answer for it.
+	isolateProjects(t, dir)
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: my-runs\n" +
 		"endpoints: { batch: " + rig.bf.URL + "/, no_auth: true }\n"
 	if withBatch {
@@ -122,6 +127,27 @@ func (rig *reaperRig) addLeakedVM(t *testing.T, runID string, age time.Duration)
 	name := "vm-" + runID
 	rig.cf.AddInstanceCreated("us-east5-a", name, labels, time.Now().Add(-age))
 	return "us-east5-a/" + name
+}
+
+// newReaperEnvRig is the rig of the reaper's own Cloud Run job: no project
+// config file, no FUGARO_CONFIG, no FUGARO_PROJECT -- nothing but the two
+// variables Terraform sets on the job (deploy/terraform/gcp/modules/compute/
+// reaper.tf, from the module's project and region) and the fakes its two
+// passes read.
+func newReaperEnvRig(t *testing.T) *reaperRig {
+	t.Helper()
+	rig := &reaperRig{bf: gcpfake.NewBatch(t), cf: gcpfake.NewCompute(t)}
+	rig.bf.Project, rig.bf.Region = "proj-1234", "us-east5"
+	rig.cf.Project = "proj-1234"
+	rig.cf.Zones = []string{"us-east5-a"}
+	oldCompute, oldWiring := reaperComputeRoot, reaperEnvTest
+	reaperComputeRoot = rig.cf.URL + "/compute/v1/"
+	reaperEnvTest = &reaperEnvWiring{batch: rig.bf.URL + "/", noAuth: true}
+	t.Cleanup(func() { reaperComputeRoot, reaperEnvTest = oldCompute, oldWiring })
+	isolateProjects(t, t.TempDir())
+	t.Setenv(envGCPProject, "proj-1234")
+	t.Setenv(envRegion, "us-east5")
+	return rig
 }
 
 // The ages the rig back-dates by, read off the deadlines the command's own
@@ -322,6 +348,175 @@ func TestReaperOptionsFromTheProjectConfig(t *testing.T) {
 	}
 	if _, err := batch.NewReaper(context.Background(), o); err != nil {
 		t.Errorf("the derived options are not a pass at all: %v", err)
+	}
+}
+
+// TestReaperCommandFromTheReaperJobsOwnEnvironment: the pass the Cloud Run job
+// runs. The job has no config file, no checkout and no project name -- only
+// FUGARO_GCP_PROJECT and FUGARO_REGION, which reaper.tf sets on it -- so the
+// environment is the pass's configuration, and the whole pass runs from it:
+// the report, the deletions, and (with --dry-run, which an operator would only
+// add by hand) nothing deleted.
+func TestReaperCommandFromTheReaperJobsOwnEnvironment(t *testing.T) {
+	for _, dry := range []bool{true, false} {
+		t.Run(fmt.Sprintf("dry-run=%v", dry), func(t *testing.T) {
+			rig := newReaperEnvRig(t)
+			job := rig.addQueuedJob(t, theRun, reaperQueueDeadline()+time.Hour)
+			vm := rig.addLeakedVM(t, otherRun, reaperMaxAge()+time.Hour)
+			args := []string{"reaper"}
+			if dry {
+				args = append(args, "--dry-run")
+			}
+			out, _, err := execute(t, args...)
+			if err != nil {
+				t.Fatalf("fugaro reaper from the job's environment: %v", err)
+			}
+			loc := "projects/proj-1234/locations/us-east5"
+			if !strings.Contains(out, loc+"\n") && !strings.Contains(out, loc+":") {
+				t.Errorf("the report %q does not name the project and region the environment gives", out)
+			}
+			verb := "deleted"
+			if dry {
+				verb = "would delete"
+			}
+			for _, want := range []string{
+				verb + " job " + loc + "/jobs/" + job + " (",
+				verb + " VM " + vm + " (",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("the report %q has no line with %q", out, want)
+				}
+			}
+			if dry {
+				if len(rig.bf.Deletes()) != 0 || len(rig.cf.Deletes()) != 0 {
+					t.Fatalf("a dry run deleted %v and %v", rig.bf.Deletes(), rig.cf.Deletes())
+				}
+				return
+			}
+			if got := rig.bf.Deletes(); len(got) != 1 || got[0] != job {
+				t.Errorf("jobs deleted = %v, want [%s]", got, job)
+			}
+			if got := rig.cf.Deletes(); len(got) != 1 || got[0] != vm {
+				t.Errorf("VMs deleted = %v, want [%s]", got, vm)
+			}
+		})
+	}
+}
+
+// TestReaperEnvOptions: the derivation the environment path rests on, read
+// without a command tree. Its two properties are what the job's own
+// environment can and cannot say: the project and the region (Terraform sets
+// both), and no task timeout at all -- so the bound is a run's own ceiling,
+// which is the deadline an installation with no batch.task_timeout derives
+// anyway.
+func TestReaperEnvOptions(t *testing.T) {
+	env := map[string]string{envGCPProject: "proj-1234", envRegion: "us-east5"}
+	getenv := func(k string) string { return env[k] }
+	o, err := reaperEnvOptions(getenv, true)
+	if err != nil {
+		t.Fatalf("reaperEnvOptions: %v", err)
+	}
+	if o.GCPProject != "proj-1234" || o.Region != "us-east5" {
+		t.Errorf("project/region = %s/%s, want the environment's proj-1234/us-east5", o.GCPProject, o.Region)
+	}
+	if !o.DryRun {
+		t.Error("--dry-run is not passed to the reaper")
+	}
+	// With no test wiring the pass reaches the APIs themselves: "" is the
+	// API's own address, and the account the job runs as is its credential.
+	if o.Endpoints.Batch != "" || o.Endpoints.NoAuth {
+		t.Errorf("endpoints = %+v, want the real APIs and the account's own credentials", o.Endpoints)
+	}
+	if o.Endpoints.Compute != reaperComputeRoot {
+		t.Errorf("the Compute endpoint = %q, want the package's root %q", o.Endpoints.Compute, reaperComputeRoot)
+	}
+	longest, err := o.Timeouts.LongestTaskTimeout()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if longest != backend.MaxRunTime {
+		t.Errorf("LongestTaskTimeout = %v, want backend.MaxRunTime (%v): the environment carries no task timeout", longest, backend.MaxRunTime)
+	}
+	if per, err := o.Timeouts.TaskTimeout("acme-app", "web"); err != nil || per != backend.MaxRunTime {
+		t.Errorf("TaskTimeout = %v, %v, want backend.MaxRunTime", per, err)
+	}
+	// The wiring a test may set is passed through as it is -- a pass reads the
+	// fakes' addresses and sends no credentials -- and the production value is
+	// what the assertions above read.
+	old := reaperEnvTest
+	reaperEnvTest = &reaperEnvWiring{batch: "https://batch.example.com/", noAuth: true}
+	t.Cleanup(func() { reaperEnvTest = old })
+	wired, err := reaperEnvOptions(getenv, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wired.Endpoints.Batch != "https://batch.example.com/" || !wired.Endpoints.NoAuth {
+		t.Errorf("endpoints = %+v, want the test wiring's own", wired.Endpoints)
+	}
+	if wired.DryRun {
+		t.Error("dry-run is set on a pass that did not ask for it")
+	}
+	if _, err := batch.NewReaper(context.Background(), wired); err != nil {
+		t.Errorf("the derived options are not a pass at all: %v", err)
+	}
+	// Half an environment is not one: the region alone names nothing to sweep.
+	for _, missing := range []string{envGCPProject, envRegion} {
+		part := map[string]string{}
+		for k, v := range env {
+			part[k] = v
+		}
+		delete(part, missing)
+		if _, err := reaperEnvOptions(func(k string) string { return part[k] }, false); err == nil {
+			t.Errorf("reaperEnvOptions accepted an environment with no %s", missing)
+		}
+	}
+}
+
+// TestReaperRefusesWhereNothingIsConfigured: the environment path is the
+// job's, and it is taken only where nothing named a config. A config the
+// operator *did* name -- --config here, which selects nothing, the file being
+// absent -- is never quietly passed over for the environment, however complete
+// the environment is: the pass would otherwise sweep a project nobody asked
+// about, and say nothing about the config that failed.
+func TestReaperRefusesWhereNothingIsConfigured(t *testing.T) {
+	// A job and a VM a pass would delete, so a command that got past the
+	// refusal is caught sweeping rather than passing quietly.
+	rig := newReaperEnvRig(t)
+	rig.addQueuedJob(t, theRun, reaperQueueDeadline()+time.Hour)
+	rig.addLeakedVM(t, otherRun, reaperMaxAge()+time.Hour)
+
+	missing := filepath.Join(t.TempDir(), "absent.yaml")
+	out, _, err := execute(t, "reaper", "--config", missing)
+	if err == nil {
+		t.Fatal("fugaro reaper ran with --config naming a file that does not exist")
+	}
+	if code := ExitCode(err); code != ExitUserError {
+		t.Errorf("exit code = %d, want %d (a user error: the config is what is wrong)", code, ExitUserError)
+	}
+	if out != "" {
+		t.Errorf("stdout = %q, want nothing: the pass never ran", out)
+	}
+	if len(rig.bf.Deletes()) != 0 || len(rig.cf.Deletes()) != 0 {
+		t.Errorf("the refused command deleted %v and %v", rig.bf.Deletes(), rig.cf.Deletes())
+	}
+	// And the same command with nothing named and no environment to fall back
+	// on: the selection's own refusal, which is the one that says what to do.
+	rig2 := newReaperEnvRig(t)
+	rig2.addQueuedJob(t, theRun, reaperQueueDeadline()+time.Hour)
+	t.Setenv(envGCPProject, "")
+	t.Setenv(envRegion, "")
+	out, _, err = execute(t, "reaper")
+	if err == nil {
+		t.Fatal("fugaro reaper ran with no config and no environment")
+	}
+	if !strings.Contains(err.Error(), "no project config") {
+		t.Errorf("refusal = %q, want the selection's own (no project config)", err)
+	}
+	if out != "" {
+		t.Errorf("stdout = %q, want nothing: the pass never ran", out)
+	}
+	if len(rig2.bf.Deletes()) != 0 || len(rig2.cf.Deletes()) != 0 {
+		t.Errorf("the refused command deleted %v and %v", rig2.bf.Deletes(), rig2.cf.Deletes())
 	}
 }
 
