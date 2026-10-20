@@ -219,6 +219,15 @@ function installPathCommands(id) {
   return [...installPathBlock(id).matchAll(/^ {8}(.*)$/gm)].map((m) => m[1].trim()).filter(Boolean)
 }
 
+/** An install path's note, with a folded scalar's line breaks read as the spaces they are. */
+function installPathNote(id) {
+  const folded = /^ {4}note: >-\n((?: {6}.*\n?)+)/m.exec(installPathBlock(id))
+  const plain = /^ {4}note: (\S.*)$/m.exec(installPathBlock(id))
+  const note = folded ? folded[1].split('\n').map((line) => line.trim()).join(' ') : plain?.[1]
+  assert.ok(note, `website/data/install.yaml's ${id} path carries no note, and the homepage prints the note under the command`)
+  return note.trim()
+}
+
 /**
  * The routes the site's pages live at, from the plan: the page files its tasks' `**Files:**`
  * lines name. Pages are lowercase and components are capitalised in this repository, so a
@@ -1083,17 +1092,22 @@ function heroPrompt(page) {
     : { text: decode(readableText(prompt)).replace(/\s+/g, ' ').trim(), source: prompt.attrs.get('data-source') ?? '' }
 }
 
-test("the hero's prompt line is the request, and the chat's first turn is the same sentence", () => {
+test("the hero's prompt line is the request, quoted from the document it cites", () => {
   // The owner's feedback of 2026-10-19: the home page has to say, in as few words as
   // possible, that a reader drives Fugaro through the coding agent they already have, and the
   // fewest words are the request — "Maybe just the `> Fan out these three bug fixes.`". Two
   // facts are read off the built page, and the second is what makes the line a quotation
   // rather than copy: it is a line of the document its `data-source` cites (Global Constraint
-  // 6, D102 — a page renders a fact and never restates one), and it is the same sentence the
-  // chat's first turn speaks, which is the one place the page shows what happens to it. The
-  // two renderings read one string (`src/lib/agent-request.mjs`), and this case is what holds
-  // the artifact to that: a hero that typed its own version of the request would show the
-  // reader asking for one thing and the agent answering about another.
+  // 6, D102 — a page renders a fact and never restates one), and it is the string
+  // `website/src/lib/agent-request.mjs` holds, which is where the line is held to that
+  // document at build time. The hero renders the module's export rather than typing the
+  // sentence, and this case is what holds the artifact to that: a hero that typed its own
+  // version of the request would show the reader a line the module does not carry.
+  //
+  // The module had a second renderer until the owner's approved draft of 2026-10-19 ("Home,
+  // draft 2 (slider)") folded the chat into the slider: the chat's first turn spoke the same
+  // sentence, and the case held the two renderings to each other. The pin is on the string,
+  // so it reads the module's export and not a second copy of the line on the page.
   const page = builtPage('')
   const prompt = heroPrompt(page)
   assert.ok(prompt, "the hero renders no prompt line, and the owner's feedback of 2026-10-19 puts the request under the headline as what the page is about")
@@ -1107,17 +1121,26 @@ test("the hero's prompt line is the request, and the chat's first turn is the sa
     `the hero's prompt line ${JSON.stringify(prompt.text)} is not a line of ${prompt.source}: the line is the repository's own example of a request, not a sentence written for the page (changes spec 2026-10-18, item 3; Global Constraint 6)`,
   )
 
-  const turns = chat(page)
-  assert.ok(turns.length > 0, 'the homepage renders no chat, and the hero\'s prompt line is the chat\'s own first turn (changes spec 2026-10-18, item 3)')
+  // **The line the page renders is the module's own string**, and the citation is the
+  // module's too. Read off the module's source rather than imported: the module imports
+  // `../content.ts` to find the repository root, and the test runner has no TypeScript loader
+  // — the same reading `base-styles.mjs` and `budget.mjs` do of the components they are about.
+  const module = repoFile('website/src/lib/agent-request.mjs')
+  const request = /export const REQUEST = '([^']*)'/.exec(module)
+  const source = /export const REQUEST_SOURCE = '([^']*)'/.exec(module)
+  assert.ok(
+    request && source,
+    'website/src/lib/agent-request.mjs no longer exports the request and the document it is quoted from, and the hero renders both (the owner\'s feedback of 2026-10-19; changes spec 2026-10-18, item 3)',
+  )
   assert.equal(
     prompt.text,
-    turns[0].line,
-    `the hero's prompt line reads ${JSON.stringify(prompt.text)} and the chat's first turn reads ${JSON.stringify(turns[0].line)}: they are one sentence, so the reader is not shown one request under the headline and a different one in the conversation (the owner's feedback of 2026-10-19)`,
+    request[1],
+    `the hero's prompt line reads ${JSON.stringify(prompt.text)} and src/lib/agent-request.mjs holds ${JSON.stringify(request[1])}: the hero renders the module's string rather than typing its own version of the request (the owner's feedback of 2026-10-19)`,
   )
   assert.equal(
     prompt.source,
-    turns[0].source,
-    `the hero's prompt line cites ${JSON.stringify(prompt.source)} and the chat's first turn cites ${JSON.stringify(turns[0].source)}: one sentence is quoted from one document, and two citations would be two places to keep in step`,
+    source[1],
+    `the hero's prompt line cites ${JSON.stringify(prompt.source)} and src/lib/agent-request.mjs names ${JSON.stringify(source[1])}: one sentence is quoted from one document, and two citations would be two places to keep in step (Global Constraint 6)`,
   )
 })
 
@@ -1171,41 +1194,61 @@ test('the homepage names the promise in its title, its description and its cards
   assert.equal((page.match(/<meta name="twitter:description"/g) ?? []).length, 0)
 })
 
-test('the homepage renders the install commands install.yaml carries, and types none of them', () => {
+test("the homepage offers one install command, install.yaml's own, and types none of it", () => {
   const page = builtPage('')
-  // Read as a document rather than sliced with a regex: each path's block holds a copy
-  // control as well as its commands (P6), and a non-greedy `<div>…</div>` would stop at the
-  // control's own closing tag and check half a block. The paths are the homepage's own section
-  // since the changes spec of 2026-10-18 (item 4): they used to be in the hero, and the block
-  // is `HomeInstall.astro`'s now.
-  const blocks = [...walk(parse(page))].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('home-install-path'))
+  // Read as a document rather than sliced with a regex: the block holds a copy control as well
+  // as the command (P6), and a non-greedy `<div>…</div>` would stop at the control's own
+  // closing tag and check half a block.
+  //
+  // **One path rather than the file's five.** The owner's approved draft of 2026-10-19 ("Home,
+  // draft 2 (slider)") replaces the two install cards the page used to end with by one "Get
+  // started" button and the command most readers run: a reader choosing between Homebrew and
+  // `go install` before they have decided to install anything is the choice the draft takes
+  // away, and `/getting-started/` still lays every path out with what each one sets up. The
+  // path rendered here is `HomeInstall.astro`'s `HOME_PATH`, and this case reads the command
+  // out of the file that carries it rather than out of the component.
+  const section = findAll(parse(page), (el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('home-install'))[0]
+  assert.ok(section, "the homepage carries no install block, and the page ends with the one command most readers run (the owner's approved draft of 2026-10-19)")
+  assert.equal(
+    section.attrs.get('data-source'),
+    'website/data/install.yaml',
+    `the homepage's install block cites ${JSON.stringify(section.attrs.get('data-source'))}, and the command and the note under it are that file's (W0.1, W1.4 step 1; Global Constraint 6)`,
+  )
 
-  assert.equal(blocks.length, 2, `the homepage renders ${blocks.length} install paths, and it shows the two commands the plan names (W1.4 step 1)`)
+  const commands = [...walk(section)]
+    .filter((el) => el.name === 'pre')
+    .map((el) => textOf(el).trim())
+  assert.deepEqual(
+    commands,
+    [installPathCommands('homebrew')[0]],
+    `the homepage's install commands are ${JSON.stringify(commands)}, and website/data/install.yaml's quick path prints ${JSON.stringify(installPathCommands('homebrew')[0])} and nothing else: a command typed into the component is a second copy of the install text, and the one that drifts (W0.1, W1.4 step 1)`,
+  )
+  assert.equal(
+    classText(page, 'home-install-note'),
+    installPathNote('homebrew'),
+    'the note under the homepage\'s install command is not the quick path\'s own note: the file carries what the path sets up, and the component renders it (W0.1, Global Constraint 6)',
+  )
 
-  // And they are not in the hero: item 4 puts the promise and its one call to action above the
-  // picture and the commands below it, so a command back in the hero is the shape the review
-  // of this branch asked to have changed.
+  // **And the one control is the button**, which is the draft's call to action: one link, to
+  // the page where the paths are laid out. A second link here — the `go install` card's, or a
+  // release page's — is the choice the draft takes off this page.
+  const links = [...walk(section)].filter((el) => el.name === 'a').map((el) => [textOf(el).trim(), el.attrs.get('href')])
+  assert.deepEqual(
+    links,
+    [['Get started', '/getting-started/']],
+    `the homepage's install block carries the links ${JSON.stringify(links)}, and the draft gives it one: the button that leads to the page where every path is laid out (the owner's approved draft of 2026-10-19)`,
+  )
+
+  // And the command is not in the hero: item 4 puts the promise and its one call to action
+  // above the picture and the commands below it, so a command back in the hero is the shape the
+  // review of this branch asked to have changed.
   const hero = findAll(parse(page), (el) => el.name === 'section' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero'))[0]
   assert.ok(hero, 'the homepage has no hero section, and the promise and its call to action are the hero (P5, D102)')
   assert.equal(
     [...walk(hero)].filter((el) => el.name === 'pre').length,
     0,
-    'the hero prints a command, and item 4 gives the hero the promise and its call to action: the commands are the install section below the picture (changes spec 2026-10-18, item 4)',
+    'the hero prints a command, and item 4 gives the hero the promise and its call to action: the command is the install block below the slider (changes spec 2026-10-18, item 4)',
   )
-
-  for (const block of blocks) {
-    const id = block.attrs.get('data-path')
-    assert.ok(id, 'an install path on the homepage names no id, so nothing says which path of install.yaml it is')
-
-    const commands = [...walk(block)]
-      .filter((el) => el.name === 'pre')
-      .map((el) => textOf(el).trim())
-    assert.deepEqual(
-      commands,
-      installPathCommands(id),
-      `the homepage's ${id} commands are not the ones website/data/install.yaml carries for that path: a command typed into the component is a second copy of the install text, and the one that drifts (W0.1, W1.4 step 1)`,
-    )
-  }
 })
 
 test('the hero renders a player only when site.yaml says the video exists', () => {
@@ -1270,397 +1313,84 @@ test('the hero offers the console from its call to action only while the flag is
   )
 })
 
-// ---- the chat (changes spec of 2026-10-18, item 3) ---------------------------------------
+// ---- the watch block, and the capture (changes spec of 2026-10-18, item 3) ---------------
 
-/**
- * The documents a line of the chat may be quoted from, by the name the turn cites: the spec,
- * whose item 3 gives the request, and the two skills, which are what the agent does with one.
- */
-function chatSources() {
-  return {
-    'docs/website/redesign/changes-spec-2026-10-18.md': repoFile('docs/website/redesign/changes-spec-2026-10-18.md'),
-    'plugin/skills/parallelism/SKILL.md': repoFile('plugin/skills/parallelism/SKILL.md'),
-    'plugin/skills/working/SKILL.md': repoFile('plugin/skills/working/SKILL.md'),
-  }
-}
+// The homepage's one command block and the screenshot beside it. Both were the chat's: the
+// owner's approved draft of 2026-10-19 ("Home, draft 2 (slider)") folds the chat into the
+// slider's third panel, which shows the reader what a run looks like from the outside —
+// `fugaro watch` on their own machine, and the real screen. The illustration of a
+// conversation left the site with `AgentChat.astro`; what stayed is the pair a reader can
+// act on, so the cases below read the panel the draft puts them in.
 
-const CHAT_CLASSES = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
-
-/**
- * The chat a built page renders: its turns in order, each with the lines it carries — the
- * reader's request, the agent's answer and the status line under it, and the results it
- * reports back with. One array, so the rules below read the chat the way a reader does.
- *
- * `line` is what a turn *says* and is held to the document it cites; `status` is the
- * illustration's own label for what the agent did (changes spec of 2026-10-18, item 3: the
- * launch is "shown as a subtle tool-call / status line, not a command the user typed"), and
- * the rule below refuses it as a quotation the same way it refuses the result labels.
- */
-function chat(page) {
-  return [...walk(parse(page))]
-    .filter((el) => el.name === 'li' && CHAT_CLASSES(el).includes('chat-turn'))
-    .map((el) => {
-      const inside = (selector) => {
-        const node = [...walk(el)].find((child) => CHAT_CLASSES(child).includes(selector))
-        return node ? decode(readableText(node)).replace(/\s+/g, ' ').trim() : ''
-      }
-      return {
-        turn: el.attrs.get('data-turn') ?? '',
-        source: el.attrs.get('data-source') ?? '',
-        who: inside('turn-who'),
-        line: inside('turn-line'),
-        status: inside('turn-status'),
-        results: [...walk(el)]
-          .filter((child) => CHAT_CLASSES(child).includes('turn-result'))
-          .map((child) => decode(readableText(child)).replace(/\s+/g, ' ').trim()),
-      }
-    })
-}
-
-/**
- * Every failure of the chat's rule, as the lines a reader of this file sees, in two halves:
- *
- *   - **every line a turn *speaks* — its `line` — is a line of the document that turn cites**,
- *     and the lines of a document come in the order that document writes them. The chat is an
- *     illustration drawn from the repository rather than a recording of a session, so a line a
- *     skill does not write — or one that moved ahead of the line before it — is the page
- *     putting words in the agent's mouth that the agent's own skill does not have (changes
- *     spec item 3, Global Constraint 6);
- *   - **the figure's own labels are not quotations.** `status` (the agent's launch line) and
- *     `results` (the `Pull request n of 3` labels) are the illustration's, and the caption
- *     says so: a run that has not happened has no pull request numbers, and a launch line a
- *     reader is meant to read as a status is not a sentence either skill prints. So neither
- *     may be a line of the document its turn cites, which is what would make them quotations
- *     while the caption denied it.
- *
- * Written as a function over a chat so a fixture can prove it refuses.
- */
-export function chatFailures(turns, sources) {
-  const out = []
-  const reached = new Map() // document -> how far into it the line before this one reached
-  for (const [index, turn] of turns.entries()) {
-    const where = `turn ${index + 1} of the chat, ${JSON.stringify(turn.line)}`
-    if (!turn.line) {
-      out.push(`${where}, has no text: the chat is the illustration, and a turn with nothing in it is a bubble a reader cannot read`)
-      continue
-    }
-    const document = sources[turn.source]
-    if (!document) {
-      out.push(`${where}, cites ${JSON.stringify(turn.source)}, which is not a document this check reads: every line says which document it is quoted from`)
-      continue
-    }
-    const line = turn.line
-    if (line) {
-      const quoted = normalize(line)
-      const at = normalize(document).indexOf(quoted, reached.get(turn.source) ?? 0)
-      if (at === -1) {
-        out.push(
-          `the chat's line ${JSON.stringify(line)} does not appear in ${turn.source} at or after the line before it: every line a turn of the chat speaks is the document's own words, in the order it writes them (changes spec 2026-10-18, item 3; Global Constraint 6)`,
-        )
-      } else {
-        reached.set(turn.source, at + quoted.length)
-      }
-    }
-    for (const [what, label] of [
-      ['status line', turn.status],
-      ...(turn.results ?? []).map((result) => ['result label', result]),
-    ]) {
-      if (!label) continue
-      if (normalize(document).includes(normalize(label))) {
-        out.push(
-          `the chat's ${what} ${JSON.stringify(label)} is a line of ${turn.source}, and the figure's own labels are not quotations: the caption says the picture is an illustration, which is what makes it honest about a launch line and three pull request numbers that no skill has printed (changes spec 2026-10-18, item 3; D184)`,
-        )
-      }
-    }
-  }
-  return out
-}
-
-test('the homepage chat is the workflow, and every line its turns speak is the document it cites', () => {
-  const turns = chat(builtPage(''))
-
-  // Item 3's illustration, turn for turn: the request, the agent's answer with the launch it
-  // runs, and the report a few minutes later. A page that grew a fourth turn, or lost one, is
-  // a page this check would otherwise go on accepting.
-  assert.equal(turns.length, 3, `the homepage chat renders ${turns.length} turns, and item 3's illustration is three (changes spec 2026-10-18, item 3)`)
-  assert.deepEqual(
-    turns.map((turn) => turn.turn),
-    ['you', 'agent', 'agent'],
-    `the chat's turns are ${JSON.stringify(turns.map((turn) => turn.turn))}, and the reader's request comes first, with the agent answering it (changes spec 2026-10-18, item 3)`,
-  )
-  assert.ok(turns[0].who, 'the chat does not say who is speaking, and a reader who cannot tell the two voices apart has not been shown the workflow (changes spec 2026-10-18, item 3)')
-  assert.ok(turns[1].status, "the agent's answer carries no status line, and item 3 asks for the launch to show as a subtle tool-call / status line rather than as a command the reader typed (changes spec 2026-10-18, item 3)")
-  assert.equal(
-    turns[2].results.length,
-    3,
-    `the agent reports back with ${turns[2].results.length} results, and item 3's illustration fans three pieces of work out (changes spec 2026-10-18, item 3)`,
-  )
-
-  const failures = chatFailures(turns, chatSources())
-  assert.deepEqual(failures, [], `the lines the homepage chat's turns speak are not the documents' own words (changes spec 2026-10-18, item 3):\n  ${failures.join('\n  ')}`)
-})
-
-test('the chat rule refuses a line the document it cites does not write', () => {
-  const sources = chatSources()
-  const turns = chat(builtPage(''))
-  assert.deepEqual(chatFailures(turns, sources), [], 'the rule refuses the page it is written for, so every refusal below is the one thing it breaks')
-
-  // A line with a word added to it: not a line of the skill, and the defect this rule exists
-  // for — a chat that paraphrases what the agent says rather than quoting its skill.
-  const paraphrased = turns.map((turn, index) => (index === 1 ? { ...turn, line: 'I will run each fix in its own job.' } : turn))
-  assert.match(chatFailures(paraphrased, sources).join('\n'), /does not appear in plugin\/skills\/parallelism\/SKILL\.md/)
-
-  // A line from the wrong document: the words are the repository's, and they are not this
-  // turn's skill. The chat says which document each turn answers from, so this fails.
-  const elsewhere = turns.map((turn, index) =>
-    index === 1 ? { ...turn, source: 'plugin/skills/working/SKILL.md' } : turn,
-  )
-  assert.match(chatFailures(elsewhere, sources).join('\n'), /does not appear in plugin\/skills\/working\/SKILL\.md/)
-
-  // The other half of the rule, and the half the launch line is about: the figure's own
-  // labels may not be quotations. A status line that turned out to be a sentence of the
-  // skill its turn cites would be a second thing the caption said was an illustration while
-  // the page quoted it — and it is the shape a future edit would take, since the obvious way
-  // to write a launch line is to copy the invocation the skill documents.
-  const quotedStatus = turns.map((turn, index) =>
-    index === 1 ? { ...turn, status: 'fugaro run --batch <name> --run-id <id> --task-file -' } : turn,
-  )
-  assert.match(
-    chatFailures(quotedStatus, sources).join('\n'),
-    /status line .* is a line of plugin\/skills\/parallelism\/SKILL\.md/,
-    'a status line that is a sentence of the skill its turn cites was not refused, and the caption says the figure\'s labels are the illustration\'s own (changes spec 2026-10-18, item 3; D184)',
-  )
-
-  // And the same for a result label, the class of text the rule was written for.
-  const quotedResult = turns.map((turn, index) => (index === 2 ? { ...turn, results: [...turn.results, 'It always ends with a pull request'] } : turn))
-  assert.match(
-    chatFailures(quotedResult, sources).join('\n'),
-    /result label .* is a line of plugin\/skills\/working\/SKILL\.md/,
-    'a result label that is a line of the skill its turn cites was not refused (changes spec 2026-10-18, item 3; D184)',
-  )
-
-  // A turn citing a document nothing reads, and a turn with no text at all.
-  assert.match(chatFailures([{ ...turns[0], source: 'website/content/cli-reference.md' }], sources).join('\n'), /not a document this check reads/)
-  assert.match(chatFailures([{ ...turns[0], line: '' }], sources).join('\n'), /has no text/)
-})
-
-test('the homepage launches through the agent, and the one command it offers the reader is fugaro watch', () => {
-  // Item 3's acceptance, read off the built page: a first-time reader has to come away with
-  // "my agent runs this", and the only command the page offers to copy besides the install
-  // paths is `fugaro watch`. The old hero example — a `fugaro run` line the reader was meant
-  // to type — is the thing this case is written to notice coming back.
-  //
-  // **The commands are read off the whole homepage rather than off a `.hero` section.** The
-  // changes spec of 2026-10-18 (item 4, and the review of this branch) takes the chat and the
-  // install paths out of the hero and puts them under the picture, so the hero holds the
-  // promise and its call to action and nothing else; what a reader is offered to copy is a
-  // fact about the page. A case that read a `.hero` section would pass on a page that offered
-  // a `fugaro run` line anywhere else in it.
-  const page = parse(builtPage(''))
-  const commands = [...walk(page)].filter((el) => el.name === 'pre').map((el) => decode(readableText(el)).trim())
-  assert.ok(
-    commands.includes('fugaro watch'),
-    `the homepage's command blocks are ${JSON.stringify(commands)}, and \`fugaro watch\` is the one command the reader is asked for (changes spec 2026-10-18, item 3)`,
-  )
-  assert.ok(
-    !commands.some((command) => /^fugaro run\b/.test(command)),
-    `the homepage offers ${JSON.stringify(commands)} as commands the reader can copy, and a \`fugaro run\` line is the manual path the documentation keeps rather than what the reader types (changes spec 2026-10-18, item 3)`,
-  )
-  assert.ok(
-    !text(builtPage('')).includes('add a --verbose flag to the export command'),
-    'the homepage still carries the old hero example, the `fugaro run "add a --verbose flag to the export command"` transcript (changes spec 2026-10-18, item 3: "Remove `fugaro run` from the hero example")',
-  )
-
-  // The launch is the agent's, drawn as a subdued line: a paragraph with no copy control of
-  // its own — what the reader copies here is `fugaro watch`, not the launch.
-  const status = findAll(page, (el) => CHAT_CLASSES(el).includes('turn-status'))[0]
-  assert.ok(status, "the homepage's chat carries no status line, and item 3 asks for the launch to show as a subtle tool-call / status line (changes spec 2026-10-18, item 3)")
-  assert.equal(status.name, 'p', `the status line is a <${status.name}>, and a command block is what a reader is offered to copy: the agent's launch is a line of the illustration (changes spec 2026-10-18, item 3)`)
-  assert.equal(
-    [...walk(status)].filter((el) => el.attrs.has('data-copy-button') || el.attrs.has('data-copy')).length,
-    0,
-    'the status line carries a copy control, and the reader did not type this line: the homepage offers exactly one command to copy (changes spec 2026-10-18, item 3)',
-  )
-  // And what it says is a status rather than a command: no `fugaro run` invocation, no flags,
-  // and one short line. The exact words are the illustration's own (item 3 gives
-  // "Fugaro: launching 3 jobs" as an example rather than as a caption to match), so this case
-  // holds the shape and not the sentence.
-  const said = decode(readableText(status)).replace(/\s+/g, ' ').trim()
-  assert.doesNotMatch(
-    said,
-    /\bfugaro\s+run\b|--[a-z]/,
-    `the status line ${JSON.stringify(said)} is a command, and the launch is what the agent did rather than something the reader types (changes spec 2026-10-18, item 3)`,
-  )
-  assert.ok(
-    said.length > 0 && said.length <= 40,
-    `the status line is ${said.length} characters (${JSON.stringify(said)}), and it is one short line under the agent's answer rather than a sentence: the launch is a status (changes spec 2026-10-18, item 3)`,
-  )
-})
-
-test('the chat says on the page that it is an illustration, and claims no more than that', () => {
-  // D184's rule for the transcript this replaces, kept for the chat: the page says what the
-  // figure is rather than leaving a reader to take an illustration for a session that
-  // happened. And it claims nothing about where the lines come from, because the figure is
-  // not all quotations: the request is item 3's own example of one, and the three results are
-  // the illustration's labels. The caption this case was written for said "every line is the
-  // repository's own words, from the skills the agent reads", which is false about both of
-  // those, and the words themselves are refused by `website/test/wording.mjs` — on the built
-  // page and in the site's sources, so the sentence cannot come back through a component.
+test('the watch block is the command the reader keeps, and it copies itself', () => {
   const page = builtPage('')
-  const caption = classText(page, 'chat-caption')
+  const command = classText(page, 'watch-command')
 
-  assert.ok(caption, 'the homepage chat carries no caption, and item 3 admits the illustration only as a labelled one rather than as a recording (changes spec 2026-10-18, item 3; D184)')
-  assert.match(caption, /illustration/i, `the chat's caption ${JSON.stringify(caption)} does not say the chat is an illustration (changes spec 2026-10-18, item 3)`)
-  assert.match(caption, /not a recording/i, `the chat's caption ${JSON.stringify(caption)} does not say the lines are not a recording of a session (D184)`)
-  assert.doesNotMatch(
-    caption,
-    /own words|quotation|quoted|verbatim/i,
-    `the chat's caption ${JSON.stringify(caption)} claims the figure's lines are quotations, and two of the things a reader reads in it are not: the request is item 3's own example, and the three results are labels for work a run would report. The caption says what the picture is and where the agent's behaviour comes from; it does not vouch for where every line came from (changes spec 2026-10-18, item 3; Global Constraint 6)`,
-  )
-  assert.match(
-    caption,
-    /skills/i,
-    `the chat's caption ${JSON.stringify(caption)} does not say where the agent's behaviour comes from, and the one thing about the figure a reader can check is that the agent's lines are its skills' (changes spec 2026-10-18, item 3)`,
-  )
-
-  // And it sits **directly under the conversation** (review round 3, item 3a). It used to be
-  // the figure's last child with the watch block — the heading "Watch it run", the slot, the
-  // command bar and the skill's note — between it and the turns, so a reader met the caption
-  // after the heading of a different thing. It is the figure's last child still (that is the
-  // content model: a `figcaption` comes first or last), and the watch block is the figure's
-  // sibling now, so "last child" and "under the conversation" are the same place.
-  const parsed = parse(page)
-  const figure = findAll(parsed, (el) => el.name === 'figure' && CHAT_CLASSES(el).includes('chat'))[0]
-  assert.ok(figure, 'the homepage renders no <figure class="chat">, and the caption is the figure\'s own name (changes spec 2026-10-18, item 3)')
-  const named = [...walk(figure)].find((el) => CHAT_CLASSES(el).includes('chat-caption'))
-  const children = (figure.children ?? []).filter((child) => child.name !== undefined)
-  assert.equal(
-    children[children.length - 1],
-    named,
-    "the chat's caption is not the figure's last child, and a `figcaption` is a figure's first or last child: this is the shape the HTML content model allows, and it is kept because the caption has to be reachable under the conversation (changes spec 2026-10-18, item 3a)",
-  )
-  const order = [...walk(parsed)]
-  const heading = order.find((el) => CHAT_CLASSES(el).includes('chat-watch-title'))
-  assert.ok(
-    heading === undefined || order.indexOf(named) < order.indexOf(heading),
-    "the chat's caption comes after the `fugaro watch` heading, and the review of round 3 found it there: the caption is what the conversation above it is, so it belongs at the foot of the conversation rather than under the heading of the block below it (changes spec 2026-10-18, item 3a)",
-  )
-
-  // And the fact the caption may not claim, read off the figure itself: the results are not
-  // lines of the document the turn that reports them cites. They are the illustration's own
-  // labels — a run that has not happened has no pull request numbers — so a caption that
-  // called them quotations would be false, and a future edit that made them quotations of a
-  // document would make this case fail until the caption said so.
-  const report = chat(page).at(-1)
-  assert.ok(report, 'the homepage chat renders no turns, so the results the caption is about cannot be read')
-  const document = chatSources()[report.source]
-  assert.ok(document, `the chat's last turn cites ${JSON.stringify(report.source)}, which is not a document this check reads`)
-  for (const result of report.results) {
-    assert.ok(
-      !normalize(document).includes(normalize(result)),
-      `the chat's result ${JSON.stringify(result)} is a line of ${report.source}, and the caption's reading of the figure is that the results are the illustration's own labels rather than quotations (changes spec 2026-10-18, item 3; D184)`,
-    )
-  }
-
-  // And the same for the status line, the other thing on the figure that is not a quotation:
-  // it is the illustration's label for the launch, so it may not be a sentence of the skill
-  // its turn cites either. `chatFailures` refuses both; this case reads the built page for
-  // the same thing, which is what makes the caption's reading true of the page a reader gets.
-  const launch = chat(page).find((turn) => turn.status)
-  assert.ok(launch, 'the homepage chat renders no status line, and the launch is the line the caption does not claim as a quotation')
-  const launchDocument = chatSources()[launch.source]
-  assert.ok(launchDocument, `the chat's launching turn cites ${JSON.stringify(launch.source)}, which is not a document this check reads`)
-  assert.ok(
-    !normalize(launchDocument).includes(normalize(launch.status)),
-    `the chat's status line ${JSON.stringify(launch.status)} is a line of ${launch.source}, and the caption's reading of the figure is that the launch line is the illustration's own rather than a quotation (changes spec 2026-10-18, item 3; D184)`,
-  )
-})
-
-test('the design record quotes the caption the site ships', () => {
-  // The record tells a reader what the chat's caption says, and it quotes the sentence to do
-  // it. A quote rots the moment the caption is rewritten, and this one has outlived a caption
-  // already: review round 5 cut the caption to one sentence, and the record went on quoting
-  // the long one — a sentence that existed nowhere on the site, and nothing said so, because
-  // the caption's own case above reads the built page and never the record. The record is a
-  // description of this branch's artifact (P9), so what it quotes of the artifact is held to
-  // the artifact here, in the file that already holds the caption to its shape.
-  const caption = classText(builtPage(''), 'chat-caption')
-  assert.ok(caption, 'the homepage chat carries no caption, so there is nothing for the design record to quote (changes spec 2026-10-18, item 3)')
-  const record = repoFile('docs/website/redesign/README.md')
-  assert.ok(
-    normalize(record).includes(normalize(caption)),
-    `docs/website/redesign/README.md does not quote the caption the built page ships. The page says ${JSON.stringify(caption)}; the record's reading of the caption quotes a sentence that is not on the site. The record describes the site this branch builds, so the sentence it quotes moves with the caption (P9, changes spec 2026-10-18, item 3)`,
-  )
-})
-
-test('the watch snippet is the command the reader keeps, and it copies itself', () => {
-  const page = builtPage('')
-  const command = classText(page, 'chat-watch-command')
-
-  assert.equal(command, 'fugaro watch', `the hero's watch snippet reads ${JSON.stringify(command)}, and the one command the reader is asked for is \`fugaro watch\` (changes spec 2026-10-18, item 3)`)
+  assert.equal(command, 'fugaro watch', `the "See it" panel's command reads ${JSON.stringify(command)}, and the one command the reader is asked for is \`fugaro watch\` (changes spec 2026-10-18, item 3)`)
   assert.ok(
     repoFile('README.md').includes(command),
-    `the snippet offers ${JSON.stringify(command)}, which README.md does not print: the command is the documentation's rather than one written for the page (Global Constraint 9)`,
+    `the panel offers ${JSON.stringify(command)}, which README.md does not print: the command is the documentation's rather than one written for the page (Global Constraint 9)`,
   )
 
   // And it is a command block like every other one on the site: one control, on the command
   // (P6, D183). The skill's own line about what the screen shows goes under it, quoted.
-  const block = [...walk(parse(page))].find((el) => CHAT_CLASSES(el).includes('chat-watch'))
-  assert.ok(block?.attrs.has('data-copy'), "the watch snippet is in no [data-copy] block, and it is a command a reader copies like any other (P6)")
+  const block = [...walk(parse(page))].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('watch-block'))
+  assert.ok(block?.attrs.has('data-copy'), 'the watch block is in no [data-copy] block, and it is a command a reader copies like any other (P6)')
   assert.equal(
     [...walk(block)].filter((el) => el.attrs.has('data-copy-button')).length,
     1,
-    "the watch snippet does not carry exactly one copy control (P6, D183)",
+    'the watch block does not carry exactly one copy control (P6, D183)',
   )
-  const note = classText(page, 'chat-watch-note')
+  const note = classText(page, 'watch-note')
   assert.ok(
     normalize(repoFile('plugin/skills/working/SKILL.md')).includes(normalize(note)),
-    `the note under the snippet, ${JSON.stringify(note)}, is not a line of plugin/skills/working/SKILL.md: the page quotes the skill rather than describing what the screen does (Global Constraint 6)`,
+    `the note under the command, ${JSON.stringify(note)}, is not a line of plugin/skills/working/SKILL.md: the page quotes the skill rather than describing what the screen does (Global Constraint 6)`,
   )
 })
 
-test('the watch screenshot is in the slot the changes spec marks, named, sized and served from here', () => {
-  // Item 3 asks for a clearly marked slot right after the chat; the owner's spec of
-  // 2026-10-18 item 5 and PR #622 supply the picture, and it is the owner's real capture of
-  // `fugaro watch` running on their own installation, published as it was taken (D190 waived
-  // by the owner for this one image, `docs/website/redesign/README.md`). So the slot holds the
-  // image now, and what this case is about is that it holds THE image and holds it so it can
-  // be read: a picture no reader can identify, or one that shifts the block under it when the
-  // file lands, or one fetched from somebody else's host, are the three ways this goes wrong.
+test('the watch screenshot is in the slot the "See it" panel marks, named, sized and served from here', () => {
+  // The owner's spec of 2026-10-18 item 5 and PR #622 supply the picture, and it is the
+  // owner's real capture of `fugaro watch` running on their own installation, published as it
+  // was taken (D190 waived by the owner for this one image, `docs/website/redesign/README.md`).
+  // So the slot holds the image, and what this case is about is that it holds THE image and
+  // holds it so it can be read: a picture no reader can identify, or one that shifts the block
+  // under it when the file lands, or one fetched from somebody else's host, are the three ways
+  // this goes wrong.
   const page = parse(builtPage(''))
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
   const slot = findAll(page, (el) => el.attrs.get('data-slot') === 'watch-screenshot')[0]
-  assert.ok(slot, 'the homepage carries no [data-slot="watch-screenshot"], and item 3 asks for a clearly marked slot for the `fugaro watch` screenshot (changes spec 2026-10-18, item 3)')
+  assert.ok(slot, 'the homepage carries no [data-slot="watch-screenshot"], and the capture of the `fugaro watch` screen needs a marked slot to be checked in (changes spec 2026-10-18, item 3)')
   for (const attribute of ['src', 'srcset', 'href', 'style', 'aria-label', 'role']) {
     assert.ok(!slot.attrs.has(attribute), `the slot carries ${attribute}, and the hook this check reads is \`data-slot\` alone (changes spec 2026-10-18, item 3)`)
   }
 
-  // "right after the chat": the slot opens the block under the conversation, directly beneath
-  // the heading of the thing the screenshot shows — the `fugaro watch` screen — so it is where
-  // item 3 puts it. It used to sit inside the chat's figure, between the turns and the watch
-  // bar; the review of round 3 moved the caption to the foot of the conversation (item 3a),
-  // and a `figcaption` is a figure's first or last child, so the watch block — heading, slot,
-  // bar, note — is the figure's sibling and carries the slot with it.
-  const heading = findAll(page, (el) => CHAT_CLASSES(el).includes('chat-watch-title'))[0]
-  assert.ok(heading, 'the homepage carries no "Watch it run" heading, and the screenshot slot and the command below it belong to a named block (changes spec 2026-10-18, item 3)')
-  const siblings = (heading.parent.children ?? []).filter((child) => child.name !== undefined)
+  // **It is in the third panel, and it opens it.** The owner's approved draft of 2026-10-19
+  // puts the capture in the "See it" tab, and the panel reads: its heading, then the picture,
+  // then the command the reader runs to see the same screen. Held as structure — the panel's
+  // own children — rather than as a class name, because the panel is what a reader switches to,
+  // and a picture moved into the "Benefits" panel is a picture under a heading about something
+  // else.
+  const panel = findAll(page, (el) => el.attrs.get('id') === 'home-panel-see')[0]
+  assert.ok(panel, 'the homepage carries no #home-panel-see, and the capture is what the draft\'s "See it" tab shows (the owner\'s approved draft of 2026-10-19)')
+  let inPanel = false
+  for (let parent = slot.parent; parent; parent = parent.parent) if (parent === panel) inPanel = true
+  assert.ok(inPanel, 'the watch screenshot is not in the "See it" panel, and the draft puts the capture in the tab a reader opens to see what a run looks like (the owner\'s approved draft of 2026-10-19)')
+  const children = (panel.children ?? []).filter((child) => child.name !== undefined)
+  const heading = children.find((child) => child.name === 'h2')
+  assert.ok(heading, 'the "See it" panel carries no heading, and the picture and the command below it belong to a named block (the owner\'s approved draft of 2026-10-19)')
   assert.equal(
-    siblings[siblings.indexOf(heading) + 1],
+    children[children.indexOf(heading) + 1],
     slot,
-    'the slot for the watch screenshot is not the element after the `fugaro watch` heading, and item 3 puts it right after the chat, with the command bar below it (changes spec 2026-10-18, item 3)',
+    'the slot for the watch screenshot is not the element after the "See it" heading: the panel reads heading, picture, command (the owner\'s approved draft of 2026-10-19)',
   )
-  const figure = findAll(page, (el) => el.name === 'figure' && CHAT_CLASSES(el).includes('chat'))[0]
-  assert.ok(figure, 'the homepage renders no <figure class="chat">, and the conversation and its caption are the figure (changes spec 2026-10-18, item 3)')
-  for (let parent = slot.parent; parent; parent = parent.parent) {
-    assert.notEqual(
-      parent,
-      figure,
-      "the watch screenshot is inside the chat's figure, and the caption under the conversation is the figure's last child: an image after it is markup the HTML content model rejects, and the picture belongs to the `fugaro watch` block it is of (changes spec 2026-10-18, item 3a)",
-    )
-  }
+  assert.ok(
+    !classes(slot).includes('watch-block') && findAll(page, (el) => classes(el).includes('watch-block'))[0],
+    'the watch command block is gone from the page, and the panel offers the reader the command that shows them the screen the picture is of (changes spec of 2026-10-18, item 3)',
+  )
 
-  // **The picture is IN the slot**, exactly one of it: the slot is where item 3 put the
-  // screenshot, and an image beside the slot is a picture this page renders outside the place
-  // the page says it renders it.
+  // **The picture is IN the slot**, exactly one of it: the slot is where the capture goes, and
+  // an image beside the slot is a picture this page renders outside the place the page says it
+  // renders it.
   const images = [...walk(slot)].filter((el) => el.name === 'img')
   assert.equal(
     images.length,
@@ -1698,7 +1428,7 @@ test('the watch screenshot is in the slot the changes spec marks, named, sized a
   )
 
   // **And the dimensions are the capture's own**, so the browser reserves the box before the
-  // file arrives and the command bar under it does not jump — which is the whole reason the
+  // file arrives and the command under it does not jump — which is the whole reason the
   // attributes are there. They are held to the capture `docs/website/redesign/README.md`
   // records rather than to themselves: a declared box of the wrong SHAPE — `1459 x 440`, one
   // pixel off the height, or the two numbers swapped — reserves the wrong box and scales the
@@ -1729,7 +1459,8 @@ test('the watch screenshot is in the slot the changes spec marks, named, sized a
   // **The page's pictures are these two and no others**: the wordmark in the header and the
   // owner's screenshot. A homepage that grew a third `<img>` — an illustration, an icon, a
   // picture of a screen the run does not have — is what this last assertion is for (Global
-  // Constraint 9; D107's rule for the hero's video).
+  // Constraint 9; D107's rule for the hero's video). The slider's three step icons are inline
+  // SVG rather than files, so they are not pictures in this reading and carry no `src`.
   const pictures = [...walk(page)]
     .filter((el) => ['img', 'picture', 'video', 'source'].includes(el.name))
     .map((el) => el.attrs.get('src') ?? el.attrs.get('srcset') ?? '')
@@ -1740,58 +1471,38 @@ test('the watch screenshot is in the slot the changes spec marks, named, sized a
   )
 })
 
-test("the flow carries the changes spec's four steps, as one component on both pages", () => {
+test("the flow is How It Works' own picture of a run, and the homepage carries none of it", () => {
   const ruling = item4()
   assert.equal(ruling.steps.length, 4, `the changes spec's item 4 names ${ruling.steps.length} steps, and the picture draws four (changes spec 2026-10-18, item 4)`)
 
-  // The homepage's flow sits under the hero, which is where P8 puts it: the picture of a run
-  // above the tagline would be the first thing a reader meets, before anything has said what
-  // Fugaro is. Held as "outside the hero and after it" rather than as an offset in the page's
-  // text: a flow rendered inside the hero — under the chat, say — starts after the hero's
-  // opening tag too, and is the same defect.
+  // **One page carries the flow.** The owner's approved draft of 2026-10-19 ("Home, draft 2
+  // (slider)") is the homepage's three blocks — the hero, the slider and the call to action —
+  // and the picture of a run is not one of them. It is `/how-it-works/`'s opening, where the
+  // four steps have the room to be drawn and where the detail under them is (item 4 keeps the
+  // detail off the homepage). Both pages rendered the same figure until this draft; the
+  // assertion below reads the homepage and refuses one, and `website/test/a11y.mjs` reads the
+  // same fact off the artifact's own ordered lists.
   const home = parse(builtPage(''))
   const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
-  const hero = findAll(home, (el) => el.name === 'section' && classes(el).includes('hero'))[0]
-  const figure = findAll(home, (el) => el.name === 'figure' && classes(el).includes('flow'))[0]
-  assert.ok(hero, 'the homepage has no hero section, and the flow is placed below it (P8)')
-  assert.ok(figure, 'the homepage renders no <figure class="flow">, and the flow is the picture item 4 asks for (P8, spec item 4)')
-  let insideHero = false
-  for (let parent = figure.parent; parent; parent = parent.parent) if (parent === hero) insideHero = true
-  assert.ok(!insideHero, 'the homepage renders its flow inside the hero section: the picture of the run goes below the hero, not within it (P8)')
-  const order = [...walk(home)]
-  assert.ok(order.indexOf(hero) < order.indexOf(figure), 'the homepage renders its flow above the hero: the picture of the run goes below the hero (P8)')
-
-  // Both pages, because the flow is the homepage's picture of the run as much as the How It
-  // Works page's opening: item 4 asks for the SAME diagram on both, from one shared component.
-  for (const route of ['', 'how-it-works']) {
-    const failures = flowFailures(builtPage(route), ruling, captionSources())
-    assert.deepEqual(
-      failures,
-      [],
-      `the ${route === '' ? '/' : `/${route}/`} page's flow is not the one the changes spec's item 4 describes:\n  ${failures.join('\n  ')}`,
-    )
-  }
-
-  // "one shared component, not two copies" (changes spec item 4), held to the artifact rather
-  // than to the source: the two pages render the same figure, character for character, so a
-  // page that grew a second copy of the picture — a copy that can drift from the first — is
-  // this failure rather than two pictures that quietly disagree.
-  const figureMarkup = (route) => {
-    const page = builtPage(route)
-    const start = page.indexOf('<figure class="flow"')
-    assert.notEqual(start, -1, `the ${route === '' ? '/' : `/${route}/`} page renders no <figure class="flow">, and the picture is on both pages (changes spec 2026-10-18, item 4)`)
-    return page.slice(start, page.indexOf('</figure>', start))
-  }
   assert.equal(
-    figureMarkup('how-it-works'),
-    figureMarkup(''),
-    'the homepage and How It Works render different flow markup: item 4 asks for the same diagram on both pages, from one component rather than two copies (changes spec 2026-10-18, item 4)',
+    findAll(home, (el) => el.name === 'figure' && classes(el).includes('flow')).length,
+    0,
+    `the homepage renders a <figure class="flow">, and the draft's homepage is the hero, the slider and the call to action: the picture of the run is /how-it-works/'s opening (the owner's approved draft of 2026-10-19; changes spec 2026-10-18, item 4)`,
+  )
+  const hero = findAll(home, (el) => el.name === 'section' && classes(el).includes('hero'))[0]
+  assert.ok(hero, 'the homepage has no hero section, and the hero is the page\'s first block (P5, D102)')
+
+  const failures = flowFailures(builtPage('how-it-works'), ruling, captionSources())
+  assert.deepEqual(
+    failures,
+    [],
+    `the /how-it-works/ page's flow is not the one the changes spec's item 4 describes:\n  ${failures.join('\n  ')}`,
   )
 
   // And the copy that told the run again on the homepage is gone (item 4: "the duplicate
-  // text-heavy 'how it works' section is REMOVED"): the homepage carries the picture, and the
-  // detail belongs to the page that opens with it. A section that came back would be a second
-  // description of the run to keep in step with the first.
+  // text-heavy 'how it works' section is REMOVED"): the detail belongs to the page that opens
+  // with the picture. A section that came back would be a second description of the run to
+  // keep in step with the first.
   assert.equal(
     runDetailOf(builtPage('')).sections,
     0,
@@ -1885,8 +1596,10 @@ test('the flow refusals fire on the defect each one names', () => {
 })
 
 test('the flow moves on scroll only for a reader who allows motion', () => {
-  // Both pages, because the flow is on both and each page ships the component's CSS.
-  const css = ['', 'how-it-works'].map((route) => builtCSS(builtPage(route))).join('\n')
+  // The page that renders the flow, because the CSS is inlined per page: the homepage renders
+  // no flow since the owner's approved draft of 2026-10-19, so its stylesheet carries none of
+  // these rules and a case that read it would be reading the wrong page.
+  const css = builtCSS(builtPage('how-it-works'))
 
   // The animation is a scroll-driven one on the steps, and the reduced-motion path is the
   // flow itself: a reader whose system asks for less motion gets every step in place,
@@ -1920,8 +1633,10 @@ test("every caption in the flow is a line of the section its step cites, in that
   const ruling = item4()
   const sources = captionSources()
 
-  for (const route of ['', 'how-it-works']) {
-    const where = route === '' ? '/' : `/${route}/`
+  // The page that carries the flow, and the only one that does (the owner's approved draft of
+  // 2026-10-19 puts the homepage's picture of a run into `/how-it-works/`'s opening alone).
+  for (const route of ['how-it-works']) {
+    const where = `/${route}/`
     const flow = flowOf(builtPage(route))
 
     assert.equal(
