@@ -630,7 +630,8 @@ What it adds, and nothing else in the file moved:
    on the merged file **in the directory that ships**.
 
 **The unsigned claim, plainly: an AppImage is not code-signed.** There is no
-Linux signing key and none is planned (D4 is macOS, D10 is Windows/Later), so
+Linux signing key and none is planned (D4 is macOS; D10's amendment of
+2026-10-20 takes Linux **unsigned** and leaves Windows later), so
 the AppImage and the `.deb` carry no signature of their own. What proves they
 are the bytes this repository built is `console-sha256sums.txt` — which covers
 every asset in the release — and the Sigstore bundle beside it, which is signed
