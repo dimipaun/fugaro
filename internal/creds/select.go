@@ -299,6 +299,14 @@ func (s *Selector) Mark(ctx context.Context, name string, f func(prev Mark, foun
 // failed probe (which doubles). Both are D153's schedule, and both are here so
 // that a caller does not have to hold the settings and the mark algebra apart.
 func (s *Selector) Record(ctx context.Context, name string, f func(prev Mark, found bool, set Settings) (Mark, error)) (Mark, error) {
+	// The same guard Mark has, and here rather than left to Mark: f is wrapped
+	// below, so the closure Mark receives is never nil and Mark's own check
+	// cannot fire — the nil call would happen inside the store's compare-and-set
+	// callback instead, as a nil-pointer panic where Mark returns an error. The
+	// two entry points are one mistake apart, so they answer it the same way.
+	if f == nil {
+		return Mark{}, fmt.Errorf("creds: a record of %q was asked for with no change to make", name)
+	}
 	set := s.Settings.withDefaults()
 	return s.Mark(ctx, name, func(prev Mark, found bool) (Mark, error) { return f(prev, found, set) })
 }

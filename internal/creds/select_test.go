@@ -28,6 +28,13 @@ type fakeStore struct {
 	rr      int64
 
 	updates int // how many times UpdateMark called its function
+
+	// fail makes one read method answer an error, keyed by the method's name
+	// ("Marks", "Leases", "Current", "RoundRobin"): the state a store cannot
+	// read is the case Select's fail-closed contract is about, and a fake that
+	// can never fail leaves every one of those branches unreachable in the
+	// suite (review finding).
+	fail map[string]error
 }
 
 func newFakeStore() *fakeStore {
@@ -39,6 +46,25 @@ func newFakeStore() *fakeStore {
 }
 
 func key(r Run) string { return r.Slug + "\x00" + r.ID }
+
+// setFail makes one read method answer err, so a test can state the store a
+// caller cannot read rather than only the store that answers.
+func (f *fakeStore) setFail(method string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail == nil {
+		f.fail = map[string]error{}
+	}
+	f.fail[method] = err
+}
+
+// failed is the error this method was given, if any: read under the lock, so a
+// method's own body stays as short as it was.
+func (f *fakeStore) failed(method string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fail[method]
+}
 
 func (f *fakeStore) setMark(name string, m Mark) {
 	f.mu.Lock()
@@ -84,6 +110,9 @@ func (f *fakeStore) currentOf(r Run) (string, bool) {
 }
 
 func (f *fakeStore) Marks(context.Context) (map[string]Mark, error) {
+	if err := f.failed("Marks"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make(map[string]Mark, len(f.marks))
@@ -107,6 +136,9 @@ func (f *fakeStore) UpdateMark(_ context.Context, name string, fn func(prev Mark
 }
 
 func (f *fakeStore) Leases(context.Context, time.Time) ([]Lease, error) {
+	if err := f.failed("Leases"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]Lease, 0, len(f.leases))
@@ -130,6 +162,9 @@ func (f *fakeStore) SetPlacement(_ context.Context, r Run, name string, l Lease)
 }
 
 func (f *fakeStore) Current(_ context.Context, r Run) (string, bool, error) {
+	if err := f.failed("Current"); err != nil {
+		return "", false, err
+	}
 	n, ok := f.currentOf(r)
 	return n, ok, nil
 }
@@ -143,6 +178,9 @@ func (f *fakeStore) setRoundRobin(n int64) {
 }
 
 func (f *fakeStore) RoundRobin(context.Context) (int64, error) {
+	if err := f.failed("RoundRobin"); err != nil {
+		return 0, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	used := f.rr
@@ -1211,5 +1249,73 @@ func TestTheStickyPathRefreshesTheLease(t *testing.T) {
 	}
 	if cur, _, err := st.Current(ctx, run); err != nil || cur != a1.Name {
 		t.Fatalf("the sticky selection left the run on %q, %v; want %q", cur, err, a1.Name)
+	}
+}
+
+// Select's fail-closed contract: a state that cannot be READ is not a state
+// that is EMPTY. Each of the three reads is a fact the answer is built on — the
+// marks say what is held, the leases say what is taken, the placement says what
+// the run is already on — and answering "nothing there" for a read that failed
+// is not a smaller answer, it is a different one: a credential the state says is
+// held is selected, and the call goes to a token the service has already been
+// told to leave alone.
+//
+// The seeded exhausted mark is what makes that difference visible rather than
+// only the shape of the error: with the state read as empty the only candidate
+// looks free, so a test that asserted "an error came back" would still pass on
+// a mutation that answered an empty map and then failed later for an unrelated
+// reason. Here the credential the state holds is the one the mutation selects.
+//
+// Mutation (read a failed Marks as map[string]Mark{}, a failed Leases as none,
+// or a failed Current as "not placed"): the corresponding case stops returning
+// the read's error.
+func TestSelectFailsClosedOnAStateItCannotRead(t *testing.T) {
+	for _, tc := range []struct{ name, method string }{
+		{"the marks cannot be read", "Marks"},
+		{"the leases cannot be read", "Leases"},
+		{"the run's placement cannot be read", "Current"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			// The only candidate is held (its reset is an hour out) and the run is
+			// placed on it, so every arm below is a read the answer needs.
+			st.setMark(a1.Name, Mark{State: StateExhausted, Since: now.Add(-time.Hour), Until: now.Add(time.Hour)})
+			st.setPlacement(run, a1.Name, Lease{Credential: a1.Name, Until: now.Add(time.Hour)})
+			boom := errors.New("the state is unreachable")
+			st.setFail(tc.method, boom)
+
+			c, wait, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
+			if !errors.Is(err, boom) {
+				t.Fatalf("Select with %s = %q, %v, %v; want the read's own error: an unreadable state is not an empty one (C1.10's state is the answer, not a cache of it)",
+					tc.method, c.Name, wait, err)
+			}
+			if c.Name != "" {
+				t.Errorf("Select returned %q alongside the error", c.Name)
+			}
+			if st.updates != 0 {
+				t.Errorf("a refused selection wrote to the store %d times", st.updates)
+			}
+		})
+	}
+}
+
+// Record refuses a nil change the way Mark does. The guard is not redundant
+// even though Mark has the same one: Record wraps f in a closure to carry the
+// settings, so the function Mark receives is never nil and its check cannot
+// fire — the nil call would land inside the store's compare-and-set callback as
+// a nil-pointer panic, one frame below the error a caller can act on.
+//
+// Mutation (drop the guard): the call panics instead of returning.
+func TestRecordRefusesANilChange(t *testing.T) {
+	st := newFakeStore()
+	_, err := selector(st, noWindow()).Record(ctx, a1.Name, nil)
+	if err == nil {
+		t.Fatal("Record with no change = nil error; want a refusal naming the credential")
+	}
+	if !strings.Contains(err.Error(), a1.Name) || !strings.Contains(err.Error(), "no change") {
+		t.Errorf("the refusal = %q; want it to name %q and say what was missing", err, a1.Name)
+	}
+	if st.updates != 0 {
+		t.Errorf("the refused record wrote to the store %d times", st.updates)
 	}
 }
