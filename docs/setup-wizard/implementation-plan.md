@@ -195,11 +195,15 @@ above is the list it must not lose.
 6. **No agent edits `.github/workflows/`.** Nothing in this work needs one; if
    the website's build grows a step, the file is staged under
    `docs/pending-workflows/` for the owner to copy.
-7. **The refusals are immutable.** No task weakens `canType()`, `RunCovers`,
-   `YesCovers`, `Managed`, the agent marker check, the impersonation check, the
-   quota-project check or the `ACTIVE` project check. A task that has to change
-   one says so in its own entry and gets opus plus a mandatory independent
-   review.
+7. **The refusals are immutable** — with **one** exception, and it is the
+   owner's. No task weakens `canType()`, `RunCovers`, `runCovered`, `YesCovers`,
+   `Managed`, the agent marker check, the impersonation check, the
+   quota-project check or the `ACTIVE` project check. The exception is
+   **W5.1**, which changes `runCovered` because **D12 was answered against the
+   recommendation** (it is exactly the row-relaxation this convention exists to
+   make hard, and it is written out in reconciliation §5 rather than decided by
+   a task); it says so in its own entry and carries a **mandatory independent
+   review**, which any future change of this kind must too.
 8. **Credentials are never printed or stored.** `Options.Redact` stays wired for
    both front doors. The billing picker (W4.3) prints account **identifiers**,
    which are not credentials, and never under `--json`.
@@ -358,7 +362,7 @@ where each answer is built, not what is still owed.
 | `internal/cli/setup.go` | W1.2 (L1), **W1.3 (L3)**, W3.4 (L5), W3.5 (L6) |
 | `internal/cli/update.go` | W1.2 (L1), W5.1 (L7) |
 | `internal/cli/restore.go` | W1.2 (L1), W2.1 (L2) |
-| `internal/cli/testdata/init_commands.golden`, `testdata/init_review.golden`, `testdata/init_retire.golden` | W1.2 (L1), W2.1 (L2) |
+| `internal/cli/testdata/init_commands.golden`, `internal/cli/testdata/init_review.golden`, `internal/cli/testdata/init_retire.golden` | W1.2 (L1), W2.1 (L2) |
 | `internal/cli/init_project.go` | W2.1 (L2), W1.3 (L3), W3.3 (L4), W4.3 (L9), W4.5 (L10) |
 | `internal/cli/init_inputs.go` | W2.1 (L2), W3.1 (L4), W3.2 (L5), W3.5 (L6), W4.3 (L9) |
 | `internal/cli/init_firebase.go` | W2.1 (L2), W3.3 (L4) |
@@ -429,7 +433,7 @@ W6.2 ← W4.4, W4.5 (owner; plus a release)
 | **L4** | W3.1 the id default · W3.3 `--firebase-project` · W2.4 the website and the generated reference | standard · standard · standard | `internal/cli/init_inputs.go` · `internal/cli/{init,init_firebase,init_project}.go` · `website/**` |
 | **L5** | W3.2 the region and the Firestore location · W3.4 the first-repository question · W2.6 the census emptied and the tail | standard · standard · standard | `internal/cli/init_inputs.go` · `internal/cli/{init_repo_gate,init_repo_target,setup}.go` · `internal/config/{example.yaml,example.go}`, `schemas/`, `images/verify-public.sh`, `docs/gcp-live-checklist.md`, `docs_live_init_census_test.go` |
 | **L6** | W3.5 the two-phase wizard stage | opus | `internal/cli/wizard_stage.go`, `init_inputs.go` |
-| **L7** | W5.1 `update`'s stage set, refusals and non-interactive contract | opus | `internal/initflow/stage.go` (the covering rule D12 moved), `internal/cli/{update,init_stages,init}.go`, `internal/cli/setup_refusals_test.go`, `docs/gcp-setup.md` (its `update` section) |
+| **L7** | W5.1 `update`'s stage set, refusals and non-interactive contract | **opus + mandatory** | `internal/initflow/stage.go` (the covering rule D12 moved), `internal/cli/{update,init_stages,init}.go`, `internal/cli/setup_refusals_test.go`, `docs/gcp-setup.md` (its `update` section) |
 | **L8** | W5.2 the e2e tests, renamed | standard | `internal/e2e/init_test.go` → `update_test.go` |
 | **L9** | W4.3 the picker prompt | **opus + mandatory** | `internal/cli/billing_prompt.go`, `init_project.go`, `init_inputs.go` |
 | **L10** | W4.4 the API-enable refusal · W4.5 the comments that become false | **opus + mandatory** · standard | `internal/cli/billing_prompt.go`, `internal/preflight/google.go` · `internal/cli/init_project.go`, `internal/infra/projectcreate.go` |
@@ -1481,7 +1485,8 @@ covers — and the first of those fails W0.1's matrix too),
 **Red step.** `TestUpdateRefusesCreateProjectAndLinkBilling` first.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Update' -count=1 && fugaro verify test`.
 **Depends on.** W1.3 (its D1, D5 and **D12** answers are in hand, D12 in the
-form above). **Reviewer.** opus.
+form above). **Reviewer.** opus + **mandatory independent review** — it is the
+one task in this plan that relaxes a confirmation (Convention 7).
 **Commit.** `cli: fugaro update re-converges what exists, refuses to create anything, and covers every step it owns under --yes`
 
 ### Task W5.2: The e2e tests, renamed for what they test — standard
