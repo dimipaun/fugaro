@@ -402,9 +402,8 @@ and separator rules, the timestamp range, the ack's type check, the deep freeze 
 copy, then P6.3's: the kind vocabulary and its (kind, field) table, the agent and
 option shapes, the action record's verbs and both target shapes, the argv alphabets and
 the head SHA, the required tag, the canonical serialisation — including the code-point
-sort and the strings it
-refuses — and, in `mac.js`, that the tag is computed over the canonical bytes and that
-`verifyMac` answers `false` rather than throwing.
+sort and the strings it refuses — and, in `mac.js`, that the tag is computed over the
+canonical bytes and that `verifyMac` answers `false` rather than throwing.
 
 Section 6 is the group about the bounds. Most of its rows **move a comparison by
 one** — `> MAX` to `>= MAX`, and to `> MAX + 1` — because that, rather than a
