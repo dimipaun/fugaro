@@ -923,6 +923,9 @@ test.describe('the renderer entry, in the real window', () => {
           message: 'the console spawned something other than the binary the header named',
         })
         .toBe(0)
+      // Non-vacuity: the log is not empty, so the assertion above is about a
+      // spawn that happened rather than about a file nobody wrote.
+      expect(readSpawnLog(spawnLog).length).toBeGreaterThan(0)
     } finally {
       await app.close()
       rmSync(scratch, { recursive: true, force: true })
