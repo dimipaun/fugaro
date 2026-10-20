@@ -737,12 +737,16 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     binaryPath: installation.binaryPath ?? '',
     version: installation.version ?? '',
     project: installation.project,
-    // Which rule 4 place this installation's binary comes from: the store's own
-    // override when the record carries one, and the well-known install locations
+    // Which rule 4 place this installation's binary comes from, **as the
+    // binding knows it**: the store's own override when the record carries one
+    // (rule 4's first candidate), and the well-known install locations
     // otherwise -- which is the ordinary case, because the console never stores
-    // the path it resolved (owner's ruling of 2026-10-20). Before a source is
-    // built there is nothing resolved to name, so `binaryPath` is empty in the
-    // second case and this field is what says so.
+    // the path it resolved (owner's ruling of 2026-10-20). The binding carries
+    // the override and nothing else, so an empty `binaryPath` here means rule 4
+    // will be walked, and this field is what says so while there is no source to
+    // ask. The *built* source answers the finer question from its own
+    // resolution (`resolution.source`, this file), where an override that has
+    // gone falls through and the word is the location that answered.
     source: installation.binaryPath === undefined || installation.binaryPath === '' ? 'well-known' : 'configured',
     ...(installation.checkout === undefined ? {} : { checkout: installation.checkout }),
   })

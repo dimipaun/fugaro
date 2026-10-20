@@ -293,25 +293,35 @@ function installationState(): ActiveInstallation | undefined {
  * activeBinding is the installation the source is bound to: the same state, as
  * the source layer's `BoundInstallation`.
  *
- * It reads the store directly, in the order the *store* means: the optional
- * override first, so rule 4 asks about that file first and the source's own
- * `InstallationRef` keeps its provenance word (`configured`), and the resolution
- * this run made otherwise, so the child is pinned to the binary the header names
- * rather than to a second walk of rule 4 that could land somewhere else.
- * `installationState` reads the same two values in the header's order -- the
- * resolution first -- and the two land on the same file in every case: where a
- * record carries an override that is still there, the resolution *is* that path,
- * and where it has gone, both fall through to the same well-known location.
+ * It reads the store and **only** the store, exactly as `handshakeInstallation`
+ * does: `chosen.binary` is the record's optional override -- rule 4's first
+ * *candidate*, absent in the ordinary case, which is every record this console
+ * wrote -- and nothing else is handed on. The binary the walk finds is the
+ * source's own business: `sourceFor` gives this field to the resolver as the
+ * configured path, so a path supplied here from `resolvedBinaries` would be read
+ * as the operator's own choice. `configuredSource` would then report
+ * `configured` for `/usr/local/bin/fugaro`, and the bound source's
+ * `InstallationRef.source` -- the provenance word design section 3.4 adds so
+ * that "why is this the wrong fugaro?" has an answer -- would say `configured`
+ * for every installation this console wrote, which is precisely the case in
+ * which the operator configured nothing.
+ *
+ * So the two readers of this run's resolution are the header's and no one
+ * else's: `installationState` names the path this process resolved (the fact the
+ * store cannot hold), and the source resolves rule 4 itself from the same input
+ * the handshake had -- the override, when a record carries one. The path that
+ * runs is therefore named by both, and the only way for the two to differ is the
+ * machine changing between the handshake and a read (an upgrade that moves
+ * `fugaro`): then the header is stale and the child is right, which is the
+ * direction to be wrong in.
  */
 function activeBinding(): BoundInstallation | null {
   const chosen = picker?.installation()
   if (chosen === undefined || !chosen.chosen) return null
-  const resolved = resolvedBinaries.get(chosen.project)
-  const binaryPath = chosen.binary ?? resolved
   return {
     id: chosen.id,
     project: chosen.project,
-    ...(binaryPath === undefined || binaryPath === '' ? {} : { binaryPath }),
+    ...(chosen.binary === undefined || chosen.binary === '' ? {} : { binaryPath: chosen.binary }),
     ...(chosen.config === undefined ? {} : { configPath: chosen.config }),
     ...(chosen.checkout === undefined ? {} : { checkout: chosen.checkout }),
     ...(chosen.cliVersion === null ? {} : { version: chosen.cliVersion }),
@@ -329,8 +339,13 @@ function activeBinding(): BoundInstallation | null {
  * **Two things write it, and they are the two moments a resolution happens**:
  * the startup handshake (`readCliVersion`, for the record's own project) and a
  * choose (the picker hands its path to `onChosen`, after the handshake that made
- * it a fact). Both are read back by `installationState` -- the dashboard header
- * -- and by `activeBinding`, so the console names, and drives, one binary.
+ * it a fact). Its one reader is `installationState` -- the dashboard header --
+ * which is the whole point of the map: the store cannot answer which `fugaro`
+ * this run is running, because the console never writes the path it resolves.
+ * The source does not read it either: `activeBinding` hands the record's
+ * override to `sourceFor` and the source walks rule 4 itself, so the map is one
+ * fact with one reader rather than a path passed around as if the operator had
+ * chosen it.
  */
 const resolvedBinaries = new Map<string, string>()
 
@@ -340,13 +355,16 @@ const resolvedBinaries = new Map<string, string>()
  * the installation's id (`createBoundSource` in `src/source/cli.ts`, where the
  * whole of the decision is unit-tested).
  *
- * **This is the only source the shipped app can construct.** `sourceFor` passes
- * the installation's own binary as the configured path, so the child is the
- * binary the operator chose or there is no child; `src/source/fixture.ts` -- the
- * replaying source the unit tests use -- is reachable only through the tests'
- * injected `create`, and a grep-style test holds `test/unit/entry-wiring.test.ts`
- * to that: this file imports nothing from `fixture.ts`, and no environment
- * variable, argv or setting selects a source.
+ * **This is the only source the shipped app can construct.** `sourceFor` gives
+ * the record's optional override to the resolver as the configured path and
+ * walks rule 4's well-known locations otherwise, so the child is the installed
+ * `fugaro` and never a binary an environment variable named.
+ *
+ * The replaying source (`src/source/fixture.ts`) is reachable only through the
+ * `create` seam the tests inject, and a grep-style test holds `this file` to
+ * that: `test/unit/entry-wiring.test.ts` asserts that nothing in it imports
+ * `fixture.ts`, and that no environment variable, argv or setting selects a
+ * source.
  *
  * The store is read through `activeBinding`, and the source it builds spawns on
  * the first read rather than here, so a console with nothing chosen -- and a

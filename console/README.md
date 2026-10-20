@@ -3735,10 +3735,19 @@ path it resolved is remembered **for the run and never written to the store**
 handshake and by a choose), and it is what the dashboard's header draws: a store that
 carries an id and a project and no path — the shape this console writes — still gets
 a line naming the binary the console is running. `withResolvedBinary` in
-`src/main/installations.ts` is that join, and it is unit-tested; the source bound to
-the installation still gives the store's override the first slot, so
-`InstallationRef.source` says `configured` only when the path that ran came from the
-record.
+`src/main/installations.ts` is that join, and it is unit-tested.
+
+The source bound to the installation is handed **the record's override and nothing
+else** (`activeBinding` in `src/main/index.ts`): `sourceFor` gives that field to the
+resolver as the configured path — rule 4's first *candidate* — and the source walks
+the well-known locations itself when there is none, exactly as the startup handshake
+does. So `InstallationRef.source` says `configured` when the record names a path and
+`well-known` when it names none, which is every record this console writes, and the
+*built* source reports the resolution's own word (`resolution.source` in
+`src/main/spawn.ts`), where an override that has gone falls through and the word is
+the location that answered. **The run's own resolution is not passed down**: a path
+handed to the resolver as the configured one would be read as the operator's choice,
+and every installation this console wrote would be drawn as `configured`.
 
 ### The checkout is optional, and asked for late
 
@@ -3855,6 +3864,30 @@ draws). A `warnings` that is *present* and is not an array is now a refusal like
 every other drawn field of the wrong type; an **absent** `warnings` reads as none,
 which is the direction that hides nothing the CLI sent.
 
+### The binding carries the record's override, and the source resolves the rest
+
+`activeBinding` was the one place the run's own resolution reached the source layer:
+it put `chosen.binary ?? resolvedBinaries.get(chosen.project)` into the
+`BoundInstallation`'s `binaryPath`. That field is documented as the installation's
+**optional override**, and `sourceFor` hands it to the resolver as the *configured*
+path, so the console's ordinary record — an id and a project and no path at all —
+reached `configuredSource` as if the operator had named
+`/opt/homebrew/bin/fugaro`, and `installationRef`'s word for it was `configured`.
+The provenance design section 3.4 adds, so that "why is this the wrong fugaro?" has
+an answer, therefore said *the operator's own record* for a path that came from a
+well-known prefix. `activeBinding` now carries `chosen.binary` or nothing, which is
+what the startup handshake has always passed (`handshakeInstallation`), so both
+readers of rule 4 — the header's resolution and the source's — are asked the same
+question and the word is honest at both layers: `configured` for a record that names
+a path, `well-known` for one that names none. The two can differ only if the machine
+changes between the handshake and a read (an upgrade that moves `fugaro`), and then
+the header is stale and the child is right.
+
+The guard is at both ends: `startup.test.ts` pins that the binding carries the
+record's override and does not read `resolvedBinaries`, and
+`bound-source.test.ts` pins `InstallationRef.source` for the no-override case — an
+empty `binaryPath` and `well-known` — and for a record that does carry one.
+
 ### The mutations each guard was proved against
 
 Every property below was planted as a change to the shipped code, run, and removed;
@@ -3884,10 +3917,12 @@ the failure is the red step, and each test goes red **by name**.
 | the tail of a long document dropped silently again (`warned.slice(0, MAX_WARNING_LINES)`) | `installlist.test.ts`, "bounds what one document may make the picker hold" |
 | a `warnings` that is not an array read as "no warnings" | `installlist.test.ts`, "refuses a `warnings` that is there and is not an array, and reads an absent one as none" |
 | the store's project-uniqueness check removed (the id one kept) | `installations-store.test.ts`, "refuses two entries for one project" |
+| the source binding given the run's resolution again (`chosen.binary ?? resolvedBinaries.get(chosen.project)`) | `startup.test.ts`, "answers the header from this run's resolution, and keeps the record for the source" |
+| `InstallationRef.source` read from anything but the record's override (`'configured'` in both cases) | `bound-source.test.ts`, "says `configured` only for a record that carries an override, and `well-known` otherwise" |
 
 ### The verification, and what it did not cover
 
-`npx vitest run --dir test/unit` under Node 22 is green — **56 files, 2025 passed, 1
+`npx vitest run --dir test/unit` under Node 22 is green — **56 files, 2026 passed, 1
 skipped** (the console's own suite; the verify container runs this repository's Go
 build and test, so the console's tests are run locally and the pull request says so)
 — and `npx tsc --noEmit` is clean, which typechecks the Playwright specs too.

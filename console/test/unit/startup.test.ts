@@ -1085,11 +1085,23 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
       'resolvedBinaries.set(chosen.target.project, resolution.path)',
     )
     expect(indexSource).toContain('resolvedBinaries.set(chosen.project, chosen.resolvedBinaryPath)')
-    // And the source still gives the store's override the first slot: it is
-    // rule 4's first *candidate*, and `InstallationRef.source` says `configured`
-    // only when the path that ran came from the record. The two readers of the
-    // map land on the same file in every case (see `withResolvedBinary`).
-    expect(bodyOf('function activeBinding()')).toContain('chosen.binary ?? resolved')
+    // And the binding the source is built from carries the store's override and
+    // **nothing else**. This is the other end of the same join, and it is the
+    // one the map must not reach: `sourceFor` hands the binding's `binaryPath`
+    // to the resolver as the *configured* path -- rule 4's first place -- so a
+    // run's own resolution arriving here would make `configuredSource` report
+    // `configured` for `/usr/local/bin/fugaro`, and would make
+    // `InstallationRef.source` say `configured` for every record this console
+    // wrote, which is the ordinary case and carries no override at all. The
+    // binding is where the record's optional override is what rule 4 is asked
+    // about; the source resolves the well-known locations itself, exactly as the
+    // startup handshake does.
+    const binding = bodyOf('function activeBinding()')
+    expect(binding).toContain('binaryPath: chosen.binary')
+    expect(
+      binding,
+      'the source binding reads the run’s resolution, so a well-known path is handed to the resolver as the operator’s own',
+    ).not.toContain('resolvedBinaries')
   })
 
   it('hands the startup handshake to the picker under the installation’s project, never its id', () => {

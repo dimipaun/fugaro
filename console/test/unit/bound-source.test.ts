@@ -258,4 +258,33 @@ describe('the source bound to the active installation', () => {
     ).toEqual({ child: 2 })
     expect(started).toBe(2)
   })
+
+  it('says `configured` only for a record that carries an override, and `well-known` otherwise', () => {
+    // `InstallationRef.source` is the one word that says *how* the binary was
+    // chosen (design section 3.4 rule 4), and the ordinary case -- a record this
+    // console wrote, which carries a project and no path, because it never
+    // stores the path it resolves -- must not be drawn as the operator's own
+    // choice. The binding is where that is decided: it carries the record's
+    // **optional override** and nothing else, so an empty `binaryPath` is rule
+    // 4's walk and the word says so.
+    //
+    // Read at call time, which is also asserted here: the ref is asked of
+    // `deps.installation` on every read rather than captured when the source was
+    // built, so the operator's next choose is what the next read answers. No
+    // source is built and none is needed -- the ref is answered from the binding
+    // alone, which is exactly the state a console is in before its first read.
+    let installation: BoundInstallation = { id: FIRST.id, project: FIRST.project }
+    const source = createBoundSource({ installation: () => installation })
+    expect(source.installation, 'the ordinary record was not named as one rule 4 resolves').toMatchObject({
+      binaryPath: '',
+      source: 'well-known',
+      project: FIRST.project,
+    })
+
+    installation = { id: FIRST.id, project: FIRST.project, binaryPath: '/opt/fugaro/bin/fugaro' }
+    expect(source.installation, 'a record that carries an override was not named as the configured one').toMatchObject({
+      binaryPath: '/opt/fugaro/bin/fugaro',
+      source: 'configured',
+    })
+  })
 })
