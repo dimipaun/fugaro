@@ -54,12 +54,14 @@ flag), `internal/cli/testdata/init_review.golden` (`TestReviewScreenGolden`,
   `docs/plans/**`, `docs/releases/v*`, `docs/design/**`,
   `docs/credentials-service/**`, `docs/website/**`, `docs/coordinator/**`,
   `docs/in-job-review/**`, `docs/mobile/**` and **`docs/setup-wizard/**`
-  itself** — keep the old name (D9, F20). Each is another artifact's dated plan
-  record: `docs/website/`, `docs/credentials-service/`, `docs/coordinator/`,
-  `docs/in-job-review/` and `docs/mobile/` each hold another artifact's own
-  `reconciliation.md` — the mobile folder its `implementation-plan.md` too —
-  describing work as it was planned on its own date, and rewriting the command
-  inside them would be editing a record rather than fixing a document. The rename's guard test
+  itself** — keep the old name (D9, F20). `docs/plans/**`, `docs/releases/v*`
+  and `docs/design/**` are this tree's own record of what shipped on a date;
+  the other five — `docs/website/`, `docs/credentials-service/`,
+  `docs/coordinator/`, `docs/in-job-review/` and `docs/mobile/` — each hold
+  another artifact's own `reconciliation.md` (the mobile folder its
+  `implementation-plan.md` too), describing work as it was planned on its own
+  date, so rewriting the command inside them would be editing a record rather
+  than fixing a document. The rename's guard test
   enforces the line, and this folder is on
   the exempt side of it: its four documents are where the retirement is
   described, so they name the retired command throughout (the count is volatile
@@ -67,8 +69,8 @@ flag), `internal/cli/testdata/init_review.golden` (`TestReviewScreenGolden`,
   figure: `git grep -o -c 'fugaro init' -- docs/setup-wizard`).
 - **No fourth verb** (O1): `setup`, `update`, `upgrade`, the hidden `init`
   tombstone, and `fugaro config init` left alone.
-- **No `fugaro upgrade` change beyond its text.** D1 (recommended) keeps the two
-  commands apart.
+- **No `fugaro upgrade` change beyond its text.** D1 (answered as recommended)
+  keeps the two commands apart.
 
 ---
 
