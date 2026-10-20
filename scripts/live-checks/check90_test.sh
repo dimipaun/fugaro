@@ -9,7 +9,11 @@ set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 script=$here/check90.sh
-work=$(mktemp -d)
+# The PHYSICAL path: on macOS the temp directory is under /var, a symlink to
+# /private/var, and a child's getcwd() reports the resolved path, so a test that
+# compares a child's cwd with the scratch directory the script announces needs
+# both spelled the same way.
+work=$(cd "$(mktemp -d)" && pwd -P)
 pids=()
 cleanup_all() {
   local p
@@ -800,7 +804,12 @@ test_foreign_request_is_refused() {
 # out. Here the streaming call is cut off at its own 5s cap, which puts the run
 # past its 5s budget: the header drops and the delayed proxy must not run.
 test_budget_is_read_at_every_step() {
-  run90 budget ok "" CHECK90_TOTAL_SECONDS=5 CHECK90_CALL_TIMEOUT=5 \
+  # The budget is wide enough for the three calls before the stream on a loaded
+  # machine (a 5s budget ran out before step_streaming when the two bash tests
+  # ran side by side), and the stream's hang is held by a cap longer than the
+  # budget, so the budget is spent INSIDE step_streaming: only a check made
+  # between steps can then stop step_drops.
+  run90 budget ok "" CHECK90_TOTAL_SECONDS=20 CHECK90_CALL_TIMEOUT=25 \
     FAKE_CLAUDE_HANG_PROMPT="Write the numbers" FAKE_CLAUDE_HANG=60
   expect_status "$status" 0 "budget: the swap's verdict still stands"
   expect_contains "$out" "FACT tier-a: PASS — VIABLE" "budget: tier A"
