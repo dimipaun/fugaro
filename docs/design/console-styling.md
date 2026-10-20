@@ -484,14 +484,15 @@ affordance is absent (`KILL_ABSENT_BECAUSE`), and a figure that is a lower bound
 - **no binary** — `div.unavailable-body` holding `h1.unavailable-headline` ("no fugaro
   binary"), `p.unavailable-reason`, `div.unavailable-install` (itself holding
   `span.unavailable-install-lead` ("install it with") and
-  **`code.unavailable-install-command`**), `div.unavailable-picker` (holding
-  `span.unavailable-picker-lead`, with **`data-picker="binary"`**, and an optional
-  `span.unavailable-configured` carrying the path the installation named when it named
-  one), and a searched-places line — `div.unavailable-searched` holding
-  `span.unavailable-searched-count` and `span.unavailable-searched-lead`. **The tags are
-  the code's and they matter**: the install command is a `code` and not a `pre`, and both
-  leads are `span`s and not `p`s, so a rule spelled `pre.unavailable-install-command`
-  styles nothing at all.
+  **`code.unavailable-install-command`**), and a searched-places line —
+  `div.unavailable-searched` holding `span.unavailable-searched-count` and
+  `span.unavailable-searched-lead`. **The tags are the code's and they matter**: the
+  install command is a `code` and not a `pre`, and the leads are `span`s and not `p`s, so
+  a rule spelled `pre.unavailable-install-command` styles nothing at all. **There is no
+  choose-the-binary affordance** (§6.3's row, as the owner's ruling of 2026-10-20 amended
+  it): no `div.unavailable-picker`, no `span.unavailable-picker-lead`, no
+  `data-picker="binary"` and no `span.unavailable-configured` — the console asks the
+  operator for no path, and the control this bullet used to describe wired nothing.
 - **refused** — `h1.unavailable-headline` ("the CLI refused this read"),
   `span.unavailable-operation` and `p.unavailable-sentence`, where the sentence is the
   CLI's own text through `sanitizeRefusal` or the console's
@@ -2360,8 +2361,8 @@ no task owns.*
    `over deadline`, the pull request shown **as text with no link**, the bounded log table,
    the diagnosis block, and the replay line.
 5. **The boundary screens** — the degraded (no-Firebase) screen with caps reading `n/a` and
-   the kill affordance absent; the no-binary screen with its install command and picker; and
-   the refusal screen (`<h1>Fugaro console</h1>` and one sentence). The last of these is the
+   the kill affordance absent; the no-binary screen with its install command and the places
+   it searched; and the refusal screen (`<h1>Fugaro console</h1>` and one sentence). The last of these is the
    **no-script** case and must look complete anyway.
 
 **The palette to draw in:** §3.2 — the dark set, the one that ships; §3.3 is the record of

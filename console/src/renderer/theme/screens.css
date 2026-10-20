@@ -1007,7 +1007,7 @@ div.degraded-totals {
 }
 
 /* The unavailable screens: no binary, or a read the CLI refused. The install
- * command is a `code` and both leads are `span`s -- the tags are the code's, so
+ * command is a `code` and the leads are `span`s -- the tags are the code's, so
  * a rule spelled `pre.unavailable-install-command` would style nothing. */
 div.unavailable-body {
   display: block;
@@ -1023,9 +1023,7 @@ code.unavailable-install-command {
 }
 
 span.unavailable-install-lead,
-span.unavailable-picker-lead,
 span.unavailable-searched-lead,
-span.unavailable-configured,
 span.unavailable-operation,
 span.unavailable-searched-count {
   color: var(--text-muted);
@@ -1285,9 +1283,7 @@ main p {
   span.degraded-compute-word,
   span.degraded-cap,
   span.unavailable-install-lead,
-  span.unavailable-picker-lead,
   span.unavailable-searched-lead,
-  span.unavailable-configured,
   span.unavailable-operation,
   span.unavailable-searched-count,
   span.live-run-title,

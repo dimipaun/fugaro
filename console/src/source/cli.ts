@@ -185,8 +185,6 @@ export interface NoInstallationState {
   readonly installCommand: string
   /** every candidate the resolution looked at, in the order it looked */
   readonly searched: readonly string[]
-  /** the path the installation named, when it named one */
-  readonly configuredPath: string | null
 }
 
 /**
@@ -212,7 +210,9 @@ export class NoInstallation extends SourceRefusal {
  * noInstallationState is the state, built from the resolution that failed. The
  * candidate list is re-derived from the same `binDirectories` the resolution
  * walked, with the same options -- so the screen names the directories this
- * machine would actually be searched in, not a list written down twice.
+ * machine would actually be searched in, not a list written down twice. The
+ * configured path is an *input* and not a field: it is one of those candidates,
+ * and the screen draws the count of them and never a path.
  */
 export function noInstallationState(options: {
   readonly reason: string
@@ -227,7 +227,6 @@ export function noInstallationState(options: {
       ...(options.configuredPath === undefined ? {} : { configuredPath: options.configuredPath }),
       ...(options.home === undefined ? {} : { home: options.home }),
     }),
-    configuredPath: options.configuredPath === undefined || options.configuredPath === '' ? null : options.configuredPath,
   }
 }
 
