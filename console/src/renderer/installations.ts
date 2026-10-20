@@ -109,12 +109,33 @@ export const NO_INSTALLATION_STATUS = 'No installations yet.'
  * installations its own store holds, and hiding them would take away the one
  * installation the operator can still open.
  */
+/**
+ * drawnScreen is the onboarding screen a reply really carries: the two kinds
+ * `src/main/onboarding.ts` draws, and no other.
+ *
+ * The union above is what the main process is *supposed* to send; this is the
+ * check that the wired value is one of them, and it is what makes the comment
+ * on `OnboardingState` true. `ONBOARDING_COPY` is a closed map over those two
+ * kinds, so a `kind` this build has never heard of would reach
+ * `onboardingNodes`' `copy.title` as `undefined` and throw -- and the throw
+ * happens while the window is being drawn, so the rows and the CLI's own
+ * warning lines go down with it. A screen this build is not written for is
+ * drawn as **no screen** rather than as half of one.
+ */
+function drawnScreen(
+  state: OnboardingState | undefined,
+): Exclude<OnboardingState, { kind: 'none' }> | undefined {
+  if (state?.kind === 'install-cli') return state
+  if (state?.kind === 'first-installation') return state
+  return undefined
+}
+
 export function viewOf(reply: InstallationReply): InstallationView {
   if (!reply.ok) {
     return { status: reply.reason, rows: [], warnings: [], onboard: NO_ONBOARD }
   }
   const answer = reply.data as InstallationsListAnswer
-  const onboard = answer.onboard ?? NO_ONBOARD
+  const onboard = drawnScreen(answer.onboard) ?? NO_ONBOARD
   const rows = answer.rows ?? []
   const warnings = answer.warnings ?? []
   if (answer.refusal !== undefined) {

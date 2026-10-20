@@ -604,10 +604,39 @@ describe('the view as a function of one reply', () => {
     })
 
     // A reply a newer main process answered with a screen this view does not
-    // know is drawn as no screen rather than as half of one.
-    const unknown = viewOf({ ok: true, data: { rows: [row()], path: DEFAULT_PATH } } as InstallationReply)
+    // know is drawn as no screen rather than as half of one -- and the rows and
+    // the CLI's warning lines beside it are still drawn. A reply with **no**
+    // `onboard` at all is the case above it (`options.onboard` defaults to
+    // `none`); this is the one an unknown `kind` is, which used to reach
+    // `ONBOARDING_COPY[state.kind].title` as `undefined.title` and throw.
+    const unknown = viewOf(
+      answer({
+        rows: [row({ active: true })],
+        warnings: ['the CLI said so'],
+        onboard: { kind: 'future-screen', command: 'fugaro future' } as unknown as OnboardingState,
+      }),
+    )
     expect(unknown.onboard).toEqual({ kind: 'none' })
-    expect(unknown.warnings).toEqual([])
+    expect(unknown.rows).toHaveLength(1)
+    expect(unknown.warnings).toEqual(['the CLI said so'])
+    // It is no screen, but it is not the first-installation screen either: the
+    // rows are what the window says, so the status line is the active row's.
+    expect(unknown.status).toBe('fugaro is the installation this console is showing (ok).')
+  })
+
+  it('draws no screen for a kind it does not know, and draws the rows anyway', async () => {
+    // The same claim through the mount, which is where the throw actually
+    // happened: `mountPicker`'s refresh calls `onboardingNodes` for any kind but
+    // `none`, so an unknown one took the whole redraw down -- the rows included,
+    // which is the one installation the operator can still open.
+    const { element } = await mount({
+      rows: [row({ active: true })],
+      warnings: ['the CLI said so'],
+      onboard: { kind: 'future-screen', command: 'fugaro future' } as unknown as OnboardingState,
+    })
+    expect(element('picker-onboarding').children).toEqual([])
+    expect(element('picker-list').children).toHaveLength(1)
+    expect(element('picker-warnings').children).toHaveLength(1)
   })
 
   it('marks a row’s state, and no version', () => {

@@ -330,11 +330,20 @@ export function inRangeCliStub(): CliStub {
  * environment it passes to `electron.launch` and gets the binary the app will
  * actually find -- the stub when nothing well-known is installed, and the
  * machine's own binary when there is one.
+ *
+ * **`HOME` comes out of `env`**, because that is where the app reads `~` from:
+ * the main process calls the resolver with its own environment, so
+ * `~/.local/bin` is *the stub's* scratch home for a launch. Letting
+ * `homedir()` answer here would be the spec runner's home instead, and this
+ * function would then name a binary the app never looks at -- the opposite of
+ * what it exists for.
  */
 export async function resolveConsoleBinary(env: NodeJS.ProcessEnv): Promise<BinaryResolution> {
+  const home = env['HOME']
   return resolveBinary({
     appEnv: env,
     directory: privateWorkingDirectory(),
     target: HANDSHAKE_TARGET,
+    ...(home === undefined || home === '' ? {} : { home }),
   })
 }
