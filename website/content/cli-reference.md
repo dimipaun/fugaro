@@ -68,7 +68,54 @@ Flags:
 
 Subcommands:
 
+- `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
 - `fugaro accounts ls` -- List the named Claude accounts (claude_accounts in the local config) a repository may use with fugaro run --token
+
+## `fugaro accounts clear`
+
+Clear one account's broken or exhausted credential mark, after replacing its token
+
+Clear one Claude account's credential mark, so the cascade may route work to it
+again. This is an operator's command: it writes the project's own database,
+acting as you (ADC), and it is the only thing that ends a broken mark.
+
+Only the two states an operator's action is what ends may be cleared:
+
+  broken     the service saw a 401 (D139) and nothing clears it on its own.
+             Replace the token first, then clear the mark here.
+  exhausted  the account reported a usage limit and holds until its reset time.
+
+A backed-off mark is refused: a probe is what clears it (C1.12), and clearing it
+by hand would route real work to a credential that has not answered since it was
+held. A state this Fugaro does not know is refused too, because clearing it
+could take off a hold a newer release placed.
+
+The write is one node — creds/marks/NAME, in this installation's own database —
+and it is conditional on the value read (PutIfMatch), so a mark the service
+changed at the same moment is not lost.
+
+NAME is "default" (the repository's own unnamed claude-oauth-token secret) or a
+claude_accounts name of the selected project config; any other name is refused
+rather than written, so a typo cannot leave a mark node for a credential that
+does not exist. Nothing here reads or prints a token value, a secret ID or a
+prefix of one: names and states only.
+
+Usage: `fugaro accounts clear NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for clear |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--yes` | bool | `false` | no | skip the typed confirmation (read what it does first) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro accounts ls`
 

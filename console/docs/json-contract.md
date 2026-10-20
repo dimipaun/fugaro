@@ -541,11 +541,49 @@ plugin wiring, not the environment the console draws).
 **Command:** `internal/cli/accounts.go` `newAccountsLsCmd`, indented
 (`printAccounts`). **Document:** `accountsListDoc`:
 `repo` string, `accounts` `[]string`, `complete` bool,
-`note`° (why selection failed). **`complete: false` means the project config
+`note`° (why selection failed), `states`° and `state_note`°. **`complete: false` means the project config
 could not be selected — the screen renders `unavailable`, never "no
 accounts"** (the type's own doc comment is the authority). Flags: `--repo`
 (always passed explicitly), `--json`, plus the cloud flags. Local and offline:
 "never calls Secret Manager".
+
+**`states` (CLI 0.9.0, credentials-service C1.21)** is every listed account's
+credential state, keyed by account name, and it is **absent exactly when no
+mark could be read** — then `state_note` says why (no Firebase budget backend,
+a database that is down, a read the person's rules refused). The two are one
+answer: a reader must **not** render "every account is available" from an
+absent `states`, because that is a claim about marks this command did not read.
+Each value is `{"state": …}` plus `until`° — the state word
+`internal/creds` stores, spelled as it stores it (`available`, `exhausted`,
+`backed_off`, `broken`; a state a newer release wrote is passed through
+verbatim rather than rounded to `available`), and, for an exhaustion, the
+instant the hold lapses in RFC 3339. An account with no node, one whose node
+says `available` and one whose mark an operator cleared all carry `available`:
+they are the same credential (`creds.Mark`'s own doc). **Names and states only
+— never a token, a secret ID or a prefix of one (F27).**
+
+The text view of the same command is the plan's column — `available`,
+`exhausted until T`, `backed off`, `broken` — and falls back to one bare name
+per line when there is no state to show, which is the shape a console that
+passes `--json` never sees.
+
+### 6.5a `fugaro accounts clear NAME` — the operator's write
+
+**Command:** `internal/cli/accounts.go` `newAccountsClearCmd`. It is the one
+command in this document that **writes the budget database**, and it is the
+reason §9 rule 1's "never" list must stay exhaustive: the console does not
+spawn it. It writes exactly one node, `creds/marks/NAME`, with
+`creds.Cleared()`, acting as the person (ADC, an admin of the database), and
+the write is conditional (`creds.RTDBStore.UpdateMark` → `PutIfMatch`) so a
+mark the service changed at the same moment is re-read rather than
+overwritten. Flags: `--yes` (skips the typed confirmation of the project's
+name), plus the cloud flags. It prints one line naming the account and the
+state it cleared, and **no value of any kind**. A `broken` or `exhausted` mark
+is clearable; a `backed_off` one is refused (a probe clears it, C1.12) and a
+state this Fugaro does not know is refused rather than overwritten. `NAME` must
+be `default` or a `claude_accounts` name of the selected local config — never
+the shared config, which strips `claude_accounts`.
+
 
 ### 6.6 `fugaro secrets ls --json`
 
@@ -839,9 +877,11 @@ table against the live constructors.
 ## 9. What the console may do with all this
 
 1. **Every document in the console's set is read-only**, and the allow-list is
-   by exact argv (design §5.1 rule 6). The one command this file describes that
-   is a write is `fugaro cancel RUN --json` (§6.3), which is on the design's
-   "never" table and which no v1 console spawns; nothing else here names a
+   by exact argv (design §5.1 rule 6). Two commands this file describes are
+   writes, and neither is in the console's set: `fugaro cancel RUN --json`
+   (§6.3), which is on the design's "never" table and which no v1 console
+   spawns, and `fugaro accounts clear NAME` (§6.5a, credentials-service C1.21),
+   the operator's own write to the cascade's state. Nothing else here names a
    write.
 2. **Exactly two of the commands in the console's set are line-delimited:
    `watch --json` and `logs RUN

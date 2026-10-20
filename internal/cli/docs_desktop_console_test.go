@@ -696,10 +696,16 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	"cancel":      newCancelCmd,
 	"secrets ls":  newSecretsLsCmd,
 	"accounts ls": newAccountsLsCmd,
-	"doctor":      newDoctorCmd,
-	"version":     newVersionCmd,
-	"config list": newConfigListCmd,
-	"plan graph":  newPlanGraphCmd,
+	// §6.5a documents the operator's write to the cascade's state
+	// (credentials-service C1.21). It is deliberately NOT on the design's
+	// spawn allow-list — the console never writes — but the document
+	// describes its flags, so they are checked against this constructor like
+	// any other's.
+	"accounts clear": newAccountsClearCmd,
+	"doctor":         newDoctorCmd,
+	"version":        newVersionCmd,
+	"config list":    newConfigListCmd,
+	"plan graph":     newPlanGraphCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
