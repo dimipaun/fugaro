@@ -21,10 +21,16 @@
 //      array. Two tolerances are deliberate and are made where they are used: an
 //      **absent** optional field reads as the empty value (a row with no
 //      `gcp_project`, a document with no `warnings` — in both cases the CLI sent
-//      nothing, so nothing is hidden), and `checkouts`, which the console only
-//      ever offers back to the CLI (rule 2) and does not draw, tolerates a wrong
-//      type rather than refusing every installation on the machine over a field
-//      no screen reads.
+//      nothing, so nothing is hidden), and `checkouts`, where what is tolerated
+//      is an **element** and not the field: a `checkouts` that is not an array
+//      carries no directory the operator could be offered, and an element that is
+//      not a non-empty string is not a directory the CLI printed (its own field
+//      is a `[]string`), so refusing every installation on the machine over
+//      either would hide the rows this read exists to draw. What is **not**
+//      tolerated is a length: a row past `MAX_DISCOVERED_INSTALLATIONS`
+//      checkouts is a refusal, because the picker draws one button per entry
+//      (`docs/design/console-styling.md` §2.2) and a shortened row is a screen
+//      that lies by omission.
 //   2. **Nothing in the document is a path the console will run.** A row's
 //      `checkouts` are offered back to the CLI verbatim when the operator picks
 //      one (the CLI's own `--dir`/cwd), never resolved, joined or guessed at
@@ -127,8 +133,21 @@ export function parseInstallationsDocument(text: string): InstallationsParse {
     if (gcpProject === null || region === null) {
       return { ok: false, reason: `the CLI listed ${JSON.stringify(name)} with a field that is not a string` }
     }
+    const checkouts = checkoutsOf(entry)
+    if (checkouts === null) {
+      // Rule 3, one row down: the bound is kept and the omission is *named* --
+      // here the count is a refusal rather than a shortened row, because a row
+      // is what the picker draws its buttons from, and a row missing half its
+      // directories is a screen that lies about the installation.
+      return {
+        ok: false,
+        reason:
+          `the CLI listed more than ${String(MAX_DISCOVERED_INSTALLATIONS)} checkouts for ` +
+          `${JSON.stringify(name)}, which this console will not draw`,
+      }
+    }
     installations.push(
-      Object.freeze({ name, gcpProject, region, checkouts: checkoutsOf(entry) }),
+      Object.freeze({ name, gcpProject, region, checkouts }),
     )
   }
   const warned = value['warnings']
@@ -190,12 +209,22 @@ function textField(entry: Record<string, unknown>, key: string): string | null {
  * dropped, and the *count* is bounded by `MAX_DISCOVERED_INSTALLATIONS`. What
  * this refuses to do is guess: an entry is kept verbatim and is never a path the
  * console went and looked at.
+ *
+ * **Past the bound it refuses the document, and does not return a short
+ * array.** The picker draws one button per checkout this carries
+ * (`docs/design/console-styling.md` §2.2), so a truncation here is a screen
+ * showing fewer directories than the CLI printed with nothing said about the
+ * ones that went -- the silent omission rule 3 forbids. The refusal is the
+ * caller's, because only the caller knows which installation it is reading; the
+ * `null` this returns for a document past the bound is the same shape
+ * `textField` uses, and it is turned into a sentence naming the row.
  */
-function checkoutsOf(entry: Record<string, unknown>): readonly string[] {
+function checkoutsOf(entry: Record<string, unknown>): readonly string[] | null {
   const value = entry['checkouts']
   if (!Array.isArray(value)) return Object.freeze([])
+  if (value.length > MAX_DISCOVERED_INSTALLATIONS) return null
   const checkouts: string[] = []
-  for (const candidate of value.slice(0, MAX_DISCOVERED_INSTALLATIONS)) {
+  for (const candidate of value) {
     if (typeof candidate !== 'string') continue
     if (candidate === '' || candidate.length > MAX_DOCUMENT_STRING) continue
     // eslint-disable-next-line no-control-regex

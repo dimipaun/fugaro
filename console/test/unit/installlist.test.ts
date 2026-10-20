@@ -98,6 +98,37 @@ describe('the installation list document', () => {
     expect(wrong.ok && [...(wrong.document.installations[0]?.checkouts ?? [])]).toEqual([])
   })
 
+  it('refuses a row whose checkouts run past the bound, rather than drawing a shortened row', () => {
+    // **The bound is named, not applied behind the screen's back.**
+    // `docs/design/console-styling.md` §2.2 says the picker's buttons are the
+    // installation's own `checkouts` and that there is no per-row cap -- every
+    // checkout the document carried is drawn. `checkoutsOf` used to slice the
+    // array at `MAX_DISCOVERED_INSTALLATIONS`, so a row with more than that lost
+    // its tail with nothing said: the picker drew a shorter list than the CLI
+    // printed, and no screen, warning or sentence mentioned the ones that went.
+    // That is the silent omission rule 3 forbids, so the document is refused
+    // instead -- the same bound, the same idiom as the installation count above.
+    const one = (checkouts: readonly string[]): unknown => ({
+      installations: [{ name: 'sandbox', gcp_project: 'p', region: 'r', checkouts: [...checkouts] }],
+      warnings: [],
+    })
+    const at = Array.from({ length: MAX_DISCOVERED_INSTALLATIONS }, (_unused, index) => `/src/checkout-${String(index)}`)
+    const kept = parsed(one(at))
+    expect(kept.ok).toBe(true)
+    expect(kept.ok && kept.document.installations[0]?.checkouts).toHaveLength(MAX_DISCOVERED_INSTALLATIONS)
+
+    const past = parsed(one([...at, '/src/one-too-many']))
+    expect(past.ok).toBe(false)
+    // The sentence names the field and the bound, the way the installation
+    // count's refusal does, so the operator is told what happened rather than
+    // shown a shorter row.
+    expect(past.ok === false && past.reason).toContain('checkouts')
+    expect(past.ok === false && past.reason).toContain(String(MAX_DISCOVERED_INSTALLATIONS))
+    // ...and the row is named, so a document with this on one of fifty rows says
+    // which one the console would not draw.
+    expect(past.ok === false && past.reason).toContain('sandbox')
+  })
+
   it('refuses text that is not the document, rather than drawing part of it', () => {
     // Each of these is a mutation of the one above: a marshalled struct instead
     // of the named document, a document with no array, a row that is not an
