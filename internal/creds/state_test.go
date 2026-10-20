@@ -733,6 +733,98 @@ func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
 	}
 }
 
+// The sweep's prune is BOUNDED, and the bound is what keeps the read path from
+// turning into a delete of the whole subtree the first time a project comes back
+// from a long quiet spell: a read deletes the oldest DefaultLeasePrune lapsed
+// nodes — never more, whatever the residue above DefaultLeaseResidue is — and
+// the next read takes the next ones. Each one lands under the ETag it re-read,
+// so a read that deletes eight costs eight conditional writes and not one big
+// one.
+//
+// Review finding N3: every existing case had DefaultLeaseResidue+6 lapsed nodes
+// at most, which is a prune of six — the clamp at DefaultLeasePrune was never
+// reached, so removing it, or pruning all of the lapsed nodes, went unnoticed.
+func TestTheLeaseSweepPrunesAtMostItsBound(t *testing.T) {
+	const gone = DefaultLeaseResidue + 20
+	db, live := leaseDB(gone)
+	st := &RTDBStore{DB: db}
+
+	if _, err := st.Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if db.deletes != DefaultLeasePrune {
+		t.Fatalf("a read over %d lapsed leases pruned %d nodes; want the bound of %d", gone, db.deletes, DefaultLeasePrune)
+	}
+	// The oldest went, and the one just past the bound stayed: the prune is the
+	// oldest DefaultLeasePrune of the lapsed nodes and not an arbitrary eight.
+	for i := 0; i < DefaultLeasePrune; i++ {
+		r := Run{Slug: "acme", ID: "gone-" + strconv.Itoa(i)}
+		if _, ok := db.nodes[PathLease(r)]; ok {
+			t.Fatalf("the sweep left %+v: it prunes the oldest lapsed leases first", r)
+		}
+	}
+	if _, ok := db.nodes[PathLease(Run{Slug: "acme", ID: "gone-" + strconv.Itoa(DefaultLeasePrune)})]; !ok {
+		t.Fatalf("the sweep pruned past its bound of %d", DefaultLeasePrune)
+	}
+	if _, ok := db.nodes[PathLease(live)]; !ok {
+		t.Fatal("the sweep deleted a live hold")
+	}
+
+	// The next read prunes the next oldest eight: the subtree converges instead
+	// of being emptied in one read, which is the property the bound is for.
+	before := db.deletes
+	if _, err := st.Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if db.deletes-before != DefaultLeasePrune {
+		t.Fatalf("the second read pruned %d nodes; want the same bound of %d", db.deletes-before, DefaultLeasePrune)
+	}
+	if _, ok := db.nodes[PathLease(Run{Slug: "acme", ID: "gone-" + strconv.Itoa(DefaultLeasePrune)})]; ok {
+		t.Fatalf("the second read left gone-%d: the sweep is the oldest first, read after read", DefaultLeasePrune)
+	}
+
+	// And it stops at the residue rather than pruning to nothing: reads keep
+	// going until at most DefaultLeaseResidue lapsed nodes are left, and then
+	// the project pays no writes at all on the read path.
+	for i := 0; i < 20; i++ {
+		if _, err := st.Leases(ctx, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lapsed := 0
+	for p := range db.nodes {
+		if p == PathLease(live) {
+			continue
+		}
+		lapsed++
+	}
+	if lapsed > DefaultLeaseResidue {
+		t.Fatalf("%d lapsed leases were left after twenty reads; want at most the residue of %d", lapsed, DefaultLeaseResidue)
+	}
+	before = db.deletes
+	if _, err := st.Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if db.deletes != before {
+		t.Fatalf("a read at the residue pruned %d more nodes; want none", db.deletes-before)
+	}
+
+	// BELOW the residue the sweep does nothing at all — and it gets there
+	// without indexing a slice, which is the reason the guard is the residue
+	// rather than "anything lapsed": the prune count is lapsed-minus-residue, so
+	// it is negative for a handful of dead nodes, and a sweep that entered the
+	// loop anyway would panic the read path — every selection in the project
+	// failing closed on a project that has simply been quiet.
+	few, _ := leaseDB(DefaultLeaseResidue - 1)
+	fewst := &RTDBStore{DB: few}
+	if _, err := fewst.Leases(ctx, now); err != nil {
+		t.Fatalf("a read over %d lapsed leases failed: %v", DefaultLeaseResidue-1, err)
+	}
+	if few.deletes != 0 {
+		t.Fatalf("a read over %d lapsed leases, below the residue of %d, pruned %d nodes; want none", DefaultLeaseResidue-1, DefaultLeaseResidue, few.deletes)
+	}
+}
+
 // A sweep that cannot land is not a read that fails: the leases it answered with
 // are the leases as they were, and failing a selection because another run's dead
 // node was not deleted would let the sweep decide the call.
