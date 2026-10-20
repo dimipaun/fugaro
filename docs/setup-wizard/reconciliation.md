@@ -1043,8 +1043,9 @@ to `runCovered`, and it keeps one matrix for both front doors.
 owns.** The owner overruled the recommendation. `fugaro update --yes` is total
 over the stage set it registers — preflight, installation, Firebase, images,
 installation (second pass), secrets, plugin and each enrolled repository — with
-**no step left `Typed`**: the Firestore database's location, a Cloud Build and
-replacing a registry tag are all covered when `update` asks for them. A CI job
+**no step left `Typed`**: the Firestore database's location, a Cloud Build,
+replacing a registry tag and onboarding a repository the run was not told about
+are all covered when `update` asks for them. A CI job
 that upgrades the CLI and has to rebuild an image gets the build, not
 `needs-you` and exit code 1.
 
@@ -1052,8 +1053,10 @@ that upgrades the CLI and has to rebuild an image gets the build, not
 creating the project (either banner) and linking the billing account — both
 `setup`'s alone, since `update` refuses `--create-project` and `--link-billing`
 outright — and the Firestore database's location, which `setup` keeps `Typed`
-while `update` covers it. `--yes` never covers those three, in either front
-door.
+while `update` covers it. So the rule is exact rather than approximate: `--yes`
+never covers **creating the project or linking the billing account, in either
+front door**, and never covers **the Firestore database's location in `setup`**
+— the only door that asks for it as a first-time question.
 
 The answer is written out row by row rather than summarised, because the rest of
 the matrix is what actually moves: **a billable first image build**,
