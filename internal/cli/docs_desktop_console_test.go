@@ -6650,13 +6650,18 @@ func TestConsoleReleaseLinuxStagedFileIsNotTheAppliedOne(t *testing.T) {
 //
 // The selection it runs is the family the staged files reach
 // (consoleCopyInRunPattern), which deliberately does not match this test: a
-// pattern that did would run this test inside the copy and recurse.
+// pattern that did would run this test inside the copy and recurse. That
+// selection is checked for coverage first (consoleCopyInUncoveredTests): a test
+// in this package that reads one of the moved files and is not selected fails
+// here, rather than being silently left out of the run in the copy.
 //
-// The mutation that proves it: make consoleWorkflowText read only the staged
-// path (fatal instead of falling back to the applied one), or pin
+// The mutations that prove it: make consoleWorkflowText read only the staged
+// path (fatal instead of falling back to the applied one); pin
 // TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere's count to the "three"
-// this change stages -- each turns this test red on the copied tree while the
-// rest of the suite, in the staged tree, stays green.
+// this change stages; and add a test outside the pattern that reads one of the
+// moved files. Each turns this test red -- the first two on the copied tree
+// while the staged tree stays green, the third before the copy is even made --
+// and nothing else in the suite notices.
 func TestStagedLinuxFilesSurviveTheCopyIn(t *testing.T) {
 	if !docExists(t, consoleLinuxWorkflowPath) || !docExists(t, consoleReleaseLinuxWorkflowPath) {
 		t.Skipf("the copy-in has been applied in this tree (%s or %s is gone): this test needs the staged state to copy from, and on the applied tree it has nothing left to prove -- the suite it would run is the suite running now",
@@ -6706,6 +6711,13 @@ func TestStagedLinuxFilesSurviveTheCopyIn(t *testing.T) {
 	spliceOut(t, filepath.Join(copyRoot, "website/README.md"), sentences.site,
 		"`docs/pending-workflows/` now holds", "the website's two manual")
 
+	// Before running anything, the selection is checked for coverage: a test
+	// that reads one of the files the copy-in moves and is not matched by the
+	// pattern would be a test this proof silently does not run.
+	for _, name := range consoleCopyInUncoveredTests(t) {
+		t.Errorf("%s reads what the copy-in changes and %q does not select it, so the run inside the copy would never exercise it: widen consoleCopyInRunPattern (or name the test into the family it belongs to), because this test's whole claim is about the tests that read the files a copy-in moves", name, consoleCopyInRunPattern)
+	}
+
 	// It runs **in the copy**: this package's own test binary, started from the
 	// copied package directory, so every readDoc and every workflow reader above
 	// opens the copied tree's file. The binary is the one this test is running
@@ -6733,7 +6745,69 @@ func TestStagedLinuxFilesSurviveTheCopyIn(t *testing.T) {
 // pattern a run uses day to day, `DesktopConsole|Docs|Lint`, which does not
 // spell the standalone Linux tests' names). It must not match the proof test
 // itself, and the proof test checks that it does not.
+//
+// It is kept honest by consoleCopyInSensitive and the coverage check in the
+// proof test: a test that reads one of the files the copy-in moves and is not
+// selected here fails that check rather than being quietly left out of the run
+// in the copy.
 const consoleCopyInRunPattern = `Console|Docs|Lint`
+
+// consoleCopyInSensitive is what a copy-in changes, as a test source spells it:
+// the two staged files by name, the constants that name their four homes, and
+// the two helpers this file reads the staging README's opening line through
+// (`pendingWorkflows` derives the pending set from the directory, and
+// `pendingReadmeOpening` is the paragraph that states it). A test whose body
+// mentions any of these is a test the copy-in can turn red.
+//
+// What it does not cover, deliberately: a test that reads the README's opening
+// line or the site's last paragraph without going through one of these -- the
+// check is over the text of the tests, and a string this list does not know
+// cannot be seen. The families that read them are selected by
+// consoleCopyInRunPattern in full, and a new reader is expected to be named into
+// one of them.
+// It is a regular expression with word boundaries rather than a list of
+// substrings: `pendingWorkflows` is a helper here and `pendingWorkflowsReadmePath`
+// is a constant in another file, and a substring search cannot tell them apart.
+var consoleCopyInSensitive = regexp.MustCompile(`\b(?:console-linux\.yml|console-release-linux\.yml|consoleLinuxWorkflowPath|appliedConsoleLinuxPath|consoleReleaseLinuxWorkflowPath|consoleReleaseWorkflowPath|appliedConsoleReleasePath|pendingReadmeOpening|pendingWorkflows)\b`)
+
+// consoleCopyInUncoveredTests is every test in this package whose source
+// mentions what a copy-in changes and which consoleCopyInRunPattern does not
+// select. The proof test refuses to run while it is non-empty: an unselected
+// reader is a test whose behaviour in the copied tree nobody has checked, which
+// is the whole failure this family was fixed for.
+func consoleCopyInUncoveredTests(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("cannot list this package's sources: %v", err)
+	}
+	pattern := regexp.MustCompile(consoleCopyInRunPattern)
+	var uncovered []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Split on the top-level `func ` keyword: every test's body is the text
+		// up to the next one, which is enough to ask whether that test mentions
+		// what the copy-in moves.
+		for _, body := range strings.Split(string(raw), "\nfunc ")[1:] {
+			test := strings.SplitN(body, "(", 2)[0]
+			if !strings.HasPrefix(test, "Test") || test == t.Name() {
+				continue
+			}
+			if consoleCopyInSensitive.MatchString(body) && !pattern.MatchString(test) {
+				uncovered = append(uncovered, name+": "+test)
+			}
+		}
+	}
+	slices.Sort(uncovered)
+	return uncovered
+}
 
 // copyInSentences is the pair of replacement sentences the README prescribes for
 // the commit that applies both files: this directory's opening line and the
