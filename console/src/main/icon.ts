@@ -53,8 +53,12 @@ import { join } from 'node:path'
 export const CONSOLE_ICON_RELATIVE_PATH = 'build/icon.png'
 
 /** consoleIconPath is that file under the app's own path -- the directory
- * `app.getAppPath()` answers, which is the console's directory in development
- * and the bundle's `Resources` directory when packaged. */
+ * `app.getAppPath()` answers, which is the console's own directory while the
+ * console runs unpackaged (what `electron .` from `console/` launches, and what
+ * the e2e specs launch) and the app's archive inside the bundle
+ * (`Contents/Resources/app.asar`) once it is packaged. Only the first of those
+ * has the file on disk, which is the other half of why the dock call below is
+ * guarded by `app.isPackaged`. */
 export function consoleIconPath(appPath: string): string {
   return join(appPath, CONSOLE_ICON_RELATIVE_PATH)
 }
