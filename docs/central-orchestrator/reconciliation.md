@@ -942,7 +942,7 @@ written not to decide by accident.
 ### D21 — Notifications
 **Recommendation: v1 uses only channels that exist or are already designed — a marker in the
 shared session, the console's existing feed, and the CLI — and the phone push path waits on
-`docs/mobile/design/push-notifications.md` (P5.2, unscheduled, D121's *"no push in v1"**#34).
+`docs/mobile/design/push-notifications.md` (P5.2, unscheduled, and D121's *"no push in v1"*, #34).
 **Alternative:** build the push sender now — cost: a device-token store, a sender identity and
 a retention question, i.e. a second product.
 
