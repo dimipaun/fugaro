@@ -188,6 +188,25 @@ func TestParseSharedRefusals(t *testing.T) {
 		{"batch image through the ghcr remote repository, digest-pinned", func(s string) string {
 			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-east5-docker.pkg.dev/fugaro-belong/fugaro-ghcr/dimipaun/fugaro-base@sha256:"+strings.Repeat("a", 64), 1)
 		}, "batch.image"},
+		// The path's segments, which the repository check above cannot see
+		// because it reads one segment and not what Docker resolves around
+		// it: every one of these carries the anchor's own host and project,
+		// so the project check passes it, and the repository check reads a
+		// segment that is not the repository the image ends up in. Docker
+		// rejects all three references, and fugaro's own reader must not be
+		// the looser of the two: an empty, "." or ".." segment is how a
+		// writer reaches a repository the check never read — the
+		// pull-through above among them — so the shape is refused before
+		// the repository is. (These three are the probes the review named.)
+		{"batch image with an empty path segment", func(s string) string {
+			return strings.Replace(s, "fugaro-belong/fugaro/edgeweb:1", "fugaro-belong//fugaro-ghcr/attacker/evil:1", 1)
+		}, "batch.image"},
+		{"batch image with a dot path segment", func(s string) string {
+			return strings.Replace(s, "fugaro-belong/fugaro/edgeweb:1", "fugaro-belong/./fugaro-ghcr/attacker/evil:1", 1)
+		}, "batch.image"},
+		{"batch image with a dot-dot path segment", func(s string) string {
+			return strings.Replace(s, "fugaro-belong/fugaro/edgeweb:1", "fugaro-belong/fugaro/../fugaro-ghcr/attacker/evil:1", 1)
+		}, "batch.image"},
 		{"batch boot image of another project", func(s string) string {
 			return strings.Replace(s, "projects/fugaro-belong/global/images/family/fugaro-base-1", "projects/evil-proj/global/images/family/fugaro-base-1", 1)
 		}, "batch.boot_image"},
@@ -530,10 +549,24 @@ func TestParseSharedAcceptsThePositivesTheBatchRefusalsLeaveOpen(t *testing.T) {
 	if noNetwork == validShared() {
 		t.Fatal("fixture: the batch block's network lines are gone from validShared")
 	}
+	image := func(ref string) string {
+		return strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", ref, 1)
+	}
 	for name, data := range map[string]string{
 		"image in another region of this project": otherRegion,
 		"image in this project's base repository": baseRepo,
 		"no network, subnetwork or account":       noNetwork,
+		// The strict path grammar (batchImageRE) is a refusal of empty, "."
+		// and ".." segments, and of nothing else: the shapes fugaro init
+		// writes stay accepted, so a later tightening of it that refuses
+		// one of these is a refusal of this installation's own build.
+		"image pinned by digest":                          image("us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb@sha256:" + strings.Repeat("a", 64)),
+		"image in a nested path":                          image("us-east5-docker.pkg.dev/fugaro-belong/fugaro/team/edgeweb:1"),
+		"image in a repository whose name has separators": image("us-east5-docker.pkg.dev/fugaro-belong/fugaro_base-x.v2/edgeweb:1"),
+		// The residue itself, which is not a positive anyone wants and is
+		// here so it cannot be lost: see
+		// TestParseSharedLeavesAnotherPullThroughRepository.
+		"image in a second pull-through repository": image("us-east5-docker.pkg.dev/fugaro-belong/docker-hub/attacker/evil:1"),
 	} {
 		c, err := ParseShared([]byte(data), sharedAnchor)
 		if err != nil {
@@ -543,6 +576,31 @@ func TestParseSharedAcceptsThePositivesTheBatchRefusalsLeaveOpen(t *testing.T) {
 		if c.Batch == nil {
 			t.Errorf("%s: parsed with no batch block", name)
 		}
+	}
+}
+
+// TestParseSharedLeavesAnotherPullThroughRepository pins the residue the design
+// now states instead of smoothing over (docs/design/shared-config.md §5, the
+// follow-up to Task 8's first half): the fugaro-ghcr refusal is by that one
+// repository ID, so a SECOND pull-through repository of the anchor's project —
+// one an operator created under another ID, whose contents are its upstream's
+// rather than this installation's — passes the reader with an attacker's path
+// inside it. The reader cannot close this: it has a name, a GCP project and a
+// bucket, and no repository list to tell the project's remote repositories from
+// the ones this installation's builds push to.
+// plan 2026-10-19-compute-backend.md Task 10 step 5 owns closing it, and this
+// test is what fails on the day it is closed: an image refused here means the
+// reader changed, and §5's sentence, the plan's step and this test move
+// together with it.
+func TestParseSharedLeavesAnotherPullThroughRepository(t *testing.T) {
+	const ref = "us-east5-docker.pkg.dev/fugaro-belong/docker-hub/attacker/evil:1"
+	published := strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", ref, 1)
+	c, err := ParseShared([]byte(published), sharedAnchor)
+	if err != nil {
+		t.Fatalf("ParseShared refused %q: %v — the refusal is by the one repository ID fugaro-ghcr and the reader has no repository list, so a refusal here is the change Task 10 step 5 makes, and docs/design/shared-config.md §5 and this test's comment have to move with it", ref, err)
+	}
+	if c.Batch == nil || c.Batch.Image != ref {
+		t.Fatalf("batch.image = %+v, want %q: the reader passed the reference but not as the batch image", c.Batch, ref)
 	}
 }
 
