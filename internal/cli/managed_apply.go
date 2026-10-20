@@ -536,7 +536,13 @@ func writeImpersonationFile(impersonationURL string) (string, func(), error) {
 	none := func() {}
 	path, err := adcFile()
 	if err != nil {
-		return "", none, err
+		// A user error (exit 1), as main's own copy of this lookup was: where
+		// the credentials are and whether they exist is the operator's
+		// environment, not a cloud failure. Without the wrap, this error
+		// reaches managedApplyErr's default arm, which reports exit 2 and the
+		// wrong reason (a terraform failure) for a machine that merely has no
+		// ADC on it.
+		return "", none, userErr("%v", safetext.FieldErr(err))
 	}
 	src, err := readBounded(path)
 	if err != nil {

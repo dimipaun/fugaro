@@ -1198,6 +1198,37 @@ func TestManagedApplyRefusalsMapToExitCodes(t *testing.T) {
 	}
 }
 
+// TestManagedApplyWithoutADCCredentialsIsAUserError: a machine with no
+// Application Default Credentials at all is a user error (exit 1, "run gcloud
+// auth application-default login"), and the deployer's credential file is
+// written inside the apply — so the failure arrives as the terraform
+// constructor's error, which internal/managed wraps with %w and this command
+// maps. A plain error there falls into managedApplyErr's default arm, which
+// reports a cloud or terraform failure (exit 2) for a lookup in the user's own
+// environment; the wrap below is that composition, so this is the code the
+// process would carry out.
+func TestManagedApplyWithoutADCCredentialsIsAUserError(t *testing.T) {
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject}
+	// An account with no ADC anywhere: no credential file, no gcloud
+	// directory, and no home to look in either.
+	for _, k := range []string{"GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG", "XDG_CONFIG_HOME", "HOME", "USERPROFILE"} {
+		t.Setenv(k, "")
+	}
+	u := deployerImpersonationURL("https://iamcredentials.example.test", managedmode.DeployerAccount(initProject))
+	_, cleanup, err := writeImpersonationFile(u)
+	cleanup()
+	if err == nil {
+		t.Fatal("a credential file was written with no Application Default Credentials on the machine")
+	}
+	if !strings.Contains(err.Error(), "Application Default Credentials") {
+		t.Errorf("the refusal is %v, want it to name the credentials the user has to go and get", err)
+	}
+	got := managedApplyErr(lc, "infra", managedmode.Result{}, fmt.Errorf("terraform for %s: %w", initProject, err))
+	if ExitCode(got) != ExitUserError {
+		t.Errorf("exit %d, want %d (no ADC is the user's to fix, not a remote failure): %v", ExitCode(got), ExitUserError, got)
+	}
+}
+
 // What this command tells the apply about the session it runs in — the input
 // of D55's rule that only the caller has. It is read from the environment and
 // from this command's own stdin, and it carries no --yes and no
