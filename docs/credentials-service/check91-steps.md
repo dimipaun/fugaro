@@ -53,8 +53,10 @@ chmod 700 "$CHK91"
 git rev-parse --show-toplevel >/dev/null 2>&1 \
   && { echo "Check 91 stopped: $CHK91 is inside a git work tree" >&2; exit 1; }
 # Hard stop 4: the service is not already there — unless it is the one this
-# check deployed, which step 3 records in $CHK91/service-mine right after the
-# deploy, so that this block can be re-run at the start of every later step.
+# check deployed, which step 3 records in $CHK91/service-mine BEFORE the deploy
+# (so that a deploy interrupted in the middle is still one this check owns and
+# deletes), which is also what lets this block be re-run at the start of every
+# later step.
 # This check deletes what it creates; a service it did not create is not its to
 # adopt or delete.
 if gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" >/dev/null 2>&1; then
@@ -67,7 +69,21 @@ fi
 # stream, then a probe per body size in step 6), so a token minted once in step
 # 3 is expired by step 6 — and every 401 that would cause reads exactly like
 # the request-body limit that step is measuring. Never paste the value.
-idt() { gcloud auth print-identity-token; }
+#
+# It is NEVER on a command line either: `ps` shows a process's argv to every
+# user of the machine for as long as the process lives, and the hour-long
+# stream would hold a token there for an hour. `idt` writes it into a 0600
+# curl config file inside the scratch directory and every request names that
+# file with `--config`, which curl reads the header from. The file is removed
+# with the scratch directory, and by step 7 before it.
+AUTH_CONF=$CHK91/idt.conf
+idt() {
+  local tok
+  tok=$(gcloud auth print-identity-token) || return 1
+  (umask 077 && printf 'header = "Authorization: Bearer %s"\n' "$tok" >"$AUTH_CONF") || return 1
+  chmod 600 "$AUTH_CONF" || return 1
+  unset tok
+}
 IMG=${L}-docker.pkg.dev/${P}/${SVC}/${SVC}:chk91
 ```
 
@@ -226,26 +242,38 @@ CMD ["python3", "/relay.py"]
 # be somebody else's image, and step 7's Restore would then delete it. So
 # nothing is written into a repository whose presence this check cannot account
 # for: create it, or — a re-run of this step, where the create below already
-# ran — find the one THIS check made, recorded in $CHK91/repo-mine right after
-# the create, exactly as hard stop 4 records the service.
+# ran — find the one THIS check made, recorded in $CHK91/repo-mine BEFORE the
+# create, exactly as hard stop 4 records the service (a run killed between the
+# record and the create still leaves the Restore a repository it owns).
 [ "$(cat "$CHK91/repo-existed" 2>/dev/null)" = no ] \
   || { echo "Check 91 stopped: $CHK91/repo-existed does not say the repository ${SVC} was absent when this check started, and this check writes only into a repository it created itself. Re-run step 1's block and read the baseline's answer." >&2; exit 1; }
 if gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null 2>&1; then
   [ -f "$CHK91/repo-mine" ] \
     || { echo "Check 91 stopped: a repository named ${SVC} is in ${P}/${L} and it is not this check's — this check creates its own and never adopts one, so it does not push the image tag into it or delete it. Nothing was written. If it is a leftover of an earlier attempt of this check whose own Restore did not finish, look at it first (gcloud artifacts docker images list ${L}-docker.pkg.dev/${P}/${SVC} --include-tags --project=${P}) and delete it yourself if it holds nothing but that attempt's image; otherwise give this check a different name (SVC in step 1). Then re-run the step 1 block and this one." >&2; exit 1; }
 else
+  # The record goes down BEFORE the create, not after it: a run that dies
+  # between the two — a Ctrl-C, a dropped connection, a kill — has still made a
+  # repository, and this record is what tells the Restore it is this check's to
+  # delete. A create that FAILED and really made nothing takes it back again
+  # (ask the project with the describe above; a repository that IS there keeps
+  # its record and the Restore deletes it).
+  : > "$CHK91/repo-mine"                    # hard stop 5 tolerates this repository from here on
   gcloud artifacts repositories create "${SVC:?}" --project="${P:?}" --location="${L:?}" \
     --repository-format=docker \
-    --description="throwaway: Check 91's image repository (fugaro-chk91), deleted by its own Restore" --quiet
-  : > "$CHK91/repo-mine"                    # hard stop 5 tolerates this repository from here on
+    --description="throwaway: Check 91's image repository (fugaro-chk91), deleted by its own Restore" --quiet \
+    || { echo "Check 91 stopped: the repository create failed — see above whether ${SVC} is there now; if it is, the record above stands and step 7's Restore deletes it" >&2; exit 1; }
 fi
 gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null \
   || { echo "Check 91 stopped: no registry repository ${SVC} in ${P}/${L} for the image tag ${IMG} to build into" >&2; exit 1; }
 gcloud builds submit --project="${P:?}" --tag="${IMG:?}" "$CHK91"
+# Same rule as the repository's record: an interrupted deploy is the ordinary
+# way to be left with a billed service, so the record is written BEFORE the
+# deploy, and a deploy that failed and left no service takes it back.
+: > "$CHK91/service-mine"                   # hard stop 4 tolerates this service from here on
 gcloud run deploy "${SVC:?}" --project="${P:?}" --region="${L:?}" --image="${IMG:?}" \
   --no-allow-unauthenticated --timeout=3600 --min-instances=0 --max-instances=1 \
-  --set-env-vars SSE_MINUTES=20 --quiet
-: > "$CHK91/service-mine"                   # hard stop 4 tolerates this service from here on
+  --set-env-vars SSE_MINUTES=20 --quiet \
+  || { echo "Check 91 stopped: the deploy failed — check 'gcloud run services describe ${SVC}' before trusting the record above" >&2; exit 1; }
 URL=$(gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" --format='value(status.url)')
 gcloud auth print-identity-token >/dev/null || { echo "Check 91 stopped: no identity token can be minted here" >&2; exit 1; }
 [ -n "$URL" ] || { echo "Check 91 stopped: no URL" >&2; exit 1; }
@@ -253,23 +281,32 @@ gcloud auth print-identity-token >/dev/null || { echo "Check 91 stopped: no iden
 
 **FACT:** that the service is `--no-allow-unauthenticated` (an unauthenticated `curl` must be refused), its `--timeout`, its min/max instances, and the image digest Cloud Run reports. **The identity token is never pasted**, only used — and every request below mints its own (the guard's `idt`), because one minted here expires inside the hour.
 
-**The repository in this step is hard stop 5's, and it is the only thing the push can land in.** The baseline wrote `no` because nothing of this name was in the project when the check started, and this step re-reads that record before the build: if it says anything else the step stops, and if a `fugaro-chk91` is there that this step did not create itself — the check records its own in `$CHK91/repo-mine` right after the create — the step stops rather than pushing into it. That is what keeps the `describe || create` from adopting a repository the installation made between the baseline and here. Record the stop and report it: nothing of this step's runs after it.
+**The repository in this step is hard stop 5's, and it is the only thing the push can land in.** The baseline wrote `no` because nothing of this name was in the project when the check started, and this step re-reads that record before the build: if it says anything else the step stops, and if a `fugaro-chk91` is there that this step did not create itself — the check records its own in `$CHK91/repo-mine` before the create — the step stops rather than pushing into it. That is what keeps the `describe || create` from adopting a repository the installation made between the baseline and here. Record the stop and report it: nothing of this step's runs after it.
 
-**`gcloud builds submit` can offer to create something, and the check does not accept.** Cloud Build stages the source in the project's own staging bucket, `gs://<project>_cloudbuild`, and it creates that bucket if it is not there; on a project whose infrastructure is Terraform-managed it may also offer to enable an API. **Both of those are the installation's, not this check's, and neither is in the Terraform that manages this project** — so if `gcloud builds submit` asks to create the `<project>_cloudbuild` bucket, to enable an API, or to grant anything, **say no, stop the check here and report it**: do not accept on the owner's behalf. Record what it asked for, verbatim, and nothing further in this step runs. An already-present staging bucket needs nothing (the check reads nothing from it and creates nothing in it by name: it is that bucket's own retention that removes the tarball).
+**`gcloud builds submit` can offer to create something, and the check does not accept.** Cloud Build stages the source in the project's own staging bucket, `gs://<project>_cloudbuild`, and it creates that bucket if it is not there; on a project whose infrastructure is Terraform-managed it may also offer to enable an API. **Both of those are the installation's, not this check's, and neither is in the Terraform that manages this project** — so if `gcloud builds submit` asks to create the `<project>_cloudbuild` bucket, to enable an API, or to grant anything, **say no, stop the check here and report it**: do not accept on the owner's behalf. Record what it asked for, verbatim, and nothing further in this step runs. An already-present staging bucket needs nothing from you — but the tarball the upload leaves in it is this check's litter, so the build is pointed at a prefix of this run's own inside that bucket and step 7's Restore deletes exactly that prefix:
+
+```bash
+STAGING=gs://${P}_cloudbuild/chk91-source/${CHK91##*/}/
+gcloud storage ls "gs://${P}_cloudbuild/" >/dev/null 2>&1 \
+  && gcloud builds submit --project="${P:?}" --tag="${IMG:?}" --gcs-source-staging-dir="$STAGING" "$CHK91" \
+  || gcloud builds submit --project="${P:?}" --tag="${IMG:?}" "$CHK91"
+```
+
+If that bucket cannot be listed, the build uses gcloud's default staging directory instead and the tarball cannot be named afterwards — record that as the check's `build-staging` fact does, and let the bucket's own lifecycle rule remove it. The prefix is never a bucket-wide delete: it is `chk91-source/<this run's scratch name>/` and nothing else.
 
 ### Check 91 step 4: cold start (U5)
 
 `--min-instances=0` lets the instance go, but not on a five-minute timer: Cloud Run keeps an idle instance far longer than that, and this project's own cold-start check (Check 41) waits **at least 35 minutes** between runs to be sure the container is new. So this step waits 35 minutes too — and then **does not assume** the instance went: the relay's own `/` body carries the time its process started (`started=<utc>`), the step reads it before the wait and again from the cold request, and a cold figure is one where the two differ. If they do not, the request was served by the same instance and the figure is a **warm** one: it is recorded as warm, not as U5's cold start, and the step is repeated after a longer idle.
 
 ```bash
-BEFORE=$(curl -sS -H "Authorization: Bearer $(idt)" "${URL:?}/" | sed -n 's/^started=//p')
+BEFORE=$(curl -sS --config "$AUTH_CONF" "${URL:?}/" | sed -n 's/^started=//p')
 [ -n "$BEFORE" ] \
   || { echo "Check 91 stopped: the relay's / body carries no started= line, so this is not this check's image — redeploy step 3" >&2; exit 1; }
 echo "instance now: started=${BEFORE}; waiting 35 minutes for it to be released"
 sleep 2100                                   # 35 minutes: Check 41's own gap on an idle container
-echo -n "cold: "; curl -sS -o "$CHK91/cold.out" -w '%{time_starttransfer}s to first byte, %{time_total}s total\n' -H "Authorization: Bearer $(idt)" "${URL:?}/"
+echo -n "cold: "; curl -sS -o "$CHK91/cold.out" -w '%{time_starttransfer}s to first byte, %{time_total}s total\n' --config "$AUTH_CONF" "${URL:?}/"
 cat "$CHK91/cold.out"
-echo -n "warm: "; curl -sS -o /dev/null -w '%{time_starttransfer}s to first byte, %{time_total}s total\n' -H "Authorization: Bearer $(idt)" "${URL:?}/"
+echo -n "warm: "; curl -sS -o /dev/null -w '%{time_starttransfer}s to first byte, %{time_total}s total\n' --config "$AUTH_CONF" "${URL:?}/"
 AFTER=$(sed -n 's/^started=//p' "$CHK91/cold.out")
 [ "$AFTER" = "$BEFORE" ] \
   && echo "Check 91: NOT a cold start — the instance started at ${AFTER} answered the request after the wait, so the figure above is warm. Record it as warm and repeat this step after a longer idle." >&2
@@ -280,7 +317,7 @@ AFTER=$(sed -n 's/^started=//p' "$CHK91/cold.out")
 ### Check 91 step 5: a long stream, and whether it arrives unbuffered (U5)
 
 ```bash
-curl -sS -N --max-time 30 -H "Authorization: Bearer $(idt)" "${URL:?}/sse" \
+curl -sS -N --max-time 30 --config "$AUTH_CONF" "${URL:?}/sse" \
   | while IFS= read -r line; do [ -n "$line" ] && printf '%s %s\n' "$(date -u +%H:%M:%S)" "$line"; done
 ```
 
@@ -290,7 +327,11 @@ Then the longest stream that completes, raising `SSE_MINUTES` toward the service
 
 ```bash
 gcloud run services update "${SVC:?}" --project="${P:?}" --region="${L:?}" --set-env-vars SSE_MINUTES=59 --quiet
-time curl -sS -N -o /dev/null -w '%{http_code} after %{time_total}s\n' -H "Authorization: Bearer $(idt)" "${URL:?}/sse"
+# --max-time of its own, longer than the SSE and shorter than nothing: without
+# a cap this request outlives the run it belongs to, and a Ctrl-C has nothing
+# to end. curl exits 18/56/52 when the front end cuts the stream, and that IS
+# the measurement.
+time curl -sS -N -o /dev/null -w '%{http_code} after %{time_total}s\n' --max-time 3840 --config "$AUTH_CONF" "${URL:?}/sse"
 ```
 
 **FACT (U5):** the longest stream that completed, and the status and time of the first one that did not — whether the front end cuts at the service's timeout, at a fixed 60-minute cap, or at something else. **This step is the one that costs wall-clock time** (an hour at the top of the range), and it needs the SSE rather than a longer fake: the stream is the request.
@@ -299,7 +340,11 @@ time curl -sS -N -o /dev/null -w '%{http_code} after %{time_total}s\n' -H "Autho
 
 **Read this before the two rows: the second one is not end to end, and U5's end-to-end HTTP/2 half is not settled by this check.** Cloud Run speaks HTTP/2 to the **container** only when the service is deployed with **`--use-http2`** *and* the container serves cleartext HTTP/2 (**h2c**) on `$PORT`; this check deploys neither (the relay is Python's `http.server`, which speaks HTTP/1.1 only), so what its second row measures is the **front end** accepting an HTTP/2 request over TLS (ALPN) and translating it — the service's ingress path above the container, not a request that is HTTP/2 from `curl` to the relay. **A check that settles the other half has to deploy with `--use-http2` and replace the relay with a container that serves h2c** (an ASGI server with HTTP/2 enabled, e.g. `hypercorn`, in place of `http.server`), keeping the same `/echo` behaviour; until that is deployed and run, label these two rows as *HTTP/1.1 end to end* and *HTTP/2 only to the front end*, never as the end-to-end pair, and leave **U5's end-to-end HTTP/2 half UNVERIFIED**. The check believes 32 MiB on HTTP/1.1 and no limit on end-to-end HTTP/2; what this step can confirm or correct is the first of those, and the front end's own behaviour above it.
 
-**The first row pins HTTP/1.1 (`--http1.1`) and the second pins HTTP/2 (`--http2`), and both rows print `%{http_version}`** — the version `curl` actually used. The second row is only an HTTP/2 row if the client can speak it, and a `curl` built without HTTP/2 does not fail on `--http2`: it degrades to HTTP/1.1 silently, and the row would then be a copy of the first while the FACT claimed to record the front end's HTTP/2 behaviour. So the step stops before the loop when the client has no HTTP/2, and the recorded `%{http_version}` is what proves which row is which.
+**The first row pins HTTP/1.1 (`--http1.1`) and the second pins HTTP/2 (`--http2`), and both rows print `%{http_version}`** — the version `curl` actually used. The second row is only an HTTP/2 row if the client can speak it, and a `curl` built without HTTP/2 does not fail on `--http2`: it degrades to HTTP/1.1 silently, and the row would then be a copy of the first while the FACT claimed to record the front end's HTTP/2 behaviour. So the step stops before the loop when the client has no HTTP/2, and the recorded `%{http_version}` is what proves which row is which. **The script settles that question FIRST, before a repository, a build or a deploy exists** — a curl without HTTP/2 makes the second row meaningless, and finding it out after the 35-minute cold-start wait and the hour-long stream would waste both; done by hand, run the check below the moment the guard passes.
+
+```bash
+curl -V | grep -q 'HTTP2' || { echo "Check 91 stopped: this curl has no HTTP/2 support — nothing was created, built or deployed" >&2; exit 1; }
+```
 
 ```bash
 curl -V | grep -q 'HTTP2' \
@@ -308,11 +353,11 @@ for n in 1048576 16777216 33554432 67108864 134217728; do
   head -c "$n" /dev/zero > "$CHK91/body.bin"
   echo -n "$n bytes, HTTP/1.1 end to end:        "
   curl -sS --http1.1 -o "$CHK91/echo.out" -w '%{http_code} %{size_upload} uploaded over HTTP/%{http_version}, relay said: ' \
-    -H "Authorization: Bearer $(idt)" -X POST --data-binary @"$CHK91/body.bin" "${URL:?}/echo"
+    --config "$AUTH_CONF" -X POST --data-binary @"$CHK91/body.bin" "${URL:?}/echo"
   cat "$CHK91/echo.out"
   echo -n "$n bytes, HTTP/2 to the front end:    "
   curl -sS --http2 -o "$CHK91/echo.out" -w '%{http_code} %{size_upload} uploaded over HTTP/%{http_version}, relay said: ' \
-    -H "Authorization: Bearer $(idt)" -X POST --data-binary @"$CHK91/body.bin" "${URL:?}/echo"
+    --config "$AUTH_CONF" -X POST --data-binary @"$CHK91/body.bin" "${URL:?}/echo"
   cat "$CHK91/echo.out"
 done
 rm -f "$CHK91/body.bin" "$CHK91/echo.out"
@@ -333,6 +378,11 @@ REPO_MINE=$(cat "$CHK91/repo-existed")        # read it before the scratch dir g
 gcloud run services delete "${SVC:?}" --project="${P:?}" --region="${L:?}" --quiet
 gcloud artifacts docker images delete "${IMG:?}" --project="${P:?}" --delete-tags --quiet
 gcloud artifacts repositories delete "${SVC:?}" --project="${P:?}" --location="${L:?}" --quiet
+# The build's staged source, removed from the prefix of this run's own (see
+# step 3). Only that prefix: never a bucket-wide delete, and nothing at all
+# when the build used gcloud's default staging directory instead.
+rm -f "$AUTH_CONF"                          # the minted identity token goes before the directory
+gcloud storage rm -r "gs://${P}_cloudbuild/chk91-source/${CHK91##*/}/" 2>/dev/null || true
 ```
 
 Then the assertion, **every count of which must read `0`** — and the scratch directory is removed **only when all three do**:
@@ -366,10 +416,10 @@ rm -rf "$CHK91"
 rm -f "$CHK91_RECORD"
 ```
 
-**FACT:** the three counts, which must all read `0` before the scratch directory goes — a non-zero one is the failure, and the directory is then **kept**, with the stop's message saying so, because it is what a re-run needs to know that the service and the repository are this check's. The first two count this check's own service and image; the third counts the repository, which the check created (the baseline stopped it otherwise), so a surviving repository is this check's too and the manual delete above names it. **A count that could not be READ is not a count of `0`, and the script treats the two differently:** `gcloud … | wc -l` prints `0` for a query that printed nothing, and a query that FAILED printed nothing too — an identity token that expired late in the run, a transient API error, and the deletes above (guarded the same way) can fail together — so reading a failure as a count would print `restore: PASS`, exit `0` and remove the records that say what is this check's. The script reads each query's own exit status instead, records `restore-counts: FAIL` naming which query failed and with what status, keeps the directory and ends the block at exit `1`. The one failure that is not a failed query is the image list: the repository it names was just deleted, so a `NOT_FOUND` there IS the answer, and the script asks the image question only while the repository list succeeded and says a repository is still there.
+**FACT:** the three counts, which must all read `0` before the scratch directory goes — and, beside them, that the prefix of this run's own in the staging bucket is empty (`gcloud storage ls` on it answers "matched no objects"; that message, and not the exit status, is what says it is gone, because the CLI exits non-zero for a prefix with nothing under it) — a non-zero one is the failure, and the directory is then **kept**, with the stop's message saying so, because it is what a re-run needs to know that the service and the repository are this check's. The first two count this check's own service and image; the third counts the repository, which the check created (the baseline stopped it otherwise), so a surviving repository is this check's too and the manual delete above names it. **A count that could not be READ is not a count of `0`, and the script treats the two differently:** `gcloud … | wc -l` prints `0` for a query that printed nothing, and a query that FAILED printed nothing too — an identity token that expired late in the run, a transient API error, and the deletes above (guarded the same way) can fail together — so reading a failure as a count would print `restore: PASS`, exit `0` and remove the records that say what is this check's. The script reads each query's own exit status instead, records `restore-counts: FAIL` naming which query failed and with what status, keeps the directory and ends the block at exit `1`. The one failure that is not a failed query is the image list: the repository it names was just deleted, so a `NOT_FOUND` there IS the answer, and the script asks the image question only while the repository list succeeded and says a repository is still there.
 
-**Passes when:** the guard's hard stops held and every request minted its own identity token; the relay ran with an image this check built, from a service that refuses unauthenticated calls; the cold and warm time-to-first-byte figures are recorded with the `started=` values that show a **different** instance answered the cold request (a pair that matches is recorded as a warm figure and repeated, not written into U5 as a cold start); the SSE events arrived one a second through the front end rather than in a burst; the longest completed stream and the first refusal are recorded; the largest body accepted on **HTTP/1.1** and the front end's own behaviour on **HTTP/2 to it** are recorded, each row with the relay's own byte count; and the Restore's three counts each read `0`, with its scratch directory removed only after that. **Passing does not settle U5's end-to-end HTTP/2 half** — that row is not an end-to-end HTTP/2 request, and step 6 says what a check that settles it needs.
+**Passes when:** the guard's hard stops held and every request minted its own identity token; the relay ran with an image this check built, from a service that refuses unauthenticated calls; the cold and warm time-to-first-byte figures are recorded with the `started=` values that show a **different** instance answered the cold request (a pair that matches is recorded as a warm figure and repeated, not written into U5 as a cold start); the SSE events arrived one a second through the front end rather than in a burst; the longest completed stream and the first refusal are recorded; the largest body accepted on **HTTP/1.1** and the front end's own behaviour on **HTTP/2 to it** are recorded, each row with the relay's own byte count; and the Restore's three counts each read `0` with the staged source gone from the prefix this run gave it, its scratch directory removed only after that. **Passing does not settle U5's end-to-end HTTP/2 half** — that row is not an end-to-end HTTP/2 request, and step 6 says what a check that settles it needs.
 
 **Fails when:** any of those is not what you saw. A stream that arrives in a burst, or a body that is accepted on HTTP/1.1 above what the check believed, is a **finding about U5, not a failure of the check** — record it, because the service's forwarding is written against these numbers, and the reconciliation's F31 consequence changes with them (a per-request timeout binds a call and not a review; the size risk is one large request). A `401` on a probe is neither: it is an expired identity token, and the row is re-run with a fresh one before anything is concluded from it. A non-zero count in the Restore's assertion is a failure of the check itself and stops it — and it **keeps** the scratch directory, on purpose, so the records that say what is this check's are still there for the re-run: delete the survivors by hand (the count messages name them) and re-run the Restore, which removes the directory once the three counts are `0`. **A repository named `fugaro-chk91` that is already in the project stops the check at its baseline**, before anything is created or pushed: this check never adopts, writes into or deletes a registry repository it did not create, so that stop is the check's answer and not something to work around in the session.
 
-**Paste back:** `fugaro version` and the service's configuration (timeout, min/max instances, image digest); the cold and warm figures with the wait before the first and the two `started=` values; the streaming timestamps and the `X-Relay` header; the longest completed stream and the first refusal; the body-limit table with `curl`'s and the relay's own byte counts per row, labelled as the front end's HTTP/2 against HTTP/1.1 end to end; and the Restore's three counts. **Never paste the identity token**, and never a URL's query string if one appears. Until this check runs, U5 is **UNVERIFIED** and its row above stays **NOT RUN**; after it runs, **U5's end-to-end HTTP/2 half is still UNVERIFIED**, and the plan's forwarding is written against that row knowing it is open.
+**Paste back:** `fugaro version` and the service's configuration (timeout, min/max instances, image digest); the cold and warm figures with the wait before the first and the two `started=` values; the streaming timestamps and the `X-Relay` header; the longest completed stream and the first refusal; the body-limit table with `curl`'s and the relay's own byte counts per row, labelled as the front end's HTTP/2 against HTTP/1.1 end to end; and the Restore's three counts with the answer for the staged-source prefix. **Never paste the identity token**, and never a URL's query string if one appears. Until this check runs, U5 is **UNVERIFIED** and its row above stays **NOT RUN**; after it runs, **U5's end-to-end HTTP/2 half is still UNVERIFIED**, and the plan's forwarding is written against that row knowing it is open.

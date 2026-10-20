@@ -155,8 +155,14 @@ func TestLiveChecksAreOneScriptTheOwnerRuns(t *testing.T) {
 // is written against.
 func TestCheck90ScriptKeepsItsPromises(t *testing.T) {
 	text := readRepoFile(t, check90Script)
+	// Strict mode WITH errtrace: -E is what makes the ERR trap below fire for a
+	// failure inside a function or a command substitution too, which is what
+	// turns an internal error into a distinct ABORTED fact rather than a run
+	// that ends looking as if it had measured something.
+	if want := "set -Eeuo pipefail"; !strings.Contains(text, want) {
+		t.Errorf("%s lacks %q", check90Script, want)
+	}
 	for _, want := range []string{
-		"set -euo pipefail",
 		// The guards: routing variables and settings files, names only.
 		"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
 		"CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_BEDROCK",
@@ -189,6 +195,42 @@ func TestCheck90ScriptKeepsItsPromises(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("%s lacks %q, which is what keeps the token off every surface but the file and the one child", check90Script, want)
 		}
+	}
+	// ... and the four ways a token could still get out, each pinned by a test of
+	// the script's own:
+	//
+	//   - a SECOND prompt. The run asks for the setup-token at one hidden prompt
+	//     and for no other input at all: a prompt beside the token file invites a
+	//     paste of `claude setup-token`'s own output, which carries validity
+	//     beside the token, and whatever is typed there lands in the block and in
+	//     the shell's history. The validity this check records is derived from the
+	//     live control call instead.
+	//   - a TRACE. `bash -x` prints the value the hidden read assigned, so a trace
+	//     is refused and xtrace is turned off before the read as well.
+	//   - an INHERITED ENVIRONMENT. The child that needs the token is the only one
+	//     that gets it; the others are run with it unset.
+	//   - the owner's own DIRECTORY and settings. `claude` is run from the scratch
+	//     directory with hooks off and every MCP server refused, so nothing it
+	//     starts inherits the token.
+	for _, want := range []string{
+		"drain_input",
+		"XTRACE_AT_START",
+		"{ set +x; } 2>/dev/null",
+		// The whole line, not its two halves: both appear in the comment above it
+		// as well, and a pin the comment satisfies stops pinning anything.
+		`exec claude --settings "{\"disableAllHooks\":true}" --strict-mcp-config "$@"`,
+		`cd "$CHK90_CWD" || exit 1`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s lacks %q, one of the ways a token could still leave the run", check90Script, want)
+		}
+	}
+	// Exactly ONE hidden read of the terminal: a second prompt is how a token
+	// gets typed twice, and what is typed into the second one lands in a surface
+	// that keeps it. (The drain above it reads with a one-second timeout and
+	// throws away what it reads.)
+	if got := strings.Count(text, "read -rs"); got != 1 {
+		t.Errorf("%s has %d hidden reads of the terminal; the token is asked for exactly once", check90Script, got)
 	}
 }
 
@@ -279,12 +321,38 @@ func TestCheck91ScriptKeepsItsPromises(t *testing.T) {
 		// are not.
 		"restore-counts", "must read 0", "scratch directory is KEPT",
 		// The block, the cleanup on every path, and the identity token that is
-		// minted per request and never printed.
+		// minted per request, never printed, and never on a command line either:
+		// it goes into an 0600 curl config file the request names with --config,
+		// because `ps` shows a process's argv to every user of the machine for as
+		// long as the process lives.
 		"CHECK 91 RESULT", "CHECK 91 RESULT END", "trap finish EXIT",
 		"refusing to remove", "chk91-mine", "print-identity-token",
+		"umask 077", `--config "$AUTH_CONF"`,
+		// The build's own litter: the staged source is given a prefix of this
+		// run's own and the Restore deletes exactly that prefix.
+		"--gcs-source-staging-dir", `gcloud storage rm -r "$STAGING_PREFIX"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("%s lacks %q", check91Script, want)
+		}
+	}
+	// The ownership records are written BEFORE the create they record. A run that
+	// dies in between -- Ctrl-C, a dropped connection, a kill -- has still made a
+	// repository or a service, and the record is what tells the Restore it is
+	// this check's to delete; written after the create, that window leaves a
+	// billed resource with nothing claiming it. (The script's own test watches a
+	// fake gcloud that hangs mid-create to check the same thing at run time.)
+	for _, pair := range []struct{ record, create string }{
+		{`: >"$REPO_MINE"`, "artifacts repositories create"},
+		{`: >"$SERVICE_MINE"`, "run deploy"},
+	} {
+		ri, ci := strings.Index(text, pair.record), strings.Index(text, pair.create)
+		if ri < 0 || ci < 0 {
+			t.Errorf("%s lacks %q or %q", check91Script, pair.record, pair.create)
+			continue
+		}
+		if ri > ci {
+			t.Errorf("%s writes %s AFTER %s: a run killed in between leaves the resource behind with nothing recording it as this check's", check91Script, pair.record, pair.create)
 		}
 	}
 	// The project is never read from a gcloud config, and no other
