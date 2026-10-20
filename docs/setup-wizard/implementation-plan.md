@@ -657,9 +657,12 @@ false:
      `console` when the origin is rewritten or the session is a coding agent's —
      and the `--repo` door's `gateRepo` refuses with a plain `userErr` instead.
      A pin that asserted kind `prompt` for this row would be wrong today.
-   Nothing is applied in any of the three shapes: for the two `askTyped` rows
-   `reachable == false` is that fact, and for the stage rows the `Left` *is* the
-   `NeedsYou` state.
+   Nothing is applied in any of those shapes, and that is the assertion that
+   matters: `askTyped` returning `reachable == false` means nothing was asked
+   (its caller leaves the step), a `NeedsYouError` stops the run in the
+   `NeedsYou` state, and `gateRepo`'s `userErr` stops it with exit code 1 — three
+   different ways of saying "this did not happen", which is why the table
+   asserts each row's own shape rather than a single rule over `LeftKind`.
 
 Both tables are crossed with five run modes — `--yes`, `--non-interactive`
 (with and without `--yes`), `--json`, no terminal, and an agent session — and
