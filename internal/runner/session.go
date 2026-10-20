@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -144,10 +143,12 @@ func (r *run) readSessionFile(id string) ([]byte, error) {
 	if !li.Mode().IsRegular() {
 		return nil, fmt.Errorf("the session file is not a regular file (%s)", li.Mode().Type())
 	}
-	// O_NOFOLLOW and O_NONBLOCK: a symlink or FIFO swapped in after the
-	// Lstat fails the open, or at least never blocks it; SameFile below
-	// refuses anything that isn't the file Lstat saw.
-	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	// openRootNoFollow passes O_NOFOLLOW and O_NONBLOCK where the platform
+	// has them: a symlink or FIFO swapped in after the Lstat fails the open,
+	// or at least never blocks it; SameFile below refuses anything that
+	// isn't the file Lstat saw. (openfile_other.go states what the Windows
+	// half of that pair loses.)
+	f, err := openRootNoFollow(root, name)
 	if err != nil {
 		return nil, fmt.Errorf("opening the session file: %w", err)
 	}

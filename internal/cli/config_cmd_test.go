@@ -795,3 +795,32 @@ func TestConfigInitDoesNotRefuseInAnAgentSession(t *testing.T) {
 		t.Fatalf("refused in an agent session: out %q, err %v", out, err)
 	}
 }
+
+// config init's write is a create with O_EXCL and O_NOFOLLOW where the
+// platform has the flag (config_init.go, openfile_unix.go): a symlink
+// planted at fugaro.yaml — by a checkout that arrived that way, or by a
+// process racing the command — must be refused, not written through, and
+// the file the link points at must not appear.
+//
+// Mutation (writeMinimalFugaroYAML's body to os.WriteFile(path, text, 0o644)):
+// the dangling link is followed, the target is created, and this test fails
+// on "wrote through the symlink".
+func TestConfigInitWriteRefusesASymlinkedPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fugaro.yaml")
+	target := filepath.Join(dir, "elsewhere.yaml")
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeMinimalFugaroYAML(path, "version: 1\nproject: aurora\n"); err == nil {
+		t.Fatal("the create wrote through a symlink")
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("wrote through the symlink: %v", err)
+	}
+	// The same call still writes where there is nothing in the way, so the
+	// refusal is about the link and not about the directory.
+	if err := writeMinimalFugaroYAML(filepath.Join(dir, "fresh.yaml"), "version: 1\n"); err != nil {
+		t.Fatalf("writing where nothing is in the way: %v", err)
+	}
+}

@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 
 	"github.com/bmatcuk/doublestar/v4"
 
@@ -118,7 +117,7 @@ func hashKeyFile(ctx context.Context, rt *os.Root, name string, budget int64) ([
 		}
 		return nil, 0, fmt.Errorf("%w: %w", errNotRegular, err)
 	}
-	f, err := rt.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, err := openRootNoFollow(rt, name)
 	if err != nil {
 		return nil, 0, fmt.Errorf("%w: %w", errNotRegular, err)
 	}
