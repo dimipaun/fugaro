@@ -129,9 +129,19 @@ Run it in your own terminal, as an operator, with your own credentials. Pass
 the entries to approve, and they replace the list: an invocation that leaves an
 entry out removes that approval, so the command names the entries it would drop
 and asks for the project's name before writing such a list. With no arguments
-the command prints the list — each entry in the same ADDRESS=IDENTITY form, so
-a line can be pasted back — and writes nothing; it never empties the list,
-because an empty list is what an absent one already means.
+the command prints the list — each entry in the same ADDRESS=IDENTITY form —
+and writes nothing; it never empties the list, because an empty list is what an
+absent one already means. A printed line is one you can paste back as far as its
+IDENTITY half goes: the command that recorded the entry escaped it, so the
+printers leave it alone and a line inside the listing's own bound carries it
+back byte for byte. The address half is the plan's own — not escaped here and
+not bounded here — so an address holding a tab, a run of spaces or a byte
+outside printable ASCII is printed as the printers rewrite it: that line is not
+the entry, and pasting it back records an entry about an address no plan has,
+which the plan refuses rather than deleting anything. A line longer than twice
+the identity's own bound is printed through the bounded sanitiser instead, cut
+and marked as cut: what you read there is visibly a text and not an entry. The
+entry itself is unchanged in the object either way.
 
 What the object is for: a run's own credentials cannot write it, and the
 deployer account a managed apply impersonates will not be able to (D75, Task
@@ -311,14 +321,32 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 // removal takes away (tf.RemoveIdentityText), which always begins with the
 // resource type — "type=google_storage_bucket project=… name=… id=…" — so the
 // half after the first "=" is required to begin with "type=". That is what
-// makes the form's one ambiguity fail closed rather than silently: a Terraform
-// address may itself contain an "=" (an index key with one in it, as in
-// google_x.y["a=b"]), and for such an argument the cut lands inside the
+// makes the form's one ambiguity fail closed in the case an owner meets: a
+// Terraform address may itself contain an "=" (an index key with one in it, as
+// in google_x.y["a=b"]), and for such an argument the cut lands inside the
 // address, the half after it does not begin with "type=", and the command
-// refuses to record an approval that matches nothing. The alternative — a
-// second argument order, or a flag per address — was not taken: the ambiguity
-// is refused, not guessed, and the operator is told which of the two they are
-// looking at.
+// refuses to record an approval that matches nothing. The cut leaves a second
+// trace, and it is the one that catches what the first does not: an address a
+// plan writes closes every bracket it opens, so an address still inside its
+// index key where the identity begins is one the cut landed in, and it is
+// refused for that too, whether the half after the cut reads as an identity or
+// not.
+//
+// What is left after both, stated rather than implied because no check here can
+// close it: an address whose own text, after its FIRST "=", spells out what an
+// identity looks like and closes its bracket before the separator — an index
+// key holding "=type=google_storage_bucket project=p name=n id=i", say — is an
+// argument this command cannot tell from ADDRESS=IDENTITY. The half after the
+// cut begins with "type=", the address it leaves is a closed one, and what is
+// recorded is an entry about the TRUNCATED address: no plan has it, so it
+// approves nothing and the owner's loop does not close — and the argument holds
+// nothing that says which of the two it is, only the plan could. That residual
+// is pinned as it stands by
+// TestAllowDeleteCommandRefusesAnAddressCutInsideItsIndexKey's second half, and
+// the doc and the test change together if it ever starts being refused. The
+// alternative — a second argument order, or a flag per address — was not taken:
+// the ambiguity is refused where the argument shows it, and the operator is
+// told which of the two they are looking at.
 //
 // The whole argument and each half are trimmed, and the halves are compared
 // with a plan's by exact equality: a stray space around either would be an
@@ -372,6 +400,16 @@ func approveArgument(arg string) (tf.DeleteEntry, error) {
 		// plan shows — the fail-closed direction, taken loudly rather than
 		// written silently.
 		return tf.DeleteEntry{}, userErr("an address holds no quote at either end: a plan writes an address as the path of the resource itself, and a quote is in one only inside an index key (module.web.google_storage_bucket.data[\"key\"]), where the bracket closes it. What is on this argument's address is one end of a pair someone quoted the whole argument with, and this command strips such a pair only when both of its ends are there: copy the argument again with the address bare, or quote the identity alone — nothing was written")
+	case strings.LastIndex(address, "[") > strings.LastIndex(address, "]"):
+		// The same ambiguity, seen from the address instead of the tail — and
+		// the half the "type=" check below does not catch, because an index key
+		// can spell "=type=…" itself, which is why this case is asked first. An
+		// address a plan writes closes every bracket it opens, so an address
+		// whose last bracket is an opening one is one the cut landed inside:
+		// half an address, and recording it would write an entry about an
+		// address no plan has — the owner reads it as an approval and it clears
+		// nothing, silently.
+		return tf.DeleteEntry{}, userErr("an address is closed before the '=' that separates it from the identity, and this one is still inside an index key where the identity begins: an address may hold an '=' of its own inside such a key (module.web.google_storage_bucket.data[\"a=b\"]), and this command cuts the argument at its first '=', so the '=' it cut at is inside the address and not the one between the two halves. Copy the argument again with the address whole, or approve the removal from a plan whose address holds no '=' (nothing was written)")
 	case !strings.HasPrefix(before, "type="):
 		return tf.DeleteEntry{}, userErr("an identity begins with the resource type the plan showed, as in 'type=google_storage_bucket project=… name=… id=…', and the text after the first '=' in this argument does not: the argument is cut at its first '=', so an address whose own text holds an '=' cannot be approved this way (nothing was written; approve it from a plan whose address has none, or rename the resource)")
 	case strings.ContainsAny(before, "()"):
@@ -515,8 +553,12 @@ const listingLineMax = 2 * tf.RemovalIdentityPrintMax
 // this listing prints whole. The half that promise holds for is the IDENTITY:
 // the command that recorded the entry escaped it (tf.RemovalIdentity.String
 // escapes every byte its printers would touch), so the rewrites FieldUncut
-// still makes are no-ops on it, and a line this command wrote carries its
-// identity back byte for byte however long the line is.
+// still makes are no-ops on it, and a line this listing prints whole carries
+// its identity back byte for byte. Past that bound (listingLineMax) the
+// identity does not come back at all: the line is Field's there, cut at
+// FieldMax and marked as cut (the paragraph below, on where the line becomes
+// Field's), so what the owner reads is a text and not the identity they
+// approved.
 //
 // The address half is not escaped — the address is the plan's own, and
 // listingLineMax says why it is not bounded either — so an address holding a

@@ -359,8 +359,10 @@ func TestAllowDeleteCommandRefusesAnArgumentThatIsNotAnEntry(t *testing.T) {
 		"an identity alone": "=type=google_storage_bucket id=data-bucket",
 		"not an identity":   "google_storage_bucket.data=id=data-bucket",
 		"a bare word":       "google_storage_bucket.data=yes",
-		// The address holds an "=", so the cut lands inside it and the half
-		// after the cut is not an identity: refused, and nothing is written.
+		// The address holds an "=", so the cut lands inside it: what the cut
+		// leaves is an address still inside its index key where the identity
+		// begins, and the command refuses rather than recording an entry about
+		// a truncated address that no plan has.
 		"an address holding an equals sign": `google_storage_bucket.data["a=b"]=type=google_storage_bucket id=x`,
 		"a trailing equals sign":            "google_storage_bucket.data=",
 	} {
@@ -372,7 +374,7 @@ func TestAllowDeleteCommandRefusesAnArgumentThatIsNotAnEntry(t *testing.T) {
 			if ExitCode(err) != ExitUserError {
 				t.Errorf("%q: exit %d, want %d", arg, ExitCode(err), ExitUserError)
 			}
-			if !strings.Contains(err.Error(), "ADDRESS=IDENTITY") && !strings.Contains(err.Error(), "an identity begins with the resource type") {
+			if !strings.Contains(err.Error(), "ADDRESS=IDENTITY") && !strings.Contains(err.Error(), "an identity begins with the resource type") && !strings.Contains(err.Error(), "inside an index key") {
 				t.Errorf("%q was refused with the wrong reason: %v", arg, err)
 			}
 			if strings.Contains(err.Error(), "runs_bucket") {
@@ -1253,5 +1255,79 @@ func TestAllowDeleteCommandTakesTheQuotesOffAWholeQuotedArgument(t *testing.T) {
 				t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
 			}
 		})
+	}
+}
+
+// TestAllowDeleteCommandRefusesAnAddressCutInsideItsIndexKey: an argument's two
+// halves are cut at its FIRST "=", and a Terraform address may hold an "=" of
+// its own inside an index key (google_x.y["a=b"]), so an address with one is an
+// argument that cannot be read: the cut lands inside the address. What that
+// leaves is one thing this command can see without the plan — the key is still
+// open where the identity begins — and an address a plan writes closes every
+// bracket it opens, so the half is refused rather than recorded as an entry
+// about the truncated address, which no plan has and which approves nothing.
+//
+// Review finding: the doc promised this case was refused because the half after
+// the cut does not begin with "type=", which is not so for an address whose key
+// spells "=type=…": that half does begin with it, every other check passed, and
+// the entry was recorded silently, about the truncated address.
+func TestAllowDeleteCommandRefusesAnAddressCutInsideItsIndexKey(t *testing.T) {
+	const identity = "type=google_storage_bucket project=proj-1234 name=data id=data-bucket"
+	for _, tc := range []struct{ name, addr string }{
+		{"the key spells an identity, as in the finding", `google_x.y["k=type=google_storage_bucket"]`},
+		{"the key holds a plain =", `module.web.google_storage_bucket.data["a=b"]`},
+		{"the key is left open by the cut", `google_x.y["k`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := allowDeleteRig(t)
+			out, _, err := execute(t, "allow-delete", tc.addr+"="+identity)
+			if err == nil {
+				t.Fatalf("an address the cut landed inside was recorded:\n%s", out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+			}
+			if !strings.Contains(err.Error(), "index key") {
+				t.Errorf("the refusal does not name the index key the cut landed in: %v", err)
+			}
+			if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); ok {
+				t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
+			}
+		})
+	}
+
+	// The other direction, and the residual the doc states rather than implies:
+	// an address whose own text, after its first "=", spells out what an identity
+	// looks like AND closes its bracket before the separator — here a key holding
+	// a whole identity — is an argument this command cannot tell from
+	// ADDRESS=IDENTITY. The half after the cut begins with "type=", the address it
+	// leaves closes every bracket it opens, and what is recorded is an entry
+	// about the TRUNCATED address: no plan has it, so it approves nothing, and
+	// nothing in the argument says which of the two this is — only the plan
+	// could. If this ever starts being refused, the doc's paragraph about the
+	// residual has to change with it.
+	r := allowDeleteRig(t)
+	rc := refusalRemoval("fmgd-data")
+	const truncated = `google_x.y["k"]`
+	arg := truncated + `=type=google_secret_manager_secret project=proj-1234 name=s id=s"]` + "=" + tf.RemoveIdentityText(rc)
+	if out, _, err := execute(t, "allow-delete", arg); err != nil {
+		t.Fatalf("an address whose key spells an identity was refused (%v):\n%s\nif this is now the behaviour, the doc and this test change together", err, out)
+	}
+	got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
+	if !ok {
+		t.Fatal("nothing was written")
+	}
+	var obj struct {
+		Version int              `json:"version"`
+		Entries []tf.DeleteEntry `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(got), &obj); err != nil {
+		t.Fatalf("the object is not a delete list (%v):\n%s", err, got)
+	}
+	if len(obj.Entries) != 1 || obj.Entries[0].Address != truncated {
+		t.Fatalf("the object holds %+v, want one entry about the truncated address %q", obj.Entries, truncated)
+	}
+	if approved, why := tf.Approves(obj.Entries, rc); approved {
+		t.Errorf("the entry the residual records approves the removal: %s", why)
 	}
 }
