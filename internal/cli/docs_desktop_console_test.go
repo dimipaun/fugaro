@@ -6846,7 +6846,7 @@ func releaseLinuxCopyInSentences(t *testing.T) copyInSentences {
 		}
 	}
 	return copyInSentences{
-		opening: fencedBlockContaining(t, "docs/pending-workflows/README.md", section, "file is pending"),
+		opening: fencedBlockContaining(t, "docs/pending-workflows/README.md", section, "files are pending"),
 		site:    fencedBlockContaining(t, "docs/pending-workflows/README.md", section, "now holds"),
 	}
 }
