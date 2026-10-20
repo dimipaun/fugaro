@@ -542,7 +542,7 @@ follows it: `console/src/renderer/app.ts` writes through `element.textContent`
 (`:124,138,159,174`), never `innerHTML`; the sanitizers are
 `console/src/shared/sanitize.ts` (`sanitizeText:2208`, `sanitizeRefusal:2445`,
 `safeUrl:2477`); navigation and window-open are denied
-(`console/src/main/window.ts:198 denyNavigation`, `:209 denyWindowOpen`), and there is
+(`console/src/main/window.ts:231 denyNavigation`, `:242 denyWindowOpen`), and there is
 exactly one validated `shell.openExternal`.
 A coordinator answering *"what's holding up the payments release?"* produces free text that
 a model wrote from untrusted inputs. If that text were rendered as markdown with live links,

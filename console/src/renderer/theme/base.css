@@ -49,14 +49,17 @@
  * column is `auto` and the rail carries the width, so the collapsed state is one
  * rule on the rail rather than a second grid definition.
  *
- * **The selected row's rule selects an attribute Task 6.5 writes.**
- * `button.console-rail-row[aria-selected='true']` is the design's own rule (section
- * 4.1: "the attribute is the machine-readable mark and the border is the drawn
- * one"), and section 2.1 gives `role="tab"` and `aria-selected` to Task 6.5 — the
- * keyboard task — while the border is this task's. The rule is therefore here
- * before the attribute is, which is the design's split and not an oversight: a
- * rail of one row has one row, and the mark that row will carry arrives with the
- * tablist behaviour. The same is true of the forced-colors block's copy of it.
+ * **The selected row's rule selects the attribute Task 6.5 writes.**
+ * `button.console-rail-row[aria-selected='true']` is the design's own rule
+ * (section 4.1: "the attribute is the machine-readable mark and the border is the
+ * drawn one"), and section 2.1 gave `role="tab"` and `aria-selected` to Task 6.5 —
+ * the keyboard task — while the border is Task 6.3's. The rule was therefore here
+ * before the attribute was, which was the design's split and not an oversight: a
+ * rail of one row has one row, and the mark that row carries arrives with the
+ * tablist behaviour. Task 6.5 brought it, so the rail's row is a `tab` whose
+ * selection this rule draws, and `theme-selectors.test.ts` reads the write rather
+ * than exempting the rule. The same is true of the forced-colors block's copy of
+ * it.
  *
  * **The state's tone is a second channel, never the only one.** Every state word
  * on the rail is drawn beside its glyph and its `data-state` (design section 3.5):

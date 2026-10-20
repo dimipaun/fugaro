@@ -41,6 +41,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { loadFixture } from '../../src/source/fixture'
 import {
+  CONSOLE_THEME,
   LIVE_POLL_MS,
   RAIL_ADD_CLASS,
   RAIL_CLASS,
@@ -61,6 +62,10 @@ import {
   VIEW_NAV_CLASS,
   VIEW_PANEL_CLASS,
   bootDashboard,
+  isMacPlatform,
+  shortcutRow,
+  tabStop,
+  tabTarget,
 } from '../../src/renderer/entry'
 import { decodeSnapshot } from '../../src/shared/schema'
 import {
@@ -70,6 +75,7 @@ import {
   aRefusedCompatibility,
   anOkCompatibility,
   everyNode,
+  keyEvent,
   textOf,
 } from '../support/fakeDom'
 
@@ -148,9 +154,20 @@ function snapshotReply(
 }
 
 /** boot runs the entry against a fake document and answers it, once the first
- * Live read has been drawn. */
-async function boot(bridge: Record<string, unknown>, document: FakeDocument): Promise<FakeDocument> {
-  await bootDashboard({ fugaro: bridge, document: document as unknown as Document })
+ * Live read has been drawn. `navigator` is the window's, which the rail's
+ * shortcut keys read for the platform's modifier (Task 6.5); a case that does
+ * not pass one drives the "not macOS" half of the rule, which is what a `vm`
+ * realm and this suite both are. */
+async function boot(
+  bridge: Record<string, unknown>,
+  document: FakeDocument,
+  navigator?: unknown,
+): Promise<FakeDocument> {
+  await bootDashboard({
+    fugaro: bridge,
+    document: document as unknown as Document,
+    navigator,
+  })
   return document
 }
 
@@ -906,5 +923,382 @@ describe('the installation rail', () => {
     const state = spanOf(document, RAIL_STATE_CLASS)
     expect(state.textContent).toBe('▲ silent')
     expect(state.attributes.get('data-state')).toBe('silent')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The keyboard (desktop-console plan Task 6.5; design sections 4.1 and 4.3).
+// ---------------------------------------------------------------------------
+
+/** navOf is the navigation the entry appended. */
+function navOf(document: FakeDocument): FakeNode {
+  const nav = everyNode(document.body).find((node) => node.attributes.get('class') === VIEW_NAV_CLASS)
+  if (nav === undefined) throw new Error('the entry drew no navigation')
+  return nav
+}
+
+/** railListOf is the rail's list, which is the tablist its rows are tabs of. */
+function railListOf(document: FakeDocument): FakeNode {
+  const list = classed(railOf(document), RAIL_LIST_CLASS)[0]
+  if (list === undefined) throw new Error('the rail drew no list')
+  return list
+}
+
+describe('the view navigation’s keyboard', () => {
+  it('is a tablist with one tab stop, and the arrows move the view and the focus with it', async () => {
+    const { bridge, calls } = fakeBridge({
+      replies: { showBudget: () => ({ ok: true, data: { document: { global: { counted_usd: 12.5 } } } }) },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const nav = navOf(document)
+    const live = buttonFor(document, 'live')
+    const spend = buttonFor(document, 'spend')
+    const projects = buttonFor(document, 'projects')
+
+    // The nav is a tablist and its buttons are its tabs (design section 4.3). The view on
+    // screen is marked twice: `aria-current` is the navigation's own mark, which the code
+    // emitted before this task and `base.css` already selects, and `aria-selected` is the
+    // same fact in the vocabulary a tablist is read with.
+    expect(nav.attributes.get('role')).toBe('tablist')
+    for (const button of [live, spend, projects]) {
+      expect(button.attributes.get('role')).toBe('tab')
+      expect(button.attributes.get('type')).toBe('button')
+    }
+    expect(live.attributes.get('aria-current')).toBe('true')
+    expect(live.attributes.get('aria-selected')).toBe('true')
+    expect(live.attributes.get('tabindex')).toBe('0')
+    // The roving half: the other two are out of the tab order, so the whole navigation is
+    // one stop rather than three.
+    for (const other of [spend, projects]) {
+      expect(other.attributes.get('aria-current')).toBe('false')
+      expect(other.attributes.get('aria-selected')).toBe('false')
+      expect(other.attributes.get('tabindex')).toBe('-1')
+    }
+
+    // Right moves to the next tab **and shows it**: a nav button's selection *is* the view
+    // it puts on screen (design section 4.3), so the read behind the view is made and no
+    // second key is needed.
+    const pressed = live.press('ArrowRight')
+    await flush()
+    expect(pressed.defaultPrevented, 'the arrow key was left to the window').toBe(true)
+    expect(spend.attributes.get('aria-current')).toBe('true')
+    expect(spend.attributes.get('aria-selected')).toBe('true')
+    expect(spend.attributes.get('tabindex')).toBe('0')
+    expect(live.attributes.get('aria-current')).toBe('false')
+    expect(live.attributes.get('tabindex')).toBe('-1')
+    expect(document.activeElement, 'the ring did not follow the arrow').toBe(spend)
+    // The view was *shown* and not merely marked: Spend is the screen that reads the budget,
+    // so a handler that moved the marks without calling `show` would leave this list empty.
+    expect(calls.filter((call) => call.name === 'showBudget')).toHaveLength(1)
+
+    // End goes to the last tab, Home to the first, and Left wraps back from the first --
+    // the one behaviour `tabTarget` documents as the pattern's own.
+    spend.press('End')
+    await flush()
+    expect(projects.attributes.get('aria-current')).toBe('true')
+    expect(document.activeElement).toBe(projects)
+    projects.press('Home')
+    await flush()
+    expect(live.attributes.get('aria-current')).toBe('true')
+    expect(document.activeElement).toBe(live)
+    live.press('ArrowLeft')
+    await flush()
+    expect(projects.attributes.get('aria-current')).toBe('true')
+    expect(document.activeElement).toBe(projects)
+
+    // A key the navigation does not own is left to the window: the nav is a horizontal
+    // tablist and its arrows are Left and Right (design section 4.3), while Up and Down are
+    // the rail's (section 4.1).
+    const down = projects.press('ArrowDown')
+    expect(down.defaultPrevented, 'the navigation took a key that is the rail’s').toBe(false)
+    expect(projects.attributes.get('aria-current')).toBe('true')
+  })
+
+  it('keeps one tab stop while Run detail is up, when no offered view is current', async () => {
+    // Run detail is a view with no button (design section 2.1), so while it is up every
+    // button is unmarked -- and a roving `tabindex` written as "the current view is 0" alone
+    // would leave the navigation with no stop at all, which is a tablist the keyboard cannot
+    // enter. The stop falls back to the first offered button, and this is the case that
+    // fails if that fallback goes.
+    const documents = syntheticDocuments()
+    const frame = documents[documents.length - 1] as Readonly<Record<string, unknown>>
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(frame),
+        diagnoseRun: () => ({ ok: true, data: { document: {} } }),
+        readRunLogs: () => ({ ok: true, data: { document: { entries: [], total: 0, refused: 0 } } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const row = classed(panelOf(document), 'live-run')[0]
+    expect(row, 'the frame drew no run row').toBeDefined()
+    ;(row as FakeNode).click()
+    await flush()
+    expect((panelOf(document).children[0] as FakeNode).attributes.get('class')).toBe('run')
+    for (const button of navButtons(document)) {
+      expect(button.attributes.get('aria-current')).toBe('false')
+      expect(button.attributes.get('aria-selected')).toBe('false')
+    }
+    expect(
+      navButtons(document)
+        .filter((button) => button.attributes.get('tabindex') === '0')
+        .map((button) => button.attributes.get('data-view')),
+      'the navigation left the tab order while a run was on screen',
+    ).toEqual(['live'])
+  })
+})
+
+describe('the installation rail’s keyboard', () => {
+  it('is a tablist whose selected row is its one tab stop, and Enter selects the row', async () => {
+    const { bridge } = fakeBridge({})
+    const document = await boot(bridge, new FakeDocument())
+    const list = railListOf(document)
+    const row = railRow(document)
+
+    // The list is a tablist in its own right and its row is a tab (design sections 2.1 and
+    // 4.1) -- the renderer's first `role=` -- and the row this console can read is the one
+    // the console is reading, so it is selected from the first paint.
+    expect(list.attributes.get('role')).toBe('tablist')
+    expect(row.attributes.get('role')).toBe('tab')
+    expect(row.attributes.get('aria-selected')).toBe('true')
+    expect(row.attributes.get('tabindex')).toBe('0')
+
+    // The arrows move the focus and change no mark: the rail's pattern is the
+    // manual-activation one, so the key that chooses is Enter (design section 4.1).
+    const down = row.press('ArrowDown')
+    expect(down.defaultPrevented, 'the row’s arrow key was left to the list’s scroll').toBe(true)
+    expect(document.activeElement).toBe(row)
+    expect(row.attributes.get('aria-selected')).toBe('true')
+    expect(row.press('Home').defaultPrevented).toBe(true)
+    expect(row.press('End').defaultPrevented).toBe(true)
+
+    const enter = row.press('Enter')
+    expect(enter.defaultPrevented).toBe(true)
+    expect(row.attributes.get('aria-selected')).toBe('true')
+    expect(row.attributes.get('tabindex')).toBe('0')
+
+    // And a key the list does not own is left to the window -- including Left and Right,
+    // which are the navigation's.
+    expect(row.press('ArrowRight').defaultPrevented).toBe(false)
+    expect(row.press('a').defaultPrevented).toBe(false)
+  })
+
+  it('answers no key at all when it draws no row, and takes the shortcut keys either way', async () => {
+    // A console with no installation chosen draws no row (Task 6.3), so the list has no tab
+    // and nothing to address: the keys are still the console's -- a shortcut is prevented
+    // whether or not a row answers it -- and nothing is selected, because nothing is drawn.
+    const { bridge } = fakeBridge({
+      installation: { ok: true, data: { chosen: false, sentence: 'no installation has been chosen' } },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    expect(classed(railOf(document), RAIL_ROW_CLASS)).toHaveLength(0)
+    expect(document.press('1', { ctrl: true }).defaultPrevented).toBe(true)
+    expect(document.press('2', { ctrl: true }).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBeNull()
+  })
+
+  it('selects the row a shortcut key names by position, and reads the platform’s modifier', async () => {
+    // Control + digit elsewhere: this suite's scope carries no navigator, and a scope with
+    // none is not macOS (`isMacPlatform`), which is the same answer a `vm` realm gives.
+    const { bridge } = fakeBridge({})
+    const document = await boot(bridge, new FakeDocument())
+    const row = railRow(document)
+    const pressed = document.press('1', { ctrl: true })
+    expect(pressed.defaultPrevented, 'the console left its own shortcut key to the window').toBe(true)
+    expect(row.attributes.get('aria-selected')).toBe('true')
+    expect(row.attributes.get('tabindex')).toBe('0')
+    expect(document.activeElement, 'the shortcut did not reach the row it named').toBe(row)
+    // A position no row is drawn at addresses nothing -- and the key is still the console's,
+    // so it is still prevented rather than left to the platform.
+    expect(document.press('2', { ctrl: true }).defaultPrevented).toBe(true)
+    expect(row.attributes.get('aria-selected')).toBe('true')
+    // Command + digit is macOS's spelling and not this platform's, so it is not the
+    // console's key here: nothing is taken and nothing is selected.
+    expect(document.press('1', { meta: true }).defaultPrevented).toBe(false)
+  })
+
+  it('reads Command on macOS, where the platform’s modifier is the other one', async () => {
+    const { bridge } = fakeBridge({})
+    const document = await boot(bridge, new FakeDocument(), { platform: 'MacIntel' })
+    const row = railRow(document)
+    // The same key that is the console's elsewhere is not the console's here, and the one
+    // that is not elsewhere is here -- both directions, because a rule that accepted either
+    // modifier everywhere would pass a one-directional case.
+    expect(document.press('1', { ctrl: true }).defaultPrevented).toBe(false)
+    expect(document.press('1', { meta: true }).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(row)
+    expect(row.attributes.get('aria-selected')).toBe('true')
+  })
+
+  it('keeps the rail’s three tab stops in the order a reader sees them', async () => {
+    // The focus order is the DOM order and the rail is first (design section 4.3): the
+    // collapse control, the list -- **one stop however many installations it holds**, which
+    // is what the roving `tabindex` buys -- and the add row. Three, and in that order.
+    const { bridge } = fakeBridge({})
+    const document = await boot(bridge, new FakeDocument())
+    const rail = railOf(document)
+    const stops = everyNode(rail).filter(
+      (node) => node.tagName === 'BUTTON' || node.attributes.has('tabindex'),
+    )
+    expect(stops.map((node) => node.attributes.get('class'))).toEqual([
+      RAIL_COLLAPSE_CLASS,
+      RAIL_ROW_CLASS,
+      RAIL_ADD_CLASS,
+    ])
+    // Exactly one of them is the roving stop and it is the selected row: a list with no `0`
+    // at all is a list the keyboard cannot enter, and two of them is a list that is two
+    // stops.
+    expect(stops.filter((node) => node.attributes.get('tabindex') === '0')).toEqual([railRow(document)])
+  })
+})
+
+describe('the keyboard’s own rules, apart from the DOM', () => {
+  it('moves within a tablist by the axis it is given, and wraps at both ends', () => {
+    // The navigation is horizontal and the rail's list vertical (design sections 4.1 and
+    // 4.3), and the axis is a parameter rather than two functions so the one rule -- which
+    // key is the next tab -- is written once.
+    expect(tabTarget('ArrowRight', 0, 3, 'x')).toBe(1)
+    expect(tabTarget('ArrowRight', 2, 3, 'x')).toBe(0)
+    expect(tabTarget('ArrowLeft', 0, 3, 'x')).toBe(2)
+    expect(tabTarget('ArrowLeft', 2, 3, 'x')).toBe(1)
+    expect(tabTarget('ArrowDown', 0, 3, 'y')).toBe(1)
+    expect(tabTarget('ArrowUp', 0, 3, 'y')).toBe(2)
+    expect(tabTarget('Home', 2, 3, 'y')).toBe(0)
+    expect(tabTarget('End', 0, 3, 'x')).toBe(2)
+    // The other axis's arrows are not this tablist's, and neither is any other key.
+    expect(tabTarget('ArrowDown', 0, 3, 'x')).toBeNull()
+    expect(tabTarget('ArrowRight', 0, 3, 'y')).toBeNull()
+    expect(tabTarget('Enter', 0, 3, 'x')).toBeNull()
+    expect(tabTarget('a', 0, 3, 'x')).toBeNull()
+    // An empty tablist, and an index outside it, move nowhere.
+    expect(tabTarget('ArrowRight', 0, 0, 'x')).toBeNull()
+    expect(tabTarget('ArrowRight', 3, 3, 'x')).toBeNull()
+  })
+
+  it('gives a tablist one tab stop, and the same one answer to both tablists', () => {
+    // The roving half of the pattern (design sections 4.1 and 4.3): one tab of
+    // the list is in the tab order and every tab beside it is not. The rail's
+    // list holds one row today, so a rail that stopped roving would still draw
+    // exactly one stop -- this is where that rule is held, and the rail's own
+    // case above is where its *write* is held.
+    expect(tabStop(true)).toBe('0')
+    expect(tabStop(false)).toBe('-1')
+  })
+
+  it('spells the shortcut key the platform’s way, and answers the row’s position', () => {
+    // **The case the rail's keys are proved by** (the plan's Task 6.5): a digit is the row's
+    // *position*, one-based, so `1` is the first row the rail draws and an off-by-one selects
+    // the wrong row -- which is what every assertion below would catch.
+    expect(shortcutRow(keyEvent('1', { ctrl: true }), false)).toBe(0)
+    expect(shortcutRow(keyEvent('2', { ctrl: true }), false)).toBe(1)
+    expect(shortcutRow(keyEvent('3', { ctrl: true }), false)).toBe(2)
+    expect(shortcutRow(keyEvent('9', { ctrl: true }), false)).toBe(8)
+    expect(shortcutRow(keyEvent('1', { meta: true }), true)).toBe(0)
+    // Both halves of the platform rule: the modifier that is not this platform's is not a
+    // second spelling, and a digit held with both is a key two rules claim.
+    expect(shortcutRow(keyEvent('1', { meta: true }), false)).toBeNull()
+    expect(shortcutRow(keyEvent('1', { ctrl: true }), true)).toBeNull()
+    expect(shortcutRow(keyEvent('1', { meta: true, ctrl: true }), true)).toBeNull()
+    expect(shortcutRow(keyEvent('1', { meta: true, ctrl: true }), false)).toBeNull()
+    // No modifier at all is the plain digit, which belongs to the document and not to this.
+    expect(shortcutRow(keyEvent('1'), false)).toBeNull()
+    expect(shortcutRow(keyEvent('1'), true)).toBeNull()
+    // `0` addresses no row: the hint's own sentence is "1 2 3", and a zero-based key would
+    // be the off-by-one in the other direction.
+    expect(shortcutRow(keyEvent('0', { ctrl: true }), false)).toBeNull()
+    expect(shortcutRow(keyEvent('a', { ctrl: true }), false)).toBeNull()
+    expect(shortcutRow(keyEvent('Enter', { ctrl: true }), false)).toBeNull()
+  })
+
+  it('reads the platform out of the navigator the scope carries', () => {
+    // Both spellings the read accepts, and the two answers it must not invent: a navigator
+    // with neither field, and no navigator at all (a `vm` realm, this suite).
+    expect(isMacPlatform({ userAgentData: { platform: 'macOS' } })).toBe(true)
+    expect(isMacPlatform({ platform: 'MacIntel' })).toBe(true)
+    expect(isMacPlatform({ userAgentData: { platform: 'Windows' } })).toBe(false)
+    expect(isMacPlatform({ platform: 'Linux x86_64' })).toBe(false)
+    expect(isMacPlatform({ userAgentData: {}, platform: 'Win32' })).toBe(false)
+    expect(isMacPlatform({})).toBe(false)
+    expect(isMacPlatform(undefined)).toBe(false)
+    expect(isMacPlatform(null)).toBe(false)
+    // The modern spelling wins where both are there: `platform` is deprecated and answers
+    // `MacIntel` on an iPad, which is the one case where the two disagree about the machine.
+    expect(isMacPlatform({ userAgentData: { platform: 'Windows' }, platform: 'MacIntel' })).toBe(false)
+    // **A modern spelling that is present and blank is not an answer**, which is what the
+    // fallback is really for: `userAgentData.platform` is an empty string where the hints
+    // are unavailable or reduced, and a read that took "there is a string" for "there is a
+    // platform" would call a Mac running such a build "not macOS" and spell the shortcut
+    // keys the other platform's way. The same for a blank legacy name, which is not macOS
+    // either.
+    expect(isMacPlatform({ userAgentData: { platform: '' }, platform: 'MacIntel' })).toBe(true)
+    expect(isMacPlatform({ userAgentData: { platform: '' }, platform: 'Windows' })).toBe(false)
+    expect(isMacPlatform({ userAgentData: { platform: '' }, platform: '' })).toBe(false)
+    expect(isMacPlatform({ userAgentData: { platform: '' } })).toBe(false)
+  })
+})
+
+/** THEME_PREFERENCE_SPELLINGS is every way a renderer source could ask the
+ * machine which theme to draw, in the order a report lists them. The first two
+ * are the web's answer (`matchMedia` and the query it is asked), the next three
+ * are Electron's (`nativeTheme`, the property a renderer would set, and the
+ * colour-scheme boolean it would read), and the last is the console's own
+ * spelling for "which set did the operator pick" -- the value Q1 ruled out, so
+ * that a `themeChoice()` added later is caught by this scan rather than by a
+ * review. */
+const THEME_PREFERENCE_SPELLINGS = [
+  'matchMedia',
+  'prefers-color-scheme',
+  'nativeTheme',
+  'themeSource',
+  'shouldUseDarkColors',
+  'themeChoice',
+] as const
+
+/** withoutComments is a source with its comments blanked, so a scan over it
+ * reads the *code* rather than the prose. The files under `src/renderer/` name
+ * the ruling they obey in their comments -- `entry.ts` says in as many words
+ * that no `matchMedia` read comes with the theme literal -- and a scan that read
+ * the text would fail on its own explanation. The `//` is only a comment where
+ * it is not part of a URL, which is what the character before it is for. */
+function withoutComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/gm, '$1')
+}
+
+/** preferenceReads is the spellings a source uses, in a fixed order. */
+function preferenceReads(source: string): readonly string[] {
+  return THEME_PREFERENCE_SPELLINGS.filter((spelling) => source.includes(spelling))
+}
+
+describe('the console’s theme', () => {
+  it('is one literal, and no renderer source reads a preference of its own', () => {
+    // Task 6.5's first case (design section 3.6, the owner's Q1 ruling of 2026-10-19): one
+    // value set ships, dark, so `CONSOLE_THEME` is a literal -- not the answer of a
+    // `themeChoice()` -- and nothing under `src/renderer/` asks the machine which theme to
+    // draw. The scan is over the directory rather than over `entry.ts`, because the second
+    // place a preference could arrive is a screen, and the theme directory's own scan
+    // (`theme-tokens.test.ts`) covers the CSS half of the same ruling.
+    expect(CONSOLE_THEME).toBe('dark')
+    const files = everySource(join(CONSOLE_ROOT, 'src', 'renderer'))
+    expect(files.length, 'the scan found no renderer sources: it would pass by finding nothing').toBeGreaterThan(5)
+    const offences = files.flatMap((file) =>
+      preferenceReads(withoutComments(readFileSync(file, 'utf8'))).map(
+        (spelling) => `${file.replace(`${CONSOLE_ROOT}/`, '')}: ${spelling}`,
+      ),
+    )
+    expect(offences, 'a renderer source reads the theme from the machine').toEqual([])
+
+    // The probe: the scan is only worth what it finds, so both halves of it are read off a
+    // snippet that carries them -- one in code, one in a comment, since the prose of these
+    // files names the ruling it obeys and a scan that read the text would fail on its own
+    // explanation.
+    expect(
+      preferenceReads(
+        withoutComments(
+          "const dark = matchMedia('(prefers-color-scheme: dark)')\n// nativeTheme.themeSource\n",
+        ),
+      ),
+    ).toEqual(['matchMedia', 'prefers-color-scheme'])
   })
 })
