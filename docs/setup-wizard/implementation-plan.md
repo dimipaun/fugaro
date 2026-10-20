@@ -61,9 +61,9 @@ flag), `internal/cli/testdata/init_review.golden` (`TestReviewScreenGolden`,
   and `docs/design/**` are this tree's own record of what shipped on a date;
   the other six — `docs/website/`, `docs/credentials-service/`,
   `docs/coordinator/`, `docs/in-job-review/`, `docs/mobile/` and
-  `docs/windows-cli/` — each hold
-  another artifact's own `reconciliation.md` (the mobile folder its
-  `implementation-plan.md` too), describing work as it was planned on its own
+  `docs/windows-cli/` — each hold another artifact's own `reconciliation.md`
+  (the mobile and Windows folders their `implementation-plan.md` too),
+  describing work as it was planned on its own
   date, so rewriting the command inside them would be editing a record rather
   than fixing a document. The rename's guard test
   enforces the line, and this folder is on
