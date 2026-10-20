@@ -141,8 +141,9 @@ func updateCheckDisabledFromContext(ctx context.Context) (disabled, ok bool) {
 // updateCheckDisabled reports whether the whole feature is off for this
 // command: FUGARO_NO_UPDATE_CHECK=1, or the selected project's local
 // config says update_check: false. The local config lookup
-// (selectedProjectConfig: a git rev-parse and a config file read, no
-// network or cloud call) is the most expensive check here, so it is only
+// (selectedProjectConfigReadOnly: a git rev-parse and a config file read,
+// no network or cloud call, and no recording of the checkout it looked at)
+// is the most expensive check here, so it is only
 // reached once every cheaper reason to skip it entirely — the env switch,
 // an excluded command, running inside a Cloud Run job — has already not
 // applied; shouldStartUpdateCheck and shouldWarnUpdateAvailable check the
@@ -155,7 +156,15 @@ func updateCheckDisabled(cmd *cobra.Command) bool {
 	if excludedCommand(cmd) || backend.OnPlatform(os.Getenv) {
 		return true
 	}
-	if lc := selectedProjectConfig(cmd.Context()); lc != nil {
+	// selectedProjectConfigReadOnly and not selectedProjectConfig: this runs
+	// on every command's PersistentPreRun, before the command has done
+	// anything, and recording the checkout it looks at would make every
+	// command in a checkout write the remembered checkouts — `fugaro config
+	// list` and `fugaro project ls` included, which are reads the console
+	// spawns under the rule that a read changes nothing. The question here
+	// ("does this project's config say update_check: false") has the same
+	// answer either way.
+	if lc := selectedProjectConfigReadOnly(cmd.Context()); lc != nil {
 		return !lc.UpdateCheckEnabled()
 	}
 	return false

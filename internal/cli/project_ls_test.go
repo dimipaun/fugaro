@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -490,11 +491,20 @@ func TestProjectLsWithNoInstallations(t *testing.T) {
 // TestProjectLsWritesNothing: the console spawns this read, and a read the
 // console spawns changes nothing — not the project configs, not the
 // remembered checkouts, not the cache home — in either output form.
+//
+// It runs from inside a checkout of a project this machine has NOT recorded,
+// with the update check left enabled (the test rig sets
+// FUGARO_NO_UPDATE_CHECK=1, which would skip the one part of the root
+// command that resolves a project before any command runs). That is the
+// point: NewRootCmd's PersistentPreRun asks the update check whether the
+// selected project's config says update_check: false on EVERY command, so if
+// that path remembered the checkout it looked at, `project ls` — a read —
+// would write checkouts.json on its way in, and so would `config list`.
 func TestProjectLsWritesNothing(t *testing.T) {
 	dir := projectLsFixture(t)
 	co := projectLsCheckout(t, filepath.Join(dir, "src", "app"), projectLsProjectYAML("aurora"), "https://github.com/acme/app.git")
-	projectLsRemember(t, "aurora", co, "https://github.com/acme/app.git")
-	projectLsRemember(t, "aurora", filepath.Join(dir, "gone"), "https://github.com/acme/app.git")
+	t.Chdir(co)
+	t.Setenv("FUGARO_NO_UPDATE_CHECK", "")
 	before := treeState(t, dir)
 	for _, args := range [][]string{{"project", "ls"}, {"project", "ls", "--json"}} {
 		if _, _, err := execute(t, args...); err != nil {
@@ -503,6 +513,12 @@ func TestProjectLsWritesNothing(t *testing.T) {
 	}
 	if after := treeState(t, dir); !reflect.DeepEqual(before, after) {
 		t.Errorf("project ls changed the machine:\nbefore %v\nafter  %v", before, after)
+	}
+	// And the checkout it ran in is not in the state file: the read is not a
+	// record of where it was run, either. A missing file is the expected
+	// state here (nothing else in this fixture records).
+	if _, err := os.Stat(filepath.Join(dir, "xdg", "fugaro", "checkouts.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("project ls recorded the checkout it ran in: stat err %v", err)
 	}
 }
 

@@ -343,7 +343,33 @@ func selectedProjectConfig(ctx context.Context) *localcfg.Config {
 // always was: that is a problem with the file being validated, which validate
 // reports against the file itself, not a selection that failed.
 func selectedProjectConfigErr(ctx context.Context) (*localcfg.Config, error) {
-	co, err := checkoutProject(ctx, "")
+	return selectedProjectErr(ctx, checkoutProject)
+}
+
+// selectedProjectConfigReadOnly is selectedProjectConfig without the
+// recording: the same selection, resolved through resolveCheckout rather
+// than checkoutProject, so looking at a checkout does not remember it.
+//
+// It is for the one caller that asks the question on EVERY command, before
+// the command has done anything: the update check's "does this project's
+// config say update_check: false" (updateCheckDisabled, reached from
+// NewRootCmd's PersistentPreRun). Recording there would make every command
+// that runs in a checkout write the remembered checkouts — `fugaro config
+// list` and `fugaro project ls` among them, and those two are reads the
+// console spawns under a rule of their own, that a read the console spawns
+// changes nothing (TestConsoleV2ReadsWriteNothing). A command that resolves
+// the checkout for its own work still records it, because it calls
+// checkoutProject.
+func selectedProjectConfigReadOnly(ctx context.Context) *localcfg.Config {
+	lc, _ := selectedProjectErr(ctx, resolveCheckout)
+	return lc
+}
+
+// selectedProjectErr is selectedProjectConfigErr with the checkout resolver
+// given: checkoutProject remembers the checkout it resolves, resolveCheckout
+// does not.
+func selectedProjectErr(ctx context.Context, resolve func(context.Context, string) (*localcfg.Checkout, error)) (*localcfg.Config, error) {
+	co, err := resolve(ctx, "")
 	if err != nil {
 		return nil, nil
 	}
