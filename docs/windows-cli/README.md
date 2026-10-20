@@ -51,7 +51,7 @@ renumbered once taken.
 
 ## Items found while planning, kept here so they are not lost
 
-The full list is **O1–O5** in [reconciliation.md](reconciliation.md) §6. One of
+The full list is **O1–O6** in [reconciliation.md](reconciliation.md) §6. One of
 them is a document-level question and is repeated here because it is about
 *these* documents rather than about the code:
 
