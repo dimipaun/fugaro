@@ -25,7 +25,8 @@
 // console option into this build — and, from the same brief, the security page's cut to three
 // things (the policy document's own *In short* section, its own reporting section and a link to
 // the document), together with the 2 bytes the new spacing gate's own find cost the console
-// page — and, last, the two rounds of 2026-10-19/20 this reading re-derived the figures for:
+// page, and the boundary diagram the owner's brief of 2026-10-20 has that page open with (its labels,
+// the facts under it and its review round's declared geometry) — and, last, the two rounds of 2026-10-19/20 this reading re-derived the figures for:
 // the CLI's bare `--repo` usage strings, which moved the CLI reference and caps-and-costs by
 // 1,126 bytes and which the round that made them left un-derived, and the owner's 2048 px logo,
 // which regenerated every icon the site serves and so moved the site figure down by 10,345 and

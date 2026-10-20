@@ -620,6 +620,30 @@ added or removed without this sentence moving fails there:
     cards are held to — no card for a system the file does not carry, one icon per card, and it
     draws something — are `test/os-cards.mjs`'s, and the count of gates in this README moved with
     it.
+  - **The security page opens with the trust boundary drawn** (the owner's brief of 2026-10-20),
+    and it moved the site figure alone, 975,034 → **980,342**, by **5,308 bytes**. The page is
+    four things now and nothing else: the drawing comes first, above the document's *In short*
+    section, and it is one inline `<svg>` — the source of the task and the people who can steer
+    a run, the one container per run and what it holds, the pull request that leaves it, and the
+    egress nothing stops — with a name on it for a screen reader, the document's own facts as a
+    list under it and its two limit lines below that. **Every label of the drawing is a phrase of
+    `SECURITY.md`**, and `website/test/security.mjs` reads each one back off the built page and
+    refuses a label that is in neither the document's own *In short* section nor the words the
+    region carries beside the picture — its heading, the facts under it and the two lines below
+    them, and not the rest of the page — which is why the drawing says "one container per run"
+    and "ends every run with a pull request" where the brief's own sketch said "your own cloud
+    project" and "a draft pull request you merge": the policy makes neither of those claims. The
+    model-key card draws the document's conditional as the one sentence it is — the budget
+    gateway is not on by default, so the real model key sits in the agent's environment — rather
+    than setting the gateway and the key's place side by side as two facts, which would be a
+    claim the policy never makes. The drawing is shapes and text in the markup and loads
+    nothing, so the page weight and the script did not move: the heaviest page is still the docs
+    hub, and no file the site ships was added. The clone figure moved by the same bytes.
+    **Its review round moved the same figure by the last 308 of those bytes**: the drawing now
+    declares its own geometry in the markup — every card the inset its labels are drawn at
+    (`data-pad`), every label the size it is drawn at (`font-size`) — so that `test/security.mjs`
+    can measure each label against the box it is drawn in and refuse one that overruns its card,
+    which is why the source card's phrase is broken after "launch a" and not after "launch".
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it

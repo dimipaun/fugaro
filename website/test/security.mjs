@@ -1,27 +1,46 @@
 // website/test/security.mjs — the security page (website plan, Task W1.8; the owner's brief
 // of 2026-10-19 and ruling D189).
 //
-// **The page is three things and nothing else**, and all three of them are the document's:
-// `SECURITY.md`'s own "In short" section, its own "Reporting a vulnerability" section, and a
-// link to the document in the repository. That is the brief's cut of the page, and D189's
-// answer to the one open question — where the summary comes from: **each long page's summary
-// is rendered from a file, never written on the page**, and this page's file is `SECURITY.md`
-// itself (`docs/website/redesign/reconciliation.md`, D189). The page used to render the
-// document whole, behind a contents list built from its headings, and then wrote a summary of
-// its own; both are gone, and this file is what holds the page to the new shape.
+// **The page is four things and nothing else**: the boundary diagram at the top (the owner's
+// brief of 2026-10-20), then `SECURITY.md`'s own "In short" section, its own "Reporting a
+// vulnerability" section, and a link to the document in the repository. The last three are the
+// brief's cut of the page and all three of them are the document's, and D189's answer to the
+// one open question — where the summary comes from: **each long page's summary is rendered
+// from a file, never written on the page**, and this page's file is `SECURITY.md` itself
+// (`docs/website/redesign/reconciliation.md`, D189). The page used to render the document
+// whole, behind a contents list built from its headings, and then wrote a summary of its own;
+// both are gone, and this file is what holds the page to the new shape.
 //
-// Five things are checked, and each one is the mechanical form of a sentence in the brief:
+// The diagram is the one thing on the page the page writes, and it is written in the
+// document's words: **every label of the drawing is a phrase of `SECURITY.md`**, and each of
+// them appears in the document's own "In short" section or in the words the page renders
+// beside the drawing. A label that needs a claim the document does not make has nowhere to
+// come from, which is why the drawing says "one container per run" and "ends every run with a
+// pull request" where the brief's own sketch said "your own cloud project" and "a draft pull
+// request you merge": `SECURITY.md` makes neither claim, and a label the policy does not state
+// is the defect this gate exists for (D99).
 //
-//   1. **The page carries its three regions and no other text** (the brief: "Nothing else").
-//      Everything a reader sees inside the page's own `<article>` is its `h1`, the summary,
-//      the reporting section and the policy link; a paragraph of introduction, a summary of a
-//      limit, or a second copy of anything fails here. The rule is applied twice over, because
-//      the page can grow two ways: the article's text has to be exactly the four regions' text
-//      (so nothing sits between them), and each region has to be the shape the brief gives it
-//      — a heading and one list, a heading and the document's paragraphs, the link and the
-//      sentence around it (so nothing sits inside one, where the first half of the rule would
-//      count it as the region's own text and pass it).
-//   2. **The summary is `SECURITY.md`'s own "In short" section, bullet for bullet** (the
+// Six things are checked, and each one is the mechanical form of a sentence in the brief:
+//
+//   1. **The page carries its four regions and no other text** (the brief: "Nothing else").
+//      Everything a reader sees inside the page's own `<article>` is its `h1`, the diagram,
+//      the summary, the reporting section and the policy link; a paragraph of introduction, a
+//      summary of a limit, or a second copy of anything fails here. The rule is applied twice
+//      over, because the page can grow two ways: the article's text has to be exactly the five
+//      regions' text (so nothing sits between them), and each region has to be the shape the
+//      brief gives it — a heading and one list, a heading and the document's paragraphs, the
+//      link and the sentence around it (so nothing sits inside one, where the first half of
+//      the rule would count it as the region's own text and pass it).
+//   2. **The diagram is one named picture, and its labels are the document's own words** (the
+//      brief: "ONE inline-SVG diagram (`role="img"` with an `aria-label`, plus the same facts
+//      as a short list under it)", and "EVERY label must follow SECURITY.md's 'In short'
+//      section"). One `<svg>`, named, carrying the drawing's labels; the facts as one list
+//      under it and the two limit lines below that; every label of the picture present in the
+//      document's "In short" section or in the words the region carries beside the picture —
+//      its heading, those facts and those lines, and not the rest of the page; every word the
+//      region carries a phrase of the document; and no script anywhere near it (the brief: "No
+//      JavaScript").
+//   3. **The summary is `SECURITY.md`'s own "In short" section, bullet for bullet** (the
 //      brief: "a short high-level description of the security model and its boundaries";
 //      D189: "rendered from a file, never written on the page"). Each rendered bullet is
 //      compared with the document's own, through one normalisation — inline markup off,
@@ -30,14 +49,14 @@
 //      measured thing. The bullets are the owner's sentences and this file does not shorten
 //      them: the ceiling is on the section, and a document edit that grows it re-derives the
 //      number in that commit.
-//   3. **The reporting section is `SECURITY.md`'s own words** (the brief: "the real reporting
+//   4. **The reporting section is `SECURITY.md`'s own words** (the brief: "the real reporting
 //      instructions, unchanged in substance"). Compared with the document paragraph by
 //      paragraph, the same way. The page renders both sections out of
 //      `website/content/security.md`, the file `go run ./internal/clidoc` writes from
 //      `SECURITY.md`, and this file reads the source document rather than the generator's
 //      output: a test written against the thing it is meant to hold agrees with whatever that
 //      thing does (plan Review Focus).
-//   4. **The link is `SECURITY.md`, at its own path in the repository** (the brief:
+//   5. **The link is `SECURITY.md`, at its own path in the repository** (the brief:
 //      `https://github.com/dimipaun/fugaro/blob/main/SECURITY.md`). The path is read from the
 //      generated file's own `source:` header and the repository from `site.yaml`, both of
 //      which `website/src/pages/security.astro` builds the URL from, so the page cannot point
@@ -49,7 +68,7 @@
 //   heading its fragment names — a fragment dropped or aimed at another heading sends readers
 //   to the top of the file, or the wrong passage, and nothing else here would notice (round 4,
 //   finding 1).
-//   5. **The page's head points at no file the build does not produce** (Global Constraint 9).
+//   6. **The page's head points at no file the build does not produce** (Global Constraint 9).
 //      The one hint the layout composes is the sitemap, and whether the build ships one is
 //      read from the resolved `astro.config.mjs` — imported, not pattern-matched, which is the
 //      same rule `website/test/readme.mjs` applies to the same file.
@@ -70,8 +89,8 @@
 // `FUGARO_GATES_DIST` points the whole gate at a planted copy and each of its refusals is
 // mutation-proved rather than asserted (the mechanism `budget.mjs` and `fold.mjs` use; the
 // case at the end of this file plants them). The regions are found by the marker attributes
-// the page's own markup carries (`data-security-page`, `data-security-summary`,
-// `data-security-reporting`, `data-security-policy`).
+// the page's own markup carries (`data-security-page`, `data-security-diagram`,
+// `data-security-summary`, `data-security-reporting`, `data-security-policy`).
 //
 // Two of the cases need a **build** rather than a planted artifact, because the refusals they
 // hold are the page's and not the gate's: a document whose summary list grows a paragraph, and
@@ -121,6 +140,17 @@ const MAX_SUMMARY_WORDS = 220
  * this file pinning a sentence of the page's own.
  */
 const POINTER_WORDS = 12
+
+/**
+ * The floor under the drawing's labels, and under the facts listed beside it. The picture
+ * draws the trust boundary the document's summary describes — who sends the task, the
+ * container and what is in it, what leaves it, and what nothing stops — and these numbers are
+ * below the count any drawing of that can carry. Both are floors and not pins: the drawing may
+ * gain a label, or the list a fact, without this file changing, and neither number is the
+ * picture's size.
+ */
+const MIN_DIAGRAM_LABELS = 8
+const MIN_DIAGRAM_FACTS = 3
 
 // ---------------------------------------------------------------------------------------
 // Reading the document, the page, and the text out of either of them.
@@ -187,6 +217,26 @@ function childElements(node) {
 }
 
 /**
+ * A copy of a node's subtree with every `<name>` subtree taken out of it. The diagram's
+ * labels are text a reader sees, so the page's own text has to be read **without** them: the
+ * label rule below asks whether a label is a phrase of the words the page renders *beside* the
+ * picture, and a reading that left the picture in would answer that question with the label
+ * itself. The copy is read by the same reader as the page's text (`verbatimText`, round 3's
+ * block boundaries and all) rather than by a second reader written for the occasion.
+ */
+function without(node, name) {
+  if (node.text !== undefined) return { text: node.text }
+  if (node.name === name) return null
+  const copy = { name: node.name, attrs: node.attrs, children: [] }
+  if (node.raw !== undefined) copy.raw = node.raw
+  for (const child of node.children ?? []) {
+    const kept = without(child, name)
+    if (kept !== null) copy.children.push(kept)
+  }
+  return copy
+}
+
+/**
  * The words a node says itself, with every element child's text taken out: the text a region
  * carries beside the elements the brief allows it. A `<p>` written into the summary, or a
  * second sentence written into the pointer, is what this counts.
@@ -205,6 +255,24 @@ function inlineText(line) {
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*]+)\*/g, '$1')
     .trim()
+}
+
+/**
+ * `SECURITY.md` as a phrase is looked for in it: its link syntax reduced to the words that
+ * carry it, its inline markers off, every run of whitespace collapsed to one space, in lower
+ * case. This is the reading `security.astro`'s own `quoted()` compares a label against, and it
+ * is here for the same reason: a label that differs from the document in a word, or in a
+ * space, is a difference in what the page claims. The page reads
+ * `website/content/security.md`, the file `go run ./internal/clidoc` writes from this
+ * document; this file reads the document itself, so a label that is a phrase of the generated
+ * file and not of the policy shows up here rather than in the build.
+ */
+function documentPhrases(document) {
+  return document
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[*`]/g, '')
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
 }
 
 /**
@@ -401,8 +469,231 @@ function checkLinks(region, { document, heading, kind, fail, what }) {
   }
 }
 
+/**
+ * What a run of text takes at a size, and the estimate the drawing is laid out against. The
+ * labels are set in the reader's own sans (`--font-sans`), whose stack lands on a wide face on
+ * more systems than not — DejaVu Sans on most Linux desktops is the widest of them, and about a
+ * tenth wider per character than Arial or Inter. `src/components/RunDiagram.astro` lays the How
+ * It Works drawing out with the same estimate and refuses an over-wide line at build time; this
+ * is the same measurement taken again over the built page.
+ */
+const CHAR = 0.62
+
+/** The width of a line at a size, at the estimate above. */
+const lineWidth = (said, size) => [...said].length * CHAR * size
+
+/**
+ * The box a `<text>` of the drawing is drawn in, read off the markup alone: the line's width at
+ * the size the node declares, the anchor it is drawn from, and the baseline it sits on. A node
+ * without those numbers is a line this check cannot measure, and `null` is what the caller
+ * refuses rather than passing.
+ */
+function drawnBox(node) {
+  const size = Number(node.attrs.get('font-size'))
+  const x = Number(node.attrs.get('x'))
+  const y = Number(node.attrs.get('y'))
+  if (![size, x, y].every(Number.isFinite)) return null
+  const width = lineWidth(prose(text(node)), size)
+  const anchor = node.attrs.get('text-anchor') ?? 'start'
+  const x0 = anchor === 'middle' ? x - width / 2 : anchor === 'end' ? x - width : x
+  return { size, x, y, width, x0, x1: x0 + width }
+}
+
+/**
+ * Every label of the drawing, measured against the box it is drawn in: the card whose rect
+ * holds the label's baseline, inset by the `data-pad` that card declares, or the drawing's own
+ * `viewBox` for a label drawn outside every card.
+ *
+ * The labels of this drawing are hand-placed against fixed card widths and every one of them is
+ * quoted from `SECURITY.md`, which the owner edits — so a phrase that grows a word or two
+ * overruns its card, and a line over a card's border is the one defect of this picture the
+ * label rule cannot see: the longer phrase is still a phrase of the document. The How It Works
+ * drawing is measured the same way, at build time and over the built page
+ * (`website/test/how-it-works.mjs`); here the built page is the whole of it, because the
+ * geometry is written by hand in the page rather than generated from the same numbers.
+ */
+function checkLabelBoxes(picture, drawn, fail) {
+  const view = (picture.attrs.get('viewbox') ?? '').trim().split(/\s+/).map(Number)
+  const cards = findAll(picture, 'rect').map((el) => ({
+    x: Number(el.attrs.get('x')),
+    y: Number(el.attrs.get('y')),
+    width: Number(el.attrs.get('width')),
+    height: Number(el.attrs.get('height')),
+    pad: Number(el.attrs.get('data-pad')),
+  }))
+  for (const [i, node] of drawn.entries()) {
+    const what = `the drawing's label ${i + 1}`
+    const label = drawnBox(node)
+    if (label === null) {
+      fail(
+        `${what} is drawn without the position or the size it is drawn at, and a label this check cannot measure is a label nothing holds inside its box: every label of the drawing carries its own \`x\`, \`y\` and \`font-size\`, because the size it is drawn at is a length in the picture's own units (the owner's brief of 2026-10-20)`,
+      )
+      continue
+    }
+    // The box the label is drawn in: the smallest rect whose own box holds the label's
+    // baseline. A label no rect holds is drawn in the open picture, and the picture's own edge
+    // is what it has to stay inside.
+    const holds = cards
+      .filter(
+        (card) =>
+          [card.x, card.y, card.width, card.height, card.pad].every(Number.isFinite) &&
+          label.y >= card.y &&
+          label.y <= card.y + card.height &&
+          label.x >= card.x &&
+          label.x <= card.x + card.width,
+      )
+      .sort((a, b) => a.width * a.height - b.width * b.height)
+    const box = holds[0]
+    const left = box === undefined ? view[0] : box.x + box.pad
+    const right = box === undefined ? view[0] + view[2] : box.x + box.width - box.pad
+    if (![left, right].every(Number.isFinite)) {
+      fail(
+        `${what} is drawn in a box this check cannot measure, and a box nothing can measure is a box nothing holds a label inside: the drawing declares the \`viewBox\` its units are in, and every card declares the inset (\`data-pad\`) its contents are drawn at (the owner's brief of 2026-10-20)`,
+      )
+      continue
+    }
+    if (label.x0 < left - 0.5 || label.x1 > right + 0.5) {
+      fail(
+        `${what} says ${JSON.stringify(prose(text(node)))} and is drawn from ${label.x0.toFixed(1)} to ${label.x1.toFixed(1)} units, and the ${box === undefined ? 'drawing' : 'card it is drawn in'} runs ${left.toFixed(1)} to ${right.toFixed(1)}: the picture is laid out for the font the page's stack resolves to on a reader's system (DejaVu Sans and the other wide sans faces are wider per character than Arial or Inter), and a line that does not fit its room is a line over the card's border — or past the picture's own edge. Every label here is hand-placed and every one of them is quoted from ${SOURCE}, which the owner edits, so a phrase that grows a word overruns its box and nothing else in this file would see it (the owner's brief of 2026-10-20)`,
+      )
+    }
+  }
+}
+
+/**
+ * The boundary diagram, held to the brief's own rules (the owner's brief of 2026-10-20).
+ *
+ * The rule this gate exists for is the label one: **the picture is one named image, and each
+ * of its labels is a phrase of `SECURITY.md`'s own "In short" section or of the words the
+ * diagram region carries beside the picture** — its heading, the facts under it and the two
+ * lines below them. The drawing is the only place on this page where the page writes
+ * anything itself, and a security page is where a sentence the policy does not state does the
+ * most damage — so a label that drifts, a claim added or a limit softened, is refused here
+ * rather than read as prose (D99). `security.astro` proves the same thing while it builds
+ * (`quoted()`); this holds it from the document's side, which is where a label that is a
+ * phrase of the generated file and not of the policy is visible.
+ *
+ * The rest is the shape the brief asks for: one `<svg>` with `role="img"` and a non-empty
+ * `aria-label`, the labels inside it, the document's own facts as one list under the picture,
+ * the two lines below that, and no script (the brief: "No JavaScript") — and, over the built
+ * page, every label measured against the box it is drawn in (`checkLabelBoxes`).
+ */
+function checkDiagram(region, { document, beside, fail }) {
+  const headings = childElements(region).filter((child) => child.name === 'h2')
+  if (headings.length !== 1) {
+    fail(
+      `the diagram carries ${headings.length} <h2> headings where the drawing sits under the document's own sentence for the boundary: the region is that heading and the picture below it (the owner's brief of 2026-10-20)`,
+    )
+  }
+
+  const figures = childElements(region).filter((child) => child.name === 'figure')
+  if (figures.length !== 1) {
+    fail(
+      `the diagram carries ${figures.length} figures where the boundary diagram is one picture with the facts under it: the brief asks for one inline SVG and one list of the document's own facts (the owner's brief of 2026-10-20)`,
+    )
+    return
+  }
+  const figure = figures[0]
+
+  // What is under the picture, and in what order: the drawing, then the facts as one list,
+  // then the two lines. The brief names all three, and a list above the picture, or a third
+  // line, is text the reader meets in an order nobody chose.
+  const inner = childElements(figure)
+  const wanted = ['svg', 'ul', 'p', 'p']
+  if (inner.length !== wanted.length || inner.some((child, i) => child.name !== wanted[i])) {
+    fail(
+      `the boundary diagram's figure carries ${inner.map((child) => `<${child.name}>`).join(' ') || 'nothing'} where the brief asks for the picture, the facts as one list under it, and the two lines below that — what the boundaries stop and what nothing stops (the owner's brief of 2026-10-20)`,
+    )
+  }
+
+  // The picture: one drawing, with a name a screen reader reads before the facts beside it.
+  const pictures = findAll(figure, 'svg')
+  const labels = []
+  if (pictures.length !== 1) {
+    fail(
+      `the diagram carries ${pictures.length} drawings where the boundary diagram is one picture: the brief asks for ONE inline-SVG diagram (the owner's brief of 2026-10-20)`,
+    )
+  } else {
+    const picture = pictures[0]
+    const name = prose(picture.attrs.get('aria-label') ?? '')
+    if (picture.attrs.get('role') !== 'img' || name === '') {
+      fail(
+        `the boundary diagram's drawing carries role=${JSON.stringify(picture.attrs.get('role') ?? '')} and an aria-label of ${JSON.stringify(name)}: the drawing is one image with a name, so a screen reader reads what the picture is before it reads the facts beside it (the owner's brief of 2026-10-20)`,
+      )
+    } else {
+      labels.push({ what: "the drawing's accessible name", text: name })
+    }
+    const drawn = findAll(picture, 'text')
+    for (const [i, node] of drawn.entries()) {
+      const said = prose(text(node))
+      if (said === '') {
+        fail(
+          `the drawing's label ${i + 1} is empty: every label of the drawing is a phrase of ${SOURCE}, and a blank one draws nothing a reader can read (the owner's brief of 2026-10-20)`,
+        )
+        continue
+      }
+      labels.push({ what: `the drawing's label ${i + 1}`, text: said })
+    }
+    if (drawn.length < MIN_DIAGRAM_LABELS) {
+      fail(
+        `the drawing carries ${drawn.length} labels where the boundary diagram draws the trust boundary: the picture is this page's own, and a drawing with ${drawn.length} of them has stopped drawing what the document describes (the owner's brief of 2026-10-20)`,
+      )
+    }
+    checkLabelBoxes(picture, drawn, fail)
+  }
+
+  const facts = findAll(figure, 'li')
+  if (facts.length < MIN_DIAGRAM_FACTS) {
+    fail(
+      `the diagram carries ${facts.length} facts under the picture where the brief asks for the same facts as a short list: who sends the task, what the run is, and where the model key sits (the owner's brief of 2026-10-20)`,
+    )
+  }
+
+  if (findAll(region, 'script').length > 0) {
+    fail(
+      'the boundary diagram carries a <script>: the drawing is static markup, and the page is read without a script the way every page on this site is (the owner\'s brief of 2026-10-20, and the site\'s one script is `public/scripts/site.js`)',
+    )
+  }
+
+  // The brief's own rule, by name: every label of the picture appears in the document's
+  // "In short" section or in the text the page renders beside the picture. "Beside the
+  // picture" is the diagram region with the drawing taken out — the heading over it, the facts
+  // under it and the two lines below that — and not the whole page: a label drawn from a
+  // sentence that only the reporting section carries, or only the pointer, is a label the page
+  // renders *elsewhere*, which is not what the brief asks for and not what this rule says.
+  const inShort = documentPhrases(bulletsOf(document, SUMMARY).join(' '))
+  const besideText = beside.toLowerCase()
+  for (const label of labels) {
+    const said = label.text.replace(/[*`]/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
+    if (!inShort.includes(said) && !besideText.includes(said)) {
+      fail(
+        `${label.what} says ${JSON.stringify(label.text)}, which ${SOURCE} does not say: a label of the boundary diagram is a phrase of the document's "${SUMMARY}" section or of the words the page renders beside the drawing, and a label the policy does not state is a security claim the page made up (the owner's brief of 2026-10-20, D99)`,
+      )
+    }
+  }
+
+  // And nothing else in the region: every word it carries — the heading, each fact, each line,
+  // each label — is a phrase of the document. The rule above is the brief's and is the
+  // narrower one (the picture's labels, against the summary and the page's own words); this is
+  // the one `security.astro`'s `quoted()` proves while the page builds, held from the
+  // document's side.
+  const phrases = documentPhrases(document)
+  for (const { what, text: said } of [
+    ...headings.map((node) => ({ what: "the diagram's heading", text: prose(text(node)) })),
+    ...facts.map((node, i) => ({ what: `the diagram's fact ${i + 1}`, text: prose(text(node)) })),
+    ...findAll(figure, 'p').map((node, i) => ({ what: `the diagram's line ${i + 1}`, text: prose(text(node)) })),
+    ...labels,
+  ]) {
+    if (!phrases.includes(said.replace(/[*`]/g, '').replace(/\s+/g, ' ').toLowerCase())) {
+      fail(
+        `${what} says ${JSON.stringify(said)}, which ${SOURCE} does not say: the page renders the document's words and no others, and the diagram is this page's own drawing written in them (D99)`,
+      )
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------------------
-// The gate: every way a built security page breaks the three-things rule.
+// The gate: every way a built security page breaks the four-things rule.
 // ---------------------------------------------------------------------------------------
 
 /** The one element carrying a marker attribute, or a failure naming what is missing. */
@@ -441,9 +732,10 @@ export function securityFailures(dist = DIST) {
   const article = marked(doc, 'data-security-page', fail)
   if (article === null) return out
 
-  // 1. The three regions, and nothing else. The `h1` is the page's own title and takes no
+  // 1. The four regions, and nothing else. The `h1` is the page's own title and takes no
   //    marker: it is the whole of what the page says above its first section.
   const h1s = findAll(article, 'h1')
+  const diagram = marked(article, 'data-security-diagram', fail)
   const summary = marked(article, 'data-security-summary', fail)
   const reporting = marked(article, 'data-security-reporting', fail)
   const policy = marked(article, 'data-security-policy', fail)
@@ -456,22 +748,24 @@ export function securityFailures(dist = DIST) {
   if (h1s.length !== 1) {
     fail(`the page carries ${h1s.length} <h1> headings and not the one title the brief gives it: the page's own heading is "Security", and a second one is another page's title inside this one (the owner's brief of 2026-10-19, W1.2)`)
   }
-  if (h1s.length === 0 || summary === null || reporting === null || policy === null) return out
+  if (h1s.length === 0 || diagram === null || summary === null || reporting === null || policy === null) return out
 
-  const regions = [h1s[0], summary, reporting, policy]
+  const regions = [h1s[0], diagram, summary, reporting, policy]
   if (prose(text(article)) !== prose(regions.map(text).join(' '))) {
     fail(
-      `the page carries text outside its title, the document's summary, its reporting section and the link to it: the page is those four things and nothing else (the owner's brief of 2026-10-19), so a sentence written anywhere else on it is a security claim the document does not make (D99)`,
+      `the page carries text outside its title, the boundary diagram, the document's summary, its reporting section and the link to it: the page is those five things and nothing else (the owner's brief of 2026-10-19, and the diagram of 2026-10-20), so a sentence written anywhere else on it is a security claim the document does not make (D99)`,
     )
   }
 
-  // 1b. And each region is the shape the brief gives it: the summary is its heading and its
-  //     one list, the reporting section is its heading and the document's own paragraphs
-  //     (compared below), and the pointer is the link and the few words that point at it. The
-  //     balance above cannot see a sentence added *inside* a region — its text is counted
-  //     either way — so without this rule a paragraph slipped into the summary, or a second
-  //     sentence slipped into the pointer, would read as part of the page's own text and pass.
+  // 1b. And each region is the shape the brief gives it: the diagram is its heading and the
+  //     picture, the summary is its heading and its one list, the reporting section is its
+  //     heading and the document's own paragraphs (compared below), and the pointer is the
+  //     link and the few words that point at it. The balance above cannot see a sentence added
+  //     *inside* a region — its text is counted either way — so without this rule a paragraph
+  //     slipped into the summary, or a second sentence slipped into the pointer, would read as
+  //     part of the page's own text and pass.
   for (const { region, what, shape, allowed, own } of [
+    { region: diagram, what: 'the boundary diagram', shape: 'its heading and the picture with the facts under it', allowed: ['h2', 'figure'], own: 0 },
     { region: summary, what: 'the summary', shape: 'its heading and its one list', allowed: ['h2', 'ul'], own: 0 },
     { region: reporting, what: "the document's reporting section", shape: 'its heading and the document\'s paragraphs', allowed: ['h2', 'p'], own: 0 },
     { region: policy, what: 'the pointer to the document', shape: 'the link and the one sentence around it', allowed: ['a'], own: POINTER_WORDS },
@@ -489,6 +783,17 @@ export function securityFailures(dist = DIST) {
       )
     }
   }
+
+  // 1c. The diagram itself: one named picture, the document's words on it, the facts as a list
+  //     under it and the two lines below that. "The words beside the drawing" are the region's
+  //     own words with the picture taken out — the heading, the facts and the two lines — and
+  //     not the rest of the page: the rule reads the words the drawing sits among, so a label
+  //     the page carries only in another region is refused.
+  checkDiagram(diagram, {
+    document: sourceDocument(),
+    beside: prose(text(without(diagram, 'svg'))),
+    fail,
+  })
 
   // 2. The summary is the document's own "In short" section, bullet for bullet.
   checkSection(summary, {
@@ -611,8 +916,8 @@ function patchGenerated(site, re, replacement) {
 
 // ---------------------------------------------------------------------------------------
 
-test('the built security page is three things and nothing else', () => {
-  assert.deepEqual(securityFailures(DIST), [], `the security page is not the three things the owner's brief of 2026-10-19 asks for:\n  ${securityFailures(DIST).join('\n  ')}`)
+test('the built security page is four things and nothing else', () => {
+  assert.deepEqual(securityFailures(DIST), [], `the security page is not the four things the owner's briefs of 2026-10-19 and 2026-10-20 ask for:\n  ${securityFailures(DIST).join('\n  ')}`)
 })
 
 test('the summary the page renders is SECURITY.md\'s own "In short" section', () => {
@@ -642,15 +947,30 @@ test('the summary is rendered from the document, and is not written on the page'
   // check that notices the shape the owner's ruling rejected — a summary typed into the
   // `.astro` file — which `securityFailures()` cannot see, because the built page is the same
   // either way.
+  // The boundary diagram (the owner's brief of 2026-10-20) quotes the summary: two of its
+  // bullets are the two lines under the picture, and the drawing's labels are phrases of the
+  // summary's own sentences. So this pin is the one that survives that, and it is the property
+  // rather than the wording: a summary sentence may appear in the page's source **only where
+  // the built page's boundary diagram renders it as its own text** — which is the document's
+  // own words, proved to be phrases of `SECURITY.md` while the page builds (`quoted()`). A
+  // summary sentence typed into the `.astro` file that the diagram does not draw is refused
+  // here exactly as it was before.
   const source = readFileSync(path.join(SITE, 'src', 'pages', 'security.astro'), 'utf8')
   const bullets = bulletsOf(sourceDocument(), SUMMARY)
   assert.ok(bullets.length >= 4, `read ${bullets.length} bullets out of ${SOURCE}'s "${SUMMARY}" section: the document has moved, so this check saw nothing`)
 
+  const html = builtPage(DIST)
+  assert.ok(html !== null, `${BUILT} is not in the artifact: run \`npm run check\` from website/ so this check has a page to read`)
+  const diagram = findAll(parse(html), (el) => el.attrs.has('data-security-diagram'))[0]
+  assert.ok(diagram !== undefined, `the built page carries no "data-security-diagram" region, so nothing here can say which of the summary's sentences the page is allowed to carry`)
+  const drawn = prose(text(diagram)).toLowerCase()
+
   for (const bullet of bullets) {
     const opening = bullet.split(/\s+/).slice(0, 6).join(' ')
+    if (!prose(source).includes(prose(opening))) continue
     assert.ok(
-      !prose(source).includes(prose(opening)),
-      `website/src/pages/security.astro carries the document's own summary text (${JSON.stringify(opening)}…): the summary is rendered from ${SOURCE}'s "${SUMMARY}" section and never written on the page (D189), because a sentence typed here is one the document does not hold and cannot be kept in step with it`,
+      drawn.includes(prose(opening).toLowerCase()),
+      `website/src/pages/security.astro carries the document's own summary text (${JSON.stringify(opening)}…) and the built page's boundary diagram does not render it: the summary is rendered from ${SOURCE}'s "${SUMMARY}" section and never written on the page (D189), and the one place the page may carry the document's sentences is the diagram, which is the document's own words drawn (the owner's brief of 2026-10-20)`,
     )
   }
 })
@@ -706,6 +1026,40 @@ test('a document the page cannot render stops the build', (t) => {
   )
 })
 
+test('a drawn phrase the document no longer carries stops the build', (t) => {
+  // The mechanism every label of the boundary diagram rests on: `security.astro`'s `quoted()`
+  // refuses a phrase the document does not carry, so a `SECURITY.md` edit that rewrites one of
+  // the phrases the picture is drawn from stops the build rather than shipping a drawing that
+  // makes a claim the policy no longer makes (D99). The plant is made in the copy's generated
+  // document — `website/content/security.md`, the file the page reads — because `SECURITY.md`
+  // itself is the owner's file and this gate does not edit it.
+  //
+  // The phrase planted out is the one the drawing is *named* with: `DIAGRAM_LABEL`, the
+  // sentence the picture is announced as, whose words are also one of the facts under it. The
+  // failure has to name it, because the person editing the document has to see which sentence
+  // the page needs and no longer has.
+  const drifted = buildCopy(
+    t,
+    ({ site }) => patchGenerated(site, /with its permission prompts turned off/g, 'with its permission prompts switched off'),
+    'fugaro-security-drifted-',
+  )
+  assert.notEqual(
+    drifted.status,
+    0,
+    `a phrase the boundary diagram draws, rewritten in ${SOURCE}, did not stop the build, so the page ships a picture drawn from a sentence the policy no longer carries:\n${drifted.output}`,
+  )
+  assert.match(
+    drifted.output,
+    /does not say "Fugaro runs a coding agent with its permission prompts turned off, in a fresh cloud container per run, and ends every run with a pull request"/,
+    `the build failed, but not at the page's own reading of the drawing's words: ${drifted.output}`,
+  )
+  assert.match(
+    drifted.output,
+    /renders it as a label of its boundary diagram/,
+    `the failure does not say the phrase is a label of the drawing, so the person editing the document cannot tell what the page needs it for: ${drifted.output}`,
+  )
+})
+
 test('a wrapped bullet is one bullet to the page', (t) => {
   // The other side of (a), and the reason the fix is a rule about blank lines rather than a ban
   // on the second line of a bullet: `SECURITY.md` wraps its bullets, and a continuation line is
@@ -744,6 +1098,82 @@ test('the gate refuses each planted defect', (t) => {
   const extra = planted(html, /(<article\b[^>]*data-security-page[^>]*>)/, '$1\n<p>A friendly note about the model.</p>')
   assert.match(verdict(t, extra).join('\n'), /carries text outside/, 'an extra paragraph on the page is not refused')
 
+  // ---- the boundary diagram (the owner's brief of 2026-10-20) --------------------------
+  //
+  // The drawing's labels are the one place on this page where the page writes words of its
+  // own, so each of the rules that holds them is planted here and seen to fire.
+
+  // A label reworded into a claim the document does not make: the defect this gate exists for.
+  // Both halves refuse it — the label is in neither the document's summary nor the page's own
+  // text, and it is not a phrase of `SECURITY.md` at all.
+  const claimed = planted(html, />the agent </, '>the agent can read every secret <')
+  const claim = verdict(t, claimed).join('\n')
+  assert.match(claim, /the drawing's label \d+ says "the agent can read every secret"/, 'a drawing label the document does not say is not refused, so the drawing is free to make a security claim of its own')
+  assert.match(claim, /which SECURITY\.md does not say/, 'the label is refused for the wrong reason, or not at all')
+
+  // A label drawn from a sentence the page renders, but not beside the picture: the reporting
+  // section carries it and the document carries it, so the label rule is the only rule that can
+  // refuse it — and it does, because "the words beside the drawing" are the diagram region's own
+  // words and not the rest of the page. This is the plant the reading of that phrase is held by:
+  // widen it to the whole article and this label passes, which is the defect it is here for.
+  const rendered = planted(html, />can read its \/proc </, '>Please do not open a public issue <')
+  const faraway = verdict(t, rendered).join('\n')
+  assert.match(
+    faraway,
+    /the drawing's label \d+ says "Please do not open a public issue"/,
+    'a label drawn from a sentence the page renders only in another region is not refused, so "the words beside the drawing" is reading the whole page rather than the words the drawing sits among',
+  )
+  assert.match(
+    faraway,
+    /is a phrase of the document's "In short" section or of the words the page renders beside the drawing/,
+    'the label is refused for the wrong reason, or not at all',
+  )
+
+  // A label the drawing has no room for: the phrase is one `SECURITY.md` carries and the page
+  // renders beside the picture, so the label rule above and the phrase rule below both pass it
+  // — the box it is drawn in is the only rule here that sees it. This is what a longer phrase
+  // in the document does to a hand-placed drawing, and it is the defect a phrase the owner
+  // grows by a word would ship: a line over the card's border.
+  const overwide = planted(html, />the agent </, '>Fugaro runs a coding agent with its permission prompts turned off <')
+  assert.match(
+    verdict(t, overwide).join('\n'),
+    /the drawing's label \d+ says "Fugaro runs a coding agent with its permission prompts turned off" and is drawn from \d+\.\d+ to \d+\.\d+ units, and the card it is drawn in runs/,
+    'a label wider than the card it is drawn in is not refused, so a phrase that grows in SECURITY.md overruns the picture with nothing here to notice',
+  )
+
+  // The picture with its name taken off: a screen reader reads the drawing as nothing. The
+  // plant is anchored on the drawing's own class, because the layout's own markup carries
+  // `aria-label`s of its own (the consent dialog, the sections menu) and an unanchored pattern
+  // would take one of those off instead and prove nothing about the drawing.
+  const unnamed = planted(html, /(class="boundary-drawing"[^>]*?) aria-label="[^"]*"/, '$1')
+  assert.match(verdict(t, unnamed).join('\n'), /role="img" and an aria-label of ""/, 'a drawing with no accessible name is not refused')
+
+  // The picture with its role taken off: the labels become loose text rather than one image.
+  const unroled = planted(html, /(class="boundary-drawing"[^>]*?) role="img"/, '$1')
+  assert.match(verdict(t, unroled).join('\n'), /role="" and an aria-label/, 'a drawing that is not an image to a screen reader is not refused')
+
+  // The labels gone: the drawing is still there and draws nothing the document describes.
+  const unlabelled = planted(html, /<text[^>]*>[^<]*<\/text>/g, '')
+  assert.match(verdict(t, unlabelled).join('\n'), /the drawing carries 0 labels/, 'a drawing with no labels is not refused')
+
+  // The facts gone from under the picture: the brief's "the same facts as a short list".
+  const unfacted = planted(html, /<ul class="boundary-facts">[\s\S]*?<\/ul>/, '')
+  assert.match(verdict(t, unfacted).join('\n'), /where the brief asks for the picture, the facts as one list under it/, 'a diagram with the facts taken out from under the picture is not refused')
+
+  // A second drawing beside the first: the brief asks for one.
+  const twice = planted(html, /<figure>/, '<figure><svg role="img" aria-label="A second drawing"></svg>')
+  assert.match(verdict(t, twice).join('\n'), /carries 2 drawings where the boundary diagram is one picture/, 'a second drawing in the diagram is not refused')
+
+  // A script in the drawing: the brief's "No JavaScript", and the site loads one first-party
+  // file and no other.
+  const scripted = planted(html, /(<rect class="boundary-card"[^>]*x="12" y="12")/, '<script>void 0</script>$1')
+  assert.match(verdict(t, scripted).join('\n'), /the boundary diagram carries a <script>/, 'a script inside the drawing is not refused')
+
+  // A paragraph slipped into the diagram, where the balance counts it as the region's own text
+  // and passes it: the shape rule is what sees this one.
+  const inDiagram = planted(html, /(<section data-security-diagram>)/, '$1<p>A friendly note about the model.</p>')
+  assert.match(verdict(t, inDiagram).join('\n'), /the boundary diagram carries a <p> that is not part of it/, 'a paragraph inside the diagram is not refused')
+
   // A second title. This is the one defect that used to switch the gate off: the title rule
   // was a `return`, so a page carrying a second `<h1>` came back with no failure at all and the
   // region balance, both word-for-word comparisons and the policy link never ran (round 4 of
@@ -777,7 +1207,16 @@ test('the gate refuses each planted defect', (t) => {
   // the deleted one cancelled and the page passed. The reader here joins verbatim and the
   // comparison collapses whitespace rather than removing it, so the missing space is a
   // difference — and this case is what holds both halves of that (round 3, findings 3 and 4).
-  const glued = planted(html, /is listed in <code>followup\.trusted<\/code>/, 'is listed in<code>followup.trusted</code>')
+  //
+  // The plant is anchored inside the summary region, because the same sentence is a fact of
+  // the boundary diagram as well now (the diagram quotes the document's own bullets), and an
+  // unanchored pattern would glue the drawing's copy and prove this case about the wrong
+  // region — the diagram's copy is refused by the diagram's own rule.
+  const glued = planted(
+    html,
+    /(<section data-security-summary>[\s\S]*?)is listed in <code>followup\.trusted<\/code>/,
+    '$1is listed infollowup.trusted',
+  )
   assert.match(
     verdict(t, glued).join('\n'),
     /does not render SECURITY\.md's own summary/,
