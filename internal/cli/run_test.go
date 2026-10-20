@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -927,3 +928,73 @@ func TestAnArtifactLaunchIsRefusedOnCloudBatch(t *testing.T) {
 		t.Fatalf("an artifact launch through agent.recipe = %v, want the artifact boundary's refusal", err)
 	}
 }
+
+// TestAnArtifactLaunchIsRefusedOnCloudBatchFromAnotherDirectory is the same
+// boundary asked from a working directory that is not a checkout of the run's
+// repository -- the hole a review found in the first version of the gate, when
+// it resolved the checkout first and returned early when there was none. A task
+// carrying its own recipe text needs no checkout, so that launch reached the
+// backend unrefused.
+//
+// Three cases from the same scratch directory, on each backend:
+//   - a task carrying an artifact recipe's own text: judged on the mode this
+//     launcher can read (the boundary's ordinary refusal);
+//   - a repository recipe: nothing here can read it, so on cloud-batch the
+//     launch is refused fail-closed instead (artifactUnreadOnBatchRefusal),
+//     because the runner resolves the same recipe at the task's ref and an
+//     artifact run must not reach a Batch VM by that path;
+//   - a task carrying a non-artifact recipe's own text: not refused. It is the
+//     mutation guard for the fail-closed arm -- a recipe this launcher CAN read
+//     and that is not mode: artifact is judged on what it says, so "refuse
+//     every unread recipe" and "refuse everything on cloud-batch" both fail
+//     here -- and cloud-run is the guard for the backend gate, since cloud-run
+//     is where artifact runs live (design artifact-runs.md D11).
+//
+// Mutation (restore the cfg == nil early return, or drop the fail-closed arm):
+// the inline artifact case stops refusing; the repository-recipe case on
+// cloud-batch is passed to the runner.
+func TestAnArtifactLaunchIsRefusedOnCloudBatchFromAnotherDirectory(t *testing.T) {
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	env := func(name backend.Codec) *cloudEnv { return &cloudEnv{be: backendNamed{codec: name}} }
+	inline := func(yaml string) *task.Spec {
+		return &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other",
+			Workflow: "svc", Task: "Render the sizzle reel",
+			Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceProject),
+				SHA256: recipe.Sum([]byte(yaml)), YAML: yaml}}
+	}
+	for _, tc := range []struct {
+		name string
+		spec *task.Spec
+		be   backend.Codec
+		want string // the refusal the launch must carry, "" for none
+	}{
+		{"an artifact recipe's own text on cloud-batch", inline(projectSizzle), backend.BatchCodec(), artifactOnBatchMessage},
+		{"a repository recipe on cloud-batch", &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other",
+			Workflow: "svc", Task: "Render the sizzle reel", Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}}, backend.BatchCodec(), artifactUnreadOnBatchRefusal("acme/other")},
+		{"an implement recipe's own text on cloud-batch", inline(implementRecipe), backend.BatchCodec(), ""},
+		{"an artifact recipe's own text on cloud-run", inline(projectSizzle), backend.CloudRunCodec(), ""},
+		{"a repository recipe on cloud-run", &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other",
+			Workflow: "svc", Task: "Render the sizzle reel", Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}}, backend.CloudRunCodec(), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkArtifactLaunch(context.Background(), env(tc.be), tc.spec)
+			if tc.want == "" {
+				if err != nil && (strings.Contains(err.Error(), artifactOnBatchMessage) || strings.Contains(err.Error(), artifactUnreadOnBatchRefusal(tc.spec.Repo))) {
+					t.Fatalf("a launch with no artifact boundary to cross was refused by it: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("checkArtifactLaunch from a directory that is not the run's checkout = %v, want the refusal %q", err, tc.want)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("the refusal is not a user error: %v", err)
+			}
+		})
+	}
+}
+
+// implementRecipe is a non-artifact recipe's own text, in the shape a project
+// or catalog recipe travels in (no mode: key parses as implement).
+const implementRecipe = "version: 1\nname: impl\nsteps:\n  - review: {}\n"

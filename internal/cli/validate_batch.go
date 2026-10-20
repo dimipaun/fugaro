@@ -147,6 +147,24 @@ func artifactOnBatchRefusal(backendName string, rcp *recipe.Recipe) (string, boo
 // removes it.
 const artifactOnBatchMessage = "an artifact-producing run is never launched on cloud-batch: this repository's recipe is mode: artifact, so its runs deliver into the runs bucket rather than opening a pull request, and a Batch run's account is not per-repository -- the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile (docs/design/artifact-runs.md §8.5 and D11). What this waits for is a per-run prefix condition or a per-run account; until one of them exists, an artifact-producing run stays on backend: cloud-run, and nothing in this build removes the refusal"
 
+// artifactUnreadOnBatchRefusal is the launch's other shape of the same
+// boundary (Global Constraint 13): on cloud-batch a launch whose recipe the
+// launcher cannot read here is refused rather than passed to the runner.
+//
+// The hole it closes is the boundary's fail-open one. A repo-sourced recipe is
+// read from this checkout (recipeForLaunch), so a launcher running from a
+// directory that is not a checkout of spec.Repo -- or a first run whose recipe
+// is whatever this checkout's agent.recipe names -- resolves it to nil, and
+// artifactOnBatchRefusal reads nil as "not an artifact run". The runner then
+// resolves the same recipe at the task's ref and runs it, which is an
+// artifact-producing run that reached a Batch VM without the boundary ever
+// seeing the mode. So the launch side fails closed instead, at a cost stated
+// plainly: a Batch launch from outside the repository's own checkout is refused
+// until the recipe can be read there, and the Fix says so.
+func artifactUnreadOnBatchRefusal(repo string) string {
+	return fmt.Sprintf("a run on cloud-batch whose recipe this launcher cannot read is refused: the recipe of %s is not readable from this directory (a repository recipe is read from a checkout whose origin is %s, and a first run's recipe is the one that checkout's agent.recipe names), so nothing on this path can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/design/artifact-runs.md §8.5 and D11). Run this launch from a checkout of %s, or name a recipe whose text the task carries, and it is judged on its own mode", repo, repo, repo)
+}
+
 // isSelectableBackend reports whether name is one of the backends
 // selectableBackends lists -- the names this build can open (backend.Open's
 // contract, held against the opener map by

@@ -1295,15 +1295,27 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 // --recipe is refused here rather than there. The two arms ask one function
 // (artifactOnBatchRefusal), so the boundary cannot be lifted from one path
 // while the other keeps it.
+//
+// It has two shapes of its own, because a launch can arrive without a recipe
+// this launcher can read at all: the refusal for a recipe known to be mode:
+// artifact, and -- on cloud-batch only -- the refusal for a recipe that could
+// not be resolved here, since nothing on this path can then say the run is not
+// an artifact one (artifactUnreadOnBatchRefusal). Both are asked before
+// anything about this launch is written, so neither leaves a task or an
+// execution behind.
 func checkArtifactLaunch(ctx context.Context, env *cloudEnv, spec *task.Spec) error {
 	cfg := checkoutConfig(ctx, spec.Repo)
-	if cfg == nil {
-		return nil
-	}
-	name, wf, err := cfg.SelectWorkflow(spec.Workflow)
-	if err != nil {
-		return nil
-	}
+	// The boundary is asked here, before the checkout can bail out below and
+	// with the recipe resolved as far as this checkout allows. Both of those
+	// are the arm itself and not an ordering detail: recipeForLaunch needs no
+	// checkout for a task that carries its own recipe text (a project or
+	// catalog recipe -- `fugaro run --recipe`), so asking the boundary only
+	// after the checkout had resolved left exactly that launch unrefused on
+	// cloud-batch, from any directory whose origin is not spec.Repo. The
+	// workflow is not consulted either: SelectWorkflow reads this checkout's
+	// config, which a launch whose local configuration disagrees with its
+	// repository would fail -- and the boundary is about the backend and the
+	// recipe, not about the workflow.
 	rcp := recipeForLaunch(ctx, cfg, spec)
 	if msg, ok := artifactOnBatchRefusal(launchBackend(env.be), rcp); ok {
 		// Before the caps below and before anything is written, like every
@@ -1311,7 +1323,24 @@ func checkArtifactLaunch(ctx context.Context, env *cloudEnv, spec *task.Spec) er
 		// and no execution behind.
 		return userErr("%s", msg)
 	}
+	if launchBackend(env.be) == backend.CloudBatch && rcp == nil {
+		// Fail closed, and this is the other shape of the same hole: a recipe
+		// this launcher cannot read (a repository recipe with no checkout of
+		// that repository here, or a first run whose recipe is the one this
+		// checkout's agent.recipe names) reaches the boundary as nil, which
+		// artifactOnBatchRefusal reads as "not an artifact run" -- and the
+		// runner resolves the same recipe at the task's ref, so on
+		// cloud-batch an unread recipe is refused rather than passed on.
+		return userErr("%s", artifactUnreadOnBatchRefusal(spec.Repo))
+	}
+	if cfg == nil {
+		return nil
+	}
 	if rcp == nil || rcp.Mode != recipe.ModeArtifact {
+		return nil
+	}
+	name, wf, err := cfg.SelectWorkflow(spec.Workflow)
+	if err != nil {
 		return nil
 	}
 	var msgs []string
