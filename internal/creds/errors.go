@@ -21,26 +21,43 @@ import (
 // the selection fails over to the next tier instead.
 type ExhaustedUntil struct {
 	// At is the earliest time one of the candidates becomes usable. With Probe
-	// set it is the time the credential's wait has passed: usable then, if the
-	// probe succeeds.
+	// set it is still that time and no earlier: a probe is due on the credential
+	// before then (see Probe), and with D142's first control on At is the end of
+	// the window the exhaustion opened rather than the wait the probe answers.
 	At time.Time
 	// Wait is At minus "now", never negative. It is returned alongside the
 	// error for a caller that only wants "how long", so that the one subtraction
 	// happens here and every caller answers with the same number.
 	Wait time.Duration
-	// Probe reports that the earliest candidate is a backed-off one whose wait
-	// has passed and that becomes usable by being probed, not by waiting
-	// (C1.12): a caller that probes nothing must not route real work to it.
-	// It is false when the wait is real.
+	// Probe reports that the earliest candidate is a backed-off one whose own
+	// wait has passed, so C1.12's probe is due on it now and a caller that
+	// probes nothing must not route real work to it. It says the probe is owed,
+	// not that the probe is enough: At and Wait are when the credential could
+	// serve work, and with D142's first control on that is the end of the window
+	// its exhaustion opened — later than the wait that made the probe due. So
+	// Probe is true alongside a real, non-zero Wait, and both facts are true:
+	// probe it, and the earliest it can serve real work is At. (An earlier
+	// version of this comment said Probe meant the credential "becomes usable by
+	// being probed, not by waiting" and was false "when the wait is real", which
+	// is the opposite of what the control does — review finding.)
+	//
+	// It is false for an exhausted or broken candidate: a reset is a time rather
+	// than a question (C1.12), and a broken mark is the operator's (C1.21).
 	Probe bool
 }
 
 func (e *ExhaustedUntil) Error() string {
+	at := " (at " + e.At.UTC().Format(time.RFC3339) + ")"
 	if e.Probe {
-		return "no credential is usable now: the earliest is backed off with its wait passed, and is usable once a probe succeeds (it is not usable by waiting)"
+		// Both facts, because both are true: the probe is due, and the earliest
+		// the credential can serve work is the wait beside it — the window its
+		// exhaustion opened, when D142's first control is on, which a successful
+		// probe does not bring forward.
+		return "no credential is usable now: the earliest is backed off with its wait passed, so a probe is due on it, and it can serve work in " +
+			e.Wait.Round(time.Second).String() + at
 	}
 	return "no credential is usable now: the earliest becomes usable in " +
-		e.Wait.Round(time.Second).String() + " (at " + e.At.UTC().Format(time.RFC3339) + ")"
+		e.Wait.Round(time.Second).String() + at
 }
 
 // ErrNoCredential is what a selection answers when no candidate can be used and

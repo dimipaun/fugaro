@@ -491,6 +491,41 @@ func TestOAuthOnlyNeverReachesThePaidTier(t *testing.T) {
 	}
 }
 
+// ErrFallbackForbidden says the credentials that could serve the call are all of
+// a tier this policy does not admit, and it has to be true when it is said: a
+// paid key that is broken, or one whose mark carries no time to wait for, cannot
+// serve the call and no `fallback: auto` would make it. Naming the policy there
+// sends the operator to a change that changes nothing; the honest answer is
+// ErrNoCredential, the one that names what stands in the way.
+func TestAnUnusablePaidKeyIsNotAPolicyRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		what string
+		mark Mark
+	}{
+		{"broken", Break(now)},
+		{"held with no time to wait for", Mark{State: StateExhausted}},
+	} {
+		st := newFakeStore()
+		st.setMark(a1.Name, Break(now))
+		st.setMark(b1.Name, tc.mark)
+
+		_, _, err := selector(st, Settings{}).Select(ctx, run, []Credential{a1, b1})
+		if !errors.Is(err, ErrNoCredential) {
+			t.Fatalf("with a %s paid key under oauth-only the selection = %v; want ErrNoCredential", tc.what, err)
+		}
+	}
+
+	// The case the policy error is for, and the reason the two are worth telling
+	// apart: the paid key could serve the call, so the refusal names the policy.
+	// (Pinned in full by TestOAuthOnlyNeverReachesThePaidTier.)
+	st := newFakeStore()
+	st.setMark(a1.Name, Break(now))
+	_, _, err := selector(st, Settings{}).Select(ctx, run, []Credential{a1, b1})
+	if !errors.Is(err, ErrFallbackForbidden) {
+		t.Fatalf("with a usable paid key under oauth-only the selection = %v; want ErrFallbackForbidden", err)
+	}
+}
+
 // The probe handoff (C1.12) is a field of the answer and nothing else carries
 // it: a caller that reads "usable in 0s" as "go" sends real work to a token
 // that answered 429. So a backed-off credential whose wait has passed answers
@@ -640,7 +675,7 @@ func TestSelectorWritesTheMarksItOwns(t *testing.T) {
 	s := selector(st, set)
 
 	// A usage limit carrying the reset the response reported.
-	if _, err := s.Exhausted(ctx, a1.Name, now.Add(time.Hour)); err != nil {
+	if _, err := s.Exhausted(ctx, a1.Name, TierA, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if m := st.mark(a1.Name); m.State != StateExhausted || !m.Until.Equal(now.Add(time.Hour)) || !m.Since.Equal(now) {
@@ -652,7 +687,7 @@ func TestSelectorWritesTheMarksItOwns(t *testing.T) {
 	// backed-off one), so this is a probe that was in flight when the reset
 	// landed, and its failure must not replace an hour's reset with fifteen
 	// minutes — the exhausted side of the in-flight race.
-	if _, err := s.ProbeFailed(ctx, a1.Name); err != nil {
+	if _, err := s.ProbeFailed(ctx, a1.Name, TierA); err != nil {
 		t.Fatal(err)
 	}
 	if m := st.mark(a1.Name); m.State != StateExhausted || !m.Until.Equal(now.Add(time.Hour)) {
@@ -664,13 +699,13 @@ func TestSelectorWritesTheMarksItOwns(t *testing.T) {
 	if _, err := s.Cleared(ctx, a1.Name); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Exhausted(ctx, a1.Name, time.Time{}); err != nil {
+	if _, err := s.Exhausted(ctx, a1.Name, TierA, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if m := st.mark(a1.Name); m.State != StateBackedOff || m.Backoff != 15*time.Minute {
 		t.Fatalf("the no-reset exhaustion left %+v; want a 15m backoff", m)
 	}
-	if _, err := s.ProbeFailed(ctx, a1.Name); err != nil {
+	if _, err := s.ProbeFailed(ctx, a1.Name, TierA); err != nil {
 		t.Fatal(err)
 	}
 	if m := st.mark(a1.Name); m.Backoff != 30*time.Minute {
@@ -692,7 +727,7 @@ func TestSelectorWritesTheMarksItOwns(t *testing.T) {
 	// over, and the token is still held for the rest of the window its
 	// exhaustion opened — review finding M3, and the difference C1.12's probe
 	// would otherwise be the way around.
-	if _, err := s.Exhausted(ctx, a1.Name, time.Time{}); err != nil {
+	if _, err := s.Exhausted(ctx, a1.Name, TierA, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	backedOff := st.mark(a1.Name)
@@ -722,10 +757,10 @@ func TestSelectorWritesTheMarksItOwns(t *testing.T) {
 	if m := st.mark(a1.Name); !m.Broken() || !m.Since.Equal(now) {
 		t.Fatalf("the mark a 401 left = %+v", m)
 	}
-	if _, err := s.Exhausted(ctx, a1.Name, now.Add(time.Hour)); err != nil {
+	if _, err := s.Exhausted(ctx, a1.Name, TierA, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ProbeFailed(ctx, a1.Name); err != nil {
+	if _, err := s.ProbeFailed(ctx, a1.Name, TierA); err != nil {
 		t.Fatal(err)
 	}
 	if m := st.mark(a1.Name); !m.Broken() {
@@ -783,7 +818,7 @@ func TestSelectorWritesTheMarksItOwns(t *testing.T) {
 	if _, err := s.Mark(ctx, a1.Name, nil); err == nil {
 		t.Fatal("a mark was written with no change to make")
 	}
-	if _, err := s.Exhausted(ctx, "", now); err == nil {
+	if _, err := s.Exhausted(ctx, "", TierA, now); err == nil {
 		t.Fatal("a usage limit was recorded for a credential with no name")
 	}
 	if st.updates != writes {
@@ -837,6 +872,77 @@ func TestTheSharedControlsDoNotReachThePaidTier(t *testing.T) {
 	}
 }
 
+// The writer and the reader must measure the same window. A tier B key whose
+// reset has passed is usable as far as the reader is concerned — free and
+// earliest read it through forTier, with D142's controls off — so the next call
+// really does go to it, and the 429 it answers with is a fresh exhaustion that
+// must back the key off. Judged with the raw settings instead, the shared tier's
+// five-hour window makes the writer call that 429 an in-flight call and leave the
+// mark exhausted with a past Until: still usable, so still selected, denied again
+// and never backed off, for the rest of a window nobody wrote for that key. That
+// is the retry storm a backoff exists to stop, on the tier that spends money.
+//
+// The shared-token half of the same sequence is the contrast that makes this
+// about the tier: there the window really is in force, and the second 429 really
+// is an in-flight call.
+func TestAFreshUsageLimitBacksOffATierBKey(t *testing.T) {
+	reset := now.Add(time.Minute)
+	// The reset has passed, so the key is in rotation again.
+	at := reset.Add(time.Minute)
+	newStore := func(name string) *fakeStore {
+		st := newFakeStore()
+		st.setMark(name, Mark{State: StateExhausted, Until: reset, Since: now})
+		return st
+	}
+	clock := func() time.Time { return at }
+
+	// The reader agrees the paid key is usable — that is why the call went there.
+	st := newStore(b1.Name)
+	s := &Selector{Store: st, Settings: Settings{Fallback: Auto}, Now: clock}
+	if c, _, err := s.Select(ctx, run, []Credential{b1}); err != nil || c.Name != b1.Name {
+		t.Fatalf("the paid key after its reset = %q, %v; want it selected", c.Name, err)
+	}
+
+	// And the 429 it answers with carries no reset header: a backoff, not the
+	// reset it is standing on.
+	m, err := s.Exhausted(ctx, b1.Name, TierB, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.State != StateBackedOff || m.Backoff <= 0 || !m.Until.After(at) {
+		t.Fatalf("a fresh no-reset 429 on the paid key left %+v; want a backoff from %s", m, at)
+	}
+
+	// The same sequence on a shared token is held: the window its exhaustion
+	// opened is still running, so the second 429 is an in-flight call.
+	shared := newStore(a1.Name)
+	ss := &Selector{Store: shared, Settings: Settings{}, Now: clock}
+	if m, err := ss.Exhausted(ctx, a1.Name, TierA, time.Time{}); err != nil {
+		t.Fatal(err)
+	} else if m.State != StateExhausted || !m.Until.Equal(reset) {
+		t.Fatalf("a no-reset 429 inside a shared token's window left %+v; want the reset it did not shorten", m)
+	}
+}
+
+// The same disagreement on the probe's side: a failed probe on a tier B key
+// whose reset has passed must leave the first backoff, not be swallowed by a
+// window the reader does not apply to that key.
+func TestAFailedProbeBacksOffATierBKey(t *testing.T) {
+	reset := now.Add(time.Minute)
+	at := reset.Add(time.Minute)
+	st := newFakeStore()
+	st.setMark(b1.Name, Mark{State: StateExhausted, Until: reset, Since: now})
+
+	s := &Selector{Store: st, Settings: Settings{Fallback: Auto}, Now: func() time.Time { return at }}
+	m, err := s.ProbeFailed(ctx, b1.Name, TierB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.State != StateBackedOff || m.Backoff != DefaultBackoffInitial || !m.Until.After(at) {
+		t.Fatalf("a failed probe on the paid key after its reset left %+v; want a %s backoff", m, DefaultBackoffInitial)
+	}
+}
+
 // The exhausted-side in-flight race, through the public API: a credential
 // exhausted for four hours, and a 429 arriving from a call that was already in
 // flight carrying no reset header. The mark, and therefore the wait Select
@@ -859,7 +965,7 @@ func TestARacingUsageLimitKeepsTheResetInTheAnswer(t *testing.T) {
 	}
 
 	// The racing report changes nothing: not the state, not the answer.
-	if _, err := s.Exhausted(ctx, b1.Name, time.Time{}); err != nil {
+	if _, err := s.Exhausted(ctx, b1.Name, TierB, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := st.mark(b1.Name); got != (Mark{State: StateExhausted, Since: now, Until: reset}) {

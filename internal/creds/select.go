@@ -70,10 +70,13 @@ type Selector struct {
 //     every admitted candidate is broken and clearing one is the operator's
 //     (C1.21). The caller refuses; it never falls back to something else
 //     (D143).
-//   - ("", 0, ErrFallbackForbidden) — the credentials that could serve the call
-//     are all of a tier this policy does not admit (tier B under `oauth-only`,
-//     D152). A refusal, and a different one from the above, because the fix is
-//     a policy and not a token.
+//   - ("", 0, ErrFallbackForbidden) — the credentials that can serve the call —
+//     now, or after the wait a mark names — are all of a tier this policy does
+//     not admit (tier B under `oauth-only`, D152). A refusal, and a different
+//     one from the above, because the fix is a policy and not a token. A
+//     credential of a refused tier that could not serve the call anyway (a
+//     broken one, one whose mark carries no time) is not this error: it is
+//     ErrNoCredential, because a policy change would not make the call succeed.
 //   - another error — the state could not be read or written. Fail closed: an
 //     unreadable state is not an empty one.
 //
@@ -85,7 +88,9 @@ type Selector struct {
 // not one this release selects is refused rather than skipped. A tier B
 // candidate offered under `oauth-only` is not refused — it carries no mistake —
 // but it is never selected, and a call that nothing else can serve is answered
-// with ErrFallbackForbidden.
+// with ErrFallbackForbidden when that candidate could actually serve it (see the
+// list above: a broken one, or one held with no time to wait for, is
+// ErrNoCredential).
 //
 // # What this does not re-check, and what that costs
 //
@@ -205,12 +210,25 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 	}
 	if len(allowed) < len(cs) {
 		// Nothing this policy admits can serve the call — every one of them is
-		// broken, or there are none — and the caller offered a tier it does not
-		// admit. The run is refused with the error that names the policy and
-		// the word that would change it (D152), rather than with the one that
-		// says a token needs an operator: a subscription token that has died is
-		// exactly when the two answers differ.
-		return Credential{}, 0, ErrFallbackForbidden
+		// broken, has a mark with no time, or there are none — and the caller
+		// offered a tier it does not admit. When that credential could serve the
+		// call — or would, if it were waited for — the run is refused with the
+		// error that names the policy and the word that would change it (D152),
+		// rather than with the one that says a token needs an operator: a
+		// subscription token that has died is exactly when the two answers
+		// differ.
+		//
+		// It is a question about the OTHER credentials, though, and it has to be
+		// asked: a paid key that is broken, or held by a mark carrying no time,
+		// cannot serve the call and no `fallback: auto` would make it. The error
+		// that names the policy says "the credentials that could serve the call
+		// are all of a tier this policy does not admit", and saying that of a
+		// key that could not serve it sends the operator to a policy change that
+		// changes nothing; ErrNoCredential is the honest answer, and it is the
+		// one that names what actually stands in the way.
+		if _, _, ok := earliest(cs, marks, leases, run, now, set); ok {
+			return Credential{}, 0, ErrFallbackForbidden
+		}
 	}
 	return Credential{}, 0, ErrNoCredential
 }
@@ -273,19 +291,39 @@ func (s *Selector) Record(ctx context.Context, name string, f func(prev Mark, fo
 // Exhausted records a usage limit on one credential: the reset the response
 // reported, or, with none, a backoff (see Exhaust). reset is the zero time when
 // the response reported no reset.
-func (s *Selector) Exhausted(ctx context.Context, name string, reset time.Time) (Mark, error) {
+//
+// The tier is the caller's, for the same reason Probed's is, and here it decides
+// what "a hold is already in force" means. Exhaust asks Mark.holdInForce, whose
+// answer for an exhausted mark is Ready — a time measured with D142's window —
+// so a raw Settings answers a tier B mark with the shared tier's five-hour
+// window. That would make the writer and the reader disagree about the same
+// mark: free and earliest read a tier B candidate through forTier, with the
+// controls off, so they consider an exhaustion whose reset has passed usable and
+// send calls to it, while this write would call every subsequent 429 an
+// in-flight call and never back the credential off. The key would then be
+// selected again and again, denied again and again, for the rest of a window
+// nobody wrote for it — the retry storm a backoff exists to stop, on the tier
+// that spends money. set.forTier(tier) is what keeps the two readers of the same
+// mark in agreement.
+func (s *Selector) Exhausted(ctx context.Context, name string, tier Tier, reset time.Time) (Mark, error) {
 	now := s.now()
 	return s.Record(ctx, name, func(prev Mark, _ bool, set Settings) (Mark, error) {
-		return Exhaust(prev, now, reset, set), nil
+		return Exhaust(prev, now, reset, set.forTier(tier)), nil
 	})
 }
 
 // ProbeFailed records a failed probe on one credential: the wait doubles, to
 // its cap (C1.12).
-func (s *Selector) ProbeFailed(ctx context.Context, name string) (Mark, error) {
+//
+// The tier is the caller's for the reason Exhausted's is: whether the mark the
+// probe landed on is still held is answered with Ready, and Ready measures
+// D142's window — a shared tier's — so a tier B mark must be read with
+// set.forTier(tier) or a failed probe would be swallowed by a window the reader
+// (free, earliest) does not apply to that credential either.
+func (s *Selector) ProbeFailed(ctx context.Context, name string, tier Tier) (Mark, error) {
 	now := s.now()
 	return s.Record(ctx, name, func(prev Mark, _ bool, set Settings) (Mark, error) {
-		return ProbeFailed(prev, now, set), nil
+		return ProbeFailed(prev, now, set.forTier(tier)), nil
 	})
 }
 
@@ -296,10 +334,19 @@ func (s *Selector) ProbeFailed(ctx context.Context, name string) (Mark, error) {
 // The tier is the caller's, because this is a write and the mark it writes does
 // not carry one: C1.12's probe runs on a credential it read from the candidates
 // it was given, and only the caller knows which tier that is. Tier B is the case
-// that matters — its controls are off (forTier) — and passing the wrong tier
-// here cannot put a credential back in rotation that a *mark* still holds: the
-// window this reads is the one its own exhaustion opened, which is only ever
-// shorter than leaving it backed off.
+// that matters — its controls are off (forTier).
+//
+// The tier is TRUSTED, and getting it wrong is not harmless: passing TierB for a
+// shared token turns D142's window off for it, so a successful probe inside the
+// window returns Cleared and the token is back in rotation immediately — the
+// exact thing the window control exists to prevent. There is no check here that
+// the name is of the tier the caller claims, and there cannot be: a mark is a
+// name and a state, and the tier of a name lives in the candidate list the
+// caller holds. What a caller gets for passing the right one is that the probe
+// reads the same window the reader (free, earliest) reads for that credential.
+// (An earlier version of this comment claimed the opposite — that a wrong tier
+// could only ever shorten a hold harmlessly — which the review was right to
+// call out: it described behaviour the code does not have.)
 func (s *Selector) Probed(ctx context.Context, name string, tier Tier) (Mark, error) {
 	now := s.now()
 	return s.Record(ctx, name, func(prev Mark, _ bool, set Settings) (Mark, error) {

@@ -391,13 +391,13 @@ func TestBrokenSurvivesAUsageLimitAndAFailedProbe(t *testing.T) {
 	st := newFakeStore()
 	st.setMark(a1.Name, broken)
 	s := selector(st, set)
-	if _, err := s.Exhausted(ctx, a1.Name, now.Add(time.Hour)); err != nil {
+	if _, err := s.Exhausted(ctx, a1.Name, TierA, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if m := st.mark(a1.Name); !m.Broken() {
 		t.Fatalf("a usage limit recorded through the service's write left %+v; want the 401 to stand", m)
 	}
-	if _, err := s.ProbeFailed(ctx, a1.Name); err != nil {
+	if _, err := s.ProbeFailed(ctx, a1.Name, TierA); err != nil {
 		t.Fatal(err)
 	}
 	if m := st.mark(a1.Name); !m.Broken() {
