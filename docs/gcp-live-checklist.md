@@ -4712,7 +4712,9 @@ sed -n 's/^canonical_url: *//p' website/data/site.yaml
 find website/dist -name index.html | sort
 # The three numbers this check reads, and the two viewports it reads them at, out of the
 # measurement script rather than typed here: the `h1`'s bottom, the lead paragraph's bottom and
-# the first command's bottom, at 390 × 844 and 1280 × 900.
+# the bottom of the first command a reader can see — the first `pre` under `main` with a
+# rectangle of its own, because the homepage's slider keeps two of its three panels hidden — at
+# 390 × 844 and 1280 × 900.
 grep -oE 'h1Bottom|leadBottom|firstCommandBottom' docs/website/redesign/capture-screenshots.mjs | sort -u
 grep -oE 'width: [0-9]+, height: [0-9]+' docs/website/redesign/capture-screenshots.mjs
 # The word ceilings, out of the site's own gate rather than typed here: the numbers live in the
@@ -4816,11 +4818,21 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    `public/images/fugaro-watch.png`, #655, the slot `website/test/home.mjs` reads), and then the
    command. So the command sits **under the picture**, and the picture's own height is between
    the heading and it: read the screenshot's rectangle too, because a picture that grew is a
-   command pushed down. `firstCommandBottom` for `/` is the first command in `main`'s own bottom:
-   the script's key, `document.querySelector('main pre')`'s bottom, measured from the top of the
-   document — and on this page that element is inside the panel that is hidden until its tab is
-   chosen, so its rectangle is the panel's own once the tab is clicked, and the number this step
-   reports for the homepage is the install command's, the one a reader sees. Beside
+   command pushed down. `firstCommandBottom` for `/` is the bottom of the first command a reader
+   can **see** in `main`, measured from the top of the document: the script's key, which takes
+   the first `pre` under `main` that has a rectangle of its own —
+   `document.querySelectorAll('main pre')`'s first element whose `getClientRects()` is not
+   empty — rather than the first one in the HTML. The distinction is this page's, and the
+   script's own comment says so: the slider keeps all three panels in the HTML and hides the two
+   the address does not name, and the page's first `pre` in document order is the `fugaro watch`
+   block inside the "See it" panel, where an element with `display: none` has no rectangle and a
+   reading taken from `document.querySelector('main pre')` alone would be an empty box's 0. The
+   number this step reports for the homepage is therefore the install command's — the command
+   above, the one a reader meets without choosing a tab — and the reading is the one that claim
+   is read against: at 390 × 844 that bottom has to be **below** 844, because the homepage's
+   first screen holds the promise and its call to action and **no** command. To read the watch
+   command's own place inside the "See it" panel, choose that tab first and take that element's
+   rectangle; the key is the page as it lands, with no fragment chosen. Beside
    it read the copy control's own rectangle: the control is `website/src/lib/copy-control.mjs`'s
    markup, `.command-controls` inside the same `.command-block`, and the block lays the two out in
    **one row** — `website/src/styles/base.css`: `display: flex; flex-direction: row-reverse;
@@ -4854,7 +4866,8 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    cover whatever is at the bottom of the viewport. It is rendered whenever `site.yaml` says
    analytics are on, and they are on, so it is there on **every first visit** — which is the visit
    this check is about. In a fresh profile, with no stored decision, at the top of the page,
-   measure the banner's own rectangle and the first command's, at 390 × 844 and at 1280 × 900. A
+   measure the banner's own rectangle and the first command's — the same first rendered command
+   step 2 reads — at 390 × 844 and at 1280 × 900. A
    command under the banner is not a command above the fold, and the fix for it is spacing or the
    banner's own height rather than a fold moved for it. **FACT:** per size, the banner's height
    and its top edge, the first command's bottom, what the banner's rectangle covers — the command,
