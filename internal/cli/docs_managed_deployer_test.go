@@ -779,3 +779,94 @@ func TestGcpSetupSaysWhyTheManagedGateIsClosed(t *testing.T) {
 		}
 	}
 }
+
+// TestChecklistCheck68NegativeDirectionNamesAgree: step 0's instruction said to
+// "Record the two names the negative direction uses", and the block under it
+// lists six resource kinds while step 5 acts on seven resources — those six plus
+// the runs bucket the guard block holds as ${RUNS_BUCKET:?}. "Two" was a leftover
+// from an earlier draft of the check, and an owner who followed it recorded two
+// names and then stopped at the first unset ${SANDBOX_*:?} guard in step 5. The
+// count is stated three ways — the instruction, the read-only block, and the
+// actions of step 5 — so this reads all three and requires one number, the way
+// the hard-stop count above is held.
+//
+// Mutations (verified, run and restored): "six names" back to "two names" → FAIL;
+// a list command dropped from step 0's block → FAIL; a seventh ${SANDBOX_*:?}
+// added to step 5 with no reader in step 0 → FAIL; the runs bucket dropped from
+// the instruction → FAIL.
+func TestChecklistCheck68NegativeDirectionNamesAgree(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+
+	// What step 0's read-only block lists, one command per name.
+	const once = "# === Check 68: the sandbox installation's own resources, read-only. Run ONCE. ==="
+	i := strings.Index(section, once)
+	if i < 0 {
+		t.Fatalf("%s's Check 68 has no read-only block (%q): it is where the owner records the names step 5 acts on", path, once)
+	}
+	block := section[i:]
+	if end := strings.Index(block, "\n```"); end >= 0 {
+		block = block[:end]
+	}
+	var listed []string
+	for _, line := range strings.Split(block, "\n") {
+		if strings.HasPrefix(line, "gcloud ") {
+			listed = append(listed, line)
+		}
+	}
+	if len(listed) == 0 {
+		t.Fatalf("%s's Check 68 read-only block lists no resources: step 5's names come from here", path)
+	}
+
+	// What step 5 acts on, and which of those names step 0 recorded.
+	step5 := docSection(t, path, section, "### 5. The negative direction")
+	if end := strings.Index(step5, "**Then the near miss"); end >= 0 {
+		step5 = step5[:end]
+	}
+	acts := regexp.MustCompile(`(?m)^gcloud `).FindAllString(step5, -1)
+	sandbox := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\$\{(SANDBOX_[A-Z0-9_]+):\?`).FindAllStringSubmatch(step5, -1) {
+		sandbox[m[1]] = true
+	}
+	usesBucket := strings.Contains(step5, "${RUNS_BUCKET:?")
+
+	// The instruction, and the number it states.
+	words := map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8}
+	re := regexp.MustCompile(`Record the (\w+) names the negative direction uses`)
+	mi := re.FindStringSubmatchIndex(section)
+	if mi == nil {
+		t.Fatalf("%s's Check 68 no longer says \"Record the N names the negative direction uses\": that sentence is what this test holds to the block under it", path)
+	}
+	stated := section[mi[2]:mi[3]]
+	want, ok := words[stated]
+	if !ok {
+		t.Fatalf("%s's Check 68 says to record the %q names, which is not a number this test reads: write the count as a word", path, stated)
+	}
+	if want != len(listed) {
+		t.Errorf("%s's Check 68 says to record the %s names the negative direction uses, and the read-only block under it lists %d resources: an owner who records %d stops at the first unset ${SANDBOX_*:?} guard in step 5", path, stated, len(listed), want)
+	}
+	if len(sandbox) != len(listed) {
+		t.Errorf("%s's Check 68 reads %d ${SANDBOX_*:?} names in step 5 and its read-only block lists %d resources: every name step 5 acts on has to be one step 0 reads", path, len(sandbox), len(listed))
+	}
+	if len(acts) != len(sandbox)+1 || !usesBucket {
+		t.Errorf("%s's Check 68 step 5 makes %d actions over %d recorded names and uses the runs bucket: %v; the negative direction is one action per service, and the seventh resource is the runs bucket the guard block holds", path, len(acts), len(sandbox), usesBucket)
+	}
+	// And the instruction itself has to say where the seventh name comes from,
+	// since the block it introduces does not list it. Read from the paragraph
+	// the sentence sits in, not from the section: the guard block above sets
+	// ${RUNS_BUCKET:?} for its own use, and that is not the instruction.
+	start := strings.LastIndex(section[:mi[0]], "\n\n")
+	if start < 0 {
+		start = 0
+	} else {
+		start += 2
+	}
+	para := section[start:]
+	if end := strings.Index(section[mi[1]:], "\n\n"); end >= 0 {
+		para = section[start : mi[1]+end]
+	}
+	if !strings.Contains(para, "RUNS_BUCKET") {
+		t.Errorf("%s's Check 68 instruction does not name ${RUNS_BUCKET:?}: the block it introduces lists %d resources and step 5 acts on %d, so the seventh name's home has to be said rather than left to the reader", path, len(listed), len(acts))
+	}
+}

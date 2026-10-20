@@ -4292,7 +4292,7 @@ gcloud iam service-accounts describe "${DEPLOYER:?}" --project="${P:?}" >/dev/nu
 mkdir -p "$CHK68_TMP"; chmod 700 "$CHK68_TMP"
 ```
 
-**Record the two names the negative direction uses, once, before anything changes** — they are the sandbox installation's own, and every "expect a denial" line below acts on one of them:
+**Record the six names the negative direction uses, once, before anything changes** — they are the sandbox installation's own, and step 5 acts on them together with the runs bucket the guard block already holds as `${RUNS_BUCKET:?}`, and on nothing else in any project:
 
 ```bash
 # === Check 68: the sandbox installation's own resources, read-only. Run ONCE. ===
