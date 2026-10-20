@@ -1,7 +1,8 @@
 # Central orchestrators — the documents
 
-**Status: plan only; no feature code is implemented, and P0 — the guard test that owns this
-folder — is the only part of the plan that has landed.** This directory holds the owner's spec
+**Status: plan only; no code is implemented, except the guard test P0 adds
+(`internal/cli/docs_central_orchestrator_test.go`, the one file that owns this folder) — every
+part after P0 is unbuilt, and no feature code exists.** This directory holds the owner's spec
 for **central orchestrators** — Fugaro orchestrators that run permanently in the cloud instead
 of on a developer's machine (`spec.md`, verbatim) — the reconciliation of that spec against the
 code at `origin/main` **`2f8b4dca`**, the decisions the reconciliation could not answer on its
