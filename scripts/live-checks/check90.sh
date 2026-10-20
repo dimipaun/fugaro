@@ -142,8 +142,12 @@ keep_logs() {
 
 stop_call() {
   if [ -n "${CALL_PID:-}" ] && kill -0 "$CALL_PID" 2>/dev/null; then
-    kill -TERM "$CALL_PID" 2>/dev/null || true
-    kill -KILL "$CALL_PID" 2>/dev/null || true
+    # with_timeout puts every call in its own process group, so the signal
+    # reaches the whole call -- the streaming one is a pipeline, and its reader
+    # would otherwise outlive the client. The single-PID fallback is for a shell
+    # where job control could not be turned on: there the call is one process.
+    kill -TERM -- "-$CALL_PID" 2>/dev/null || kill -TERM "$CALL_PID" 2>/dev/null || true
+    kill -KILL -- "-$CALL_PID" 2>/dev/null || true
   fi
   CALL_PID=""
 }
@@ -506,13 +510,23 @@ start_proxy() { # start_proxy LOGFILE [extra args...]
 with_timeout() { # with_timeout SECONDS cmd...
   local secs=$1
   shift
-  "$@" &
+  # Job control, so the call gets a process group of its own: without it the
+  # deadline below could only kill the group's leader -- and a streaming call is
+  # a pipeline, whose reader and client are separate processes. stdin stays
+  # /dev/null, as it was before job control was on: `claude -p` takes its prompt
+  # as an argument, and a client that decided to read the terminal instead would
+  # hang.
+  set -m
+  "$@" </dev/null &
   CALL_PID=$!
   local waited=0
   while kill -0 "$CALL_PID" 2>/dev/null; do
     if [ "$waited" -ge "$secs" ]; then
+      # The pid is kept here and cleared by stop_call: the wait below has to
+      # name the call to reap it, and cleanup must not signal it twice.
+      local pid=$CALL_PID
       stop_call
-      wait "$CALL_PID" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
       return 124
     fi
     sleep 1
@@ -532,26 +546,43 @@ with_timeout() { # with_timeout SECONDS cmd...
 # anyway would prove nothing.
 PLACEHOLDER="placeholder-not-a-credential"
 
-# claude_call BASE_URL CREDENTIAL OUT CALL_TIMEOUT "$@" — runs claude with
+# Where a call is told its credential is — a SOURCE, never the value:
+#   file:PATH     the 0600 token file, the one the proxy reads too
+#   literal:TEXT  the placeholder above, which is not a credential
+# The child reads the source into CLAUDE_CODE_OAUTH_TOKEN itself. That is what
+# keeps the token off every command line: `env CLAUDE_CODE_OAUTH_TOKEN=value`
+# would put the value in `env`'s own argv, which /proc/<pid>/cmdline shows to
+# every process on the machine for as long as it lives.
+# shellcheck disable=SC2016 # the child's own text: nothing here expands in this shell
+CRED_CHILD='
+case "$CHK90_CRED_SOURCE" in
+file:*) CLAUDE_CODE_OAUTH_TOKEN=$(cat "${CHK90_CRED_SOURCE#file:}") || exit 1 ;;
+literal:*) CLAUDE_CODE_OAUTH_TOKEN=${CHK90_CRED_SOURCE#literal:} ;;
+*) echo "check90: the call was given no credential source" >&2; exit 1 ;;
+esac
+export CLAUDE_CODE_OAUTH_TOKEN
+unset CHK90_CRED_SOURCE
+exec claude "$@"'
+
+# claude_call BASE_URL CRED_SOURCE OUT CALL_TIMEOUT "$@" — runs claude with
 # nothing in its environment but the credential and the base URL this check
 # chose. The five variables the guards refused cannot reach it from here
-# either, and no argument of the call carries a credential.
+# either, and no argument of the call carries a credential: its argv holds only
+# the source — a path, or the placeholder — and the child is what reads it.
 claude_call() {
-  local base=$1 cred=$2 out=$3 secs=$4
+  local base=$1 src=$2 out=$3 secs=$4
   shift 4
   set +e
   with_timeout "$secs" env \
     -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
     -u CLAUDE_CODE_USE_VERTEX -u CLAUDE_CODE_USE_BEDROCK \
     ANTHROPIC_BASE_URL="$base" \
-    CLAUDE_CODE_OAUTH_TOKEN="$cred" \
-    claude "$@" >"$out" 2>&1
+    CHK90_CRED_SOURCE="$src" \
+    bash -c "$CRED_CHILD" check90-claude "$@" >"$out" 2>&1
   local status=$?
   set -e
   return "$status"
 }
-
-real_token() { cat "$TOKEN_FILE"; }
 
 phase_log() { printf '%s/proxy-%s.log' "$SCRATCH" "$1"; }
 
@@ -575,7 +606,7 @@ header_names_of() { # header_names_of LOGFILE — the names the swap call forwar
 # ------------------------------------------------------------------- the steps
 step_control() {
   say "step 1/7: the control (no proxy, your token in the environment)"
-  if claude_call "https://api.anthropic.com" "$(real_token)" "$SCRATCH/control.out" "$CALL_TIMEOUT" -p "say ok"; then
+  if claude_call "https://api.anthropic.com" "file:$TOKEN_FILE" "$SCRATCH/control.out" "$CALL_TIMEOUT" -p "say ok"; then
     fact "control" PASS "the call succeeded with the setup-token and no proxy in its path"
   else
     fact "control" FAIL "the call failed ($(head -c 300 "$SCRATCH/control.out" | tr '\n' ' '))"
@@ -588,7 +619,7 @@ step_observed_control() {
   local log
   log=$(phase_log observed)
   start_proxy "$log" --no-swap
-  if claude_call "http://127.0.0.1:$PORT" "$(real_token)" "$SCRATCH/observed.out" "$CALL_TIMEOUT" -p "say ok"; then
+  if claude_call "http://127.0.0.1:$PORT" "file:$TOKEN_FILE" "$SCRATCH/observed.out" "$CALL_TIMEOUT" -p "say ok"; then
     local h
     h=$(header_of "$log")
     if [ "$h" = "authorization" ]; then
@@ -610,7 +641,7 @@ step_swap() {
   start_proxy "$log" --token-file "$TOKEN_FILE" --error-fields
   local started ended
   started=$(date +%s)
-  if claude_call "http://127.0.0.1:$PORT" "$PLACEHOLDER" "$SCRATCH/swap.out" "$CALL_TIMEOUT" -p "say ok"; then
+  if claude_call "http://127.0.0.1:$PORT" "literal:$PLACEHOLDER" "$SCRATCH/swap.out" "$CALL_TIMEOUT" -p "say ok"; then
     ended=$(date +%s)
     local h
     h=$(header_of "$log")
@@ -669,13 +700,18 @@ step_streaming() {
   start_proxy "$log" --token-file "$TOKEN_FILE"
   local status=0
   set +e
-  stream_call "$times"
+  # Under the same cap as every other call. It is a pipeline, so the cap has to
+  # reach the group, not one process: with_timeout and stop_call do that.
+  with_timeout "$CALL_TIMEOUT" stream_call "$times"
   status=$?
   set -e
   local lines first last spread
   lines=$(wc -l <"$times" | tr -d ' ')
   first=$(head -n 1 "$times" 2>/dev/null || true)
   last=$(tail -n 1 "$times" 2>/dev/null || true)
+  # A call the cap cut off before its first line leaves the file empty, and an
+  # empty variable is 0 in an arithmetic context: this reads as a spread of 0,
+  # which is only ever reported when the call produced lines.
   spread=$((last - first))
   if [ "$status" -eq 0 ] && [ "$lines" -gt 1 ]; then
     if [ "$spread" -ge 2 ]; then
@@ -685,8 +721,10 @@ step_streaming() {
     fi
   elif [ "$status" -eq 0 ]; then
     fact "stream" FAIL "completed but produced $lines line(s), too few to say whether it streamed"
+  elif [ "$status" -eq 124 ]; then
+    fact "stream" FAIL "did not complete: this check's own ${CALL_TIMEOUT}s cap cut the call off, after $lines line(s) of output"
   else
-    fact "stream" FAIL "did not complete within ${CALL_TIMEOUT}s (status $status)"
+    fact "stream" FAIL "the call failed (status $status) after $lines line(s) of output"
   fi
 }
 
@@ -695,8 +733,9 @@ stream_call() { # stream_call TIMESFILE — one prompt, its arrival times record
   env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
     -u CLAUDE_CODE_USE_VERTEX -u CLAUDE_CODE_USE_BEDROCK \
     ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" \
-    CLAUDE_CODE_OAUTH_TOKEN="$PLACEHOLDER" \
-    claude -p "Write the numbers from 1 to 20, one per line." |
+    CHK90_CRED_SOURCE="literal:$PLACEHOLDER" \
+    bash -c "$CRED_CHILD" check90-claude \
+    -p "Write the numbers from 1 to 20, one per line." |
     while IFS= read -r _line; do date +%s >>"$times"; done
 }
 
@@ -712,7 +751,7 @@ step_drops() {
     fi
     log=$(phase_log "drop-$name")
     start_proxy "$log" --token-file "$TOKEN_FILE" --drop "$name"
-    if claude_call "http://127.0.0.1:$PORT" "$PLACEHOLDER" "$SCRATCH/drop.out" "$CALL_TIMEOUT" -p "say ok"; then
+    if claude_call "http://127.0.0.1:$PORT" "literal:$PLACEHOLDER" "$SCRATCH/drop.out" "$CALL_TIMEOUT" -p "say ok"; then
       optional+=("$name")
       fact "header-drop-$name" PASS "the call survived dropping it (optional)"
     else
@@ -731,7 +770,7 @@ step_timeout() {
   start_proxy "$log" --token-file "$TOKEN_FILE" --delay "$DELAY"
   started=$(date +%s)
   set +e
-  claude_call "http://127.0.0.1:$PORT" "$PLACEHOLDER" "$SCRATCH/delay.out" "$CALL_TIMEOUT" -p "say ok"
+  claude_call "http://127.0.0.1:$PORT" "literal:$PLACEHOLDER" "$SCRATCH/delay.out" "$CALL_TIMEOUT" -p "say ok"
   status=$?
   set -e
   ended=$(date +%s)

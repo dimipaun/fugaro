@@ -42,6 +42,11 @@ expect_status() { # status want what
 # token, and a test asserts this string never survives the run.
 SENTINEL='FAKE-TOKEN-FOR-CHECK-90-TESTS-NOT-A-CREDENTIAL-0123456789'
 
+# The real tools the fakes below hand over to, resolved before any test puts a
+# directory of fakes at the front of PATH.
+REAL_ENV=$(command -v env || true)
+REAL_PS=$(command -v ps || true)
+
 # --------------------------------------------------------------------- fakes
 write_fake_claude() { # dir
   mkdir -p "$1/bin"
@@ -54,7 +59,7 @@ base is answered from here, and every other base is a loopback proxy this run
 started. It records which credential it was given only as a KIND -- sentinel,
 placeholder or empty -- never a value.
 """
-import http.client, json, os, sys, time
+import http.client, json, os, subprocess, sys, time
 
 mode = os.environ.get("FAKE_CLAUDE_MODE", "ok")
 args = sys.argv[1:]
@@ -72,6 +77,25 @@ kind = "sentinel" if cred == sentinel else ("placeholder" if cred else "empty")
 if "--version" not in args:
     with open(os.environ["FAKE_CLAUDE_CALLS"], "a") as fh:
         fh.write("%s %s %s\n" % (os.environ.get("ANTHROPIC_BASE_URL", ""), kind, prompt))
+
+# Two recordings of what a process's ARGV holds while a call is live, for the
+# test that the token is never on a command line: this call's own argv, and a
+# snapshot of the argv of every process of this run, taken by the fake `ps`.
+if os.environ.get("FAKE_CLAUDE_ARGV"):
+    with open(os.environ["FAKE_CLAUDE_ARGV"], "a") as fh:
+        fh.write(" ".join(sys.argv) + "\n")
+if os.environ.get("FAKE_CLAUDE_PS"):
+    snap = subprocess.run(["ps", os.environ.get("FAKE_PS_PATTERN", "claude")],
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    with open(os.environ["FAKE_CLAUDE_PS"], "ab") as fh:
+        fh.write(snap.stdout)
+
+# A client that stalls on ONE prompt and answers every other: the streaming
+# call is the only one this test can make the cap cut off without losing the
+# steps before it.
+if os.environ.get("FAKE_CLAUDE_HANG_PROMPT", "") and prompt.startswith(os.environ["FAKE_CLAUDE_HANG_PROMPT"]):
+    time.sleep(float(os.environ.get("FAKE_CLAUDE_HANG", "300")))
+    sys.exit(0)
 
 if mode == "fail":
     sys.exit("fake claude: failing on purpose")
@@ -109,6 +133,36 @@ else:
     print("ok")
 CLAUDE_EOF
   chmod +x "$1/bin/claude"
+}
+
+# write_fake_env DIR — a stand-in for `env` that writes down the argv it was
+# given and then runs the real one. This is the recording that catches a
+# credential handed over as an argument: `env VAR=value` puts the value in
+# env's OWN argv, and env execs the client, so that argv exists for
+# microseconds -- far too short for a snapshot of the process table to be
+# relied on, and no reason not to be sure.
+write_fake_env() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/env" <<ENV_EOF
+#!/bin/sh
+# fake env: record the argv, then hand over to the real env.
+printf '%s\n' "\$@" >>"$1/env.argv"
+exec "$REAL_ENV" "\$@"
+ENV_EOF
+  chmod +x "$1/bin/env"
+}
+
+# write_fake_ps DIR — a stand-in for `ps` that snapshots the argv of the
+# processes of THIS run (the pattern in $1 names them), so an unrelated process
+# elsewhere on the machine cannot make the test flaky.
+write_fake_ps() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/ps" <<PS_EOF
+#!/bin/sh
+# fake ps: \$1 is a grep -E pattern naming this run's processes.
+"$REAL_PS" -A -ww -o pid,ppid,args 2>/dev/null | grep -Ei "\$1" || true
+PS_EOF
+  chmod +x "$1/bin/ps"
 }
 
 write_fake_upstream() { # dir
@@ -206,6 +260,8 @@ run90() {
   shift 3
   mkdir -p "$dir/home" "$dir/tmp" "$dir/logs" "$dir/managed"
   write_fake_claude "$dir"
+  write_fake_env "$dir"
+  write_fake_ps "$dir"
   write_fake_upstream "$dir"
   start_upstream "$dir" "$mode" "$require" || return 1
   : >"$dir/claude.calls"
@@ -478,6 +534,66 @@ test_sigint_cleans_up() {
   return 0
 }
 
+# The token is never on a command line. The calls run for real, and three
+# recordings are taken while they are live:
+#   env.argv      the argv of every `env` the script runs (see write_fake_env:
+#                 this is the one that would carry a credential passed as an
+#                 argument, and the one no process snapshot can be relied on to
+#                 catch, because env execs the client microseconds later)
+#   claude.argv   the argv the client itself was run with
+#   ps.snapshot   the argv of every process of the run, as the client saw it
+# The same run also has to show the token DID reach the client -- in the
+# environment of the one child that needs it, and nowhere else.
+test_token_is_never_on_a_command_line() {
+  run90 argv ok "" \
+    FAKE_CLAUDE_ARGV="$work/argv/claude.argv" \
+    FAKE_CLAUDE_PS="$work/argv/ps.snapshot" \
+    FAKE_PS_PATTERN='check90|chk90|claude'
+  expect_status "$status" 0 "argv: the run"
+  expect_contains "$(cat "$work/argv/claude.calls")" "sentinel" \
+    "argv: the control was given the token (in its environment, which is where it belongs)"
+  local what
+  for what in claude.argv ps.snapshot env.argv; do
+    [ -s "$work/argv/$what" ] || fail "argv: nothing was recorded in $what, so it proves nothing"
+    expect_absent "$(cat "$work/argv/$what" 2>/dev/null)" "$SENTINEL" "argv: $what"
+  done
+  # The recording that would carry it is the env one: it must have seen the
+  # calls, so that its silence about the token means something.
+  expect_contains "$(cat "$work/argv/env.argv")" "check90-claude" "argv: env.argv saw the calls"
+  expect_contains "$(cat "$work/argv/env.argv")" "CHK90_CRED_SOURCE" "argv: env.argv saw where the credential comes from"
+  # And nothing the run left behind carries it either.
+  assert_no_sentinel "$work/argv" "argv"
+  return 0
+}
+
+# The streaming call is under the same cap as every other call, and the FAIL
+# line says the cap is what ended it. It is also the one scenario where the
+# call is cut off before it prints a single line, so the arrival-time reading
+# below it sees an empty file: the run must still reach the block -- the last
+# three steps' facts are worthless if it does not.
+test_streaming_call_is_capped() {
+  local started elapsed
+  started=$(date +%s)
+  run90 streamcap ok "" \
+    FAKE_CLAUDE_HANG_PROMPT="Write the numbers" FAKE_CLAUDE_HANG=60 \
+    CHECK90_CALL_TIMEOUT=5
+  elapsed=$(($(date +%s) - started))
+  expect_status "$status" 0 "stream cap"
+  expect_contains "$out" "FACT stream: FAIL — did not complete: this check's own 5s cap cut the call off" \
+    "stream cap: the fact names the cap"
+  expect_contains "$out" "CHECK 90 RESULT END (exit 0)" "stream cap: the run reached the block"
+  # The steps after it ran, so the cap ended the call and not the run.
+  expect_contains "$out" "FACT headers-required: PASS" "stream cap: the header steps ran"
+  expect_contains "$out" "FACT timeout-retry: PASS" "stream cap: the delayed call ran"
+  [ "$elapsed" -lt 60 ] || fail "stream cap: the run took ${elapsed}s, so the call was not cut off at the cap"
+  # The cap killed the whole call -- the pipeline's client too, not just the
+  # shell in front of it -- so nothing of this run is left sleeping behind it.
+  if command -v pgrep >/dev/null 2>&1 && pgrep -f "$work/streamcap/bin/claude" >/dev/null 2>&1; then
+    fail "stream cap: the client outlived the cap"
+  fi
+  return 0
+}
+
 # The script wipes the token file explicitly and then removes the whole 0700
 # scratch directory, so "the token file was left behind" is only observable
 # together with "the scratch directory survived" -- and that pair is what the
@@ -499,6 +615,8 @@ test_swap_fails
 test_limit_is_recorded
 test_control_failure_is_inconclusive
 test_dry_run_makes_no_call
+test_token_is_never_on_a_command_line
+test_streaming_call_is_capped
 test_sigint_cleans_up
 
 if [ "$failures" -ne 0 ]; then
