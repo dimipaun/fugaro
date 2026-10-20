@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -138,6 +140,27 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 		}
 	})
 
+	t.Run("the selected project config could not be read", func(t *testing.T) {
+		// The other state selectedProjectConfigErr answers nil for: the config
+		// is selected and was refused at load (its switch names a model no
+		// entry claims), so there is no policy this command could read. The
+		// refusal says that, and not "no project config for aurora is selected
+		// here", which is false of it — the reason is the problem the loader's
+		// own line carries.
+		isolateProjects(t, t.TempDir())
+		projectRouting(t, routedSwitchBlock)
+		out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("exit = %d, want %d (out %q, err %v)", ExitCode(err), ExitUserError, out, err)
+		}
+		if !strings.Contains(out, "agent.auth: is refused: the project config selected here could not be read") {
+			t.Errorf("the refusal does not name the state it is in:\n%s", out)
+		}
+		if strings.Contains(out, "no project config for aurora is selected here") {
+			t.Errorf("a config that is there and unreadable is reported as none selected:\n%s", out)
+		}
+	})
+
 	t.Run("another auth is not this rule's business", func(t *testing.T) {
 		f := newLaunchBudget(t, "observe")
 		publishPolicy(t, f, `{"version":`+fmt.Sprint(projectpolicy.RulesVersion)+`,"allow_repos":["*"]}`)
@@ -231,6 +254,27 @@ func TestValidateCascadeSwitchReasonNeverBlamesTheGateway(t *testing.T) {
 	}
 }
 
+// shiftRelease returns rel with its patch number moved by delta ("0.9.6" and
+// -1 is "0.9.5"): the release one below cascadeSince is the image the gate has
+// to refuse, and one above it the image it has to pass. Written as a shift of
+// the constant rather than as a literal so the boundary this test pins is the
+// constant's own: a row written as "0.9.5" beside a constant of "0.9.6" is the
+// same number typed twice, and it stays green when the constant moves — which
+// is the skew the test exists to catch. A constant whose patch cannot shift is
+// not a release this gate can judge, and that is what the fatal says.
+func shiftRelease(t *testing.T, rel string, delta int) string {
+	t.Helper()
+	parts := strings.Split(rel, ".")
+	if len(parts) != 3 {
+		t.Fatalf("cascadeSince = %q is not a X.Y.Z release, so no boundary can be read from it", rel)
+	}
+	patch, err := strconv.Atoi(parts[2])
+	if err != nil || patch+delta < 0 {
+		t.Fatalf("cascadeSince = %q has no release %d below/above it", rel, delta)
+	}
+	return parts[0] + "." + parts[1] + "." + strconv.Itoa(patch+delta)
+}
+
 // TestInitRepoRefusesCascadeOnOlderBaseImage is Task C1.1's skew gate: a
 // fugaro.yaml value is a version-skew break in a strictly decoded config, so
 // `fugaro init --repo` refuses to deploy a cascade repository against an
@@ -241,6 +285,13 @@ func TestValidateCascadeSwitchReasonNeverBlamesTheGateway(t *testing.T) {
 // base image at all passes, since its job is built from this release's own
 // image.
 //
+// The boundary is the constant's own (shiftRelease): the image refused is one
+// release below cascadeSince and the images that pass are cascadeSince itself
+// and one release above it, so a constant moved to a release no base image
+// could be — or one that no longer sits where the number in docs/release.md
+// and the schemas says — is what this test's rows are written to catch rather
+// than to follow.
+//
 // Mutation (run, restored): move cascadeSince below the base image's release
 // (0.9.4) and both this test's refusal and the repoEngine one fail — the gate
 // passes an image whose runner has never heard of the value; refuse the empty
@@ -249,6 +300,7 @@ func TestValidateCascadeSwitchReasonNeverBlamesTheGateway(t *testing.T) {
 // passing in silence.
 func TestInitRepoRefusesCascadeOnOlderBaseImage(t *testing.T) {
 	cascade := &config.Config{Agent: config.Agent{Auth: config.AuthCascade}}
+	below, above := shiftRelease(t, cascadeSince, -1), shiftRelease(t, cascadeSince, 1)
 	lc := func(ref string) *localcfg.Config {
 		if ref == "" {
 			return &localcfg.Config{}
@@ -261,13 +313,14 @@ func TestInitRepoRefusesCascadeOnOlderBaseImage(t *testing.T) {
 	cmd.SetErr(&errOut)
 	r := &initRun{o: &initOptions{}, cmd: cmd, w: &out}
 
-	err := r.gateCascadeAuth(r.o, "acme/app", lc("ghcr.io/dimipaun/fugaro-base:0.9.5"), cascade)
+	older := "ghcr.io/dimipaun/fugaro-base:" + below
+	err := r.gateCascadeAuth(r.o, "acme/app", lc(older), cascade)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want refused", err)
 	}
 	for _, want := range []string{
 		"fugaro " + cascadeSince + " or later",
-		"ghcr.io/dimipaun/fugaro-base:0.9.5, release 0.9.5",
+		older + ", release " + below,
 		"fugaro init --base base",
 		"agent.auth: cascade",
 	} {
@@ -281,7 +334,7 @@ func TestInitRepoRefusesCascadeOnOlderBaseImage(t *testing.T) {
 
 	// A base image at cascadeSince or past it passes, and one that is not a
 	// release image only warns.
-	for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + cascadeSince, "ghcr.io/dimipaun/fugaro-base:0.9.7"} {
+	for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + cascadeSince, "ghcr.io/dimipaun/fugaro-base:" + above} {
 		var warn bytes.Buffer
 		if err := refuseCascadeSkew("acme/app", config.AuthCascade, ref, &warn); err != nil || warn.Len() != 0 {
 			t.Errorf("%s: err = %v, warn = %q, want neither", ref, err, warn.String())
@@ -301,7 +354,7 @@ func TestInitRepoRefusesCascadeOnOlderBaseImage(t *testing.T) {
 	// image has to read, and a vertex file is read by every release.
 	for _, auth := range []string{"vertex", "api-key", "oauth"} {
 		var warn bytes.Buffer
-		err := refuseCascadeSkew("acme/app", auth, "ghcr.io/dimipaun/fugaro-base:0.9.5", &warn)
+		err := refuseCascadeSkew("acme/app", auth, older, &warn)
 		if err != nil || warn.Len() != 0 {
 			t.Errorf("auth %q: err = %v, warn = %q, want neither", auth, err, warn.String())
 		}
@@ -312,7 +365,7 @@ func TestInitRepoRefusesCascadeOnOlderBaseImage(t *testing.T) {
 	// (the same escape the route-switch gate leaves). --print-vars is judged
 	// like a deploy would be — the values it prints are the ones a deploy
 	// would use — and nothing of it lands on stdout.
-	old := lc("ghcr.io/dimipaun/fugaro-base:0.9.5")
+	old := lc(older)
 	if err := r.gateCascadeAuth(r.o, "acme/app", old, cascade); err == nil {
 		t.Fatal("a plain deploy was not refused")
 	}
@@ -331,6 +384,63 @@ func TestInitRepoRefusesCascadeOnOlderBaseImage(t *testing.T) {
 	}
 }
 
+// TestCascadeSinceIsTheReleaseTheDocsAndSchemasName: the constant's number is
+// stated to three other readers, and each of them acts on it. docs/release.md's
+// "Before you tag" bullet is what a release verifies the constant against
+// ("currently `\"0.9.6\"`"), and the two schemas' agent.auth descriptions tell
+// an author editing a fugaro.yaml which release stops refusing the value
+// ("Fugaro before 0.9.6 refuses the value"). A constant that moves alone leaves
+// one of those readers a number that is not the one the gate judges with — the
+// release checklist verifying a release that does not read the value, or a
+// repository author told their file is fine on an image whose runner refuses it
+// — and nothing else in this package reads any of the three.
+//
+// The boundary the gate itself judges is pinned in the test above, off the
+// constant; this is the other half: the number a person reads is the number the
+// gate uses, so moving the constant to a release that no base image can be, or
+// to one the docs do not name, fails here rather than silently refusing every
+// cascade install.
+//
+// Mutation (run, restored): change cascadeSince to "0.9.7" and nothing else —
+// this fails naming the release checklist and both schemas, which still say
+// 0.9.6.
+func TestCascadeSinceIsTheReleaseTheDocsAndSchemasName(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.Contains(line, "`cascadeSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no cascadeSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+cascadeSince+"\"`") {
+		t.Errorf("docs/release.md's cascadeSince bullet does not carry the constant's release (%q): the checklist would verify a release the gate does not judge with", cascadeSince)
+	}
+	// The schemas' own line, not the file: the enum line is the one that
+	// carries the description an editor of fugaro.yaml or a project layer reads.
+	for _, path := range []string{"../../schemas/fugaro.schema.json", "../../schemas/project-layer.schema.json"} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var line string
+		for _, l := range strings.Split(string(b), "\n") {
+			if strings.Contains(l, `"enum"`) && strings.Contains(l, `"cascade"`) {
+				line = l
+				break
+			}
+		}
+		if line == "" {
+			t.Fatalf("%s: no agent.auth enum line names cascade", path)
+		}
+		if !strings.Contains(line, "before "+cascadeSince) {
+			t.Errorf("%s's agent.auth description does not say Fugaro before %s refuses the value: the schema tells an author a release the gate does not judge with", path, cascadeSince)
+		}
+	}
+}
+
 // TestRepoEngineRefusesCascadeOnAnOlderBaseImage is the gate at its call site:
 // the checks above test gateCascadeAuth in isolation, and this one pins that
 // repoEngine reaches it at all — before the plan, the apply or any other cloud
@@ -342,8 +452,9 @@ func TestInitRepoRefusesCascadeOnOlderBaseImage(t *testing.T) {
 // holding is the state bucket the run never reaches (the check above would
 // not have noticed: it calls the gate itself).
 func TestRepoEngineRefusesCascadeOnAnOlderBaseImage(t *testing.T) {
+	below := shiftRelease(t, cascadeSince, -1)
 	r := newInitRig(t)
-	r.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.9.5}\n")
+	r.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:"+below+"}\n")
 	r.save(t)
 	isolateCache(t)
 	noProjectLayerBucket(t)
@@ -356,7 +467,7 @@ func TestRepoEngineRefusesCascadeOnAnOlderBaseImage(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit = %d, err = %v: want the cascade refused on this installation's base image", ExitCode(err), err)
 	}
-	for _, want := range []string{cascadeSince, "0.9.5", "fugaro init --base base", "agent.auth: cascade"} {
+	for _, want := range []string{cascadeSince, below, "fugaro init --base base", "agent.auth: cascade"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)
 		}

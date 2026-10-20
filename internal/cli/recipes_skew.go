@@ -296,6 +296,24 @@ const titlesSince = "0.8.5"
 // could answer differently, and this value is read by the same config reader
 // either way (refuseCascadeSkew). docs/release.md ("Before you tag") has the
 // checklist verify it equals the release that ships the value.
+//
+// It names 0.9.6, which is not tagged yet, and that is the ruling rather than
+// a slip: the owner's ruling of 2026-10-20 places the whole credentials
+// service — this value included — in 0.9.6, so 0.9.6 is the release this value
+// ships in and the one whose config reader accepts it. An installation whose
+// base image is 0.9.5 or older is therefore refused, which is right: that
+// runner's config.Validate does not know the value, so a cascade repository
+// deployed against it would die at bootstrap, and `fugaro init --base base`
+// — run by a binary of the release that carries the value — is the fix that
+// clears the refusal. No `cascadeShipped`-style boolean belongs beside this
+// constant, the shape catalogSince has: that one gates a value read by a
+// release *later* than the binary that writes it, so no base image of any age
+// could read it and the age check would be vacuous, while here the reader is
+// this release's own config reader and the age check is the whole rule.
+//
+// TestCascadeSinceIsTheReleaseTheDocsAndSchemasName holds it to the number
+// docs/release.md's bullet and the two schemas' agent.auth descriptions state,
+// so the constant cannot move without them.
 const cascadeSince = "0.9.6"
 
 // needsRecipeImage reports whether a launch needs a runner that knows

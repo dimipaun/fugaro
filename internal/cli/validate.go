@@ -403,6 +403,15 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 // gateway on and is valid. The state with no ceiling is refused by O2 below
 // anyway, on the reason that is true of it.
 //
+// That state is two states, and they are not one sentence. selectedProjectConfigErr
+// answers a nil config both for a machine where nothing selects one and for one
+// whose config is selected and was refused at load, and the two are what the
+// rest of this file already tells apart (unreadableProjectConfig, and
+// TestValidateReportsAProjectConfigItCouldNotRead): an operator whose own config
+// is there and unreadable is not told that none is selected, which would send
+// them to select one they have already selected. Both are refused, because O2
+// cannot be proven from either.
+//
 // O2 (the owner's ruling of 2026-10-17, reconciliation.md §4) is the reason
 // this function reads the *published* policy: a repository may ask for the
 // cascade, and only the operator-written project policy — routing.claude's
@@ -415,7 +424,7 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 // letting a cascade workflow through that no run would be admitted with. The
 // launch refuses the same pair again on its own side (plan Task C1.19); this
 // is where the repository's author is told before pushing.
-func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config) []config.Problem {
+func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config, lcErr error) []config.Problem {
 	if cfg.Agent.Auth != config.AuthCascade {
 		return nil
 	}
@@ -426,7 +435,16 @@ func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			why, "routing.claude: {via: cascade}")})
 	}
 	if lc == nil || lc.Name != cfg.Project {
-		refuse(fmt.Sprintf("no project config for %s is selected here, so the policy this project has published cannot be read", pluginwire.Printable(cfg.Project)))
+		switch {
+		case lcErr != nil:
+			// The config is selected and was refused at load. Its own reason is
+			// the problem the caller prepends for it, printed whole and once.
+			// No project is named here: which project an unreadable config is
+			// for is not a question the file answers.
+			refuse("the project config selected here could not be read (the reason is the problem reported for it above), so the policy this project has published cannot be read either")
+		default:
+			refuse(fmt.Sprintf("no project config for %s is selected here, so the policy this project has published cannot be read", pluginwire.Printable(cfg.Project)))
+		}
 		return problems
 	}
 	// The ceiling is readable from here on, so the gateway rule can be judged
@@ -1511,7 +1529,7 @@ func newValidateCmd() *cobra.Command {
 				problems, warnings, notes = append(problems, pp...), append(warnings, pw...), append(notes, pn...)
 				rtp, rtn := routingProblems(cmd.Context(), ecfg, lc, routes, lcErr)
 				problems, notes = append(problems, rtp...), append(notes, rtn...)
-				problems = append(problems, cascadeProblems(cmd.Context(), ecfg, lc)...)
+				problems = append(problems, cascadeProblems(cmd.Context(), ecfg, lc, lcErr)...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {
