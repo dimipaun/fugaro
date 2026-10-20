@@ -3482,8 +3482,9 @@ names no keypad key.
 
 ### The mutations this task is proved against
 
-Each was planted in the shipped code, run, and removed; the failure is the red step. The last
-three are the 2026-10-20 follow-up's, and the sections above record what each was for.
+Each was planted in the shipped code, run, and removed; the failure is the red step. The first
+three are Task 6.5's own and the last three were planted by the follow-up of 2026-10-20, which
+is the PR that moved the mapping onto the physical key and bounded it to three rows.
 
 | Mutation | What fails |
 |---|---|
@@ -3499,11 +3500,11 @@ three are the 2026-10-20 follow-up's, and the sections above record what each wa
 The eight golden frames are Task 6.6's, which is owner-run and records once at the end of the
 phase — **and this task moved the picture once**: `base.css` has drawn the selected rail row's
 raised surface and 3 px `--accent` border since Task 6.3, and the `aria-selected` that turns
-them on is written here, so a frame taken now differs from the same frame taken before it.
-The reason the goldens wait is still Task 6.6's own. The
-theme switch this task was named for is **not** deferred work: the owner's Q1 ruling removed
-it, and a later task that wants it needs a light set to switch to and a new ruling to ship it
-(plan Task 6.5's record, design section 3.6). No token, no rule and no served file is this
+them on is written here, so a frame taken now differs from the same frame taken before it. The
+reason the goldens wait is still Task 6.6's own. The theme switch this task was named for is
+**not** deferred work: the owner's Q1 ruling removed it, and a later task that wants it needs
+a light set to switch to and a new ruling to ship it (plan Task 6.5's record, design section
+3.6). No token, no rule and no served file is this
 task's: `THEME_STYLESHEETS`, `SERVED_FILES` and the CSP are exactly what Task 6.4 left, and
 `ElementLike` needed no widening — `role`, `aria-*` and `tabindex` are attributes, and
 `event.code` is a read of an event rather than a write to the DOM.
