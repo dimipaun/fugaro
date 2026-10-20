@@ -1021,8 +1021,13 @@ reading the family would fail the very apply this module exists to complete,
 because the family has no image until the scheduled build has run once. Reading
 the label back takes a Compute client `internal/infra.Clients` does not carry
 (`init_compute.go`'s `Verify` says the same of the preload image), and the
-configuration field it would be written into is §8.1 task 8's, which is not in
-this tree. So the read-back is Check 57b's and `doctor`'s, and
+configuration field it would be written into **does** exist — `batch.socket_gid`,
+the `batch:` block's own key (`Options.Docker.SocketGID`,
+`internal/localcfg/localcfg.go`, §8.1 Task 7) — but
+**nothing writes it from the module's output**: only the preload label's *name*
+travels through `infra.ComputeOutputs`, never the gid the label records, because
+the image is built out of band and no resource the root holds carries that
+value. So the read-back is Check 57b's and `doctor`'s, and
 `Options.Docker.SocketGID` stays unset until then — which is the state Task 7's
 refusal already covers (a Docker run with no recorded gid is refused before the
 create). A recorded gid that no longer matches the image is a mount

@@ -374,16 +374,35 @@ func TestComputeStageNoChanges(t *testing.T) {
 	}
 }
 
-// --plan-only applies nothing, --provision-batch or not.
+// --plan-only applies nothing, --provision-batch or not -- and it starts
+// nothing either: the preload rebuild is the apply's own last act, and it is a
+// billable Cloud Build, so a plan view that started one would spend money the
+// operator only asked to look at. The stage's Plan reaches the root's plan and
+// stops there (the calls below are read in the compute root's own workdir, so
+// a run that never reached the root would not pass this test vacuously: the
+// plan call is what puts a line in that log).
 func TestComputeStagePlanOnlyAppliesNothing(t *testing.T) {
 	r := computeRig(t)
+	// The installation plans cleanly, so the run reaches the compute stage:
+	// without this the installation is still to-do and the compute stage is
+	// deferred behind it ("plans when applied (after installation)"), which
+	// left the original assertions reading an empty call log and passing for a
+	// reason they did not name.
+	r.setPlanAt(t, "installation")
 	fakeTerminal(t)
 	out, _, err := executeStdin(t, "", "init", "--yes", "--plan-only", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
+	calls := subcommands(computeCalls(t, r))
+	if slices.Contains(calls, "apply") {
 		t.Fatalf("--plan-only applied: %q", calls)
+	}
+	if !slices.Contains(calls, "plan") {
+		t.Fatalf("--plan-only did not plan the compute root: %q\n%s", calls, out)
+	}
+	if runs := r.sched.Runs(); len(runs) != 0 {
+		t.Errorf("--plan-only started the preload rebuild (the image build): %v", runs)
 	}
 }
 
