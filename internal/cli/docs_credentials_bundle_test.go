@@ -173,6 +173,13 @@ func TestDocsCredentialsServiceKeepsOneBundleSecret(t *testing.T) {
 // names nothing in that state and zsh refuses an unquoted `[0]`. Both wrong
 // forms are forbidden below.
 //
+// A later code review added the cover's own finding: `google_cloud_run_v2_service`
+// was admitted to init's confirmation with no attribute case, so the service's
+// image was held to nothing but the variable's digest shape. The plan paragraph
+// pin below is where that decision is written down for the owner; the guard
+// itself is `internal/infra/tf/cover.go`'s, with its unit cases in
+// `cover_test.go`.
+//
 // It is about wording only: nothing here is implemented by the documents it
 // reads. Every phrase below was checked against the plan as amended.
 func TestDocsCredentialsServiceCarriesTheSecurityReviewFixes(t *testing.T) {
@@ -200,6 +207,11 @@ func TestDocsCredentialsServiceCarriesTheSecurityReviewFixes(t *testing.T) {
 		// m5
 		`**C1.25 must not "fix" this by adding one**`,
 		"the bundle container of C1.18 carries **no operator member at all**",
+		// The cover's finding: the service type is covered by init's one
+		// confirmation only where tf/cover.go checks its image, its
+		// environment and its IAM setting.
+		"covers the service only where `internal/infra/tf/cover.go` checks it",
+		"a tag is never enough for *this* image",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("%s no longer carries %q: it is one of the independent security review's findings, and this is the only place it is written down for the owner", plan, want)
