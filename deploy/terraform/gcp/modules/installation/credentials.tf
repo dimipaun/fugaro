@@ -107,8 +107,13 @@ resource "google_secret_manager_secret_iam_member" "credentials_bundle" {
 # account's own invoker grant (modules/workflow/sa.tf).
 #
 # The image is a variable (C1.20's init stage fills it with the released
-# image's reference, as it fills var.history.image), and no command or args are
-# set: the image's own entrypoint is the service (C1.14). The timeout is the
+# image's reference, as it fills var.history.image) and it is pinned BY DIGEST:
+# var.credentials_service's validation refuses a tag. That is a security rule,
+# not a preference — the registry grants roles/artifactregistry.writer to every
+# operator (iam.tf), so a mutable tag would let an operator push the code this
+# account runs, and this account reads every credential in the bundle
+# (independent security review of this file, M1). No command or args are set:
+# the image's own entrypoint is the service (C1.14). The timeout is the
 # longest Cloud Run allows, because a proxied streaming call is long-lived
 # (Check 91 measures what a Cloud Run front end does with one).
 resource "google_cloud_run_v2_service" "credentials" {
@@ -128,9 +133,25 @@ resource "google_cloud_run_v2_service" "credentials" {
   # layered on top of it, never instead of it.
   invoker_iam_disabled = false
 
-  # The service holds no data: the one thing worth keeping is the bundle
-  # container, and that one carries prevent_destroy above. Turning the opt-in
-  # off is therefore a removal a plan may make, not a refusal.
+  # The service holds no data of its own: what is worth keeping is the bundle
+  # container, and that one carries prevent_destroy above. So dropping the
+  # opt-in is NOT a removal a plan may make: with the container in state the
+  # plan fails ("Instance cannot be destroyed") and applies nothing — the
+  # service, this account and the grant above cannot be removed in that plan
+  # either (independent security review of this file, M2, whose first version
+  # of this comment claimed the opposite). Turning the service off is two
+  # owner steps, in this order, and C1.22's runbook carries them:
+  #
+  #   1. terraform state rm google_secret_manager_secret.credentials_bundle[0]
+  #      — forgets the container. It deletes nothing in GCP and leaves every
+  #      credential in it alone.
+  #   2. an ordinary plan and apply, with credentials_service unset, which
+  #      removes this service, its account and the grant, and touches no
+  #      secret.
+  #
+  # deletion_protection stays false so step 2 can do its work; the container's
+  # prevent_destroy, not this flag, is what keeps a credential from being
+  # deleted by a plan.
   deletion_protection = false
 
   template {

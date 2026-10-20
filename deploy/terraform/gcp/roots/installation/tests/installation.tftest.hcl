@@ -1784,10 +1784,18 @@ run "credentials_service_off_by_default" {
 #     service's own account, and the grant carries NO condition: no
 #     secretmanager.googleapis.com/secretId filter and no name-prefix fence,
 #     which is what Q6 replaced. A condition added here fails this run.
-#   * The service's account holds nothing else: not a member of the project's
-#     other secret containers (the run sets two of them, the two model
-#     credentials, so the assertion is not vacuous), nothing on the runs
-#     bucket, and no grant that would let anyone act as it.
+#   * The service's account holds nothing else IN THIS MODULE: not a member of
+#     the project's other secret containers (the run sets two of them, the two
+#     model credentials, so the assertion has something to be false about),
+#     nothing on the runs bucket, and no grant here that would let anyone act
+#     as it. What this run cannot see is a grant written in another file — a
+#     per-secret grant to the service's account added to secrets.tf, say, is
+#     not a resource of this module and no assertion here can reach it. That
+#     direction is the Go scan's: deploy/terraform's
+#     TestCredentialsServiceGrantsAreTheOneBundle reads credentials.tf, and
+#     internal/infra/managed's TestRunAccountsHaveNoWritePathTo… walks every
+#     module's IAM resources. (Independent review n1: this comment used to
+#     claim the run guarded that too, which it does not.)
 #   * The service requires IAM: nothing in this module grants invoker to
 #     anyone, and the container reads no credential from its environment.
 run "credentials_service_on" {
@@ -1807,7 +1815,7 @@ run "credentials_service_on" {
     credentials_service = {
       account_id    = "fugaro-credentials"
       service       = "fugaro-credentials"
-      image         = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:latest"
+      image         = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
       bundle_secret = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
     }
   }
@@ -1890,7 +1898,7 @@ run "credentials_service_on" {
   }
   assert {
     condition = (google_cloud_run_v2_service.credentials[0].template[0].service_account == google_service_account.credentials[0].email &&
-      google_cloud_run_v2_service.credentials[0].template[0].containers[0].image == "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:latest" &&
+      google_cloud_run_v2_service.credentials[0].template[0].containers[0].image == "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3" &&
     google_cloud_run_v2_service.credentials[0].template[0].timeout == "3600s")
     error_message = "the service runs as its own account, on the image the variable carries, with the longest timeout Cloud Run allows for a streaming proxy"
   }
@@ -1941,4 +1949,54 @@ run "credentials_service_on" {
     ]) == 0
     error_message = "the service's account holds no project-level role: it reads one secret and nothing else"
   }
+}
+
+# The image is pinned by digest, and a tag is refused at plan time (C1.18,
+# independent security review M1). Why this is a security rule and not a
+# preference: the service runs as the account that reads every credential in
+# the bundle, and modules/installation/iam.tf grants every operator
+# roles/artifactregistry.writer on the installation's registry — so a mutable
+# `fugaro-credentials:latest` would let an operator push the code that the
+# next owner apply runs as that account. A digest cannot be rewritten. The
+# run above is the digest form, planned and asserted; this one is the tag
+# form, refused by the variable's validation before any resource is planned.
+run "credentials_service_image_must_be_a_digest" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id    = "fugaro-credentials"
+      service       = "fugaro-credentials"
+      image         = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:latest"
+      bundle_secret = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# A digest that is not 64 lower-case hex digits is not a digest: a truncated
+# or upper-case one would not resolve, and `@sha256:` alone would pass a check
+# that only looked for the marker. This is the second half of the same rule.
+run "credentials_service_image_must_be_a_whole_digest" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id    = "fugaro-credentials"
+      service       = "fugaro-credentials"
+      image         = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e"
+      bundle_secret = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+    }
+  }
+
+  expect_failures = [var.credentials_service]
 }

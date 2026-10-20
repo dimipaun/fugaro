@@ -419,6 +419,44 @@ func TestPreventDestroy(t *testing.T) {
 	}
 }
 
+// The service holds no data of its own, and the container beside it is the
+// one thing worth keeping, so turning the opt-in off is NOT "a removal a plan
+// may make": with the container in state, `credentials_service = null` fails
+// the whole plan ("Instance cannot be destroyed") and applies nothing, and the
+// service, its account and its grant cannot be removed in that plan either.
+// Opting out is two owner steps — forget the container with `terraform state
+// rm` (which deletes nothing in GCP), then an ordinary plan that removes the
+// service — and C1.22's runbook carries them. This test pins the file's
+// account of that, because the first version of the comment claimed the
+// opposite (independent security review of this file, M2) and nothing else in
+// the tree states the order. deletion_protection = false is what makes step
+// two possible; the container's prevent_destroy is what keeps a credential
+// from being deleted by a plan.
+func TestCredentialsServiceOptOutIsTwoSteps(t *testing.T) {
+	const path = "gcp/modules/installation/credentials.tf"
+	data, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	text := string(data)
+	const step = "terraform state rm google_secret_manager_secret.credentials_bundle[0]"
+	if !strings.Contains(text, step) {
+		t.Errorf("%s does not document the opt-out's first step (%q): without it a reader is left with the plan failure and no path", path, step)
+	}
+	if strings.Contains(text, "is therefore a removal a plan may make") || strings.Contains(text, "removal a plan may make, not a refusal") {
+		t.Errorf("%s still claims the opt-out is a removal a plan may make: it is not, the container's prevent_destroy refuses the whole plan", path)
+	}
+	// The two lifecycle settings the two steps depend on.
+	containers := resourceBlocks(t, path, data, "google_secret_manager_secret")
+	if len(containers) != 1 || !hasAttr(containers[0].body, "prevent_destroy", "true") {
+		t.Errorf("%s: the bundle container must be exactly one secret with prevent_destroy = true (got %d blocks), which is what makes the state rm step necessary", path, len(containers))
+	}
+	services := resourceBlocks(t, path, data, "google_cloud_run_v2_service")
+	if len(services) != 1 || !hasAttr(services[0].body, "deletion_protection", "false") {
+		t.Errorf("%s: the service must be exactly one Cloud Run service with deletion_protection = false (got %d blocks), so the second step can remove it", path, len(services))
+	}
+}
+
 // The token signer holds no roles, and no job or build account is granted
 // anything on the Firebase project. The plan assertions check the values;
 // this text check catches a grant written to either by reference, which no
@@ -3688,5 +3726,53 @@ func TestCredentialsServiceIsOptIn(t *testing.T) {
 	}
 	if !strings.Contains(squash(stripComments(string(rb))), "credentials_service = optional(object({ name = string region = string }))") {
 		t.Error("gcp/roots/repo/variables.tf: the installation object must accept credentials_service, or the repo root cannot carry the installation's service")
+	}
+}
+
+// The service's image must be a DIGEST, and the validation that says so must
+// be exercised by a run that plans the tag form and expects the refusal. Why
+// it is a security rule and not a preference: the service's account reads
+// every credential in the bundle, and the registry grants
+// roles/artifactregistry.writer to every operator, so a mutable tag would let
+// an operator push the code that the next owner apply runs as that account
+// (independent security review of this file, M1). The terraform test is the
+// guard that bites — this test is what fails if someone deletes the refusal
+// runs while leaving the validation, or loosens the validation while leaving
+// the runs, either of which would take the digest requirement with it.
+func TestCredentialsServiceImageMustBeADigest(t *testing.T) {
+	const path = "gcp/modules/installation/variables.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	i := regexp.MustCompile(`(?m)^\s*variable\s+"credentials_service"\s*\{`).FindStringIndex(code)
+	if i == nil {
+		t.Fatalf("%s declares no credentials_service variable", path)
+	}
+	body := code[i[1]:matchBrace(code, i[1]-1)]
+	if !strings.Contains(body, "@sha256:[0-9a-f]{64}") {
+		t.Errorf("%s: the credentials_service validation must require an image pinned by digest (a regex ending in @sha256: and 64 lower-case hex digits); a tag is mutable and any operator may push to the installation's registry:\n%s", path, body)
+	}
+	if strings.Contains(body, "length(var.credentials_service.image) > 0") {
+		t.Errorf("%s: the credentials_service validation still accepts any non-empty image, which is the shape M1 found", path)
+	}
+	const tftest = "gcp/roots/installation/tests/installation.tftest.hcl"
+	tb, err := fs.ReadFile(FS, tftest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(tb)
+	if !strings.Contains(text, "@sha256:") {
+		t.Errorf("%s: no run in the installation root's terraform test carries a digest image, so nothing exercises the validation above", tftest)
+	}
+	n := 0
+	for _, m := range regexp.MustCompile(`(?m)^\s*expect_failures\s*=\s*\[([^\]]*)\]`).FindAllStringSubmatch(text, -1) {
+		if strings.Contains(m[1], "var.credentials_service") {
+			n++
+		}
+	}
+	if n < 2 {
+		t.Errorf("%s: %d runs expect var.credentials_service to fail; the tag form and the truncated-digest form must each be planned and refused (M1)", tftest, n)
 	}
 }

@@ -291,7 +291,7 @@ variable "project_secrets" {
 }
 
 variable "credentials_service" {
-  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image (C1.20's init stage fills it, as it fills history.image); bundle_secret is the Secret Manager ID of the one bundle container the service reads — the project-wide container of the logical name \"creds-bundle\" (internal/backend/gcp's ProjectSecretID, CredsBundleSecretID once the loader of C1.11 declares it), which C1.20's stage fills from that one function so the container created here and the name the loader reads cannot drift. It is created here and written only by the owner-run fugaro creds set (C1.25)."
+  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image, pinned BY DIGEST and never by tag (C1.20's init stage fills the verified digest, as it fills history.image; the validation below refuses a tag, because the account this service runs as reads every credential in the bundle and an operator may push a tag to the installation's own registry); bundle_secret is the Secret Manager ID of the one bundle container the service reads — the project-wide container of the logical name \"creds-bundle\" (internal/backend/gcp's ProjectSecretID, CredsBundleSecretID once the loader of C1.11 declares it), which C1.20's stage fills from that one function so the container created here and the name the loader reads cannot drift. It is created here and written only by the owner-run fugaro creds set (C1.25)."
   type = object({
     account_id    = string
     service       = string
@@ -300,14 +300,26 @@ variable "credentials_service" {
   })
   default = null
 
+  # The image is a DIGEST and never a tag, and that is a security rule rather
+  # than a preference. The service runs as the account that reads every
+  # credential in the bundle, and the repository the image is pushed to grants
+  # roles/artifactregistry.writer to every operator (iam.tf's operators
+  # binding on fugaro-base): a mutable tag such as
+  # `fugaro-base/fugaro-credentials:latest` would let any operator push the
+  # code that the next owner apply runs as that account — the boundary D145
+  # exists to keep ("operators add, never read"). A digest cannot be
+  # rewritten, so the revision an apply creates runs the bytes the owner
+  # verified. C1.20's init stage fills the verified digest (init already reads
+  # verified digests back through the ghcr proxy), and the tag form is refused
+  # at plan time rather than trusted.
   validation {
     condition = var.credentials_service == null ? true : (
       can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.credentials_service.account_id)) &&
       can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.credentials_service.service)) &&
-      length(var.credentials_service.image) > 0 &&
+      can(regex("^[A-Za-z0-9][A-Za-z0-9._/@:-]*@sha256:[0-9a-f]{64}$", var.credentials_service.image)) &&
       can(regex("^[a-zA-Z0-9_-]{1,255}$", var.credentials_service.bundle_secret))
     )
-    error_message = "credentials_service needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter), a Cloud Run service name, an image, and the bundle secret's Secret Manager ID (letters, digits, - and _)."
+    error_message = "credentials_service needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter), a Cloud Run service name, an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag), and the bundle secret's Secret Manager ID (letters, digits, - and _)."
   }
 }
 
