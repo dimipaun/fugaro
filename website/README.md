@@ -470,10 +470,11 @@ added or removed without this sentence moving fails there:
     either: **1,060 bytes onto the docs hub**, whose page carries the whole generated CLI
     reference, and **66 bytes onto caps-and-costs**, which quotes the three usages under its
     commands — **1,126 bytes onto the site figure**. Neither was re-derived in that round, and
-    the round after it (How It Works, below) re-derived the site figure from the figure stated
-    in this list rather than from the build it makes, so the 1,126 bytes survived it: they are
-    paid in the round below, which is why the site figure there moves by less than the icons
-    alone. Both figures are now the gate's own build's, which is the rule (D192).
+    the round after it (How It Works, below) added its own 6,510 bytes to the figure stated in
+    this list rather than re-deriving from the build — 975,034 + 6,510 is the 981,544 it wrote,
+    while the build was 1,126 bytes larger — so the shortfall survived it and is paid in
+    the logo round at the end of this list. Both figures are read off the gate's own build now,
+    which is the rule (D192).
   - **How It Works is one diagram of the run, and the run in words under it** (the owner
     approved the draft "How it works, draft 2 (diagram)" on 2026-10-19 with "build it", and
     item P8's step-by-step timeline came out). It moved the site figure alone, 975,034 →
@@ -491,19 +492,18 @@ added or removed without this sentence moving fails there:
     console's byte copy of it — is no longer an upscale of a smaller source (`brand/README.md`
     and `console/README.md` carry the account, and `test/accent.mjs` re-pins the facts about the
     file: the canvas, the counts and the circular mean hue, which moved 198.4° → **199.0°**).
-    Every file `scripts/gen-brand-icons.py` writes moved with it, and the two figures moved in
-    opposite directions:
-    **the whole site, 981,544 → 972,325, by −9,219 bytes.** The icons the site serves are
-    **10,345 bytes lighter** in total — the 512 px and the maskable Android icons and the
+    Every file `scripts/gen-brand-icons.py` writes moved with it, and the two byte figures moved
+    in opposite directions. **The whole site went 981,544 → 972,325, by −9,219 bytes:** the icons
+    the site serves are **10,345 bytes lighter** in total — the three Android icons and the
     apple-touch icon are most of it, the three favicons are 89 bytes heavier, and the header's
     `logo.png` is 17 lighter — and the **1,126 bytes the CLI round above had left un-derived**
-    are paid here, which is the rest.
-    **The page weight, 280,681 → 281,813, by +1,132 bytes**: the docs hub fetches the three
-    favicons (89 bytes heavier) and the header logo (17 lighter), so its own share is +72, on top
-    of the 1,060 the CLI reference had already added to it. The script did not move — no page's
-    JavaScript changed, and `public/scripts/site.js` is the same 39,888 bytes — and neither did
-    a word of any page: no markup and no stylesheet changed, so the two word ceilings did not
-    move either. The count of files in `dist/` is 23, as it was.
+    are paid here, which is the rest. **The page weight went 280,681 → 281,813, by +1,132
+    bytes:** the docs hub fetches the three favicons (89 bytes heavier) and the header logo (17
+    lighter), so its own share of the move is +72, on top of the 1,060 the CLI reference had
+    already added to it. The script did not move — no page's JavaScript changed, and
+    `public/scripts/site.js` is the same 39,888 bytes — and neither did a word of any page: no
+    markup and no stylesheet changed, so the two word ceilings did not move either, and the count
+    of files in `dist/` is 23, as it was.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it

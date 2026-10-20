@@ -531,8 +531,9 @@ The source was 1024 × 1024 when this round first sampled it, and the owner repl
 a 2048 × 2048 one on 2026-10-20: the same artwork with twice the real pixels, so the
 derived icons are no longer upscales. **Every figure above is the re-sample of that file**,
 and the movement is small but real — the canvas and every count scale with the resolution,
-and each mean hue moves up by 0.6–0.8° (198.4 → 199.0 at saturation ≥ 0.5, 199.5 → 200.0 at
-≥ 0.6, 201.4 → 202.0 at ≥ 0.7, 204.2 → 205.0 at ≥ 0.8). Why the finer file reads a shade
+and each mean hue moves up by about half a degree to three quarters of one (198.4 → 199.0 at
+saturation ≥ 0.5, 199.5 → 200.0 at ≥ 0.6, 201.4 → 202.0 at ≥ 0.7, 204.2 → 205.0 at ≥ 0.8,
+to the one decimal the script prints). Why the finer file reads a shade
 bluer is not something this sample settles: the pixels at the artwork's edges, which a
 1024 px render blends with the transparent ground and a 2048 px one resolves, are the
 likeliest place for it, and this document does not claim more than that. What did not move
