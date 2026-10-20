@@ -1008,6 +1008,28 @@ func TestNoTerminalErrorDropsTheYesHintForAnAgent(t *testing.T) {
 	}
 }
 
+// The zero value of ConfirmClass is Typed, the strictest: a caller that names
+// no class — a zero value, a field nobody set, a class left out of a table —
+// refuses a confirmation rather than giving one, the direction every mistake in
+// this package falls (as with Managed's zero value, and Covers and Removes
+// being methods rather than fields). --yes at a real terminal is the sharpest
+// way to say it: the permissive class takes it, the strictest does not.
+func TestZeroConfirmClassIsTheStrictest(t *testing.T) {
+	if ConfirmClass(0) != Typed {
+		t.Fatalf("the zero ConfirmClass is %d, want Typed (%d): a caller that names no class must not be handed the permissive one", ConfirmClass(0), Typed)
+	}
+	all := Conditions{Yes: true, Terminal: true}
+	if got, want := CanConfirm(ConfirmClass(0), all), CanConfirm(Typed, all); got != want || got {
+		t.Errorf("CanConfirm(zero class, --yes at a terminal) = %v, want %v (the Typed rule)", got, want)
+	}
+	if !CanConfirm(YesOrTyped, all) {
+		t.Error("YesOrTyped no longer takes --yes at a terminal")
+	}
+	if YesOrTyped == Typed {
+		t.Error("the two classes are no longer distinct")
+	}
+}
+
 func TestCanConfirm(t *testing.T) {
 	type c = Conditions
 	term := c{Terminal: true}

@@ -338,17 +338,26 @@ func AgentProceeded(marker string) string {
 }
 
 // ConfirmClass is who may confirm a step.
+//
+// The zero value is Typed, the strictest class, and that is deliberate: a
+// caller that names no class — a field nobody set, a class left out of a
+// table, a zero value passed on — refuses a confirmation rather than giving
+// one. Every mistake in this file falls in the refusing direction (Managed's
+// zero value is "not managed", and Covers and Removes are methods rather than
+// fields so no caller can assert coverage), and the zero value of the class a
+// step is confirmed under is the last place a mistake could fall the other
+// way.
 type ConfirmClass int
 
 const (
-	// YesOrTyped steps take --yes, or the typed confirmation at a terminal:
-	// the Terraform applies, the plugin wiring, a known repository.
-	YesOrTyped ConfirmClass = iota
 	// Typed steps are money or permanent: a new project, billing, a secret, a
 	// Firestore location, a billable image build, replacing a registry tag. A
 	// person types the confirmation at a real terminal; --yes,
 	// --non-interactive, --json, a pipe and a coding agent never give it.
-	Typed
+	Typed ConfirmClass = iota
+	// YesOrTyped steps take --yes, or the typed confirmation at a terminal:
+	// the Terraform applies, the plugin wiring, a known repository.
+	YesOrTyped
 )
 
 // Conditions are what a run says about who is there.
