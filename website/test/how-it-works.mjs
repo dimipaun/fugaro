@@ -725,7 +725,7 @@ export function runDiagramFailures(html, css, docs = sources()) {
       plain: rules.filter((rule) => !rule.conditions).map((rule) => rule.value),
       switched: rules
         .filter((rule) => rule.conditions)
-        .map((rule) => ({ value: rule.value, at: queryWidth(rule.conditions), query: rule.conditions })),
+        .map((rule) => ({ value: rule.value, at: queryWidth(rule.conditions) })),
     }
   }
   const tallShown = shown('run-tall')
