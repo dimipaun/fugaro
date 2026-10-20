@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **981,544 bytes in a checkout with no tags** and to **981,544 bytes with the
+  commit builds to **972,362 bytes in a checkout with no tags** and to **972,362 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -464,6 +464,19 @@ added or removed without this sentence moving fails there:
     four glyphs are shapes in the markup, and `test/home.mjs` reads each one back off the built
     page and refuses an icon that references a file or an origin. The words are the ones the
     section already carried, so the word ceiling did not move.
+  - **The CLI's `--repo` gained its bare form, and the two figures it moved were left
+    un-derived** (the round of 2026-10-19; this round repairs it). `fugaro budget set --repo`
+    with no value means the checkout's own repository now, and the command tree's usage strings
+    changed with it — `--repo R` → `--repo [owner/name]` on `budget set`, `budget kill` and
+    `budget resume`. The site renders those strings in two places, and nothing is fetched for
+    either: **1,060 bytes onto the docs hub**, whose page carries the whole generated CLI
+    reference, and **66 bytes onto caps-and-costs**, which quotes the three usages under its
+    commands — **1,126 bytes onto the site figure**. Neither was re-derived in that round, and
+    the round after it (How It Works, below) added its own 6,510 bytes to the figure stated in
+    this list rather than re-deriving from the build — 975,034 + 6,510 is the 981,544 it wrote,
+    while the build was 1,126 bytes larger — so the shortfall survived it and is paid in
+    the logo round at the end of this list. Both figures are read off the gate's own build now,
+    which is the rule (D192).
   - **How It Works is one diagram of the run, and the run in words under it** (the owner
     approved the draft "How it works, draft 2 (diagram)" on 2026-10-19 with "build it", and
     item P8's step-by-step timeline came out). It moved the site figure alone, 975,034 →
@@ -513,6 +526,23 @@ added or removed without this sentence moving fails there:
     981,544 → **982,707**, the 1,126 bytes plus this round's 37. Both figures are what
     `website/test/budget.mjs` measures in the gates' own build, which is the build the numbers
     are derived from (above); the script's figure did not move, so it was not re-derived.
+  - **The logo's source became the owner's 2048 px one, and every derived icon was regenerated**
+    (2026-10-20). The owner supplied `fugaro-logo-large.png`, 2048 × 2048, 8-bit RGBA on
+    transparency: the same artwork with twice the real pixels, so the 1024 px app icon — and the
+    console's byte copy of it — is no longer an upscale of a smaller source (`brand/README.md`
+    and `console/README.md` carry the account, and `test/accent.mjs` re-pins the facts about the
+    file: the canvas, the counts and the circular mean hue, which moved 198.4° → **199.0°**).
+    Every file `scripts/gen-brand-icons.py` writes moved with it, and the two byte figures moved
+    in opposite directions. **The whole site went 982,707 → 972,362, by −10,345 bytes:** the icons
+    the site serves are **10,345 bytes lighter** in total — the three Android icons and the
+    apple-touch icon are most of it, the three favicons are 89 bytes heavier, and the header's
+    `logo.png` is 17 lighter. **The page weight went 281,741 → 281,813, by +72
+    bytes:** the docs hub fetches the three favicons (89 bytes heavier) and the header logo (17
+    lighter), so its share of the move is +72, on top of the 1,060 the CLI reference had
+    already added to it. The script did not move — no page's JavaScript changed, and
+    `public/scripts/site.js` is the same 39,888 bytes — and neither did a word of any page: no
+    markup and no stylesheet changed, so the two word ceilings did not move either, and the count
+    of files in `dist/` is 23, as it was.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -536,10 +566,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,056,531 bytes. Three times 352,177: the heaviest page, the
-    docs hub, at 281,741 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 1,056,801 bytes. Three times 352,267: the heaviest page, the
+    docs hub, at 281,813 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,685,152 bytes. Three times 1,228,384 (every file in `dist/`, 982,707
+  - **Whole site:** 3,646,359 bytes. Three times 1,215,453 (every file in `dist/`, 972,362
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
