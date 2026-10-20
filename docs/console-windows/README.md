@@ -14,20 +14,22 @@ GATE.
 
 | File | What it is |
 |---|---|
-| [reconciliation.md](reconciliation.md) | The task brief **verbatim** as §0 — the source this work is reconciled against — then corrections **C1–C5** to what the tree says today; findings **F1–F45** against `ccc406b2`, each classified **Wrong / Exists / Gap / Rule / Open** with a path and a symbol and its consequence; the headline table; the **census** (every construct the brief names, each count with **the exact command** beside it, and the rule that the commands and not the figures are the durable part); **decisions D1–D12**, each with its recommendation first, the alternative and its cost, and none of them answered; items **O1–O7**; and the **UNVERIFIED** table **U1–U19**. Where it disagrees with the brief, it wins and says so. |
+| [reconciliation.md](reconciliation.md) | The task brief **verbatim** as §0 — the source this work is reconciled against — then corrections **C1–C6** to what the tree says today; findings **F1–F47** against `ccc406b2`, each classified **Wrong / Exists / Gap / Rule / Open** with a path and a symbol and its consequence; the headline table; the **census** (every construct the brief names, each count with **the exact command** beside it, and the rule that the commands and not the figures are the durable part); **decisions D1–D12**, each with its recommendation first, the alternative and its cost, and none of them answered; items **O1–O7**; and the **UNVERIFIED** table **U1–U19**. Where it disagrees with the brief, it wins and says so. |
 | [implementation-plan.md](implementation-plan.md) | The plan: **Part A** the packer and the fuse table, **Part B** the resolver, **Part C** paths, **Part D** the credential boundary, **Part E** spawning, streaming and cancellation, **Part F** the first-run pages, **Part G** the installer job and the release text, **Part H** the test strategy; each part ordered so it merges alone, each task with files, a **red step**, a verification command, dependencies, a reviewer tier and a commit message; the **owner manual checklist** (Check 119, proposed); and the **OWNER APPROVAL GATE**. **Nothing is approved: Part A is the first part that may start, and only after the gate passes.** |
 
 ## The headline, in one paragraph
 
 **The console is already built to run a CLI it did not write, and the WSL route needs almost none of
-its design to change — but three of its load-bearing POSIX assumptions are compile-time-adjacent
-blockers, and the packer refuses Windows outright.** `fuseTarget`
+its design to change — but the packer refuses Windows outright, and three of the resolver's
+load-bearing POSIX assumptions make the unit suite unrunnable on a Windows runner.** `fuseTarget`
 (`console/src/main/fuses.ts:379`) **throws** for any `electronPlatformName` outside
 `SUPPORTED_PLATFORMS` (`fuses.ts:298` = `['darwin','linux']`), and `afterPack` is the pack's only
 fuse flipper, so `electron-builder --win` cannot produce an artifact at all until the table gains a
 `win32` row — there is no "pack it and fix it later". Under that, the resolver's three POSIX
 assumptions are each a **one-line** change in a module that is already a pure function of what it is
-given: `isExecutableFile`'s `stat.mode & 0o111` (`spawn.ts:850`, meaningless on Windows, which
+given — and they are the **runner's** blockers rather than the route's, because the WSL route never
+walks the host's directories (C6): `isExecutableFile`'s `stat.mode & 0o111` (`spawn.ts:850`,
+meaningless on Windows, which
 reports two modes), `binDirectories`' and `childPath`'s `':'` separator (`spawn.ts:825`,
 `spawn.ts:920`), and `privateWorkingDirectory`'s uid/chmod/lstat chain (`spawn.ts:955`) — which
 Windows does not have at all. **The credential boundary needs no change and must not get one**:
