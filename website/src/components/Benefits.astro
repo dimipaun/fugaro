@@ -62,6 +62,17 @@
  * the weight the name already carried — "bolder" here is that weight stepped up the scale).
  * The section's own `h2` goes one step further (`--font-size-xl`), so the block still reads as
  * a section with four points under it rather than as four headings and a label.
+ *
+ * **The heading is "Why Fugaro?"** (the owner's ruling of 2026-10-20, capital W and F and the
+ * question mark). It was "Benefits", which named the block's shape rather than what it says:
+ * the four points below are the README's `## Why Fugaro` reasons, and they are the answer to
+ * that question, so the heading is the question and the list under it the answer. The section
+ * carries `id="benefits-title"` and `class="home-benefits"` still — the id and the class are
+ * the element's name in the markup, which `aria-labelledby` and the stylesheet both read, and
+ * neither is a label a reader sees. `website/test/home.mjs` holds the heading to the exact
+ * string, question mark included, and `website/test/slider.mjs` holds the panel's own heading
+ * to the tab label that opens it, so the tab and the heading are one name and a rename that
+ * reached only one of them stops the build.
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -242,7 +253,7 @@ const { inPanel = false } = Astro.props
   aria-labelledby="benefits-title"
   data-source={SOURCE}
 >
-  <h2 class="benefits-title" id="benefits-title">Benefits</h2>
+  <h2 class="benefits-title" id="benefits-title">Why Fugaro?</h2>
   <ul class="benefit-list">
     {
       BENEFITS.map((benefit) => (

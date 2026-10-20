@@ -505,6 +505,15 @@ function readmeReasons() {
 const BENEFITS_SOURCE = 'README.md#Why Fugaro'
 
 /**
+ * The benefits section's heading, exactly: the owner's ruling of 2026-10-20 names it "Why
+ * Fugaro?" — capital W and F and the question mark — because the four points under it are the
+ * reasons the README argues under that heading, and the section is the answer to the question
+ * rather than a list of "benefits". Held as one string and read twice (the heading, and the
+ * tab label `slider.mjs` pairs with it), so the two halves of the rename cannot drift apart.
+ */
+const BENEFITS_TITLE = 'Why Fugaro?'
+
+/**
  * The attributes of an element as one stable string, without the build's own scope attribute:
  * what a glyph is drawn with is its drawing, and Astro's `data-astro-cid-…` is the same on
  * every element of the section rather than part of any picture.
@@ -609,6 +618,8 @@ function benefitsOf(html) {
 /**
  * Every failure of the benefits' rule, as the lines a reader of this file sees:
  *
+ *   - **the section is headed "Why Fugaro?"**, the owner's own name for it since the ruling of
+ *     2026-10-20, and the same string the slider's tab carries;
  *   - **the page renders the README's reasons, all of them and in the README's order** — one
  *     benefit per reason, named with the README's own name for it (the number off, which is
  *     the README's device for counting and not part of the name). A reason the page drops is a
@@ -639,9 +650,9 @@ export function benefitFailures(benefits, reasons) {
   if (benefits.sections !== 1) {
     return [`the page renders ${benefits.sections} benefits sections, and it renders one: the section is the README's four reasons and not a figure (the owner's feedback of 2026-10-19)`]
   }
-  if (benefits.title !== 'Benefits') {
+  if (benefits.title !== BENEFITS_TITLE) {
     out.push(
-      `the benefits section is headed ${JSON.stringify(benefits.title)}, and the section a reader looks for is headed "Benefits": the heading is the site's own label for the block, the way "Install" is the install block's (the owner's feedback of 2026-10-19)`,
+      `the benefits section is headed ${JSON.stringify(benefits.title)}, and the section a reader looks for is headed ${JSON.stringify(BENEFITS_TITLE)}: the heading is the site's own label for the block, the way "Install" is the install block's, and it is the question the README's four reasons answer (the owner's ruling of 2026-10-20)`,
     )
   }
   if (benefits.source !== BENEFITS_SOURCE) {
@@ -742,7 +753,7 @@ function iconMarkup(body, marks = 'aria-hidden="true" focusable="false"') {
 const FIXTURE_GLYPHS = ['M1 1h2v2', 'M3 3h2v2', 'M5 5h2v2', 'M7 7h2v2']
 
 /** A page carrying nothing but a benefits section, for the refusals above. */
-function benefitsPage(items, { title = 'Benefits', source = BENEFITS_SOURCE, sections = 1 } = {}) {
+function benefitsPage(items, { title = BENEFITS_TITLE, source = BENEFITS_SOURCE, sections = 1 } = {}) {
   const body = items
     .map(
       (item, index) =>
@@ -805,10 +816,19 @@ test('the benefits refusals fire on a paraphrase, a shuffled line and a dropped 
     'a benefit renamed by the page is not refused',
   )
 
+  // The heading is pinned to the character: the plant is the owner's own words without the
+  // question mark, so a rename that read the ruling as a phrase rather than as the exact
+  // string is refused.
   assert.match(
     benefitFailures(benefitsOf(benefitsPage(good, { title: 'Why Fugaro' })), reasons).join('\n'),
     /is headed "Why Fugaro"/,
-    'a section that lost its heading is not refused',
+    'a section headed with the old label, or with the new one minus its question mark, is not refused',
+  )
+
+  assert.match(
+    benefitFailures(benefitsOf(benefitsPage(good, { title: 'Benefits' })), reasons).join('\n'),
+    /is headed "Benefits"/,
+    'the label this section carried before the owner\'s ruling of 2026-10-20 is not refused',
   )
 
   assert.match(
@@ -1191,7 +1211,7 @@ test('the watch screenshot is in the slot the "See it" panel marks, named, sized
   // puts the capture in the "See it" tab, and the panel reads: its heading, then the picture,
   // then the command the reader runs to see the same screen. Held as structure — the panel's
   // own children — rather than as a class name, because the panel is what a reader switches to,
-  // and a picture moved into the "Benefits" panel is a picture under a heading about something
+  // and a picture moved into the "Why Fugaro?" panel is a picture under a heading about something
   // else.
   const panel = findAll(page, (el) => el.attrs.get('id') === 'home-panel-see')[0]
   assert.ok(panel, 'the homepage carries no #home-panel-see, and the capture is what the draft\'s "See it" tab shows (the owner\'s approved draft of 2026-10-19)')

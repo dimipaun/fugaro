@@ -16,7 +16,7 @@
 //   2. **The panel the fragment names is the panel the stylesheet shows, per tab.** The
 //      stylesheet hides every panel, shows the targeted one, shows the first one while nothing
 //      is targeted, and marks the tab that belongs to each panel — read one tab at a time, so a
-//      stylesheet that pairs the Benefits tab with the See it panel is refused rather than
+//      stylesheet that pairs the Why Fugaro? tab with the See it panel is refused rather than
 //      counted as three pairs present.
 //   3. **No script switches them.** Nothing in the block is a script, the site's one script
 //      names none of the block's ids or classes, and the tabs carry no `role="tab"` /
@@ -217,8 +217,8 @@ export function sliderFailures(css, html) {
   // 1. the three tabs, the three panels, and the pairing between them.
   const tabs = findAll(slider, (el) => el.name === 'a' && HAS(el, 'tab'))
   const panels = findAll(slider, (el) => HAS(el, 'panel'))
-  const LABELS = ['Easy to use', 'Benefits', 'See it']
-  if (tabs.length !== 3) out.push(`the slider carries ${tabs.length} tabs, and the draft asks for three ("Easy to use", "Benefits", "See it")`)
+  const LABELS = ['Easy to use', 'Why Fugaro?', 'See it']
+  if (tabs.length !== 3) out.push(`the slider carries ${tabs.length} tabs, and the draft asks for three ("Easy to use", "Why Fugaro?", "See it")`)
   if (panels.length !== 3) out.push(`the slider carries ${panels.length} panels, and every tab has one: a panel that is not in the HTML is a tab that opens nothing`)
   if (tabs.length === 3 && panels.length === 3) {
     for (const [index, tab] of tabs.entries()) {
@@ -227,7 +227,7 @@ export function sliderFailures(css, html) {
       const panel = panels[index]
       const id = panel.attrs.get('id') ?? ''
       if (label !== LABELS[index]) {
-        out.push(`tab ${index + 1} reads ${JSON.stringify(label)} where the draft's third tab is ${JSON.stringify(LABELS[index])}: the three labels are "Easy to use", "Benefits" and "See it", in that order`)
+        out.push(`tab ${index + 1} reads ${JSON.stringify(label)} where the draft's third tab is ${JSON.stringify(LABELS[index])}: the three labels are "Easy to use", "Why Fugaro?" and "See it", in that order`)
       }
       if (!/^#home-panel-[\w-]+$/.test(href)) {
         out.push(`tab ${index + 1} (${JSON.stringify(label)}) links to ${JSON.stringify(href)}, and a tab is a fragment link to the panel it opens: without the fragment the stylesheet has nothing to key the panel's \`:target\` rule on`)
