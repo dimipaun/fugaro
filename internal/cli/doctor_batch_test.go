@@ -351,3 +351,27 @@ func TestDoctorBatchRefusesAJobDefinitionTheBackendWouldRefuse(t *testing.T) {
 		t.Errorf("the warning is not the backend's own refusal: %s", c.Problem)
 	}
 }
+
+// TestBatchSinkArmMatchesTheModulesFilter: batchSinkArm is a copy of the
+// installation module's own arm (deploy/terraform/gcp/modules/installation/
+// logging.tf's local.fugaro_batch_logs), and the sink check reads it with
+// strings.Contains. Nothing else holds the two together: the module's side is
+// pinned by deploy/terraform/terraform_test.go, but a whitespace or label edit
+// there would leave doctor warning on every correctly applied installation
+// with no Go test failing -- the asymmetry with batchLauncherRole, which
+// internal/infra/tf.Cover holds to the compute module, is why this reads the
+// module's file rather than restating the arm.
+//
+// Mutation (change the constant, or the module's local): this fails.
+func TestBatchSinkArmMatchesTheModulesFilter(t *testing.T) {
+	data, err := os.ReadFile("../../deploy/terraform/gcp/modules/installation/logging.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The arm is a Terraform string literal, so its inner quotes are escaped
+	// there and not in the Go constant.
+	tf := strings.ReplaceAll(string(data), `\"`, `"`)
+	if !strings.Contains(tf, batchSinkArm) {
+		t.Errorf("the installation module's filter no longer carries the arm doctor checks for (%s): doctor would warn on every correctly applied installation, and the module and the Go constant change together", batchSinkArm)
+	}
+}
