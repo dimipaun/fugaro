@@ -60,7 +60,7 @@ import {
 // then pass for the wrong reason (a garbage frame is refused too).
 import { APP_ENTRY_URL, CONTENT_SECURITY_POLICY } from '../../src/main/protocol'
 import type { ConsoleEventLike, ConsoleHandlers, ConsoleReply, IpcMainLike } from '../../src/main/ipc'
-import { CLI_VERSION_BUILT_AGAINST } from '../../src/shared/version'
+import { CLI_VERSION_BUILT_AGAINST, classifyCliVersion } from '../../src/shared/version'
 import { FUGARO_BINARY_NAME } from '../../src/main/spawn'
 import { installStub } from './stub'
 import type { Stub } from './stub'
@@ -526,6 +526,54 @@ describe('the picker’s list', () => {
     const chosen = await answer(ipcMain, 'choose', { project: 'legacy' })
     expect(chosen.ok).toBe(true)
     expect(picker.installation()).toMatchObject({ chosen: true, project: 'legacy' })
+  })
+
+  it('carries the startup’s handshake into the dashboard’s read and the picker’s row', async () => {
+    // What `src/main/index.ts` does with the startup read: `onDecided` hands the
+    // compatibility to `picker.remember(project, …)`, and the two readers a
+    // launch draws -- `installation.current` (the dashboard's header) and the
+    // picker's rows -- both ask the registry for it **by project**
+    // (`compatibility.get(active.project)`, `rowsOf`'s `compatibility.get(
+    // installation.project)`). Remembering under the installation's *id*
+    // instead put the answer where nothing looks: the header drew "version not
+    // read · unknown" and the active row said `unknown` on every launch, with
+    // the handshake's own answer thrown away.
+    const root = freshDirectory()
+    const userData = join(root, 'user-data')
+    mkdirSync(userData, { recursive: true, mode: 0o700 })
+    writeFileSync(
+      join(userData, INSTALLATIONS_FILE_NAME),
+      serializeInstallationFile({
+        version: 1,
+        active: '0123456789abcdef',
+        installations: [{ id: '0123456789abcdef', project: 'legacy' }],
+      }),
+      { mode: 0o600 },
+    )
+    const { picker, ipcMain } = pickerOver({ userData, prefixes: [freshDirectory()] })
+    // Nothing has read it in this run, so nothing may say `ok` (review S1). The
+    // non-vacuity half: the assertions below would pass on a console that always
+    // answered `ok`.
+    const before = picker.installation()
+    expect(before).toMatchObject({ chosen: true, project: 'legacy', mode: 'unknown', cliVersion: null })
+    const read = classifyCliVersion(CLOCKED)
+    picker.remember('legacy', read)
+    // The dashboard's header...
+    expect(picker.installation()).toMatchObject({
+      chosen: true,
+      project: 'legacy',
+      mode: read.mode,
+      cliVersion: read.cliVersion,
+    })
+    // ...and the row the picker draws, from the same answer.
+    const listed = await answer(ipcMain, 'list')
+    expect(listed.ok).toBe(true)
+    if (!listed.ok) return
+    const rows = (listed.data as { rows: readonly { project: string; mode: string }[] }).rows
+    expect(rows).toEqual([expect.objectContaining({ project: 'legacy', mode: read.mode })])
+    // The id is a different string, and it is not a second key: a reader that
+    // asked for it would answer `unknown` while the project's entry sat there.
+    expect(read.mode).toBe('ok')
   })
 
   it('draws the store’s own rows beside the CLI’s refusal, rather than hiding them', async () => {

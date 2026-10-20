@@ -141,14 +141,12 @@ function serveBundle(): void {
  * `NO_ACTIVE_INSTALLATION`, and the picker opens once.
  */
 function handshakeInstallation(): {
-  readonly id: string
   readonly binaryPath?: string | undefined
   readonly target: SpawnTarget
 } | null {
   const chosen = picker?.installation()
   if (chosen === undefined || !chosen.chosen) return null
   return {
-    id: chosen.id,
     ...(chosen.binary === undefined ? {} : { binaryPath: chosen.binary }),
     target: Object.freeze({
       project: chosen.project,
@@ -158,14 +156,21 @@ function handshakeInstallation(): {
 }
 
 /**
- * handshakeFor is the id of the installation whose startup handshake has just
- * been read, until `onDecided` hands the answer to the picker's registry
- * (`picker.remember`), so `installation.current` and the picker's rows carry the
- * startup's mode and version rather than a default (review S1). It is consumed
- * once: a later `onDecided` comes from a choose, whose own probe the picker has
- * already remembered.
+ * handshakeProject is the **project** of the installation whose startup
+ * handshake has just been read, until `onDecided` hands the answer to the
+ * picker's registry (`picker.remember`), so `installation.current` and the
+ * picker's rows carry the startup's mode and version rather than a default
+ * (review S1). It is consumed once: a later `onDecided` comes from a choose,
+ * whose own probe the picker has already remembered.
+ *
+ * **The project and not the id**, because that is the key the compatibility is
+ * held under: `picker.remember` -> `registry.remember` -> `compatibility.set`,
+ * and every reader asks for `active.project` / `installation.project`. An id
+ * here would store the handshake's answer where nothing looks -- the header
+ * drawn as "version not read · unknown" and the active row as `unknown` on every
+ * launch, with the answer the startup had just read thrown away.
  */
-let handshakeFor: string | null = null
+let handshakeProject: string | null = null
 
 /**
  * readCliVersion is the handshake's reader: `resolveHandshakeBinary`
@@ -202,7 +207,7 @@ async function readCliVersion(): Promise<VersionRead> {
     if (chosen !== null && resolution.ok) resolvedBinaries.set(chosen.target.project, resolution.path)
     return versionReadFrom(resolution)
   } finally {
-    handshakeFor = chosen === null ? null : chosen.id
+    handshakeProject = chosen === null ? null : chosen.target.project
     log.close()
   }
 }
@@ -425,8 +430,10 @@ function registerHandlers(): void {
  */
 function onDecided(compatibility: CliCompatibility): void {
   current = compatibility
-  const read = handshakeFor
-  handshakeFor = null
+  // The project, which is what `remember` keys the compatibility by: see
+  // `handshakeProject` above for what an id here would cost.
+  const read = handshakeProject
+  handshakeProject = null
   if (read !== null) picker?.remember(read, compatibility)
   if (compatibility.mode === 'refused') return
   registerHandlers()

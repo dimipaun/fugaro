@@ -1092,6 +1092,30 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     expect(bodyOf('function activeBinding()')).toContain('chosen.binary ?? resolved')
   })
 
+  it('hands the startup handshake to the picker under the installation’s project, never its id', () => {
+    // The compatibility a handshake read is held **by project**: `remember` is
+    // `registry.remember(project, …)` -> `compatibility.set(project, value)`, and
+    // the readers are `compatibility.get(active.project)` (`current`,
+    // `activeCompatibility`) and `compatibility.get(installation.project)`
+    // (`rows`). An id is a different string, so remembering under it stores the
+    // answer where nothing looks: the dashboard's header draws "version not read
+    // · unknown" and the picker's active row says `unknown` on every launch,
+    // while the handshake that just read the version is thrown away. The two
+    // statements that make that a fact here are the assignment below -- which the
+    // same function does correctly two lines earlier for `resolvedBinaries` --
+    // and the `remember` call `onDecided` makes with it.
+    expect(indexSource).toContain('handshakeProject = chosen === null ? null : chosen.target.project')
+    expect(indexSource).not.toMatch(/handshakeProject\s*=\s*[^\n]*\.id/)
+    expect(bodyOf('function onDecided(compatibility: CliCompatibility): void')).toContain(
+      'picker?.remember(read, compatibility)',
+    )
+    // And the id is not carried at all: `resolveHandshakeBinary` takes the
+    // override and the target, so a stored id would be a field nothing reads and
+    // the next writer of this function would have to guess which one `remember`
+    // wants (it wants the project).
+    expect(bodyOf('function handshakeInstallation()')).not.toContain('chosen.id')
+  })
+
   // The two Task 3.4b cases that stood here were greps of this file's text
   // (`'configuredPath: chosen.binaryPath'` and the like), and they passed with
   // the B1 fallthrough in place (review S4). Their behaviour is proven instead:
