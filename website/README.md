@@ -982,10 +982,13 @@ added or removed without this sentence moving fails there:
   makes it a stacking context; the skip link and the consent banner carry the chrome's layer
   and nothing else does; and **no other rule declares a `z-index` at all**, which is the only
   thing a content component would need to paint over an open menu. The defect it was written
-  for is the diagram: `ArchitectureDiagram.astro`'s steps are `position: relative` — that is
-  what their arrows are placed against — and a positioned box with no `z-index` paints with
-  every other such box in tree order, where the header is the first and a block drawn after it
-  covers the menu on the two pages that carry the drawing. `base.css` gives `.site-header` the
+  for is the diagram: the retired four-step flow's steps were `position: relative` — that is
+  what their arrows were placed against, and the homepage's slider is the positioned block that
+  stands where they stood — and a positioned box with no `z-index` paints with every other such
+  box in tree order, where the header is the first and a block drawn after it covers the menu on
+  the pages that carry a positioned block. (The owner's ruling of 2026-10-20 retires the flow
+  and `ArchitectureDiagram.astro` with it; the diagram's own history stays in
+  `test/stacking.mjs`'s note.) `base.css` gives `.site-header` the
   header's layer instead, in one rule rather than one per component, and this gate keeps it
   there. Its refusals are kept the way the others keep theirs: a fixture page carries the scale
   and the three layered rules, and a case plants each defect — a header with no layer, a header
@@ -1341,9 +1344,11 @@ them there.
   repository carries `plugin/skills/`**: `test/lib/build.mjs` and the five test files that
   stage their own copy skip only the parts of `plugin/` a build does not read
   (`READ_UNDER_PLUGIN`).
-- **The four steps' captions and the run's detail** come from `README.md` and
-  `docs/design/v1.md`, cited by the component that quotes each line
-  (`src/components/ArchitectureDiagram.astro`, `src/components/RunDiagram.astro`).
+- **The four steps' captions and the run's detail** came from `README.md` and
+  `docs/design/v1.md`, cited by the component that quoted each line: the four-step flow's
+  captions were `src/components/ArchitectureDiagram.astro`'s, retired with the flow by the
+  owner's ruling of 2026-10-20, and the run's detail is `src/components/RunDiagram.astro`'s,
+  where every label is held to the document it cites.
 
 ## Layout
 

@@ -919,7 +919,7 @@ test('How It Works is one diagram of the run, named for a screen reader and quot
   assert.deepEqual(
     diagrammed.map((page) => page.rel),
     [path.join('how-it-works', 'index.html')],
-    'the run diagram is not on How It Works and only there: the owner\'s draft of 2026-10-19 puts it on that page, and the homepage keeps its own four-step flow (website/test/home.mjs)',
+    'the run diagram is not on How It Works and only there: the owner\'s draft of 2026-10-19 puts it on that page, and the owner\'s ruling of 2026-10-20 retires the homepage\'s own four-step flow, so the site\'s one picture of a run is this one (website/test/home.mjs reads the homepage\'s slider, the block in the flow\'s place)',
   )
   for (const page of diagrammed) {
     const failures = runDiagramFailures(page.html, pageCss(page.html))

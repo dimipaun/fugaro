@@ -385,17 +385,20 @@ test('the retired claim is refused where a caption is written, and in the source
 
   // The same sentence in the site's own sources, which is where a caption is written: a
   // component that puts the claim back in fails before the next build, not after it. The
-  // component named here is the site's other caption, the one on the console page's
-  // screenshot: `AgentChat.astro`, whose caption this rule was written for, left the site
-  // with the owner's approved draft of 2026-10-19.
+  // components named here are the site's other captions. `AgentChat.astro`, whose caption this
+  // rule was written for, left the site with the owner's approved draft of 2026-10-19, and
+  // `ArchitectureDiagram.astro` — whose true sentence about the flow's own captions stood here
+  // as the second file, the one the gate must *not* refuse — left it with the owner's ruling of
+  // 2026-10-20. The run's picture is what carries the repository's words now, and its build-time
+  // guard is where the same claim would be written.
   const sources = {
     'src/components/ScreenshotSlider.astro': `<figcaption>${shipped}</figcaption>\n`,
-    'src/components/ArchitectureDiagram.astro': '<p>every caption in the flow is the repository\'s own words</p>\n',
+    'src/components/RunDiagram.astro': "<p>every word of the picture is the repository's own words</p>\n",
   }
   const inSources = sourceWordingFailures(sources)
   assert.equal(inSources.length, RETIRED_CLAIMS.length, `the claim in a component was not refused:\n${inSources.join('\n')}`)
   assert.ok(
     inSources.every((line) => line.startsWith('src/components/ScreenshotSlider.astro ')),
-    `the gate refused a true sentence about the flow's captions, which are quotations of README.md:\n${inSources.join('\n')}`,
+    `the gate refused a true sentence about the run's labels, which are quotations of the repository's documents:\n${inSources.join('\n')}`,
   )
 })
