@@ -18,7 +18,9 @@
 //     fails its table; accepting `https://github.com.evil.test`, a URL with
 //     credentials or one with a port fails the three entries that name them;
 //     and `openExternalValidated` calling `openExternal` on a refused URL fails
-//     the test that counts the calls;
+//     the test that counts the calls; letting a rejection from
+//     `shell.openExternal` through -- the platform declining the handover --
+//     fails the case that asserts it answers `false` instead;
 //   - the protocol handler serving a path outside the bundle root, serving a
 //     request over another scheme or host, or dropping the CSP from a response
 //     fails the request table, which asserts the status *and* the reason for
@@ -441,6 +443,34 @@ describe('the one path to the user’s browser is an allow-list (rule 2, D14)', 
       await expect(openExternalValidated(shell, link), link).resolves.toBe(false)
     }
     expect(opened).toEqual([])
+  })
+
+  it('answers false when the platform refuses the handover, rather than rejecting', async () => {
+    // The third way a link does not open, and the only one the *console* cannot
+    // decide: the URL passed its allow-list, the handover reached the operating
+    // system, and the platform has nothing registered for `https:` -- a
+    // container, a headless box, a desktop whose browser association is broken.
+    // Electron's `shell.openExternal` reports that by **rejecting**, and an
+    // uncaught rejection is not this function's `false`: it travels out of
+    // whichever `ipcMain.handle` callback awaited it, so the picker's
+    // `openExternal` answers with the operating system's own complaint (its
+    // catch surfaces `error.message`) instead of the console's one sentence,
+    // and the dashboard's `link.openExternal` rejects the same way. The
+    // contract the picker's handler is written against is that both a refused
+    // URL and a declined handover answer `false`; this is the half of it that
+    // was not true.
+    const opened: string[] = []
+    const shell = {
+      async openExternal(url: string) {
+        opened.push(url)
+        throw new Error('Failed to open the link: no application is registered for the https scheme')
+      },
+    } as unknown as Shell
+
+    await expect(openExternalValidated(shell, 'https://github.com/fugaro/fugaro')).resolves.toBe(false)
+    // The handover did happen -- the OS was asked -- so a test that only
+    // asserted `false` would also pass for a shell this function never reached.
+    expect(opened).toEqual(['https://github.com/fugaro/fugaro'])
   })
 })
 

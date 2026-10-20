@@ -374,11 +374,30 @@ export function validateExternalUrl(raw: string): ExternalUrlDecision {
  * It returns whether it opened anything, so a caller can tell the user what
  * happened rather than pretending. Note that the URL that reaches the OS is the
  * one `validateExternalUrl` returned, not the argument.
+ *
+ * **Three ways a link does not open, and all three answer `false`.** The URL is
+ * refused by the allow-list above; the handover reaches the platform and the
+ * platform declines it -- no application registered for `https:`, a prompt the
+ * operator dismissed -- which Electron reports by **rejecting**; or it opens.
+ * The middle one is caught here rather than allowed to travel, because a
+ * rejection is not an answer this function's callers can use: both of them
+ * await it inside an `ipcMain.handle` callback (`src/main/index.ts`'s
+ * `openExternalFromShell` for the dashboard's `link.openExternal`, and the
+ * picker's `openExternal`), and each of those catches an error by putting its
+ * `message` in front of the operator -- so an uncaught rejection here would
+ * draw the *operating system's* complaint ("Failed to open the link: ...")
+ * where the console has a sentence of its own (`OPEN_EXTERNAL_FAILED`). The
+ * platform's text is not a sentence this console writes and is not what its
+ * screens are written to draw, so it stops here.
  */
 export async function openExternalValidated(shell: Shell, raw: string): Promise<boolean> {
   const decision = validateExternalUrl(raw)
   if (!decision.ok) return false
-  await shell.openExternal(decision.url)
+  try {
+    await shell.openExternal(decision.url)
+  } catch {
+    return false
+  }
   return true
 }
 
