@@ -673,3 +673,65 @@ func TestReleaseManagedDeployerBulletStatesTheCurrentReason(t *testing.T) {
 		}
 	}
 }
+
+// TestChecklistCheck68HardStopCountsAgree: the index row counted "four hard
+// stops" while the guard block carries five `Check 68 stopped:` refusals and the
+// section's own setup comment says "nothing below the five hard stops runs".
+// The belong refusal (commit c98da729) added the fifth stop and updated the
+// section prose; the row kept the number it had when the guard had four. Three
+// places state the same fact, so this reads all three and requires one number —
+// a guard whose count is stated in prose is exactly the kind of claim that
+// survives a silent edit.
+//
+// Mutation (verified, run and restored): put "four hard stops" back into the row
+// — this fails naming the two numbers.
+func TestChecklistCheck68HardStopCountsAgree(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	numbers := map[string]int{
+		"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+		"six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+	}
+	// 1. The index row, the checklist's own summary of the check.
+	row := ""
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| 68 |") {
+			row = line
+		}
+	}
+	if row == "" {
+		t.Fatal("the checklist has no `| 68 |` table row")
+	}
+	m := regexp.MustCompile(`\b(\w+) hard stops\b`).FindStringSubmatch(row)
+	if m == nil {
+		t.Fatal("Check 68's index row does not state its number of hard stops: the guard's refusals are what the row is describing")
+	}
+	rowN, ok := numbers[m[1]]
+	if !ok {
+		t.Fatalf("Check 68's index row states its hard stops as %q, which is not a count this test can read", m[1])
+	}
+	section := docSection(t, path, doc, "## Check 68:")
+	// 2. The guard's own comment, which is what a reader re-running the block
+	// is told to expect.
+	m = regexp.MustCompile(`nothing below the (\w+) hard stops runs`).FindStringSubmatch(section)
+	if m == nil {
+		t.Fatal("Check 68's guard comment does not say how many hard stops run before the check's steps: the owner re-runs that block at every step")
+	}
+	sectionN, ok := numbers[m[1]]
+	if !ok {
+		t.Fatalf("Check 68's guard comment states its hard stops as %q, which is not a count this test can read", m[1])
+	}
+	// 3. The refusals themselves.
+	stops := 0
+	for _, line := range strings.Split(section, "\n") {
+		if strings.Contains(line, "Check 68 stopped:") {
+			stops++
+		}
+	}
+	if rowN != sectionN || rowN != stops {
+		t.Errorf("Check 68's hard stops are counted three ways and disagree: the index row says %d, the guard comment says %d, and the guard carries %d `Check 68 stopped:` refusals", rowN, sectionN, stops)
+	}
+	if stops < 5 {
+		t.Errorf("Check 68's guard carries %d `Check 68 stopped:` refusals, and this check's belong stop is one of them: the guard is what keeps a live IAM check off the belong installation", stops)
+	}
+}
