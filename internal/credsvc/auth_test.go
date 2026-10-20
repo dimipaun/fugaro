@@ -757,6 +757,51 @@ func TestVerifyErrorsNeverCarryTheToken(t *testing.T) {
 		assertCarriesNoToken(t, err, jobTok)
 	})
 
+	// The refusals that happen before any claim is read — a token that is not
+	// a JWT, and one whose signature does not verify — are the other half of
+	// the same rule: they are answered to a caller who is holding the token, so
+	// they are exactly where repeating it would be worst.
+	t.Run("a refusal before any claim is read", func(t *testing.T) {
+		other, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			t.Fatalf("generating a key: %v", err)
+		}
+		notJWT := "not-a-jwt." + strings.Repeat("A", 40)
+		cases := map[string]struct {
+			run, job string
+			want     error
+		}{
+			"a run token that is not a JWT": {run: notJWT, want: ErrUnverified},
+			"a run token signed by another key": {
+				run:  signJWT(t, other, testKid, newFixture(t).runClaims()),
+				want: ErrUnverified,
+			},
+			"a job token that is not a JWT": {job: notJWT, want: ErrUnverifiedJob},
+			"a job token signed by another key": {
+				job:  signJWT(t, other, testJobKid, newFixture(t).jobClaims()),
+				want: ErrUnverifiedJob,
+			},
+		}
+		for name, c := range cases {
+			t.Run(name, func(t *testing.T) {
+				f := newFixture(t)
+				run, job := c.run, c.job
+				if run == "" {
+					run = f.runToken()
+				}
+				if job == "" {
+					job = f.jobToken()
+				}
+				_, err := f.verify(run, job, f.job)
+				if !errors.Is(err, c.want) {
+					t.Fatalf("err = %v, want %v", err, c.want)
+				}
+				assertCarriesNoToken(t, err, run)
+				assertCarriesNoToken(t, err, job)
+			})
+		}
+	})
+
 	// The key id inside a token is the caller's text like any other, and it
 	// can be 8 KiB of the caller's choosing: a refusal says the kid is not one
 	// Google publishes and does not repeat it.
@@ -777,7 +822,11 @@ func TestVerifyErrorsNeverCarryTheToken(t *testing.T) {
 // token nor any head of it may appear in the error text.
 func assertCarriesNoToken(t *testing.T, err error, tok string) {
 	t.Helper()
-	if strings.Contains(err.Error(), tok) || strings.Contains(err.Error(), tok[:24]) {
+	head := tok
+	if len(head) > 24 {
+		head = head[:24]
+	}
+	if strings.Contains(err.Error(), tok) || strings.Contains(err.Error(), head) {
 		t.Fatalf("err = %q carries the token", err)
 	}
 }
