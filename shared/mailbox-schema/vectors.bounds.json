@@ -517,6 +517,20 @@
       "field": "id"
     },
     {
+      "name": "an id carrying DEL",
+      "why": "DEL is the other end of the control range and a key refuses it as a character; without this row, dropping that one comparison from the key rule survives the JavaScript parity test (index.test.js holds it, this artifact did not)",
+      "record": "message",
+      "value": {
+        "id": "m\u007f1",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "bad-key",
+      "field": "id"
+    },
+    {
       "name": "a body carrying DEL",
       "why": "DEL is the other end of the control range, and a body is a string like any other",
       "record": "message",

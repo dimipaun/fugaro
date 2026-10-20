@@ -289,8 +289,8 @@ func TestTheSharedBoundVectorsHold(t *testing.T) {
 	file := loadBoundVectors(t)
 	accepts := list(t, file["accepts"], "accepts")
 	refusals := list(t, file["refusals"], "refusals")
-	if len(accepts) != 14 || len(refusals) != 10 {
-		t.Fatalf("vectors.bounds.json carries %d accepts and %d refusals, not 14 and 10: the file, not the replay, is what changed",
+	if len(accepts) != 14 || len(refusals) != 11 {
+		t.Fatalf("vectors.bounds.json carries %d accepts and %d refusals, not 14 and 11: the file, not the replay, is what changed",
 			len(accepts), len(refusals))
 	}
 
