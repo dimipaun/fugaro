@@ -430,12 +430,16 @@ step_cold_start() {
   [ -n "$before" ] || stop "the relay's / body carries no started= line, so this is not this check's image"
   say "instance now: started=${before}; waiting ${idle_seconds}s for it to be released"
   sleep "$idle_seconds"
-  cold=$(curl -sS -o "$SCRATCH/cold.out" -w '%{time_starttransfer}|%{time_total}' -H "Authorization: Bearer $(idt)" "${URL}/")
-  warm=$(curl -sS -o /dev/null -w '%{time_starttransfer}|%{time_total}' -H "Authorization: Bearer $(idt)" "${URL}/")
+  local cold_rc=0 warm_rc=0
+  : >"$SCRATCH/cold.out"
+  cold=$(curl -sS -o "$SCRATCH/cold.out" -w '%{time_starttransfer}|%{time_total}' -H "Authorization: Bearer $(idt)" "${URL}/" 2>/dev/null) || cold_rc=$?
+  warm=$(curl -sS -o /dev/null -w '%{time_starttransfer}|%{time_total}' -H "Authorization: Bearer $(idt)" "${URL}/" 2>/dev/null) || warm_rc=$?
   local after
   after=$(sed -n 's/^started=//p' "$SCRATCH/cold.out")
   local detail="waited ${idle_seconds}s; cold: first byte ${cold%%|*}s, total ${cold##*|}s; warm: first byte ${warm%%|*}s, total ${warm##*|}s; started= before=${before} after=${after}; --min-instances=0 --max-instances=1"
-  if [ "$after" != "$before" ]; then
+  if [ "$cold_rc" != 0 ] || [ "$warm_rc" != 0 ]; then
+    fact "cold-start" FAIL "a request failed (cold curl exit ${cold_rc}, warm curl exit ${warm_rc}), so no figure can be read — ${detail}"
+  elif [ "$after" != "$before" ]; then
     fact "cold-start" PASS "a DIFFERENT instance answered the cold request — ${detail}"
   else
     fact "cold-start" FAIL "NOT a cold start: the instance that started at ${after} answered the request after the wait, so the figure is warm. Record it as warm and repeat the step after a longer idle — ${detail}"
@@ -447,13 +451,17 @@ step_stream() {
   local probe=${CHECK91_PROBE_SECONDS:-30}
   : >"$SCRATCH/stream.times"
   local headers
-  headers=$(curl -sS -N -D - -o /dev/null --max-time "$probe" -H "Authorization: Bearer $(idt)" "${URL}/sse" |
+  # curl exits 28 when its own --max-time cuts the stream, and that is the
+  # EXPECTED end of a probe against a stream that runs for minutes: the guards
+  # below are what keep it from ending the run -- and with them, the last three
+  # of U5's numbers, which would otherwise be lost after the cold-start wait.
+  headers=$(curl -sS -N -D - -o /dev/null --max-time "$probe" -H "Authorization: Bearer $(idt)" "${URL}/sse" 2>/dev/null |
     sed -n 's/^[Xx]-[Rr]elay: */x-relay: /p' | head -n 1)
-  curl -sS -N --max-time "$probe" -H "Authorization: Bearer $(idt)" "${URL}/sse" |
+  curl -sS -N --max-time "$probe" -H "Authorization: Bearer $(idt)" "${URL}/sse" 2>/dev/null |
     while IFS= read -r line; do
       [ -n "$line" ] || continue
       printf '%s %s %s\n' "$(date -u +%s)" "$(date -u +%H:%M:%S)" "$line" >>"$SCRATCH/stream.times"
-    done
+    done || true
   local events span
   events=$(wc -l <"$SCRATCH/stream.times" | tr -d ' ')
   if [ "$events" -lt 2 ]; then
@@ -472,9 +480,12 @@ step_long_stream() {
   say "the long stream: SSE_MINUTES=59 against --timeout=3600. This is the hour-long part"
   gcloud run services update "${SVC:?}" --project="${P:?}" --region="${L:?}" --set-env-vars SSE_MINUTES=59 --quiet >&2 \
     || stop "the service update to SSE_MINUTES=59 failed"
-  local out
-  out=$(curl -sS -N -o /dev/null -w '%{http_code} after %{time_total}s' -H "Authorization: Bearer $(idt)" "${URL}/sse")
-  fact "stream-longest" PASS "SSE_MINUTES=59: ${out} (--timeout=3600; mint a fresh identity token for every probe after this one)"
+  local out rc=0
+  # This one has no --max-time: the point is where the stream ENDS. curl still
+  # exits non-zero when the front end cuts the connection mid-stream (18, 56,
+  # 52), and that is the measurement, not a reason to stop the run.
+  out=$(curl -sS -N -o /dev/null -w '%{http_code} after %{time_total}s' -H "Authorization: Bearer $(idt)" "${URL}/sse" 2>/dev/null) || rc=$?
+  fact "stream-longest" PASS "SSE_MINUTES=59: ${out}; curl exit ${rc} (0 = the stream ended by itself; 18/56 = the front end cut it; 52 = empty reply) — --timeout=3600; mint a fresh identity token for every probe after this one"
 }
 
 # ----------------------------------------------------- step 6 the body table
@@ -483,15 +494,23 @@ step_body_limit() {
     || stop "this curl has no HTTP/2 support, so --http2 would silently send HTTP/1.1 and the second row would duplicate the first — use a curl built with HTTP/2"
   local sizes=${CHECK91_BODY_SIZES:-"1048576 16777216 33554432 67108864 134217728"}
   local n h1 h2 h1_big="" h2_big=""
+  local h1rc h2rc
   local table=""
   for n in $sizes; do
     head -c "$n" /dev/zero >"$SCRATCH/body.bin"
+    # A row refused above the limit is a refusal curl may report with a
+    # non-zero exit of its own (56, 55, 52): the row records it instead of
+    # ending the run -- the first refusal is exactly what this step measures.
+    : >"$SCRATCH/echo.out"
+    h1rc=0
     h1=$(curl -sS --http1.1 -o "$SCRATCH/echo.out" -w '%{http_code} %{size_upload} over HTTP/%{http_version}' \
-      -H "Authorization: Bearer $(idt)" -X POST --data-binary @"$SCRATCH/body.bin" "${URL}/echo")
-    h1="${h1}, relay said: $(tr -d '\n' <"$SCRATCH/echo.out")"
+      -H "Authorization: Bearer $(idt)" -X POST --data-binary @"$SCRATCH/body.bin" "${URL}/echo" 2>/dev/null) || h1rc=$?
+    h1="${h1} (curl exit ${h1rc}), relay said: $(tr -d '\n' <"$SCRATCH/echo.out")"
+    : >"$SCRATCH/echo.out"
+    h2rc=0
     h2=$(curl -sS --http2 -o "$SCRATCH/echo.out" -w '%{http_code} %{size_upload} over HTTP/%{http_version}' \
-      -H "Authorization: Bearer $(idt)" -X POST --data-binary @"$SCRATCH/body.bin" "${URL}/echo")
-    h2="${h2}, relay said: $(tr -d '\n' <"$SCRATCH/echo.out")"
+      -H "Authorization: Bearer $(idt)" -X POST --data-binary @"$SCRATCH/body.bin" "${URL}/echo" 2>/dev/null) || h2rc=$?
+    h2="${h2} (curl exit ${h2rc}), relay said: $(tr -d '\n' <"$SCRATCH/echo.out")"
     table="${table}${n}: HTTP/1.1 ${h1} | HTTP/2-to-front-end ${h2}"$'\n'
     case "$h1" in 200*) h1_big="$n: $h1" ;; esac
     case "$h2" in 200*) h2_big="$n: $h2" ;; esac

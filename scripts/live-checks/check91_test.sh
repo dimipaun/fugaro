@@ -268,6 +268,13 @@ if method == "POST" and path.startswith("/echo"):
         n = os.path.getsize(data[1:])
     status, uploaded, version = 200, n, ("1.1" if "--http1.1" in args else "2")
     body = "read %d bytes\n" % n
+    # `timeout` mode: the size above the first one is refused the way a front
+    # end refuses it -- a status with a curl that also exits non-zero, which is
+    # the row this step exists to record.
+    if mode == "timeout" and n >= 2097152:
+        status, body = 413, "Request Entity Too Large\n"
+        emit()
+        sys.exit(56)
     emit()
     sys.exit(0)
 
@@ -291,6 +298,10 @@ if path.startswith("/sse"):
     body = "".join(streamed)
     if fmt:
         emit()
+    # `timeout` mode ends the way a real curl does: 28 when its own --max-time
+    # cut the probe, 18 when the front end cut the stream mid-body.
+    if mode == "timeout":
+        sys.exit(28 if "--max-time" in args else 18)
     sys.exit(0)
 
 # GET / -- liveness, and the started= value that makes a cold start checkable.
@@ -423,6 +434,30 @@ test_happy_path() {
   if [ -d "$scratch" ]; then fail "happy path: the scratch directory survived"; fi
 }
 
+test_curl_cutting_the_stream() {
+  # curl exits 28 when its own --max-time cuts an SSE probe, 18 when the front
+  # end cuts the long stream, and 56 on a refused body. All three are what this
+  # check exists to MEASURE: unguarded, `set -e` would end the run at the first
+  # probe and the last three of U5's numbers would be lost after the 35-minute
+  # cold-start wait.
+  local dir=$work/truncating
+  prepare "$dir"
+  run91 "$dir" FAKE_CURL_MODE=timeout
+  expect_status "$status" 0 "curl cut the stream: the run completes"
+  for fact in stream-unbuffered stream-longest body-limit-http1 body-limit-http2-front-end; do
+    expect_absent "$out" "FACT $fact: FAIL — not reached" "curl cut the stream: $fact was reached"
+  done
+  expect_contains "$out" "FACT stream-unbuffered: PASS" "curl cut the stream: the arrival times are still read"
+  expect_contains "$out" "curl exit 18" "curl cut the stream: the long stream records curl's own exit"
+  expect_contains "$out" "curl exit 56" "curl cut the stream: a refused body row records curl's exit"
+  expect_contains "$out" "413 2097152 over HTTP/1.1 (curl exit 56)" "curl cut the stream: the refusal is in the row"
+  expect_contains "$out" "FACT stream-longest: PASS" "curl cut the stream: the long stream is recorded"
+  # Only the refused size is missing from the accepted column: the smaller one
+  # was accepted, so the fact still reads PASS with a limit to report.
+  expect_contains "$out" "FACT body-limit-http1: PASS — largest accepted: 1048576" "curl cut the stream: the smaller size is the largest accepted"
+  expect_contains "$out" "END (exit 0)" "curl cut the stream: the block ends at 0"
+}
+
 test_warm_cold_start() {
   local dir=$work/warm
   prepare "$dir"
@@ -523,6 +558,7 @@ test_never_belong() {
   expect_absent "$calls" "another-project" "never belong: no command named another project"
 }
 
+test_curl_cutting_the_stream
 test_dry_run
 test_project_guard
 test_service_taken
