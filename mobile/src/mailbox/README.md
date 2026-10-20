@@ -394,9 +394,11 @@ from their absence:
   `../../../shared/mailbox-schema/index.js`, `../../../shared/presence/index.js`
   and `../../../shared/digest/redact.js` -- the app's own modules and the shared
   package, which `src/boundary.test.js`'s D119 rule allows. Node resolves them
-  (the tests run), but **bundling the app across `mobile/` and `shared/` needs a
-  Metro `watchFolders` entry that no task has added**: nothing here has been
-  through `expo start`, and that wiring is unverified.
+  (the tests run) and **Metro does too**: `mobile/metro.config.cjs` adds the
+  repository root to `watchFolders`, so `npx expo export` bundles them -- the
+  entry the earlier revision of this bullet said no task had added. Still not
+  seen: **`expo start`**, so the dev server's half of that wiring is unverified
+  (`mobile/README.md`, "What is not verified here").
 * **The simulator (P1.5) is not used as this client's other end.** P1.5 signs
   nothing (`PLACEHOLDER_MAC`) and sets no `reply_to` (`replyId(id) = 'r-' + id`),
   so it can neither produce a message this client will speak nor answer one it

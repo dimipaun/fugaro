@@ -28,8 +28,8 @@
 // page — and, last, the two rounds of 2026-10-19/20 this reading re-derived the figures for:
 // the CLI's bare `--repo` usage strings, which moved the CLI reference and caps-and-costs by
 // 1,126 bytes and which the round that made them left un-derived, and the owner's 2048 px logo,
-// which regenerated every icon the site serves and so moved the site figure down by 9,219 and
-// the page weight up by 1,132. **The logo round is the one this build's two byte figures come
+// which regenerated every icon the site serves and so moved the site figure down by 10,345 and
+// the page weight up by 72. **The logo round is the one this build's two byte figures come
 // from** (the script is unchanged, so its figure is the one the round before set), and every
 // round is named in the list below — plus 25 %, which is D192's rule and the rule the README's
 // loose figures are three times.

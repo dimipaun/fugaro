@@ -37,11 +37,14 @@
  * right; the tall one is the same run read top to bottom, one card under the other, for a
  * phone. Both are in the markup and the stylesheet shows exactly one of them at a time
  * (`display: none` takes the other out of the accessibility tree as well as off the page):
- * below 48 rem — the width the site's chrome switches at — the wide drawing's labels would
- * be a third of the size they are drawn at. Each `<svg>` is `role="img"` with an
- * `aria-label`, carries a `viewBox` and `width: 100%` so it scales to the column and never
- * scrolls sideways, and the text list under the figure carries the same facts for a reader
- * who skips the picture.
+ * below **59.25 rem** the wide drawing's labels would be smaller than the 12 px a reader can
+ * read, and 59.25 rem is the width at which the page's own column scales the smallest of them
+ * to exactly that size. That is *not* the site's 48 rem chrome breakpoint, and the stylesheet
+ * below says why in its own words: the two numbers are the two different questions — where the
+ * chrome changes shape, and where this drawing's labels stop being readable. Each `<svg>` is
+ * `role="img"` with an `aria-label`, carries a `viewBox` and `width: 100%` so it scales to the
+ * column and never scrolls sideways, and the text list under the figure carries the same facts
+ * for a reader who skips the picture.
  *
  * **Every line is drawn in the box it was laid out for.** The drawing is set in the reader's
  * own sans, and that stack is wider per character on some systems than on others (DejaVu Sans
@@ -373,16 +376,23 @@ function boxContents(b: { name: string; labels: Label[]; stages?: boolean }, ind
       // draft draws, and the arrow `docs/design/v1.md` §4 writes as `[fix ─► review(2)] …`.
       // Nothing of it is drawn over a pill: the whole loop, its head and its word are in the
       // lane the pills leave, inside the same content box as the labels above them.
+      //
+      // The arrow's head is drawn the way the drawing's other two arrows are: `back` is where
+      // the line arrives — the base of the triangle — and `point`, two units off the implement
+      // pill's right edge, is the tip of it, ahead of the base on the way in. So the head points
+      // back at the stage the run returns to rather than away from it, which is what makes it
+      // read as the round trip. `website/test/how-it-works.mjs` reads the head's three corners
+      // and refuses one whose point leads its base the other way.
       if (stage === 'review') {
         const from = rowY + stageRow / 2
         const to = cy + STAGES.indexOf('implement') * stageRow + stageRow / 2
-        const tip = pillRight + 2
-        const head = tip + 9
-        const rail = head + 7
+        const point = pillRight + 2
+        const back = point + 9
+        const rail = back + 7
         const labelX = rail + 4
         fits(`the loop's word ${JSON.stringify(LOOP)}`, LOOP, f.stage, pillRight + lane - labelX)
-        parts.push(`<path class="run-loop-line" d="M ${pillRight.toFixed(1)} ${from.toFixed(1)} H ${rail.toFixed(1)} V ${to.toFixed(1)} H ${head.toFixed(1)}" />`)
-        parts.push(`<path class="run-loop-head" d="M ${tip.toFixed(1)} ${(to - 6).toFixed(1)} L ${head.toFixed(1)} ${to.toFixed(1)} L ${tip.toFixed(1)} ${(to + 6).toFixed(1)} Z" />`)
+        parts.push(`<path class="run-loop-line" d="M ${pillRight.toFixed(1)} ${from.toFixed(1)} H ${rail.toFixed(1)} V ${to.toFixed(1)} H ${back.toFixed(1)}" />`)
+        parts.push(`<path class="run-loop-head" d="M ${back.toFixed(1)} ${(to - 6).toFixed(1)} L ${point.toFixed(1)} ${to.toFixed(1)} L ${back.toFixed(1)} ${(to + 6).toFixed(1)} Z" />`)
         parts.push(
           `<text class="run-text run-loop" x="${labelX.toFixed(1)}" y="${((from + to) / 2 + f.stage * 0.35).toFixed(1)}" font-size="${f.stage}">${LOOP}</text>`,
         )
@@ -578,16 +588,24 @@ const ALT =
     max-width: 100%;
   }
 
-  /* One drawing at a time. Under 48 rem — where the site's chrome switches — the wide
-     drawing's labels would be a third of the size they are drawn at, so the tall viewBox is
-     the one a phone shows; above it, the tall one is not rendered at all. An SVG that is not
-     rendered is not in the accessibility tree either, so a screen reader is told the run
-     once. */
+  /* One drawing at a time, and the width they change over at is the tall drawing's own scale
+     rather than the site's chrome breakpoint: the wide drawing's smallest label is 16 units
+     of a 1200 unit picture, and it is readable from 12 px up, which a column of 900 px is —
+     a 59.25 rem viewport, in a page whose column is its width less `main`'s 24 px of padding
+     on either side. At the site's 48 rem the column scales that label to 9.6 px, a label a
+     reader cannot read, which is the whole reason these two numbers are not the same. Above
+     it the tall drawing is not rendered at all: an SVG that is not rendered is not in the
+     accessibility tree either, so a screen reader is told the run once. */
   .run-tall {
     display: none;
+    /* The stacked drawing is drawn at a phone's own width (360 units of `viewBox`, one unit
+       to the pixel), and a tablet is shown it at that size rather than stretched to the
+       column: 22.5 rem is the drawing's own scale, so its labels never grow or shrink. */
+    max-width: 22.5rem;
+    margin-inline: auto;
   }
 
-  @media (max-width: 47.99rem) {
+  @media (max-width: 59.25rem) {
     .run-wide {
       display: none;
     }
