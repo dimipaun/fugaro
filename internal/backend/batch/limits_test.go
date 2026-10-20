@@ -31,7 +31,34 @@ func TestCheckResourcesAcceptsWhatAVMCanHold(t *testing.T) {
 		}
 	}
 	if is := CheckResources(config.Resources{CPU: 2, Memory: "4Gi"}, defaultMachineType); len(is) != 0 {
-		t.Errorf("CheckResources(2 CPU/4Gi, %s) = %+v, want none: that type's task holds exactly that", defaultMachineType, is)
+		t.Errorf("CheckResources(2 CPU/4Gi, %s) = %+v, want none: that type's task holds 4 CPUs and 8Gi, and this pair is inside both", defaultMachineType, is)
+	}
+}
+
+// TestCheckResourcesAcceptsTheConfigDefaultsOnTheDefaultMachineType is the
+// consequence the default machine type is sized for: a workflow that names no
+// `resources:` gets the config's defaults (internal/config/defaults.go), so a
+// freshly provisioned installation whose workflows are all left at the defaults
+// must not refuse them. It is the shape the default had before review --
+// e2-standard-4's task share is 2000m/4096MiB, Check 57a's measured request and
+// below the default ask of 4 CPUs and 8Gi, so every workflow that named no
+// resources was refused until the operator raised `batch.machine_type`: a
+// default installation that cannot run its default workflow.
+//
+// Mutation (set defaultMachineType back to e2-standard-4): this fails, naming
+// workflows.web.resources.cpu.
+func TestCheckResourcesAcceptsTheConfigDefaultsOnTheDefaultMachineType(t *testing.T) {
+	cfg, ps := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"workflows:\n  web:\n    commands: { build: \"true\", test: \"true\" }\n"))
+	if len(ps) > 0 {
+		t.Fatalf("the fixture config has problems: %v", ps)
+	}
+	r := cfg.Workflows["web"].Resources
+	if r.CPU != 4 || r.Memory != "8Gi" {
+		t.Fatalf("the config's defaults are %+v, want the 4 CPU/8Gi this test is about: the default machine type is sized to it", r)
+	}
+	if is := CheckResources(r, defaultMachineType); len(is) != 0 {
+		t.Errorf("a workflow left at the config's defaults (%+v) is refused on the default machine type %s: %+v", r, defaultMachineType, is)
 	}
 }
 
@@ -43,8 +70,8 @@ func TestCheckResourcesAcceptsWhatAVMCanHold(t *testing.T) {
 // hold.
 //
 // Mutation (drop the cpu bound, drop the memory bound, or compare against the
-// machine type's whole quantities -- 4 CPUs and 16Gi on e2-standard-4): the
-// named case passes and the test fails.
+// machine type's whole quantities -- 4 CPUs and 16Gi on e2-standard-4, 8 CPUs
+// and 32Gi on the default): the named case passes and the test fails.
 func TestCheckResourcesRefusesMoreThanTheTaskShare(t *testing.T) {
 	for _, c := range []struct {
 		name        string
@@ -52,9 +79,14 @@ func TestCheckResourcesRefusesMoreThanTheTaskShare(t *testing.T) {
 		machineType string
 		field       string
 	}{
-		{"cpu over the share", config.Resources{CPU: 4, Memory: "1Gi"}, defaultMachineType, "cpu"},
-		{"memory over the share", config.Resources{CPU: 1, Memory: "8Gi"}, defaultMachineType, "memory"},
-		{"neither of them", config.Resources{CPU: 8, Memory: "32Gi"}, defaultMachineType, "cpu"},
+		// e2-standard-4, named rather than taken from defaultMachineType: the
+		// default is e2-standard-8 (see its own test), whose share is 4 CPU/8Gi,
+		// and an ask over THAT is 8 CPUs or 16Gi.
+		{"cpu over the share", config.Resources{CPU: 4, Memory: "1Gi"}, "e2-standard-4", "cpu"},
+		{"memory over the share", config.Resources{CPU: 1, Memory: "8Gi"}, "e2-standard-4", "memory"},
+		{"neither of them", config.Resources{CPU: 8, Memory: "32Gi"}, "e2-standard-4", "cpu"},
+		{"cpu over the default's share", config.Resources{CPU: 8, Memory: "1Gi"}, defaultMachineType, "cpu"},
+		{"memory over the default's share", config.Resources{CPU: 1, Memory: "16Gi"}, defaultMachineType, "memory"},
 		{"the smallest type", config.Resources{CPU: 1, Memory: "4Gi"}, "e2-standard-2", "memory"},
 		{"a machine type the table does not price", config.Resources{CPU: 1, Memory: "1Gi"}, "e2-micro", ""},
 	} {
@@ -81,7 +113,7 @@ func TestCheckResourcesRefusesMoreThanTheTaskShare(t *testing.T) {
 	// failure it must NOT claim is the one this backend cannot produce -- the
 	// workflow's resources: never reaches the job's computeResource, so no ask
 	// in this field can leave a task QUEUED.
-	over := CheckResources(config.Resources{CPU: 4, Memory: "1Gi"}, defaultMachineType)
+	over := CheckResources(config.Resources{CPU: 4, Memory: "1Gi"}, "e2-standard-4")
 	if len(over) == 0 {
 		t.Fatal("the over-share ask was accepted")
 	}

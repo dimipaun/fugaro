@@ -1504,6 +1504,18 @@ func TestJobDefinitionIsAVMWithTheDesignsNetwork(t *testing.T) {
 		t.Errorf("noExternalIpAddress = %v, want true (C7)", ni["noExternalIpAddress"])
 	}
 
+	// No provisioning model is named anywhere in it, and that is a fact
+	// limits.go's MaxRunDuration rests on: Batch reads an absent
+	// provisioningModel as STANDARD, whose RUNNING ceiling is the 14 days that
+	// constant is, while FLEX_START's is 7 (design §1.8). A task that later
+	// asks for one -- FLEX_START, or the SPOT model design §1.3 has the profile
+	// carry (C5) -- has to move that constant with it, not only this JSON.
+	if blob, err := json.Marshal(call.Job); err != nil {
+		t.Fatalf("marshalling the created job: %v", err)
+	} else if strings.Contains(string(blob), "provisioningModel") {
+		t.Errorf("the job definition names a provisioning model, and MaxRunDuration (14 days) is the ceiling for STANDARD alone: %s", blob)
+	}
+
 	// The task asks for a share of the machine type, not the whole of it: the
 	// VM it lands on also runs the OS, the Batch agent and the Docker daemon,
 	// and a request for the whole type leaves nothing for them and sits
@@ -1895,17 +1907,18 @@ func TestNewRefusesAnIncompleteVMConfiguration(t *testing.T) {
 	}
 }
 
-// TestTheVMDefaultsAreTheDesignsOwn: the two fields an installation may leave
-// unset are the design's own values -- the e2-standard-4 the design names as
-// the likely default, which every price and size in prices.go is carried for,
-// and the 50 GB disk Check 57a's jobs carried (design §1.3, §7.2) -- and they
-// are defaults, not silent zeros: a job whose computeResource and boot disk
-// were zero would be a VM of the wrong shape or no VM at all.
-func TestTheVMDefaultsAreTheDesignsOwn(t *testing.T) {
+// TestTheVMDefaultsCarryTheDefaultAsk: the two fields an installation may
+// leave unset, and why each has the value it has. The machine type is the
+// smallest type whose task share carries the config's default ask of 4 CPUs
+// and 8Gi (limits_test's own test is what holds the config's side of that), and
+// the boot disk is the 50 GB Check 57a's jobs carried (design §7.2). They are
+// defaults, not silent zeros: a job whose computeResource and boot disk were
+// zero would be a VM of the wrong shape or no VM at all.
+func TestTheVMDefaultsCarryTheDefaultAsk(t *testing.T) {
 	ctx := context.Background()
 	b, bf, _, _ := newTestBackend(t, func(o *Options) { o.MachineType, o.BootDiskGB = "", 0 })
-	if defaultMachineType != "e2-standard-4" {
-		t.Errorf("defaultMachineType = %q, want the design's e2-standard-4 (§1.3)", defaultMachineType)
+	if defaultMachineType != "e2-standard-8" {
+		t.Errorf("defaultMachineType = %q, want the smallest e2-standard type whose task share carries the config's default 4 CPU/8Gi ask", defaultMachineType)
 	}
 	if defaultBootDiskGB != 50 {
 		t.Errorf("defaultBootDiskGB = %d, want the 50 Check 57a's jobs carried (§7.2)", defaultBootDiskGB)

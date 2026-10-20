@@ -427,7 +427,8 @@ type Batch struct {
 	// here too.
 	Image string `yaml:"image,omitempty"`
 	// MachineType is the Compute Engine machine type a run's VM is. Empty
-	// means the backend's own default (e2-standard-4); it must be one the
+	// means the backend's own default (e2-standard-8, the smallest type whose
+	// task share carries the config's default 4 CPU/8Gi); it must be one the
 	// price table carries, which the backend checks.
 	MachineType string `yaml:"machine_type,omitempty"`
 	// BootImage is the preloaded boot image a run's VM boots, as the family

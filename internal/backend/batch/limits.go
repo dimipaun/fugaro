@@ -27,10 +27,17 @@ import (
 //
 // It is a ceiling, not a plan value: Fugaro's own bound is
 // backend.MaxRunTime (the cap a per-run override may name), and both bind
-// first for every installation that has one. Under FLEX_START the ceiling is 7
-// days, which this constant does not model: no Fugaro job asks for FLEX_START
-// (run.go's job definition names STANDARD provisioning), so the 14-day figure
-// is the one this build can be held to.
+// first for every installation that has one.
+//
+// 14 days is the ceiling for the provisioning model this build's jobs are
+// created under, and it is a fact about the job JSON run.go builds rather than
+// about a constant it states: that JSON has no provisioningModel field at all,
+// and Batch reads an absent one as STANDARD. Batch documents a 7-day RUNNING
+// ceiling under FLEX_START (design §1.8), which would be the one that binds if
+// a job ever named it -- so a later task that asks for FLEX_START, or for the
+// SPOT model design §1.3 has the profile carry (C5), has to revisit this
+// constant rather than only the job definition. Nothing in this tree sets a
+// provisioning model anywhere.
 const MaxRunDuration = 14 * 24 * time.Hour
 
 // Issue is one way a workflow's resources do not fit the VM a run gets on
@@ -64,9 +71,10 @@ type Issue struct{ Field, Message string }
 //
 // There is deliberately no coupling rule between the two fields. On a VM the
 // machine type fixes both numbers and the run's pair only sizes its
-// container, so 4 CPUs with 1Gi and 1 CPU with 8Gi are both asks an
-// e2-standard-4 can hold; refusing either would be importing Cloud Run's rule
-// into a backend that does not have it.
+// container, so 4 CPUs with 1Gi and 1 CPU with 8Gi are both asks the default
+// machine type's share holds (4 CPUs and 8Gi, see defaultMachineType);
+// refusing either would be importing Cloud Run's rule into a backend that does
+// not have it.
 //
 // An unknown machine type is an Issue with no Field: it is a fact about the
 // installation's batch block rather than about one workflow's resources, and

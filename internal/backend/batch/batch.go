@@ -123,9 +123,31 @@ const HostSocketPath = "/var/run/docker.sock"
 const defaultBootDiskGB = 50
 
 // defaultMachineType is the machine type a run's VM gets when
-// Options.MachineType is unset: the e2-standard-4 the design names as the
-// likely default and the one Check 57a measured on (design §1.3, §7.2).
-const defaultMachineType = "e2-standard-4"
+// Options.MachineType is unset: the smallest e2-standard type whose task share
+// (half its vCPUs and a quarter of its memory, run.go's taskResources) carries
+// what a workflow that names no `resources:` asks for -- the local config's
+// default of 4 CPUs and 8Gi (internal/config/defaults.go), which is 8 vCPUs
+// and 32 GiB of machine, `e2-standard-8`.
+//
+// The share has to hold the default ask rather than nearly hold it. The design's
+// own answer for a run that wants more than its share is a larger machine type
+// (design §9 step 9), and CheckResources refuses the ask that exceeds it -- so a
+// default machine type below the default ask is a default installation on which
+// every workflow that names no resources is refused until the operator raises
+// `batch.machine_type`: no default at all. That is the shape this constant had
+// while it was `e2-standard-4`, whose task share is 2000m/4096MiB -- Check 57a's
+// measured request, and below the default ask.
+//
+// The design's e2-standard-4 (§1.3: "the likely default", and the type 57a
+// measured the cold start, the shares and the price on, §7.2) is therefore not
+// this fallback's value. Its likely-default sentence is about which type the
+// measurements were taken on; what a run gets when the installation names no
+// type is a choice, and the one that works is the type sized to the default ask.
+// An installation that wants the cheaper measured type names it: `batch.
+// machine_type: e2-standard-4` and workflows that name no resources are then
+// refused with the reason and the larger type named, which is the operator's
+// decision to make rather than a silent one.
+const defaultMachineType = "e2-standard-8"
 
 // Docker is the VM's Docker daemon as a run reaches it: the socket, mounted
 // from the host (design §2.2, C2). It is the installation's, not the run's --
@@ -188,8 +210,8 @@ type Options struct {
 	// Execution reports, and its quantities are what the run's compute cost
 	// is priced from (design §5.2) -- so it must be one the price table
 	// carries (prices.go): a type whose figures are unknown can neither be
-	// priced nor reported honestly. Empty means e2-standard-4, the design's
-	// likely default.
+	// priced nor reported honestly. Empty means defaultMachineType, the
+	// smallest type whose task share carries the config's default ask.
 	MachineType string
 	// BootImage is the boot disk's image: the preloaded image Task 6 builds
 	// per base version, with fugaro-base already in its Docker data root
