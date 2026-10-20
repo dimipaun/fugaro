@@ -176,12 +176,15 @@ type loop struct {
 const defaultProgram = "fugaro"
 
 // program is the name the run's own lines use: the caller's Program, or the
-// program alone when it did not name one.
+// program alone when it did not name one. It goes through the same redaction
+// as every other line the loop prints: the name reaches a header, a fix text
+// and --json, and a caller's string is not trusted to be free of a value the
+// process holds.
 func (l *loop) program() string {
 	if l.o.Program == "" {
 		return defaultProgram
 	}
-	return l.o.Program
+	return l.redact(l.o.Program)
 }
 
 func (l *loop) redact(s string) string {

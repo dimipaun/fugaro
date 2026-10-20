@@ -532,6 +532,33 @@ func TestOutputsContainNoSecretValues(t *testing.T) {
 	}
 }
 
+func TestProgramNameIsRedacted(t *testing.T) {
+	// The caller's Program reaches the header, both fix texts, the human
+	// account and --json, so it goes through the same redaction every other
+	// line does: a value the process holds is not printed because a caller
+	// put it in the name of the program.
+	const secret = "s3cr3t-in-program"
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight)
+	stages[0].(*fake).applyErr = errors.New("boom")
+	res, err := Run(context.Background(), stages, Options{Yes: true, Terminal: true, Out: &out,
+		Program: "fugaro run " + secret, Project: "aurora", Redact: []string{secret}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	js, err := res.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), secret) || strings.Contains(string(js), secret) || strings.Contains(res.Failed.Fix, secret) {
+		t.Errorf("a held value reached the output through Program:\n%s\n%s", out.String(), js)
+	}
+	if !strings.Contains(out.String(), "fugaro run [redacted]") {
+		t.Errorf("the program name was dropped rather than redacted:\n%s", out.String())
+	}
+}
+
 func TestLeftTextIsOneLine(t *testing.T) {
 	var log []string
 	stages := fakes(&log, Secrets)
