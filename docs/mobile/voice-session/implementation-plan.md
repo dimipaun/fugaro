@@ -143,7 +143,7 @@ credentials service's; **100–104** are the mobile functional spec's, with
 **105–109 reserved and unused**; **110** is named by
 [../design/voice-evaluation-switch.md](../design/voice-evaluation-switch.md) as
 the next free number and was assigned by it; and **111** is taken by
-[docs/setup-wizard/](../setup-wizard/README.md) ("110 is claimed by an open pull
+[docs/setup-wizard/](../../setup-wizard/README.md) ("110 is claimed by an open pull
 request … **111 is therefore the next free number**, and it is taken here"). So
 the first free number is **112**, and this work takes six of them. The command
 that shows the allocation, rather than a figure that any edit changes:
@@ -203,9 +203,11 @@ tree's plain-JS-with-JSDoc style, next to `mobile/src/audio/pipeline.js`);
 malformed event at the boundary rather than at the transition.
 **Tests.** Every kind and every route is exported; an unknown `type`, an unknown
 `route` and a missing `shouldResume` are each refused; the objects are frozen.
-**Verification.** `cd mobile && npx jest src/voice-session/events.test.js` — or
-the repository's configured runner through **`fugaro verify test`**. The
-dependency scan stays green: this file imports nothing.
+**Verification.** `cd mobile && node --test src/voice-session/events.test.js` —
+the runner `mobile/package.json`'s `test` script already uses
+(`node --test "src/**/*.test.js"`), pointed at one file — or the whole suite with
+**`cd mobile && npm test`**, or through **`fugaro verify test`**. The dependency
+scan stays green: this file imports nothing.
 **Reviewer.** standard.
 
 ### Task VS0.2: The state machine, as a pure reducer — **new**
@@ -232,8 +234,8 @@ resume **only** on an explicit action; `hangUp()` from every active state →
 `ending → ended`; mute as an orthogonal flag that changes no state; an unknown
 event is refused and changes nothing; and the **P8 caveat** — an
 `interruptionBegan` carrying the suspension key must not be treated as a call.
-**Verification.** `cd mobile && npx jest src/voice-session/machine.test.js`, or
-**`fugaro verify test`**.
+**Verification.** `cd mobile && node --test src/voice-session/machine.test.js`, or
+**`cd mobile && npm test`**, or **`fugaro verify test`**.
 **Reviewer.** standard.
 
 ### Task VS0.3: The door, its scan, and the fences — **new**
@@ -250,9 +252,10 @@ three recursive scans `src/audio/index.test.js` runs (no package imports; only
 `src/voice-session/`; and two **new** assertions this work adds: **a paused
 session touches no credential** (no import of `src/accounts/`, matching F24) and
 **no file here builds a string from `transcript`** (F9, D213).
-**Verification.** `cd mobile && npx jest src/voice-session/index.test.js`; then
-**`fugaro verify test`** for the whole suite — the dependency scan and the
-boundary tests are the ones that would notice an accident.
+**Verification.** `cd mobile && node --test src/voice-session/index.test.js`; then
+**`cd mobile && npm test`** or **`fugaro verify test`** for the whole suite — the
+dependency scan and the boundary tests are the ones that would notice an
+accident.
 **Reviewer.** standard.
 
 **Commit.** `mobile/voice-session: the state machine, as a pure reducer over the spec's event stream`.
@@ -282,8 +285,8 @@ and a stale stored copy is never used (the assertion is that mutating the
 pipeline changes the decision with no event in between); a paused session issues
 **no** mailbox call and reads **no** credential (F24); the machine's `ended`
 releases the lease exactly once.
-**Verification.** `cd mobile && npx jest src/voice-session/session.test.js`, or
-**`fugaro verify test`**.
+**Verification.** `cd mobile && node --test src/voice-session/session.test.js`, or
+**`cd mobile && npm test`**, or **`fugaro verify test`**.
 **Reviewer.** standard.
 
 ### Task VS1.2: The native port, and its fake — **new**
@@ -302,7 +305,8 @@ recommended shape: a code and the field it names, in the manner of
 **Tests.** The fake satisfies the same shape assertion the real port must; a
 malformed event is refused (VS0.1's validator); the recorded calls match the
 `updateStatus` throttle; the error path carries a code and no free text.
-**Verification.** `cd mobile && npx jest src/voice-session/`, or **`fugaro verify test`**.
+**Verification.** `cd mobile && npm test` (the mobile runner's own glob picks the
+whole folder up), or **`fugaro verify test`**.
 **Reviewer.** standard.
 
 ### Task VS1.3: The app's one construction site — **edited**
@@ -694,10 +698,13 @@ performs any step.**
   cannot start from the background at all, so any design that wants to *start* a
   session from a notification is impossible, not merely discouraged. The plan
   never offers one.
-- **Four of the spec's platform claims are wrong** (§4 of the reconciliation),
-  and two of them would have been built as written: a `staleDate` described as
-  something that ends an activity (it marks), and `.voiceChat` described as
-  enabling echo cancellation (it does not promise it).
+- **Five of the spec's platform claims do not survive the check** (§4 of the
+  reconciliation): three are Wrong (P5, P7, P23) and two are wrong as written in
+  a way that changes a design (P14, P20). Two of the five would have been built
+  **exactly as the spec writes them** — a `staleDate` described as something that
+  ends an activity (it marks one stale), and `.voiceChat` described as enabling
+  echo cancellation (it does not promise it) — because each reads as a platform
+  guarantee until the platform's own page is opened.
 - **The owner may not have an Android device** (F30). VS7.4's and VS7.5's
   Android rows are written, and three of their subjects cannot be shown on an
   emulator — stated rather than discovered late.

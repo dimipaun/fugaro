@@ -43,8 +43,8 @@ than made silently (F2, decision D207).
 | Block | State |
 |---|---|
 | **D201–D220** | this work's decisions, all written and **all open**. The spec's own four open questions are D201–D204 (the timeout, the "I'm back" cue, Hang Up opening the app, and 16.1 versus 17); the other sixteen are what the reconciliation exposed, including two the spec does not raise at all (**D216**, what the paused activity shows; **D209**, whether `READ_PHONE_STATE` is asked for). |
-| **D193–D200** | **left alone.** [docs/coordinator/README.md](../../coordinator/README.md) says "D193 onward — free", and the highest number written anywhere under `docs/` is **D192** — so D193–D200 are free by that reading. The brief records **D200** as an already-taken ruling ("development builds only, no Expo Go") that **this tree cannot cite** (F20), so this work starts at **D201** rather than collide with a number the owner's own notes may hold. |
-| **Checks 112–117** | this work's, **numbered but not written**. The register's written sections run to **89**; 90–99 are the credentials service's; 100–104 are the functional spec's, with 105–109 **reserved and unused**; **110** is named by the P5.3 design and never written; **111** is taken by [docs/setup-wizard/](../setup-wizard/). Six are free and this work takes the first six. **None is written into the register**: the register's own rule is that *the phase that ships the check writes it*, and no phase here is approved. |
+| **D193–D200** | **left alone.** [docs/coordinator/README.md](../../coordinator/README.md) says "D193 onward — free", and **at this work's base commit `c92093b6`** the highest number written anywhere under `docs/` was **D192** (`git grep -hoE '\bD[0-9]{2,3}\b' c92093b6 -- docs/ | sort -t D -k2 -n | tail -1`; the anchor is the point — from the commit that carries this folder, the same command returns D220) — so D193–D200 are free by that reading. The brief records **D200** as an already-taken ruling ("development builds only, no Expo Go") that **this tree cannot cite** (F20), so this work starts at **D201** rather than collide with a number the owner's own notes may hold. |
+| **Checks 112–117** | this work's, **numbered but not written**. The register's written sections run to **89**; 90–99 are the credentials service's; 100–104 are the functional spec's, with 105–109 **reserved and unused**; **110** is named by the P5.3 design and never written; **111** is taken by [docs/setup-wizard/](../../setup-wizard/). Six are free and this work takes the first six. **None is written into the register**: the register's own rule is that *the phase that ships the check writes it*, and no phase here is approved. |
 | **Check 86** | **not touched.** It already owns *"Hands-free audio: the background mode, the microphone ask, Bluetooth, and barge-in"* (P3.5/P4.2, owner-run) and its text is unwritten. It keeps its number and its subject; the new checks cover what it does not name (F17). |
 
 ## Why nothing here is decided
@@ -81,8 +81,13 @@ file stays verbatim, and the corrections live where they can cite a source.
    phone is locked, so a paused session must need no credential) and **F26**
    (Android will not let a microphone service start from the background at all).
 5. [reconciliation.md](reconciliation.md) §4 — the 25 platform facts, with URLs
-   and verdicts. **Four of the spec's claims are wrong**, and two of those change
-   a design.
+   and verdicts. **Five of the spec's claims do not survive the check** — three
+   are Wrong (P5, P7, P23) and two are wrong as written in a way that changes a
+   design (P14's `POST_NOTIFICATIONS` parenthetical, P20's attribution of echo
+   cancellation to `MODE_IN_COMMUNICATION`). Of the five, **P5's `staleDate` and
+   P7's `.voiceChat` would have been built exactly as the spec writes them**,
+   because each reads as a platform guarantee until the platform's own page is
+   opened. P16 and P17 are Unverified and are asserted nowhere.
 6. [reconciliation.md](reconciliation.md) §5 — **D201–D220**, each with its
    recommendation and its cost. **None is answered.**
 7. [reconciliation.md](reconciliation.md) §6 — what each part costs the **owner**,

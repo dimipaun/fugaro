@@ -449,9 +449,15 @@ D21–D38 console v2, D39–D54b voice, D55–D78 managed projects, **D79–D89
 deliberately unused** (*"an unused number is not a free number"*), D90–D109
 website, D110–D129 mobile, D130–D159 credentials service, D160–D179 mobile
 functional spec (D174–D179 reserved), D180–D192 website redesign (proposed), and
-*"**D193 onward** — free"*. The highest number written anywhere in `docs/` is
-**D192**; `grep -rhoE '\bD[0-9]{2,3}\b' docs/ | sort -u` is the command that
-shows it.
+*"**D193 onward** — free"*. **Anchored to this work's base commit `c92093b6`**,
+the highest number written anywhere in `docs/` was **D192**, and
+`git grep -hoE '\bD[0-9]{2,3}\b' c92093b6 -- docs/ | sort -t D -k2 -n | tail -1`
+is the command that showed it. The anchor matters twice over: this folder's own
+**D201–D220** are written under `docs/` by the commit that carries this
+reconciliation, so from that commit onward the same command returns D220 — and
+`sort -u` would not have surfaced the maximum even at the base commit, because
+`D200` sorts before `D54`. A figure this volatile is given as a **command against
+a commit**, never as a bare number (this document's §0 rule).
 
 **Consequence.** The brief records **D200** as an already-taken ruling
 (*"development builds only, no Expo Go"*, F20) and no such row exists in this
@@ -692,18 +698,44 @@ established from a first-party page and is **not** asserted anywhere in the plan
 | P24 | App extensions under EAS + CNG | **Verified, and labelled experimental by Expo** | See **F15**. `docs.expo.dev/build-reference/app-extensions/` |
 | P25 | App Groups is a capability EAS can enable | **Verified** | Expo's *iOS capabilities* table lists **App Groups — `com.apple.security.application-groups`** as supported, and the page says EAS synchronizes capabilities on the Apple Developer Console from `ios.entitlements` on `eas build`. `docs.expo.dev/build-reference/ios-capabilities/` |
 
-**Two of the spec's platform claims are Wrong (P5, P7) and two more are wrong as
-written in a way that changes a design (P14, P20).** The rest hold.
+**Five of the spec's platform claims do not survive the check.** Three are
+**Wrong** — P5 (`staleDate` presented as something that ends a Live Activity: it
+marks one stale; Apple's own 8-hour and 12-hour bounds are what remove it), P7
+(`.voiceChat` presented as enabling echo cancellation and AGC: the mode sets
+voice-optimised equalisation and a reduced route set, and promises neither) and
+P23 (`expo-apple-targets` is not a package) — and two more are **wrong as
+written in a way that changes a design** — P14 (the `POST_NOTIFICATIONS`
+parenthetical reads as gating the foreground service; it gates the notification,
+not the service) and P20 (`MODE_IN_COMMUNICATION` is presented as what makes the
+platform apply echo cancellation; the reference does not say that, and AEC is the
+separate, device-dependent `AcousticEchoCanceler`). P16 and P17 are **Unverified**
+and are therefore asserted nowhere in the plan (§4's own rule), and the remaining
+**eighteen** rows hold.
+
+Of the five, **two would have been built exactly as the spec writes them** — P5's
+`staleDate` and P7's `.voiceChat` — because both read as a platform guarantee
+until the platform's own page is opened; the other three (P14's parenthetical,
+P20's attribution and P23's package name) would have cost a rework rather than a
+wrong feature.
 
 ---
 
 ## 5. Decisions for the owner — **D201–D220, none answered**
 
 Each row: the question, a **recommended** option with its reason, and the
-alternative with its **cost**. **No row is filled in.** The two questions in the
-spec's own §12 that this section carries are D201 (the timeout) and D202 (the
-cue), D211 and D204 for its §12 items 3 and 4; the rest are what the
-reconciliation exposed.
+alternative with its **cost**. **No row is filled in.**
+
+**The spec's own §12 asks four questions, and all four are carried here in
+order: D201 (item 1, the timeout), D202 (item 2, the "I'm back" cue), D203
+(item 3, whether Hang Up opens the app) and D204 (item 4, the minimum iOS
+version).** The other sixteen rows — D205–D220 — are what the reconciliation
+exposed: the composition with P3.4's machine, where the module's code and the
+widget's target live, what a device check may assume while the app is voiceless,
+the two Android permission questions (`READ_PHONE_STATE` and notifications
+denied), the "Tap to resume" entry point the spec's §8 mentions *optionally*
+(D211 — **not** one of the §12 questions), demo mode, telemetry, the paused
+activity's content, the throttle, the notification category, this work's check
+numbers and the resume rule.
 
 | # | The question | Recommended, and why | The alternative, and its cost |
 |---|---|---|---|
@@ -715,7 +747,7 @@ reconciliation exposed.
 | **D206** | **How the new machine composes with P3.4's pipeline** (F3). | **By subject, and derived, never duplicated:** `voice-session` owns *is there a session, is it paused, why did it end*; the pipeline keeps *whose turn it is and whether an utterance is in flight*; the session's `listening`/`speaking` are **read** from `pipeline.turn()` / `pipeline.speaking()` on every render. This is what keeps `interruptDecision`'s two arguments current, and it is why no second `speaking` flag is stored. | **A stored `state` field that the pipeline updates.** Cost: `interruptDecision` can then judge a flag that is one event stale, and the failure it produces — an update spoken over the user — is the failure P3.5 was built to prevent. **Or flatten the two machines into one**: cost: P3.5's tests, P6.12's seam and `src/audio/`'s door all move, for no gain in behaviour. |
 | **D207** | **What background audio means for D122's conditional** (F2: D122 says the mode is declared *"only if barge-in needs it"*). | **Extend D122, and say so in one place.** The background audio mode is declared, and the reason is now the session's whole existence and not only barge-in. Every other half of D122 is unchanged: `NSMicrophoneUsageDescription` is the owner's sentence, the two denial codes stay, and the visible "tap to speak" fallback stays. | **Leave D122 as written and declare the mode as "barge-in"**. Cost: the declaration would be described by a rule narrower than the reason, which is how a permission string and its purpose drift apart — and a store reviewer reading `UIBackgroundModes: audio` against a spec that says "only if barge-in" has a fair question to ask. |
 | **D208** | **What a device check may assume about speech, while the app is voiceless** (F7). | **Every check is written to run with the session up and the pipeline silent.** Start, background, interrupt, route change, mute, hang up, force-kill, recover — all of it is observable without one word being said, and the pipeline's `say`/`turn` can be driven by the fakes. The one thing that must wait for **Check 85** is the "I'm back" cue and anything that depends on real speech. | **Hold the whole work until Check 85 is run.** Cost: the lifecycle half — which is what this spec is entirely about — waits on an unrelated measurement, and the owner's iPhone can prove nothing in the meantime. **Or ship the checks with a synthetic audio path only**: cost: the same checks then never meet a real microphone, and the thing most likely to be wrong (what iOS and Android actually do to a microphone on a call) is the thing not tested. |
-| **D209** | **Does the app request `READ_PHONE_STATE` for the Android call-state listener** (spec §7.4, F16/P16/P17)? | **No — audio focus only, in the first cut.** It would be the app's fourth runtime ask for a signal that audio focus already carries in the ordinary case, and the spec's own §7.4 already names the fallback as acceptable (*"If the user denies it, fall back to audio focus only"*). Fewer permissions is the posture D122 was answered with, and a permission that is only sometimes granted is a second behaviour that must be tested on a device the owner may not have (F30). | **Yes, request it.** Cost: a fourth runtime permission whose Play treatment this reconciliation could **not** establish (P16, P17), a Data safety answer to change, a denial path to test, and a privacy-form sentence to write — for a case (`some calls don't produce clean focus changes`) the spec itself describes as exceptional. |
+| **D209** | **Does the app request `READ_PHONE_STATE` for the Android call-state listener** (spec §7.4; F13 and F21 — the new asks are store declarations — and the platform facts P16/P17)? | **No — audio focus only, in the first cut.** It would be the app's fourth runtime ask for a signal that audio focus already carries in the ordinary case, and the spec's own §7.4 already names the fallback as acceptable (*"If the user denies it, fall back to audio focus only"*). Fewer permissions is the posture D122 was answered with, and a permission that is only sometimes granted is a second behaviour that must be tested on a device the owner may not have (F30). | **Yes, request it.** Cost: a fourth runtime permission whose Play treatment this reconciliation could **not** establish (P16, P17), a Data safety answer to change, a denial path to test, and a privacy-form sentence to write — for a case (`some calls don't produce clean focus changes`) the spec itself describes as exceptional. |
 | **D210** | **What the app does when notifications are denied on Android 13+** (F27). | **Run the session, and say on the app's own screen that the controls are not reachable from the shade** — and keep the Live-Activity-equivalent promise honest by never claiming a control that is not there. The service is not gated by the permission (P14), so this is a *disclosure* problem and not a functional one. | **Refuse to start a session without notifications.** Cost: a user who has muted notifications for everything loses the feature entirely, which is a larger denial than the platform itself makes. **Or start and say nothing**: cost: the owner's own test matrix (§11 item 9) names this case, and silence is the answer that makes the check unwritable. |
 | **D211** | **Is the "Tap to resume" entry point in the first cut, and is it a local notification or an in-app banner** (spec §8, F12)? | **An in-app banner only, in the first cut**, with the local notification a later part of its own. A banner cannot be misread on a lock screen, needs no permission, and is checkable on the owner's own phone today; and the spec's own §8 already marks the notification *"optionally"*. | **Both now.** Cost: a notification channel, a `POST_NOTIFICATIONS` ask and a lock-screen surface that must be kept content-free (F12) — three things to get right for an entry point that only appears after a three-minute call. **Or neither**: cost: §2's Goal 4 (*"a one-tap way back in"*) is unmet, and the session simply disappears. |
 | **D212** | **Does a voice session run in demo mode** (F10)? | **No.** The demo is a Play-review path that is text-only by construction, its three fences are pinned by `safety.test.js`, and its entry is the first screen a reviewer taps. A microphone that opens there is the worst possible place for one, and widening the demo's own scan to allow it would weaken a fence that exists for a reason. | **A scripted demo session over the fakes.** Cost: the demo would have to own native audio on a store-review device (or visibly fake the microphone, which is worse), and its "no credential, no network" contract would have to be re-argued in public. **Or a video/GIF of the feature in the store listing**: cost: a store asset that can go stale, and nothing the reviewer can operate. |
