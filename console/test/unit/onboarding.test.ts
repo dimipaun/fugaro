@@ -29,7 +29,8 @@
 // a `website/data/install.yaml` that renamed the cask -- fails the same way,
 // which is the point: the console cannot quietly disagree with the site.
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
@@ -90,14 +91,20 @@ describe('the setup command', () => {
   it('is the command the CLI itself declares', () => {
     // `Use: "init"` (`internal/cli/config_init.go`) is what makes `fugaro init`
     // the command: the string in the console is derived from the CLI's own name
-    // for it, and this is the assertion that keeps the two together.
+    // for it, and this is the assertion that keeps the two together -- the
+    // command is *built from the value the CLI declares*, so a rename in that
+    // file is a red step here rather than a note beside a string nobody compares.
     const source = read('internal/cli/config_init.go')
-    expect(source).toMatch(/Use:\s*"init"/)
-    expect(FUGARO_SETUP_COMMAND).toBe('fugaro init')
+    const declared = /Use:\s*"([^"\s]+)"/.exec(source)?.[1]
+    expect(declared, 'internal/cli/config_init.go must declare Use: "<name>"').toBe('init')
+    expect(FUGARO_SETUP_COMMAND).toBe(`fugaro ${declared ?? ''}`)
     // The rename the setup-wizard plan makes (`fugaro setup`) is the one change
-    // that must fail here: this is the red step for it, held as a value.
-    const planned = source.replace(/Use:\s*"init"/, 'Use: "setup"')
-    expect(FUGARO_SETUP_COMMAND).not.toBe(`${planned.includes('Use: "setup"') ? 'fugaro setup' : ''}`)
+    // that must fail here, and it fails *because of the derivation above*:
+    // renaming `Use:` in `internal/cli/config_init.go` makes `declared` say
+    // `setup` while the console still holds `fugaro init`, so the equalities
+    // above go red by name. No second spelling of the command is asserted
+    // instead -- a `not.toBe('fugaro setup')` here would be true whatever the
+    // CLI declared, which is the assertion this replaced.
   })
 
   it('points at the plan that renames it, in one place', () => {
@@ -163,6 +170,13 @@ describe('the two states', () => {
     // the second screen the install command would leave an operator with a CLI
     // and no installation, told to install the CLI again.
     expect(FUGARO_SETUP_COMMAND).not.toBe(FUGARO_INSTALL_COMMAND)
-    expect(REPO_ROOT).toContain('repo')
+    // The path arithmetic this file's `read()` uses, checked as the property it
+    // is reaching for: `../../..` from this spec must land on the repository
+    // root, so every `read('website/…')` above reads the file it names. (It used
+    // to assert that the checkout's path contains the substring "repo", which is
+    // true of a local `/work/repo/…` and false of GitHub's
+    // `/home/runner/work/fugaro/fugaro/console` -- a fact about this machine.)
+    expect(existsSync(join(REPO_ROOT, 'go.mod')), 'the path arithmetic must reach the repository root').toBe(true)
+    expect(existsSync(join(REPO_ROOT, 'console', 'package.json'))).toBe(true)
   })
 })
