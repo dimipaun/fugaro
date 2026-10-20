@@ -9,7 +9,7 @@ before the [OWNER APPROVAL GATE](#owner-approval-gate) at the end is passed.**
 
 The findings below are cited by number (**F1**, **D4**, **C1**) and live in
 [reconciliation.md](reconciliation.md) — the whole set is **F1–F42**, the
-decisions are **D1–D16** (all open) and the owner-run checks the plan needs are
+decisions are **D1–D16** (**D16 answered** on 2026-10-20, and D1–D15 open) and the owner-run checks the plan needs are
 **U1–U13** in that document's UNVERIFIED table; the ranges are stated here so a
 citation in this plan can be read without opening the other document. Where a
 task cites a decision, the task is written to the *recommended* option and
@@ -864,7 +864,8 @@ The gate is passed when all four of the following are true:
    T6.3, only as far as the evidence reaches, and only with the owner's
    agreement.
 
-**Answering D7–D16 is helpful but does not gate the gate**: each of those
+**Answering D7–D15 is helpful but does not gate the gate** (D16 is answered, and
+answering a decision does not approve a task): each of those
 sizes one task, and a task can be written to its recommended option and
 rebased when the answer arrives. D8 (where the config lives), D12 (the mode
 claim) and D15 (the platform status) are the three worth answering early,

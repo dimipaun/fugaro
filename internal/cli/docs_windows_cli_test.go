@@ -52,6 +52,23 @@ const (
 	windowsCLIFirstCut        = "**The first cut builds.**"
 	windowsCLIFirstCutCommand = "GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/fugaro.exe ./cmd/fugaro"
 
+	// windowsCLIDecisionsOpen, windowsCLIDecisionsNotTaken and
+	// windowsCLIPOSIXChange are the index's three statements about what this
+	// work has actually decided and changed, pinned word for word because the
+	// guard used to hold the opposite of the first one: it pinned the range
+	// "**D1–D16**" beside a sentence calling every decision open, while the
+	// index's own table and the plan recorded the owner's 2026-10-20 approval of
+	// Slice 0 and Slice 1 (D16) — a guard enforcing a stale claim. D16 is
+	// answered and D1–D15 are not, and the two cannot be said in one word.
+	// windowsCLIPOSIXChange is the other half of the same problem: the one POSIX
+	// path this slice changes (a relative $XDG_CONFIG_HOME or $XDG_CACHE_HOME
+	// used to decide the config and the two caches) is written down where a
+	// reader looks, rather than claimed away as parity.
+	windowsCLIDecisionsOpen     = "**D1–D15 in [reconciliation.md](reconciliation.md) §5 are open, and D16 is answered**"
+	windowsCLIDecisionsNotTaken = "**none of D1–D15 is taken.**"
+	windowsCLID16Answered       = "**D16 answered**"
+	windowsCLIPOSIXChange       = "**The one POSIX behaviour this slice changes is that a relative `$XDG_CONFIG_HOME` or `$XDG_CACHE_HOME` stops deciding where the config and the two caches go.**"
+
 	// windowsCLIPermsDeferral is the index's record of the one security
 	// question this slice leaves open: the operator's refresh-token file
 	// managed apply writes under %TEMP% is protected by os.Chmod(0600/0700),
@@ -102,6 +119,9 @@ func TestDocsWindowsCLIIsWritten(t *testing.T) {
 		windowsCLIStatus,
 		windowsCLIFirstCut,
 		windowsCLIFirstCutCommand,
+		windowsCLIDecisionsOpen,
+		windowsCLIDecisionsNotTaken,
+		windowsCLIPOSIXChange,
 		windowsCLIPermsDeferral,
 		"**Owner:** the Fugaro owner",
 		windowsCLIRevision,
@@ -144,6 +164,11 @@ func TestDocsWindowsCLIIsWritten(t *testing.T) {
 
 	for _, want := range []string{
 		windowsCLIStatus,
+		// The plan's own statement of the same fact the index carries: D16 is
+		// the one decision the owner has answered, and the plan says so rather
+		// than calling all sixteen open (implementation-plan.md's "the
+		// decisions are D1–D16 (all open)" is what this replaced).
+		windowsCLID16Answered,
 		windowsCLISupportHeading,
 		"## 3. The slices",
 		windowsCLIGate,

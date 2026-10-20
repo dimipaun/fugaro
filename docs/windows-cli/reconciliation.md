@@ -8,7 +8,8 @@ tree disagrees with it (**C1–C3**), numbers every finding **F1–F42** and
 classifies each **Wrong / Exists / Gap / Rule / Open**, states the census each
 count comes from with the exact command beside it, and lists the choices only
 the owner can make as **D1–D16** — each with a recommendation first, the
-alternative and its cost, and **none taken**. Where this document disagrees
+alternative and its cost, and **none taken but D16**, which the owner answered
+on 2026-10-20 by approving Slice 0 and Slice 1 as work. Where this document disagrees
 with [spec.md](spec.md), **this document wins**.
 
 **Nothing here is an approval of a task.** Answering a decision is not
