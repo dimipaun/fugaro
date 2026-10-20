@@ -258,13 +258,16 @@ export function fuseConfig(): FuseConfig {
  * packer's own -- `electronPlatformName`, `appOutDir`, `packager.appInfo`'s
  * `productFilename` and `sanitizedName`, and `packager.executableName`.
  *
- * The last two are the Linux half. `packager.executableName` exists on every
- * packager (`PlatformPackager` sets it) but is only *configured* by
- * `linux.executableName`, and `appInfo.sanitizedName` is the name
- * `LinuxPackager` falls back to -- `sanitizeFileName(package.json name)`
- * lowercased. Both are optional here because neither is a field this file may
- * require: on darwin the bundle is named by `productFilename` and neither is
- * read.
+ * The last two are the Linux half, and neither is on the base packager:
+ * `LinuxPackager` declares `executableName` and is the only class that assigns
+ * it -- to `sanitizeFileName(linux.executableName)` when the configuration sets
+ * that key, and to `appInfo.sanitizedName` (`sanitizeFileName(package.json name)`
+ * lowercased) when it does not. `PlatformPackager` is where an executable name
+ * is read for the other platforms, and it guards those reads with
+ * `this instanceof LinuxPackager`, falling back to `appInfo.productFilename`;
+ * that is why this field is optional here and why it is read on linux alone.
+ * Both are optional because neither is a field this file may require: on darwin
+ * the bundle is named by `productFilename` and neither is read.
  */
 export interface AfterPackContext {
   readonly electronPlatformName: string
