@@ -1,3 +1,5 @@
+//go:build unix
+
 package localcfg
 
 import (
@@ -13,10 +15,15 @@ import (
 // ~/.local/state elsewhere — with %USERPROFILE% standing in for HOME where a
 // Windows shell sets no HOME (F5, D8).
 //
-// The Windows rows run on Linux: what they prove is which variable is read
-// and what is joined onto it, not how Windows spells a separator. The paths
-// are built with filepath.Join for the same reason, so the expectations are
-// this platform's spelling of the same rule.
+// The Windows rows run on Linux, which is what the build tag above is for:
+// what they prove is which variable is read and what is joined onto it, not
+// how Windows spells a separator, and the stand-ins ("/appdata", "/users/me")
+// are absolute for this platform while filepath.IsAbs's rule is the compiled
+// platform's — a Windows build would read them as relative and fail every row.
+// The paths are built with filepath.Join for the same reason, so the
+// expectations are this platform's spelling of the same rule. Making these
+// rows run on Windows is Slice 3's T3.5, the task for the test files that do
+// not yet type-check or pass there (F36).
 func TestConfigDirFollowsThePlatform(t *testing.T) {
 	// The Windows rows use paths this platform calls absolute: absoluteness is
 	// filepath.IsAbs's, which is the *compiled* platform's rule (a Windows
