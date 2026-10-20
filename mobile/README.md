@@ -124,7 +124,7 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 | `metro.config.cjs` | Metro's config, and the one entry in it that matters: `watchFolders` includes the **repository root**, because the app imports `shared/` (`../../../shared/confirm/index.js` and its siblings) and Metro's project root is `mobile/`. Without it the bundle fails to resolve them — `npx expo export` stops at `Unable to resolve module ../../../shared/confirm/index.js` — so it is not removable, and `src/dependencies.test.js` fails if it goes. `.cjs`, because `package.json` is `"type": "module"`. |
 | `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. Two fields are what SDK 58 needs: `plugins: ["expo-secure-store"]` (the module that holds D111's two items, whose config plugin is what configures it for a native build — `npx expo install` asks for it) and **no `edgeToEdgeEnabled` and no `newArchEnabled`**: `npx expo-doctor` reports each of the two as `Additional property "…" is not allowed` against the SDK 58 schema (one error per run, so removing the first is what makes the second visible — 19/20, then 19/20, then 20/20). Both flags ask for what SDK 58 builds anyway: edge-to-edge is mandatory from Android 16 (Expo's own `withEdgeToEdge` says so), and the new architecture is the only architecture. |
 | `app.config.js` | **The build-time config** (P4.4), and the one place the two release identities come from: it resolves `FUGARO_IOS_BUNDLE_ID` and `FUGARO_ANDROID_PACKAGE` from the environment over `app.json`'s `expo` object — see "Building for internal testing" and `src/app-config.ids.test.js`. |
-| `eas.json` | The EAS profiles: `development`, `preview` and `internal` (the store profile Check 89 builds and submits with). It carries exactly one thing about the stores — `ascAppId`, the App Store Connect app record's own public number, so EAS is never asked for it — and no credential path, no credential value and no identity value — see `src/eas-config.test.js`. |
+| `eas.json` | The EAS profiles: `development`, `preview` and `internal` (the store profile Check 89 builds and submits with). It carries exactly one store-side **identifier** — `ascAppId`, the App Store Connect app record's own public number, so EAS is never asked for it (the submit track, the store distribution and the AAB build type are store-side *settings*, not identifiers, and "Building for internal testing" below is where the track is called C8's whole content) — and no credential path, no credential value and no identity value — see `src/eas-config.test.js`. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from; while demo mode is on it draws the banner and the way out on **every** screen, above whatever the screen holds. |
 | `src/app/first-screen.js` | The first screen: what the app is waiting for, the "Try the demo" control, and the slot (`pairingScreen`) where P6.8's pairing screen goes -- above the demo control, never instead of it. |
@@ -279,11 +279,11 @@ FUGARO_ANDROID_PACKAGE=<the reverse-DNS identity> \
 eas env:exec production 'eas submit --profile internal --platform ios'
 ```
 
-`--latest` (as in the block above) submits the profile's most recent finished
-build instead of asking which build. **Neither form has been run from this
+`--latest` — the flag the Check 89 block above uses — submits the profile's most
+recent finished build instead of asking which build; the two forms just above
+are the same command without it. **Neither form has been run from this
 repository**, and no agent runs either: the submission is the owner's (D120,
-Check 89). The two commands above are the ones the owner's own machine needs;
-what follows is what the stores do with the upload.
+Check 89). What follows is what the stores do with the upload.
 
 **After the iOS upload: TestFlight.** The submission is not the install — Apple
 processes the build first, and the owner does four things:
@@ -298,8 +298,9 @@ processes the build first, and the owner does four things:
 3. **Answer the export-compliance question, if the console asks it.** The build
    already carries the answer: `app.config.js` merges
    `ios.infoPlist.ITSAppUsesNonExemptEncryption: false` (the owner's declaration
-   of 2026-10-20, above), which is why the question is normally not put at all;
-   if App Store Connect shows it anyway, the answer is the declared one.
+   of 2026-10-20, in "The export-compliance answer is declared, not asked
+   again." below), which is why the question is normally not put at all; if App
+   Store Connect shows it anyway, the answer is the declared one.
 4. **Install through the TestFlight app** on the device — the console hands out
    no build by itself. This is Check 89 step 4's install, and what it records is
    the version the app reports against the release's tag (C6).
