@@ -11,19 +11,26 @@ import (
 // MaxRunDuration is the longest maxRunDuration a Batch task may be given: 14
 // days in RUNNING before Batch fails the task automatically
 // (cloud.google.com/batch/quotas, checked 2026-10-15; design
-// compute-backend.md §1.3, §9). run.go sends the workflow's own clock plus
-// backend.TaskTimeoutSlack as the job's maxRunDuration, so a workflow whose
-// clock is longer than this is a job Batch refuses at create -- which is why
-// fugaro validate refuses it first, where the operator can see it rather than
-// reading it out of a failed create.
+// compute-backend.md §1.3, §9). run.go sends the run's total plus
+// backend.TaskTimeoutSlack as the job's maxRunDuration, so a total longer than
+// this is a job Batch refuses at create -- which is why fugaro validate bounds
+// the value that can reach the field first, where the operator can see it
+// rather than reading it out of a failed create.
+//
+// The total a run reaches this field with is not a workflow's timeouts.total
+// in this build: batchTimeouts.TaskTimeout answers every workflow with
+// localcfg.BatchTaskTimeout (batch.task_timeout, else backend.MaxRunTime), and
+// a launch that carries its own --total-timeout wins over both. So what
+// validate bounds is batch.task_timeout, which is the one input that can put a
+// total past this ceiling; when the enable task reads the workflow's own
+// timeouts.total per workflow, that value is what validate bounds instead.
 //
 // It is a ceiling, not a plan value: Fugaro's own bound is
-// backend.MaxRunTime (the cap a per-run override may name) and each
-// workflow's timeouts.total, and both bind first for every installation that
-// has one. Under FLEX_START the ceiling is 7 days, which this constant does
-// not model: no Fugaro job asks for FLEX_START (run.go's job definition names
-// STANDARD provisioning), so the 14-day figure is the one this build can be
-// held to.
+// backend.MaxRunTime (the cap a per-run override may name), and both bind
+// first for every installation that has one. Under FLEX_START the ceiling is 7
+// days, which this constant does not model: no Fugaro job asks for FLEX_START
+// (run.go's job definition names STANDARD provisioning), so the 14-day figure
+// is the one this build can be held to.
 const MaxRunDuration = 14 * 24 * time.Hour
 
 // Issue is one way a workflow's resources do not fit the VM a run gets on
@@ -43,9 +50,17 @@ type Issue struct{ Field, Message string }
 // the task's computeResource is derived from it (run.go's taskResources:
 // half the type's vCPUs, a quarter of its memory -- the shares Check 57a
 // scheduled with). A workflow's resources: is the run's own ask, and what
-// bounds it is that share: a task asking for more than the VM Batch placed it
-// on holds sits QUEUED until the queue deadline deletes it, which is a run
-// that never starts rather than a run that fails.
+// bounds it is that share.
+//
+// The failure mode is a mismatch, not a job that never starts: the task's
+// computeResource is taskResources(machine type) and the workflow's resources:
+// is not sent to Batch at all (run.go's job definition, which builds the
+// container with no limits either), so an ask above the share is a run sized
+// for capacity its own task never claimed -- and a run that believed it had
+// more room than the task it runs in. The design's answer for a run that needs
+// more is a larger machine type, not an overcommitted task (design §9 step 9);
+// the shares themselves are a floor known to work rather than a measured
+// maximum, which is what Check 57b-9 measures.
 //
 // There is deliberately no coupling rule between the two fields. On a VM the
 // machine type fixes both numbers and the run's pair only sizes its
@@ -69,10 +84,10 @@ func CheckResources(r config.Resources, machineType string) []Issue {
 	if err != nil {
 		return []Issue{{"", fmt.Sprintf("the Batch backend's machine type: %v", err)}}
 	}
-	// The share, as run.go's taskResources computes it. Computed the same way
-	// rather than named as constants twice: taskVCPUShare and taskMemShare are
-	// the authority, and TestCheckResourcesMatchesTheTaskShares holds the two
-	// together.
+	// The share, as run.go's taskResources computes it. Computed from the same
+	// two constants rather than restated as numbers, and
+	// TestCheckResourcesMatchesTheTaskShares holds this computation against
+	// taskResources' own, which is what the job sends.
 	shareCPU := mt.VCPU / taskVCPUShare
 	shareMem := mt.MemoryGiB / taskMemShare
 
@@ -81,7 +96,7 @@ func CheckResources(r config.Resources, machineType string) []Issue {
 		out = append(out, Issue{"cpu", "a run needs at least one CPU"})
 	} else if float64(r.CPU) > shareCPU {
 		out = append(out, Issue{"cpu", fmt.Sprintf(
-			"a run on %s asks for at most %g CPUs: %d is more than the share of the machine type a Batch task gets (%g of the type's %g), and a task asking for more than the VM it is placed on holds sits QUEUED until the queue deadline deletes it (design §1.3, §2.3)",
+			"a run on %s asks for at most %g CPUs: %d is more than the share of the machine type the run's task claims (%g of the type's %g), and the workflow's resources are not sent to Batch -- the task's computeResource is that share -- so this is a run sized for capacity its own task never claimed. The answer is a larger batch.machine_type, not an overcommitted task (design §1.3, §9 step 9)",
 			mt.Name, shareCPU, r.CPU, shareCPU, mt.VCPU)})
 	}
 	gib, err := backend.MemoryGiB(r.Memory)
@@ -90,7 +105,7 @@ func CheckResources(r config.Resources, machineType string) []Issue {
 		out = append(out, Issue{"memory", err.Error()})
 	case gib > shareMem:
 		out = append(out, Issue{"memory", fmt.Sprintf(
-			"a run on %s asks for at most %s of memory: %s is more than the share of the machine type a Batch task gets (%s of the type's %s), and a task asking for more than the VM it is placed on holds sits QUEUED until the queue deadline deletes it (design §1.3, §2.3)",
+			"a run on %s asks for at most %s of memory: %s is more than the share of the machine type the run's task claims (%s of the type's %s), and the workflow's resources are not sent to Batch -- the task's computeResource is that share -- so this is a run sized for capacity its own task never claimed. The answer is a larger batch.machine_type, not an overcommitted task (design §1.3, §9 step 9)",
 			mt.Name, giB(shareMem), r.Memory, giB(shareMem), giB(mt.MemoryGiB))})
 	}
 	return out

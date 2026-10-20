@@ -36,9 +36,11 @@ func TestCheckResourcesAcceptsWhatAVMCanHold(t *testing.T) {
 }
 
 // TestCheckResourcesRefusesMoreThanTheTaskShare is the check's refusal half:
-// a task asking for more than the share of the machine type Batch places it on
-// sits QUEUED, so validate refuses it rather than letting the run wait out the
-// queue deadline.
+// the task's computeResource is the machine type's share, and a workflow's
+// resources: is not sent to Batch at all, so an ask above it is a run sized for
+// capacity its own task never claimed. The refusal names the larger machine
+// type as the answer (design §9 step 9), which the message assertions below
+// hold.
 //
 // Mutation (drop the cpu bound, drop the memory bound, or compare against the
 // machine type's whole quantities -- 4 CPUs and 16Gi on e2-standard-4): the
@@ -73,6 +75,59 @@ func TestCheckResourcesRefusesMoreThanTheTaskShare(t *testing.T) {
 	is := CheckResources(config.Resources{CPU: 1, Memory: "1Gi"}, "e2-micro")
 	if !strings.Contains(is[0].Message, defaultMachineType) {
 		t.Errorf("the unknown-machine-type refusal does not list the types this build prices: %q", is[0].Message)
+	}
+	// And it names the answer the design gives a run that asks for more: a
+	// larger machine type, not an overcommitted task (design §9 step 9). The
+	// failure it must NOT claim is the one this backend cannot produce -- the
+	// workflow's resources: never reaches the job's computeResource, so no ask
+	// in this field can leave a task QUEUED.
+	over := CheckResources(config.Resources{CPU: 4, Memory: "1Gi"}, defaultMachineType)
+	if len(over) == 0 {
+		t.Fatal("the over-share ask was accepted")
+	}
+	for _, want := range []string{"batch.machine_type", "computeResource"} {
+		if !strings.Contains(over[0].Message, want) {
+			t.Errorf("the over-share refusal does not say %q: %q", want, over[0].Message)
+		}
+	}
+	if strings.Contains(over[0].Message, "QUEUED") {
+		t.Errorf("the over-share refusal claims a failure this backend cannot produce (the task's computeResource is the share, so the workflow's ask cannot make the job unplaceable): %q", over[0].Message)
+	}
+}
+
+// TestCheckResourcesMatchesTheTaskShares holds the bound CheckResources applies
+// to the number the job actually sends. taskResources is what the task's
+// computeResource carries (run.go), and this check computes the same share from
+// the same two constants -- two computations of one fact, so this is what keeps
+// them the same fact: the largest ask the check accepts is exactly what the task
+// claims, and one more than that is refused, on every type the table prices.
+//
+// Mutation (change either computation, or compare against the machine type's
+// whole quantities): the type named in the failure no longer matches the ask
+// the task carries.
+func TestCheckResourcesMatchesTheTaskShares(t *testing.T) {
+	for _, name := range []string{defaultMachineType, "e2-standard-2", "e2-standard-16"} {
+		mt, err := MachineTypeOf(name)
+		if err != nil {
+			t.Fatalf("MachineTypeOf(%s): %v", name, err)
+		}
+		// The task asks Batch in milli-CPU and MiB; a workflow asks in whole
+		// CPUs and a memory string.
+		tr := taskResources(mt)
+		shareCPU := float64(tr.CpuMilli) / 1000
+		shareMem := float64(tr.MemoryMib) / 1024
+		ask := config.Resources{CPU: int(shareCPU), Memory: giB(shareMem)}
+		if is := CheckResources(ask, name); len(is) != 0 {
+			t.Errorf("CheckResources(%+v, %s) = %+v, want none: taskResources asks Batch for exactly %g CPUs, and the check refuses the task's own claim", ask, name, is, shareCPU)
+		}
+		over := config.Resources{CPU: int(shareCPU) + 1, Memory: giB(shareMem)}
+		if is := CheckResources(over, name); len(is) == 0 || is[0].Field != "cpu" {
+			t.Errorf("CheckResources(%+v, %s) = %+v, want a cpu issue: that is one CPU more than the task asks Batch for", over, name, is)
+		}
+		fat := config.Resources{CPU: int(shareCPU), Memory: giB(shareMem + 1)}
+		if is := CheckResources(fat, name); len(is) == 0 || is[0].Field != "memory" {
+			t.Errorf("CheckResources(%+v, %s) = %+v, want a memory issue: that is one GiB more than the task asks Batch for", fat, name, is)
+		}
 	}
 }
 
