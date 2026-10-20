@@ -1040,9 +1040,12 @@ test('with no Linux block in the data file, no built page carries one', async (t
     null,
     `the downloads section carries a Linux block while ${DOWNLOADS_JSON} carries none: it renders only while the data file has one (D10)`,
   )
+  // The data file's own released sentence is the one place the word may appear without a
+  // block: it says Linux builds do not exist yet, which is the state being asserted.
+  const pageWithoutReleasedSentence = page.split(data.released.text).join('')
   for (const word of ['Linux', 'AppImage', '.deb']) {
     assert.ok(
-      !page.includes(word),
+      !pageWithoutReleasedSentence.includes(word),
       `the page carries ${JSON.stringify(word)} and ${DOWNLOADS_JSON} says nothing about it: the page's sentence about the platform the release carries is the only one it makes`,
     )
   }

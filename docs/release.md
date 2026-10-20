@@ -219,6 +219,8 @@ grep "linux-x64" console-sha256sums.txt | sha256sum -c -   # shasum -a 256 -c - 
 less console-linux-verification.txt
 ```
 
+**What the Linux `.deb` installs, and the one flag never to use.** The `.deb`'s after-install script installs a `chrome-sandbox` helper that may be **SUID root** (mode 4755) on hosts without unprivileged user namespaces, writes an AppArmor profile (`/etc/apparmor.d/fugaro-console`) for Ubuntu 24.04 and later, and creates the `/usr/bin/fugaro-console` symlink. The AppImage installs nothing and has no such profile, so on Ubuntu 24.04+ it may refuse to start; **the AppImage must NEVER be run with `--no-sandbox`** (the window relies on `sandbox: true`). The same text is in `console/README.md`.
+
 **Two things a reader must not conclude.** That the Linux artifacts are signed in any sense — they are not, and a release note or a page that says so is wrong. And that the macOS asset list is what the release carries: since the ruling the release carries a Linux leg as well, and the file that produces it is staged under `docs/pending-workflows/` until the owner copies it in (see "Before you tag" above), so a `console-vX.Y.Z` release cut before that copy has no Linux asset whatever — which is also why the website's downloads data carries no Linux entry yet (console/README.md, the Linux section).
 
 ## Rolling back

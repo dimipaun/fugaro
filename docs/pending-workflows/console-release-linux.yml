@@ -905,7 +905,12 @@ jobs:
           name: console-linux-assets
           path: ${{ runner.temp }}/console-linux-assets
           if-no-files-found: error
-          retention-days: 1
+          # Seven days, not the macOS leg's one: this job runs as soon as the
+          # tag is pushed, but `publish` waits for the `release` job, which
+          # waits for the owner to approve the `console-release` environment.
+          # An approval later than the retention would make download-artifact
+          # fail in `publish` and force a re-run of this job.
+          retention-days: 7
 
   # The only job that can write a release, and it runs no repository code: no
   # checkout, no packer, no environment, no Apple secret, no Linux secret. It

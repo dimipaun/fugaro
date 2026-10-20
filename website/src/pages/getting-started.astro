@@ -212,7 +212,14 @@ const GLYPH_SHAPES = /<(?:path|circle|ellipse|rect|line|polyline|polygon)\b/
 // build errors naming the files: a console whose assets name no system (or more than one) has
 // no card to sit in, and one whose system this page draws no card for would be a download
 // offered under a system it is not built for.
-const consolePlatformNames = [...new Set(consoleFacts.downloads.map((download) => download.platform))]
+// The assets a per-platform block names are drawn under that block's own sentence, so they do
+// not decide which system's card the console sits in: only the rest do.
+const blockAssetIds = new Set((consoleFacts.linux?.downloads ?? []).map((download) => download.id))
+const consolePlatformNames = [
+  ...new Set(
+    consoleFacts.downloads.filter((download) => !blockAssetIds.has(download.id)).map((download) => download.platform),
+  ),
+]
 if (consolePlatformNames.length !== 1) {
   throw new Error(
     `website/content/downloads.json names ${consolePlatformNames.length} platform(s) on its downloads (${consolePlatformNames.join(', ') || 'none'}), and Getting Started offers the console in the card of the one system it ships for: with no platform named there is no card to put the download in, and with two the page would have to decide which`,

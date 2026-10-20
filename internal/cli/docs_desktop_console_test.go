@@ -7257,3 +7257,52 @@ func consoleSpawnList(t *testing.T, src, constant, field string) []string {
 	}
 	return out
 }
+
+// TestConsoleLinuxReleaseKeepsItsArtifactForTheApprovalAndSaysUnsigned pins two
+// facts of the staged release workflow the independent review of PR 758 found
+// unguarded: the Linux artifact outlives the owner's environment approval (the
+// job runs at tag time, publish waits for the approval), and the release notes
+// say the Linux build is unsigned in those words.
+func TestConsoleLinuxReleaseKeepsItsArtifactForTheApprovalAndSaysUnsigned(t *testing.T) {
+	text, path := consoleReplacementText(t, consoleReleaseLinuxWorkflowPath, appliedConsoleReleasePath)
+
+	i := strings.Index(text, "name: console-linux-assets")
+	if i < 0 {
+		t.Fatalf("%s uploads no console-linux-assets artifact", path)
+	}
+	rest := text[i:]
+	m := regexp.MustCompile(`retention-days: (\d+)`).FindStringSubmatch(rest)
+	if m == nil {
+		t.Fatalf("%s: the console-linux-assets upload sets no retention-days", path)
+	}
+	if days, _ := strconv.Atoi(m[1]); days < 7 {
+		t.Errorf("%s keeps console-linux-assets %d day(s): the linux job runs at tag time and publish waits for the owner's environment approval, so an approval later than that makes publish fail (want at least 7)", path, days)
+	}
+
+	j := strings.Index(text, "--notes ")
+	if j < 0 {
+		t.Fatalf("%s has no gh release create --notes text", path)
+	}
+	notes := text[j:]
+	if k := strings.Index(notes, "\n"); k >= 0 {
+		notes = notes[:k]
+	}
+	for _, want := range []string{"The Linux build is unsigned", "not code-signed"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("%s: the release notes no longer contain %q; design 7.6 item 2 requires the notes to say unsigned in those words", path, want)
+		}
+	}
+}
+
+// TestDocsConsoleLinuxDebAndSandboxAreSaidPlainly pins the paragraph that says
+// what the .deb installs and that --no-sandbox is never the answer.
+func TestDocsConsoleLinuxDebAndSandboxAreSaidPlainly(t *testing.T) {
+	for _, path := range []string{"console/README.md", "docs/release.md"} {
+		doc := readDoc(t, path)
+		for _, want := range []string{"chrome-sandbox", "SUID root", "/etc/apparmor.d/fugaro-console", "Ubuntu 24.04", "/usr/bin/fugaro-console", "NEVER be run with `--no-sandbox`"} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s no longer says %q about the Linux .deb and sandbox", path, want)
+			}
+		}
+	}
+}

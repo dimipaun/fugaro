@@ -473,6 +473,20 @@ describe('the afterPack hook', () => {
     expect(fuses.calls).toEqual([])
     expect(() => fuseTarget(elsewhere)).toThrow(/win32/)
   })
+
+  // The allow-list is exact: it is matched against the names Electron Packager
+  // reports, byte for byte, so a differently-cased darwin or linux, an empty or
+  // missing name and any other platform are refused, not normalised.
+  it.each(['freebsd', 'Linux', 'LINUX', 'Darwin', 'DARWIN', 'mas', 'win32', '', 'constructor'])(
+    'refuses the platform name %j',
+    async (name) => {
+      const fuses = fakeFuses()
+      const elsewhere = { ...CONTEXT, electronPlatformName: name } as AfterPackContext
+      await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/packaged for darwin and linux/)
+      expect(() => fuseTarget(elsewhere)).toThrow(/packaged for darwin and linux/)
+      expect(fuses.calls).toEqual([])
+    },
+  )
 })
 
 describe('the packaging configuration the fuses belong to', () => {

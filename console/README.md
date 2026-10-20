@@ -3684,6 +3684,12 @@ certificate, no owner-run signing step and no secret in any Linux job, because
 there is nothing to sign *with* — and the release's own words, the design's and
 this file's say unsigned rather than leaving it to be deduced.
 
+### What the `.deb` installs, and why `--no-sandbox` is never the answer
+
+The `.deb` is installed by electron-builder's own after-install script, and it does three things a reader should know before installing it as root: it installs a `chrome-sandbox` helper next to the executable, which the script makes **SUID root (mode 4755) on hosts that do not allow unprivileged user namespaces** (and leaves alone where they do); it writes an AppArmor profile, `/etc/apparmor.d/fugaro-console`, that lets the console create user namespaces, which **Ubuntu 24.04 and later restrict by default**; and it creates the `/usr/bin/fugaro-console` symlink to the installed executable (distinct from the CLI's `/usr/bin/fugaro`).
+
+The **AppImage installs nothing and ships no AppArmor profile**, so on Ubuntu 24.04 or later it can refuse to start under that restriction. **The AppImage must NEVER be run with `--no-sandbox`, and neither may the `.deb`'s executable**: the window relies on `sandbox: true`, and that flag turns off the renderer's OS-level sandbox, which is the boundary the untrusted-renderer rule above exists to keep. Install the `.deb` (which brings the profile) or allow user namespaces for the AppImage instead.
+
 ### What ships, and the configuration that produces it
 
 | | |
