@@ -617,12 +617,18 @@ export function shortcutRow(event: KeyEventLike, mac: boolean): number | null {
  *
  * **This is the file's one read of the window's platform, and it is a read of
  * the navigator the scope carries** -- not a global, so a case can drive both
- * platforms. The two spellings are both read because the modern one is not
- * always there: `navigator.userAgentData` is behind a secure context and the
- * console's own `app://` origin is not one, so `navigator.platform` -- which
- * answers `MacIntel` on macOS -- is the fallback rather than the first choice. A
- * scope with no navigator at all (a `vm` realm, a unit test) answers `false`,
- * which is the "elsewhere" half of the rule and never an exception.
+ * platforms. The origin is not the reason for the two spellings: the console's
+ * `app://` scheme is registered `{ standard: true, secure: true }` precisely so
+ * the document is a secure context (`src/main/protocol.ts`), and
+ * `navigator.userAgentData` is not withheld from it. The fallback is for the
+ * value rather than the origin -- the modern spelling is a Chromium
+ * user-agent-client-hints member, and **its `platform` can be an empty string**
+ * where the hints are unavailable or reduced, which is a spelling that is
+ * present and says nothing. So `navigator.platform` -- deprecated, but answering
+ * `MacIntel` on macOS -- is read when the modern one is missing *or blank*, and
+ * a name that is still blank answers `false`. A scope with no navigator at all
+ * (a `vm` realm, a unit test) answers `false` too, which is the "elsewhere" half
+ * of the rule and never an exception.
  */
 export function isMacPlatform(navigator: unknown): boolean {
   const scope = navigator as
@@ -634,7 +640,8 @@ export function isMacPlatform(navigator: unknown): boolean {
     | undefined
   const modern = scope?.userAgentData?.platform
   const legacy = scope?.platform
-  const name = typeof modern === 'string' ? modern : typeof legacy === 'string' ? legacy : ''
+  const spelled = (value: unknown): string => (typeof value === 'string' ? value : '')
+  const name = spelled(modern) || spelled(legacy)
   return /^mac/i.test(name)
 }
 

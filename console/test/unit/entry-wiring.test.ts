@@ -1224,6 +1224,16 @@ describe('the keyboard’s own rules, apart from the DOM', () => {
     // The modern spelling wins where both are there: `platform` is deprecated and answers
     // `MacIntel` on an iPad, which is the one case where the two disagree about the machine.
     expect(isMacPlatform({ userAgentData: { platform: 'Windows' }, platform: 'MacIntel' })).toBe(false)
+    // **A modern spelling that is present and blank is not an answer**, which is what the
+    // fallback is really for: `userAgentData.platform` is an empty string where the hints
+    // are unavailable or reduced, and a read that took "there is a string" for "there is a
+    // platform" would call a Mac running such a build "not macOS" and spell the shortcut
+    // keys the other platform's way. The same for a blank legacy name, which is not macOS
+    // either.
+    expect(isMacPlatform({ userAgentData: { platform: '' }, platform: 'MacIntel' })).toBe(true)
+    expect(isMacPlatform({ userAgentData: { platform: '' }, platform: 'Windows' })).toBe(false)
+    expect(isMacPlatform({ userAgentData: { platform: '' }, platform: '' })).toBe(false)
+    expect(isMacPlatform({ userAgentData: { platform: '' } })).toBe(false)
   })
 })
 
