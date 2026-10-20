@@ -10,8 +10,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
+
+// executeStdinReader is executeStdin for a reader of the test's own: it is how
+// a test acts at the exact moment the command reads the confirmation — after
+// the read it decided on and before the write it makes.
+func executeStdinReader(t *testing.T, stdin io.Reader, args ...string) (string, string, error) {
+	t.Helper()
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(stdin)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(NormalizeRepoArgs(args))
+	err := cmd.Execute()
+	return out.String(), errOut.String(), err
+}
 
 // TestAccountsLsNoProjectConfigNeedsNoCloud: with no project config selected
 // at all (no FUGARO_CONFIG, nothing in $XDG_CONFIG_HOME/fugaro/projects), the
@@ -38,6 +54,53 @@ func TestAccountsLsNoProjectConfigNeedsNoCloud(t *testing.T) {
 	}
 	if doc.Complete || doc.Note == "" {
 		t.Fatalf("doc = %+v, want complete=false with a note (selection genuinely failed)", doc)
+	}
+	// No project config means no database to read a mark from: the states are
+	// absent with a note, never "every account is available", which is a claim
+	// about marks this command did not read (C1.21).
+	if doc.States != nil || doc.StateNote == "" {
+		t.Fatalf("states = %v, state_note = %q, want no states and a note naming why", doc.States, doc.StateNote)
+	}
+}
+
+// A mark carrying a state this release does not model is shown as the word it
+// carries, in both views: rounding it to "available" is the one direction this
+// reader must not take, because it would tell an operator a credential is in
+// the cascade's rotation when a newer release has held it.
+func TestAccountsLsShowsAStateItDoesNotKnow(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.appendConfig(t, "claude_accounts:\n  acme-personal:\n    allow_data_to: [\"acme/other\"]\n  acme-quota:\n    allow_data_to: [\"acme/other\"]\n")
+	f.db.Set(credsMarkPath("acme-quota"), map[string]any{"state": "quota_hold"})
+
+	out, _, err := execute(t, "accounts", "ls", "--repo", "acme/other", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc accountsListDoc
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("unmarshal %q: %v", out, err)
+	}
+	if got := doc.States["acme-quota"].State; got != "quota_hold" {
+		t.Fatalf("states[acme-quota] = %q, want the word the mark carries", got)
+	}
+	// An account with no node is available: a credential with no mark and one
+	// whose mark was cleared are the same credential (creds.Mark's own doc).
+	if got := doc.States["acme-personal"].State; got != "available" {
+		t.Fatalf("states[acme-personal] = %q, want available for an account with no node", got)
+	}
+
+	text, _, err := execute(t, "accounts", "ls", "--repo", "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := ""
+	for _, l := range strings.Split(text, "\n") {
+		if strings.HasPrefix(l, "acme-quota") {
+			line = l
+		}
+	}
+	if fields := strings.Fields(line); len(fields) != 2 || fields[1] != "quota_hold" {
+		t.Fatalf("the text view does not show the unknown state verbatim: %q\n%s", line, text)
 	}
 }
 
@@ -206,6 +269,22 @@ func TestPrintAccountsTextGoesThroughPrintable(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), `\u001b`) {
 		t.Fatalf("output %q does not show the escaped form", buf.String())
+	}
+
+	// The state column is a tabwriter row, where a literal tab in a name would
+	// open the next column instead of staying inside this one. Printable keeps
+	// tabs (they are a printable form of their own), so the cell escapes it.
+	buf.Reset()
+	doc := accountsListDoc{Repo: "acme/app", Accounts: []string{"acme\tpersonal"},
+		States: map[string]accountState{"acme\tpersonal": {State: "broken"}}}
+	if err := printAccounts(&buf, doc, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "\t") {
+		t.Fatalf("output %q has a raw tab in a cell", buf.String())
+	}
+	if !strings.Contains(buf.String(), `acme\u0009personal`) || !strings.Contains(buf.String(), "broken") {
+		t.Fatalf("output %q does not show the name and its state", buf.String())
 	}
 }
 
@@ -439,13 +518,19 @@ func TestAccountsClearOnlyNamedAccount(t *testing.T) {
 	for _, name := range []string{"default", "acme-personal", "acme-overflow"} {
 		f.db.Set(credsMarkPath(name), map[string]any{"state": "broken", "since": since})
 	}
+	// A name the installation does not know, with a mark of its own: the
+	// leftover of an account the config no longer lists. The name is what
+	// refuses the clear — not the absence of a mark, which the refusal below
+	// would otherwise be about — and the node stays exactly as it was.
+	f.db.Set(credsMarkPath("acme-other"), map[string]any{"state": "broken", "since": since})
 	stdinIsTerminal = func(io.Reader) bool { return false }
 
-	if _, _, err := execute(t, "accounts", "clear", "acme-other", "--yes"); err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("err = %v, want a user error for a name the installation does not know", err)
+	if _, _, err := execute(t, "accounts", "clear", "acme-other", "--yes"); err == nil || ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "claude_accounts") {
+		t.Fatalf("err = %v, want a user error naming the name the installation does not know", err)
 	}
-	if f.db.Value(credsMarkPath("acme-other")) != nil {
-		t.Fatal("a mark node was written for a name no claude_accounts entry carries")
+	if m, _ := f.db.Value(credsMarkPath("acme-other")).(map[string]any); m["state"] != "broken" || m["since"] != since {
+		t.Fatalf("a name no claude_accounts entry carries was cleared: %v", m)
 	}
 	for _, name := range []string{"default", "acme-personal", "acme-overflow"} {
 		if m, _ := f.db.Value(credsMarkPath(name)).(map[string]any); m["state"] != "broken" {
@@ -516,5 +601,59 @@ func TestAccountsClearNeverPrintsAValue(t *testing.T) {
 		default:
 			t.Fatalf("the cleared mark carries %q, which is not a field of creds.Mark: %v", k, m)
 		}
+	}
+}
+
+// markFlip is the operator's terminal in the test below: the first time the
+// command reads the confirmation, it changes the stored mark — exactly where
+// the service marking the credential at that same moment would — and then
+// answers the confirmation with the project's name.
+type markFlip struct {
+	db   *gcpfake.RTDB
+	path string
+	mark map[string]any
+	line string
+	done bool
+}
+
+func (m *markFlip) Read(p []byte) (int, error) {
+	if !m.done {
+		m.done = true
+		m.db.Set(m.path, m.mark)
+	}
+	if m.line == "" {
+		return 0, io.EOF
+	}
+	n := copy(p, m.line)
+	m.line = m.line[n:]
+	return n, nil
+}
+
+// The clear re-decides on the value it writes under, not on the one it read
+// (creds.RTDBStore.UpdateMark's callback runs under the ETag): a credential
+// the service marked between this command's read and its write keeps the
+// service's state, because a clear meant for "broken" must not take off a
+// hold placed a moment later.
+func TestAccountsClearReDecidesUnderTheWrite(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.appendConfig(t, claudeAccountsConfig)
+	now := time.Now().UTC().Truncate(time.Second)
+	f.db.Set(credsMarkPath("acme-personal"), map[string]any{
+		"state": "broken", "since": now.Add(-time.Minute).Format(time.RFC3339Nano)})
+	typed(t)
+
+	// The state the service writes while the operator is answering: one this
+	// Fugaro must not clear (a probe is what ends a backoff, C1.12).
+	held := map[string]any{"state": "backed_off", "until": now.Add(15 * time.Minute).Format(time.RFC3339Nano)}
+	in := &markFlip{db: f.db, path: credsMarkPath("acme-personal"), mark: held, line: "aurora\n"}
+	if _, _, err := executeStdinReader(t, in, "accounts", "clear", "acme-personal"); err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: the state under the write is not one to clear", err)
+	}
+	if !in.done {
+		t.Fatal("the command never read the confirmation, so the mark was never changed under it")
+	}
+	m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any)
+	if m["state"] != "backed_off" || m["until"] != held["until"] {
+		t.Fatalf("mark = %v, want the service's own write untouched", m)
 	}
 }

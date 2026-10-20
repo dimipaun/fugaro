@@ -1307,6 +1307,30 @@ func TestDoctorReportsTheCascadeWithoutTheCredsMarker(t *testing.T) {
 		t.Fatalf("a marker above this release's generation: %+v (ok=%v), want a warning whose fix is to upgrade", c, ok)
 	}
 
+	// A marker below this release's generation: the deployed document
+	// predates the credentials family, and the remedy is this Fugaro's own
+	// init, not an upgrade. Generation 0 is reachable — it is what a marker
+	// hand-edited to zero (or written by a deploy that recorded nothing)
+	// says, and only a negative one is "cannot be told apart".
+	db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion-1)
+	c, ok = doctorChecksByID(t)["creds-rules"]
+	if !ok || c.Severity != "warning" || !strings.Contains(c.Fix, "init --firebase") {
+		t.Fatalf("a marker below this release's generation: %+v (ok=%v), want a warning whose fix is to re-run init", c, ok)
+	}
+	if strings.Contains(c.Fix, "upgrade") {
+		t.Fatalf("the older-marker fix tells the reader to upgrade: %+v", c)
+	}
+
+	// A marker that is not a generation at all (a negative number is what a
+	// hand-edit leaves): the check says it cannot be told apart rather than
+	// reading it as an older deploy, since a number below zero is not one any
+	// release wrote.
+	db.Set(rules.PathCredsRulesMarker(), -1)
+	c, ok = doctorChecksByID(t)["creds-rules"]
+	if !ok || !strings.Contains(c.Problem, "cannot be told apart") {
+		t.Fatalf("a hand-edited marker: %+v (ok=%v), want the cannot-be-told-apart warning", c, ok)
+	}
+
 	// The cascade off: no marker is needed, and doctor says nothing.
 	doctorPolicyRig(t, doctorPolicy(nil), "")
 	if c, ok := doctorChecksByID(t)["creds-rules"]; ok {
