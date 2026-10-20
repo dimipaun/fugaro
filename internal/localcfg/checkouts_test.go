@@ -524,8 +524,14 @@ func TestBoundedAppliesTheWriteBoundsOnTheRead(t *testing.T) {
 		t.Fatalf("the hand-written document holds %d repositories, want %d (the read is what is under test)", got, MaxCheckoutRepos+4)
 	}
 	bounded, dropped := c.Bounded([]string{"aurora"})
-	if dropped == 0 {
-		t.Error("dropped = 0, want the entries the bounds cut")
+	// Every entry the read did not examine, counted as the entries they are:
+	// the 24 repositories hold 192 rows between them and the bound examines
+	// 20 x 5 = 100, so 92 rows went unexamined. Counting a dropped repository
+	// as one entry would say 64 — it would hide the 8 rows of each of the 4
+	// repositories the repository bound drops.
+	wantDropped := (MaxCheckoutRepos+4)*(MaxCheckoutPaths+3) - MaxCheckoutRepos*MaxCheckoutPaths
+	if dropped != wantDropped {
+		t.Errorf("dropped = %d, want %d: the entries the bounds cut, not the repositories", dropped, wantDropped)
 	}
 	got := bounded.ProjectCheckouts("aurora")
 	if len(got) != MaxCheckoutRepos {
@@ -623,6 +629,47 @@ func writeHandWritten(t *testing.T, path string, doc *Checkouts) {
 		t.Fatal(err)
 	}
 	writeFile(t, path, string(data))
+}
+
+// TestConfigEnrollsPicksTheSameEntryEveryTime: repos: is keyed by the
+// operator's own spelling, and two keys can fold together ("acme/app" and
+// "Acme/App"), so the fold alone names no entry. The exact spelling is read
+// first — configRepo's rule — and the fold is then resolved over the sorted
+// keys, so the same files answer the same thing on every run rather than
+// whichever entry the map's iteration happens to reach first. A gate that
+// answers differently on two reads of unchanged files is a validity verdict
+// that flips: an operator who sees "not enrolled" and runs the same command
+// again can get "valid".
+//
+// Mutation (run, restore): drop the exact-spelling lookup and the first half
+// fails, because "Acme/App" sorts before "acme/app" and answers for it.
+// Iterate the map instead of the sorted keys and the second half fails within
+// a few runs (`go test -count=20`): the answer follows the map's order.
+func TestConfigEnrollsPicksTheSameEntryEveryTime(t *testing.T) {
+	// Two spellings of one name, naming different providers: the entry the
+	// operator wrote the way the repository is written is the one that
+	// answers.
+	cfg := &Config{Repos: map[string]Repo{
+		"acme/app": {Provider: "github"},
+		"Acme/App": {Provider: "bitbucket"},
+	}}
+	if !cfg.Enrolls("github", "acme/app") {
+		t.Error("Enrolls(github, acme/app) = false, want the entry spelled as the repository is")
+	}
+	if cfg.Enrolls("bitbucket", "acme/app") {
+		t.Error("Enrolls(bitbucket, acme/app) = true, want the exact spelling to answer, not the other entry")
+	}
+	// No exact spelling: the fold is resolved over the sorted keys, so the
+	// answer does not change between reads.
+	folded := &Config{Repos: map[string]Repo{
+		"Acme/App": {Provider: "github"},
+		"ACME/APP": {Provider: "bitbucket"},
+	}}
+	for i := range 8 {
+		if !folded.Enrolls("bitbucket", "acme/app") || folded.Enrolls("github", "acme/app") {
+			t.Fatalf("read %d: the folded entries answered differently (sorted keys: ACME/APP is the one that answers)", i)
+		}
+	}
 }
 
 // TestConfigEnrollsIsALocalFact: whether a repository is enrolled is read off

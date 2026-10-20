@@ -671,6 +671,27 @@ that cannot be read (not JSON, another version, over its size bound, not a
 regular file) is a warning naming it and `checkouts: []` for every
 installation — never a silent "there are none", and never a listing that fails.
 
+**One row carries one reason, and which one it is is fixed.** In order:
+
+1. `not_representable` — decided from the row's own strings, **before anything
+   touches the disk**: the path as printed is not the path as stored, the path
+   is not absolute, or the identity is not a provider and an `owner/name`. A
+   row that fails here is never examined further, so a relative path that
+   happens to exist under the reader's working directory is still
+   `not_representable` and not a valid checkout.
+2. `missing` — the path is not a directory that exists.
+3. `unreadable` — it is there, and its `fugaro.yaml` cannot be read.
+4. `not_a_checkout` — it is not a git checkout's own root.
+5. `other_project` — its `fugaro.yaml` names another project (or none).
+6. `other_repository` — its origin is another repository than the row's, or an
+   origin git config rewrites.
+7. `not_enrolled` — everything above holds and the project does not enroll the
+   repository.
+
+The order is part of the contract because the console renders the reason: a row
+is reported as the *first* thing wrong with it, and `not_enrolled` — the last
+of the seven — is therefore what a row gets when nothing else is.
+
 **What a reader may do with a row — one rule, and the whole rule.** A row
 carrying `valid: true` is a string from this document and the absolute path of
 a git checkout this machine has, of this project and this repository, which the
@@ -724,13 +745,10 @@ warning** — a picker that offered a name and then failed silently is worse tha
 one that says what it could not read. **Its `checkouts` are listed anyway, and
 every one of them is `enrolled: false` and `valid: false`** — enrolment is a
 fact of that very file, and a file that cannot be read enrolls nothing — **but
-the `reason` is the path's own, not `not_enrolled`**: the reasons are reported
-in the order the read examines the row, so a path that is gone is `missing`, a
-directory that is not a checkout `not_a_checkout`, one whose `fugaro.yaml`
-names another project `other_project`, one whose origin is another repository
-`other_repository`, and a path the document cannot spell `not_representable`;
-`not_enrolled` is what a row gets when the path itself is sound and the
-enrolment is the only thing wrong with it. The two fields answer two questions,
+the `reason` is the row's own, not `not_enrolled`**: the reason is the first
+thing the read finds wrong with the row, in the fixed order above, so a path
+that is gone is `missing` and a row whose path is sound is `not_enrolled`. The
+two fields answer two questions,
 and a reader that wants "this project does not own this repository" reads
 `enrolled: false` — which is true of every row here — rather than the reason.
 Which directory holds this project's checkout is a fact of this machine, not of

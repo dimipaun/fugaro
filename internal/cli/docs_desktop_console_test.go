@@ -423,6 +423,60 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 	}
 }
 
+// TestDocsDesktopConsoleContractNamesEveryReasonCode: §6.8 of the contract is
+// what the console is written against, so the list of reasons it gives must be
+// exactly the reasons `config list --json` can emit, and in the order it gives
+// them — the order is what a reader uses to say which of a row's problems is
+// *the* reason it is not valid. (An earlier revision of that block got the
+// order wrong and omitted `unreadable` entirely, which is the drift this pins.)
+//
+// The list is read out of the numbered block §6.8 introduces ("One row carries
+// one reason, and which one it is is fixed. In order:"), not searched for in
+// the prose: the field table further up names the codes too, so a `Contains`
+// over the whole document would pass with the ordered list wrong or a code
+// missing from it.
+//
+// Mutations (run, restore): delete the `unreadable` item, or move
+// `not_enrolled` off the end; each fails here. (Both leave the field table, and
+// so a whole-document search, untouched.)
+func TestDocsDesktopConsoleContractNamesEveryReasonCode(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	const intro = "**One row carries one reason, and which one it is is fixed.** In order:"
+	i := strings.Index(doc, intro)
+	if i < 0 {
+		t.Fatalf("%s no longer states the order the reasons are reported in", path)
+	}
+	// The items that follow, up to the first line that is neither one nor a
+	// wrapped continuation of one (an item's prose is indented under it).
+	var got []string
+	for _, line := range strings.Split(doc[i+len(intro):], "\n") {
+		if line == "" || line[0] == ' ' || line[0] == '\t' {
+			continue
+		}
+		m := reasonItemRE.FindStringSubmatch(line)
+		if m == nil {
+			break
+		}
+		got = append(got, m[1])
+	}
+	want := []string{
+		checkoutNotRepresentable,
+		checkoutMissing,
+		checkoutUnreadable,
+		checkoutNotACheckout,
+		checkoutOtherProject,
+		checkoutOtherRepository,
+		checkoutNotEnrolled,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("%s's ordered reason list = %v, want %v", path, got, want)
+	}
+}
+
+// reasonItemRE is one numbered item of §6.8's ordered list: "3. `unreadable` …".
+var reasonItemRE = regexp.MustCompile("^[0-9]+\\. `([a-z_]+)`")
+
 // jsonCellRE is a backticked identifier in a field table's first cell: the
 // field names of one row, one or more of them.
 var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -115,7 +116,11 @@ func (i CheckoutIdentity) Key() string { return i.Provider + "/" + i.Repo }
 // the fold this tree adopts (configRepo's lookup, task.Slug's canonical form),
 // which folds A-Z and nothing else: Unicode case folding would let two
 // different names that look alike (U+212A KELVIN SIGN and "k") be read as one
-// repository, and a name is the thing a link is built from.
+// repository, and a name is the thing a link is built from. Two keys that do
+// fold together ("acme/app" and "Acme/App") are resolved the way the rest of
+// the tree resolves them — the exact spelling first (configRepo's rule), then
+// the fold over the sorted keys — so the answer is the same on every read of
+// unchanged files rather than whichever entry a map iteration reached first.
 //
 // It is a *local* fact, and that is the point: it reads the operator's own
 // project config and nothing else. The published allow-list is the cloud's
@@ -123,20 +128,37 @@ func (i CheckoutIdentity) Key() string { return i.Provider + "/" + i.Repo }
 // and it is not read here — `fugaro config list --json` opens no bucket and
 // takes no credentials.
 //
-// An entry with no provider: counts: provider: is optional there, and the
-// checkout's fugaro.yaml git.provider decides it when the entry is silent.
+// An entry with no provider: counts: provider: is optional there, and such an
+// entry enrolls any provider. The provider compared here is the caller's — the
+// one the checkout's origin host names (providerForHost), never the one its
+// own fugaro.yaml claims.
+//
 // A nil config — one that could not be read — enrolls nothing: nothing can be
 // proved about it, and the reader fails closed.
 func (c *Config) Enrolls(provider, repo string) bool {
 	if c == nil {
 		return false
 	}
-	folded := task.ASCIILower(repo)
-	for name, r := range c.Repos {
-		if task.ASCIILower(name) != folded {
-			continue
-		}
+	enrolls := func(r Repo) bool {
 		return r.Provider == "" || task.ASCIILower(r.Provider) == task.ASCIILower(provider)
+	}
+	// The exact spelling first, as configRepo reads it: an entry the operator
+	// wrote with upper-case letters is read as written where the repository is
+	// written the same way.
+	if r, ok := c.Repos[repo]; ok {
+		return enrolls(r)
+	}
+	// Then the fold — and over the sorted keys, because two spellings can fold
+	// together ("acme/app" and "Acme/App") and a gate that answered with
+	// whichever one the map reached first would give a different verdict on
+	// two reads of unchanged files. Sorted keys are what the rest of the tree
+	// resolves such a duplicate by (init's key order), so the entry that
+	// answers here is the one that answers there.
+	folded := task.ASCIILower(repo)
+	for _, name := range slices.Sorted(maps.Keys(c.Repos)) {
+		if task.ASCIILower(name) == folded {
+			return enrolls(c.Repos[name])
+		}
 	}
 	return false
 }
@@ -258,19 +280,27 @@ func (c *Checkouts) Bounded(projects []string) (*Checkouts, int) {
 	var rows []row
 	for _, project := range projects {
 		repos := c.ProjectCheckouts(project)
+		// Every entry the file holds for this project, and every entry the
+		// bounds will examine: dropped is the difference, counted in entries
+		// (rows, one per path) rather than in repositories. A repository the
+		// bound drops takes its paths with it — up to MaxCheckoutPaths of
+		// them — so counting it as one entry would understate what a reader
+		// did not examine by that much.
+		held, examined := 0, 0
+		for _, r := range repos {
+			held += len(r.Paths)
+		}
 		if len(repos) > MaxCheckoutRepos {
-			dropped += len(repos) - MaxCheckoutRepos
 			repos = newest(repos, func(r CheckoutRepo) time.Time { return r.RecordedAt }, MaxCheckoutRepos)
 		}
 		for _, r := range repos {
-			if len(r.Paths) > MaxCheckoutPaths {
-				dropped += len(r.Paths) - MaxCheckoutPaths
-			}
 			r.Paths = newest(r.Paths, func(p CheckoutPath) time.Time { return p.RecordedAt }, MaxCheckoutPaths)
+			examined += len(r.Paths)
 			for _, p := range r.Paths {
 				rows = append(rows, row{project: project, repo: r, path: p})
 			}
 		}
+		dropped += held - examined
 	}
 	if len(rows) > MaxCheckoutRows {
 		slices.SortStableFunc(rows, func(a, b row) int { return b.path.RecordedAt.Compare(a.path.RecordedAt) })
