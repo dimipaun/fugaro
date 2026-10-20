@@ -99,6 +99,15 @@ func TestParseProblems(t *testing.T) {
 		// claude_accounts' allow_data_to allow-list entirely (the local
 		// config, never fugaro.yaml, controls that list — T1).
 		{"claude-oauth-token-prefixed workflow secret reserved", minimalYAML + "    secrets:\n      - { name: claude-oauth-token-acme-personal, env: TOK }\n", "workflows.server.secrets[0].name", "reserved for named Claude accounts", 0},
+		// Codex's OAuth credential names, reserved ahead of that harness
+		// (config.CodexOAuthToken, owner ruling of 2026-10-18): Fugaro does
+		// not drive Codex, so nothing mounts them and no account or provider
+		// of it exists to allow one — every name of either shape in
+		// fugaro.yaml is refused, whether or not a Codex provider ever names
+		// it. Both rows so the bare name and the namespace are pinned: a
+		// mutation that checked only the prefix would pass the first.
+		{"codex-oauth-token workflow secret reserved", minimalYAML + "    secrets:\n      - { name: codex-oauth-token, env: TOK }\n", "workflows.server.secrets[0].name", "reserved for the Codex harness", 0},
+		{"codex-oauth-token-prefixed workflow secret reserved", minimalYAML + "    secrets:\n      - { name: codex-oauth-token-acme-personal, env: TOK }\n", "workflows.server.secrets[0].name", "reserved for the Codex harness", 0},
 		{"cache key", minimalYAML + "    cache:\n      - { key: [], paths: [~/.gradle] }\n", "workflows.server.cache[0].key", "at least one file", 0},
 		// A verbatim tag's own text stands in for !!str in yaml.v3's type
 		// error, so a fugaro.yaml can put anything a YAML tag allows,
@@ -668,6 +677,82 @@ func TestAgentOAuthToken(t *testing.T) {
 	_, ps = Parse([]byte(fmt.Sprintf(base, "  oauth_token: "+strings.Repeat("a", MaxClaudeAccountNameLen+1)+"\n")))
 	if len(ps) != 1 || ps[0].Path != "agent.oauth_token" || !strings.Contains(ps[0].Message, "must be at most") {
 		t.Fatalf("too long: %v", ps)
+	}
+}
+
+// TestAgentOf is the reader internal/cli judges a launch's Claude account with
+// (agentAtRef: the fugaro.yaml at the ref a run checks out, read out of the
+// launcher's git objects). It reads the document's own agent block, applies the
+// auth default the rest of Fugaro applies (DefaultAgentAuth — a resolved config
+// says "vertex" for a file that names none, so this reader must not say ""),
+// and answers "cannot tell" for bytes no reader of this Fugaro could resolve —
+// which is not the same answer as "names no account".
+//
+// Mutation (run, restore): return the block as decoded, without the auth
+// default — the no-auth cases read "" here while every resolved config says
+// "vertex", and claudeAccountAllowed then stops refusing an account named for a
+// workflow whose own file names no oauth auth.
+func TestAgentOf(t *testing.T) {
+	for _, tc := range []struct {
+		why       string
+		data      string
+		wantAuth  string
+		wantToken string
+		wantOK    bool
+	}{
+		{
+			why:       "both keys as written",
+			data:      "version: 1\nproject: example\ngit: { provider: github }\nagent: { auth: oauth, oauth_token: acme-personal }\nworkflows:\n  app: { commands: { build: b } }\n",
+			wantAuth:  "oauth",
+			wantToken: "acme-personal",
+			wantOK:    true,
+		},
+		{
+			why:      "an agent block that names no auth carries the default",
+			data:     "version: 1\nproject: example\ngit: { provider: github }\nagent: { oauth_token: acme-personal }\nworkflows:\n  app: { commands: { build: b } }\n",
+			wantAuth: DefaultAgentAuth, wantToken: "acme-personal", wantOK: true,
+		},
+		{
+			why:      "no agent block at all names no account",
+			data:     "version: 1\nproject: example\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: b } }\n",
+			wantAuth: DefaultAgentAuth, wantOK: true,
+		},
+		{
+			// The file a launch most often reads: one that needs the project
+			// layer for its workflow, which no plain Resolve could answer for.
+			// agent.oauth_token is repository-scope, so it is here.
+			why:      "a file that needs a layer still says which account it names",
+			data:     "version: 1\nproject: example\ngcp_project: proj-1234\nagent: { auth: oauth, oauth_token: acme-personal }\nworkflows:\n  app: { profile: p, commands: { build: b } }\n",
+			wantAuth: "oauth", wantToken: "acme-personal", wantOK: true,
+		},
+		{
+			why:    "an unknown key is cannot tell, not names no account",
+			data:   "version: 1\nproject: example\ngit: { provider: github }\nagent: { auth: oauth, oauth_token: acme-personal }\nnonsense: 1\nworkflows:\n  app: { commands: { build: b } }\n",
+			wantOK: false,
+		},
+		{
+			why:    "a duplicate key is cannot tell too",
+			data:   "version: 1\nproject: example\ngit: { provider: github }\nagent: { auth: oauth, auth: api-key }\nworkflows:\n  app: { commands: { build: b } }\n",
+			wantOK: false,
+		},
+		{
+			why:    "an oauth_token that is not a string is cannot tell",
+			data:   "version: 1\nproject: example\ngit: { provider: github }\nagent: { auth: oauth, oauth_token: [a, b] }\nworkflows:\n  app: { commands: { build: b } }\n",
+			wantOK: false,
+		},
+	} {
+		t.Run(tc.why, func(t *testing.T) {
+			a, ok := AgentOf([]byte(tc.data))
+			if ok != tc.wantOK {
+				t.Fatalf("AgentOf ok = %v, want %v (%q)", ok, tc.wantOK, tc.data)
+			}
+			if !ok {
+				return
+			}
+			if a.Auth != tc.wantAuth || a.OAuthToken != tc.wantToken {
+				t.Errorf("AgentOf = {auth: %q, oauth_token: %q}, want {%q, %q}", a.Auth, a.OAuthToken, tc.wantAuth, tc.wantToken)
+			}
+		})
 	}
 }
 

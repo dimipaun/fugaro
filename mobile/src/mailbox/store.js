@@ -170,6 +170,31 @@ export class MemoryMailboxStore {
     return Object.freeze({ ok: true, value: this.#subtree(path) });
   }
 
+  /**
+   * Deliver a node the OTHER end wrote: the consumer's reply, the
+   * orchestrator's heartbeat, the question a consumer is holding.
+   *
+   * **Why this is not `write`.** `write` is the PHONE's door and the one the
+   * one-write-path scan (`write-path.test.js`) fences to `client.js`: it
+   * models the two rules a phone write meets and records the attempt in
+   * `writes()`. A harness that wants the tree to already hold the other end's
+   * side is not making a phone write and must not appear to be one -- and the
+   * real adapter has no such method, so nothing that reaches a database can be
+   * built on this. What a caller gets for using it is the double's own read
+   * semantics (subtrees, own `__proto__` keys, the ack's parent rule), which is
+   * the whole reason to plant a delivery in the double rather than to keep a
+   * simulant's map beside it.
+   *
+   * The delivery is NOT recorded in `writes()`: that log is "what the client
+   * asked for", and a delivery the client never asked for would make the
+   * one-write-path assertion in `client.test.js` a statement about the harness.
+   */
+  deliver(path, value) {
+    if (typeof path !== 'string' || path === '') return refuse(STORE_CODES.WRITE_FAILED, 'path');
+    this.#nodes.set(path, copy(value));
+    return Object.freeze({ ok: true });
+  }
+
   /** Every write the client asked for, in order, as `{ path, value }`. */
   writes() {
     return Object.freeze([...this.#writes]);

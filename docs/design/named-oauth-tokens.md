@@ -14,6 +14,17 @@ The Claude OAuth credential is **one secret per repository**, reserved and fixed
 - Accounting has **no dollar cap for oauth**. `docs/design/v1.md` §6.1 "oauth" (`docs/design/v1.md:47,52`): the run only adds `total_cost_usd` to `notional` counters (global, repository, project), never billed, never capped by the gateway (there is no gateway for oauth — §6.1 "oauth has no gateway", line 52). Its only budget is the token cap (`agent.max_run_tokens`) and the kill switches. `fugaro budget show` prints `notional $X (subscription, not billed)` per repository and globally (`internal/cli/budget.go:607,621`); there is **no per-account dimension anywhere** in the budget schema (`internal/budget/model.go`'s `Counters.ByModel` is keyed by model, not by credential).
 - **Layered config ruled per-person Claude tokens out of scope already** (`docs/design/layered-config.md:135`, decision area, and §13 non-goals): "They change how runs authenticate: a run would need to know who launched it and which secret to mount. That is a separate, later project." This design is that later project, scoped to *named accounts a repository may choose among*, not to *per-person* identity (no change to "every run of a repository's workflow runs as the same account," `docs/design/v1.md:72`).
 - **A close, already-shipped precedent exists for almost this exact shape**: `internal/config/providers.go`'s `ModelProvider` (M10, multi-model). It lives only in the **local config** (never `fugaro.yaml`), is named (`providers.<name>`), carries its own `Secret` (a logical name, never a key), and gates use with `AllowsData(repo)`, an explicit per-provider allow-list of `owner/name` repositories (`providers.go:44-46,62-64`). `fugaro secrets set <provider-secret-name>` is validated against exactly that allow-list (`internal/cli/secrets.go:172-178`). This design reuses that shape for Claude accounts instead of inventing a new one.
+- **The project level of the same shape (0.9.0, built).** Everything above is a choice made *inside
+  one repository* — the account is part of its own job's name, and the repository is the only thing
+  that names it. Where a **shared project job** serves several repositories, that choice does not
+  carry: the credential is a fact of the job, which is shared, so an account there is declared by
+  the **operator** in the project's local config (`claude_accounts` and a profile's
+  `claude_accounts:`), published as the policy's `accounts.<name>.allow_repos`, and deployed as one
+  job per (profile, provider, account). The repository's `agent.oauth_token`/`--token` selection is
+  unchanged and still applies; the job it lands on is what the project decides. See
+  [project-named-oauth-tokens.md](project-named-oauth-tokens.md) and the operator guide
+  [../project-claude-accounts.md](../project-claude-accounts.md). The per-person question this
+  design left alone (bullet above) is still left alone there.
 
 ## 2. The feature
 

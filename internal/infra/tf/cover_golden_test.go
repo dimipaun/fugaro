@@ -45,10 +45,15 @@ func goldenCover(listed ...string) Cover {
 
 func TestGoldenPlansAreCovered(t *testing.T) {
 	for name, listed := range map[string][]string{
-		"installation":         nil,
-		"installation-managed": nil,
-		"repo":                 {"user:launcher@example.com", "user:operator@example.com"},
-		"firebase":             {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
+		"installation": nil,
+		// The account axis's plan: the same root and the same run, with a
+		// profile serving a Claude account. It is a real plan of the account
+		// job's mounts and secret grants, and the review screen must cover it
+		// (TestGoldenAccountJobMountsOnlyItsOwnToken reads the rest).
+		"installation-accounts": nil,
+		"installation-managed":  nil,
+		"repo":                  {"user:launcher@example.com", "user:operator@example.com"},
+		"firebase":              {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := goldenPlan(t, name)
@@ -68,7 +73,7 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 // otherwise pass on plans that merely lack the shape.
 func TestGoldenPlansHaveTheShapesTheChecksRead(t *testing.T) {
 	var jobs, scheds, roles, members, buckets, keys, sinks, checkSpecs int
-	for _, name := range []string{"installation", "repo", "firebase"} {
+	for _, name := range []string{"installation", "installation-accounts", "repo", "firebase"} {
 		for _, rc := range goldenPlan(t, name).ResourceChanges {
 			a := rc.Change.After
 			switch rc.Type {

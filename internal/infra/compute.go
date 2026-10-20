@@ -56,9 +56,9 @@ const (
 	JobPrefix = gcp.BatchJobPrefix
 	// ReaperAccountID is the reaper's dedicated service account (§3.7).
 	ReaperAccountID = "fugaro-reaper"
-	// ReaperRoleID is the reaper's custom role: exactly the six
-	// permissions the reaper's code uses, never roles/batch.jobsEditor and
-	// never roles/compute.instanceAdmin.v1.
+	// ReaperRoleID is the reaper's custom role: exactly the five
+	// permissions the reaper's code uses (Task 9), never
+	// roles/batch.jobsEditor and never roles/compute.instanceAdmin.v1.
 	ReaperRoleID = "fugaroReaper"
 	// PreloadAccountID is the account the preloaded boot image's build runs
 	// as: the Cloud Build step itself, and the Cloud Scheduler call that
@@ -280,15 +280,26 @@ func ComputeWorkdir(getenv func(string) string, project string) (string, error) 
 type ComputeOutputs struct {
 	// PreloadImage is the image FAMILY a job's VM boots, as the module's
 	// output: projects/<project>/global/images/family/<PreloadImage>.
-	PreloadImage     string `json:"preload_image"`
-	ReaperAccount    string `json:"reaper_account"`
-	ReaperRole       string `json:"reaper_role"`
-	PreloadAccount   string `json:"preload_account"`
-	PreloadScheduler string `json:"preload_scheduler_job"`
-	Router           string `json:"router"`
-	NAT              string `json:"nat"`
-	Network          string `json:"network"`
-	Subnetwork       string `json:"subnetwork"`
+	PreloadImage string `json:"preload_image"`
+	// PreloadSocketGIDLabel is the label every generation in that family
+	// records its socket gid under (preload.sh, preload.tf): the name, not the
+	// value. The value is a fact about an image the build makes out of band,
+	// so it is not an output of any resource here and terraform's refresh
+	// covers none of it -- a `data` source reading the family would fail the
+	// apply this module exists to complete, since the family has no image
+	// until the scheduled build has run once. It travels beside the family
+	// because reading the gid back takes both, and the read is Check 57b's and
+	// a later `doctor` check's (this package's Clients carries no Compute
+	// client, which is what init_compute.go's Verify already says).
+	PreloadSocketGIDLabel string `json:"preload_socket_gid_label"`
+	ReaperAccount         string `json:"reaper_account"`
+	ReaperRole            string `json:"reaper_role"`
+	PreloadAccount        string `json:"preload_account"`
+	PreloadScheduler      string `json:"preload_scheduler_job"`
+	Router                string `json:"router"`
+	NAT                   string `json:"nat"`
+	Network               string `json:"network"`
+	Subnetwork            string `json:"subnetwork"`
 }
 
 // DecodeComputeOutputs reads the compute root's outputs.

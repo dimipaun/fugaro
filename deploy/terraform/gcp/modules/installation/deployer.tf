@@ -20,8 +20,8 @@
 # condition on one binding cannot fence permissions an unconditioned binding of
 # the same role already grants project-wide.
 #
-# ONE BINDING PER SERVICE (0.9.0 redesign, docs/design/managed-deployer-fence.md).
-# Until 0.9.0 the conditioned half was ONE role, fugaroDeployerScoped, under one
+# ONE BINDING PER SERVICE (0.9.5 redesign, docs/design/managed-deployer-fence.md).
+# Until 0.9.5 the conditioned half was ONE role, fugaroDeployerScoped, under one
 # condition, and that condition could not be applied: it joined 9 clauses with
 # 17 logical operators where IAM allows 12, it called resource.name.contains(),
 # which is not a supported function (startsWith, endsWith, extract, == and !=

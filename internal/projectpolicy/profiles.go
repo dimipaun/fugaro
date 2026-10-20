@@ -141,7 +141,10 @@ func (p *Policy) ProfileAllowRepos(profile string) ([]string, error) {
 // its job. A run in a per-repository job is held to the project's allow_repos
 // alone, because the job it is in carries no selected profile: that is a baked
 // workflow, or a policy that defines no profiles, and internal/cli's
-// run_allowlist.go is the launcher's advisory twin of that one gate.
+// run_allowlist.go is the launcher's advisory twin of that one gate — while
+// the launcher's twin of *this* gate is profileAdmissionRefusal in the same
+// file, called where the launcher decides which job a launch runs on
+// (launchProjectJobFor), which is where a launch's profile is known.
 // ProfileAllowRepos answers the narrower question a message or a listing asks
 // ("what does this profile name"), never the verdict. A profile's list is
 // validated strictly where it is published (validProfiles) because this is the
@@ -216,16 +219,38 @@ func providerOf(canonical string) string {
 	return head
 }
 
+// providerRequired is the refusal a profile that names no provider gets, in
+// the one place the sentence lives. validProfiles below is where the rule is
+// stated, but DeriveAccounts reaches an empty provider first on the publish
+// path it shares with `fugaro init` (internal/cli/project_cmd.go derives the
+// accounts block before the document is judged), so a profile naming
+// claude_accounts without a provider would otherwise be refused for the wrong
+// thing — the account's slug "is not a repository" — and the operator would
+// read a sentence about a repository instead of the field they left out. Both
+// callers say this one sentence.
+func providerRequired(at string) error {
+	return fmt.Errorf("%s.provider: a profile must name the provider it serves; there is no default (a Bitbucket profile never shares a project-wide credential)", at)
+}
+
 // validProfiles checks the profiles block of a node, entry by entry: the
 // default profile must be defined, every name a profile name, every profile
 // pin one provider (required, finding 4), its cpu/memory/timeout be a shape
 // Cloud Run accepts, and every allow_repos pattern name a repository of that
 // one provider — a pattern of another provider could never match and is
 // refused here instead of silently admitting nothing. A secret entry must be a
-// name (CheckSecretName) and never a Claude OAuth token, which no shared job
-// may mount until phase 5 (isClaudeOAuthSecret): the rule `fugaro init` deploys
-// by, stated here so that the two cannot disagree about one profile.
-func validProfiles(profiles map[string]Profile) error {
+// name (CheckSecretName), never a Claude OAuth token, which no profile may
+// mount (isClaudeOAuthSecret), and never a Codex OAuth token, whose name is
+// reserved ahead of the harness that would read it (config.CodexOAuthSecret):
+// the rule `fugaro init` deploys by, stated here so that the two cannot
+// disagree about one profile.
+//
+// The accounts block is the fourth thing a profile is judged against, and the
+// rules that hold a profile listing accounts to it are validProfileAccounts':
+// every listed account is an account the policy defines, the profile writes
+// its own exact allow_repos, every account covers every repository that list
+// admits, and no Anthropic API key is mounted beside them (design
+// project-named-oauth-tokens §4.1, D3 and D4).
+func validProfiles(profiles map[string]Profile, accounts map[string]Account) error {
 	if len(profiles) == 0 {
 		// A block that carries nothing defines nothing — not even the profile
 		// every workflow defaults to. Leaving the key out is how a policy says
@@ -243,7 +268,7 @@ func validProfiles(profiles map[string]Profile) error {
 		// decides which repositories the profile may serve, and it is the
 		// credential the job holds — a profile without one describes no job.
 		if pr.Provider == "" {
-			return fmt.Errorf("%s.provider: a profile must name the provider it serves; there is no default (a Bitbucket profile never shares a project-wide credential)", at)
+			return providerRequired(at)
 		}
 		// The kinds Fugaro has a git path for (config.Providers) — the same
 		// list fugaro.yaml's git.provider and the local config's
@@ -291,6 +316,17 @@ func validProfiles(profiles map[string]Profile) error {
 			if isClaudeOAuthSecret(secret) {
 				return fmt.Errorf("%s.secrets[%d]: a Claude OAuth token is person-owned (design D2), and its allow_data_to is a per-repository list a shared job cannot honour — a profile is shared by every repository admitted to it — so no profile mounts one until phase 5 decides how an account reaches a shared job. `fugaro init` refuses to deploy the job such a profile names, and this node must not name one either", at, i)
 			}
+			// The Codex harness's OAuth credential is the same KIND of name,
+			// reserved ahead of the harness itself (config.CodexOAuthToken,
+			// owner ruling of 2026-10-18): Fugaro does not drive Codex, so
+			// nothing mints a value for it and `fugaro secrets set` refuses to
+			// store one — a profile naming it would mount a container that can
+			// never have a version, and would name the credential the harness
+			// reads the day it lands. Refused here by the same rule the
+			// deployer holds a profile to, rather than by one of its own.
+			if config.CodexOAuthSecret(secret) {
+				return fmt.Errorf("%s.secrets[%d]: %s and the names starting %s are reserved for the Codex harness's OAuth credential, which Fugaro does not drive yet: no job mounts one, so no profile may name it", at, i, config.CodexOAuthToken, config.CodexOAuthTokenPrefix)
+			}
 			if seen[secret] {
 				return fmt.Errorf("%s.secrets[%d]: a secret is listed twice; list each secret once", at, i)
 			}
@@ -308,6 +344,13 @@ func validProfiles(profiles map[string]Profile) error {
 				return fmt.Errorf("%s.allow_repos[%d]: %q names the %s provider, and this profile serves %s; a profile admits only its own provider's repositories",
 					at, i, pattern, head, pr.Provider)
 			}
+		}
+		// The accounts the profile serves, judged last: validProfileAccounts'
+		// subset rule reads the profile's own allow_repos, and this is the
+		// point at which that list has been checked — so a refusal about a
+		// pattern is about the pattern, and not about what the accounts cover.
+		if err := validProfileAccounts(at, pr, accounts); err != nil {
+			return err
 		}
 	}
 	if _, ok := profiles[DefaultProfileName]; !ok {
@@ -409,4 +452,12 @@ func sortedProfileNames(entries map[string]json.RawMessage) []string {
 // project-job layout (plan task 3.2) validates the local config's profiles
 // with it before it deploys a job, so a profile `fugaro project policy
 // publish` would refuse can never be deployed as one nobody can select.
-func CheckProfiles(profiles map[string]Profile) error { return validProfiles(profiles) }
+//
+// accounts is the policy's accounts block, derived from the same local config
+// by the same function publish uses (DeriveAccounts): a caller that passed an
+// empty one would make every profile listing an account fail the membership
+// rule below, with a sentence about a policy that was never published, on a
+// `fugaro init` that has the account in hand.
+func CheckProfiles(profiles map[string]Profile, accounts map[string]Account) error {
+	return validProfiles(profiles, accounts)
+}

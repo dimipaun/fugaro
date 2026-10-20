@@ -347,14 +347,40 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 	}
 	if err := rr.verifyCreated(ctx, c, made); err != nil {
 		var notOpen *createdNotOpenError
-		if !errors.As(err, &notOpen) {
+		var unmarked *createdUnmarkedError
+		switch {
+		case errors.As(err, &notOpen):
+			// The creation is this run's and complete; only the budget gate
+			// refused. The config stays moved (no putBack), the checkout does not.
+			//
+			// Both ways out are offered and each is scoped to the state it
+			// applies to, because the states are not one: what this command's
+			// own --managed creation writes is a version-2 fact that records
+			// the amount the restore was given, and the one object the owner's
+			// flag replaces is a version-1 creation fact, which records none
+			// (internal/infra/managed, WriteFlag's own rule). The inherited
+			// message handed the flag to both (round-2 review, nit 3), which
+			// offers a command that would refuse for the state this command
+			// actually leaves.
+			moved = false
+			return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so it is a complete managed project except for the apply, and the project config now names it (its previous content is in the backup %s); the checkout's gcp_project: line did not move. If the marker read failed for a passing reason, change that line to gcp_project: %s and run fugaro managed apply %s to finish. Otherwise the fact in the runs bucket is what refuses the apply, and what can replace it depends on what it records: a creation fact that records none is what `fugaro managed flag %s --budget N --budget-currency CCC`, run at the owner's own terminal, replaces with the version that records the amount (Task 6.1), while the fact this run's --managed creation writes already records one, and no command of ours rewrites one that does — so for it, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
+				rr.newID, rr.backup, rr.newID, rr.rootArg, rr.newID, rr.newID, rr.newID)
+		case errors.As(err, &unmarked):
+			// The creation is this run's and half marked: the fact is in the
+			// runs bucket and the project has no label, so nothing reads it
+			// as managed yet. The config stays moved (no putBack) for the
+			// reason the budget-gate branch above does: the project exists
+			// because this run made it, and it is one owner-run write away
+			// from being a complete managed project, so the message says
+			// what is missing and where the line that writes it is — the
+			// refusal names the condition and not the command, because a
+			// refusal is what a coding agent's session reads (Task 3.0 §5).
+			moved = false
+			return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so the project config keeps naming it (its previous content is in the backup %s) and the checkout's gcp_project: line did not move. What is missing is the project's %s=%s label, which only the owner writes, in their own terminal: docs/gcp-setup.md has that one line. Run it, then change the checkout's line to gcp_project: %s and run fugaro managed apply %s to finish. If the project is unwanted instead, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
+				rr.newID, rr.backup, managed.ProjectLabelKey, managed.ProjectLabelValue, rr.newID, rr.rootArg, rr.newID, rr.newID)
+		default:
 			return err
 		}
-		// The creation is this run's and complete; only the budget gate
-		// refused. The config stays moved (no putBack), the checkout does not.
-		moved = false
-		return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so it is a complete managed project except for the apply, and the project config now names it (its previous content is in the backup %s); the checkout's gcp_project: line did not move. If the marker read failed for a passing reason, change that line to gcp_project: %s and run fugaro managed apply %s to finish. If the marker records no valid budget, this release cannot add one to an existing project (Task 6.1, unscheduled): shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
-			rr.newID, rr.backup, rr.newID, rr.rootArg, rr.newID, rr.newID)
 	}
 	// The project exists, this run created it and wrote its fact: from here
 	// the config names a project that is the installation's, and it stays.
@@ -404,16 +430,35 @@ func (rr *restoreRun) refuseExisting(ctx context.Context) error {
 // else moves, and it is bound to THIS run rather than to whatever is in the
 // cloud: the creating run's own account (made, filled by init's markCreated)
 // must say it created NEW_PROJECT_ID, did not find it already there, and
-// wrote its creation fact — a write managed.WriteMarker makes create-only
-// (ifGenerationMatch=0), so a fact somebody planted first makes that write
-// fail and is never this run's. Only then is the fact read back through the
-// fail-closed read every managed command uses.
+// wrote its mark — the creation fact, whose write managed.WriteMarker makes
+// create-only (ifGenerationMatch=0), so a fact somebody planted first makes
+// that write fail and is never this run's, and the project's label (Task
+// 3.0), which is the second half and the one a credential can lack. Only
+// then is the fact read back through the fail-closed read every managed
+// command uses.
+//
+// The two halves are refused apart, and the caller acts on which one is
+// missing: no fact at all is a project this run created and cannot prove it
+// is the managed one, so the local config goes back and the operator is told
+// to retry or shut the project down; the fact without the label is the same
+// project one owner-run write away from being complete, so the config keeps
+// naming it and the refusal says how to finish (createdUnmarkedError).
 func (rr *restoreRun) verifyCreated(ctx context.Context, c *infra.Clients, made initCreation) error {
 	switch {
 	case made.Existed:
 		return userErr("the creating path found %s already there, so this run did not create it (a restore never adopts a project)", rr.newID)
 	case made.Created != rr.newID:
 		return userErr("the creating path did not create %s (it created %q)", rr.newID, made.Created)
+	case !made.Marked && made.Fact:
+		// Half a mark: the creation fact is written and the label is not,
+		// which the read answers "not managed" for (managed.readFact requires
+		// both). The project IS this run's — the create-only fact write is
+		// what proves that — so it is not putBack's case: its advice (shut
+		// the project down, retry with another ID) would orphan a project an
+		// owner-run label away from being complete. This run tells the
+		// operator what the state is and how it is finished instead, and
+		// leaves the config naming the project.
+		return &createdUnmarkedError{err: userErr("the creating path created %s and wrote its creation fact, but not its %s=%s label, and the read requires both, so %s is not managed yet", rr.newID, managed.ProjectLabelKey, managed.ProjectLabelValue, rr.newID)}
 	case !made.Marked:
 		return userErr("the creating path created %s but did not write its creation fact, so it is not managed", rr.newID)
 	}
@@ -434,6 +479,23 @@ func (rr *restoreRun) verifyCreated(ctx context.Context, c *infra.Clients, made 
 	}
 	return nil
 }
+
+// createdUnmarkedError is verifyCreated's other refusal that comes after the
+// creation was proved to be this run's: the run wrote the creation fact and
+// could not write the project's fugaro_managed label, so the project exists,
+// is Fugaro's, and is not managed until an owner writes the label.
+//
+// It is a type of its own rather than a plain refusal for the same reason
+// createdNotOpenError is: the caller's own branch has to treat it differently
+// from every failure that comes before — the local project config stays
+// pointed at the new project (no putBack) and the checkout's gcp_project:
+// line does not move, because the project is real and one line from being
+// complete. Folding it into createdNotOpenError would make the caller's
+// message claim the budget gate refused, which is not what happened.
+type createdUnmarkedError struct{ err error }
+
+func (e *createdUnmarkedError) Error() string { return e.err.Error() }
+func (e *createdUnmarkedError) Unwrap() error { return e.err }
 
 // createdNotOpenError is verifyCreated's one refusal that comes AFTER this
 // run is proved to have created NEW_PROJECT_ID and written its fact: the
@@ -670,11 +732,17 @@ func restoreOldReadable(ctx context.Context, c *infra.Clients, gcpProject string
 // What moves, and why each is not a guess:
 //
 //   - gcp_project and runs_bucket: named after the project, so both follow it.
-//   - bucket_url, registry_host, log_view, build.service_account and
-//     terraform.state_bucket are cleared rather than derived here. The
-//     creating apply writes every one of them from the new installation's own
-//     outputs (init's writeConfig), and a value naming the old project would
-//     be planned before it does.
+//   - bucket_url, registry_host, log_view, build.service_account,
+//     terraform.state_bucket and the legacy registry are cleared rather than
+//     derived here. The creating apply writes every one of them from the new
+//     installation's own outputs (init's writeConfig), and a value naming the
+//     old project would be planned before it does. registry is the legacy
+//     shared image registry (localcfg.Config.Registry), which the per-
+//     repository jobs' own spec still turns into every workflow's LegacyImage
+//     (spec.go's `if lc.Registry != ""`): kept across a restore it would name a
+//     registry inside the project that was lost, which is the class this
+//     function's own list clears — the images a job starting from it would look
+//     for are not there, and the create plans a job that cannot start.
 //   - The budget backend's four project-naming fields (rtdb_url,
 //     firebase_project, firebase_api_key, token_signer) go the same way, and
 //     the operator's own settings in that block — the mode, the caps, the
@@ -701,7 +769,13 @@ func restoreOldReadable(ctx context.Context, c *infra.Clients, gcpProject string
 // buckets that exist somewhere specific, and a restore that silently pointed
 // them at the new project would be guessing about where the operator's data
 // is.
-func restoreConfig(lc *localcfg.Config, newID string) (*localcfg.Config, []string, error) {
+//
+// lc is the run's selection — the config the flags selected and addressed the
+// cloud with — and onDisk is the same config as its own file writes it, which
+// is where every value that is not this move's to change comes from: the
+// region above all, which --region overrides for the invocation and must not
+// become the installation's on disk (planConfig).
+func restoreConfig(lc, onDisk *localcfg.Config, newID string) (*localcfg.Config, []string, error) {
 	if got, want := lc.RunsBucketName(), "fugaro-runs-"+lc.GCPProject; got != "" && got != want {
 		return nil, nil, userErr("the project config names runs_bucket %s, and an installation whose runs bucket is not the default %s for %s cannot be moved by a restore: the marker, the delete list and the shared config are all read from the default name, so point the config at %s or move runs_bucket yourself", got, want, lc.GCPProject, want)
 	}
@@ -709,27 +783,28 @@ func restoreConfig(lc *localcfg.Config, newID string) (*localcfg.Config, []strin
 		return nil, nil, userErr("the project config names terraform.state_bucket %s, which is a bucket of its own rather than %s's default: a restore cannot know where that bucket's successor should be. Remove terraform.state_bucket from the config (fugaro init derives fugaro-tfstate-%s) or move it yourself", s, lc.GCPProject, newID)
 	}
 	var strandedBases []string
-	next := *lc
+	next := *onDisk
 	next.GCPProject = newID
 	next.RunsBucket = "fugaro-runs-" + newID
 	next.Bucket = ""
+	next.Registry = ""
 	next.RegistryHost = ""
 	next.LogView = ""
-	next.Build = lc.Build
+	next.Build = onDisk.Build
 	next.Build.ServiceAccount = ""
-	next.Terraform = lc.Terraform
+	next.Terraform = onDisk.Terraform
 	next.Terraform.StateBucket = ""
-	next.BaseImages, strandedBases = restoreBaseImages(lc)
+	next.BaseImages, strandedBases = restoreBaseImages(onDisk)
 
 	var left []string
 	if len(strandedBases) > 0 {
-		left = append(left, fmt.Sprintf("the base images of %s's registry (kinds: %s) did not come across: each reference named the registry of the project that was lost, and the creating run pins this release's base images again (fugaro init --base, or --base-image KIND=IMAGE to point a kind at an image of your own)", lc.GCPProject, strings.Join(strandedBases, ", ")))
+		left = append(left, fmt.Sprintf("the base images of %s's registry (kinds: %s) did not come across: each reference named the registry of the project that was lost, and the creating run pins this release's base images again (fugaro init --base, or --base-image KIND=IMAGE to point a kind at an image of your own)", onDisk.GCPProject, strings.Join(strandedBases, ", ")))
 	}
-	if b := lc.Budget; b != nil {
+	if b := onDisk.Budget; b != nil {
 		nb := *b
 		if nb.RTDBURL != "" || nb.FirebaseProject != "" || nb.FirebaseAPIKey != "" || nb.TokenSigner != "" {
 			nb.RTDBURL, nb.FirebaseProject, nb.FirebaseAPIKey, nb.TokenSigner = "", "", "", ""
-			left = append(left, fmt.Sprintf("the budget backend of %s — its Realtime Database, its Firestore database, its restricted web API key and its token signer — did not come across: where the new one lives is your decision, so build it again with fugaro init --firebase (the mode, the caps and the token ceiling in the config are kept as they were), or leave it off if you want none", lc.GCPProject))
+			left = append(left, fmt.Sprintf("the budget backend of %s — its Realtime Database, its Firestore database, its restricted web API key and its token signer — did not come across: where the new one lives is your decision, so build it again with fugaro init --firebase (the mode, the caps and the token ceiling in the config are kept as they were), or leave it off if you want none", onDisk.GCPProject))
 		}
 		next.Budget = &nb
 	}
@@ -845,7 +920,21 @@ func (rr *restoreRun) confirm(cmd *cobra.Command) error {
 // typed confirmation: restoreConfig's refusals are refusals a typed name does
 // not help with, and the operator reads them before typing rather than after.
 func (rr *restoreRun) planConfig() error {
-	next, left, err := restoreConfig(rr.lc, rr.newID)
+	// The config as its own file writes it, beside the selection's copy: the
+	// selection has this invocation's --gcp-project and --region applied to it
+	// (selectProject → announce → localcfg.Config.Override), and the moved
+	// config is written from that copy — so a --region given to address the old
+	// project would become the installation's own region on disk, and the new
+	// project's resource region with it (createArgs passes the moved config to
+	// the creating path, which derives the region from it), without the
+	// operator having asked for either. The flag's help says what it is: "GCP
+	// region (overrides the project config's)". --gcp-project needs no such
+	// treatment: Override refuses one that is not the config's own.
+	onDisk, err := localcfg.Parse(rr.old)
+	if err != nil {
+		return userErr("the project config %s: %v", rr.path, err)
+	}
+	next, left, err := restoreConfig(rr.lc, onDisk, rr.newID)
 	if err != nil {
 		return err
 	}
@@ -1060,9 +1149,13 @@ func restoreGCPProjectLine(data []byte, oldID, newID string) ([]byte, bool, erro
 	if at < 0 {
 		return nil, false, byHand("fugaro.yaml's gcp_project: is not a one-line top-level key")
 	}
-	body := bytes.TrimRight(lines[at], "\r\n")
-	eol := lines[at][len(body):]
-	lines[at] = append([]byte("gcp_project: "+newID), eol...)
+	line := bytes.TrimRight(lines[at], "\r\n")
+	eol := lines[at][len(line):]
+	rewritten, err := rewriteGCPProjectValue(line, newID)
+	if err != nil {
+		return nil, false, byHand("%v", err)
+	}
+	lines[at] = append(rewritten, eol...)
 	out := bytes.Join(lines, nil)
 
 	// Read it back, as setGCPProjectLine does: the file must mean what it
@@ -1076,6 +1169,81 @@ func restoreGCPProjectLine(data []byte, oldID, newID string) ([]byte, bool, erro
 		return nil, false, byHand("the edited file would not read back as intended")
 	}
 	return out, true, nil
+}
+
+// rewriteGCPProjectValue replaces the VALUE of a gcp_project: line and nothing
+// else — the key's own spelling, the spacing after the colon, the quoting the
+// value carried and any trailing comment are the file's, because the restore
+// edits one value of a committed file and every other byte of it is the
+// operator's. It is the difference between "the line now names the new
+// project" and "the line is now what this program would have written": the
+// second drops a comment that said why the value was what it was, and the
+// read-back check cannot see it, because a comment and a pair of quotes are
+// not part of the parsed value.
+//
+// The value is read with the quoting YAML gives it — a double-quoted scalar
+// (with the backslash escapes it may hold), a single-quoted one, or a bare
+// scalar that ends at the first blank or "#" — and written back in the same
+// quoting. A project ID needs no escaping, so the two forms cannot differ in
+// what they mean; what is kept is the file's.
+func rewriteGCPProjectValue(line []byte, id string) ([]byte, error) {
+	colon := bytes.IndexByte(line, ':')
+	if colon < 0 {
+		return nil, errors.New("the gcp_project: line has no colon")
+	}
+	// head is the key and the colon with the spacing after it, as written.
+	end := colon + 1
+	for end < len(line) && (line[end] == ' ' || line[end] == '\t') {
+		end++
+	}
+	head, rest := line[:end], line[end:]
+	tail, quote, err := valueTailAndQuote(rest)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, len(line)+len(id))
+	out = append(out, head...)
+	out = append(out, quote...)
+	out = append(out, id...)
+	out = append(out, quote...)
+	out = append(out, tail...)
+	return out, nil
+}
+
+// valueTailAndQuote reads the YAML scalar a gcp_project: line drops after the
+// colon — a double-quoted one (with the backslash escapes it may hold), a
+// single-quoted one, or a bare one that ends at the first blank or "#" — and
+// returns what follows it on the line (the spacing before a trailing comment,
+// and the comment) together with the quote character the scalar opened with,
+// "" for a bare one. Its two errors are shapes the read above has in practice
+// already refused — a line with no value at all parses as no value, and an
+// unclosed quote does not parse — and they are kept so that the editor refuses
+// a line it cannot read rather than rebuilding it: the rule here is that every
+// shape this function does not understand is the operator's, not this
+// program's to write.
+func valueTailAndQuote(rest []byte) (tail []byte, quote string, err error) {
+	if len(rest) == 0 {
+		return nil, "", errors.New("the gcp_project: line has no value")
+	}
+	if q := rest[0]; q == '"' || q == '\'' {
+		for i := 1; i < len(rest); i++ {
+			if q == '"' && rest[i] == '\\' {
+				// The escape and what it escapes are inside the scalar whatever
+				// the next byte is, so a quoted \" does not close it.
+				i++
+				continue
+			}
+			if rest[i] == q {
+				return rest[i+1:], string(rune(q)), nil
+			}
+		}
+		return nil, "", errors.New("the gcp_project: value's quote is never closed")
+	}
+	i := 0
+	for i < len(rest) && rest[i] != ' ' && rest[i] != '\t' && rest[i] != '#' {
+		i++
+	}
+	return rest[i:], "", nil
 }
 
 // notRestored is D66's list: what the new project does NOT have, as a list

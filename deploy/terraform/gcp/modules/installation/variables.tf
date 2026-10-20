@@ -161,7 +161,7 @@ variable "operators" {
 }
 
 variable "launcher_bucket_condition" {
-  description = "The condition of the launchers' objectUser grant on the runs bucket: runs/ of that bucket only (gcp.LauncherBucketCondition). Passed byte for byte, so every launcher shares one binding."
+  description = "The condition of the launchers' objectUser grant on the runs bucket: runs/ and tokens/ of that bucket only (gcp.LauncherBucketCondition). Passed byte for byte, so every launcher shares one binding."
   type = object({
     title      = string
     expression = string
@@ -291,7 +291,7 @@ variable "project_secrets" {
 }
 
 variable "managed_deployer_scoped" {
-  description = "Whether to create the managed deployer's seven conditioned roles (fugaroDeployerStorage, Secret, Account, ApiKey, Repository, RunJob, SchedulerJob) and their seven conditioned bindings. OFF by default, and fugaro init never sets it: the redesigned fmgd- prefix fence has not been measured live yet (docs/design/managed-deployer-fence.md, Check 68 of the live checklist). Before 0.9.0 this flag created one scoped role under one condition, and that condition could not be expressed as a GCP IAM condition at all (17 logical operators where IAM allows 12, resource.name.contains() is not a supported function, and resource.name is not supported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, service accounts or API keys), so setIamPolicy would have rejected it and stopped the whole apply. Managed projects stay disabled until the redesigned fence is measured live."
+  description = "Whether to create the managed deployer's seven conditioned roles (fugaroDeployerStorage, Secret, Account, ApiKey, Repository, RunJob, SchedulerJob) and their seven conditioned bindings. OFF by default, and fugaro init never sets it: the redesigned fmgd- prefix fence has not been measured live yet (docs/design/managed-deployer-fence.md, Check 68 of the live checklist). Before 0.9.5 this flag created one scoped role under one condition, and that condition could not be expressed as a GCP IAM condition at all (17 logical operators where IAM allows 12, resource.name.contains() is not a supported function, and resource.name is not supported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, service accounts or API keys), so setIamPolicy would have rejected it and stopped the whole apply. Managed projects stay disabled until the redesigned fence is measured live."
   type        = bool
   default     = false
   nullable    = false

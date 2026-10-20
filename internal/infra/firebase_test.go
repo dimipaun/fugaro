@@ -67,13 +67,28 @@ func TestFirebaseTfvarsGolden(t *testing.T) {
 	// plan its script makes hold project jobs (plan task 3.2 step 5): one
 	// job and one job service account per (profile, provider, account), and
 	// no repository ever reaches this root.
-	for name, deploy := range map[string]bool{"installation-budget.tfvars.json": false, "installation-budget-job.tfvars.json": true} {
-		spec := installationSpecWith(t, projectProfilesLCBlock)
+	//
+	// The third is the account axis's (plan task 2): one profile serving a
+	// named Claude account beside the default one, so the fixture and its
+	// golden plan hold an account job whose token is a secret mount. It is a
+	// fixture of its own, and not a case of the second, so that the two plans
+	// every existing installation is deploying stay byte for byte what they
+	// were: this change adds jobs and replaces none (D9).
+	for _, c := range []struct {
+		name   string
+		deploy bool
+		spec   func(*testing.T) InstallationSpec
+	}{
+		{"installation-budget.tfvars.json", false, projectJobSpec},
+		{"installation-budget-job.tfvars.json", true, projectJobSpec},
+		{"installation-accounts.tfvars.json", true, projectAccountJobSpec},
+	} {
+		spec := c.spec(t)
 		h, err := History(parseLC(t, m4LocalConfig+m5Additions))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if deploy {
+		if c.deploy {
 			h.DeployJob, h.FirebaseProject, h.RTDBURL = true, "aurora-fp", "https://aurora-fp-default-rtdb.firebaseio.com"
 		}
 		spec.EnableBudget, spec.History = true, &h
@@ -81,7 +96,7 @@ func TestFirebaseTfvarsGolden(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		checkGolden(t, name, data)
+		checkGolden(t, c.name, data)
 	}
 }
 
@@ -349,7 +364,8 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 	// them is the rules-generation marker, which must not be written unless
 	// the deploy succeeded (TestRulesMarkerOnlyAfterTheRulesDeploy in
 	// internal/cli drives the failing case through init).
-	wantPaths := []string{"fugaro/mark", "fugaro/project", "config/mode", "config/limits", "rules", projectpolicy.PathRulesMarker()}
+	wantPaths := []string{"fugaro/mark", "fugaro/project", "config/mode", "config/limits", "rules",
+		projectpolicy.PathRulesMarker(), rules.PathCredsRulesMarker()}
 	if !slices.Equal(paths, wantPaths) {
 		t.Fatalf("actions = %v, want %v (the rules last, their marker after them)", paths, wantPaths)
 	}
@@ -359,9 +375,12 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 	if got := f.Value(projectpolicy.PathRulesMarker()); got != json.Number(strconv.Itoa(projectpolicy.RulesVersion)) {
 		t.Errorf("%s = %#v, want %d (RulesVersion)", projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion)
 	}
+	if got := f.Value(rules.PathCredsRulesMarker()); got != json.Number(strconv.Itoa(rules.CredsRulesVersion)) {
+		t.Errorf("%s = %#v, want %d (CredsRulesVersion): the credentials children's generation", rules.PathCredsRulesMarker(), got, rules.CredsRulesVersion)
+	}
 	lim, _ := f.Value(budget.PathLimits).(map[string]any)
-	if len(lim) != 2 || lim["maxReserveMicros"] == nil {
-		t.Errorf("config/limits = %v, want the marker beside maxReserveMicros", lim)
+	if len(lim) != 3 || lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v, want the two markers beside maxReserveMicros", lim)
 	}
 	want, _ := rules.Generate()
 	if !SameJSON(f.Rules(), want) {
@@ -484,6 +503,125 @@ func TestDBRefusesToDeployOverNewerRules(t *testing.T) {
 	f.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	if _, _, err := NewDB(d.c, "aurora", "proj-1234", "").Plan(context.Background()); err != nil {
 		t.Errorf("a database at this generation is refused: %v", err)
+	}
+}
+
+// The credentials marker (credentials-service plan, task C1.3) is written the
+// way the rules-generation marker is: after the rules PUT succeeds, and on the
+// no-deploy path too, when it is absent. It records the generation of the
+// credentials children (/creds denied, the registry entry's `credential` and
+// `waiting_until`, the by-tier counters), which a cascade launch, the init
+// stage and doctor read before a run may start -- a marker of its own rather
+// than a `RulesVersion` bump, which would drop every published policy on an
+// installation whose owner has not redeployed yet.
+//
+// Hand mutation this fails on: writing the marker before the rules (a failed
+// deploy then claims rules that are not there), or dropping the write
+// altogether (a cascade launch reads nothing and is refused on an installation
+// that has deployed).
+func TestFirebaseDeployWritesCredsMarker(t *testing.T) {
+	d, f := newDB(t, "")
+	acts := deploy(t, d)
+	rulesAt, credsAt := -1, -1
+	for i, a := range acts {
+		switch a.Path {
+		case "rules":
+			rulesAt = i
+		case rules.PathCredsRulesMarker():
+			credsAt = i
+		}
+	}
+	if rulesAt < 0 || credsAt < 0 {
+		t.Fatalf("actions = %v, want the rules deploy and the credentials marker", acts)
+	}
+	if credsAt < rulesAt {
+		t.Errorf("the credentials marker (%d) is planned before the rules deploy (%d): it must not claim rules that are not there", credsAt, rulesAt)
+	}
+	if !strings.Contains(acts[credsAt].Text, rules.PathCredsRulesMarker()) {
+		t.Errorf("the marker's action text does not name it: %q", acts[credsAt].Text)
+	}
+	if got := f.Value(rules.PathCredsRulesMarker()); got != json.Number(strconv.Itoa(rules.CredsRulesVersion)) {
+		t.Errorf("%s = %#v, want %d", rules.PathCredsRulesMarker(), got, rules.CredsRulesVersion)
+	}
+}
+
+// A database whose deployed rules already equal the generated document needs no
+// deploy -- and a credentials marker that is absent is still written, because
+// the document that carries the children is the one running. That is the path
+// an installation takes when it upgrades the CLI and its rules were already at
+// this generation.
+//
+// Hand mutation this fails on: writing the marker only when a rules deploy was
+// planned.
+func TestFirebaseNoDeployWritesAbsentCredsMarker(t *testing.T) {
+	d, f := newDB(t, "")
+	deploy(t, d)
+	f.Set(rules.PathCredsRulesMarker(), nil) // the marker an earlier init never wrote
+	d2 := NewDB(d.c, "aurora", "proj-1234", "")
+	acts, _, err := d2.Plan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(acts) != 1 || acts[0].Path != rules.PathCredsRulesMarker() {
+		t.Fatalf("actions = %v, want the credentials marker alone (no rules deploy: the deployed document is the generated one)", acts)
+	}
+	if err := d2.Apply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Value(rules.PathCredsRulesMarker()); got != json.Number(strconv.Itoa(rules.CredsRulesVersion)) {
+		t.Errorf("%s = %#v, want %d", rules.PathCredsRulesMarker(), got, rules.CredsRulesVersion)
+	}
+	if n := f.RulePuts(); n != 1 {
+		t.Errorf("the rules were deployed %d times, want 1 (the fixture's): the marker write must not redeploy", n)
+	}
+}
+
+// A credentials marker above this binary's CredsRulesVersion is a newer
+// Fugaro's, and the same refusal as the rules marker's applies: this binary's
+// document does not carry the children that marker describes, so deploying it
+// would leave a `cascade` launch passing a gate on rules that are not there.
+// Nothing is planned and nothing is written.
+//
+// Hand mutation this fails on: dropping the refusal (the plan then writes this
+// binary's older document and the marker down to this version), or widening it
+// to `>=` (which refuses a database at this generation).
+func TestFirebasePlanRefusesNewerCredsMarker(t *testing.T) {
+	d, f := newDB(t, "")
+	deploy(t, d)
+	newer := rules.CredsRulesVersion + 1
+	f.Set(rules.PathCredsRulesMarker(), newer)
+	before, _ := json.Marshal(f.Value(""))
+	puts := len(f.Requests())
+
+	acts, _, err := d.Plan(context.Background())
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("Plan = (%v, %v), want a refusal: this binary must not deploy over a newer credentials generation", acts, err)
+	}
+	for _, want := range []string{rules.PathCredsRulesMarker(), strconv.Itoa(newer), strconv.Itoa(rules.CredsRulesVersion)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if len(acts) != 0 {
+		t.Errorf("acts = %v, want none", acts)
+	}
+	after, _ := json.Marshal(f.Value(""))
+	if string(before) != string(after) || f.RulePuts() != 1 {
+		t.Errorf("the refusal wrote: database %s -> %s, rules put %d times", before, after, f.RulePuts())
+	}
+	for _, q := range f.Requests()[puts:] {
+		if q.Method == "PUT" || q.Method == "PATCH" {
+			t.Errorf("the refused plan wrote %s /%s", q.Method, q.Path)
+		}
+	}
+	// A marker at this generation plans normally, and one below it is a database
+	// whose rules predate the children: that is the deploy this binary is for.
+	for _, seed := range []int{rules.CredsRulesVersion, rules.CredsRulesVersion - 1} {
+		f.Set(rules.PathCredsRulesMarker(), seed)
+		if _, _, err := NewDB(d.c, "aurora", "proj-1234", "").Plan(context.Background()); err != nil {
+			t.Errorf("a credentials marker at %d is refused: %v", seed, err)
+		}
 	}
 }
 

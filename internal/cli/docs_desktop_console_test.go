@@ -46,11 +46,15 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/plan"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/report"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/userstats"
 	"github.com/dimipaun/fugaro/internal/watch"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -365,7 +369,62 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 			t.Errorf("%s never names the json field %q, which the shape it documents carries", path, name)
 		}
 	}
+
+	// §6.10 is held to its OWN field tables instead of to the whole document,
+	// and the difference is the test: `project`, `by`, `rows` and `totals` are
+	// words this contract uses in a dozen other sections, so a Contains over
+	// all 1100 lines passes for a field §6.10 never lists — which is exactly
+	// the drift this test exists to catch. The section's two tables are the
+	// document shape and the row shape the counts are flattened into
+	// (userstats.Row embeds Counts), and the comparison is set EQUALITY in both
+	// directions: a Go key the section does not list fails, and a field row the
+	// section lists and the code no longer has fails too — the sibling below
+	// refuses invented names document-wide, and this is the same rule where the
+	// runs stats shapes are described.
+	const stats = "### 6.10 "
+	body := section(t, doc, stats, "\n## 7. ")
+	listed := map[string]bool{}
+	for _, header := range []string{
+		"| Field | Type | omitempty | Availability state |",
+		"| Field | Type | omitempty | Note |",
+	} {
+		for _, row := range docTableAfter(t, path, body, header) {
+			// A row's first cell can name several fields at once — the four
+			// settled counts share one row (`succeeded`, `failed`, `halted`,
+			// `infra_error`) — so every backticked name in it is one field of
+			// the shape, not the cell's whole text.
+			for _, m := range jsonCellRE.FindAllStringSubmatch(row[0], -1) {
+				listed[m[1]] = true
+			}
+		}
+	}
+	statsShapes := []reflect.Type{
+		reflect.TypeOf(userStatsDoc{}),
+		reflect.TypeOf(userstats.Row{}),
+		reflect.TypeOf(userstats.Counts{}),
+	}
+	keys := jsonTagNames(t, namedTypes(statsShapes...), statsShapes...)
+	for _, name := range keys {
+		if !listed[name] {
+			t.Errorf("%s's §6.10 tables never list the json field %q, which the shape it documents carries", path, name)
+		}
+	}
+	inGo := map[string]bool{}
+	for _, name := range keys {
+		inGo[name] = true
+	}
+	for _, row := range docTableAfter(t, path, body, "| Field | Type | omitempty | Availability state |") {
+		for _, m := range jsonCellRE.FindAllStringSubmatch(row[0], -1) {
+			if !inGo[m[1]] {
+				t.Errorf("%s's §6.10 document table lists %q, which no field of userStatsDoc carries", path, m[1])
+			}
+		}
+	}
 }
+
+// jsonCellRE is a backticked identifier in a field table's first cell: the
+// field names of one row, one or more of them.
+var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 
 // TestDocsDesktopConsoleContractNamesNoInventedField is the other direction,
 // and it is the one a review found missing: every backticked name in the
@@ -400,6 +459,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
+		// §6.10, the same three shapes as the test above (CLI 0.9.0).
+		reflect.TypeOf(userStatsDoc{}),
+		reflect.TypeOf(userstats.Row{}),
+		reflect.TypeOf(userstats.Counts{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		real[name] = true
@@ -480,6 +543,50 @@ func TestDocsDesktopConsoleContractStatesTheThreeFeedFacts(t *testing.T) {
 	}
 }
 
+// TestDocsDesktopConsoleContractStatesTheRunsStatsOwnViewRefusal pins §6.10's
+// own-view paragraph to the three states the command actually has. Two of them
+// are the empty table -- a window the caller started nothing in, and an
+// identity with no key of its own (nothing printable in it, or a text that
+// reads as the unattributed key) -- and the third is not a state of `rows` at
+// all: an identity the CLI cannot resolve (local config's user: empty, git
+// config user.email answering nothing) is REFUSED before any document exists,
+// with an error naming --all-users. A document that files the refusal with the
+// empty table sends a console looking for a `rows: []` it will never receive.
+// The help's own half of this is TestRunsStatsHelpStatesThePrivateViewsThreeWays
+// (runs_stats_test.go), and the refusal itself is behaviour-pinned by
+// TestRunsStatsVisibilityIsTheRuling's last case.
+func TestDocsDesktopConsoleContractStatesTheRunsStatsOwnViewRefusal(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	start := strings.Index(doc, "**The `\"own\"` view filters a read that is not its own.**")
+	end := strings.Index(doc, "`userstats.Row`")
+	if start < 0 || end < 0 || end <= start {
+		t.Fatalf("%s's own-view paragraph was renamed or reordered; update this test's markers", path)
+	}
+	para := doc[start:end]
+	for _, want := range []string{
+		"`rows: []`",              // the empty table, still stated
+		"nothing printable in it", // the identity with no key of its own
+		"**refused**",             // and the case that is not a table at all
+		"`--all-users`",           // the way past it, as the error names it
+	} {
+		if !strings.Contains(para, want) {
+			t.Errorf("%s's own-view paragraph does not say %q:\n%s", path, want, para)
+		}
+	}
+	// The refusal's own wording, read out of the command rather than written
+	// here, so the two cannot drift: the error a caller gets names --all-users
+	// too, and that is what the paragraph claims it does.
+	f := newCloudFixture(t)
+	userStatsPlace(t, f, "", nil, nil)
+	testutil.IsolateGit(t)
+	t.Setenv("GIT_DIR", t.TempDir())
+	out, _, err := execute(t, "runs", "stats", "--json")
+	if err == nil || !strings.Contains(err.Error(), "--all-users") {
+		t.Fatalf("no identity: err = %v, want the refusal %s's paragraph describes (out: %s)", err, path, out)
+	}
+}
+
 // TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited: the
 // console's own set has exactly two line-delimited documents, and they do it
 // through two different code paths -- the watch feed through json.NewEncoder
@@ -512,8 +619,7 @@ func TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited(t *testi
 		}},
 		{"cancel's document is compact, outside that set", []string{
 			"**Its document is compact — one object per line**",
-			"printCancel",
-			"cancel.go:474",
+			"`printCancel` marshals the struct with `json.Marshal`",
 			"the only one outside the console's set",
 		}},
 		{"every other document in the console's set is indented", []string{
@@ -579,6 +685,12 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	"budget show": newBudgetShowCmd,
 	"report":      newReportCmd,
 	"runs ls":     newLsCmd,
+	// §6.10 documents the by-person aggregate (CLI 0.9.0). It is not on the
+	// design's spawn allow-list yet -- the Spend screen's by-person view is
+	// the task that follows -- but the document describes its flags, so the
+	// flags written there are checked against this constructor like any
+	// other's.
+	"runs stats":  newRunsStatsCmd,
 	"diagnose":    newDiagnoseCmd,
 	"logs":        newLogsCmd,
 	"cancel":      newCancelCmd,
@@ -1247,6 +1359,18 @@ func TestWatchRefusalBeforeTheStreamExits1WithNoDocument(t *testing.T) {
 // returning one document and exit 1.
 func TestWatchStreamRefusalEmitsOneDocumentThenExits1(t *testing.T) {
 	f := newBudgetFixture(t, "")
+	// The queued source opens the runs bucket on its own goroutine, and that
+	// open's project-name check writes the project-check cache. The open is
+	// deliberately left to finish on its own when the command ends
+	// (TestQueuedSourceQuitWhileOpenBlocked pins that: an open that ignores a
+	// cancelled ctx never blocks shutdown), so its cache write can land after
+	// this command returns. Point XDG_CACHE_HOME at TestMain's own directory,
+	// which nothing removes, so the late write cannot race t.TempDir's
+	// RemoveAll cleanup -- which is how this test used to flake ("directory
+	// not empty").
+	if testCacheRoot != "" {
+		t.Setenv("XDG_CACHE_HOME", filepath.Join(testCacheRoot, t.Name()))
+	}
 	f.db.RefusePath("agents", 401, "UNAUTHENTICATED", "", "expired")
 	cmd := NewRootCmd()
 	out := &lockedBuf{}
@@ -4643,6 +4767,167 @@ func TestPlanRule9ListsEveryFlaggedHeading(t *testing.T) {
 	}
 }
 
+// TestDocsDesktopConsoleContractCitesRunsStatsBySymbol: the contract's
+// `runs stats --json` section (6.10) cites the code it describes by SYMBOL, not
+// by line. The line numbers it used to carry (`runs_stats.go:69`, `:467`,
+// `:181`) each pointed at something else as soon as anything was inserted above
+// them — the one this test was written for went stale inside the same pull
+// request that added the section, when a review fix moved `writeUserStats` from
+// :467 to :493 — and a console author who follows a line number that now lands
+// on an unrelated statement reads the wrong shape off it. The symbols are what
+// the console reads the document for, so the section names them and a line
+// number cannot come back.
+//
+// Mutation (verified, run and restored): put `runs_stats.go:467` back beside
+// the section's `writeUserStats` — this fails naming the line citation.
+func TestDocsDesktopConsoleContractCitesRunsStatsBySymbol(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	start := strings.Index(doc, "### 6.10 `fugaro runs stats --json`")
+	end := strings.Index(doc, "## 7. The CLI gaps")
+	if start < 0 || end <= start {
+		t.Fatalf("%s's runs stats section was renamed or reordered; update this test's markers", path)
+	}
+	section := doc[start:end]
+	// The three symbols the section describes, each of which exists in the file
+	// it names (read from the source, so a rename cannot leave the contract
+	// pointing at a function that is gone).
+	src := readDoc(t, "internal/cli/runs_stats.go")
+	for _, sym := range []string{"newRunsStatsCmd", "runRunsStats", "userStatsDoc", "writeUserStats"} {
+		if !strings.Contains(section, "`"+sym+"`") {
+			t.Errorf("%s's runs stats section does not name `%s`: the console reads this document to learn the shape, and a symbol is what stays true", path, sym)
+		}
+		if !strings.Contains(src, "func "+sym+"(") && !strings.Contains(src, "type "+sym+" ") {
+			t.Errorf("%s names `%s`, and internal/cli/runs_stats.go no longer declares it", path, sym)
+		}
+	}
+	// No line citation in the section: one that is right today is wrong at the
+	// next insertion above it, and the console cannot tell the two apart.
+	if m := regexp.MustCompile(`runs_stats\.go:\d+`).FindString(section); m != "" {
+		t.Errorf("%s's runs stats section cites %s instead of a symbol: a line number here rots the moment anything is inserted above the symbol it means", path, m)
+	}
+}
+
+// TestDocsDesktopConsoleContractCitesBySymbolNotLine: a file:LINE citation in
+// the contract is right the day it is written and wrong at the next insertion
+// above the symbol it means, and the console cannot tell the two apart. Section
+// 6.10 was the first section held to symbol names only; this holds the whole
+// document to it, after a round of line pins had already gone stale
+// (json.go:97, json.go:91-92, runview.go:57, runview.go:109, queued.go:17 —
+// each pointed at an unrelated line by the time it was checked).
+//
+// Mutation (verified, run and restored): put `json.go:97` back beside a
+// `JSONDoc` citation — this fails naming the citation.
+func TestDocsDesktopConsoleContractCitesBySymbolNotLine(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	if ms := regexp.MustCompile(`[A-Za-z0-9_./-]+\.go:[0-9]+`).FindAllString(doc, -1); len(ms) > 0 {
+		t.Errorf("%s cites %s: name the symbol (the function, type or constant) instead, so the anchor survives an insertion above it", path, strings.Join(ms, ", "))
+	}
+}
+
+// TestDocsDesktopConsoleContractHeadingsStandAlone: each of the contract's
+// section headings is a heading and nothing else.
+//
+// The same citation pass joined eleven of them to the body paragraph below —
+// `## 3`, `## 4` and `### 6.1` through `### 6.9`, each of which had been a
+// heading, a blank line and then the body. Markdown then renders the whole
+// command description as heading text and the section anchors and any table of
+// contents move with it, and no test noticed: the contract is read as bytes,
+// and every other assertion here looks for a phrase that a merged heading still
+// contains.
+//
+// Two rules, because one alone leaves a hole. A heading is followed by a blank
+// line — that catches every one of those eleven, since each had body text on the
+// next line. And a heading carries none of the `**Command:**` / `**Document:**`
+// markers that begin the paragraph under it — that catches the same join made
+// with the blank line kept, where the body sits on the heading line itself.
+//
+// Mutation (verified, run and restored): re-join `## 3.` with the `**Command:**`
+// line that follows it — this fails on that line, twice, once per rule.
+func TestDocsDesktopConsoleContractHeadingsStandAlone(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	lines := strings.Split(readDoc(t, path), "\n")
+	for i, line := range lines {
+		body := strings.TrimLeft(line, "#")
+		if !strings.HasPrefix(line, "#") || !strings.HasPrefix(body, " ") {
+			continue // not an ATX heading
+		}
+		for _, marker := range []string{"**Command:**", "**Document:**"} {
+			if strings.Contains(body, marker) {
+				t.Errorf("%s:%d: heading carries body text (%s): %q — the body paragraph starts on its own line", path, i+1, marker, line)
+			}
+		}
+		if i+1 < len(lines) && strings.TrimSpace(lines[i+1]) != "" {
+			t.Errorf("%s:%d: heading is not followed by a blank line: %q — body text joined onto it?", path, i+1, line)
+		}
+	}
+}
+
+// TestDocsDesktopConsoleContractStatesTheAccountAxis: the `account` row of both
+// run shapes used to say the field could not appear on a project job at all —
+// "in phase 3 **never**, because a profile may not mount a Claude OAuth token"
+// — and internal/watch/json.go's own comment carried the same claim. The
+// release this contract documents made it false: a profile lists
+// claude_accounts, the deployer builds one job per (profile, provider,
+// account), and a row's account is the axis the run's job name was computed
+// from, which is exactly what a console shows a screen from. The stale sentence
+// is the dangerous half — a console that believes the key can never appear never
+// renders one — so it is banned by name in both files, and the row is held to
+// the axis the code computes rather than to a hand-kept paraphrase.
+//
+// Mutation (verified, run and restored): restore the sentence to either file —
+// this fails naming it.
+func TestDocsDesktopConsoleContractStatesTheAccountAxis(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	const code = "internal/watch/json.go"
+	doc := readDoc(t, path)
+	for _, stale := range []string{
+		"in phase 3 **never**",
+		"a profile may not mount a Claude OAuth token",
+		"absent on every phase-3 project job",
+		"which in phase 3 is every project job",
+	} {
+		for _, where := range []struct{ path, text string }{{path, doc}, {code, readDoc(t, code)}} {
+			if strings.Contains(where.text, stale) {
+				t.Errorf("%s still says %q: a project job's row can carry an account, and a console reading either document would never render one", where.path, stale)
+			}
+		}
+	}
+	// What the code computes: a profile that lists the default account and one
+	// named account has a job per entry (config.ProjectJobAccounts), and the
+	// named account's job is the one whose row carries an account
+	// (runner.ProjectJobOfPolicy, which internal/cli/project_job.go's
+	// projectJobIndex.ref puts on the row). The empty string is the profile's
+	// no-account job, which is why the key is omitempty and absent there.
+	p := &projectpolicy.Policy{Profiles: map[string]projectpolicy.Profile{
+		"standard": {JobProfile: config.JobProfile{Provider: "github",
+			ClaudeAccounts: []string{config.DefaultClaudeAccount, "work"}}},
+	}}
+	if _, _, account, ok := runner.ProjectJobOfPolicy(p, gcp.ProjectJobName("standard", "github", "work")); !ok || account != "work" {
+		t.Fatalf("ProjectJobOfPolicy(standard, github, work) = (%q, %v): a named account's job no longer carries its name on the row", account, ok)
+	}
+	if _, _, account, ok := runner.ProjectJobOfPolicy(p, gcp.ProjectJobName("standard", "github", "")); !ok || account != "" {
+		t.Fatalf("ProjectJobOfPolicy(standard, github, no account) = (%q, %v): the profile's no-account job no longer reads as the empty axis", account, ok)
+	}
+	if got := config.ProjectJobAccounts(config.JobProfile{ClaudeAccounts: []string{config.DefaultClaudeAccount, "work"}}); len(got) != 2 {
+		t.Fatalf("ProjectJobAccounts(default, work) = %v, want the two entries the row's presence rule is about", got)
+	}
+	// And the row says it, naming the code that decides it: the symbols are in
+	// the row rather than only in this test, so a reader of the contract can
+	// check the claim.
+	for _, want := range []string{
+		"**one job per account**",
+		"`config.ProjectJobAccounts`",
+		"`config.ProjectJobTokenAccount`",
+		"the profile's no-account job",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s's `account` row does not say %q: the axis is runner.ProjectJobOfPolicy's answer over config.ProjectJobAccounts, and the row is what a console reads to know whether to render one", path, want)
+		}
+	}
+}
+
 // TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes: console/test/fixtures/
 // normal.ndjson is the shape of one real 0.8.6 `watch --json` document with
 // every value invented, so its shape is the one thing in it that must stay the
@@ -4923,9 +5208,13 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	sameSet(t, "stage", stages, tsList(t, scrub, `\bstage: \[([^\]]*)\]`, "VOCAB.stage"))
 
 	// The auth values: the config's allowed set, which is the one a run is
-	// launched with, plus the dash the wall view writes for an empty one.
-	auth := sourceValues(t, "internal/config/validate.go", readDoc(t, "internal/config/validate.go"),
-		`\[\]string\{([^}]*)\}, c\.Agent\.Auth`)
+	// launched with, plus the dash the wall view writes for an empty one. The
+	// set is config.AgentAuths in defaults.go — validate.go's own check and the
+	// run's account gate both read it (config.KnownAgentAuth), so it is the one
+	// list, and this scan follows it there rather than reading a copy out of the
+	// validator's call site.
+	auth := sourceValues(t, "internal/config/defaults.go", readDoc(t, "internal/config/defaults.go"),
+		`AgentAuths = \[\]string\{([^}]*)\}`)
 	allowed := quoted(auth[0])
 	if len(allowed) == 0 {
 		t.Fatalf("internal/config/validate.go: the allowed-auth set parsed as empty")

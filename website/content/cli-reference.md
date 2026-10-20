@@ -26,6 +26,7 @@ Subcommands:
 - `fugaro accounts` -- List the named Claude accounts a repository may use
 - `fugaro allow-delete` -- Record the Terraform addresses a run may delete or replace (the project's owner)
 - `fugaro artifacts` -- List and download what an artifact run delivered
+- `fugaro backends` -- List the compute backends an installation can run its jobs on
 - `fugaro budget` -- Show and change the project's model-spend caps and kill switches
 - `fugaro cancel` -- Cancel a run, letting the runner open a draft PR first
 - `fugaro completion` -- Generate the autocompletion script for the specified shell
@@ -132,11 +133,13 @@ list, because an empty list is what an absent one already means.
 What the object is for: a run's own credentials cannot write it, and the
 deployer account a managed apply impersonates will not be able to (D75, Task
 1.5), so a managed apply can take its allow-list from the owner's object
-instead of from the command line of whatever session is applying. That apply is not built yet — the managed apply
-is Task 3.1, and until it lands fugaro init still honours its own flag. What
-this does not do: a coding agent's session holds the operator's credentials,
-so it can write this object directly (gcloud storage cp) or unset its agent
-marker and run this command itself. The refusal below is a speed bump against
+instead of from the command line of whatever session is applying: fugaro
+managed apply reads this object and takes no address flag of its own, so the
+session that applies cannot widen the list. (fugaro init still honours its own
+--allow-delete on its own command line, where the addresses go to tf.Guard
+directly.) What this does not do: a coding agent's session holds the
+operator's credentials, so it can write this object directly (gcloud storage
+cp) or unset its agent marker and run this command itself. The refusal below is a speed bump against
 an agent that uses the program, not a boundary against one that goes around it
 (SECURITY.md records the wider Owner/Editor bypass).
 
@@ -263,6 +266,60 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository RUN belongs to (owner/name; needed only for a bare run ID) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro backends`
+
+List the compute backends an installation can run its jobs on
+
+Usage: `fugaro backends`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for backends |
+
+Subcommands:
+
+- `fugaro backends ls` -- List the compute backends this fugaro knows and which one the project uses
+
+## `fugaro backends ls`
+
+List the compute backends this fugaro knows and which one the project uses
+
+List the compute backends a project config's backend: key may name, and
+which one the selected project uses:
+
+  cloud-run    Cloud Run jobs (the default, and the one every installation
+               runs on today)
+  cloud-batch  Cloud Batch jobs, one VM per run (the VM backend)
+
+A config that names no backend runs on cloud-run. A config that names
+cloud-batch is refused by this build ("not enabled yet"): the backend and its
+opener are built and tested, and nothing selects them until Fugaro has passed
+the live checklist for it.
+
+This is a local, read-only lookup: it reads the project config and the backend
+names internal/backend defines, and it calls no cloud API. With --json it
+prints one object instead of two lines, carrying the list, the selected project
+and the name its config selects.
+
+Usage: `fugaro backends ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -1433,7 +1490,7 @@ Flags:
 | `--json` | bool | `false` | no | print the result as JSON on stdout (progress goes to stderr) |
 | `--launcher` | stringArray | `[]` | no | an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--link-billing` | string | "" | no | with --create-project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, after you type the account's ID at a terminal. This may incur charges on that account; never with --yes. It never changes a project's existing billing link |
-| `--managed` | bool | `false` | no | with --create-project: create a Fugaro-managed project. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is not yet possible in this release (never by init) |
+| `--managed` | bool | `false` | no | with --create-project: create a Fugaro-managed project. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, and never init's |
 | `--name` | string | "" | no | the project's name: for a project config fugaro init creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; adopting an installation defaults it to the installation's) |
 | `--no-build` | bool | `false` | no | with --repo: don't offer the first image builds |
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
@@ -1512,6 +1569,7 @@ Flags:
 Subcommands:
 
 - `fugaro managed apply` -- Apply the agent-authored Terraform root of a managed project, as the deployer account
+- `fugaro managed flag` -- Flag an existing GCP project as managed (the project's owner)
 
 ## `fugaro managed apply`
 
@@ -1542,6 +1600,14 @@ address the owner did not approve is refused) and the deployer account (which
 holds no project-level IAM permission and cannot write the runs bucket). None
 of the four is a boundary against a session that goes around this program.
 
+The prompt comes back whenever the whole-project inventory does not clear the
+project: before anything is planned, this command reads every resource of the
+GCP project (Cloud Asset, with the operator's own credential) and compares it
+with what the installation's Terraform states account for. A resource nothing
+accounts for, or an inventory that cannot be read, keeps this run's
+confirmation: a coding agent's session is refused and a person is asked, with
+the reason printed first. Nothing is halted and nothing is deleted.
+
 Usage: `fugaro managed apply ROOT`
 
 Flags:
@@ -1551,6 +1617,89 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for apply |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro managed flag`
+
+Flag an existing GCP project as managed (the project's owner)
+
+Flag an existing GCP project PROJECT_ID as managed, recording the managed
+marker in that project's own runs bucket.
+
+This is how a project Fugaro did not create becomes managed: the marker is
+what tells a later run that this project's applies may skip the typed
+confirmation, and it is normally written by the run that created the project
+(fugaro init --create-project --managed). Flagging is the after-the-fact way,
+answered by the owner on 2026-10-16 (design D58).
+
+Run it in your own terminal, as an operator, with your own credentials, and
+type the GCP project ID it asks for. A coding agent's session is refused, and
+nothing stands in for the typed ID — not --yes, not --non-interactive, not a
+pipe.
+
+PROJECT_ID must be the exact GCP project ID of the installation selected by
+--project, --config or the checkout: one invocation names one project, and
+there is no bulk form, no wildcard and no prefix.
+
+It records two things in gs://<runs bucket>/fugaro/managed.json: that this
+project is managed, and the monthly budget amount and currency the owner
+states with --budget and --budget-currency. The amount is required, with no
+default (D64), because the marker's amount is what the apply-time budget read
+opens the gate on: a marked project that records no amount is refused by every
+managed apply rather than applied without a budget control. The amount is the
+budget ALERT amount the installation's Terraform creates and nothing else —
+this command does not create or change a budget, and it makes no billing call.
+
+It writes BOTH marks a managed project carries, in one step: that object and
+the label fugaro_managed=true on the GCP project itself (Task 3.0). The read
+requires both — the label is what a project can be narrowed by, and a project
+without it is not managed whatever its runs bucket holds — so writing the
+object alone would leave this project exactly as unmanaged as it was. The
+label is written on the project, by the account running this command, which is
+why the account needs resourcemanager.projects.update on it; the project's
+other labels are kept. A project that already carries that key with another
+value is refused rather than overwritten — the label someone else put there is
+a statement, not an empty slot — and the object written first is not taken
+back, so that refusal says which half is there and which is missing.
+
+What flagging gives up, stated before it writes: the marker is what turns the
+typed confirmation off (D55), so from this project's next apply on, the
+deterministic gate, the whole-project inventory, the owner-written delete list
+(fugaro allow-delete) and the recorded budget are what stand in the
+confirmation's place — and a coding agent's session can apply a plan the gate
+admitted with no human prompt.
+
+What it does not do: it is not a boundary against a session that goes around
+this program. A coding agent's session holds the operator's credentials, can
+write this object directly with gcloud storage cp, and can unset its own
+marker and run this command; SECURITY.md records the wider Owner/Editor
+bypass. The refusal below is a speed bump against an agent that uses the
+program, not a wall against one that goes around it.
+
+A project that already records an amount is refused: the amount is the owner's
+decision at the time it was taken, and this command adds a budget rather than
+editing one. The one object it does replace is a version-1 creation fact —
+what fugaro init --create-project without --managed leaves, and the state the
+managed apply refuses for having no amount recorded. What it replaced is said
+in the output, and the write is conditioned on the object it read, so nothing
+is overwritten blind.
+
+Usage: `fugaro managed flag PROJECT_ID`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--budget` | int64 | `0` | no | the monthly budget alert amount to record, in whole units of --budget-currency (required) |
+| `--budget-currency` | string | "" | no | the currency --budget is in, three uppercase letters such as USD (required) |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for flag |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -1619,6 +1768,7 @@ Subcommands:
 - `fugaro project policy` -- The project's published policy (config/policy/shared)
 - `fugaro project repos` -- The project's allow-list: which repositories may run
 - `fugaro project show` -- Show the effective project: caps, policy, allow-list, repositories running now
+- `fugaro project sync` -- Offer the GitHub App's installed repositories that the allow-list does not admit
 
 ## `fugaro project policy`
 
@@ -1670,11 +1820,26 @@ config/policy/repos children are removed too, shared node or not: a delete
 that failed on the shared node leaves them behind, and this is what clears
 them.
 
-routing.claude is written where the operator writes it: this config. A publish
-refuses to drop an active route the config does not account for, and refuses
-a config that writes a routing block naming no Claude switch in the same
-state; --remove-routing is how the operator says the block goes away on
-purpose.
+Each repository an account a profile names admits also gets a child under
+config/policy/repos/$slug, holding the NAMES of its admitted accounts and
+nothing else: the accounts published are the ones some profile names,
+qualified by that profile's provider, so an account this config defines but
+no profile names admits nothing a run could read. The children are narrowed before the shared node and widened
+after it, so a publish that stops between the two writes leaves the installation tighter than the config asked, never looser.
+When the node this publish writes carries a member an older Fugaro refuses
+whole — a credentials
+block, or routing.claude.via: cascade — the diff warns: older launchers (and,
+for the cascade, older runner images) stop until they are upgraded.
+
+routing.claude is written where the operator writes it: this config. A
+publish refuses to drop an active route the config does not account for, and
+refuses to turn the credentials cascade off — a node carrying
+routing.claude.via: cascade with a config that names no Claude switch is
+refused with its own sentence, because the cascade is not a route: it decides
+which credential carries a Claude call, never where the call goes, and it is
+what hands a run the project's other credentials. A config that writes a
+routing block naming no Claude switch in the same state is refused too.
+--remove-routing is how the operator says the block goes away on purpose.
 
 Usage: `fugaro project policy publish [--seed-repos] [--delete] [--yes] [--remove-routing]`
 
@@ -1732,7 +1897,7 @@ Flags:
 Subcommands:
 
 - `fugaro project repos add` -- Enroll a repository: add it to the policy's allow-list
-- `fugaro project repos ls` -- List the allow-list and the repositories running now
+- `fugaro project repos ls` -- List the allow-list and the repositories that have run here
 - `fugaro project repos rm` -- Un-enroll a repository: remove it from the allow-list
 
 ## `fugaro project repos add`
@@ -1763,7 +1928,7 @@ This command has no subcommands.
 
 ## `fugaro project repos ls`
 
-List the allow-list and the repositories running now
+List the allow-list and the repositories that have run here
 
 Usage: `fugaro project repos ls`
 
@@ -1836,6 +2001,45 @@ Flags:
 | `--json` | bool | `false` | no | machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project sync`
+
+Offer the GitHub App's installed repositories that the allow-list does not admit
+
+Ask GitHub which repositories the project's GitHub App is installed on (the
+App API, with the App's own credentials) and offer the ones the published
+allow_repos does not admit, as one list confirmed once. The accepted list is
+written through the same ETag-guarded write `project repos add` uses; entries
+are only ever added, so a sync never un-enrolls a repository — including one
+the App is not installed on at all (another provider's, or one whose
+installation was removed). A repository the list already admits, a pattern
+included, is not offered: its runs are admitted already.
+
+Reading the App's private key is --github-app-key: without it, nothing is
+read. Under it the key is read from the project's github-app-key secret with
+your own credentials and held in memory only to sign the App's 9-minute JWT
+(never printed, never passed as an argument, never in an error), and the
+flag is refused in a coding agent's session. The App ID is a number, not a
+secret: --github-app-id, or the one this machine's config already holds.
+
+Usage: `fugaro project sync [--github-app-id <id>] [--github-app-key] [--yes]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `--github-app-id` | string | "" | no | the GitHub App's ID (a number, not a secret); default: the one this machine's config holds |
+| `--github-app-key` | bool | `false` | no | read the project's GitHub App private key from Secret Manager to ask GitHub (your own credentials; refused in a coding agent's session) |
+| `-h`, `--help` | bool | `false` | no | help for sync |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--yes` | bool | `false` | no | confirm the batch without typing the project's name |
 
 Subcommands:
 
@@ -2154,6 +2358,7 @@ Flags:
 Subcommands:
 
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
+- `fugaro runs stats` -- Aggregate run records by the person who started each run
 
 ## `fugaro runs ls`
 
@@ -2189,6 +2394,110 @@ Flags:
 | `--repo` | string | "" | no | only this repository (owner/name) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro runs stats`
+
+Aggregate run records by the person who started each run
+
+Count the runs one installation's records hold, and what they cost, grouped by
+the person who started each one: how many jobs an identity began, how they ended,
+what they spent, and a total row.
+
+The numbers come from the run records, not from the budget database: each run's
+launch.json carries the launcher it recorded at launch, and its result.json the
+outcome and the settled cost. Nothing else is read, no counter is consulted, and
+nothing is written.
+
+Attribution, as the records themselves state it:
+
+  - A follow-up (fugaro run --pr) belongs to the launcher of that follow-up: the
+    identity is the one the follow-up's own launch recorded.
+  - An automated launch -- a service account, a CI runner -- appears as its own
+    identity, exactly as it recorded itself; it is never folded into a person's.
+  - A run whose launch recorded no launcher is grouped as 'unknown'. It is never
+    guessed from the run's task, its record or the account it ran under.
+  - Dollars are never added across currencies: a row is one user and one currency,
+    and a total covers one currency. Every cost recorded today is in USD.
+  - The window is UTC days like the rest of the CLI. A run is counted on the day
+    the bucket's run IDs place its start, so the window and the runs in it agree
+    with runs ls.
+
+The money is model dollars, counted the way the budget screens count them. COUNTED
+$ is the model spend that counts toward the caps (a run on an API key or Vertex),
+and NOTIONAL $ the model spend of a run on a subscription (agent.auth oauth),
+which counts toward the plan's limits and is no one's bill: they are separate
+columns and are never summed. Compute is not attributed to a person: no run's
+compute is, and the budget database's own person view leaves it out too. AVG
+$/RUN is COUNTED $ over COUNTED RUNS, the runs that settled a real-dollar cost;
+a notional run, a run with no readable record and a record from before the cost
+breakdown existed are none of them averaged in as a run that cost nothing.
+
+Who sees whom. An operator of the installation -- the identity the local config's
+user: (or git config user.email) names, listed in its terraform.operators, the
+list fugaro doctor's runs-bucket-iam check reads -- sees every user. Anyone else
+sees their own row alone, and --all-users asks for the whole table. An
+installation that names no operators (one from before the 0.7.0 hardening, say)
+places nobody, and the view then stays private: the default is never the wider
+one. Whose numbers a table shows is printed above it.
+
+A private view is the caller's own row. A caller whose identity cannot be told at
+all -- the local config names nobody, and git config user.email answers nothing --
+is refused, never quietly widened: the error says so, and names --all-users. An
+identity with no key of its own because nothing printable is left of it (a pasted
+zero-width character, say) is shown no row instead: the table is empty, and its
+view line says the CLI cannot tell who you are. A row keyed 'unknown' is every run
+of the window that recorded no launcher -- never one person's -- so it is not shown
+as the caller's own either, and a note says so.
+
+The launcher text is what a launcher wrote and is read for nothing else: it is
+sanitised and size-capped before it is printed, and it authorises and admits
+nothing. Two identities that differ only in what the sanitising drops -- an
+invisible character a paste left in one of them, say -- or only past the cap are
+one key and one row: the row is the key, not the person. A private view is not
+read off that key. It holds the runs whose launch recorded your identity itself --
+the identity fugaro run writes to launch.json at launch, not the requested_by that
+runs ls --mine compares -- so someone whose identity merely
+sanitises to the same text is never counted in it and your own row can be
+smaller than that key's row in the full table.
+
+A window can hold every run of every repository in the bucket, so the read is
+bounded: at most --max-runs records are read per call, newest first, and a window
+holding more says so in the output rather than publishing figures over a part of
+itself silently. The bound is on the read, not on a person: the newest --max-runs
+runs are taken before any view is applied, so a private view can be over fewer of
+the caller's own runs than --max-runs suggests. A run with neither a launch nor a
+record -- never launched, cancelled before launch, or a stale claim -- never
+started and is counted in no figure. The count of those is the window's, over
+everyone's runs, and is no more the caller's own than the truncation is.
+
+--json prints {project, by, view, you, operator, since, until, max_runs,
+truncated, rows[], totals[], unlaunched, notes}; rows and totals carry {user,
+currency, runs, succeeded, failed, halted, infra_error, other, no_record,
+counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the counts add up:
+runs == succeeded + failed + halted + infra_error + other + no_record.
+
+Usage: `fugaro runs stats`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | every repository in the runs bucket |
+| `--all-users` | bool | `false` | no | show every user's row, not only your own (the table names whose numbers it shows) |
+| `--by` | string | `user` | no | what to break the figures down by (user) |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for stats |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--max-runs` | int | `5000` | no | read at most this many runs, newest first (a bigger window is truncated and says so) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | only this repository (owner/name) |
+| `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 
 Subcommands:
 

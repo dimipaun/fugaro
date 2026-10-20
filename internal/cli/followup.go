@@ -420,7 +420,7 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	// but whether this repository may still use that account was never
 	// re-checked here, the one place a repeated --run-id reuses it as is,
 	// before any build-record read or the launch itself.
-	if err := claudeAccountAllowed(env, have.Repo, cmp.Or(have.OAuthToken, config.DefaultClaudeAccount), checkoutOf(ctx, have.Repo)()); err != nil {
+	if err := claudeAccountAllowed(env, have.Repo, cmp.Or(have.OAuthToken, config.DefaultClaudeAccount), checkoutAgentAuth(checkoutOf(ctx, have.Repo)())); err != nil {
 		return nil, err
 	}
 	return have, nil
@@ -491,7 +491,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// that never was, must not let a follow-up launch under it. An explicit
 	// override (o.token, a launcher's own flag) gets the identical check,
 	// never a lesser one.
-	if err := claudeAccountAllowed(env, repo, account, checkout()); err != nil {
+	if err := claudeAccountAllowed(env, repo, account, checkoutAgentAuth(checkout())); err != nil {
 		return nil, err
 	}
 	if o.token != "" && account != cmp.Or(c.OAuthToken, config.DefaultClaudeAccount) {

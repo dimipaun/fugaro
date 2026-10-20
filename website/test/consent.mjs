@@ -1193,8 +1193,43 @@ test('the shipped scripts never take the keyboard: no preventDefault, no stopPro
 
 // ---- the privacy statement, and the claims it makes -------------------------------------
 
+/**
+ * The part of the privacy page that is about the SITE: everything inside `main` before the
+ * second `h2`, which is where "The software" begins (the page carries two named parts — the
+ * owner's request of 2026-10-19 — and only the first is about what the site collects).
+ *
+ * The vendor rule below is scoped to this part and not to the whole page, and the scoping is
+ * the correction the software part forced: the phone app signs in to the reader's OWN Firebase
+ * project, so the page names Firebase in the software part by design, and a scan of the whole
+ * page would read that as the site's measurement naming a vendor it does not have. The rule is
+ * unchanged for the part it was written about.
+ */
+function sitePartOf(html) {
+  const main = find(parse(html), 'main')
+  if (main === null) return ''
+  const nodes = [...walk(main)]
+  const h2s = nodes.filter((el) => el.name === 'h2')
+  if (h2s.length < 2) return textOf(main)
+  // The two part headings have to be SIBLINGS, at the same level, and this reader refuses a page
+  // where they are not: the site's part is everything between the first heading and the second,
+  // and that reading only means anything if the second one closes the first. A page whose
+  // "The software" heading is nested inside "The website" — or sits beside it in a container of
+  // its own — has no site part this reader can name, so it is refused rather than guessed at.
+  if (h2s[0].parent !== h2s[1].parent) {
+    throw new Error(
+      `the privacy page's two parts do not share a parent, so there is no site part to read: the part headings are siblings, one after the other — a nested or separately wrapped "The software" makes the site's scope unreadable (see website/test/privacy.mjs, which refuses the same page for the same reason)`,
+    )
+  }
+  // Document order, not sibling index: what the reader meets after the first heading and before
+  // the second is the site's part, whatever markup sits between the two.
+  return nodes
+    .slice(nodes.indexOf(h2s[0]) + 1, nodes.indexOf(h2s[1]))
+    .map(textOf)
+    .join(' ')
+}
+
 test('the privacy page states what is collected in the state the site is built in', () => {
-  const off = textOf(parse(pageOf(FLAG_OFF.pages, 'privacy/index.html')))
+  const off = sitePartOf(pageOf(FLAG_OFF.pages, 'privacy/index.html'))
   assert.match(off, /collects nothing/i, 'with analytics off the privacy page does not say that the site collects nothing')
   assert.ok(!/Google Analytics|Firebase|googletagmanager/i.test(off), 'the privacy page names the analytics vendor while analytics are switched off')
 
@@ -1204,6 +1239,45 @@ test('the privacy page states what is collected in the state the site is built i
   assert.match(on, /after you accept|after consent/i, 'the privacy page does not state that analytics load only after consent')
   assert.match(on, /Decline/, 'the privacy page does not say how consent is withdrawn')
   assert.match(on, new RegExp(CONSENT_KEY), 'the privacy page does not say where the choice is stored')
+})
+
+test('the vendor rule reads the site part, and a vendor named in it is still refused', () => {
+  // The scoping above is a correction and not a weakening: a vendor named in the site's own part
+  // is the thing the rule was written for, and a whole-page scan is what made the page's software
+  // part — where Firebase is the reader's own project, not the site's measurement — a finding.
+  const shell = (site, software) =>
+    `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>Privacy</h1><h2>The website</h2><p>${site}</p><h2>The software</h2><p>${software}</p></main></body></html>`
+
+  assert.match(sitePartOf(shell('Google Analytics counts visits.', 'Your own Firebase project.')), /Google Analytics/, 'a vendor named in the site part is not read, so the rule could not refuse one')
+  assert.ok(!/Google Analytics|Firebase|googletagmanager/i.test(sitePartOf(shell('This site collects nothing.', 'Your own Firebase project.'))), 'the vendor rule reads the software part, which is where the reader\'s own Firebase project is named')
+  assert.equal(sitePartOf('<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>no main</p></body></html>'), '', 'a page with no main is not a site part, and this reader must not invent one')
+
+  // The software part now names Google as the holder of the app's reports, in the shipped page's
+  // own words, and the site's part stays clean: naming Google or Firebase in the software part is
+  // allowed, and the rule still refuses each of them named as what the SITE loads.
+  const software = `The app reports to Google, which holds it as Firebase's processor, under Google's Firebase privacy policy.`
+  const off2 = sitePartOf(shell('This site collects nothing.', software))
+  assert.ok(!/Google|Firebase|googletagmanager/i.test(off2), 'naming Google in the software part makes the site part read as the site\'s vendor')
+  assert.match(sitePartOf(shell('Google Analytics counts visits.', software)), /Google Analytics/, 'a vendor named in the site part is still read when the software part also names one')
+  for (const vendor of ['Google Analytics', 'Firebase', 'googletagmanager']) {
+    assert.ok(!sitePartOf(shell('This site collects nothing.', `The app reports through ${vendor}.`)).includes(vendor), `${vendor} named in the software part is read into the site part, so the page cannot say what the app does without tripping the site's own rule`)
+  }
+})
+
+test('a page whose two part headings do not share a parent is refused, not guessed at', () => {
+  // The reader used to take the first heading's siblings and drop the last one, which reads a
+  // page where "The software" sits inside "The website" as though the site's part were the whole
+  // of main minus one heading. That is the defect this case exists for: a nested part has no
+  // scope to read, so the reader refuses the page.
+  const nested = `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>Privacy</h1><h2>The website</h2><div><p>site</p><h2>The software</h2><p>software</p></div></main></body></html>`
+  assert.throws(() => sitePartOf(nested), /two parts do not share a parent/, 'a page whose second part is nested under the first is read as though it had a site part')
+
+  const sectioned = `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>Privacy</h1><section><h2>The website</h2><p>site</p></section><section><h2>The software</h2><p>software</p></section></main></body></html>`
+  assert.throws(() => sitePartOf(sectioned), /two parts do not share a parent/, 'a page whose two parts are each in a container of their own is read as though it had a site part')
+
+  // The control: the shipped shape — two siblings — is read, and reads the site's part only.
+  const siblings = `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>Privacy</h1><h2>The website</h2><p>Google Analytics counts visits.</p><h2>The software</h2><p>Firebase is yours.</p></main></body></html>`
+  assert.match(sitePartOf(siblings), /Google Analytics/, 'the sibling shape the page is built in is not read at all')
 })
 
 /**

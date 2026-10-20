@@ -2114,3 +2114,121 @@ func equalJSON(a, b any) bool {
 	y, err2 := json.Marshal(b)
 	return err1 == nil && err2 == nil && string(x) == string(y)
 }
+
+// TestLaunchRefusesASecretEnv is the Batch half of the seal's carrier
+// (docs/design/budget-token-channel.md, "The Batch backend refuses a sealed
+// launch"): a Batch job has no per-execution override, so the only place a
+// launch's variable can go is the job definition's plain variables, which
+// every launcher (batch.jobsEditor) and the reaper (batch.jobs.get) read back
+// with `gcloud batch jobs describe` for as long as the job is kept — a
+// standing copy, not the Cloud Run override the design prices. So a launch
+// carrying a secret entry (the budget seal key) is refused before the create,
+// definitively (ErrRejected, so the launcher drops its claim and its sealed
+// object), and the refusal does not quote the value.
+//
+// The refusal is the **owner's answer** and not a waiting state (the compute
+// backend plan's P1, 2026-10-19): Batch runs no sealed budget run, and — the
+// wording the review of this branch corrected — an installation that mints
+// budget tokens **cannot launch any run on Batch**, because minting is the
+// installation's (`internal/cli/launch_budget.go`'s `budgetMintOn`: a budget
+// database with budget mode on, or a published policy) and an installation has
+// one backend. "It runs its budget-on path on Cloud Run" read as though
+// budget-off runs could still go there; none can, since every launch of a
+// minting installation is sealed.
+//
+// The assertions below therefore hold the refusal's whole operator-facing
+// contract — the entry is named, the value is not, **no warning or error
+// carries it either**, nothing was created, and the message says what the
+// answer is and where it is documented — because a refusal that stopped saying
+// why would send an operator to provision a backend their project cannot use.
+//
+// Mutations (each run, restored):
+//   - let jobDefinition merge secret entries into vars like plain ones — the
+//     create happens and this test fails;
+//   - format kv.Value into the refusal's text — the value assertion fails;
+//   - drop the entry's name from the refusal, or the sentence naming what the
+//     installation has to do instead — the "names" assertions fail;
+//   - log the key (`b.o.Warn("seal " + kv.Value)` in the secret branch, the
+//     mutation the review of this branch found surviving) — the warning
+//     assertion fails;
+//   - narrow the branch to `kv.Secret && kv.Name == "FUGARO_BUDGET_TOKEN"` —
+//     the second, differently named secret entry below is then written into
+//     the job definition in plain text and this test fails.
+func TestLaunchRefusesASecretEnv(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, warns := newTestBackend(t, nil)
+	s := spec()
+	v := strings.Repeat("k", 43)
+	s.SecretEnv = []string{"FUGARO_BUDGET_TOKEN=" + v}
+	_, err := b.Launch(ctx, s)
+	if !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch with a secret entry = %v, want ErrRejected", err)
+	}
+	if strings.Contains(err.Error(), v) {
+		t.Fatalf("the refusal quotes the secret's value: %v", err)
+	}
+	// The class, not the name: the guard is `kv.Secret`, and the refusal reads
+	// the same for any secret entry this backend is ever asked to carry. The
+	// name below is deliberately not the budget marker's, so a guard narrowed
+	// to the marker's name cannot pass this test — it would put this value
+	// into the job definition's plain variables and create the job.
+	other := strings.Repeat("z", 43)
+	s2 := spec()
+	s2.SecretEnv = []string{"SOME_OTHER_SECRET=" + other}
+	b2, bf2, _, warns2 := newTestBackend(t, nil)
+	_, err2 := b2.Launch(ctx, s2)
+	if !errors.Is(err2, backend.ErrRejected) {
+		t.Fatalf("Launch with a secret entry named SOMETHING_ELSE = %v, want ErrRejected: the guard is the entry's Secret flag and not the budget marker's name", err2)
+	}
+	if strings.Contains(err2.Error(), other) {
+		t.Fatalf("the refusal of a differently named secret quotes its value: %v", err2)
+	}
+	if !strings.Contains(err2.Error(), "SOME_OTHER_SECRET") {
+		t.Errorf("the refusal does not name the entry it refused: %v", err2)
+	}
+	if n := len(bf2.Creates()); n != 0 {
+		t.Fatalf("a refused launch of a differently named secret created %d job(s): the value would be a plain variable of the job's definition", n)
+	}
+	if n := len(bf2.IDs()); n != 0 {
+		t.Fatalf("a refused launch of a differently named secret left %d job(s) behind: %v", n, bf2.IDs())
+	}
+	for _, got := range *warns2 {
+		if strings.Contains(got, other) {
+			t.Fatalf("the refusal logs the secret's value: %q", got)
+		}
+	}
+	// The entry's *name* is what an operator is allowed to see, and the
+	// refusal is useless without it: it is the one thing that says which
+	// launch variable was refused.
+	if !strings.Contains(err.Error(), "FUGARO_BUDGET_TOKEN") {
+		t.Errorf("the refusal does not name the entry it refused: %v", err)
+	}
+	// The answer itself, in the operator's words: the reason (a Batch job's
+	// variables are the job's definition), where it is documented, that no run
+	// of a minting installation can go to this backend, and the condition that
+	// makes an installation mint. These phrases are the ones the design
+	// documents carry too, and TestDocsBudgetTokenChannelAnswersTheBatchSeal
+	// holds this file and those documents to the same sentence.
+	for _, want := range []string{
+		"the job's definition",
+		"docs/design/budget-token-channel.md",
+		"cannot launch any run on Batch",
+		"a budget database with budget mode on, or a published policy",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: the answer is a documented limit, and a refusal that stops naming its reason, its consequence or the condition sends an operator to provision a backend their project cannot use\n\nmessage: %v", want, err)
+		}
+	}
+	// The value is not in the refusal, and it is not in any warning either:
+	// the backend's only other output path is Options.Warn, and a warning is
+	// what would put the key in a log (the surviving mutation the review of
+	// this branch reported).
+	for _, got := range *warns {
+		if strings.Contains(got, v) {
+			t.Fatalf("the refusal logs the secret's value through Warn: %q", got)
+		}
+	}
+	if n := len(bf.Creates()); n != 0 {
+		t.Fatalf("a refused launch created %d job(s)", n)
+	}
+}

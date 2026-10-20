@@ -338,7 +338,7 @@ func NewRunID(now time.Time, r io.Reader) (string, error) {
 // Anything that isn't such a path, before or after the reduction (a URL,
 // "acme/.git", a "." or ".." segment), is an error.
 func CanonicalRepo(repo string) (string, error) {
-	c := strings.TrimSuffix(asciiLower(repo), ".git")
+	c := strings.TrimSuffix(ASCIILower(repo), ".git")
 	if !repoRE.MatchString(repo) || !repoRE.MatchString(c) {
 		return "", errors.New("the repository must look like owner/name") // never quoted: it may be a value pasted in the wrong place
 	}
@@ -350,9 +350,18 @@ func CanonicalRepo(repo string) (string, error) {
 	return c, nil
 }
 
-// asciiLower lower-cases A–Z only, so no Unicode case folding can merge
-// look-alike names (repoRE admits ASCII only anyway).
-func asciiLower(s string) string {
+// ASCIILower lower-cases A–Z only, and nothing else.
+//
+// It is the fold every repository name this Fugaro compares is put through,
+// because it is the one no Unicode case folding can merge look-alike names
+// with: strings.ToLower turns a Kelvin sign K (U+212A) into an ASCII "k" and
+// "İ" into "i̇", so two names a person reads as different become one string,
+// while the form the runner compares an allow-list entry against (CanonicalRepo)
+// is this fold's. It is exported so a listing that has to agree with that form
+// uses it rather than reaching for strings.ToLower (internal/gitprov/github's
+// AppRepositories lower-cases the names the App returns, which are the names
+// this program then canonically spells).
+func ASCIILower(s string) string {
 	b := []byte(s)
 	for i, c := range b {
 		if 'A' <= c && c <= 'Z' {

@@ -165,6 +165,38 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 		return nil, fmt.Errorf("launching %s: %w", full, err)
 	}
 	for _, kv := range extra {
+		if kv.Secret {
+			// A secret entry is the budget seal key (D15): the only place this
+			// backend could put it is the job definition's plain variables,
+			// which every launcher (roles/batch.jobsEditor on the Fugaro job
+			// prefix, compute/iam.tf) and the reaper (batch.jobs.get) can read
+			// back with `gcloud batch jobs describe`, for as long as the job is
+			// kept, and which may reach the CreateJob audit record — not a peer
+			// run (its account holds only agentReporter and logWriter). What
+			// that carrier adds is a standing copy in the job resource, and the
+			// reaper as a reader: the launchers are already in the Cloud Run
+			// override's audience in kind, and
+			// docs/design/budget-token-channel.md calls the seal itself "a
+			// capability, not a boundary: it removes the value of what a peer
+			// can reach; it does not narrow what a peer can reach".
+			//
+			// This refusal is the **answer** and not a waiting state (the
+			// compute backend plan's P1, 2026-10-19): the seal's carrier on
+			// Batch is a documented limit, because the one carrier this
+			// backend could use makes the key a standing copy in the job
+			// resource and widens its audience to the reaper, and the only
+			// other one the design allows is its rejected C2 (a per-run Secret
+			// Manager secret on a shared per-(profile, account) account). So
+			// Batch carries no sealed budget run. **A launch is sealed
+			// whenever its installation mints** (internal/cli/launch_budget.go's
+			// budgetMintOn), and an installation has one backend, so this is
+			// not a per-run fallback: an installation that mints budget tokens
+			// cannot launch any run on Batch. The message below says all of
+			// that to the operator, and it never quotes the value
+			// (LaunchSpec.SecretEnv's own contract: the value leaves the
+			// launcher once, as the execution's override member).
+			return nil, fmt.Errorf("launching %s: the launch carries %s as a secret (the budget token's seal key), and a Batch job has no per-execution override: its variables are the job's definition, which every launcher the Fugaro job-name condition admits and the reaper can read back for as long as the job is kept, so the key is not put there and nothing was created; this refusal is deliberate, and it is the documented limit (docs/design/budget-token-channel.md, \"The Batch backend refuses a sealed launch\"): every launch of an installation that mints is sealed, so an installation that mints budget tokens — a budget database with budget mode on, or a published policy — cannot launch any run on Batch, and such an installation has to stay on backend: cloud-run", full, kv.Name)
+		}
 		vars[kv.Name] = kv.Value
 	}
 	// The other fast start, and the one a Docker run cannot have: with

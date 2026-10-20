@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -20,7 +21,7 @@ import (
 // no `## Check 68` section and no summary row for any of them (the
 // managed-projects plan reserves the numbers and its Task 5.3 writes them) —
 // and that row has since been half-made true: Check 68 was written into the
-// register by this repository's 0.9.0 fence work, so §13's row now says 68 is
+// register by this repository's 0.9.5 fence work, so §13's row now says 68 is
 // written and 67a/67b are not, and this test pins each half in its own
 // direction;
 // §2 called `mac` and `kind` "not shipped" when P6.4 (#601, `371038f`) is
@@ -61,15 +62,27 @@ import (
 // utterance is not sent" back; put §4.5's "the text is not sent" back; restore
 // §2's "not shipped"; restore §2's "checked field by field through PARENTKIND";
 // restore §2's "rules.go:583-590"; rename a `## Check 49:` heading; delete a
-// `| 49 |`, `| 57 |` or `| 11b |` summary row; rename `## Check 19:`; add a
+// `| 49 |`, `| 57 |`, `| 11b |`, `| 81 |`, `| 82 |` or `| 89 |` summary row;
+// rename `## Check 19:`; add a
 // `| 48 |` row or a `## Check 69c` section; restore §13's "the register says so
 // of itself"; drop "11 also carries **11b**" from §13's run; add a `| 67a |`
 // row, a `## Check 67b:` section, a `## Check 57:` section, or delete the
 // `| 68 |` row or the `## Check 68:` section; stop the `| 57 |`
 // row pointing at compute-backend.md §7.2; restore "The convention is the
 // register's and the mobile plan's"; drop the §5.3 attribution or lowercase the
-// plan's quoted sentence; reword a quoted sentence in its source file; or
-// delete a quotation from §13 — each fails this test.
+// plan's quoted sentence; reword a quoted sentence in its source file; delete a
+// quotation from §13; or point §5.3's 70b sentence at "the count below" when the
+// count is above it — each fails this test.
+
+// voiceSwitchWritten is every number §13 of the design names as written in the
+// register — each a summary row AND a `## Check` section: the eight written
+// since the baseline a573870 (49, 50, 52, 58, 69a, 69b, 70a, 70c), 70b, which
+// §13's 70a–70c row names as written, and the mobile work's 81, 82 and 89.
+// Named once; its length is never stated, because a stated count over a list is
+// the drift this file keeps catching — the counts §13 gives are derived from the
+// register at test time (part 1c).
+var voiceSwitchWritten = []string{"49", "50", "52", "58", "69a", "69b", "70a", "70b", "70c", "81", "82", "89"}
+
 func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	const designPath = "docs/mobile/design/voice-evaluation-switch.md"
 	const checklistPath = "docs/gcp-live-checklist.md"
@@ -77,13 +90,16 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	checklist := readDoc(t, checklistPath)
 
 	// 1. The numbers the design names as written, each a summary row AND a
-	// `## Check` section — the eight written since the baseline a573870 (49,
-	// 50, 52, 58, 69a, 69b, 70a, 70c), which is every number §13 names as
-	// written and so the whole list this half pins. Both halves, the way
+	// `## Check` section: every number §13 names as written (voiceSwitchWritten
+	// below: the eight written since the baseline a573870 — 49, 50, 52, 58, 69a,
+	// 69b, 70a, 70c — plus 70b, which this branch writes, and the mobile work's
+	// 81, 82 and 89), and so the whole list this half pins. Both halves, the way
 	// TestWebsiteChecklistHasCheck69aAnd69b pins 69a and 69b: a check that
 	// exists as a section but not as a row is one nobody reads first, and a row
-	// with no section is a command nobody can follow.
-	for _, n := range []string{"49", "50", "52", "58", "69a", "69b", "70a", "70c"} {
+	// with no section is a command nobody can follow. The list is named once and
+	// no count of it is written down: a count is derived from the register
+	// (part 1c), so there is no number here for a later check to leave stale.
+	for _, n := range voiceSwitchWritten {
 		if !strings.Contains(checklist, "## Check "+n+":") {
 			t.Errorf("%s has no `## Check %s:` section, but %s §13 names %s as written; correct the design's reading or this test's list", checklistPath, n, designPath, n)
 		}
@@ -109,12 +125,14 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	// 1b. §13's reading of the register, read from the register rather than
 	// trusted — both directions of it. The row run it writes out is 1 (and 1b),
 	// 2–18 (11 also carries 11b), 19–23 and 26–38, 40–47, 49, 50, 52, 57, 58,
-	// 69a, 69b, 70a and 70c, so every one of those must have a row; and every
-	// number it says is written as a `## Check` section (19–47 with 39 living
-	// in the retire-image-mirror plan as 39a–39f, plus the eight written since
-	// the baseline) must have one. Without this half the test pins only what
-	// the register must NOT have: deleting `| 57 |`, `| 11b |` or `## Check 19`
-	// left it green.
+	// 69a, 69b, 70a and 70c — that is the run as §13 writes it, a count taken at
+	// 07022b1, so the list this half wants is the run plus the numbers §13 names
+	// as written since (70b, 81, 82, 89). Every number in that list must have a
+	// row; and every number §13 says is written as a `## Check` section (19–47
+	// with 39 living in the retire-image-mirror plan as 39a–39f, plus
+	// voiceSwitchWritten) must have one. Without
+	// this half the test pins only what the register must NOT have: deleting
+	// `| 57 |`, `| 11b |` or `## Check 19` left it green.
 	rows := summaryRows(t, checklistPath, checklist)
 	wantRows := []string{"1", "1b", "11b"}
 	for _, run := range []struct{ from, to int }{{2, 23}, {26, 38}, {40, 47}} {
@@ -122,10 +140,10 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 			wantRows = append(wantRows, strconv.Itoa(i))
 		}
 	}
-	wantRows = append(wantRows, "49", "50", "52", "57", "58", "69a", "69b", "70a", "70c")
+	wantRows = append(wantRows, "49", "50", "52", "57", "58", "69a", "69b", "70a", "70b", "70c", "81", "82", "89")
 	for _, n := range wantRows {
 		if !rows[n] {
-			t.Errorf("%s's summary table has no `| %s |` row, but %s §13's row run names %s as one; correct the design's reading or this test's list", checklistPath, n, designPath, n)
+			t.Errorf("%s's summary table has no `| %s |` row, but %s §13 names %s as a written row — in its row run, or, for 70b, in its 70a–70c row; correct the design's reading or this test's list", checklistPath, n, designPath, n)
 		}
 	}
 	// 24 and 25 are the reverse — a `## Check` section each and no summary row,
@@ -136,7 +154,7 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 			t.Errorf("%s now has a `| %s |` summary row, so §13's count of the row run (\"19–23 and 26–38 (24 and 25 have `## Check` sections but no summary row)\") is stale and must be recounted", checklistPath, n)
 		}
 	}
-	wantSections := []string{"49", "50", "52", "58", "69a", "69b", "70a", "70c"}
+	wantSections := append([]string{}, voiceSwitchWritten...)
 	for i := 19; i <= 47; i++ {
 		if i != 39 { // 39 is written as 39a–39f in the retire-image-mirror plan, not here
 			wantSections = append(wantSections, strconv.Itoa(i))
@@ -147,6 +165,48 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 			t.Errorf("%s has no `## Check %s:` section, but %s §13 names %s as written (19–47 written, 39 as 39a–39f in the retire-image-mirror plan)", checklistPath, n, designPath, n)
 		}
 	}
+	// 1c. The counts §13 states, derived from the register's own headings and
+	// compared with the figure the design prints, so no number in this test is a
+	// hand-kept copy of one in the design. "(28 of them" is the 19–47 run's
+	// sections (39 excluded: it lives in the retire-image-mirror plan), and the
+	// dated count "carries 36 `## Check` sections" at 07022b1 is that run plus
+	// the eight written since the baseline — the sections §13 says existed at
+	// that commit; the four written after it (70b, 81, 82, 89) are not in it.
+	headings := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^## Check (\d+[a-z]?):`).FindAllStringSubmatch(checklist, -1) {
+		headings[m[1]] = true
+	}
+	run := 0
+	for i := 19; i <= 47; i++ {
+		if headings[strconv.Itoa(i)] {
+			run++
+		}
+	}
+	atCount := run
+	for _, n := range []string{"49", "50", "52", "58", "69a", "69b", "70a", "70c"} {
+		if headings[n] {
+			atCount++
+		}
+	}
+	checks13 := docSection(t, designPath, design, "## 13. The checks this would need")
+	for _, c := range []struct {
+		re   string
+		got  int
+		what string
+	}{
+		{`\((\d+) of them;`, run, "the 19–47 run's `## Check` sections"},
+		{`carries (\d+) ` + "`## Check`" + ` sections`, atCount, "the `## Check` sections the register carried at 07022b1"},
+	} {
+		m := regexp.MustCompile(c.re).FindStringSubmatch(checks13)
+		if m == nil {
+			t.Errorf("%s's §13 no longer states %s (pattern %q), so its count cannot be checked against the register", designPath, c.what, c.re)
+			continue
+		}
+		if stated, _ := strconv.Atoi(m[1]); stated != c.got {
+			t.Errorf("%s's §13 states %d for %s, and %s has %d: recount", designPath, stated, c.what, checklistPath, c.got)
+		}
+	}
+
 	// 39 is the one number in that run whose section is not in the register, and
 	// the design says where it lives instead. A `## Check 39` section written
 	// later makes that sentence stale.
@@ -171,9 +231,15 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	// The numbers §13 names as in neither half of the register: a row or a
 	// section for any of them means the design's reading is stale. (85 is the
 	// bake-off, which §13 says is written nowhere; 110 is the number this
-	// document names and writes nothing into.)
-	absent := []string{"48", "51", "53", "54", "55", "56", "69c", "70b", "85", "110"}
+	// document names and writes nothing into. 81, 82 and 89 are excluded from
+	// the 80–89 run because §13's row names them as written by Task P4.2a, and
+	// the first half above requires their rows and sections; 70b is not here
+	// because §13's 70a–70c row names it as written.)
+	absent := []string{"48", "51", "53", "54", "55", "56", "69c", "85", "110"}
 	for i := 80; i <= 89; i++ {
+		if i == 81 || i == 82 || i == 89 {
+			continue
+		}
 		absent = append(absent, strconv.Itoa(i))
 	}
 	for _, n := range absent {
@@ -446,6 +512,42 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	}
 	if strings.Contains(checklist, "the phase that ships the check writes them") {
 		t.Errorf("%s now carries %q, so it has become a source for it; attribute the quotation to the file it is in", checklistPath, "the phase that ships the check writes them")
+	}
+}
+
+// TestVoiceDocRegisterNoteCounts70bAsWritten pins the other document that keeps the
+// register's bookkeeping: docs/design/voice.md §5.3 says which of the website redesign's
+// checks are written, and it said "69c and 70b are not in the register" — true when it was
+// counted, and false on a branch that writes the `| 70b |` row and the `## Check 70b:`
+// section. §13 of the mobile design records the same fact for 70a–70c (its own row says
+// all three are written), so this is the same recount in the document that was missed.
+// The row and the section themselves are pinned by
+// TestWebsiteChecklistHasCheck70bRow and TestWebsiteChecklistHasCheck70bSection; what is
+// pinned here is that this document's sentence agrees with them — and that it points at
+// the count it is about: §5.3's count is above the sentence, and nothing below it carries
+// one, so the direction word is pinned too.
+func TestVoiceDocRegisterNoteCounts70bAsWritten(t *testing.T) {
+	const voicePath = "docs/design/voice.md"
+	voice := flat(readDoc(t, voicePath))
+
+	if strings.Contains(voice, "69c and 70b are not in the register") {
+		t.Errorf("%s §5.3 says 70b is not in the register, and docs/gcp-live-checklist.md carries a `## Check 70b:` section and a `| 70b |` row: recount the sentence the way §13 of docs/mobile/design/voice-evaluation-switch.md was recounted", voicePath)
+	}
+	for _, want := range []string{
+		"69c is not in the register",
+		"70b is written since that count",
+		"written since the count above by the website redesign's check-70b work",
+	} {
+		if !strings.Contains(voice, want) {
+			t.Errorf("%s §5.3's register note no longer carries %q: the note has to say which of the website redesign's three checks is written and which is not, or the reader takes the count above it for the register as it stands", voicePath, want)
+		}
+	}
+	// And the direction it points in. The count this sentence is about is §5.3's dated
+	// paragraph above it (the eight written since a573870, counted at 07022b1) and the note
+	// above the sentence in the same paragraph ("adds 70b to the list above"); nothing below
+	// the sentence carries a count, so "the count below" sends the reader to nothing.
+	if strings.Contains(voice, "written since the count below") {
+		t.Errorf("%s §5.3 says 70b is \"written since the count below\", and the count is above the sentence: §5.3's dated paragraph is where the eight written since a573870 are counted, and the note above this sentence says it adds 70b to \"the list above\"", voicePath)
 	}
 }
 

@@ -1,4 +1,4 @@
-# The managed deployer's fence, redesigned for 0.9.0
+# The managed deployer's fence, redesigned for 0.9.5
 
 Status: **design + implementation, GATED OFF.** `managed_deployer_scoped`
 defaults to false and `internal/cli`'s `managedDeployerShipped` stays false, so

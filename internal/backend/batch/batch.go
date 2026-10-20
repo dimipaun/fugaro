@@ -488,8 +488,9 @@ func (b *Backend) location() string {
 //
 // Names reach it from bucket objects a run's own service account can write
 // (launch.json, result.json), so it follows only a name in the backend's
-// region whose every part is [a-z0-9-]. Callers that know the run bind the
-// job too, through the codec's ValidateRun.
+// region whose every part is [a-z0-9-]. Callers that know the run bind it to
+// the run by FUGARO_RUN (gcp.CheckRunExecution), not by the job, which a
+// shared job no longer makes an identity.
 func (b *Backend) canonical(name string) (backend.ExecID, error) {
 	id, err := b.codec.ParseInRegion(name, b.o.Region)
 	if err != nil {

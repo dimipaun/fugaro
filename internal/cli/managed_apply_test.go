@@ -69,7 +69,36 @@ func managedBudgetRig(t *testing.T) (*initRig, string) {
 		t.Fatal(err)
 	}
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
+	labelled(r.crm, initProject)
+	// The whole-project read these tests do not exercise: no Cloud Asset
+	// server is configured here, so the command would reach Google's own API.
+	// A read that cannot be made is the fallback (Task 4.5), which is the
+	// honest state of these fixtures, and the rows about the inventory itself
+	// stub their own answer (managedInventoryRig).
+	stubManagedAssets(t, &fakeManagedAssets{err: errors.New("no Cloud Asset server in this test")})
 	return r, root
+}
+
+// fakeManagedAssets is the command's whole-project read as a test sees it: the
+// answer it gives, and every project it was asked about.
+type fakeManagedAssets struct {
+	assets []managedmode.Asset
+	err    error
+	asked  []string
+}
+
+func (f *fakeManagedAssets) List(_ context.Context, gcpProject string) ([]managedmode.Asset, error) {
+	f.asked = append(f.asked, gcpProject)
+	return f.assets, f.err
+}
+
+// stubManagedAssets points the command's whole-project read at assets, for the
+// length of one test.
+func stubManagedAssets(t *testing.T, assets managedmode.Assets) {
+	t.Helper()
+	old := managedAssets
+	managedAssets = func(context.Context, *localcfg.Config) (managedmode.Assets, error) { return assets, nil }
+	t.Cleanup(func() { managedAssets = old })
 }
 
 // noWriteAcrossFakes is the task's own "no write is made" assertion, read off
@@ -121,7 +150,7 @@ func TestManagedApplyRefusesWhenNoBudgetReadOpensTheGate(t *testing.T) {
 	}{
 		{"the marker is version 1: managed, and no amount recorded",
 			[]byte(`{"version":1,"gcp_project":"proj-1234"}`), false,
-			[]string{"has no budget recorded", "this release cannot add a budget to an existing project", "fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID"}},
+			[]string{"has no budget recorded", "fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC", "fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID"}},
 		{"there is no marker at all", nil, false, []string{"is not managed", "is not there"}},
 		{"the marker exists and cannot be read", []byte(v2), true, []string{"is not managed", "cannot be read"}},
 		// A version-2 marker whose figure fails Budget.Check is reported as an

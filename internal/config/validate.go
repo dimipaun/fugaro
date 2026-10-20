@@ -118,8 +118,8 @@ func Validate(c *Config) []Problem {
 	if !validBranchName(c.Git.BaseBranch) {
 		add("git.base_branch", "must be a plain git branch name: letters, digits, '.', '_', '-' and '/', not starting with '-', '.' or '/', with no '..', '//', component starting with '.', or trailing '/', '.' or '.lock'")
 	}
-	if !slices.Contains([]string{"vertex", "api-key", "oauth"}, c.Agent.Auth) {
-		add("agent.auth", "must be one of vertex, api-key, oauth")
+	if !KnownAgentAuth(c.Agent.Auth) {
+		add("agent.auth", "must be one of %s", strings.Join(AgentAuths, ", "))
 	}
 	if c.Agent.ReviewRounds < 1 || c.Agent.ReviewRounds > 10 {
 		add("agent.review_rounds", "must be between 1 and 10")
@@ -224,6 +224,17 @@ func Validate(c *Config) []Problem {
 				// may ever set (T1). Reserved whether or not the suffix
 				// happens to name a configured account.
 				add(sp+".name", "names starting %s are reserved for named Claude accounts (claude_accounts in the local config), not a workflow secret", ClaudeOAuthTokenPrefix)
+			} else if CodexOAuthSecret(s.Name) {
+				// The Codex harness's OAuth credential names, reserved ahead
+				// of the harness (CodexOAuthToken, owner ruling of
+				// 2026-10-18). Nothing mounts them yet and there is no
+				// account or provider of Codex to allow one, so unlike the
+				// Claude namespace above there is no legitimate case at all:
+				// any name of this shape in fugaro.yaml is either a typo or
+				// an attempt to have the platform's future credential read a
+				// value the repository chose. Refused whether or not a Codex
+				// provider ever names it.
+				add(sp+".name", "%s and names starting %s are reserved for the Codex harness's OAuth credential (codex-oauth-token), not a workflow secret", CodexOAuthToken, CodexOAuthTokenPrefix)
 			}
 			switch {
 			case !envNameRE.MatchString(s.Env):

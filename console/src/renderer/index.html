@@ -17,6 +17,25 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
     />
+    <!--
+      The one stylesheet this document links (desktop-console plan Task 6.2;
+      design section 5.4).
+
+      It is `./console.css` -- a relative path on this origin, like
+      `./console.js` below -- because `style-src 'self'` is the third directive
+      of the policy above and admits exactly that: a stylesheet from
+      `app://console`. Nothing is loosened for it. There is no inline style, no
+      style element and no `'unsafe-inline'` anywhere in this document, and
+      `test/unit/csp-document.test.ts` fails if one appears.
+
+      The file is `dist/bundle/console.css`, written by
+      `tools/bundle-renderer/index.ts` from the theme directory's stylesheets
+      in cascade order, and it is one of the six files the served root holds
+      (`SERVED_FILES` in `src/main/protocol.ts`). It carries no `media`, no
+      `onload` and no `integrity`: the file is local and same-origin, and
+      `integrity` on an `app://` response is a hash nobody maintains.
+    -->
+    <link rel="stylesheet" href="./console.css" />
     <title>Fugaro console</title>
     <!--
       The one script this document loads, and the whole of what it may load

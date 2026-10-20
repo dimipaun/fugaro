@@ -78,6 +78,29 @@ func doctorOpenProvidersCheck(lc *localcfg.Config) *doctorCheck {
 		Fix:     "to narrow it, list the repositories in that provider's allow_data_to and run " + selfCommand() + " init --repo in each one (a deployed job keeps the key's mount and the routes it was applied with until then)"}
 }
 
+// doctorProviderSecretNamesCheck is doctor's "provider-secret-name" finding:
+// every provider of the local config whose key is not stored under the name
+// the convention gives it (<provider>-api-key, providerSecretConvention in
+// internal/config). Informational, like doctorOpenProvidersCheck and for the
+// same reason: the state is the owner's and it is valid — the key works, and
+// nothing is renamed or migrated (the owner's ruling of 2026-10-18) — so this
+// only makes the difference visible, and it never fails doctor, --strict
+// included. It reads the local config alone: no cloud call, no value.
+func doctorProviderSecretNamesCheck(lc *localcfg.Config) *doctorCheck {
+	var lines []string
+	for _, name := range slices.Sorted(maps.Keys(lc.Providers)) {
+		if msg := config.SecretNameOffConvention(name, lc.Providers[name]); msg != "" {
+			lines = append(lines, "provider "+pluginwire.Printable(name)+": "+msg)
+		}
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	return &doctorCheck{ID: "provider-secret-name", Severity: "info",
+		Problem: strings.Join(lines, "; "),
+		Fix:     "rename nothing: a name the platform already stores keeps working. Name a *new* provider's key <provider>-api-key, and note the conventional name is reserved for that provider, so no workflow secret can be stored under it"}
+}
+
 // cliVersionCheck is doctor's "cli-version" check: whether this binary is
 // the latest stable fugaro release. Unlike the background nag
 // (warnUpdateAvailable), it always attempts the (cached, bounded) lookup
@@ -296,6 +319,9 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	if c := doctorOpenProvidersCheck(lc); c != nil {
 		o.Checks = append(o.Checks, *c)
 	}
+	if c := doctorProviderSecretNamesCheck(lc); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
 	// The checkout and its fugaro.yaml are resolved here, before the policy
 	// checks, and reused below. doctorRoutingChecks (inside them) resolves the
 	// published switch over the routes a run of a repository has, and a run's
@@ -353,6 +379,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, fromPreflight(c))
 	}
 	o.Checks = append(o.Checks, doctorRunsBucketIAM(ctx, lc, crmSvc)...)
+	o.Checks = append(o.Checks, doctorLauncherReach(ctx, lc)...)
 	o.Checks = append(o.Checks, doctorPolicyChecks(ctx, lc, doctorRoutingLayerOf(ctx, rf))...)
 
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {
@@ -377,6 +404,13 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// below (inside the checkout) and the project-wide accessor one here.
 	projSM, projSecrets, projOK := doctorProjectSecrets(ctx, lc)
 	o.Checks = append(o.Checks, doctorProjectSecretAccessorChecks(ctx, lc, projSM, projSecrets)...)
+	if c := projectAccountStoredCheck(lc, projSecrets, projOK); c != nil {
+		// Outside the checkout branch on purpose: an account job is the
+		// project's, not this repository's (the profile and the jobs it is
+		// deployed as are the local config's), so the check is the same
+		// wherever doctor is run from.
+		o.Checks = append(o.Checks, *c)
+	}
 
 	o.Project = &doctorProject{Name: lc.Name, GCPProject: lc.GCPProject, Region: lc.Region, RegistryHost: lc.RegistryHost, BaseImages: lc.BaseImages}
 
@@ -449,7 +483,7 @@ func doctorManagedDeployer() *doctorCheck {
 		return nil
 	}
 	return &doctorCheck{ID: "managed-deployer-disabled", Severity: "info",
-		Problem: "the managed deployer's scoped roles are disabled in this release, so their absence is expected: the redesigned fmgd- prefix fence (one IAM condition per service) has not been measured live yet, so the seven roles and their seven bindings are not created, and managed projects (fugaro init --create-project --managed, fugaro managed apply, fugaro restore) are refused until 0.9.0",
+		Problem: "the managed deployer's scoped roles are disabled in this release, so their absence is expected: the redesigned fmgd- prefix fence (one IAM condition per service) has not been measured live yet, so the seven roles and their seven bindings are not created, and managed projects (fugaro init --create-project --managed, fugaro managed apply, fugaro restore) are refused until 0.9.5",
 		Fix:     "nothing to do: an installation and a project created without --managed are unaffected (docs/design/managed-deployer-fence.md, Check 68 of docs/gcp-live-checklist.md)"}
 }
 
@@ -1296,6 +1330,195 @@ func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secret
 		Fix:     strings.Join(cmds, "; ")}
 }
 
+// projectAccountJob is one shared job a profile serves for a Claude account:
+// the (profile, provider, account) triple's own job name, the account the job
+// holds the token of, and the repositories that account's token may be used
+// by. It is the join config.ProjectJobAccounts and
+// config.ProjectJobTokenAccount make — the same one internal/infra deploys
+// the job with, internal/cli launches into and internal/runner re-checks
+// (design project-named-oauth-tokens §4.4, D9) — read here off the local
+// config, which is where a profile's accounts and an account's repositories
+// are written.
+type projectAccountJob struct {
+	Profile string   // the profile whose job set this entry is
+	Account string   // the account as the policy's accounts block spells it ("default" included)
+	Job     string   // gcp.ProjectJobName(profile, provider, account)
+	Token   string   // config.ClaudeAccountSecret(account): the container the job mounts
+	Repos   []string // the account's own repositories, as the local config writes them
+	Source  string   // the key those repositories are written in
+	// NoAccountJob is true when the account rides the profile's no-account
+	// job rather than one of its own: the default account's case (D5), the
+	// one account whose token is mounted into a job whose name does not carry
+	// it.
+	NoAccountJob bool
+}
+
+// projectAccountJobs is every shared job the project's profiles serve for a
+// Claude account, sorted by job name: one entry per (profile, provider,
+// account) triple a deploy builds — each profile's no-account job when it
+// lists the default account, plus one job per named account it lists — with
+// the token that job mounts and the repositories that token may be used by.
+//
+// A profile that lists no account contributes nothing: its no-account job
+// carries no Claude token, and an installation that uses no accounts gets no
+// check at all from this (the same silence claudeAccountsStoredCheck keeps).
+//
+// The two halves come from the local config rather than from the published
+// policy, because that is the document doctor can read on a machine that has
+// never published: the policy's accounts block is derived from exactly these
+// two fields (projectpolicy.DeriveAccounts), and `fugaro project policy show`
+// prints the node as it stands.
+func projectAccountJobs(lc *localcfg.Config) []projectAccountJob {
+	var out []projectAccountJob
+	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
+		pr := lc.Profiles[name]
+		for _, account := range config.ProjectJobAccounts(pr) {
+			token, serves := config.ProjectJobTokenAccount(pr, account)
+			if !serves {
+				// The job holds no Claude token: a no-account job of a
+				// profile that does not list the default account.
+				continue
+			}
+			j := projectAccountJob{
+				Profile: name, Account: token, Job: gcp.ProjectJobName(name, pr.Provider, account),
+				Token: config.ClaudeAccountSecret(token), NoAccountJob: account == "",
+			}
+			if token == config.DefaultClaudeAccount {
+				// The default account is not definable in claude_accounts
+				// (its name is reserved there): its list — and so its
+				// project-wide container — is the project_secrets entry
+				// (design §4.2, D5/D6).
+				j.Source = "project_secrets." + config.ClaudeAccountSecret(token) + ".allow_data_to"
+				j.Repos = lc.ProjectSecrets[config.ClaudeAccountSecret(token)].AllowDataTo
+			} else {
+				j.Source = "claude_accounts." + pluginwire.Printable(token) + ".allow_data_to"
+				j.Repos = lc.ClaudeAccounts[token].AllowDataTo
+			}
+			out = append(out, j)
+		}
+	}
+	slices.SortFunc(out, func(a, b projectAccountJob) int { return strings.Compare(a.Job, b.Job) })
+	return out
+}
+
+// projectAccountReach is one account job's reach, as one line: which job it
+// is, which account and container it holds, and the repositories that token
+// may be used by. The list is spelled the way the local config writes it (a
+// slug, owner/name); the policy qualifies each entry with the job's provider
+// when it is published (projectpolicy.DeriveAccounts), and `fugaro project
+// policy show` prints that node.
+func projectAccountReach(j projectAccountJob) string {
+	repos := "none"
+	if len(j.Repos) > 0 {
+		printable := make([]string, len(j.Repos))
+		for i, r := range j.Repos {
+			printable[i] = pluginwire.Printable(r)
+		}
+		repos = strings.Join(printable, ", ")
+	}
+	return fmt.Sprintf("%s (profile %s, account %s, token %s, repositories %s in %s)",
+		j.Job, pluginwire.Printable(j.Profile), pluginwire.Printable(j.Account), j.Token, repos, j.Source)
+}
+
+// defaultAccountNote is the sentence doctor owes the owner about a profile
+// that lists the default Claude account, and "" when no profile does.
+//
+// It exists because that account is the one whose blast radius is not a job
+// of its own: its token (claude-oauth-token) rides the profile's no-account
+// job (D5), and a static secret_env mount is in the container before the run
+// starts, so EVERY run of that job holds the token — including a run whose
+// agent.auth is not oauth, which authenticates with its own credential and
+// never reads it — a Vertex one, and an api-key one under the gateway, whose
+// Anthropic key is optional there (agent.BuildEnv). Nothing refuses those runs
+// (design §4.3: the non-OAuth ones are legitimate), so the reach is documented
+// rather than gated — and doctor is where an owner reads it. The residual
+// itself is SECURITY.md's (D8).
+func defaultAccountNote(jobs []projectAccountJob) string {
+	var lines []string
+	for _, j := range jobs {
+		if j.Account != config.DefaultClaudeAccount || !j.NoAccountJob {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("note: the profile %s lists the default Claude account, whose token %s rides its no-account job %s: every run of that job holds it, including a run whose agent.auth is not oauth",
+			pluginwire.Printable(j.Profile), j.Token, j.Job))
+	}
+	return strings.Join(lines, "; ")
+}
+
+// projectAccountStoredCheck is doctor's "project-account-stored" check (plan
+// task 3, design §4.4): every shared job the project's profiles serve for a
+// Claude account mounts that account's token by a static secret_env entry
+// (§4.3, D1), so the container the job names must have a stored version —
+// otherwise every run of that job starts with a credential that is not
+// there, and the failure is the run's, in the agent.
+//
+// It is the project-wide twin of claudeAccountsStoredCheck, and it is keyed
+// differently on purpose: that check asks what the REPOSITORY may choose
+// (config.AllowedClaudeAccounts) and counts either scope's copy as stored,
+// because a per-repository run mounts whichever one exists. A shared job
+// mounts the container its secret_env names, which is always the
+// project-wide one (infra.ProjectSecretCandidate, gcp.ProjectSecretID), so a
+// repository copy does not reach it — this check asks the project's listing
+// for that name and nothing else.
+//
+// It reads no value: project is doctorProjectSecrets' metadata listing, read
+// with the credentials doctor already holds (the launcher role lists secret
+// metadata, which is the permission a launcher needs and no more), and the
+// only thing read off an entry is whether it has an enabled version.
+//
+// Severity is claude-accounts-stored's discipline: an installation that
+// serves no account job gets no check at all (no new output over the release
+// before this one); a listing that could not be attempted or failed is a
+// warning, never silence, since otherwise an owner could not tell whether a
+// configured account is usable (fail closed); and a missing version is a
+// failing check with the commands that store it.
+func projectAccountStoredCheck(lc *localcfg.Config, project []gcp.SecretInfo, projectOK bool) *doctorCheck {
+	jobs := projectAccountJobs(lc)
+	if len(jobs) == 0 {
+		return nil
+	}
+	reach := make([]string, len(jobs))
+	for i, j := range jobs {
+		reach[i] = projectAccountReach(j)
+	}
+	note := defaultAccountNote(jobs)
+	problem := func(s string) string {
+		if note == "" {
+			return s
+		}
+		return s + "; " + note
+	}
+	// !projectOK is "the listing could not be attempted or failed". A nil
+	// slice with projectOK true is not that: gcp.Secrets.List leaves its
+	// result nil when nothing matches the filter, and an installation that
+	// has stored nothing is exactly the state this check must report.
+	if !projectOK {
+		return &doctorCheck{ID: "project-account-stored", Severity: "warning",
+			Problem: problem(fmt.Sprintf("could not list the project's secrets, so whether the token of its Claude account job(s) is stored could not be checked: %s",
+				strings.Join(reach, "; "))),
+			Fix: "rerun doctor with Secret Manager reachable and your credentials available, or check by hand: " + selfCommand() + " secrets ls --project-wide"}
+	}
+	have := projectSecretEnabled(project)
+	var missing, cmds []string
+	for _, j := range jobs {
+		if have[j.Token] {
+			continue
+		}
+		missing = append(missing, fmt.Sprintf("%s (profile %s, account %s, token %s)", j.Job,
+			pluginwire.Printable(j.Profile), pluginwire.Printable(j.Account), j.Token))
+		cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(j.Token)+" --project-wide")
+	}
+	if len(missing) == 0 {
+		return &doctorCheck{ID: "project-account-stored", OK: true, Severity: "info",
+			Problem: problem(fmt.Sprintf("the project's Claude account job(s), with the repositories each one's token may be used by: %s", strings.Join(reach, "; "))),
+			Fix:     "an account job mounts its account's token by a static secret_env entry, so its container is the project-wide copy: 'fugaro secrets set TOKEN --project-wide' stores it, and a repository copy does not reach the job. The launch gate refuses an OAuth run whose account the profile does not serve and a repository the account's list does not cover, and the runner re-decides both on its own. The jobs above are Cloud Run jobs like any other: the launcher-jobs line reports a launcher's own reach over them"}
+	}
+	return &doctorCheck{ID: "project-account-stored",
+		Problem: problem(fmt.Sprintf("the Claude account job(s) %s mount a token with no stored version in the project's secrets: their runs start without the credential the job hands them",
+			strings.Join(missing, ", "))),
+		Fix: strings.Join(cmds, "; ")}
+}
+
 // oauthTokenAllowedCheck is doctor's "oauth-token-allowed" check (design
 // docs/design/named-oauth-tokens.md §6f, plan Task 8): the checkout's
 // agent.oauth_token, if set, must name an account config.AllowedClaudeAccounts
@@ -1421,15 +1644,32 @@ func checksFail(checks []doctorCheck, strict bool) bool {
 	return false
 }
 
-// printDoctorChecks prints one line per failing check (its problem and fix),
-// or a single "ok" line when none failed.
+// printDoctorChecks prints one line per check doctor means to show (its
+// problem and fix), or a single "ok" line when none failed.
+//
+// An ok check with no Severity is doctor's own bookkeeping and stays out of
+// the human output. A Severity is the opposite: it is how the checks that
+// report what doctor measured rather than what it found wrong — the launcher
+// grants over the Cloud Run jobs, the project's Claude account jobs and the
+// repositories each token may be used by — ask to be read, and skipping those
+// by their OK flag left them in --json alone.
 func printDoctorChecks(w io.Writer, checks []doctorCheck) {
 	failed := false
 	for _, c := range checks {
-		if c.OK {
+		if c.OK && c.Severity == "" {
 			continue
 		}
-		failed = true
+		// An "info" check is what doctor *measured*, never what it found
+		// wrong (checksFail: an info check does not fail doctor, with or
+		// without --strict), so it must not suppress the summary line either:
+		// counting it as a failure said "something is wrong" — by printing no
+		// "everything checked is ok" — on an installation whose only line was
+		// the launcher grants it had just measured. The surface a person has
+		// to be able to read is the whole point of such a check, and the
+		// summary line is exactly what tells them the read found nothing.
+		if !c.OK && c.Severity != "info" {
+			failed = true
+		}
 		line := c.ID + ": "
 		if c.Severity != "" {
 			line = c.Severity + " " + line
