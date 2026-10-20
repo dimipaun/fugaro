@@ -15,14 +15,20 @@ import (
 // its own file — this one, the same convention docs_in_job_review_test.go
 // states for docs/in-job-review/.
 //
-// The documents are docs-only and no task in them is approved, so what a guard
-// can usefully hold is the plan's own shape and the plan's own claims about
-// itself: the status line, the numbered findings and decisions with no gap, the
-// support table naming commands that exist, the census stating the command
-// beside every count, and — the claim that would otherwise be unbacked — that
-// each documentation task names the guard that owns it. Every one of those is a
-// sentence a later edit can quietly break, which is what makes them worth
-// pinning rather than asserting in prose.
+// The documents are docs-only — the owner approved Slice 0 and Slice 1 of the
+// plan and no other task, and Slice 0 is the part of it that is written — so
+// what a guard can usefully hold is the plan's own shape and the plan's own
+// claims about itself: the status line, the numbered findings and decisions
+// with no gap, the support table naming commands that exist, the census stating
+// the command beside every count, and — the claim that would otherwise be
+// unbacked — that each documentation task names the guard that owns it. Every
+// one of those is a sentence a later edit can quietly break, which is what
+// makes them worth pinning rather than asserting in prose.
+//
+// A document that says of itself "this is not done yet" is one of those
+// sentences: three of them went false in the commit that made them true (the
+// index's row for the guide, **O3**'s gap, and the reconciliation's own gate
+// paragraph), and each is pinned below where it lives.
 const (
 	windowsCLIReadme = "docs/windows-cli/README.md"
 	windowsCLISpec   = "docs/windows-cli/spec.md"
@@ -89,6 +95,11 @@ func TestDocsWindowsCLIIsWritten(t *testing.T) {
 		"**D1–D16**",
 		"**F1–F42**",
 		"**U1–U13**",
+		// The guide's row (T0.2). The index said the guide "has no Windows
+		// text at all today" while this pull request was the task that wrote
+		// it, so the row records the section instead of the gap — the claim
+		// and the commit that made it false cannot be the same commit.
+		"now carries the Windows and WSL forms",
 	}, windowsCLIIndexedFiles...) {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s lacks %q", windowsCLIReadme, want)
@@ -116,6 +127,13 @@ func TestDocsWindowsCLIIsWritten(t *testing.T) {
 		// against.
 		windowsCLIRevision,
 		"54cb02a8ea43e74231e42e38f130b5dd37f1563e",
+		// O3 is a finding against the tree at that revision and stays one; what
+		// it must not do is still read as an open gap once the task it named
+		// has shipped. The finding keeps its text and gains the task.
+		"**T0.2** shipped it",
+		// The same rule for the reconciliation's own gate paragraph, which was
+		// written before the owner's answers and says the gate is not passed.
+		"was passed on 2026-10-20",
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q", windowsCLIRecon, want)
@@ -156,6 +174,12 @@ func TestDocsWindowsCLIIsWritten(t *testing.T) {
 		"inside WSL",
 		// F40: the console cannot reach a WSL-only installation.
 		"desktop console",
+		// The install block's verification, which must name the archive it
+		// downloaded: `checksums.txt` covers every platform's archive and its
+		// SBOM, so the bare `fugaro_${V}_` this document inherited from
+		// release.md matches files the block never fetched and `sha256sum -c`
+		// exits 1 with "FAILED open or read" for each of them.
+		`grep " fugaro_${V}_linux_amd64.tar.gz\$" checksums.txt | sha256sum -c -`,
 	} {
 		if !strings.Contains(wsl, want) {
 			t.Errorf("%s lacks %q", windowsCLIWSL, want)

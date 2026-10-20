@@ -11,8 +11,15 @@ import (
 // — `grep -n -i windows docs/gcp-setup.md` answered nothing — while two of the
 // commands the page has the user run are shell commands, whose form depends on
 // the shell the reader is in: the ADC login of precondition 1, and the `Fix`
-// lines `init` and `fugaro doctor` print, which say "unset K"
+// lines `init` and `fugaro doctor` print, which say `unset`
 // (internal/preflight/preflight.go) and are POSIX today (F6, F27).
+//
+// The three `Fix` lines are not one line three times: the project-variable
+// check prints the variable's name to substitute, while the impersonation and
+// GODEBUG checks print "unset it" and leave the name to the `Problem` line
+// above them. The pins below hold both shapes, because a page that told a
+// Windows reader to substitute a name the CLI never prints would send them
+// looking for one.
 // docs/windows-cli/implementation-plan.md T0.2 is the task; this is its guard,
 // and the guard is the task's first deliverable because the document had none.
 const gcpSetupDoc = "docs/gcp-setup.md"
@@ -41,12 +48,29 @@ func TestDocsGCPSetupNamesTheWindowsForm(t *testing.T) {
 		"~/.config/gcloud/application_default_credentials.json",
 		// The login itself, which is the same line in both environments.
 		"gcloud auth application-default login",
-		// The Fix line's "unset K", once per shell the page names.
+		// The Fix line's `unset`, once per shell the page names.
 		"unset GOOGLE_IMPERSONATE_SERVICE_ACCOUNT",
 		"Remove-Item Env:GOOGLE_IMPERSONATE_SERVICE_ACCOUNT",
 		"set GOOGLE_IMPERSONATE_SERVICE_ACCOUNT=",
 		"PowerShell",
 		"cmd.exe",
+		// The two `Fix` lines that print no name, quoted as
+		// internal/preflight/preflight.go writes them, and the `Problem` line
+		// that carries the name in their place. Only the project-variable
+		// check's line has a name to substitute, and a page that says
+		// otherwise is wrong about what the reader will see.
+		// The one line that does print a name: the CLI's own template with the
+		// project as the page's placeholder, since the name it prints is the
+		// reader's.
+		"unset GOOGLE_PROJECT (or set it to <gcp-project>) and rerun",
+		"fugaro runs as your own credentials only; unset it and rerun",
+		"unset it (or drop http2debug) and rerun",
+		"GOOGLE_IMPERSONATE_SERVICE_ACCOUNT is set",
+		// The project variables are the ones whose line does print a name, and
+		// the page has to say so for the substitution to mean anything.
+		"GOOGLE_PROJECT",
+		"GOOGLE_CLOUD_PROJECT",
+		"CLOUDSDK_CORE_PROJECT",
 		// The finding behind the Fix half: the printed line is POSIX, so the
 		// page states the Windows form as the reader's own command, not as the
 		// CLI's output.
@@ -66,9 +90,15 @@ func TestDocsGCPSetupNamesTheWindowsForm(t *testing.T) {
 	for _, want := range []string{
 		"in the environment that will run `fugaro`",
 		"different files",
+		// Which preconditions are shell commands at all. The page claimed
+		// preconditions 1 and 3 and then said everything else was `fugaro`,
+		// which is false of 2, 4, 5, 6 and 9 — gcloud and terraform commands
+		// the reader runs — and the next paragraph already treats 2 as one.
+		"`gcloud` in 1, 2, 4, 5 and 9",
+		"`terraform` in 6",
 	} {
 		if !strings.Contains(flat, want) {
-			t.Errorf("%s does not say %q (whitespace flattened): the environment rule and the two-files fact are the section's whole reason", gcpSetupDoc, want)
+			t.Errorf("%s does not say %q (whitespace flattened): the environment rule, the two-files fact and which preconditions are shell commands at all are what the section exists to say", gcpSetupDoc, want)
 		}
 	}
 }

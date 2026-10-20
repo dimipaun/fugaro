@@ -14,7 +14,11 @@ with [spec.md](spec.md), **this document wins**.
 **Nothing here is an approval of a task.** Answering a decision is not
 approving a task, and no code, config, workflow, Terraform, schema or live
 action follows from this document. The gate at the end of
-[implementation-plan.md](implementation-plan.md) is not passed.
+[implementation-plan.md](implementation-plan.md) is not passed — *as written
+before the owner's answers of 2026-10-20. The gate was passed on 2026-10-20 for
+Slice 0 and Slice 1 and for nothing later, and D1–D6 and D16 were answered, as
+[README.md](README.md) records. This document's decision texts and its own
+status line still read as written.*
 
 **Checked against.** `main` at `54cb02a8ea43e74231e42e38f130b5dd37f1563e`,
 on 2026-10-20, with the Go toolchain go1.27.1 pinned by `mise.toml` and
@@ -1449,7 +1453,10 @@ and not smuggled into this plan.
 first-time user follows, and two of its steps are shell commands the user
 runs (`gcloud auth application-default login`, the Fix commands). Whatever D1
 and D8 decide, that guide needs the Windows or WSL text, and the plan's Slice
-0 or Slice 6 is where it goes.
+0 or Slice 6 is where it goes. **T0.2** shipped it on 2026-10-20, under
+**D16**'s approval of Slice 0: the guide now carries the Windows and WSL forms
+of the ADC login and of the `Fix` line, and the paragraph above stands as the
+finding against the tree at the revision this document was checked at.
 
 **O4 — `internal/cli/docs_desktop_console_test.go` pins the console's CI
 workflow byte-for-byte against `docs/pending-workflows/console-tests.yml`.**

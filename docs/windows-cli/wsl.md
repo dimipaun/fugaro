@@ -48,9 +48,17 @@ and the credential boundary below is a real source of confusion.
    cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
      --certificate-identity "https://github.com/dimipaun/fugaro/.github/workflows/release.yml@refs/tags/v$V" \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com
-   grep " fugaro_${V}_" checksums.txt | sha256sum -c -
+   grep " fugaro_${V}_linux_amd64.tar.gz\$" checksums.txt | sha256sum -c -
    tar -xzf fugaro_${V}_linux_amd64.tar.gz
    ```
+
+   The `grep` names the one archive the line above downloaded, and the `\$` is
+   what makes it that one: `checksums.txt` carries a line for every published
+   archive — darwin and linux, amd64 and arm64 — and for each archive's SBOM, so
+   a pattern matching them all leaves `sha256sum -c` reading seven files this
+   block never fetched, and it exits 1 with `FAILED open or read` for each of
+   them. [release.md](../release.md#verifying-a-release) names this OS's entries
+   for the same reason; it downloads this OS's archives rather than one.
 
    Put the extracted `fugaro` on the distribution's `PATH` (`~/.local/bin` is
    the usual place) and check it with `fugaro version`. A `go install

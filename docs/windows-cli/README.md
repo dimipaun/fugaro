@@ -96,8 +96,10 @@ them is a document-level question and is repeated here because it is about
 - [docs/pending-workflows/README.md](../pending-workflows/README.md) — the
   staging convention the Windows CI job must follow, because no Fugaro run may
   write under `.github/workflows/` (F38).
-- [docs/gcp-setup.md](../gcp-setup.md) — the guide a first-time user follows;
-  it has no Windows text at all today (O3, implementation-plan T0.2).
+- [docs/gcp-setup.md](../gcp-setup.md) — the guide a first-time user follows.
+  It carried no Windows text at all (**O3** was the finding that named the gap);
+  it now carries the Windows and WSL forms of the two commands it has a user
+  run, which is this work's **T0.2** (2026-10-20).
 - [docs/setup-wizard/](../setup-wizard/) and
   [docs/credentials-service/](../credentials-service/) — the shape this folder
   follows: README index with a status line, `spec.md` verbatim and committed

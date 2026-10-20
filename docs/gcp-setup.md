@@ -118,7 +118,7 @@ These are read-only checks, and yours to run and fix.
 
 ## On Windows and in WSL: the two commands you run yourself
 
-Preconditions 1 and 3 are shell commands, and the shell is the one thing this page cannot choose for you: everything else here is `fugaro` itself, which is the same program in every terminal.
+The preconditions above are mostly commands you run in a shell — `gcloud` in 1, 2, 4, 5 and 9, `terraform` in 6, and the variable state of 3 — and the shell is the one thing this page cannot choose for you. Precondition 11 is `fugaro` itself, the same program in every terminal, and 0, 7, 8 and 10 are decisions rather than commands. Two of the shell commands need something said about them on Windows: the ADC login, because which `gcloud` runs it decides which file the credentials land in, and the `Fix` line `init` and `fugaro doctor` print, because its form is POSIX today.
 
 **Run the ADC login in the environment that will run `fugaro`.** `gcloud auth application-default login` writes to the config directory of the `gcloud` that ran it. A Windows `gcloud` writes `%APPDATA%\gcloud\application_default_credentials.json`; a `gcloud` installed inside WSL writes `~/.config/gcloud/application_default_credentials.json` **inside the distribution**. Those are two different files, so signing in on Windows does not sign you in inside WSL and signing in inside WSL does not sign you in on Windows. The command is the same line in all three terminals —
 
@@ -128,15 +128,15 @@ gcloud auth application-default login
 
 — and what differs is which `gcloud` runs it. Precondition 2's `gcloud auth application-default set-quota-project <gcp-project>` is the same: run it where you ran the login. Which route works on Windows today, and what does not, is [windows-cli/wsl.md](windows-cli/wsl.md)'s subject.
 
-**The `Fix` lines that say "unset K" are POSIX today.** When a variable of precondition 3 is set, `init` and `fugaro doctor` print the line to run, and it is written for a POSIX shell (`unset <NAME>`; see **F6** in [windows-cli/reconciliation.md](windows-cli/reconciliation.md)). On Windows the same thing is:
+**The `Fix` line is written for a POSIX shell today.** When a variable of precondition 3 is set, `init` and `fugaro doctor` print the line to run, and it says `unset` (**F6** and **F27** in [windows-cli/reconciliation.md](windows-cli/reconciliation.md)). Only the project-variable check prints a name to substitute — `unset GOOGLE_PROJECT (or set it to <gcp-project>) and rerun`, for whichever of `GOOGLE_PROJECT`, `GOOGLE_CLOUD_PROJECT` and `CLOUDSDK_CORE_PROJECT` is set; the impersonation and `GODEBUG` checks say `unset it and rerun` and `unset it (or drop http2debug) and rerun`, and the variable they mean is named on the `Problem` line above them (`GOOGLE_IMPERSONATE_SERVICE_ACCOUNT is set`, and the `GODEBUG` line). Each, in each shell:
 
-| Shell | what the printed `Fix` line means there |
-|---|---|
-| bash, zsh, WSL | `unset GOOGLE_IMPERSONATE_SERVICE_ACCOUNT` |
-| PowerShell | `Remove-Item Env:GOOGLE_IMPERSONATE_SERVICE_ACCOUNT` |
-| cmd.exe | `set GOOGLE_IMPERSONATE_SERVICE_ACCOUNT=` |
+| The check | The line it prints | bash, zsh, WSL | PowerShell | cmd.exe |
+|---|---|---|---|---|
+| a project variable | `unset GOOGLE_PROJECT (or set it to <gcp-project>) and rerun` | `unset GOOGLE_PROJECT` | `Remove-Item Env:GOOGLE_PROJECT` | `set GOOGLE_PROJECT=` |
+| impersonation | `fugaro runs as your own credentials only; unset it and rerun` | `unset GOOGLE_IMPERSONATE_SERVICE_ACCOUNT` | `Remove-Item Env:GOOGLE_IMPERSONATE_SERVICE_ACCOUNT` | `set GOOGLE_IMPERSONATE_SERVICE_ACCOUNT=` |
+| `GODEBUG` sets `http2debug` | `unset it (or drop http2debug) and rerun` | `unset GODEBUG` | `Remove-Item Env:GODEBUG` | `set GODEBUG=` |
 
-Substitute the name the line prints: `GOOGLE_IMPERSONATE_SERVICE_ACCOUNT`, `GOOGLE_PROJECT`, `GOOGLE_CLOUD_PROJECT`, `CLOUDSDK_CORE_PROJECT` or `GODEBUG`. A POSIX shell is one `unset`; PowerShell removes the variable from this session's environment; `cmd.exe` sets it to nothing, which is the same thing there. The plan's T2.2 is where the printed line itself gains a platform ([windows-cli/implementation-plan.md](windows-cli/implementation-plan.md)); until then this page carries both forms.
+A POSIX shell is one `unset`; PowerShell removes the variable from this session's environment; `cmd.exe` sets it to nothing, which is the same thing there. For `GODEBUG` the other half of the line is available everywhere: keep the variable and drop the `http2debug` token from it. The plan's T2.2 is where the printed line itself gains a platform ([windows-cli/implementation-plan.md](windows-cli/implementation-plan.md)); until then this page carries both forms.
 
 ## The steps
 
