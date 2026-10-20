@@ -1158,6 +1158,19 @@ file and is cleared by the *user* unblocking the file, not by the installer.
 
 ---
 
+**O6 — the D-number namespace.** This document's D1–D16 and
+`docs/setup-wizard/reconciliation.md`'s D1–D12 are numerically the same range,
+distinguished only by their folder. That is the convention the two existing
+folders have followed, and `docs/credentials-service` did not: it took a global
+block (D130–D159). The cost of the local convention is that two open decisions
+called "D4" exist in the repository at once, which is a real ambiguity for
+anyone reading a citation that does not name its folder. Recommendation: keep
+the local namespace (a citation always names the folder) unless the owner would
+rather have one sequence, in which case this work moves to the next free global
+block and **nothing but the numbers changes**.
+
+---
+
 ## 7. UNVERIFIED
 
 Everything below is a claim about **behaviour on Windows**, which this run
