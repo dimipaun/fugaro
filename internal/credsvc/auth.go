@@ -24,7 +24,11 @@
 //     W2).
 //
 // No value a caller presents is ever echoed: an error names what is wrong
-// with the identity, never the token, and never the caller's own text.
+// with the identity, never the token, and never the caller's own text. That
+// includes the key id inside a token, which is caller text like any other and
+// is 8 KiB of attacker-chosen bytes if the caller wants it to be — so a
+// refusal says the key id is not one Google publishes and does not repeat it
+// (a test pins that).
 package credsvc
 
 import (
@@ -553,6 +557,10 @@ type GoogleKeys struct {
 	keys    map[string]*rsa.PublicKey
 	expires time.Time
 	fetched bool
+	// forced is when this source last read the set outside the cache's life,
+	// because a token named a kid the cached set did not hold (Key). It is
+	// rate-limited by keyCacheMin.
+	forced time.Time
 }
 
 // GoogleKeysOption configures GoogleKeys.
@@ -579,6 +587,21 @@ func NewGoogleKeys(opts ...GoogleKeysOption) *GoogleKeys {
 // Key returns the public key for kid, reading Google's set when it is not
 // cached. A kid the published set does not hold is ErrUnknownKeyID; a set
 // that could not be read is ErrUnavailable.
+//
+// The kid is the caller's own text — it comes out of a token this service was
+// handed, and may be any length and any bytes — so no error here names it.
+// The refusal says what is wrong with the token, never what the token said:
+// an error from this function reaches the refusal body, a halt message and an
+// audit line, and none of those is a place for a value a caller chose. An
+// operator diagnosing a rotation reads the refusal type, and a kid worth
+// keeping belongs in C1.13's audit line, through internal/safetext.
+//
+// A kid that is not in the cached set is also the one signal that Google has
+// rotated its keys, so the set is read once more before the token is refused:
+// without that, a rotation would refuse every run identity and every caller
+// until the cache's life ran out, which is up to a day. The extra read is
+// rate-limited to one per keyCacheMin, so a caller naming random kids cannot
+// make this service read Google's endpoint in a loop.
 func (g *GoogleKeys) Key(ctx context.Context, kid string) (*rsa.PublicKey, error) {
 	if kid == "" {
 		return nil, fmt.Errorf("%w: the token names no key id", ErrUnknownKeyID)
@@ -590,11 +613,19 @@ func (g *GoogleKeys) Key(ctx context.Context, kid string) (*rsa.PublicKey, error
 			return nil, err
 		}
 	}
-	key, ok := g.keys[kid]
-	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrUnknownKeyID, kid)
+	if key, ok := g.keys[kid]; ok {
+		return key, nil
 	}
-	return key, nil
+	if g.now().Sub(g.forced) >= keyCacheMin {
+		g.forced = g.now()
+		if err := g.fetch(ctx); err != nil {
+			return nil, err
+		}
+		if key, ok := g.keys[kid]; ok {
+			return key, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: the token names a key id Google does not publish", ErrUnknownKeyID)
 }
 
 // fetch reads and parses the published set, and installs it. Nothing is
@@ -639,16 +670,26 @@ func (g *GoogleKeys) fetch(ctx context.Context) error {
 
 // cacheLife is how long Google's set may be cached: its own max-age, clamped
 // to a minute and a day, an hour when it says nothing.
+//
+// A directive that says not to store the set at all — no-store, no-cache, or
+// a max-age of zero — is not a licence to fall back to the hour: it means the
+// shortest life this code allows, which is the floor. So every directive is
+// taken at its word, and the clamp decides. A max-age this code cannot read
+// is the one thing ignored, because there is nothing to take at its word.
 func cacheLife(cacheControl string) time.Duration {
 	life := keyCacheDefault
 	for _, part := range strings.Split(cacheControl, ",") {
 		part = strings.TrimSpace(part)
+		if part == "no-store" || part == "no-cache" {
+			life = 0
+			continue
+		}
 		value, ok := strings.CutPrefix(part, "max-age=")
 		if !ok {
 			continue
 		}
 		secs, err := strconv.Atoi(strings.TrimSpace(value))
-		if err != nil || secs <= 0 {
+		if err != nil {
 			continue
 		}
 		life = time.Duration(secs) * time.Second

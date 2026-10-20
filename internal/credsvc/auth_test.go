@@ -93,7 +93,9 @@ type staticKeys map[string]*rsa.PublicKey
 func (s staticKeys) Key(_ context.Context, kid string) (*rsa.PublicKey, error) {
 	k, ok := s[kid]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrUnknownKeyID, kid)
+		// No kid in the error, exactly as the real source does it: the kid is
+		// the caller's own text.
+		return nil, fmt.Errorf("%w: the token names a key id Google does not publish", ErrUnknownKeyID)
 	}
 	return k, nil
 }
@@ -616,6 +618,21 @@ func TestVerifyErrorsNeverCarryTheToken(t *testing.T) {
 			t.Fatalf("err = %q carries the token", err)
 		}
 	}
+
+	// The key id inside a token is the caller's text like any other, and it
+	// can be 8 KiB of the caller's choosing: a refusal says the kid is not one
+	// Google publishes and does not repeat it.
+	hostile := "kid-" + strings.Repeat("A", 4096) + "\nX-Evil: 1"
+	f2 := newFixture(t)
+	_, err = f2.verify(signJWT(t, testKey(), hostile, f2.runClaims()), f2.jobToken(), f2.job)
+	if !errors.Is(err, ErrUnknownKeyID) {
+		t.Fatalf("err = %v, want ErrUnknownKeyID for a kid Google does not publish", err)
+	}
+	for _, fragment := range []string{hostile, "AAAA", "X-Evil"} {
+		if strings.Contains(err.Error(), fragment) {
+			t.Fatalf("err = %q carries the key id the caller chose", err)
+		}
+	}
 }
 
 // A liveness check the service cannot complete is a refusal, not an
@@ -804,12 +821,6 @@ func TestGoogleKeysAreCached(t *testing.T) {
 	if n := fetches.Load(); n != 1 {
 		t.Errorf("fetches = %d, want 1: the key set is cached", n)
 	}
-	if _, err := keys.Key(context.Background(), testOtherKid); !errors.Is(err, ErrUnknownKeyID) {
-		t.Fatalf("err = %v, want ErrUnknownKeyID for a kid Google does not publish", err)
-	}
-	if n := fetches.Load(); n != 1 {
-		t.Errorf("fetches = %d, want 1: an unknown kid does not refetch", n)
-	}
 	// An hour on, the set is still good: the published max-age is what the
 	// cache lives by, not the source's own default.
 	now = now.Add(time.Hour)
@@ -826,6 +837,118 @@ func TestGoogleKeysAreCached(t *testing.T) {
 	}
 	if n := fetches.Load(); n != 2 {
 		t.Errorf("fetches = %d, want 2 after the cache expired", n)
+	}
+}
+
+// TestGoogleKeysReadAgainOnceForAKidTheSetDoesNotHold pins what happens when a
+// token names a kid the cached set does not hold — the shape a Google key
+// rotation takes. The set is read once more, because the alternative is
+// refusing every call in a new run until the cache's life runs out; and the
+// extra read is rate-limited, because the kid is the caller's text and a
+// caller naming random kids must not be able to make this service read
+// Google's endpoint in a loop.
+func TestGoogleKeysReadAgainOnceForAKidTheSetDoesNotHold(t *testing.T) {
+	key := testKey()
+	pemBytes := selfSignedPEM(t, key)
+	var mu sync.Mutex
+	published := map[string]string{testKid: string(pemBytes)}
+	var fetches atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fetches.Add(1)
+		w.Header().Set("Cache-Control", "public, max-age=7200")
+		mu.Lock()
+		body, err := json.Marshal(published)
+		mu.Unlock()
+		if err != nil {
+			t.Errorf("marshalling the key set: %v", err)
+			return
+		}
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	now := testNow()
+	keys := NewGoogleKeys(WithKeysEndpoint(srv.URL), WithKeysClock(func() time.Time { return now }))
+	if _, err := keys.Key(context.Background(), testKid); err != nil {
+		t.Fatalf("Key: %v", err)
+	}
+	if n := fetches.Load(); n != 1 {
+		t.Fatalf("fetches = %d, want 1", n)
+	}
+
+	// A kid the cached set does not hold: the set is read once more.
+	_, err := keys.Key(context.Background(), testOtherKid)
+	if !errors.Is(err, ErrUnknownKeyID) {
+		t.Fatalf("err = %v, want ErrUnknownKeyID for a kid Google does not publish", err)
+	}
+	if n := fetches.Load(); n != 2 {
+		t.Errorf("fetches = %d, want 2: an unknown kid reads the set again", n)
+	}
+	if strings.Contains(err.Error(), testOtherKid) {
+		t.Errorf("err = %q repeats the key id the caller chose", err)
+	}
+
+	// Within the floor, a second unknown kid does not read again.
+	now = now.Add(keyCacheMin - time.Second)
+	if _, err := keys.Key(context.Background(), testOtherKid); !errors.Is(err, ErrUnknownKeyID) {
+		t.Fatalf("err = %v, want ErrUnknownKeyID", err)
+	}
+	if n := fetches.Load(); n != 2 {
+		t.Errorf("fetches = %d, want 2: the extra read is rate-limited", n)
+	}
+
+	// A hostile kid is refused without being repeated, whatever the set says.
+	hostile := "kid-" + strings.Repeat("A", 4096) + "\nX-Evil: 1"
+	if _, err := keys.Key(context.Background(), hostile); !errors.Is(err, ErrUnknownKeyID) {
+		t.Fatalf("err = %v, want ErrUnknownKeyID", err)
+	}
+	for _, fragment := range []string{hostile, "AAAA", "X-Evil"} {
+		if strings.Contains(err.Error(), fragment) {
+			t.Fatalf("err = %q carries the key id the caller chose", err)
+		}
+	}
+	if n := fetches.Load(); n != 2 {
+		t.Errorf("fetches = %d, want 2: a hostile kid does not read the set either", n)
+	}
+
+	// The rotation lands: past the floor, the next read finds the new kid.
+	now = now.Add(2 * time.Second)
+	mu.Lock()
+	published[testOtherKid] = string(pemBytes)
+	mu.Unlock()
+	got, err := keys.Key(context.Background(), testOtherKid)
+	if err != nil {
+		t.Fatalf("Key after the rotation: %v", err)
+	}
+	if !got.Equal(&key.PublicKey) {
+		t.Error("Key returned another key than the published one")
+	}
+	if n := fetches.Load(); n != 3 {
+		t.Errorf("fetches = %d, want 3 after the floor passed", n)
+	}
+}
+
+// TestCacheLifeTakesEveryDirectiveAtItsWord pins the bounds around Google's
+// Cache-Control. A response that says the set may not be cached, or that says
+// nothing this code reads, must not end up cached for an hour by accident.
+func TestCacheLifeTakesEveryDirectiveAtItsWord(t *testing.T) {
+	cases := map[string]time.Duration{
+		"":                                    keyCacheDefault,
+		"private":                             keyCacheDefault,
+		"max-age=notanumber":                  keyCacheDefault,
+		"public, max-age=3600":                time.Hour,
+		"public, max-age=60, must-revalidate": time.Minute,
+		"public, max-age=0":                   keyCacheMin,
+		"public, max-age=-5":                  keyCacheMin,
+		"no-store":                            keyCacheMin,
+		"no-cache":                            keyCacheMin,
+		"max-age=86400":                       keyCacheMax,
+		"max-age=999999999":                   keyCacheMax,
+	}
+	for cacheControl, want := range cases {
+		if got := cacheLife(cacheControl); got != want {
+			t.Errorf("cacheLife(%q) = %v, want %v", cacheControl, got, want)
+		}
 	}
 }
 
