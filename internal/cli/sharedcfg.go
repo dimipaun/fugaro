@@ -322,6 +322,17 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		if m := batchImageProjectRE.FindStringSubmatch(b.Image); m == nil || m[1] != a.GCPProject {
 			return bad("batch.image", "%q is not an image of this project's Artifact Registry, <region>-docker.pkg.dev/%s/<repository>/<image>[:tag][@sha256:<digest>]: a Batch run's job image is this installation's own build, and an image from anywhere else would run as the run's service account", b.Image, a.GCPProject)
 		}
+		// The path, before the repository is read out of it: a reference
+		// whose segments are not name components is one Docker refuses, and
+		// one whose empty, "." or ".." segment Docker would resolve is a
+		// path to a repository the segment check below never read — a
+		// pull-through reached through the anchor's own host and project.
+		// localcfg's own grammar for this field is the spelling an operator
+		// writes, and it is looser than this one; the value here is the
+		// writer's, so it is read strictly (batchImageRE, above).
+		if !batchImageRE.MatchString(b.Image) {
+			return bad("batch.image", "%q is not a path of names in this project's Artifact Registry, <region>-docker.pkg.dev/%s/<repository>/<image>[:tag][@sha256:<digest>]: a path segment is a lowercase name, never empty, %q or %q, so what this names is an image and not a path Docker would resolve to another repository", b.Image, a.GCPProject, ".", "..")
+		}
 		// The project is not the whole of it: the repository the image sits in
 		// is inside that project, so no project check can tell one repository
 		// from another. fugaro-ghcr is a pull-through repository to ghcr.io
@@ -444,6 +455,18 @@ func dropLegacyBaseImages(data []byte) ([]byte, []string, error) {
 	return out, dropped, err
 }
 
+// An image reference's own pieces, spelled once and read by baseImageRE and
+// batchImageRE below: a path component is a lowercase name component, so it
+// can be neither empty nor "." nor ".." — the segments Docker itself refuses.
+// They matter here because a segment this reader accepted and Docker
+// resolved is a repository of the writer's choosing reached through a
+// segment the checks below never read (see batchImageRE).
+const (
+	imageComponent = `[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*`
+	imageTag       = `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`
+	imageDigest    = `sha256:[0-9a-f]{64}`
+)
+
 // batchResourceProjectRE pulls the project out of a full resource name,
 // projects/<project>/..., and batchImageProjectRE pulls it out of an Artifact
 // Registry image reference, <region>-docker.pkg.dev/<project>/...:
@@ -466,6 +489,28 @@ var (
 	batchSecretProjectRE = regexp.MustCompile(`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/secrets/`)
 )
 
+// batchImageRE is the whole shape of a published batch.image: the Artifact
+// Registry host, the anchor's project, and then a path of name components —
+// <repository>/<image>, at least those two, the form the refusals name —
+// with an optional tag or digest. The components are baseImageRE's, and they
+// are here for the reason the repository check exists at all: the project in
+// the reference is the anchor's own either way, and the segment
+// batchImageRepoRE reads is only a segment. Docker resolves empty, "." and
+// ".." segments before it pulls, so
+//
+//	<host>/<project>//<repository>/<owner>/<image>:<tag>
+//	<host>/<project>/./<repository>/<owner>/<image>:<tag>
+//	<host>/<project>/<segment>/../<repository>/<owner>/<image>:<tag>
+//
+// all pass a project check, read a repository that is not the one the image
+// comes from — the pull-through among them — and fail to pull, because
+// Docker rejects the reference the reader accepted. A reference the tool
+// cannot pull is never this installation's job image, so it is refused here,
+// before the repository is read: the value is one the writer wrote, and the
+// shapes above are not what fugaro init writes.
+var batchImageRE = regexp.MustCompile(`^[a-z][a-z0-9-]*-docker\.pkg\.dev/[a-z][a-z0-9-]{4,28}[a-z0-9]/` +
+	imageComponent + `(?:/` + imageComponent + `)+` + `(?::` + imageTag + `)?(?:@` + imageDigest + `)?$`)
+
 // baseImageRE matches what this installation's base_images may name under
 // host, in either shape: the copy an earlier release made,
 // <host>/fugaro-base/<path> with an optional tag and digest, or this
@@ -485,13 +530,10 @@ var (
 // ".." (this value reaches a Dockerfile FROM line), and there is no other
 // "@". The ID is taken from the entry's own key rather than spelled out.
 func baseImageRE(host, kind, owner string) *regexp.Regexp {
-	const component = `[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*`
-	const tag = `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`
-	const digest = `sha256:[0-9a-f]{64}`
 	return regexp.MustCompile(`^` + regexp.QuoteMeta(host+"/"+infra.BaseRegistry+"/") +
-		component + `(?:/` + component + `)*` + `(?::` + tag + `)?(?:@` + digest + `)?$` +
+		imageComponent + `(?:/` + imageComponent + `)*` + `(?::` + imageTag + `)?(?:@` + imageDigest + `)?$` +
 		`|^` + regexp.QuoteMeta(host+"/"+infra.GhcrRegistry+"/"+owner+"/fugaro-"+kind) +
-		`:` + releaseVersionRE + `@` + digest + `$`)
+		`:` + releaseVersionRE + `@` + imageDigest + `$`)
 }
 
 // sharedTopLevel checks the YAML's shape, which fugaro init's Marshal

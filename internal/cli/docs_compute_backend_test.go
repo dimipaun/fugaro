@@ -1420,14 +1420,20 @@ func TestDocsComputeBackendReleaseProseDocumentsAreNamed(t *testing.T) {
 }
 
 // TestDocsComputeBackendTask10CarriesTheAccountRequirement: the security review
-// of Task 8's first half left two things to the enable rather than settling them
-// in that task's code, and both are requirements on Task 10's text. The first is
-// an escalation the code alone does not close — a published `batch.service_account`
-// is held to the anchor's project and to nothing more, so the gate must refuse
-// one outside the installation's own run accounts, or the account must come from
-// the local config only — and the second is the inventory of code outside the
-// seam that still assumes Cloud Run, which the enable has to reach. Neither is
-// pinned anywhere else, so a trim can drop one without a test noticing.
+// of Task 8's first half, and the follow-up to it, left three things to the
+// enable rather than settling them in that task's code, and all three are
+// requirements on Task 10's text. The first is an escalation the code alone does
+// not close — a published `batch.service_account` is held to the anchor's project
+// and to nothing more, so the gate must refuse one outside the installation's own
+// run accounts, or the account must come from the local config only — the second
+// is the inventory of code outside the seam that still assumes Cloud Run, which
+// the enable has to reach, and the third is the shared-config reader's own
+// residue of the same kind as the account: a published `batch.image` is refused
+// only in the `fugaro-ghcr` pull-through repository, so an image in a second
+// pull-through repository of the project passes a reader that has no repository
+// list to check against, and the enable's gate is where that is settled. None of
+// the three is pinned anywhere else, so a trim can drop one without a test
+// noticing.
 func TestDocsComputeBackendTask10CarriesTheAccountRequirement(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
 	task := section(t, doc, "### Task 10: The enable", "## Phase C")
@@ -1442,6 +1448,10 @@ func TestDocsComputeBackendTask10CarriesTheAccountRequirement(t *testing.T) {
 		"`gcp.JobName`",
 		"`gcp.WorkflowVariant`",
 		"names Secret Manager secrets of the installation's project without asking whether the installation created them",
+		// The third: the reader's own residue, which the gate is where it is
+		// closed, and which the design's §5 states in the same terms.
+		"refuses it by that one repository ID and nothing else",
+		"A later reader who finds the `fugaro-ghcr` check and nothing more has found this step unfinished",
 	} {
 		if !strings.Contains(task, want) {
 			t.Errorf("%s's Task 10 no longer says %q: the security review of Task 8's first half left that to the enable, and the enable's own text is where it has to be", computeBackendPlan, want)
@@ -1457,5 +1467,52 @@ func TestDocsComputeBackendTask10CarriesTheAccountRequirement(t *testing.T) {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s no longer carries %q: the artifact refusal and the enable's dependency on it are one fact and are stated on both sides", computeBackendPlan, want)
 		}
+	}
+}
+
+// TestDocsSharedConfigStatesTheImageChecksExactly: the design's §5 bullet is
+// what a later reader checks the reader's own batch.image checks against, so it
+// has to claim exactly what they enforce. Two halves are pinned here, and the
+// second is what the follow-up to Task 8's first half corrected: the bullet had
+// said the check leaves an image in one of the installation's own repositories,
+// which is more than it leaves — it refuses the one repository ID fugaro-ghcr
+// and passes every other repository of the project, a second pull-through
+// repository among them. A trim that dropped either half would leave the design
+// promising a refusal the code does not make (the plan's Task 10 step 5 owns the
+// remainder, and its own pin above).
+func TestDocsSharedConfigStatesTheImageChecksExactly(t *testing.T) {
+	const doc = "docs/design/shared-config.md"
+	bullet := ""
+	for _, line := range strings.Split(readDoc(t, doc), "\n") {
+		if strings.Contains(line, "every value of the published `batch:` block") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatalf("%s no longer carries §5's bullet on the published batch block, which is where the image's checks are read off", doc)
+	}
+	for _, want := range []string{
+		// What the reader enforces of the path, stated beside the reference
+		// the refusals name.
+		"every path segment a lowercase name component in the Docker reference grammar",
+		"`batchImageRE`",
+		// The refusal, and its residue, which the reader cannot see past: the
+		// anchor carries no repository list.
+		"not one served through the `fugaro-ghcr` remote repository",
+		"What the check refuses is exactly that one repository ID",
+		"an operator created under another ID",
+		"the check cannot see which of them they are",
+		"Task 10 step 5",
+	} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("%s §5 no longer says %q of the published batch.image: the bullet is where the reader's checks are read off, so it has to state what they enforce and what they leave", doc, want)
+		}
+	}
+	// The claim the follow-up removed: "one of this installation's own
+	// repositories" is a promise the reader does not keep, so a later edit that
+	// restores the phrasing restores the overclaim with it.
+	if strings.Contains(readDoc(t, doc), "What the check leaves is an image in one of this installation's own repositories") {
+		t.Errorf("%s §5 claims the fugaro-ghcr refusal leaves an image in one of this installation's own repositories, which the reader does not enforce: it refuses one repository ID and passes the project's others", doc)
 	}
 }
