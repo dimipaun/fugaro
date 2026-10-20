@@ -1823,6 +1823,19 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 			Fix:     "fix budget.rtdb_url in the project's config, then run doctor again"}},
 			doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database could not be reached (%v), so the published switch cannot be read", err), layer)...)
 	}
+	// And the database must be this project's own, the check every other
+	// reader and writer makes (checkDBProject): everything below — the policy,
+	// the rules markers and the credential marks — is read as this project's,
+	// and a budget.rtdb_url pointing at another project's database would
+	// otherwise have doctor report that project's policy, switch and broken
+	// accounts as this one's. A note, not a failure, like every other read
+	// that did not answer.
+	if err := checkDBProject(ctx, db, lc); err != nil {
+		return append([]doctorCheck{{ID: "policy-published", Severity: "info",
+			Problem: fmt.Sprintf("whether project %s publishes a policy could not be checked: %v", lc.Name, err),
+			Fix:     "fix budget.rtdb_url in the project's config, then run doctor again"}},
+			doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database is not project %s's own (%v), so the published switch cannot be read", lc.Name, err), layer)...)
+	}
 	checks := doctorRulesSkew(ctx, db)
 	checks = append(checks, doctorCredsBroken(ctx, db)...)
 	// The node is read through projectpolicy.Read, the reader a run uses
@@ -2538,7 +2551,13 @@ func doctorCredsBroken(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	}
 	return []doctorCheck{{ID: "creds-broken", Severity: "warning",
 		Problem: fmt.Sprintf("%d Claude account(s) are broken — the service saw a 401 on the token, and the cascade routes no work to them until an operator clears the mark: %s (a mark exists only for an account the cascade has selected, so these are accounts an admission let it use; doctor reads the marks, not every repository's admissions)", len(broken), strings.Join(broken, ", ")),
-		Fix:     "replace each account's token, then clear its mark: 'fugaro accounts clear NAME' ('fugaro accounts ls' shows the state of every account)"}}
+		// The names here are the database's, and a name may come from another
+		// checkout of this project's config (claude_accounts is per-checkout
+		// and never published): the clear takes any name the database carries
+		// a mark for, so this fix is runnable for every name above, and
+		// 'fugaro accounts ls' — which lists this repository's own names — is
+		// offered as what it is rather than as the way to find them.
+		Fix: "replace each account's token, then clear its mark: 'fugaro accounts clear NAME' (the clear takes any name the database carries a mark for; 'fugaro accounts ls' shows the state of the accounts this repository may use)"}}
 }
 
 // doctorCredsRules reads the credentials family's marker beside the policy

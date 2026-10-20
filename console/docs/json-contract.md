@@ -180,8 +180,8 @@ drift from it.
 | `job` | string | — | **yes** | the Cloud Run job this run is in, from the run's own `launch.json` (`runstore.Launch.Job`) — the same read that produces the queued rows, so a live row has it too. Absent when the reader has no `launch.json` for the run. Under the project-centric model this is the **shared** job of a (profile, provider, account), not one repository's. **Display text, not an authority**: `launch.json` is writable by every launcher and, on a shared job, by every run (SECURITY.md, D4), so the value is what that object says, stripped of control characters — never a name to act on |
 | `profile` / `provider` / `account` | string | — | **yes** | the (profile, provider, account) the job's name was **computed from**, matched against the project's published policy — never parsed back out of the name (R2-5), so a `job` no profile computes gets none of them. `profile` and `provider` are present together or absent together; `account` is present only beside them and only for a job of a named Claude account — a profile that lists `claude_accounts` gets **one job per account** beside its no-account job (`config.ProjectJobAccounts`), so a run on a named account's job carries that account's name, and a run on the profile's no-account job carries none. An absent `account` is **not** "this job mounts no credential": the no-account job holds the default account's token when the profile lists `default` and none otherwise (`config.ProjectJobTokenAccount`), so what is empty is the account axis of the job's name, never a claim about the run's credential. All three are absent for a run on a **per-repository** job (a baked workflow, a Bitbucket repository, an installation that has not migrated), whose name is no project job's. `provider` here is the **profile's** provider, not a general stamp of the repository's: it is the reason the field exists on the two run shapes but does not close §7's gap 7 |
 | `launched_by` | string | — | **yes** | who started the run, from the run's own `launch.json` (`runstore.Launch.LaunchedBy`, **CLI 0.9.0**) — a person's address, or the identity an automated launch runs as (a service account, a CI runner). It is the **full recorded identity**: the text views show the short form a column has room for (`runview.LauncherShort` — the part before an address's `@`, the whole value for anything else). Absent when the record has none — one whose `launch.json` the reader does not have, or a launch built without a launcher (the recovery backfill from `result.json`, a local run with no cloud execution, or the synthetic launch `fugaro logs` builds) — **never a value the CLI invents**. **Display text, not an authority**: `launch.json` is writable by every launcher (SECURITY.md, D4), the value is sanitised and capped like every other bucket-derived string (`safetext.Field`, 512 runes), and no policy, admission or budget rule reads it |
-| `credential` | string | — | **yes** | the **name** — never the value — of the credential the run's cascade is currently spending on (`budget.AgentEntry.Credential`, written by the run itself under the rules of C1.3; the credentials service chooses it). **CLI 0.9.6.** Absent when the run has not reported one, which is **"not recorded", never "no credential"**: a run that has not written the field is one this reader cannot account for, not one spending on nothing. A name a run wrote, so it is sanitised like every other database-derived string here, and **never an authority** — no policy, admission or budget rule reads it. A console that wants to say which account a run is on must not treat the field as proof that the run is on that account now (the run reports it as it switches) |
-| `waiting_until` | string | RFC 3339, UTC | **yes** | when a run waiting for a credential expects to resume at (`budget.AgentEntry.WaitingUntil`, epoch ms, D152's "waiting, expected resume time"). **CLI 0.9.6.** Present **only while the run is still waiting**: presence is the state, so a reader that sees the field knows the run is held up rather than spending, and one that wants a countdown compares it with `now`. The text views show the same fact as `waiting for a credential, expected resume T` |
+| `credential` | string | — | **yes** | the **name** — never the value — of the credential the run's cascade is currently spending on (`budget.AgentEntry.Credential`, written by the run itself under the rules of C1.3; the credentials service chooses it). **CLI 0.10.0.** Absent when the run has not reported one, which is **"not recorded", never "no credential"**: a run that has not written the field is one this reader cannot account for, not one spending on nothing. A name a run wrote, so it is sanitised like every other database-derived string here, and **never an authority** — no policy, admission or budget rule reads it. A console that wants to say which account a run is on must not treat the field as proof that the run is on that account now (the run reports it as it switches) |
+| `waiting_until` | string | RFC 3339, UTC | **yes** | when a run waiting for a credential expects to resume at (`budget.AgentEntry.WaitingUntil`, epoch ms, D152's "waiting, expected resume time"). **CLI 0.10.0.** Present **only while the run is still waiting**: presence is the state, so a reader that sees the field knows the run is held up rather than spending, and one that wants a countdown compares it with `now`. The text views show the same fact: the plain table as `waiting for a credential, expected resume T`, and the screen's FLAGS column as `waiting` with the instant on the run's detail lines (its column is 30 columns wide at its widest, and the sentence is 55 — a clip would eat the instant and any flag behind it) |
 
 **A live run carries no PR field at all** — no `pr_url`, no `pr_number`, no
 `pr` (design §4.3 gap 6, §5.1 rule 2). The console renders no link for a live
@@ -531,6 +531,16 @@ parseable JSON).
 the CLI worded them — including the "not on the `PATH` the console gives the
 CLI" class of finding the design's §3.4 rule 5 describes.
 
+**Two check ids are new in CLI 0.10.0** (credentials-service C1.21), both
+`severity: "warning"` — so both fail `--strict` and neither is an `ok: false`
+about the installation: **`creds-broken`**, naming every Claude account the
+database's `creds/marks` marks broken (the service saw a 401), with the fix
+`fugaro accounts clear NAME`; and **`creds-rules`**, when the published policy
+has the cascade switched on (`routing.claude.via: cascade`) and
+`config/limits/credsRules` is missing, unreadable, hand-edited or of another
+generation than the binary's. An unreadable `creds/` is an `info` check
+instead, so "could not read" is never rendered as "nothing is broken".
+
 **Flags** (`newDoctorCmd`): `--dir` (default `.`), `--plugin`, `--strict`,
 `--json`, **`--check-github-app`** — the last of which reads the App's private
 key out of Secret Manager and is therefore unreachable by the console by
@@ -546,10 +556,14 @@ plugin wiring, not the environment the console draws).
 `note`° (why selection failed), `states`° and `state_note`°. **`complete: false` means the project config
 could not be selected — the screen renders `unavailable`, never "no
 accounts"** (the type's own doc comment is the authority). Flags: `--repo`
-(always passed explicitly), `--json`, plus the cloud flags. Local and offline:
-"never calls Secret Manager".
+(always passed explicitly), `--json`, plus the cloud flags. The **names** are
+local and offline — "never calls Secret Manager" — but **the state column is
+not**: when the selected project has a Firebase budget backend, the marks are
+read from that database as the person (ADC, an admin's read of `creds/marks`),
+which is what makes `states` a value rather than an assumption. A project with
+no backend stays offline and answers with the names and a `state_note`.
 
-**`states` (CLI 0.9.0, credentials-service C1.21)** is every listed account's
+**`states` (CLI 0.10.0, credentials-service C1.21)** is every listed account's
 credential state, keyed by account name, and it is **absent exactly when no
 mark could be read** — then `state_note` says why (no Firebase budget backend,
 a database that is down, a read the person's rules refused). The two are one
@@ -583,8 +597,18 @@ name), plus the cloud flags. It prints one line naming the account and the
 state it cleared, and **no value of any kind**. A `broken` or `exhausted` mark
 is clearable; a `backed_off` one is refused (a probe clears it, C1.12) and a
 state this Fugaro does not know is refused rather than overwritten. `NAME` must
-be `default` or a `claude_accounts` name of the selected local config — never
-the shared config, which strips `claude_accounts`.
+be `default`, a `claude_accounts` name of the selected local config, or a name
+the database already carries a mark for; a name with none of the three is
+refused, so a typo cannot leave a mark node behind. The third case is not an
+edge: `claude_accounts` is per-checkout and never published (the shared config
+strips it), while the marks belong to the project, so a mark can name an
+account this checkout does not list — and §6.4's `creds-broken` finding names
+exactly those marks, so its fix has to be runnable for every one of them. The
+config read is the **local** one, never the shared one. The command refuses no
+coding agent's session — it approves nothing and records no owner decision, and
+its neighbours are `fugaro budget set`/`kill`, not `fugaro allow-delete` and
+`fugaro managed flag` — but it does refuse `GODEBUG=http2debug` before it opens
+anything, like every command that opens the cloud.
 
 
 ### 6.6 `fugaro secrets ls --json`

@@ -59,7 +59,8 @@ func TestWatchShowsWaitingUntil(t *testing.T) {
 	put(t, s, SrcAgents, "/", `{"acme%2Fapp":{
 	 "r1":`+agent("acme/app", "waiting for a turn", fmt.Sprintf(`,"credential":"acme-personal","waiting_until":%d`, ms(resume)))+`,
 	 "r2":`+agent("acme/app", "its wait has passed", fmt.Sprintf(`,"waiting_until":%d`, ms(t0.Add(-time.Minute))))+`,
-	 "r3":`+agent("acme/app", "nothing pending", "")+`}}`, t0)
+	 "r3":`+agent("acme/app", "nothing pending", "")+`,
+	 "r4":`+agent("acme/app", "waiting and halted", fmt.Sprintf(`,"waiting_until":%d,"halted":"budget"`, ms(resume)))+`}}`, t0)
 	v := Build(s, t0, Config{})
 
 	byRun := map[string]RunRow{}
@@ -100,14 +101,15 @@ func TestWatchShowsWaitingUntil(t *testing.T) {
 		t.Fatalf("waiting_until = %q %q, want both absent", until["r2"], until["r3"])
 	}
 
-	// The screen: FLAGS says it, and the detail has room for the instant even
-	// at a width whose FLAGS column cannot hold the whole sentence.
+	// The screen: FLAGS says the run is waiting — the whole sentence is the
+	// plain table's, which has no columns to fit — and the detail has room for
+	// the instant at every width.
 	sel := Cursor{Slug: "acme%2Fapp", Run: "r1"}
 	f := frame(v, 120, 0, func(o *RenderOptions) {
 		o.Selected, o.Expanded = sel, map[Cursor]bool{sel: true}
 	})
-	if !strings.Contains(f, "waiting for a credential") {
-		t.Fatalf("the waiting run's FLAGS does not say what it waits for:\n%s", f)
+	if got := rowStartingWith(f, "▸ r1 "); !strings.Contains(got, "waiting") || strings.Contains(got, "expected resume") {
+		t.Fatalf("the waiting run's FLAGS does not say it is waiting, and only that:\n%s", got)
 	}
 	if !strings.Contains(f, "    waiting    expected resume 2026-10-03 12:15Z") {
 		t.Fatalf("the waiting run's detail does not say when it resumes:\n%s", f)
@@ -124,16 +126,47 @@ func TestWatchShowsWaitingUntil(t *testing.T) {
 	narrow := frame(v, 80, 0, func(o *RenderOptions) {
 		o.Selected, o.Expanded = sel, map[Cursor]bool{sel: true}
 	})
-	row := ""
-	for _, l := range strings.Split(narrow, "\n") {
-		if strings.HasPrefix(l, "▸ r1 ") {
-			row = l
-		}
-	}
+	row := rowStartingWith(narrow, "▸ r1 ")
 	if row == "" || !strings.HasSuffix(row, "waiting") || strings.Contains(row, "expected resume") {
 		t.Fatalf("the narrow row does not shorten the waiting flag:\n%s", narrow)
 	}
 	if !strings.Contains(narrow, "    waiting    expected resume 2026-10-03 12:15Z") {
 		t.Fatalf("the narrow frame's detail lost the instant:\n%s", narrow)
 	}
+
+	// Tier 3 is the widest table there is and its FLAGS column is still 30
+	// columns, against a 55-column sentence: the row shortens it there too,
+	// because the alternative is not the sentence but its first half with an
+	// ellipsis, and any flag behind it — r4's halt — gone with the instant the
+	// clip ate. The detail has the room, at every tier.
+	wide := frame(v, 120, 0, func(o *RenderOptions) {
+		o.Selected, o.Expanded = Cursor{Slug: "acme%2Fapp", Run: "r4"}, map[Cursor]bool{{Slug: "acme%2Fapp", Run: "r4"}: true}
+	})
+	r4 := rowStartingWith(wide, "▸ r4 ")
+	if r4 == "" {
+		t.Fatalf("tier 3 has no row for r4:\n%s", wide)
+	}
+	if !strings.Contains(r4, "waiting, halted: budget") {
+		t.Fatalf("the tier-3 row does not shorten the waiting flag, or drops what follows it:\n%s", r4)
+	}
+	if strings.Contains(r4, "expected resume") {
+		t.Fatalf("the tier-3 row carries the sentence its column cannot hold:\n%s", r4)
+	}
+	if !strings.Contains(wide, "    waiting    expected resume 2026-10-03 12:15Z") {
+		t.Fatalf("the tier-3 frame's detail lost the instant:\n%s", wide)
+	}
+	if got := rowStartingWith(wide, "▸ r1 "); strings.Contains(got, "expected resume") {
+		t.Fatalf("the tier-3 row of a waiting run carries the sentence:\n%s", got)
+	}
+}
+
+// rowStartingWith is the frame's line that begins with prefix — one run's row,
+// at a width whose columns pad it — or "" when there is none.
+func rowStartingWith(f, prefix string) string {
+	for _, l := range strings.Split(f, "\n") {
+		if strings.HasPrefix(l, prefix) {
+			return l
+		}
+	}
+	return ""
 }

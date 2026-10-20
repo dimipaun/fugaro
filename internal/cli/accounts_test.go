@@ -520,9 +520,13 @@ func TestAccountsClearMark(t *testing.T) {
 }
 
 // TestAccountsClearOnlyNamedAccount: the clear writes one node — the named
-// account's — and never a second. A name the installation does not know is
-// refused before anything is written, so a typo cannot leave a mark node for a
-// credential that does not exist.
+// account's — and never a second. The name must be one this installation has,
+// and there are three ways it can be: "default", a claude_accounts entry of
+// the selected config, or a mark the database already carries. The first two
+// are decided locally, before the database is opened; the third is the mark
+// itself, which is the account existing. A name with none of them is refused
+// and leaves no node behind, so a typo cannot create a mark for a credential
+// that does not exist.
 func TestAccountsClearOnlyNamedAccount(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.appendConfig(t, claudeAccountsConfig)
@@ -530,24 +534,35 @@ func TestAccountsClearOnlyNamedAccount(t *testing.T) {
 	for _, name := range []string{"default", "acme-personal", "acme-overflow"} {
 		f.db.Set(credsMarkPath(name), map[string]any{"state": "broken", "since": since})
 	}
-	// A name the installation does not know, with a mark of its own: the
-	// leftover of an account the config no longer lists. The name is what
-	// refuses the clear — not the absence of a mark, which the refusal below
-	// would otherwise be about — and the node stays exactly as it was.
-	f.db.Set(credsMarkPath("acme-other"), map[string]any{"state": "broken", "since": since})
+	// A name with neither a claude_accounts entry nor a mark: a typo. It is
+	// refused — the name is what refuses it, since the state the same run
+	// would otherwise report is "no mark to clear" — and no node appears for
+	// it, which is the whole point of the check.
 	noTerminal(t)
-
 	if _, _, err := execute(t, "accounts", "clear", "acme-other", "--yes"); err == nil || ExitCode(err) != ExitUserError ||
 		!strings.Contains(err.Error(), "claude_accounts") {
 		t.Fatalf("err = %v, want a user error naming the name the installation does not know", err)
 	}
-	if m, _ := f.db.Value(credsMarkPath("acme-other")).(map[string]any); m["state"] != "broken" || m["since"] != since {
-		t.Fatalf("a name no claude_accounts entry carries was cleared: %v", m)
+	if v := f.db.Value(credsMarkPath("acme-other")); v != nil {
+		t.Fatalf("the refused clear left a node for a name no account has: %v", v)
 	}
 	for _, name := range []string{"default", "acme-personal", "acme-overflow"} {
 		if m, _ := f.db.Value(credsMarkPath(name)).(map[string]any); m["state"] != "broken" {
 			t.Fatalf("the refused clear touched %q: %v", name, m)
 		}
+	}
+	// A mark whose name this checkout's claude_accounts does not list: the
+	// ordinary case for a project several checkouts share (claude_accounts is
+	// per-checkout and never published, while the marks are the project's
+	// own). The mark is the account existing, so the clear takes it — and it
+	// has to, because `fugaro doctor` names exactly such marks and prescribes
+	// this command as the fix (TestDoctorBrokenMarkFixRuns).
+	f.db.Set(credsMarkPath("team-shared"), map[string]any{"state": "broken", "since": since})
+	if _, _, err := execute(t, "accounts", "clear", "team-shared", "--yes"); err != nil {
+		t.Fatalf("a mark for a name this config does not list was refused: %v", err)
+	}
+	if m, _ := f.db.Value(credsMarkPath("team-shared")).(map[string]any); m["state"] != "available" {
+		t.Fatalf("the mark of a name no claude_accounts entry carries was not cleared: %v", m)
 	}
 
 	if _, _, err := execute(t, "accounts", "clear", "acme-personal", "--yes"); err != nil {
@@ -648,6 +663,67 @@ func TestAccountsRefuseAnotherProjectsDatabase(t *testing.T) {
 	}
 	if m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any); m["state"] != "broken" {
 		t.Fatalf("mark = %v, want it untouched", m)
+	}
+}
+
+// TestAccountsRefuseHTTP2DebugBeforeOpening: both of this task's commands open
+// the project's budget database with the person's own Application Default
+// Credentials, and GODEBUG=http2debug makes Go print HTTP/2 requests with
+// their headers — the OAuth bearer token among them — to stderr. GODEBUG is
+// read before main runs, so it cannot be unset in time: every command that
+// opens the cloud refuses instead (refuseHTTP2Debug, cloud.go), and these two
+// are no exception, though the command they belong to was a purely local one
+// before the state column existed. The refusal comes before the open, so
+// nothing is read and nothing is written.
+func TestAccountsRefuseHTTP2DebugBeforeOpening(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.appendConfig(t, claudeAccountsConfig)
+	since := time.Now().UTC().Add(-time.Minute).Truncate(time.Second).Format(time.RFC3339Nano)
+	f.db.Set(credsMarkPath("acme-personal"), map[string]any{"state": "broken", "since": since})
+	noTerminal(t)
+	t.Setenv("GODEBUG", "http2debug=2")
+
+	out, _, err := execute(t, "accounts", "ls", "--repo", "acme/other", "--json")
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "http2debug") {
+		t.Fatalf("accounts ls: err = %v, want the GODEBUG refusal", err)
+	}
+	if out != "" {
+		t.Fatalf("accounts ls printed %q before refusing", out)
+	}
+
+	if _, _, err := execute(t, "accounts", "clear", "acme-personal", "--yes"); err == nil || ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "http2debug") {
+		t.Fatalf("accounts clear: err = %v, want the GODEBUG refusal", err)
+	}
+	if m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any); m["state"] != "broken" || m["since"] != since {
+		t.Fatalf("a clear refused for GODEBUG wrote anyway: %v", m)
+	}
+}
+
+// TestAccountsClearRefusesNoAgentsSession: the clear takes no agent-marker
+// refusal, and that is a decision rather than an omission. The commands that
+// refuse one — fugaro allow-delete and fugaro managed flag — are the ones
+// whose own output is an approval of a later cloud change, read back by a
+// gate; this command approves nothing and records no owner decision, and its
+// neighbours are fugaro budget set and fugaro budget kill, the same write to
+// the same database with the same person's credentials, which refuse no agent
+// either. What it can do is take off a hold the service placed on a credential
+// whose token the operator has replaced, and the service marks it broken again
+// if the new token is refused too. The test is here so that a later change to
+// the decision is a deliberate one.
+func TestAccountsClearRefusesNoAgentsSession(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.appendConfig(t, claudeAccountsConfig)
+	since := time.Now().UTC().Add(-time.Minute).Truncate(time.Second).Format(time.RFC3339Nano)
+	f.db.Set(credsMarkPath("acme-personal"), map[string]any{"state": "broken", "since": since})
+	noTerminal(t)
+	t.Setenv("CLAUDECODE", "1") // a coding agent's session
+
+	if _, _, err := execute(t, "accounts", "clear", "acme-personal", "--yes"); err != nil {
+		t.Fatalf("a coding agent's session was refused: %v (the decision is that it is not, like fugaro budget set and kill)", err)
+	}
+	if m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any); m["state"] != "available" {
+		t.Fatalf("the mark was not cleared: %v", m)
 	}
 }
 

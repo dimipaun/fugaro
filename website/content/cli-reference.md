@@ -94,11 +94,26 @@ The write is one node — creds/marks/NAME, in this installation's own database 
 and it is conditional on the value read (PutIfMatch), so a mark the service
 changed at the same moment is not lost.
 
-NAME is "default" (the repository's own unnamed claude-oauth-token secret) or a
-claude_accounts name of the selected project config; any other name is refused
-rather than written, so a typo cannot leave a mark node for a credential that
-does not exist. Nothing here reads or prints a token value, a secret ID or a
-prefix of one: names and states only.
+NAME is "default" (the repository's own unnamed claude-oauth-token secret), a
+claude_accounts name of the selected project config, or an account the database
+already carries a mark for — a mark is the account existing, and a name with
+none of the three is refused rather than written, so a typo cannot leave a mark
+node for a credential that does not exist. (A mark whose name this checkout's
+claude_accounts does not list is the ordinary case for a project several
+checkouts share: claude_accounts is per-checkout and never published, while the
+marks are the project's own. fugaro doctor names such marks, so its fix has
+to work here.) Nothing reads or prints a token value, a secret ID or a prefix
+of one: names and states only.
+
+This command is run by a person in the sense that it acts as you, with your own
+credentials, on your own installation's database — but it is not one of the
+commands that refuse a coding agent's session. It records no owner decision and
+approves nothing: it takes off a hold the service placed, on a credential you
+have already replaced the token for, and the service marks it broken again if
+the token is still refused. fugaro budget set and fugaro budget kill — the
+same kind of write to the same database, with the same credentials — refuse no
+agent either, and fugaro allow-delete and fugaro managed flag, which do, are
+commands whose own output is an approval of a later cloud change.
 
 Usage: `fugaro accounts clear NAME`
 
@@ -127,10 +142,20 @@ claude-oauth-token secret, always allowed) first, then every claude_accounts
 name in the local config whose allow_data_to lists the repository, sorted
 (config.AllowedClaudeAccounts, the one place that decides the question).
 
-This is a local, read-only lookup, offline whenever a project config is
-already selected on this machine: it reads the local config file the CLI
-would otherwise select for a cloud command, and never calls Secret Manager,
-never reads or prints a token value, only names.
+The names are a local, read-only lookup, offline whenever a project config is
+already selected on this machine: it reads the local config file the CLI would
+otherwise select for a cloud command, and never calls Secret Manager, never
+reads or prints a token value, only names.
+
+The state column is not local. When the selected project has a Firebase budget
+backend (budget.rtdb_url, which fugaro init --firebase writes), each account's
+credential state is read from that database as you, with your Application
+Default Credentials — the creds/marks subtree the credentials service writes,
+which an admin's rules grant the read of — and printed beside the name as
+available, exhausted until T, backed off or broken. A project with no backend,
+and a machine where no project config could be selected, answer with the names
+alone and a note saying why: the command never turns "could not read" into
+"every account is available".
 
 --json's "complete" is false when no project config could be selected for a
 reason other than an explicit --config/--project/$FUGARO_CONFIG/$FUGARO_PROJECT

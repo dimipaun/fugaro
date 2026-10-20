@@ -565,14 +565,19 @@ func colsOf(tier, w, recW int) runCols {
 
 func rowFlags(run RunRow, warn string, tier int) string {
 	f := flags(run, warn)
+	// The waiting sentence is the longest flag there is — 55 columns, past
+	// every FLAGS column this table has (tier 3's is 30) — and its instant is
+	// the part a clip would eat, taking any flag behind it (SILENT, a halt)
+	// with it. So no tier's row carries it: the row says only that the run is
+	// waiting, and the detail has the room for the instant and the sentence
+	// (design §10.2, the same reason LOST drops its parenthetical). Tier 3
+	// shortens it for the same reason the narrower tiers do, which is the
+	// column and not the tier.
+	repl := []string{"waiting for a credential, expected resume " + stampText(run.WaitingUntil), "waiting"}
 	if tier < 3 {
-		// The waiting sentence is the longest flag there is and its instant
-		// is the part a narrow column would clip away, so the row says only
-		// that the run is waiting: the detail has the room for the rest
-		// (design §10.2, the same reason LOST drops its parenthetical).
-		f = strings.NewReplacer("LOST (sweeper pending)", "LOST", "OVER deadline", "OVER", "near deadline", "near",
-			"waiting for a credential, expected resume "+stampText(run.WaitingUntil), "waiting").Replace(f)
+		repl = append(repl, "LOST (sweeper pending)", "LOST", "OVER deadline", "OVER", "near deadline", "near")
 	}
+	f = strings.NewReplacer(repl...).Replace(f)
 	if tier < 3 && run.Notional {
 		if f != "" {
 			f = "NOTIONAL, " + f
@@ -851,7 +856,8 @@ func (r *rend) detail(run RunRow) []string {
 		{"models", models},
 	}
 	// A waiting run says so, and until when: the row's FLAGS has neither the
-	// room for the instant nor, at a narrow width, the sentence at all.
+	// room for the instant nor, at any tier, the sentence at all
+	// (rowFlags).
 	if run.Waiting {
 		rows = append(rows, [2]string{"waiting", "expected resume " + stampText(run.WaitingUntil)})
 	}

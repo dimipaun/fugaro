@@ -1268,6 +1268,70 @@ func TestDoctorReportsBroken(t *testing.T) {
 	}
 }
 
+// TestDoctorRefusesAnotherProjectsDatabase: every check doctorPolicyChecks
+// makes reads the budget database as this project's own — the published
+// policy, the rules markers and the credential marks — so a budget.rtdb_url
+// pointing at another project's database must be caught before any of them
+// reads it (checkDBProject, the check every other reader and writer makes).
+// Doctor's shape for a read that did not answer is a note, so the finding is
+// an info check naming the other project, and nothing below it is reported:
+// the other project's broken accounts are not this one's.
+func TestDoctorRefusesAnotherProjectsDatabase(t *testing.T) {
+	cascade := func(p *projectpolicy.Policy) {
+		p.Routing = &projectpolicy.Routing{Claude: &projectpolicy.ClaudeRoute{Via: projectpolicy.RouteCascade}}
+	}
+	_, db := doctorPolicyRig(t, doctorPolicy(cascade), "")
+	db.Set("fugaro/project", "birch") // the database belongs to a different project
+	db.Set(credsMarkPath("acme-personal"), map[string]any{
+		"state": "broken", "since": time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)})
+
+	checks := doctorChecksByID(t)
+	c, ok := checks["policy-published"]
+	if !ok || c.Severity != "info" || !strings.Contains(c.Problem, "birch") {
+		t.Fatalf("policy-published = %+v, want an info note naming the other project", c)
+	}
+	for _, id := range []string{"creds-broken", "creds-rules", "policy-rules-skew"} {
+		if c, ok := checks[id]; ok {
+			t.Errorf("doctor reported %s from another project's database: %+v", id, c)
+		}
+	}
+}
+
+// TestDoctorBrokenMarkFixRuns: the fix `fugaro doctor` prints for a broken
+// account has to be a command that runs, or --strict can never pass. The marks
+// belong to the project and claude_accounts is per-checkout (the shared config
+// strips it), so a mark can name an account this machine's config does not
+// carry — the ordinary case for a project several checkouts share — and the
+// clear takes any name the database carries a mark for. This is the loop end
+// to end: doctor names it, the command its fix prescribes clears it, and the
+// finding goes away.
+func TestDoctorBrokenMarkFixRuns(t *testing.T) {
+	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	db.Set(credsMarkPath("team-shared"), map[string]any{
+		"state": "broken", "since": time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)})
+
+	c, ok := doctorChecksByID(t)["creds-broken"]
+	if !ok || !strings.Contains(c.Problem, "team-shared") {
+		t.Fatalf("doctor did not name the broken account this machine's config does not carry: %+v", c)
+	}
+	if !strings.Contains(c.Fix, "accounts clear") {
+		t.Fatalf("the fix does not name the command that clears it: %q", c.Fix)
+	}
+
+	// The prescribed command, on the same installation: the name is not in
+	// this machine's claude_accounts (the rig's config has none), and the mark
+	// is what makes it one this installation has.
+	if _, _, err := execute(t, "accounts", "clear", "team-shared", "--yes"); err != nil {
+		t.Fatalf("the fix doctor printed does not run: %v", err)
+	}
+	if m, _ := db.Value(credsMarkPath("team-shared")).(map[string]any); m["state"] != "available" {
+		t.Fatalf("the mark doctor named was not cleared: %v", m)
+	}
+	if c, ok := doctorChecksByID(t)["creds-broken"]; ok {
+		t.Fatalf("doctor still reports the account it named: %+v", c)
+	}
+}
+
 // TestDoctorReportsTheCascadeWithoutTheCredsMarker: the credentials family
 // ships in the same rules document as everything else and does not bump
 // projectpolicy.RulesVersion (budget/rules/marker.go), so `policy-rules-skew`

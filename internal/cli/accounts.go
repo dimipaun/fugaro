@@ -105,10 +105,20 @@ claude-oauth-token secret, always allowed) first, then every claude_accounts
 name in the local config whose allow_data_to lists the repository, sorted
 (config.AllowedClaudeAccounts, the one place that decides the question).
 
-This is a local, read-only lookup, offline whenever a project config is
-already selected on this machine: it reads the local config file the CLI
-would otherwise select for a cloud command, and never calls Secret Manager,
-never reads or prints a token value, only names.
+The names are a local, read-only lookup, offline whenever a project config is
+already selected on this machine: it reads the local config file the CLI would
+otherwise select for a cloud command, and never calls Secret Manager, never
+reads or prints a token value, only names.
+
+The state column is not local. When the selected project has a Firebase budget
+backend (budget.rtdb_url, which fugaro init --firebase writes), each account's
+credential state is read from that database as you, with your Application
+Default Credentials — the creds/marks subtree the credentials service writes,
+which an admin's rules grant the read of — and printed beside the name as
+available, exhausted until T, backed off or broken. A project with no backend,
+and a machine where no project config could be selected, answer with the names
+alone and a note saying why: the command never turns "could not read" into
+"every account is available".
 
 --json's "complete" is false when no project config could be selected for a
 reason other than an explicit --config/--project/$FUGARO_CONFIG/$FUGARO_PROJECT
@@ -181,7 +191,14 @@ func accountsLs(cmd *cobra.Command, o accountsOptions) error {
 	}
 	names := config.AllowedClaudeAccounts(claudeAccounts, repo)
 	doc := accountsListDoc{Repo: repo, Accounts: names, Complete: note == "", Note: note}
-	doc.States, doc.StateNote = accountsStates(ctx, lc, names, note)
+	doc.States, doc.StateNote, err = accountsStates(ctx, lc, names, note)
+	if err != nil {
+		// The one failure that is not a note: a refusal to open the database
+		// at all (refuseHTTP2Debug). It aborts the command, as it does in
+		// every other command that opens the cloud, rather than being
+		// reported as a reason there is no state to show.
+		return err
+	}
 	if doc.StateNote != "" {
 		fmt.Fprintf(cmd.ErrOrStderr(), "note: %s\n", doc.StateNote)
 	}
@@ -190,43 +207,61 @@ func accountsLs(cmd *cobra.Command, o accountsOptions) error {
 
 // accountsStates is every listed account's credential state, read from the
 // cascade's own subtree (creds/marks, internal/creds). The second return is
-// the note to carry when there is nothing to show, and it is never an error:
+// the note to carry when there is nothing to show, and it is never a failure:
 // the names are a local read and stay right whether or not a mark could be
 // read, so a project with no budget database, a database that is down and a
 // read the person's rules refuse all answer with the names and a note.
+//
+// The third return is the one failure there is, and it is not about the state:
+// the refusal to open the cloud at all (refuseHTTP2Debug). It aborts the
+// command rather than becoming a note, because nothing was read and nothing
+// may be.
 //
 // The read is the operator's, as the person (ADC), not the service's: the
 // marks are what the service writes and what an operator is meant to see
 // (D141), and the rules grant the read to an admin. The note names the reason
 // rather than printing every account as available, which is a claim about
 // marks this command did not read.
-func accountsStates(ctx context.Context, lc *localcfg.Config, names []string, selNote string) (map[string]accountState, string) {
+//
+// The names above are answered without the network; this is where the command
+// stops being purely local. A project with no budget backend returns before
+// this point and stays offline, which is what its own note says.
+func accountsStates(ctx context.Context, lc *localcfg.Config, names []string, selNote string) (map[string]accountState, string, error) {
 	if lc == nil {
-		return nil, "no project config could be selected, so no credential state could be read (" + selNote + ")"
+		return nil, "no project config could be selected, so no credential state could be read (" + selNote + ")", nil
 	}
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
-		return nil, fmt.Sprintf("project %s has no Firebase budget backend, so no credential state could be read (the cascade's marks live in its database; fugaro init --firebase adds it)", lc.Name)
+		return nil, fmt.Sprintf("project %s has no Firebase budget backend, so no credential state could be read (the cascade's marks live in its database; fugaro init --firebase adds it)", lc.Name), nil
+	}
+	// Before the database is opened, as openBudgetDB does: GODEBUG=http2debug
+	// makes Go print HTTP/2 requests with their headers — the OAuth bearer
+	// token of the person's own ADC, which is what this read authenticates
+	// with — to stderr, and GODEBUG is read before main runs, so it cannot be
+	// unset in time. Every command that opens the cloud refuses instead
+	// (refuseHTTP2Debug).
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return nil, "", err
 	}
 	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
 	if err != nil {
-		return nil, fmt.Sprintf("no credential state could be read: %v", err)
+		return nil, fmt.Sprintf("no credential state could be read: %v", err), nil
 	}
 	// The database must be this project's own (the check every other reader and
 	// writer makes): a budget.rtdb_url pointing at another project's database
 	// would otherwise have this command print that project's marks as this
 	// project's states, which is a wrong answer rather than a missing one.
 	if err := checkDBProject(ctx, db, lc); err != nil {
-		return nil, fmt.Sprintf("no credential state could be read: %v", err)
+		return nil, fmt.Sprintf("no credential state could be read: %v", err), nil
 	}
 	marks, err := (&creds.RTDBStore{DB: db}).Marks(ctx)
 	if err != nil {
-		return nil, fmt.Sprintf("no credential state could be read: %v", err)
+		return nil, fmt.Sprintf("no credential state could be read: %v", err), nil
 	}
 	out := make(map[string]accountState, len(names))
 	for _, n := range names {
 		out[n] = accountStateOf(marks[n])
 	}
-	return out, ""
+	return out, "", nil
 }
 
 // accountStateOf is one mark as the document spells it: the state internal/creds
@@ -324,6 +359,19 @@ type accountsClearOptions struct {
 //
 // Names and states only: nothing here reads or writes a token, and the command
 // prints neither a value nor a secret ID (F27).
+//
+// It refuses no coding agent's session, and that is a decision rather than an
+// omission. The commands that refuse one (fugaro allow-delete, fugaro managed
+// flag) are the ones whose own output is an approval of a later cloud change,
+// read back by a gate; this command approves nothing and records no decision.
+// Its nearest neighbours are fugaro budget set and fugaro budget kill: writes
+// to this same database with this same person's credentials, refusing no
+// agent. What it can do is take off a hold the service placed, on a credential
+// the operator has already replaced the token for — and the service puts the
+// mark back, broken, if the new token is refused too, so the loop a session
+// could start here is one the 401 ends. It still refuses GODEBUG=http2debug
+// before it opens anything, which is about the credentials, not about who is
+// running. TestAccountsClearRefusesNoAgentsSession pins the decision.
 func newAccountsClearCmd() *cobra.Command {
 	var o accountsClearOptions
 	cmd := &cobra.Command{
@@ -348,11 +396,26 @@ The write is one node — creds/marks/NAME, in this installation's own database 
 and it is conditional on the value read (PutIfMatch), so a mark the service
 changed at the same moment is not lost.
 
-NAME is "default" (the repository's own unnamed claude-oauth-token secret) or a
-claude_accounts name of the selected project config; any other name is refused
-rather than written, so a typo cannot leave a mark node for a credential that
-does not exist. Nothing here reads or prints a token value, a secret ID or a
-prefix of one: names and states only.`,
+NAME is "default" (the repository's own unnamed claude-oauth-token secret), a
+claude_accounts name of the selected project config, or an account the database
+already carries a mark for — a mark is the account existing, and a name with
+none of the three is refused rather than written, so a typo cannot leave a mark
+node for a credential that does not exist. (A mark whose name this checkout's
+claude_accounts does not list is the ordinary case for a project several
+checkouts share: claude_accounts is per-checkout and never published, while the
+marks are the project's own. fugaro doctor names such marks, so its fix has
+to work here.) Nothing reads or prints a token value, a secret ID or a prefix
+of one: names and states only.
+
+This command is run by a person in the sense that it acts as you, with your own
+credentials, on your own installation's database — but it is not one of the
+commands that refuse a coding agent's session. It records no owner decision and
+approves nothing: it takes off a hold the service placed, on a credential you
+have already replaced the token for, and the service marks it broken again if
+the token is still refused. fugaro budget set and fugaro budget kill — the
+same kind of write to the same database, with the same credentials — refuse no
+agent either, and fugaro allow-delete and fugaro managed flag, which do, are
+commands whose own output is an approval of a later cloud change.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return accountsClear(cmd, o, args[0]) },
 	}
@@ -375,10 +438,31 @@ func accountsClear(cmd *cobra.Command, o accountsClearOptions, name string) erro
 	if lc == nil {
 		return userErr("no project config could be selected, so there is no database to clear %q in (%s)", name, note)
 	}
-	if name != config.DefaultClaudeAccount {
-		if _, ok := lc.ClaudeAccounts[name]; !ok {
-			return userErr("no claude_accounts entry of project %s is named %q: this writes one account's mark, and a name the installation does not know would leave a mark node for a credential that does not exist (fugaro accounts ls lists the names)", lc.Name, name)
-		}
+	// The name must be one this installation has, and the two ways it can be
+	// are answered in different places. "default" and a claude_accounts entry
+	// of the selected config are local, so they are decided here, before the
+	// database is opened, and a typo costs nothing. An account that already
+	// carries a mark is decided below, where the marks have been read: the
+	// mark is the account existing — the cascade selected it, and every mark
+	// is written for a credential a published admission let a run use — and a
+	// name that has one must stay clearable, or `fugaro doctor` would warn
+	// about a broken mark whose own fix refuses (a name another checkout of
+	// this project lists, claude_accounts being per-checkout and stripped from
+	// the shared config). What the check refuses is a name with neither: a
+	// typo, which would otherwise leave a mark node for a credential that does
+	// not exist.
+	known := name == config.DefaultClaudeAccount
+	if !known {
+		_, known = lc.ClaudeAccounts[name]
+	}
+	// Before the database is opened, as openBudgetDB does: GODEBUG=http2debug
+	// makes Go print HTTP/2 requests with their headers — the OAuth bearer
+	// token of the person's own ADC, which is what this write authenticates
+	// with — to stderr, and GODEBUG is read before main runs, so it cannot be
+	// unset in time. Every command that opens the cloud refuses instead
+	// (refuseHTTP2Debug), and this one opens the person's own credentials.
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return err
 	}
 	_, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
@@ -402,7 +486,13 @@ func accountsClear(cmd *cobra.Command, o accountsClearOptions, name string) erro
 	if err != nil {
 		return remote(err)
 	}
-	prev := marks[name]
+	prev, hasMark := marks[name]
+	// The third way a name is one this installation has (above): it carries a
+	// mark, which is the account existing rather than a typo. A name with
+	// neither is refused here, and nothing has been written.
+	if !known && !hasMark {
+		return userErr("no claude_accounts entry of project %s is named %q, and the database carries no mark for it either: this writes one account's mark, and a name the installation does not know would leave a mark node for a credential that does not exist (fugaro accounts ls lists the names this repository may use)", lc.Name, name)
+	}
 	switch prev.State {
 	case creds.StateBroken, creds.StateExhausted:
 	case "", creds.StateAvailable:
