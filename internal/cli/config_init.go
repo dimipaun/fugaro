@@ -58,7 +58,18 @@ func compareExistingMinimalFile(w io.Writer, path, text string) (stop bool, err 
 // ErrExist here means something appeared in that window. A var so a test can
 // make the race happen deterministically, by writing path itself just before
 // calling through to the real implementation.
+//
+// The Lstat is the platform-independent half of that refusal, and it is what
+// covers the case where there is no O_NOFOLLOW: a symlink already at path is
+// refused here on every platform, where the flag is what refuses one that
+// appeared a moment later (openfile_other.go says what that half loses). It is
+// a separate call from the create and therefore racy in that same window, so
+// it does not replace the flag — it is the part of the refusal that survives
+// where the flag does not exist.
 var writeMinimalFugaroYAML = func(path, text string) error {
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink; refusing to write through it", path)
+	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|oNoFollow, 0o644)
 	if err != nil {
 		return err
