@@ -1077,3 +1077,181 @@ func TestAllowDeleteCommandRefusesAnIdentityTooLongToMatch(t *testing.T) {
 		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
 	}
 }
+
+// TestAllowDeleteCommandTrimsWhatAStripExposes: the marks a paste carries are
+// stripped in whatever order the paste has them, and a strip can expose
+// whitespace that the one after it then sits behind — a message a terminal
+// wrapped puts a newline between the identity and the sentence's closing
+// bracket, and a space there is ordinary. What is recorded is compared with a
+// plan's identity byte for byte (tf.Approves), so a character left on the end
+// of the copy is an approval of nothing: the loop the delete list works by —
+// refuse, copy, approve — would not close, and nothing would say so.
+//
+// Review finding: the strip took the bracket off and did not trim what taking
+// it off exposed, so "… id=data-bucket )" recorded an identity with a space on
+// its end, which no plan's identity equals.
+func TestAllowDeleteCommandTrimsWhatAStripExposes(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket.fmgd_data"
+	rc := refusalRemoval("fmgd-data")
+	bare := tf.RemoveIdentityText(rc)
+	for _, tc := range []struct{ name, before string }{
+		{"a space between the identity and the sentence's bracket", bare + " )"},
+		{"a newline there, as a wrapped message leaves it", bare + "\n)"},
+		{"a tab there", bare + "\t)"},
+		{"a quoted identity and a space before the bracket", `"` + bare + `" )`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := allowDeleteRig(t)
+			if out, _, err := execute(t, "allow-delete", addr+"="+tc.before); err != nil {
+				t.Fatalf("the text a refusal printed was refused: %v\n%s", err, out)
+			}
+			got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
+			if !ok {
+				t.Fatal("nothing was written")
+			}
+			var obj struct {
+				Version int              `json:"version"`
+				Entries []tf.DeleteEntry `json:"entries"`
+			}
+			if err := json.Unmarshal([]byte(got), &obj); err != nil {
+				t.Fatalf("the object is not a delete list (%v):\n%s", err, got)
+			}
+			want := tf.ApprovalFor(rc)
+			if len(obj.Entries) != 1 || obj.Entries[0] != want {
+				t.Errorf("the object holds %+v, want the one entry that approves the removal (%+v)", obj.Entries, want)
+			}
+			if ok, why := tf.Approves(obj.Entries, rc); !ok {
+				t.Errorf("the entry recorded from the paste does not approve the removal: %s", why)
+			}
+		})
+	}
+}
+
+// TestAllowDeleteCommandRefusesAnIdentityNoPlanCouldHaveWritten: an identity is
+// escaped text (tf.identityValue), so one is made of printable ASCII with a
+// single space between two of its parts and no other whitespace at all — a
+// space inside a value is written \x20, and a newline, a tab or an escape byte
+// is written as an escape of its own — and the gate compares that text byte for
+// byte. A copy that has been wrapped, re-indented or typed by hand can carry a
+// character outside that set, and an entry holding one equals no identity a
+// plan produces: the owner reads it as an approval and it clears nothing. It is
+// refused here, loudly, rather than written.
+func TestAllowDeleteCommandRefusesAnIdentityNoPlanCouldHaveWritten(t *testing.T) {
+	for _, tc := range []struct{ name, before string }{
+		{"a newline inside the identity", "type=google_storage_bucket\nid=data-bucket"},
+		{"a tab between two parts", "type=google_storage_bucket\tid=data-bucket"},
+		{"two spaces in a row between two parts", "type=google_storage_bucket  id=data-bucket"},
+		{"an escape byte a message carried", "type=google_storage_bucket id=data-\x1bbucket"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := allowDeleteRig(t)
+			out, _, err := execute(t, "allow-delete", dataApproval.address+"="+tc.before)
+			if err == nil {
+				t.Fatalf("an identity no plan writes was recorded:\n%s", out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+			}
+			if !strings.Contains(err.Error(), "printable ASCII") {
+				t.Errorf("the refusal does not say what an identity is made of: %v", err)
+			}
+			if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); ok {
+				t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
+			}
+		})
+	}
+
+	// The other direction: an identity whose space is escaped, which is what a
+	// refusal prints for a name that holds one, is still recorded. The refusal
+	// above is about the shape an identity has and not about escaping.
+	r := allowDeleteRig(t)
+	rc := refusalRemoval("fmgd data")
+	if _, _, err := execute(t, "allow-delete", rc.Address+"="+tf.RemoveIdentityText(rc)); err != nil {
+		t.Fatalf("the identity a refusal prints was refused: %v", err)
+	}
+	got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
+	if !ok || !strings.Contains(got, `\x20`) {
+		t.Errorf("the object does not hold the escaped space of the name (found=%v): %s", ok, got)
+	}
+}
+
+// TestAllowDeleteCommandTakesTheQuotesOffAWholeQuotedArgument: a person who
+// quotes the whole argument — at a shell of their own, or in a message someone
+// else quoted — arrives with one quote at each end of the ARGUMENT, and
+// stripping only the identity half's pair left the other quote on the address:
+// the entry recorded was `"module.managed.google_storage_bucket.fmgd_data=…`, an
+// address no plan has, and it was written silently. The pair is taken off
+// around the argument, before the cut at the first "=", and the identity half
+// keeps the strip it had.
+//
+// A quote at one end only is not that pair, on either half: no address begins
+// or ends with one (a quote is in an address only inside an index key, where
+// the "]" closes it), there is no way to tell which end a lost pair was on, and
+// the address half was the one this command never looked at — so the argument
+// is refused rather than recorded as the address that quote would make it.
+func TestAllowDeleteCommandTakesTheQuotesOffAWholeQuotedArgument(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket.fmgd_data"
+	rc := refusalRemoval("fmgd-data")
+	bare := tf.RemoveIdentityText(rc)
+	for _, tc := range []struct{ name, arg string }{
+		{"the whole argument quoted", `"` + addr + `=` + bare + `"`},
+		{"the whole argument quoted, with the sentence's bracket inside the quotes", `"` + addr + `=` + bare + `)"`},
+		{"the whole argument quoted, with the bracket after the quotes", `"` + addr + `=` + bare + `")`},
+		{"the whole argument quoted, with the shell's spaces around it", "  " + `"` + addr + `=` + bare + `"` + "  "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := allowDeleteRig(t)
+			if out, _, err := execute(t, "allow-delete", tc.arg); err != nil {
+				t.Fatalf("a quoted argument was refused: %v\n%s", err, out)
+			}
+			got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
+			if !ok {
+				t.Fatal("nothing was written")
+			}
+			var obj struct {
+				Version int              `json:"version"`
+				Entries []tf.DeleteEntry `json:"entries"`
+			}
+			if err := json.Unmarshal([]byte(got), &obj); err != nil {
+				t.Fatalf("the object is not a delete list (%v):\n%s", err, got)
+			}
+			want := tf.ApprovalFor(rc)
+			if len(obj.Entries) != 1 || obj.Entries[0] != want {
+				t.Errorf("the object holds %+v, want the one entry that approves the removal (%+v)", obj.Entries, want)
+			}
+			if ok, why := tf.Approves(obj.Entries, rc); !ok {
+				t.Errorf("the entry recorded from the paste does not approve the removal: %s", why)
+			}
+		})
+	}
+
+	// A quote that is not one of a pair: not a mark this command strips, and an
+	// entry holding one at the address's end is an entry about an address no
+	// plan has. And a text that needs two pairs — one around the whole argument
+	// and one around the identity inside it — is a text this command has not
+	// read: it strips one pair, so what is left is not an identity, and it is
+	// refused rather than recorded as the tail of the second one.
+	for _, tc := range []struct{ name, arg string }{
+		{"a quote at the address's start alone", `"` + addr + `=` + bare},
+		{"a quote left on each half", `"` + addr + `"="` + bare + `"`},
+		{"a quote at the address's end", addr + `"=` + bare},
+		{"a pair around the whole argument and another around the identity", `"` + addr + `="` + bare + `""`},
+	} {
+		t.Run("refused "+tc.name, func(t *testing.T) {
+			r := allowDeleteRig(t)
+			out, _, err := execute(t, "allow-delete", tc.arg)
+			if err == nil {
+				t.Fatalf("an argument with an unpaired quote on the address was accepted:\n%s", out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+			}
+			if !strings.Contains(err.Error(), "address") {
+				t.Errorf("the refusal does not name the address half: %v", err)
+			}
+			if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); ok {
+				t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
+			}
+		})
+	}
+}
