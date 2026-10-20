@@ -166,9 +166,12 @@ cosign verify-blob checksums.txt \
   --certificate-identity "https://github.com/dimipaun/fugaro/.github/workflows/release.yml@refs/tags/v$V" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
-# The archives match the checksums
-grep " fugaro_${V}_" checksums.txt | shasum -a 256 -c -      # macOS
-grep " fugaro_${V}_" checksums.txt | sha256sum -c -         # Linux
+# The archives match the checksums. The grep names this OS's entries, which are
+# the ones the download line above fetched: checksums.txt covers every platform's
+# archive and its SBOM, and sha256sum exits 1 with "FAILED open or read" for each
+# entry whose file is not in the directory.
+grep " fugaro_${V}_$(uname -s | tr A-Z a-z)_" checksums.txt | shasum -a 256 -c -      # macOS
+grep " fugaro_${V}_$(uname -s | tr A-Z a-z)_" checksums.txt | sha256sum -c -         # Linux
 
 # Each channel
 brew install dimipaun/tap/fugaro && fugaro version
