@@ -215,6 +215,24 @@ func TestTheFourTypedStepsLeaveAPrompt(t *testing.T) {
 	}
 }
 
+// TestRefusalMatrixTheTypedRuleRefusesEveryMode pins the rule itself and not
+// only the state the loop reaches: initflow.CanConfirm(Typed, ...) — what
+// init's askTyped and the project stage's canType consult — is false in every
+// mode but the control. It is the same columns as the matrix, so a branch that
+// lets --yes, --json or a coding agent's marker give a Typed confirmation fails
+// here even where the loop's own path would have refused the stage first.
+func TestRefusalMatrixTheTypedRuleRefusesEveryMode(t *testing.T) {
+	for _, m := range refusalModes() {
+		t.Run(m.name, func(t *testing.T) {
+			run, _, _ := m.condition.run(t, "")
+			c := run.conditions()
+			if got := canConfirmTyped(initflow.Typed, c); got != m.control {
+				t.Errorf("CanConfirm(Typed, %+v) = %v, want %v: the step is money or permanent, and only a person at a real terminal confirms it", c, got, m.control)
+			}
+		})
+	}
+}
+
 // refusalMode is one column of the matrix: the CLI's own reading of a run's
 // flags and environment (init_confirm_test.go's condition harness), whether
 // the loop turns it into a plan-only run (--non-interactive without --yes),
