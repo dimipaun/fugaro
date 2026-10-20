@@ -47,6 +47,13 @@
 import { copyControlHTML } from '../lib/copy-control.mjs'
 
 interface DownloadFacts {
+  /**
+   * The data file's own id for the asset (`macos-dmg`): the key a per-platform block's
+   * `assets` list names, which `console-downloads.mjs` resolves against this list. The
+   * section filters on it when it draws a block's own rows under that block rather than
+   * above it, so telling one row from another never needs the file names to be compared.
+   */
+  id: string
   /** What a reader sees on the link: the platform and the asset's extension (`macOS .dmg`). */
   label: string
   /** Where a reader downloads it from. Only ever rendered while `available` is true. */

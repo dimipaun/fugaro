@@ -695,6 +695,37 @@ test("the build refuses a checksum that is not the release's own", async (t) => 
   )
 })
 
+test('the build refuses a published name the data file spells out in full', async (t) => {
+  // Every entry of `downloads` is the name the release publishes *for the version in the same
+  // file*, so the file carries the literal `{version}` and the reader substitutes the version
+  // it read from `release`. The defect the rule exists for is an entry frozen at one version:
+  // it passes every other check in the reader — the checksums in this mutation still agree
+  // with the release's own sums file, because the name below is the one that file records — so
+  // nothing but the placeholder check tells it from a correct entry, and a file that carries
+  // one renders last release's artifact under this release's tag at the next bump.
+  const entry = downloadsData().downloads[0]
+  const built = buildWith(t, (copy) => {
+    const file = path.join(copy.root, 'website', 'content', 'downloads.json')
+    const data = JSON.parse(readFileSync(file, 'utf8'))
+    data.downloads[0].file = entry.file.split('{version}').join(data.release.version)
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
+  })
+
+  assert.notEqual(
+    built.status,
+    0,
+    `the build accepted a published name written out in full rather than left as the file's placeholder:\n${built.output}`,
+  )
+  assert.match(built.output, /downloads\.json/, 'the failure does not name the data file the entry came from')
+  assert.match(built.output, /downloads\[0\]\.file/, 'the failure does not name the entry of the file it refused')
+  assert.match(
+    built.output,
+    /\{version\}/,
+    'the failure does not name the placeholder the entry has to carry: a name frozen at one version is the thing the rule refuses',
+  )
+  assert.equal(built.page, null, 'the build wrote a page from a data file that names its assets by a version rather than by the release')
+})
+
 test('the build refuses a tag prefix the release workflow does not compose', async (t) => {
   // The one thing between the data file's names and the artifact a reader downloads is the
   // release's tag: every URL is
@@ -867,9 +898,12 @@ test('the page states nothing its data file does not carry', async (t) => {
 // in the file (rendered).
 
 /** The Linux assets the fixture below puts in a copy's data file: the names the packaging
- * step produces (`console/package.json`'s `build.linux.artifactName`), for the fixture's own
- * version, and one distinct well-formed checksum each. */
-function linuxAssetsFor(version) {
+ * step produces (`console/package.json`'s `build.linux.artifactName`), one distinct
+ * well-formed checksum each, and the literal `{version}` the data file's entries have to
+ * carry — the reader refuses one written out in full, because a name frozen at one version
+ * stops being the release's the next time the version moves. The release's own name for an
+ * entry is `linuxReleaseName` of it. */
+function linuxAssetsFor() {
   return [
     {
       id: 'linux-appimage',
@@ -883,7 +917,14 @@ function linuxAssetsFor(version) {
       file: 'Fugaro.Console-{version}-linux-x64.deb',
       sha256: 'b'.repeat(64),
     },
-  ].map((entry) => ({ ...entry, file: entry.file.replace('{version}', version) }))
+  ]
+}
+
+/** A data-file entry's own name as the release serves it: the placeholder the file must carry,
+ * with the version substituted — the spelling the sums file holds and the link's last segment
+ * comes from. */
+function linuxReleaseName(asset, version) {
+  return asset.file.replace('{version}', version)
 }
 
 /** The copy's data file, parsed, and written back by `write` — the fixture's way in. */
@@ -964,7 +1005,7 @@ test('with a Linux block in the data file, the section renders it and its own as
   let fixture = null
   const built = buildWith(t, (copy) => {
     const data = (fixture = editData(copy, (next) => {
-      next.downloads.push(...linuxAssetsFor(next.release.version))
+      next.downloads.push(...linuxAssetsFor())
       next.linux = {
         text: 'The console also builds for Linux: an AppImage and a .deb for x86-64, and neither is code-signed.',
         assets: ['linux-appimage', 'linux-deb'],
@@ -972,12 +1013,14 @@ test('with a Linux block in the data file, the section renders it and its own as
       }
     }))
     // And the release's own sums file, which every entry is held to: the copy's gains the two
-    // lines the release would carry. Written from the same entries the data file got, because
-    // the two files are one fact — the release publishes both.
+    // lines the release would carry, each the entry's checksum and **the release's name for
+    // it** (`linuxReleaseName`), because a sums file records published names and the data file
+    // records the placeholder they are built from. Written from the same entries the data file
+    // got, because the two files are one fact — the release publishes both.
     const sums = path.join(copy.root, 'website', 'data', 'console-sha256sums.txt')
     const added = data.downloads
       .filter((entry) => entry.id.startsWith('linux-'))
-      .map((entry) => `${entry.sha256}  ${entry.file}`)
+      .map((entry) => `${entry.sha256}  ${linuxReleaseName(entry, data.release.version)}`)
     writeFileSync(sums, `${readFileSync(sums, 'utf8')}${added.join('\n')}\n`)
   })
 
@@ -1001,16 +1044,20 @@ test('with a Linux block in the data file, the section renders it and its own as
   // One link per asset the block names, in the file's order, held to the release's own facts:
   // the repository, the release path, the tag and the name the release serves — the same
   // `assertReleaseURL` the macOS rows are held to, and the served name of a name the release
-  // publishes (`linuxAssetsFor`, and `servedName` for the one rewrite GitHub applies).
+  // publishes (`linuxReleaseName` for the version the data file's placeholder stands for, and
+  // `servedName` for the one rewrite GitHub applies).
   const links = linksIn(block)
-  const expected = linuxAssetsFor(data.release.version)
+  const expected = linuxAssetsFor().map((asset) => ({
+    ...asset,
+    releaseName: linuxReleaseName(asset, data.release.version),
+  }))
   assert.equal(
     links.length,
     expected.length,
     `the block renders ${links.length} link(s) for ${expected.length} asset(s) (${links.map((link) => link.href).join(', ')})`,
   )
   for (const [index, asset] of expected.entries()) {
-    const name = servedName(asset.file)
+    const name = servedName(asset.releaseName)
     assertReleaseURL(links[index].href, name, data)
     assert.equal(
       links[index].label,
@@ -1036,17 +1083,59 @@ test('with a Linux block in the data file, the section renders it and its own as
   )
   for (const link of aboveLinks) {
     assert.ok(
-      !expected.some((asset) => link.href.endsWith(`/${servedName(asset.file)}`)),
+      !expected.some((asset) => link.href.endsWith(`/${servedName(asset.releaseName)}`)),
       `${link.href} is one of the block's assets and is rendered above the block as well: one asset of a release is one row, and a Linux link under the macOS sentence is under a fact that does not describe it`,
     )
   }
   for (const asset of expected) {
-    const href = links.find((link) => link.href.endsWith(`/${servedName(asset.file)}`)).href
+    const href = links.find((link) => link.href.endsWith(`/${servedName(asset.releaseName)}`)).href
     assert.equal(
       section.split(href).length - 1,
       1,
       `${href} appears more than once in the section: the block owns the assets it names`,
     )
+  }
+
+  // **Getting Started renders the console's downloads too**, from the same facts, through
+  // `ConsoleOption.astro` — the card in the `#install` section. It is the consumer this case
+  // scanned nothing of until now, and it is the one a block can be added to and forgotten in:
+  // it rendered every entry it was handed, so a Linux asset reached its list under the macOS
+  // heading with no sentence behind it. So the assertion below is not about the section: it is
+  // about **every built page**, which is the only shape that holds a page the block's author
+  // did not think of. A block-owned asset may appear on a page only with the block's own
+  // sentence on it, only after that sentence, and only once.
+  const pages = builtPages(built.dist)
+  const gettingStarted = pages.find((page) => page.rel.startsWith('getting-started/'))
+  assert.ok(
+    gettingStarted,
+    `the build carries no Getting Started page, so the card that renders the console's downloads was not scanned (${pages.map((page) => page.rel).join(', ')})`,
+  )
+  assert.ok(
+    decode(gettingStarted.html).includes(linux.text),
+    `Getting Started does not render the block's own sentence while the data file carries one: the card is the second consumer of the same facts, and an asset of the block in its list is a link under a heading that does not describe it`,
+  )
+  for (const page of pages) {
+    const html = decode(page.html)
+    for (const asset of expected) {
+      const name = servedName(asset.releaseName)
+      const occurrences = html.split(`/${name}`).length - 1
+      if (occurrences === 0) continue
+      assert.equal(
+        occurrences,
+        1,
+        `${page.rel} links ${name} ${occurrences} times: a block's asset is one row on a page, under the block that names it`,
+      )
+      const at = html.indexOf(`/${name}`)
+      const sentence = html.indexOf(linux.text)
+      assert.ok(
+        sentence >= 0,
+        `${page.rel} links ${name} and carries none of the block's own sentence: an asset the block names is rendered with the sentence that says what it is, never under another platform's`,
+      )
+      assert.ok(
+        at > sentence,
+        `${page.rel} links ${name} above the block's own sentence: the block owns the assets it names, and a link before its sentence is one under the facts of whatever sentence is there`,
+      )
+    }
   }
 })
 

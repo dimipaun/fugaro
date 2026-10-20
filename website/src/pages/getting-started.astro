@@ -204,11 +204,14 @@ const doc = (path: string, fragment: string): string =>
         {/* The console, offered beside the CLI: its own heading, its downloads once it has a
             release, and the link to the page that says what it is. While it is unreleased the
             component renders the data file's sentence and no download at all — the same rule
-            the console page's Downloads section keeps, from the same facts. */}
+            the console page's Downloads section keeps, from the same facts, including the
+            per-platform block: the card is handed `linux` too, so an asset a block names is
+            drawn under that block's own sentence here and never in the list above it. */}
         <ConsoleOption
           available={consoleFacts.available}
           note={consoleFacts.notReleased.short}
           downloads={consoleFacts.downloads}
+          linux={consoleFacts.linux}
         />
       </div>
     </div>

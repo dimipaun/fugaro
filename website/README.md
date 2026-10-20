@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **987,954 bytes in a checkout with no tags** and to **987,954 bytes with the
+  commit builds to **987,996 bytes in a checkout with no tags** and to **987,996 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -565,6 +565,15 @@ added or removed without this sentence moving fails there:
     **+7,187**, the 0.9.5 reference), and **987,954 bytes** for the whole site (972,362 on
     `main`, so **+15,592**). The script and the number of files did not move, and the
     clone figure moved by the same bytes.
+  - **The console's per-platform block** (2026-10-20, the owner's Linux ruling): Getting
+    Started's console card renders the data file's optional `linux` block as the console page's
+    Downloads section does — the block's own sentence, and the assets the block names drawn
+    under it rather than in the list above — so the card no longer lists a Linux artifact under
+    a sentence about the disk images. **The whole site went 987,954 → 987,996, by 42 bytes:**
+    the two rules that give that block its spacing, which are scoped to the component one page
+    renders. Nothing else moved and no page gained a word — the block's markup is rendered only
+    while the data file carries a block, and the file this checkout ships carries none — so the
+    page weight and the script are where they were, and the count of files in `dist/` is 23.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -591,7 +600,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,083,750 bytes. Three times 361,250: the heaviest page, the
     docs hub, at 289,000 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,704,829 bytes. Three times 1,234,943 (every file in `dist/`, 987,954
+  - **Whole site:** 3,704,985 bytes. Three times 1,234,995 (every file in `dist/`, 987,996
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
