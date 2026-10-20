@@ -174,15 +174,16 @@ func TestWebsiteChecklistHasCheck70bSection(t *testing.T) {
 		"website/test/meta.mjs",
 		// The ordering gate the position rests on.
 		"website/test/fold.mjs",
-		// The homepage's own blocks, in the order the page renders them, and the command the
-		// page's first `pre` belongs to.
+		// The homepage's own blocks, in the order the page renders them, the slider's tabs and
+		// panels, and the command the page's first `pre` belongs to.
 		"website/src/pages/index.astro",
-		"AgentChat.astro",
-		"ArchitectureDiagram.astro",
+		"HomeSlider.astro",
 		"HomeInstall.astro",
-		"HOME_PATHS",
+		"HOME_PATH",
 		"home-install-command",
-		"chat-watch",
+		"home-panel-",
+		"watch-block",
+		"watch-command",
 		// The banner that is over the first screen on a first visit.
 		"ConsentBanner.astro",
 		"position: fixed",
@@ -491,12 +492,14 @@ func TestWebsiteChecklistCheck70bNamesWhatTheTreeHas(t *testing.T) {
 	flat := strings.Join(strings.Fields(docSection(t, path, doc, checklist70bHeading)), " ")
 
 	for _, m := range []struct{ name, file string }{
-		{"HOME_PATHS", "website/src/components/HomeInstall.astro"},
+		{"HOME_PATH", "website/src/components/HomeInstall.astro"},
 		{"home-install-command", "website/src/components/HomeInstall.astro"},
-		{"chat-watch", "website/src/components/AgentChat.astro"},
-		{"chat-watch-command", "website/src/components/AgentChat.astro"},
+		{"watch-block", "website/src/components/HomeSlider.astro"},
+		{"watch-command", "website/src/components/HomeSlider.astro"},
+		{"watch-shot", "website/src/components/HomeSlider.astro"},
+		{"home-panel-", "website/src/components/HomeSlider.astro"},
 		{"HomeInstall", "website/src/pages/index.astro"},
-		{"ArchitectureDiagram", "website/src/pages/index.astro"},
+		{"HomeSlider", "website/src/pages/index.astro"},
 		{"DOCUMENT_PAGES", "website/test/lib/exempt.mjs"},
 		{"flex-direction: row-reverse", "website/src/styles/base.css"},
 	} {
@@ -508,11 +511,20 @@ func TestWebsiteChecklistCheck70bNamesWhatTheTreeHas(t *testing.T) {
 		}
 	}
 
-	// The hero's old names, refused: #623 moved the homepage's install paths out of the hero
-	// and into their own section, so a step that reads them there reads a page that is gone.
-	for _, stale := range []string{"HERO_PATHS", "hero-install-command"} {
+	// The names of pages that are gone, refused: #623 moved the homepage's install paths out
+	// of the hero into their own section, and the draft of 2026-10-19 folded the chat and the
+	// diagram out of the page and the two install cards into one command — so a step that reads
+	// the homepage out of any of them reads a page that is not there.
+	for _, stale := range []string{
+		"HERO_PATHS",
+		"hero-install-command",
+		"AgentChat.astro",
+		"chat-watch",
+		"ArchitectureDiagram.astro",
+		"HOME_PATHS",
+	} {
 		if strings.Contains(flat, stale) {
-			t.Errorf("%s's section names %q, which no file in the tree carries: the homepage's install paths are HomeInstall.astro's HOME_PATHS and .home-install-command since #623", path, stale)
+			t.Errorf("%s's section names %q, which no file in the tree carries: the homepage is the hero, the slider and the install block since the draft of 2026-10-19, and its command is HomeInstall.astro's HOME_PATH and .home-install-command", path, stale)
 		}
 	}
 }
@@ -744,8 +756,8 @@ func TestWebsiteChecklistCheck70bMethodReadsExist(t *testing.T) {
 		"website/test/lib/exempt.mjs",
 		"website/test/meta.mjs",
 		"website/src/pages/index.astro",
+		"website/src/components/HomeSlider.astro",
 		"website/src/components/HomeInstall.astro",
-		"website/src/components/AgentChat.astro",
 		"website/src/components/Hero.astro",
 		"website/src/components/ConsentBanner.astro",
 		"website/test/home.mjs",

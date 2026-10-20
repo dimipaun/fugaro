@@ -505,7 +505,7 @@ probe account carries predefined grants only).
 | 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no player for the video, which does not exist (`features.video` is false), and every console download it offers resolving to an asset of the release its own facts name (`features.console_downloads` is true, and the console moved to `console-v0.9.0`) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). The canonical origin is read out of `website/data/site.yaml` by the guard block, so it is not typed from memory, and it is the only host this check fetches: there is no second domain (owner ruling 2026-10-17), so no step here observes one. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; the deployed home page's sha256 equal to the local build's; the greps for a player printing nothing; and every console download URL the pages carry answering 200 (or a redirect to the release's own storage) with the checksum the page printed beside it. **USER-RUN, NOT RUN.** |
 | 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Google Analytics behind the consent banner and **W3.2 has turned it on** — the measurement id is `website/data/site.yaml`'s, the gate is the site's own file, and the pass is therefore a pass about the post-consent request, not about analytics being absent) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
 | 70a | The mobile header fits one row, and the three group labels are the phone's menu (website redesign plan `docs/website/redesign/implementation-plan.md` §3, part P3; D182 and the amendment of 2026-10-19, RF3): at **390 × 844** — and at 375, 320 and 391 — the header is **one row** of about 77 px, with the wordmark's mark kept and its text out of the row below the breakpoint, nothing wrapped under them and no sideways scroll; the three labels are the whole menu there (**Product**, **Reference**, **Project**, each at least 44 px tall, **no `Menu` control on the page**), each opens its own panel **by tap and by keyboard**, Escape and a click outside close it, the focus goes back to the label that opened it, the three are exclusive, **an open panel is drawn above the page's blocks and not under them** (the owner's reading of 2026-10-19), the menu reaches every link with **JavaScript disabled**, and on a device whose **pointer hovers** a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it (the owner's brief of 2026-10-18, item 1) | See "Check 70a" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | The header's measured height at each width is one row's (about 77 px, not the 177 px of three rows RF3 measured), `document.documentElement.scrollWidth` is not wider than the viewport, the wordmark's text is out of the row below its breakpoint and the mark is in it, the three labels are on the one row and each is at least 44 px tall, a label is focusable and opens its panel, Escape closes it and returns the focus, opening a second label closes the first, the open panel is drawn above a page's block rather than under it (`/how-it-works/`, where the flow's steps are positioned), every link in the three groups is reachable and follows with JavaScript off, **and on a device whose pointer hovers a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it** (the owner's brief of 2026-10-18, item 1), and at 1280 × 900 the three group labels are **drawn** in the header's one row as the three dropdowns D182 asks for, with no `Menu` control and no overlay panel, and opening a group showing its links **without changing the header's height**. **USER-RUN, NOT RUN.** |
-| 70b | The gist is above the fold (website redesign plan `docs/website/redesign/implementation-plan.md` §3 and §8, part P5; D187, D188, RF23, RF5): on the built or deployed site **every page states its main point above the fold** — the `h1`'s bottom and the lead's bottom inside the first screen at **390 × 844** — the homepage's **first screen** holds the promise and its call to action and **no command** — the page's first command (the chat's `fugaro watch` block, below it) carrying its copy control **beside it in the command's own row**, Getting Started's **first command block** is fully visible at **390 × 844 and 1280 × 900**, the consent banner neither pushes the commands below the fold nor covers the first command on a first visit, the word ceilings hold (a page's lead at most **40 words**; the **privacy statement** within its own derived ceiling; and every other page at most **250 words** except `/docs/`, `/security/` and `/changelog/`), and no page carries the provenance phrases the build refuses | See "Check 70b" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | Per page, the `h1`'s and the lead's bottom under 844 at 390 × 844; the homepage's first screen's blocks in order and the page's first command (the chat's `fugaro watch` block) with its control in the command's own row; Getting Started's first command block inside the first screen at both widths; the banner's rectangle and what it covers, with the first command clear of it; every page's lead and page word counts inside the ceilings `website/README.md` states — the privacy statement's own count against the ceiling derived from it — read from the site's own gate; and none of the gate's provenance phrases on any page. **USER-RUN, NOT RUN.** |
+| 70b | The gist is above the fold (website redesign plan `docs/website/redesign/implementation-plan.md` §3 and §8, part P5; D187, D188, RF23, RF5): on the built or deployed site **every page states its main point above the fold** — the `h1`'s bottom and the lead's bottom inside the first screen at **390 × 844** — the homepage's **first screen** holds the promise and its call to action and **no command** — the page's first command (the slider's `fugaro watch` block, inside the "See it" panel) carrying its copy control **beside it in the command's own row**, Getting Started's **first command block** is fully visible at **390 × 844 and 1280 × 900**, the consent banner neither pushes the commands below the fold nor covers the first command on a first visit, the word ceilings hold (a page's lead at most **40 words**; the **privacy statement** within its own derived ceiling; and every other page at most **250 words** except `/docs/`, `/security/` and `/changelog/`), and no page carries the provenance phrases the build refuses | See "Check 70b" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | Per page, the `h1`'s and the lead's bottom under 844 at 390 × 844; the homepage's first screen's blocks in order and the page's first command (the slider's `fugaro watch` block) with its control in the command's own row; Getting Started's first command block inside the first screen at both widths; the banner's rectangle and what it covers, with the first command clear of it; every page's lead and page word counts inside the ceilings `website/README.md` states — the privacy statement's own count against the ceiling derived from it — read from the site's own gate; and none of the gate's provenance phrases on any page. **USER-RUN, NOT RUN.** |
 | 70c | Every copy control copies its own command (redesign plan §3, part P6; D183, RF13): on the built or deployed site **each kind of control** — the hero's install blocks, Getting Started's code blocks, the docs hub's rendered reference, the caps guide's usage lines and the terminal's own line — puts **that command** on a real clipboard, **by mouse and by keyboard**, the "Copied" state is announced politely and clears itself, and **nothing is shown with JavaScript off** | See "Check 70c" below; run by you, in a browser, against the **built artifact** or the deployed site — read-only, no cloud project touched, and **No agent runs any step of it** | Each control's clipboard content equals the command it sits on and nothing else — no `$` prompt, no caret, no neighbouring line, no page furniture — the copied state appears, is announced and clears, the keyboard reaches every control and the focus ring is visible on it, and with JavaScript disabled every command is still on the page with **no button rendered at all**. **USER-RUN, NOT RUN.** |
 | 81 | The deployed rules' fence (design `m9-budget-and-dashboard.md` §6.2 and §6.4; mobile plan Task P4.2a writes it, and P2.3 and P4.2 **run** it): the live half of P2.2's and P6.4's denial cases for the **signed-in user** — an account whose own uid has a device node (`config/admin/devices/<uid>`, D166, which **you** write over IAM because `fugaro pair` is P6.6 and is not built) and a token whose `mu` claim is its own uid makes **exactly two writes** (one message into its own `inbox/$msg`, carrying the `mac` and `kind` generation 3 requires; the `acked: true` once, on a message already in its own `outbox/$msg`) and reads **nothing beyond** the nodes D112's user-claim read grant sits at (`config/caps/{global,defaults,repos/$slug}`, `config/kill/{global,repos/$slug}`, `spend/$day/{global,repos/$slug,runs/$slug/$run}`, plus its own `outbox` and `heartbeat` — the grant sits on those nodes and cascades down only, so `spend/$day` and each of their parents is **not** readable); everything else is refused — another account's mailbox, a read of its own inbox, the outbox message and the heartbeat (the consumer's writes, **check 80's** half), a message with no `mac`, a second, `false` or parent-less ack, the parents of the granted nodes, the device allowlist (its own node included, which no client token may read), both pairing nodes, and every family the grant does not name (`config/limits/policyRules`, `config/mode`, `config/policy/**`, `agents/**`, `outcomes/**`, `runs/**`, `fugaro/**`) — an account with **no** device node is refused everything, its own mailbox included, and a token whose `mu` names another uid is admitted nowhere | See "Check 81" below; **you** run it, on installation `fugaro` (never `belong`), in project `fugaro-dev`, with two accounts you add by hand (D114) and custom tokens you mint yourself; every step re-runs the one guarded setup block, which reads the backend out of the project's own config (printing the project ids it found, never the key), and five nodes are seeded with your own IAM credentials (which bypass the rules and prove nothing about them): the three mailbox nodes it reads and acks, and the two device nodes. **No agent runs any step of it** | Four minted custom tokens exchanged for ID tokens (two in step 1, step 7's mismatch token and the residual's, which needs a second signer), five seeded nodes, and a set of reads and writes each of which must answer a permission denial; the tokens and the web API key are credentials and never appear in a `FACT` line or a pull request. **USER-RUN, NOT RUN.** |
 | 82 | The rules deploy and the marker (design `m9-budget-and-dashboard.md` §6.2 and §6.4; mobile plan Task P4.2a writes it, and P2.3 **runs** it): `fugaro init --firebase` puts this release's generated rules document on the database and records the generation the emulator cases and check 81's denial cases are written against — the two act lines in the order the plan prints them — `rules: deploys the security rules (<N> bytes, generated)` when the deployed document differs, and then, as the plan's **last** write, the marker line `config/limits/policyRules: records the rules generation (config/limits/policyRules = 3)` — followed by a second run that writes nothing (`The database already has the rules, mark, project name and mode.`), and by the marker node itself read back holding this release's `projectpolicy.RulesVersion` (3) over a document that `infra.SameJSON` calls `rules.Generate()`'s own output — the same JSON document, formatting ignored; the generated document is 54289 bytes — and that carries the `mailbox` subtree, the device allowlist and the pairing nodes; an installation still on an older generation (1 or 2) is moved to generation 3 by exactly this run, with `fugaro doctor`'s `policy-rules-skew` line as the before-state — and, if its accounts have no device node, every app read refused until they do (check 81 step 1 writes them by hand) | See "Check 82" below; **you** run it, on installation `fugaro` (never `belong`), `fugaro-dev`, at your own terminal, and **you** type the confirmation (a coding agent's session cannot). **No agent applies rules** | One rules deploy of about 53 KB and at most the marker write beside it, under the database step's own confirmation; the marker-above-this-binary refusal is **read, not provoked** (no hand-written marker on the dogfood installation). **USER-RUN, NOT RUN.** |
@@ -4681,13 +4681,18 @@ themselves. **The homepage's first screen has changed once more since P5**, and 
 follows the page rather than the part that wrote it: the owner's changes spec of 2026-10-18
 (item 3, which takes the run command out of the hero example and shows the real workflow, and item 4,
 the one bold diagram, both shipped by #623) took the commands out of the hero and made the page the promise and
-its call to action, then the chat, then the diagram, then the install paths. So the homepage's
-first screen is the promise and the two links under it and no command, the page's first command
-is the chat's `fugaro watch` block, and the command-above-the-fold claim this check's step 2
-used to carry for the homepage is now Getting Started's alone (step 3). **And the chat's block
-has grown a picture since**: #655 put the owner's real `fugaro watch` capture into it, between
-the "Watch it run" heading and the command, so the page's first command now sits under the
-screenshot and step 2 reads that order — heading, screenshot, command — as the block it is. **The numbers above are the owner's record of the page before the
+its call to action, then the chat, then the diagram, then the two install cards — and **the
+owner's approved draft "Home, draft 2 (slider)" of 2026-10-19 folds that middle and those cards
+into two blocks**: the hero, then one slider whose three tabs are how it is to use, why it is
+worth it and what it looks like running, then one large "Get started" button with the one command
+most readers run under it. So the homepage's first screen is still the promise and the links
+under it and no command. The page's first command in the HTML is the slider's `fugaro watch`
+block, inside the "See it" panel — and that panel is shown by the stylesheet only once its tab is
+chosen, so the first command a reader *meets* without choosing a tab is the install command in the
+page's last section. The command-above-the-fold claim this check's step 2 used to carry for the
+homepage is Getting Started's alone (step 3). **The picture is still there**: #655's capture of
+the owner's real `fugaro watch` screen is in that block, above the command, so step 2 reads the
+block's three parts in order — heading, screenshot, command — on the panel its tab opens. **The numbers above are the owner's record of the page before the
 redesign** (`docs/website/redesign/reconciliation.md` §6, the capture set described by
 `docs/website/redesign/current/README.md`): they are not measurements of the page as it is now, and
 every number this check passes or fails on is one it takes itself.
@@ -4720,21 +4725,24 @@ grep -n 'DOCUMENT_PAGES' website/test/lib/exempt.mjs
 # searches every page for.
 sed -n '/^export const PHRASES = \[/,/^\]/p' website/test/meta.mjs
 # The homepage's blocks in the order the page renders them, out of the page's own source rather
-# than remembered: the hero, then the chat, then the diagram, then the install paths (#623 moved
-# the commands out of the hero and into the page's last section).
-grep -n "Hero\|home-chat\|home-flow\|HomeInstall" website/src/pages/index.astro
-# The install paths the homepage renders, and the markup each command is in: the two paths the
-# component names, and the class its command blocks carry.
-grep -n "HOME_PATHS\|home-install-command" website/src/components/HomeInstall.astro
-# The page's first command, out of the component that renders it: the chat's `fugaro watch`
-# block, which is the first `pre` in `main` now that the install paths are the page's last
-# section.
-grep -n "chat-watch-command\|WATCH = " website/src/components/AgentChat.astro
-# The screenshot the chat's block now carries above that command (#655), out of the component
-# that renders it rather than remembered: the slot the picture goes in, the file the picture is,
-# and the hook the site's own gate reads it by — which is what step 2's "heading, screenshot,
-# command" is read against.
-grep -n "chat-shot\|fugaro-watch\|watch-screenshot" website/src/components/AgentChat.astro
+# than remembered: the hero, then the slider, then the install block (#623 moved the commands out
+# of the hero and into the page's last section; the draft of 2026-10-19 put the page's middle
+# into the slider).
+grep -n "Hero\|HomeSlider\|HomeInstall" website/src/pages/index.astro
+# The tabs, the panels and the fragment each tab carries, out of the component that renders them:
+# the three ids step 2 clicks are the panels' own, and the class the slider's block carries.
+grep -n "home-panel-\|TABS = \|home-slider" website/src/components/HomeSlider.astro
+# The one install path the homepage renders, and the markup its command is in: the path the
+# component names, and the class its command block carries.
+grep -n "HOME_PATH\|home-install-command" website/src/components/HomeInstall.astro
+# The page's first command in the HTML, out of the component that renders it: the slider's
+# `fugaro watch` block, inside the panel step 2 opens.
+grep -n "watch-command\|WATCH = " website/src/components/HomeSlider.astro
+# The screenshot that block carries above the command (#655), out of the component that renders
+# it rather than remembered: the slot the picture goes in, the file the picture is, and the hook
+# the site's own gate reads it by — which is what step 2's "heading, screenshot, command" is read
+# against.
+grep -n "watch-shot\|fugaro-watch\|watch-screenshot" website/src/components/HomeSlider.astro
 # The two links under the promise, and the flag that decides whether a third one is rendered:
 # the console's link is what `features.console_downloads` renders, and while it is false the
 # hero's row is the two links step 2 reads.
@@ -4776,9 +4784,10 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
 2. **The homepage's first screen is the promise and its call to action, and the page under it is
    the page the design asks for.** The homepage's argument is its order, and the order is read out
    of the page's own source rather than remembered: `website/src/pages/index.astro` renders the
-   hero, then the chat, then the diagram, then the install paths — `Hero.astro`,
-   `AgentChat.astro`, `ArchitectureDiagram.astro`, `HomeInstall.astro` — and since #623 the
-   install paths are the page's **last** section, the commands having moved out of the hero. So
+   hero, then the slider, then the install block — `Hero.astro`, `HomeSlider.astro`,
+   `HomeInstall.astro` — and the install block is the page's **last** section, the commands
+   having moved out of the hero with #623 and the page's middle folded into the slider by the
+   draft of 2026-10-19. So
    at 390 × 844 the first screen holds the headline (`Lambdas for coding agents`, README's own
    line) and the lead of step 1, then the **two** links under them, and **no command**: what this
    step reads is that no command block has climbed back into the first screen. **Two links and not
@@ -4788,17 +4797,30 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    check describes the site **without** a console link for that reason, and the site's own gate
    holds the row to the flag (`website/test/home.mjs` refuses a hero whose call to action is not
    exactly the two links while the flag is false); a hero with three links is a site whose flag
-   has been flipped, which is a later reading of this step rather than a failure of it. The
-   page's first command is the chat's `fugaro watch` block — `AgentChat.astro`'s `.chat-watch`,
-   under its "Watch it run" heading, and the first `pre` in `main` now that the install paths come
-   last — and **the block is three things in that order**: the heading, the owner's real
-   `fugaro watch` screenshot above the command (`div.chat-shot`'s `img`,
+   has been flipped, which is a later reading of this step rather than a failure of it.
+
+   **The page's middle is one slider with three tabs** (the draft of 2026-10-19): `HomeSlider.astro`
+   renders `.home-slider`, a row of three fragment links — "Easy to use", "Benefits", "See it" —
+   and three panels, of which the stylesheet shows one at a time (`.panel` is `display: none`;
+   the panel the address's fragment names, or the first one while no fragment does, is
+   `display: block`). All three panels are in the HTML the page serves, so read the middle by
+   **clicking each tab** rather than by scrolling: the panel a tab opens is the element the
+   address names, and a reader with no JavaScript gets the same three panels. What step 2 reads
+   on the first screen is that the slider's row of tabs is what follows the hero, and that no
+   command has climbed back above it. The page's first command **in the HTML** is the slider's
+   `fugaro watch` block — `.watch-block` inside the "See it" panel, which is the panel the third
+   tab opens — and the first command a reader meets *without choosing a tab* is the install
+   command in the page's last section, `HomeInstall.astro`'s `.home-install-command`. On the
+   "See it" panel the block is three things in that order: the panel's "See it" heading, the
+   owner's real `fugaro watch` screenshot above the command (`div.watch-shot`'s `img`,
    `public/images/fugaro-watch.png`, #655, the slot `website/test/home.mjs` reads), and then the
-   command. So the first command sits **under the picture**, and the picture's own height is
-   between the heading and it: read the screenshot's rectangle too, because a picture that grew
-   is a first command pushed down. `firstCommandBottom` for `/` is that block's bottom: the
-   script's key,
-   `document.querySelector('main pre')`'s bottom, measured from the top of the document. Beside
+   command. So the command sits **under the picture**, and the picture's own height is between
+   the heading and it: read the screenshot's rectangle too, because a picture that grew is a
+   command pushed down. `firstCommandBottom` for `/` is the first command in `main`'s own bottom:
+   the script's key, `document.querySelector('main pre')`'s bottom, measured from the top of the
+   document — and on this page that element is inside the panel that is hidden until its tab is
+   chosen, so its rectangle is the panel's own once the tab is clicked, and the number this step
+   reports for the homepage is the install command's, the one a reader sees. Beside
    it read the copy control's own rectangle: the control is `website/src/lib/copy-control.mjs`'s
    markup, `.command-controls` inside the same `.command-block`, and the block lays the two out in
    **one row** — `website/src/styles/base.css`: `display: flex; flex-direction: row-reverse;
@@ -4808,10 +4830,11 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    Fails-when block below names — where the command is visible and the button is not, and which
    no reading of the command's own rectangle can see. **FACT:** the first screen's blocks in
    order and whether any of them is a command block; the hero's links as rendered and how many
-   they are, against `features.console_downloads`; the chat's block's three parts in order, with
-   the screenshot's own height and whether it is above the command; the page's first command as
-   rendered, the block it is in, its bottom in pixels and whether it is above or below 844; and
-   the control's top and bottom beside the command's.
+   they are, against `features.console_downloads`; the three tabs and, per tab, the panel it
+   opens with the block's three parts in order — heading, screenshot, command — the screenshot's
+   own height and whether it is above the command; the page's first command as rendered, the
+   block it is in, its bottom in pixels and whether it is above or below 844; and the control's
+   top and bottom beside the command's.
 
 3. **Getting Started's first command block is above the fold on both sizes.** At 390 × 844 and at
    1280 × 900, read `firstCommandBottom` for `/getting-started/` and check the first command
@@ -4885,9 +4908,11 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
 the `h1`'s bottom and the lead's bottom both under 844 — the homepage's first screen holds the
 promise and its call to action and **no command**, the call to action is the **two** links the
 site's own flag renders (the console's link is absent while `features.console_downloads` is
-false), the chat's block is its heading, the owner's `fugaro watch` screenshot and then the
-command, and its first command (the chat's `fugaro watch`
-block) carries its copy control in the command's own row wherever it sits, Getting Started's
+false), the slider's three tabs each open a panel that is in the HTML with the stylesheet showing
+the one the fragment names, the "See it" panel's block is its heading, the owner's `fugaro watch`
+screenshot and then the command, and the page's first command (that block, or the install command
+a reader meets without choosing a tab) carries its copy control in the command's own row wherever
+it sits, Getting Started's
 first command block is above the
 fold at 390 × 844 **and** at 1280 × 900, the consent banner covers neither the first command nor
 its control on a first visit at either size, every page's lead is within 40 words, the privacy
@@ -4900,8 +4925,10 @@ homepage's copy control has left its command's row, or is outside the first scre
 in; a **third** link under the promise — the console's — on a site whose `website/data/site.yaml`
 still says `features.console_downloads: false` (a hero that disagrees with the site's own flag, so
 either the flag has been flipped and this reading is stale or the link was written into the hero
-rather than rendered from the flag); the chat's block missing its screenshot, or carrying it
-**below** the command, so the first command is not under the picture this step reads; Getting
+rather than rendered from the flag); the "See it" panel's block missing its screenshot, or
+carrying it **below** the command, so the command is not under the picture this step reads; a tab
+whose panel is not in the HTML, or a panel the stylesheet never shows once its fragment is in the
+address, so a reader without JavaScript has two panels rather than three; Getting
 Started's first command block is below the fold at either width; the consent banner
 covers the first command or its control on a first visit; a page is over a ceiling the README
 states — including the privacy statement over its own derived one, or any other page over 250 —
@@ -4910,20 +4937,20 @@ provenance phrase. What failing looks like: a hero that grows a second paragraph
 the promise, so the lead is 41 words and its bottom is below the fold (the shape `fold.mjs`
 refuses in the built artifact and this check is the position of); a command block moved back up
 into the homepage's first screen, which is the arrangement #623 moved out of it; a first command
-in the install section that is the *second* path's, because `HOME_PATHS`' order moved and nobody
-re-read the page; a copy control that has left the command's row, rendered below its command
+in the install section that is not the one `HomeInstall.astro`'s `HOME_PATH` names, because the
+path moved and nobody re-read the page; a copy control that has left the command's row, rendered below its command
 rather than beside it, so the command is visible and the button is not; a banner whose text grew a
 line, so its top edge came up over the first command's bottom. The **ordering** half of the first
 of those — the lead region's shape — is already refused by `website/test/fold.mjs` and its
 **word** half by `budget.mjs`, so a failure here that the build did not catch is a **rendered**
 fact — a position, a height, an overlap — and the fix belongs in `website/src/pages/*.astro`,
-`Hero.astro`, `HomeInstall.astro` or `base.css`'s spacing, with the case that would have caught it
+`Hero.astro`, `HomeSlider.astro`, `HomeInstall.astro` or `base.css`'s spacing, with the case that would have caught it
 added to the gate that can see it.
 
 **Paste back:** per page at 390 × 844, the `h1`'s bottom and the lead's bottom, and whether each is
 above the fold; the homepage's first screen's blocks in order, the hero's links as rendered and how
-many they are, the chat's block's three parts in order with the screenshot's height, and the page's
-first command as
+many they are, the three tabs with the panel each opens and the block's three parts in order with
+the screenshot's height, and the page's first command as
 rendered with the block it is in, its bottom and its control's rectangle;
 Getting Started's first command block's bottom at both widths; the consent banner's height and top
 edge on a first visit at both widths, and what it covers; per page, the lead's and the page's word
@@ -4976,7 +5003,9 @@ grep -n "cosign verify-blob" website/data/install.yaml
 1. **Each kind of control, by mouse.** On the built or deployed site, click the copy control
    on: the homepage's install blocks (`HomeInstall.astro`'s, the page's last section since
    #623), a code block on Getting Started, a block of the rendered CLI reference on the docs
-   hub, a usage line on the caps guide, and the chat's `fugaro watch` line on the home page.
+   hub, a usage line on the caps guide, and the slider's `fugaro watch` line on the home page
+   (open its "See it" tab first: the panel is in the HTML, and the stylesheet shows it once the
+   tab is chosen).
    After each click, paste into a text editor and read it back.
    **The caps guide's usage lines sit behind one disclosure** since the owner's brief of
    2026-10-19: the page leads with what a job costs, and the commands are the detail under the
