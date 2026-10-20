@@ -322,7 +322,9 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 //
 // The whole argument and each half are trimmed, and the halves are compared
 // with a plan's by exact equality: a stray space around either would be an
-// approval of nothing.
+// approval of nothing. The half that carries the identity is trimmed twice,
+// with trimPasteMarks between the two: taking the sentence's bracket off
+// uncovers the space that can sit before it.
 //
 // Trimming an identity cannot lose a character of one: an identity is escaped
 // so that the only whitespace in it is the single space between two of its
@@ -349,7 +351,15 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 // quoted or bracketed tail that is not an identity is still refused.
 func approveArgument(arg string) (tf.DeleteEntry, error) {
 	address, before, cut := strings.Cut(strings.TrimSpace(arg), "=")
-	address, before = strings.TrimSpace(address), trimPasteMarks(strings.TrimSpace(before))
+	// Trimmed, then the paste's marks taken off, then trimmed AGAIN: taking the
+	// sentence's closing bracket off the end can uncover the space that sat
+	// before it ("…id=x )"), and an identity is compared byte for byte, so a
+	// trailing space is an entry that approves nothing (tf.identityValue has
+	// single spaces and none at either end). The second trim can lose nothing
+	// the first did not already: the marks are only ever at the two ends, and
+	// what they uncover is the identity's own last character or that same
+	// space.
+	address, before = strings.TrimSpace(address), strings.TrimSpace(trimPasteMarks(strings.TrimSpace(before)))
 	switch {
 	case !cut || address == "":
 		return tf.DeleteEntry{}, userErr("an argument is an address and the identity of the object approved there, written ADDRESS=IDENTITY, as in 'module.web.google_storage_bucket.data=type=google_storage_bucket project=proj-1234 name=data id=data-bucket instance=2026-01-02T03:04:05.678Z': the identity is the one a refused apply printed for the object the address removes, and nothing was written")
