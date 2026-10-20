@@ -56,7 +56,7 @@ func TestDocsChecklistPlanStatusCitationsNameTheStatusLine(t *testing.T) {
 	doc := readDoc(t, setupWizardChecklist)
 	planLines := strings.Split(readDoc(t, setupWizardPlan), "\n")
 
-	const quoted = `*"plan only; nothing is implemented; decisions open"*`
+	const quoted = `*"approved to build; implementation in progress"*`
 	re := regexp.MustCompile(`implementation-plan\.md:(\d+)`)
 	matches := re.FindAllStringSubmatchIndex(doc, -1)
 	if len(matches) == 0 {
@@ -80,7 +80,7 @@ func TestDocsChecklistPlanStatusCitationsNameTheStatusLine(t *testing.T) {
 			t.Errorf("%s cites %s:%s, which is not a line of it", setupWizardChecklist, setupWizardPlan, doc[m[2]:m[3]])
 			continue
 		}
-		if got := planLines[line-1]; !strings.Contains(got, "plan only; nothing is implemented") {
+		if got := planLines[line-1]; !strings.Contains(got, "approved to build; implementation in progress") {
 			t.Errorf("%s cites %s:%d for the status sentence, and that line reads %q",
 				setupWizardChecklist, setupWizardPlan, line, strings.TrimSpace(got))
 		}
