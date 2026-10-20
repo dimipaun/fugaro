@@ -145,3 +145,72 @@ func TestDocsCredentialsServiceKeepsOneBundleSecret(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsCredentialsServiceCarriesTheSecurityReviewFixes pins the plan text
+// the independent security review of this implementation asked for (the
+// review of head 1f7ddf13). Each finding has a home in the plan, and the two
+// that could be lost by a later edit — the digest rule and the two-step
+// opt-out — are stated in the task that owns them and again in the runbook
+// task that will write them down for an owner:
+//
+//   - M1: the service's image is pinned by digest and a tag is refused, and
+//     C1.20's init stage fills the verified digest;
+//   - M2: turning the opt-in off is two owner steps, the first a
+//     `terraform state rm` that deletes nothing, because the bundle container
+//     carries prevent_destroy and a plan that drops it fails whole;
+//   - m3: Secret Manager DATA_READ audit logs are off by default and the owner
+//     turns them on (Fugaro's Terraform manages no audit config), so Check 94
+//     reads the config back before it reads a log line;
+//   - m4: `fugaro creds set` disables the version it replaced, because
+//     Terraform manages no version and a superseded bundle that stays enabled
+//     stays readable;
+//   - m5: C1.25 writes the bundle with the owner's own project IAM and adds no
+//     operator grant — the sentence that used to promise an operator's
+//     secretVersionAdder is gone, and the test forbids it coming back.
+//
+// It is about wording only: nothing here is implemented by the documents it
+// reads. Every phrase below was checked against the plan as amended.
+func TestDocsCredentialsServiceCarriesTheSecurityReviewFixes(t *testing.T) {
+	const plan = "../../docs/credentials-service/implementation-plan.md"
+	data, err := os.ReadFile(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+
+	for _, want := range []string{
+		// M1
+		"pinned by digest and never by tag",
+		"C1.20's init stage fills the verified digest",
+		"the variable's validation refuses anything else at plan time",
+		// M2
+		"terraform state rm google_secret_manager_secret.credentials_bundle[0]",
+		`fails with "Instance cannot be destroyed" and applies **nothing**`,
+		// m3
+		"`DATA_READ` audit logs are off by default and Fugaro's Terraform manages no audit config",
+		// m4
+		"After a verified write the version it replaced is disabled",
+		// m5
+		`**C1.25 must not "fix" this by adding one**`,
+		"the bundle container of C1.18 carries **no operator member at all**",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s no longer carries %q: it is one of the independent security review's findings, and this is the only place it is written down for the owner", plan, want)
+		}
+	}
+
+	// The two sentences the review found wrong, which must not come back.
+	for _, forbidden := range []string{
+		// m5: the promise that the bundle is written with an operator's
+		// secretVersionAdder, which no grant in this design gives.
+		"(the operator's `secretVersionAdder` and `viewer`, exactly as `fugaro secrets set`",
+		// M1: the image as a plain variable.
+		"its image a variable, its SA",
+		// M2: the claim that the opt-out is an ordinary removal.
+		"Turning the opt-in off is therefore a removal a plan may make, not a refusal",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("%s says %q again, which the independent security review found wrong", plan, forbidden)
+		}
+	}
+}
