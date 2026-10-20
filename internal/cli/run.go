@@ -1290,11 +1290,22 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 // It is also the arm of the artifact boundary that survives the enable (Global
 // Constraint 13, plan compute-backend.md Task 8 step 4): an artifact-producing
 // run is never launched on cloud-batch, and this is where the backend and the
-// recipe the run will actually use are both known -- `fugaro validate` judges
-// the checkout's own recipe offline, so a launch naming an artifact recipe with
+// recipe the launch names are both known -- `fugaro validate` judges the
+// checkout's own recipe offline, so a launch naming an artifact recipe with
 // --recipe is refused here rather than there. The two arms ask one function
 // (artifactOnBatchRefusal), so the boundary cannot be lifted from one path
 // while the other keeps it.
+//
+// What it judges is the recipe as recipeForLaunch resolves it, and that is not
+// always the recipe the runner reads: a project or catalog recipe's text
+// travels in the task and is exact, but a repository recipe (named, or the one
+// agent.recipe names) is read from this launcher's working tree, while the
+// runner reads it at the task's ref -- the repository's base branch unless the
+// launch names another. A working tree whose recipe is not mode: artifact
+// passes this gate for a ref whose recipe is. That residual is recorded in the
+// plan's Task 10 step 5 inventory, which closes it before the name is
+// selectable, and TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins
+// it.
 //
 // It has two shapes of its own, because a launch can arrive without a recipe
 // this launcher can read at all: the refusal for a recipe known to be mode:
@@ -1329,7 +1340,7 @@ func checkArtifactLaunch(ctx context.Context, env *cloudEnv, spec *task.Spec) er
 		// that repository here, or a first run whose recipe is the one this
 		// checkout's agent.recipe names) reaches the boundary as nil, which
 		// artifactOnBatchRefusal reads as "not an artifact run" -- and the
-		// runner resolves the same recipe at the task's ref, so on
+		// runner resolves that recipe at the task's ref, so on
 		// cloud-batch an unread recipe is refused rather than passed on.
 		return userErr("%s", artifactUnreadOnBatchRefusal(spec.Repo))
 	}

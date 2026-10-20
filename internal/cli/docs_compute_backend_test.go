@@ -1887,6 +1887,43 @@ func TestDocsComputeBackendTask10CarriesTheAccountRequirement(t *testing.T) {
 	}
 }
 
+// TestDocsComputeBackendTask10CarriesTheArtifactGatesRefResidual: the launch's
+// arm of the artifact boundary (run.go's checkArtifactLaunch) judges a
+// repository recipe by the file in the launcher's working tree, and the runner
+// reads it at the task's ref -- the repository's base branch unless the launch
+// names another. The plan does not ask Task 8 for more than validate's offline
+// refusal (Global Constraint 13 and Task 8 step 4 name the mechanisms), the
+// name is refused until Task 10, and Task 10's step 5 is the inventory a review
+// of the enable reads it against -- so the residual is a requirement there,
+// with its own test case, and TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef
+// pins the code's side of the same sentence. A trim of either half fails here.
+func TestDocsComputeBackendTask10CarriesTheArtifactGatesRefResidual(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	task := section(t, doc, "### Task 10: The enable", "## Phase C")
+	for _, want := range []string{
+		"**And a sixth, of the artifact boundary's kind (Global Constraint 13): the launch's gate reads a repository recipe from the launcher's working tree, and the runner reads it at the task's ref.**",
+		"**A working-tree recipe may differ from the base branch's**",
+		"`TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef`",
+		"**This task closes it before the name is selectable**",
+		"**step 5's sixth entry as its own case**",
+	} {
+		if !strings.Contains(task, want) {
+			t.Errorf("%s's Task 10 no longer says %q: the review of Task 8's second half left the launch gate's working-tree read to the enable, and the enable's own text is where it has to be", computeBackendPlan, want)
+		}
+	}
+	// The code's comments claim only what the gate enforces: neither arm is
+	// described as knowing the recipe the run will actually use.
+	for _, path := range []string{"internal/cli/validate_batch.go", "internal/cli/run.go"} {
+		src := readDoc(t, path)
+		if strings.Contains(src, "recipe the run will actually use") {
+			t.Errorf("%s still says the launch gate knows the recipe the run will actually use: for a repository recipe it reads this launcher's working tree, and the runner reads the task's ref", path)
+		}
+		if !strings.Contains(src, "Task 10") || !strings.Contains(src, "working tree") {
+			t.Errorf("%s does not state the working-tree residual and the task that closes it", path)
+		}
+	}
+}
+
 // TestDocsSharedConfigStatesTheImageChecksExactly: the design's §5 bullet is
 // what a later reader checks the reader's own batch.image checks against, so it
 // has to claim exactly what they enforce. Two halves are pinned here, and the

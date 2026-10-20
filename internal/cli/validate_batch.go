@@ -28,9 +28,16 @@ import (
 // resolves the way a launch would (agent.recipe, else the default); a launch
 // that names its own --recipe -- including one that would produce artifacts --
 // is judged by the launch's gate, run.go's checkArtifactLaunch, which asks the
-// same artifactOnBatchRefusal with the recipe the run will actually use. A
-// boundary enforced only here would be a hole the moment the name is
-// selectable, which is exactly what Global Constraint 13 exists to prevent.
+// same artifactOnBatchRefusal with the recipe the launch resolves: the text a
+// project or catalog recipe carries in the task, or, for a repository recipe
+// (named, or the one agent.recipe names), the file in this launcher's working
+// tree. The runner reads a repository recipe at the task's ref -- the
+// repository's base branch unless the launch names another -- so neither arm
+// sees the recipe the runner will read when the two differ: that residual is
+// recorded in the plan's Task 10 step 5 inventory, which must close it before
+// the name is selectable, and TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef
+// pins it. A boundary enforced only here would be a hole the moment the name
+// is selectable, which is exactly what Global Constraint 13 exists to prevent.
 //
 // NOT written here, and why, so a reader of Task 8's step 4 does not have to
 // reconstruct it: design §4.4's item 2 (docker: true requires a Docker-capable
@@ -131,7 +138,10 @@ func batchValidateProblems(lc *localcfg.Config, cfg *config.Config, rcp *recipe.
 // that only one of the two paths enforces is the hole Global Constraint 13
 // exists to keep shut: `fugaro run --recipe <an artifact recipe>` on a Batch
 // installation would be exactly that, and the launch's gate is where the
-// recipe the run will actually use is known.
+// recipe the launch names is resolved. Resolved as this launcher can: a
+// repository recipe is read from its working tree, not at the task's ref the
+// runner reads, and that difference is the residual the plan's Task 10 must
+// close (see the file comment above).
 func artifactOnBatchRefusal(backendName string, rcp *recipe.Recipe) (string, bool) {
 	if backendName != backend.CloudBatch || rcp == nil || rcp.Mode != recipe.ModeArtifact {
 		return "", false
@@ -156,7 +166,7 @@ const artifactOnBatchMessage = "an artifact-producing run is never launched on c
 // directory that is not a checkout of spec.Repo -- or a first run whose recipe
 // is whatever this checkout's agent.recipe names -- resolves it to nil, and
 // artifactOnBatchRefusal reads nil as "not an artifact run". The runner then
-// resolves the same recipe at the task's ref and runs it, which is an
+// resolves that recipe at the task's ref and runs it, which is an
 // artifact-producing run that reached a Batch VM without the boundary ever
 // seeing the mode. So the launch side fails closed instead, at a cost stated
 // plainly: a Batch launch from outside the repository's own checkout is refused
