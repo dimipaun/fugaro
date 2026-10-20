@@ -50,8 +50,13 @@ const (
 // AgentAuths are the values agent.auth may take: validate's check and every
 // reader that has to tell "an auth this Fugaro knows" from an arbitrary string
 // read one list, so a value the validator accepts is never one a reader
-// refuses as unknown.
-var AgentAuths = []string{"vertex", "api-key", "oauth", AuthCascade}
+// refuses as unknown. The values are spelled out here rather than named by
+// their constants because this literal is the list a reader reads: the desktop
+// console's scrub vocabulary is compared with it by name
+// (TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource, which parses
+// exactly this assignment), and TestValidateAcceptsCascade pins that every
+// constant above — AuthCascade today — is one of them.
+var AgentAuths = []string{"vertex", "api-key", "oauth", "cascade"}
 
 // KnownAgentAuth reports whether auth is one of AgentAuths.
 //
