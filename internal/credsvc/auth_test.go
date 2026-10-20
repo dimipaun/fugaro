@@ -313,16 +313,28 @@ func TestVerifyRefusesOtherProject(t *testing.T) {
 		}
 	})
 
-	t.Run("an ID token from another Firebase project", func(t *testing.T) {
-		f := newFixture(t)
-		tok := f.runToken(func(c map[string]any) {
+	// aud and iss are checked one at a time, so each is pinned on its own: a
+	// token that names the right issuer but was minted for another audience
+	// (a replay from another service's Firebase project) must be refused, and
+	// so must one that names our audience but another issuer.
+	cases := map[string]func(map[string]any){
+		"another audience, our issuer": func(c map[string]any) { c["aud"] = "other-firebase" },
+		"our audience, another issuer": func(c map[string]any) {
+			c["iss"] = "https://securetoken.google.com/other-firebase"
+		},
+		"both another project's": func(c map[string]any) {
 			c["aud"] = "other-firebase"
 			c["iss"] = "https://securetoken.google.com/other-firebase"
+		},
+	}
+	for name, mutate := range cases {
+		t.Run("an ID token from another Firebase project: "+name, func(t *testing.T) {
+			f := newFixture(t)
+			if _, err := f.verify(f.runToken(mutate), f.jobToken(), f.job); !errors.Is(err, ErrUnverified) {
+				t.Fatalf("err = %v, want ErrUnverified", err)
+			}
 		})
-		if _, err := f.verify(tok, f.jobToken(), f.job); !errors.Is(err, ErrUnverified) {
-			t.Fatalf("err = %v, want ErrUnverified", err)
-		}
-	})
+	}
 }
 
 // The uid names the run and the claims must agree with it: a token for one
@@ -338,7 +350,22 @@ func TestVerifyRefusesAnIdentityThatNamesTwoRuns(t *testing.T) {
 			c["sub"], c["user_id"] = "a-person-uid", "a-person-uid"
 		},
 		"two different uids": func(c map[string]any) { c["sub"] = "r~another-repo~20261020-090000-ffff" },
-		"no fx":              func(c map[string]any) { delete(c, "fx") },
+		// The Firebase uid is sub, and it is the uid the rules honour
+		// (auth.uid): a token whose sub names one run, whose user_id names
+		// another and whose fs/fr agree with sub must not be read as sub's
+		// run, because the two halves of the token disagree about who is
+		// calling.
+		"a uid that disagrees with sub, and claims that agree with sub": func(c map[string]any) {
+			c["sub"] = "r~another-repo~20261020-090000-ffff"
+			c["fs"], c["fr"] = "another-repo", "20261020-090000-ffff"
+		},
+		// The prefix is what makes the uid a run's: without it, a token whose
+		// uid is slug~run shaped is still nobody's.
+		"no r~ prefix on the uid": func(c map[string]any) {
+			uid := c["fs"].(string) + "~" + c["fr"].(string)
+			c["sub"], c["user_id"] = uid, uid
+		},
+		"no fx": func(c map[string]any) { delete(c, "fx") },
 		// The slug and the run id become a database path and a log line: a
 		// separator or a control character hiding in either is not one.
 		"a slug that is not a path segment": func(c map[string]any) {
@@ -460,9 +487,20 @@ func TestVerifyRefusesSharedJobRun(t *testing.T) {
 	if !strings.Contains(err.Error(), "shared") {
 		t.Errorf("err = %q, want it to say the job is shared", err)
 	}
-	// A run that names no job at all cannot be placed, so it is refused too.
-	if _, err := f.verify(f.runToken(), f.jobToken(), ""); !errors.Is(err, ErrUnverified) {
-		t.Fatalf("err = %v, want ErrUnverified for a run that names no job", err)
+	// A run that names no job at all cannot be placed, so it is refused too —
+	// and so is a job name that is not one clean header value: it is looked
+	// up in the policy and written into an audit line.
+	unplaceable := map[string]string{
+		"no job at all":             "",
+		"a newline in the job name": "fugaro-aurora\nX-Evil: 1",
+		"a job name past the bound": strings.Repeat("j", maxHeaderTokenBytes+1),
+	}
+	for name, job := range unplaceable {
+		t.Run(name, func(t *testing.T) {
+			if _, err := f.verify(f.runToken(), f.jobToken(), job); !errors.Is(err, ErrUnverified) {
+				t.Fatalf("err = %v, want ErrUnverified for a run that cannot be placed", err)
+			}
+		})
 	}
 }
 
@@ -539,14 +577,23 @@ func TestVerifyRefusesWhenTheOutcomeCannotBeRead(t *testing.T) {
 // refused; and one claiming a launch older than any run can be is refused
 // rather than scanned.
 func TestVerifyRefusesARunIDItCannotPlace(t *testing.T) {
-	t.Run("no timestamp", func(t *testing.T) {
-		f := newFixture(t)
-		f.run = "not-a-run-id"
-		_, err := f.verify(f.runToken(), f.jobToken(), f.job)
-		if !errors.Is(err, ErrUnverified) {
-			t.Fatalf("err = %v, want ErrUnverified", err)
-		}
-	})
+	unplaceable := map[string]string{
+		"a run id too short to hold a time": "not-a-run-id",
+		"a run id whose head is not a time": "abcdefgh-ijklmn-ee55",
+	}
+	for name, run := range unplaceable {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			f.run = run
+			_, err := f.verify(f.runToken(), f.jobToken(), f.job)
+			if !errors.Is(err, ErrUnverified) {
+				t.Fatalf("err = %v, want ErrUnverified", err)
+			}
+			if len(f.outcomes.asked) != 0 {
+				t.Errorf("days asked = %v, want none: a run whose launch day is unknown is refused, not scanned", f.outcomes.asked)
+			}
+		})
+	}
 
 	t.Run("an implausibly old launch", func(t *testing.T) {
 		f := newFixture(t)

@@ -185,6 +185,26 @@ func TestSwitchHeaderRoundTrip(t *testing.T) {
 	if _, ok, err := SwitchHeader(http.Header{}); ok || err != nil {
 		t.Fatalf("an answer with no switch reports (%v, %v), want (false, nil)", ok, err)
 	}
+
+	// A switch with no reason, or with a name that is not one, is not written:
+	// the run's log records why a call moved, and a record without the why is
+	// not one.
+	refused := map[string]Switch{
+		"no reason":    {To: "anthropic-key"},
+		"no target":    {From: "acct-one", Reason: ReasonExhausted},
+		"a bad target": {To: "anthropic key", Reason: ReasonExhausted},
+	}
+	for name, s := range refused {
+		t.Run(name, func(t *testing.T) {
+			h := http.Header{}
+			if err := SetSwitchHeader(h, s); err == nil {
+				t.Fatalf("SetSwitchHeader(%+v) was accepted", s)
+			}
+			if len(h) != 0 {
+				t.Errorf("a refused switch wrote %v", h)
+			}
+		})
+	}
 }
 
 // The refusal the service answers an unverified caller is a typed body, and
