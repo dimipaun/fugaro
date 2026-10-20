@@ -28,6 +28,9 @@ const (
 	windowsCLISpec   = "docs/windows-cli/spec.md"
 	windowsCLIRecon  = "docs/windows-cli/reconciliation.md"
 	windowsCLIPlan   = "docs/windows-cli/implementation-plan.md"
+	// windowsCLIWSL is Slice 0's document (T0.1): the route that works today,
+	// which is the only part of this folder a Windows reader can act on.
+	windowsCLIWSL = "docs/windows-cli/wsl.md"
 
 	// windowsCLIStatus is the index's status line, word for word: the folder is
 	// a plan with nothing implemented and every decision open. It moves only
@@ -52,6 +55,7 @@ var windowsCLIIndexedFiles = []string{
 	"[spec.md](spec.md)",
 	"[reconciliation.md](reconciliation.md)",
 	"[implementation-plan.md](implementation-plan.md)",
+	"[wsl.md](wsl.md)",
 }
 
 // windowsCLIClasses are the five words a finding may be classified with
@@ -63,11 +67,12 @@ var (
 	windowsCLITiers   = []string{"**Supported", "**Best effort", "**Not supported", "**Out of scope"}
 )
 
-// TestDocsWindowsCLIIsWritten: the folder exists with its index and its three
+// TestDocsWindowsCLIIsWritten: the folder exists with its index and its four
 // documents, the index carries the status line word for word and names the
-// other three files, and each document carries the structure the brief asked
+// other four files, and each document carries the structure the brief asked
 // for. Its red state is this test: the folder's guard did not exist until this
-// file did.
+// file did, and wsl.md's own red state was this test naming a document that was
+// not written yet (implementation-plan.md T0.1).
 func TestDocsWindowsCLIIsWritten(t *testing.T) {
 	readme := readDoc(t, windowsCLIReadme)
 	spec := readDoc(t, windowsCLISpec)
@@ -124,6 +129,34 @@ func TestDocsWindowsCLIIsWritten(t *testing.T) {
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s lacks %q", windowsCLIPlan, want)
+		}
+	}
+
+	// The WSL document (T0.1) is the one thing in this folder a Windows reader
+	// can act on today, so the claims it makes are pinned rather than left to a
+	// reader: the state of the native build, F39's two traps and its Claude Code
+	// requirement, and the console's own answer (F40). Each is a sentence a
+	// later edit can drop without any other symptom.
+	wsl := readDoc(t, windowsCLIWSL)
+	for _, want := range []string{
+		// The route, and the honest state of the native one beside it.
+		"Windows archive is published",
+		"**F39**",
+		"**F40**",
+		// F39's two traps, each by the path it is about: the checkout's
+		// filesystem and the two credential files that are not the same file.
+		"`/mnt/c`",
+		"file modes",
+		"~/.config/gcloud/application_default_credentials.json",
+		`%APPDATA%\gcloud\application_default_credentials.json`,
+		// F39's third requirement, which is not about the CLI at all.
+		"Claude Code",
+		"inside WSL",
+		// F40: the console cannot reach a WSL-only installation.
+		"desktop console",
+	} {
+		if !strings.Contains(wsl, want) {
+			t.Errorf("%s lacks %q", windowsCLIWSL, want)
 		}
 	}
 }
@@ -553,7 +586,7 @@ var proseLineRefRE = regexp.MustCompile(`[A-Za-z0-9_./-]+\.(go|ya?ml|md|json|tom
 // moved. A citation in prose is the kind that rots, which is why the header
 // forbids it and why this test exists.
 func TestDocsWindowsCLICitesNoProseLineNumbers(t *testing.T) {
-	for _, path := range []string{windowsCLIRecon, windowsCLIPlan, windowsCLIReadme} {
+	for _, path := range []string{windowsCLIRecon, windowsCLIPlan, windowsCLIReadme, windowsCLIWSL} {
 		doc := readDoc(t, path)
 		fenced := false
 		for i, line := range strings.Split(doc, "\n") {
