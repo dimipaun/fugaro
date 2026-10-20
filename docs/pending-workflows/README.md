@@ -588,11 +588,49 @@ git rm docs/pending-workflows/console-linux.yml
 git commit -m "console: build the Linux artifacts in CI"
 ```
 
-**One follow-up edit belongs in that commit**: the last section of
-`website/README.md` counts and names the files still pending in this directory,
-and `website/test/readme.mjs` holds that sentence to the directory in both
-directions. The sentence it needs after both of 2026-10-20's files are applied
-is in `## console-release-linux.yml` below.
+**Two follow-up edits belong in that commit**, because two sentences in this
+repository count the files still pending in this directory and both are held to
+the directory: the last section of `website/README.md` (which
+`website/test/readme.mjs` reads in both directions, count and names) and **this
+README's own opening line** (which `TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`
+holds to the same directory). Applying this file leaves
+`console-release-linux.yml` pending beside `shared-tests.yml`, so the two
+sentences that commit needs are (each block is the **exact** text to write in
+place of the sentence it replaces: the opening-line block is the whole claim,
+from its first bold marker to the end of its last sentence, and the sentence
+that follows it in this file — "**Two other files stay staged here by design**,
+`console-tests.yml` and `console-release.yml`" — is unchanged, because those two
+do stay staged):
+
+```
+**Two files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below) **and `console-release-linux.yml`** (the console's
+signing pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged
+`console-release.yml`; see `## console-release-linux.yml` below).
+```
+
+```
+`docs/pending-workflows/` now holds two pending workflows,
+`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+P4.3) — and `docs/pending-workflows/console-release-linux.yml` — the console's signing
+pipeline with the Linux legs added, which supersedes the staged `console-release.yml` and so
+is copied over it as well as into `.github/workflows/`. Neither is this site's:
+```
+
+The second block is the head of `website/README.md`'s last paragraph, up to and
+including "site's:"; the words that follow it on the page today — "the
+website's two manual workflows, `website-preview.yml` and
+`website-promote.yml` (#566)…" — are not part of this change and stay where they
+are. `TestStagedLinuxFilesSurviveTheCopyIn` splices exactly this text into the
+site's README (and the two blocks below into this one) and then runs this suite
+in the spliced tree, so a block that is not the text the tests need fails here
+rather than in the owner's commit.
+
+The sentences the second commit needs — with both of 2026-10-20's files applied
+and their staged copies removed — are the pair in
+`## console-release-linux.yml` below. `website/README.md` is never left saying
+"one pending workflow" while this one is still here: `readme.mjs` reads the
+directory, not the file's own history.
 
 ## `console-release-linux.yml`
 
@@ -661,18 +699,27 @@ change was merged in. That is the reason it is staged as a file of its own
 rather than as an edit to the staged `console-release.yml`, which is what the
 2026-10-19 change did.
 
-**One follow-up edit belongs in that commit.** The last section of
-`website/README.md` says how many workflows this directory still holds pending
-and names them, and `website/test/readme.mjs` fails in both directions — a
-staged file the README does not name, or a name for a file that is not staged —
-and it reads the count as a word. With both of 2026-10-20's files applied and
-their staged copies removed, this directory holds one pending workflow again and
-that sentence becomes:
+**Two follow-up edits belong in that commit**, the same pair the
+`## console-linux.yml` section above describes — this directory's own opening
+line and the last section of `website/README.md`, both of which count and name
+the files still pending here, and both of which are held to the directory
+(`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` and
+`website/test/readme.mjs`). With both of 2026-10-20's files applied and their
+staged copies removed, this directory holds one pending workflow again and the
+two sentences become (again, each block is the exact text to write; the
+opening-line block stops at the end of its last sentence, and the
+"**Two other files stay staged here by design**" sentence that follows it is
+unchanged — `console-tests.yml` and `console-release.yml` do stay staged):
+
+```
+**One file is pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below).
+```
 
 ```
 `docs/pending-workflows/` now holds one pending workflow,
 `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
-P4.3), which is not this site's: …
+P4.3), which is not this site's:
 ```
 
 **What cannot be checked here.** The linux job's steps run on a runner: this

@@ -757,7 +757,10 @@ jobs:
           npm run build
 
       # The packer, with no signing identity to discover and nothing to publish:
-      # `--publish never` is in the script itself. It runs the fuse hook
+      # `--publish never` is in the script itself. The `unset` below is
+      # unguarded on purpose: this job holds no signing material, and a shell
+      # that could not clear an inherited `CSC_*` variable has to fail here
+      # rather than carry it into the packer. It runs the fuse hook
       # (`dist/main/fuses.js`) against `release/linux-unpacked/fugaro-console`,
       # which reads the fuse wire back and fails the build if a flip did not
       # take -- so the binary inside both artifacts is the hardened one, or
@@ -770,7 +773,7 @@ jobs:
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
           set -euo pipefail
-          unset CSC_LINK CSC_NAME CSC_KEY_PASSWORD || true
+          unset CSC_LINK CSC_NAME CSC_KEY_PASSWORD
           npm run package:linux -- -c.extraMetadata.version="$VERSION"
           shopt -s nullglob
           appimages=(release/*.AppImage)

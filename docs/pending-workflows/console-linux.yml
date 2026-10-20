@@ -148,13 +148,18 @@ jobs:
       # this job has no signing material and must not acquire any by inheriting
       # a variable from the runner's environment, and
       # `CSC_IDENTITY_AUTO_DISCOVERY=false` is the packer's own switch for
-      # "look for no identity at all".
+      # "look for no identity at all". The `unset` is deliberately unguarded --
+      # no `|| true` -- because a shell that could not unset them is a shell
+      # about to hand the packer a signing identity this job must not have, and
+      # that has to fail the step rather than be swallowed (`|| true` belongs to
+      # the signing pipeline's cleanup step and nowhere else; the merge into
+      # `console-release.yml` is held to that too).
       - name: build the Linux artifacts
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
           set -euo pipefail
-          unset CSC_LINK CSC_NAME CSC_KEY_PASSWORD || true
+          unset CSC_LINK CSC_NAME CSC_KEY_PASSWORD
           npm run package:linux
           shopt -s nullglob
           appimages=(release/*.AppImage)
