@@ -102,12 +102,35 @@ repository builds no Windows binary."* and a `build:` block that mirrors
 `.goreleaser.yaml`'s `builds[0]`. `README.md`'s "## Requirements" ends with
 "macOS or Linux (Windows: untested). Docker is optional, for local image
 builds." `internal/cli/docs_website_install_test.go`
-(`TestWebsiteInstallFactsNameNoUnbuiltPlatform`) pins all of it to
-`.goreleaser.yaml`: the supported list must equal the built goos list, the
-untested list must be exactly the goos names the build does *not* produce, an
-unbuilt platform named in any prose block must carry the word "untested", and
-each install path's own platform list must be exactly the platforms the build
-produces.
+(`TestWebsiteInstallFactsNameNoUnbuiltPlatform`) pins all five, and it is worth
+stating its rules exactly rather than in summary, because D15 and T5.2 are
+written to them:
+
+1. `facts.build.os` and `facts.build.arch` must equal
+   `.goreleaser.yaml`'s `builds[0].goos` and `builds[0].goarch` — the one
+   exact-equality pin to the build matrix, and it is over the *structured*
+   fields.
+2. Every platform entry whose `status` is `supported` must name a goos the
+   build produces, and every entry whose `status` is `untested` must name one
+   it does not, and must carry the word "untested" in its own note. A third
+   status is refused.
+3. The supported entries, in file order, must equal the platforms
+   `README.md`'s "## Requirements" statement names — **not** the built goos
+   list — and the untested entries likewise. So it is README's sentence that
+   the file is pinned to, platform for platform.
+4. An unbuilt platform named in any prose block must sit in a block that says
+   "untested", and no block may make a support claim for it.
+5. Each install path's own `platforms:` list is pinned **per path, to a
+   different authority**: `archive` equals `builds[0].goos` exactly;
+   `homebrew` equals the platforms the README marker beside the `brew` line
+   names; `go-install` and `plugin` equal README's supported list; `cosign`
+   equals the platforms its own command block prints a checksum line for.
+   Every path's platforms must also be a subset of what the build produces.
+
+The distinction matters for this work because rule 3 means the Windows change
+is *not* only a `.goreleaser.yaml` edit: the moment `windows` joins `goos`,
+README's "## Requirements" sentence and the file's platform entries have to
+move with it or the guard refuses the half-change (T5.2).
 
 **Consequence.** Any change to what Windows *is* is a three-file change
 (`.goreleaser.yaml`, `website/data/install.yaml`, `README.md`) plus whatever
@@ -239,20 +262,47 @@ its answer decides where `fugaro config ls` looks *and* what
 `internal/localcfg/localcfg.go`'s `Save` writes. See D8.
 
 **F6 — `internal/shellword.Quote`: POSIX single-quoting, printed for a user to
-paste.** Class: **Gap**. `Quote` is correct POSIX and is used by seven call
-sites to build text the user is told to run: `internal/infra/hardening.go`,
-`internal/infra/projectcreate.go`, `internal/cli/doctor_signers.go`,
-`internal/preflight/google.go`, `internal/cli/init_retire.go`,
-`internal/cli/init_project.go` and `internal/cli/project_cmd.go`. In
-`cmd.exe` a single quote is an ordinary character, so `'-x'` is passed to the
+paste.** Class: **Gap**. `Quote` is correct POSIX and is reached from every
+command the CLI prints for a human to run. The census, because the size of this
+is the size of the work:
+
+```sh
+grep -rn --include='*.go' 'shellword\.Quote(' internal/ cmd/ | grep -v '_test.go'   # 15 sites, 6 files
+grep -rn --include='*.go' 'quoteWord('       internal/ cmd/ | grep -v '_test.go'   # 51 sites, 19 files
+grep -rln --include='*.go' 'shellword\.Quote(\|quoteWord(' internal/ cmd/ | grep -v '_test.go' | wc -l   # 24 files
+```
+
+Fifteen sites carry the name `shellword.Quote` — fourteen calls in five files
+(`internal/cli/doctor_signers.go` 7, `internal/preflight/google.go` 3,
+`internal/infra/projectcreate.go` 2, `internal/cli/project_cmd.go` 1,
+`internal/infra/hardening.go` 1) and the fifteenth in
+`internal/cli/init_repo_target.go`, which is the alias below rather than a call.
+Everything else goes through that alias, `quoteWord`:
+
+```go
+func quoteWord(s string) string { return shellword.Quote(s) }
+```
+
+— 51 call sites in 19 files, so **the two spellings together reach 24 non-test
+files**, `internal/cli/doctor.go`, `internal/cli/init.go`,
+`internal/cli/secrets.go`, `internal/cli/githubapp.go`,
+`internal/cli/doctor_launcher.go` and `internal/cli/image.go` among them. A
+change to what the CLI prints is therefore a change to a helper that half the
+package already calls, not to a list of seven. (The brief's own question about
+`internal/cli/init_retire.go` is answered by the census: it names no quoting
+function at all.)
+
+In `cmd.exe` a single quote is an ordinary character, so `'-x'` is passed to the
 program with the quotes attached; PowerShell treats `'…'` as a literal string,
 which is right, but PowerShell's escaping of an embedded `'` is `''` and not
-`'\''`, so the `it's` case is wrong there too. The same class covers prose
-Fix strings: `internal/preflight/preflight.go`'s `Environment` says "unset
-K", and `internal/cli/doctor.go` says "unset it and rerun" — neither is a
-Windows command. Cost: the printed commands are the CLI's instruction to a
-human, so on Windows they must either be shell-aware or be reworded to name
-the variable and let the platform document the syntax.
+`'\''`, so the `it's` case is wrong there too. The same class covers the prose
+Fix strings that are not commands at all: `internal/preflight/preflight.go`'s
+`Environment` and its neighbours say "unset K", "unset it and rerun" and
+"unset it (or drop http2debug) and rerun" — all three in that file, not in
+`internal/cli/doctor.go` — and none is a Windows command. Cost: the printed
+commands are the CLI's instruction to a human, so on Windows they must either
+be shell-aware or be reworded to name the variable and let the platform
+document the syntax.
 
 **F7 — `os.Rename` over an existing target: correct, with two limits.**
 Class: **Exists**. Go's `os.Rename` on Windows is
@@ -369,12 +419,20 @@ That is F12's problem, and it is the reason F12 cannot be solved by renaming
 anything.
 
 **F14 — terminal work is `golang.org/x/term` only, and that is
-cross-platform.** Class: **Exists**. Five non-test sites:
-`internal/cli/init.go`'s `stdinIsTerminal` (`term.IsTerminal`),
-`internal/cli/initsecrets.go` (`term.MakeRaw`),
-`internal/cli/secrets.go` (`term.ReadPassword`),
-`internal/cli/updatewarn.go` (`term.IsTerminal`). `x/term` implements all
-three on Windows through the console API. There is **no `/dev/tty`** anywhere
+cross-platform.** Class: **Exists**. Every call is one of the five functions
+the package has, in four files:
+
+```sh
+grep -rn --include='*.go' '\bterm\.[A-Z]' internal/ cmd/ | grep -v '_test.go'   # 12 call sites, 4 files
+```
+
+`term.IsTerminal` five times (`internal/cli/init.go`'s `stdinIsTerminal`,
+`internal/cli/initsecrets.go` twice, `internal/cli/secrets.go`,
+`internal/cli/updatewarn.go`), `term.MakeRaw` once and `term.Restore` four
+times and `term.GetState` once (`internal/cli/initsecrets.go`,
+`internal/cli/secrets.go`), and `term.ReadPassword` once
+(`internal/cli/secrets.go`). `x/term` implements all five on Windows through
+the console API. There is **no `/dev/tty`** anywhere
 in the module, and the pty dependency (`github.com/creack/pty`, in `go.mod`
 marked "tests only: the hidden-prompt test needs a pseudo-terminal") is used
 by three test files: `internal/cli/secrets_pty_test.go`,
@@ -411,7 +469,12 @@ See D9.
 **F17 — terminal size comes from Bubble Tea, never from an ioctl.** Class:
 **Exists**. `internal/watch/tui.go` handles `tea.WindowSizeMsg` and
 `internal/watch/render.go` falls back to `Width: 80` when nothing has been
-reported. The only `TIOCGWINSZ`-family constants in the tree are
+reported. The two constants the pty tests do name are `unix.TCGETS` and
+`unix.TIOCINQ` on linux and `unix.TIOCGETA` and `FIONREAD` on darwin — the
+termios read and the input-queue count, not a window size
+(`grep -rn 'TIOCGWINSZ' --include='*.go' .` finds nothing anywhere), which
+makes the claim stronger than an earlier draft of this finding stated. The
+only ioctl constants in the tree are
 `internal/cli/termios_linux_test.go` and `internal/cli/termios_darwin_test.go`,
 which are test-only and already gated by their `_linux`/`_darwin` filename
 suffix — so they are invisible to a Windows build rather than broken by it.
@@ -433,17 +496,40 @@ PKGS=$(go list -deps -f '{{.Dir}}' ./cmd/fugaro | grep -v '/internal/runner$' | 
 grep -rn --include='*.go' 'exec.Command\|exec.CommandContext' $PKGS | grep -v '_test.go'
 ```
 
-— `git` (`internal/gitops/gitops.go`, `internal/gitops/rejected.go`,
-`internal/imagecheck/gittree.go`, `internal/localcfg/localcfg.go`,
-`internal/cli/image.go`, `internal/cli/imagecheck.go`,
-`internal/cli/init_repo_target.go`'s `gitCmd`, `internal/cli/validate.go`,
-`internal/gitprov/fake/fake.go`), `docker` (`internal/image/local.go`, four
-sites), `terraform` (`internal/preflight/preflight.go`,
-`internal/cli/init.go`, `internal/cli/managed_apply.go`),
-`cosign` (`internal/basepin/cosign.go`), `claude`
-(`internal/claudeplugin/claudeplugin.go`), `mise` and `fugaro` itself
-(`internal/image/selftest.go`, which runs inside a Linux image), and
-`sh -c` (F3). **`gcloud` is not in that list** — F28. Cost: the Windows
+The sites that command returns, in its own order:
+
+- **`git`** — `internal/gitops/gitops.go` (the one every git operation goes
+  through), `internal/gitops/rejected.go`, `internal/imagecheck/gittree.go`,
+  `internal/localcfg/localcfg.go` (the `user.email` read),
+  `internal/cli/image.go` (three), `internal/cli/imagecheck.go`,
+  `internal/cli/init_repo_target.go`'s `gitCmd`, `internal/cli/validate.go`,
+  and `internal/gitprov/fake/fake.go`.
+- **`docker`** — `internal/image/local.go`. Its four `Cmd` literals name
+  `docker`, and all four arrive through one `exec.CommandContext` in that
+  file's `ExecRunner`.
+- **`terraform`** — **`internal/infra/tf/tf.go`**, which is the launcher
+  (`exec.CommandContext(ctx, t.bin, args...)`); the binary it runs comes from
+  `exec.LookPath("terraform")` in `internal/cli/init.go`,
+  `internal/cli/managed_apply.go` and `internal/preflight/preflight.go`'s
+  `lookPath`. The last of those three also execs it once directly, for
+  `version -json`. An earlier draft of this finding named the two `LookPath`
+  sites as if they were the launchers.
+- **`cosign`** — `internal/basepin/cosign.go`.
+- **`claude`** — `internal/claudeplugin/claudeplugin.go`.
+- **`sh -c`** — `internal/agent/fakeclaude/main.go` (the fake the agent tests
+  install, not a program a user needs), and F3's site in
+  `internal/verify/verify.go`, which reaches `sh` through `procgroup` rather
+  than through an `exec.Command` of its own.
+- **the image's own tools** — `internal/image/tools.go` runs whatever a tool
+  entry's `Argv` names, and `internal/image/selftest.go` runs `mise` and
+  `fugaro` itself. Both run **inside a Linux image**, which is out of scope
+  (the brief) and is why they are named here rather than counted as Windows
+  requirements.
+- **`internal/cli/image.go`**'s three sites are `git`, not `docker`, and
+  `internal/procgroup/procgroup.go` and `internal/image/local.go` are the two
+  general launchers (`c.Name`, `t.bin`) rather than a program of their own.
+
+**`gcloud` is not in that list** — F28. Cost: the Windows
 requirement is a `git` on `PATH` (Git for Windows, whose installer offers to
 put it there), a `terraform`, a `gcloud.cmd`, an optional Docker Desktop, and
 a Claude Code — F26 and F27.
@@ -549,11 +635,13 @@ Fix strings a platform.
 
 **F27 — `fugaro doctor`'s Fix strings are POSIX commands.** Class: **Gap**,
 folded into F6. Named here because `doctor` is the command a Windows user
-will run first and its advice is the CLI's own instruction:
-`internal/cli/doctor.go` prints "unset it and rerun",
-`internal/preflight/preflight.go`'s `Environment` prints "unset K",
-`internal/preflight/google.go` prints `gcloud …` lines through
-`shellword.Quote`.
+will run first and its advice is the CLI's own instruction. Three of the
+strings live in one file, `internal/preflight/preflight.go`:
+`internal/preflight/preflight.go`'s `Environment` says "unset K", and the same
+file's `Fix` strings say "unset it and rerun" and "unset it (or drop
+http2debug) and rerun". `internal/preflight/google.go` prints `gcloud …` lines
+through `shellword.Quote`. (An earlier draft of this finding put the first two
+in `internal/cli/doctor.go`; the string is not there.)
 
 **F28 — `gcloud` is never executed; it is only read and only named.** Class:
 **Exists**, and it is the answer to a question the brief asks directly. Seven
@@ -575,12 +663,29 @@ means the Windows documentation's gcloud requirement is one command, not a
 tool dependency of the CLI.
 
 **F29 — `gcloud`'s ADC file location is wrong on Windows, in three places.**
-Class: **Wrong**. `internal/cli/init_project.go`'s `adcInfo`,
-`internal/cli/init_inputs.go` and `internal/cli/managed_apply.go` each build
-the path as `$CLOUDSDK_CONFIG/application_default_credentials.json`, else
-`$XDG_CONFIG_HOME/gcloud/…`, else `~/.config/gcloud/…`. gcloud on Windows
-keeps its configuration in `%APPDATA%\gcloud` and reads neither `XDG_CONFIG_HOME`
-nor `~/.config`. Cost: on Windows the CLI cannot see that the user is signed
+Class: **Wrong**. Three functions build this path, and they are not three
+copies of one thing:
+
+```sh
+grep -rn 'application_default_credentials\|CLOUDSDK_CONFIG\|XDG_CONFIG_HOME' internal/cli/*.go | grep -v _test
+```
+
+- `internal/cli/init_project.go`'s `adcInfo` and
+  `internal/cli/managed_apply.go`'s `adcFile` both try
+  `$CLOUDSDK_CONFIG/application_default_credentials.json`, else
+  `$XDG_CONFIG_HOME/gcloud/…`, else `~/.config/gcloud/…`.
+- `internal/cli/init_inputs.go`'s `adcPath` — the third, and the one an
+  earlier draft described as identical — has **no `$XDG_CONFIG_HOME` step at
+  all**: it tries `$CLOUDSDK_CONFIG`, else `filepath.Join(home, ".config",
+  "gcloud")` with `home` from `os.UserHomeDir()`. It is the path
+  `adcQuotaProject` reads, and it is reached by the pre-flight checks rather
+  than by `init`'s own refusal.
+
+gcloud on Windows keeps its configuration in `%APPDATA%\gcloud` and reads
+neither `XDG_CONFIG_HOME` nor `~/.config`. The home half of the problem is
+already handled where `os.UserHomeDir()` is used — that call reads
+`%USERPROFILE%` on Windows — so what is wrong on every one of the three is the
+`.config/gcloud` part and, in the two with an XDG step, the step itself. Cost: on Windows the CLI cannot see that the user is signed
 in, so `doctor`'s ADC checks and `init`'s quota-project refusal report the
 wrong thing — and the refusal the user gets ("no ADC") is not the problem they
 have. Note the irony: `adcInfo` is deliberately careful (it reads a bounded
@@ -648,9 +753,16 @@ June 2023), or an **EV** certificate (a stricter identity check, a higher fee,
 and the reputation SmartScreen needs immediately rather than accumulating);
 then the certificate or its cloud key must reach the release job as a secret,
 and the release job must be a separate, protected file for the same reason the
-console's is (`docs/pending-workflows/console-release.yml`'s own comment says
-exactly this: a job holding signing material must not sit in a file that runs
-on every pull request). Cheaper alternatives that are not code signing:
+console's is. The console states the separation twice, once from each file and
+each in its own words: `docs/pending-workflows/console-tests.yml:29-30` says
+the tests hold "no secret of any kind" and that the signing job is "a separate
+file, because a job that runs on every pull request must not sit next to the
+Apple signing material", and `docs/pending-workflows/console-release.yml:44-46`
+gives the boundary from the signing side — its job "carries **no pull-request
+trigger of any kind**, and that is a security boundary rather than tidiness:
+this job reads the Apple signing certificate and the App Store Connect key, and
+a branch of this repository can open a pull request." (An earlier draft quoted
+the first sentence as though it were console-release.yml's own comment.) Cheaper alternatives that are not code signing:
 publishing the archive's SHA-256 (already done — `checksums.txt`) and telling
 the reader to unblock the file, and Scoop's `checkver`/`hash` flow, which
 records the hash in the manifest the user installs from. See D4.
@@ -679,8 +791,12 @@ GoReleaser "builds `fugaro` for darwin and linux on amd64 and arm64, writes
 `checksums.txt`, and the GitHub Release; it also pushes the Homebrew cask";
 `.goreleaser.yaml`'s `release.header` prints the Homebrew and `go install`
 lines; `website/data/install.yaml` and `README.md` hold the reader-facing
-platform claim; and `internal/cli/docs_website_install_test.go` holds the two
-of them to `.goreleaser.yaml`. Cost: the Windows change lands in five files
+platform claim; and `internal/cli/docs_website_install_test.go`
+(`TestWebsiteInstallFactsNameNoUnbuiltPlatform`) holds the two of them to
+`.goreleaser.yaml` — the structured `build:` block and the `archive` path's
+list exactly, the reader-facing lists to `README.md`'s own "## Requirements"
+sentence, and the three other install paths to their own markers and command
+blocks (C3 states the five rules). Cost: the Windows change lands in five files
 and one guard test; a change that touches the matrix and not the prose is
 caught, which is the point.
 
@@ -707,8 +823,8 @@ F9, F11, F12 and F20. Cost: this is why the plan can promise that main stays
 green on Linux and macOS while the port proceeds, and why it can be honest
 that the Windows job will be red for a while.
 
-**F37 — the copy-count caveat.** Every count above is volatile state: a
-committed test changes it. The commands are recorded with the figures so that
+**F37 — the copy-count caveat.** Class: **Rule**. Every count above is
+volatile state: a committed test changes it. The commands are recorded with the figures so that
 a later reader can re-run them, not so that the figures can be quoted as
 facts. This is the same rule `docs/setup-wizard/reconciliation.md` states for
 its own `fugaro init` count.
@@ -724,8 +840,10 @@ in the repository is `console-tests.yml`'s `jobs.<name>.strategy.matrix.os`,
 and it does not
 include Windows. A `windows-latest` job would run on GitHub-hosted Windows
 Server, billed at twice the Linux rate, with the same 6-hour ceiling. The
-`test` job's own comment in `ci.yml` records the owner's ruling of 2026-10-16
-that **pull requests are not merge-gated by CI**, so a Windows job is
+ruling is recorded in `ci.yml`'s **`on:` block** (`ci.yml:5-8`), not in a job's
+own comment: "Pull requests are not merge-gated by CI (owner's ruling
+2026-10-16: the in-run loop already runs the tests)", with `workflow_dispatch`
+the trigger a branch is run against on demand. So a Windows job is
 advisory on pull requests and runs on `main` by the same mechanism as the
 rest, unless D5 says otherwise.
 
@@ -803,10 +921,12 @@ and is excluded from every count below.
 | `getenv("HOME")` | 4 | 4 | as above |
 | `os.TempDir` | 2 | 8 | as above |
 | `os.UserHomeDir` | 7 | 7 | as above |
-| `golang.org/x/term` | 5 | 6 | as above |
-| `golang.org/x/sys/unix` | **0** | 4 (four test files: `internal/cli/initsecrets_pty_test.go` and `internal/cli/secrets_pty_test.go`, both `//go:build darwin \|\| linux`, and `internal/cli/termios_linux_test.go` and `internal/cli/termios_darwin_test.go`, both filename-gated) | as above |
+| `golang.org/x/term` | 12 | 12 | as above |
+| `golang.org/x/sys/unix` | **0** | 7 (four test files: `internal/cli/initsecrets_pty_test.go` and `internal/cli/secrets_pty_test.go`, both gated by a build tag that names darwin and linux, and `internal/cli/termios_linux_test.go` and `internal/cli/termios_darwin_test.go`, both filename-gated) | as above |
 | `os.DevNull` | 2 | 7 | as above |
 | `"/dev/` | **0** | 10 | as above |
+| `shellword.Quote(` | 15 | 17 | as above |
+| `quoteWord(` | 51 | 60 | as above |
 
 Two of those rows are the answer to a fear the brief's question list encodes:
 **`golang.org/x/sys/unix` appears in the CLI's packages only in tests, and
@@ -1092,14 +1212,24 @@ explaining why.
 release publishes a Windows archive; then move it to `supported` in the same
 commit that adds `windows` to `.goreleaser.yaml`'s `goos`, and add a WSL row
 as its own entry rather than as Windows prose.** The reason: C3's guard test
-requires an unbuilt platform to be marked untested and forbids a support
-claim; the moment the archive exists the test requires the *opposite*, so the
-two moves are one commit. And a WSL install path is a *path* in the file's own
-vocabulary (`paths:` with `platforms:`), not a note.
+ties these two documents to each other in both directions — an entry marked
+`untested` must name a platform the build does not produce and say "untested"
+in its own note, while an entry marked `supported` must name one it does
+produce and must sit in the list `README.md`'s "## Requirements" sentence
+names. So the moment `windows` joins `.goreleaser.yaml`'s `goos`, the
+`untested` form fails and the `supported` form passes, and the `README.md`
+sentence has to move in the same commit or it fails in turn: a half-change is
+refused, which is why the two moves are one commit. And a WSL install path is
+a *path* in the file's own vocabulary (`paths:` with `platforms:`), not a
+note; its `platforms:` list is then bound by C3's rule 5 to whichever
+authority that path's list is pinned to (`archive` exactly the build's goos,
+`homebrew` the README marker beside the brew line, `go-install` and `plugin`
+README's supported list, `cosign` its own command block).
 
 **Alternative: mark Windows "best effort" — a third status.** Cost: a new
-status the guard test does not know (`supported` or `untested` today), so it
-is a change to the guard test and to the site's renderer; and it is the status
+status the guard test does not know — it refuses any entry that is neither
+`supported` nor `untested` — so it is a change to the guard test and to the
+site's renderer; and it is the status
 that is hardest to keep honest, because nobody can say what "best effort" does
 not cover.
 

@@ -8,9 +8,12 @@ of reviewer it needs. **Nothing here is approved, and no task may be started
 before the [OWNER APPROVAL GATE](#owner-approval-gate) at the end is passed.**
 
 The findings below are cited by number (**F1**, **D4**, **C1**) and live in
-[reconciliation.md](reconciliation.md). Where a task cites a decision, the
-task is written to the *recommended* option and states what changes if the
-owner answers differently.
+[reconciliation.md](reconciliation.md) — the whole set is **F1–F42**, the
+decisions are **D1–D16** (all open) and the owner-run checks the plan needs are
+**U1–U13** in that document's UNVERIFIED table; the ranges are stated here so a
+citation in this plan can be read without opening the other document. Where a
+task cites a decision, the task is written to the *recommended* option and
+states what changes if the owner answers differently.
 
 **The shape of the whole thing, in one paragraph.** The tree already compiles
 for Windows in every package the CLI is made of except two (**C1**), it
@@ -48,6 +51,27 @@ Each task has:
     service or an external account.
 - **Depends on** — the tasks that must have landed.
 
+**Documentation tasks.** Five of the tasks below change documents and nothing
+else — T0.1 (`docs/windows-cli/wsl.md`), T0.2 (`docs/gcp-setup.md`), T0.3 and
+T1.5 (this folder's `README.md`) and T6.3 (its status line) — and the two
+bullets above are not relaxed for them: each names a red step below, and each
+is owned by a pin test in the style this repository's documentation folders
+use. There is no registry over `docs/`, so a folder that wants its documents
+pinned writes its own `internal/cli/docs_*_test.go` — the convention
+`internal/cli/docs_in_job_review_test.go` states for `docs/in-job-review/` —
+and this folder's is `internal/cli/docs_windows_cli_test.go`, whose standing
+guards are `TestDocsWindowsCLIIsWritten` (the index, its status line and the
+files it names), `TestDocsWindowsCLIFindingsDecisionsAndItemsAreNumbered` (the
+F, D, O and U series numbered from 1 with no gap, and the ranges the index
+states, checked against the documents' own counts),
+`TestDocsWindowsCLISupportTableNamesRealCommands` (§1's Commands column against
+the command tree), `TestDocsWindowsCLICensusStatesItsCommands` (§4's rows, each
+with its command) and `TestDocsWindowsCLIEveryDocTaskNamesItsGuard` (this
+paragraph). T0.2's document lives outside this folder, so its guard is a pin of
+its own. A red step for a documentation task is the pin that fails before the
+edit and passes after — which is what makes a document a deliverable rather
+than a draft.
+
 **Every slice is independently mergeable and leaves `main` green on Linux and
 macOS.** That is the plan's hardest constraint and the reason for the ordering
 below: no slice changes a POSIX code path, and every slice's `[pins]` and
@@ -67,11 +91,11 @@ reader, so it is per *command group* and it is stated in
 | Group | Commands | Tier at the end of this plan | Why |
 |---|---|---|---|
 | Identity | `version`, `doctor` | **Supported** | No shell, no cloud, no paths beyond the config dir; `doctor` gains the checks in F26. |
-| Reading config | `validate`, `config ls`, `config show`, `config layer`, `config backends` | **Supported** | `internal/config` + `internal/pluginwire`; the two-package fix in Slice 1 is exactly this path. |
+| Reading config | `validate`, `config list`, `config show`, `config layer`, `backends ls` | **Supported** | `internal/config` + `internal/pluginwire`; the two-package fix in Slice 1 is exactly this path. |
 | Reading state | `runs ls`, `artifacts ls`, `stats`, `budget show`, `logs`, `diagnose` | **Supported** | Read-only against the bucket, through the Go client libraries, with the ADC path fixed in Slice 1. |
 | Watching | `watch` (TUI, `--plain`, `--json`) | **Supported** | Bubble Tea supports Windows (F17, F18); the plain and JSON modes are the escape hatch. |
-| Setup | `init`, `secrets`, `accounts`, `allow`, `recipes`, `backends`, `project` | **Supported** | The wizard reads the terminal through `x/term` (F14) and has a non-interactive mode; `secrets set` needs a real Windows hidden-prompt check (**U3**). |
-| Running | `run`, `plan`, `cancel`, `report`, `follow`/attach, `restore` | **Supported** | Needs the whole auth path and, for `run`, the git and CLI wiring that Slice 4 covers. |
+| Setup | `init`, `secrets`, `accounts`, `allow-delete`, `recipes`, `backends ls`, `project` | **Supported** | The wizard reads the terminal through `x/term` (F14) and has a non-interactive mode; `secrets set` needs a real Windows hidden-prompt check (**U3**). |
+| Running | `run` (`--attach`), `plan`, `cancel`, `report`, `logs` (`--follow`), `restore` | **Supported** | Needs the whole auth path and, for `run`, the git and CLI wiring that Slice 4 covers. |
 | Repository tooling | `verify` | **Supported, with the shell rule of D7** | Runs the repository's own configured commands; the shell is chosen by platform. |
 | Local images | `image build --local`, `image selftest` | **Best effort** | Needs Docker Desktop; unverified until **U10**. |
 | In-job | `exec` (hidden) | **Not supported, not shipped as a user command** | Hidden, Linux-only, and untouched (F41). |
@@ -120,9 +144,14 @@ the native CLI. Mergeable now, before any decision on D1 is answered — it is
 worth doing under every answer.*
 
 **T0.1 — `docs/windows-cli/wsl.md`.** Files: `docs/windows-cli/wsl.md` (new),
-`docs/windows-cli/README.md` (the row). Red step: none in code — this is a
-`Rule` task; its red step is the link check. Verification: `[pins]` plus
-`grep -c 'wsl.md' docs/windows-cli/README.md`. Tier A. Depends on: nothing.
+`docs/windows-cli/README.md` (the row). Red step:
+`internal/cli/docs_windows_cli_test.go`'s `TestDocsWindowsCLIIsWritten` — add
+`[wsl.md](wsl.md)` and its index row to that guard's file list first, then run
+it and watch it fail on the document that is not written yet. This is a
+documentation task, and a `Rule` task: its pin is its red step. Verification: `[pins]`, which now includes
+`GOFLAGS=-p=2 go test ./internal/cli -run TestDocsWindowsCLIIsWritten -count=1`,
+plus `grep -c 'wsl.md' docs/windows-cli/README.md`. Tier A. Depends on:
+nothing.
 Content: what WSL is for, that a Linux `fugaro` inside WSL is the Linux path
 exactly (F39), the two traps (a checkout under `/mnt/c` has no real file modes
 and is slow; gcloud's ADC inside WSL is a *different file* from the Windows
@@ -131,8 +160,15 @@ a `fugaro`, and that Fugaro does not support the console on Windows (F40).
 Commit: `docs(windows-cli): the WSL route, which works today`.
 
 **T0.2 — the Windows text `docs/gcp-setup.md` is missing.** Files:
-`docs/gcp-setup.md`, `internal/cli/docs_*.go` if a guard pins that guide's
-headings (check before editing). Red step: none — `Rule` task. Verification:
+`docs/gcp-setup.md`, `internal/cli/docs_gcp_setup_test.go` (**new**) — no
+guard pins that guide at all today — plus `internal/cli/docs_*.go` if a guard
+turns out to pin its headings (check before editing). Red step:
+`internal/cli/docs_gcp_setup_test.go`'s `TestDocsGCPSetupNamesTheWindowsForm`:
+write the pin first, naming the two commands in the Windows and WSL forms the
+guide must carry, and watch it fail against today's guide. This documentation
+task's guard does not exist yet, so the guard is the task's first
+deliverable. Verification:
+`GOFLAGS=-p=2 go test ./internal/cli -run DocsGCPSetup -count=1`, then
 `[pins]`. Tier A. Depends on: **D1** (if the answer is WSL-only, this task is
 the *only* one that ships). Content: the two commands the guide has a user run
 (`gcloud auth application-default login` and the Fix commands), in a Windows
@@ -140,8 +176,13 @@ form and a WSL form, without deciding F6 for the CLI's own printed text.
 Commit: `docs(gcp-setup): the Windows and WSL forms of the two commands the user runs`.
 
 **T0.3 — state the plan's own status where a reader looks.** Files:
-`docs/windows-cli/README.md`. Verification: `[pins]`. Tier A. Depends on:
-T0.1. This is the slice's index task and it is what makes the first cut
+`docs/windows-cli/README.md`. Red step:
+`internal/cli/docs_windows_cli_test.go`'s `TestDocsWindowsCLIIsWritten` asserts
+the status line word for word, so the change and its evidence arrive together —
+move the line in the guard first, watch the guard fail against the unchanged
+`README.md`, then move the document and the line together. This is a documentation task:
+it changes this folder's index and nothing else. Verification:
+`[pins]`. Tier A. Depends on: T0.1. This is the slice's index task and it is what makes the first cut
 reviewable as a unit.
 
 ---
@@ -201,8 +242,14 @@ hatch); else the platform's own config directory (`%APPDATA%` on Windows,
 refusal is actionable. Commit: `localcfg: the platform's own config and cache directories, XDG still first`.
 
 **T1.4 — the ADC path (F29).** Files: `internal/cli/init_project.go`
-(`adcInfo`), `internal/cli/init_inputs.go`, `internal/cli/managed_apply.go`,
-and the shared path builder they should have been sharing. Red step: a new
+(`adcInfo`), `internal/cli/managed_apply.go` (`adcFile`),
+`internal/cli/init_inputs.go` (`adcPath`), and the shared path builder the
+three should have been sharing. They are not three copies of one thing today:
+`adcInfo` and `adcFile` both try `$CLOUDSDK_CONFIG`, then
+`$XDG_CONFIG_HOME/gcloud`, then `~/.config/gcloud`, while `adcPath` has **no
+`$XDG_CONFIG_HOME` step at all** — it goes straight from `$CLOUDSDK_CONFIG` to
+`os.UserHomeDir()/.config/gcloud`. All three are wrong on Windows at the
+`.config/gcloud` segment; only the two are wrong about XDG. F29 states this. Red step: a new
 test in `internal/cli` that sets `APPDATA` and no `XDG_CONFIG_HOME` and
 asserts the path is `<APPDATA>/gcloud/application_default_credentials.json`;
 it fails today. Verification: `go test ./internal/cli -run 'ADC|Init|Managed' -count=1`,
@@ -215,9 +262,14 @@ Commit: `cli: gcloud's ADC file where gcloud keeps it, per platform`.
 
 **T1.5 — the first cut's own guard.** Files: `docs/windows-cli/README.md`
 (the numbers), plus — if the owner agrees at review — a build-tagged
-cross-compile check. Red step: none; `Rule` task. Verification: `[cross]`
-must be clean from a Linux checkout, and the commit message records the
-command and its output. Tier A. Depends on: T1.1–T1.4. **Do not add
+cross-compile check. Red step:
+`internal/cli/docs_windows_cli_test.go`'s
+`TestDocsWindowsCLIFindingsDecisionsAndItemsAreNumbered` checks the ranges the
+index states against the documents' own counts, so a headline figure tightened
+without the document that carries it fails it — tighten the figure in the guard
+first and watch it fail. This is a documentation task whose subject is the
+first cut's own numbers. Verification: `[cross]` must be clean from a Linux
+checkout, and the commit message records the command and its output. Tier A. Depends on: T1.1–T1.4. **Do not add
 `GOOS=windows` to `fugaro.yaml`'s `commands.build` here**: that would make
 every contributor's `fugaro verify build` cross-compile, which is a different
 decision (it is Slice 6's, and it costs every Linux build a Windows build's
@@ -244,7 +296,11 @@ execs gcloud (F28). Commit: `doctor: check the two tools it assumed, and say whi
 
 **T2.2 — the printed commands get a platform (F6, F27).** Files:
 `internal/shellword/shellword.go` (a platform-aware entry point beside the
-existing `Quote`), its seven call sites, `internal/cli/doctor.go`,
+existing `Quote`), the sites that print a command to be pasted — **15** direct
+`shellword.Quote` call sites and the **51** `quoteWord` call sites that reach
+it through `internal/cli/init_repo_target.go`'s alias, **24 files** between
+them (F6 states the three commands that produce those figures, and they are
+volatile state: re-run them, do not quote them) — `internal/cli/doctor.go`,
 `internal/preflight/preflight.go`. Red step: a table test asserting
 `QuoteFor("windows", "it's")` and the `cmd.exe` case; it fails today. Tier A
 for the code, **Tier B** to accept *done*, because the only real proof is
@@ -252,8 +308,11 @@ pasting the string into `cmd.exe` and PowerShell. Verification:
 `go test ./internal/shellword ./internal/cli ./internal/preflight`, `[pins]`,
 `[cross]`. Depends on: nothing. Two sub-choices with different costs, and the
 task should take the cheap one first: (a) make the quoting platform-aware
-(correct, and it means `Quote`'s callers must pass the platform down, which is
-a signature change at seven sites); or (b) keep POSIX quoting and reword the
+(correct, and it means `Quote`'s callers must pass the platform down: a
+signature change at 15 call sites in 6 files, or the same effect for the 51
+that go through it by changing the one-line `quoteWord` alias at
+`internal/cli/init_repo_target.go:102`, which is the cheap shape of this
+option); or (b) keep POSIX quoting and reword the
 *prose* Fix strings that are not commands — "unset K" becomes "remove the
 variable K from this shell's environment" — which touches no signature and is
 what the two prose sites in F27 need anyway. The plan does (b) in this task
@@ -434,7 +493,11 @@ Verification: `[pins]` green again after the edit. Tier A. Depends on: T5.1.
 Content: Windows moves from `untested` to `supported` with its own install
 path (the `go-install` path's platform list too), the prose in `README.md`'s
 requirements line stops saying "Windows: untested", `docs/release.md` names
-the `goos` list correctly, and — per D15 — WSL gets its own `paths:` entry
+the `goos` list correctly, and each install path's `platforms:` list stays
+pinned to its own authority as C3's rule 5 states — only the `archive` path's
+list is the build's `goos` exactly, the other three follow `README.md` and
+their own markers, so a path whose list has to change is a change to the
+authority it follows first, and — per D15 — WSL gets its own `paths:` entry
 rather than a note. If the owner answers D15 the other way (a third "best
 effort" status), this task grows a guard-test change and the site's renderer,
 and that cost belongs in the answer. Commit:
@@ -483,7 +546,10 @@ the staged file is the *complete* intended content for the owner to copy, not
 a diff — the convention `docs/pending-workflows/README.md` states and
 `TestConsoleTestsWorkflowIsStagedAndPinned` enforces (`O4`). Red step:
 `[pins]` — `docs/pending-workflows/README.md` has guard tests that name its
-rows (`TestPendingWorkflowsReadmeNamesTheConsoleRows` and its siblings), so a
+rows (`TestDocsPendingWorkflowsReadmeNamesTheConsoleRows` and its sibling
+`TestPendingWorkflowsReadmeNamesTheConsoleTestsRow`, both in
+`internal/cli/docs_desktop_console_test.go` — an earlier draft of this task
+named a test that does not exist), so a
 new row without its name in the right places fails them. Verification:
 `[pins]`, plus a YAML parse of the staged file. Tier A to write, **Tier C to
 install** (`.github/workflows/` is owner-only). Depends on: Slice 3 (a job
@@ -508,7 +574,12 @@ nothing. Commit: `ci: the Windows job gates, one release after it went green`.
 **T6.3 — the support tier goes into the docs' own convention.** Files:
 `docs/windows-cli/README.md` (the status line changes from `plan only; nothing
 is implemented; decisions open` to the tier the work actually reached). Red
-step: `[pins]`. Verification: `[pins]`. Tier A. Depends on: everything the
+step: `internal/cli/docs_windows_cli_test.go`'s `TestDocsWindowsCLIIsWritten`,
+which pins the status line word for word — write the new line into the guard
+first, watch it fail against the document that still carries the old one, and
+land the two together with the evidence that licenses the move. This is a
+documentation task, and the last one in the plan. Verification:
+`[pins]`. Tier A. Depends on: everything the
 status line claims. This task exists because the status line is a promise the
 same way `website/data/install.yaml`'s platform list is, and it must not be
 moved earlier than the evidence.
