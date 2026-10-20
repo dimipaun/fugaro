@@ -228,9 +228,14 @@ export const ONBOARDING_COPY: Readonly<Record<'install-cli' | 'first-installatio
 }>> = Object.freeze({
   'install-cli': Object.freeze({
     title: 'Install the Fugaro CLI first',
-    // Terse and true: what is missing, and that this console looked. The list of
-    // places is drawn from the answer's own `searched`, not from this sentence.
-    body: 'The console drives the Fugaro CLI, and it found none at the places it looks.',
+    // Terse and true, and deliberately **silent about the cause**: three failures
+    // of rule 4's resolution draw this screen -- nothing found anywhere, a
+    // candidate that exists and does not answer `version`, and a `binaryPath` in
+    // `installations.json` that is not absolute -- and only the first is "it found
+    // none". The cause is never in this sentence: it is the resolution's own,
+    // drawn beneath it as `state.reason`. The list of places is drawn from the
+    // answer's own `searched`, not from this sentence either.
+    body: 'The console drives the Fugaro CLI, and it has none it can use:',
     link: 'Open the getting-started guide',
   }),
   'first-installation': Object.freeze({
@@ -375,16 +380,31 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
   }
 
   /** onboardingNodes is one screen, as elements: the title, the one sentence of
-   * what is missing, the one command, and the one link -- plus, for the
-   * absent-binary screen, the places the resolution looked, which is a fact the
-   * answer carries and this view does not paraphrase. */
+   * what is missing, the resolution's own sentence for the absent-binary screen,
+   * the one command, and the one link -- plus, for that screen, the places the
+   * resolution looked, which is a fact the answer carries and this view does not
+   * paraphrase.
+   *
+   * `state.reason` is drawn **as it arrived**: this screen is built for every
+   * failure of rule 4's resolution, and only one of the three -- nothing found --
+   * is described by the fixed words above. A candidate that exists and does not
+   * answer `version`, and a `binaryPath` in `installations.json` that is not
+   * absolute, are this screen too, and the sentence that says so is the one the
+   * operator can act on. A screen that dropped it would tell an operator to
+   * install a CLI they already have. */
   const onboardingNodes = (state: Exclude<OnboardingState, { kind: 'none' }>): PickerElement[] => {
     const copy = ONBOARDING_COPY[state.kind]
     const nodes: PickerElement[] = [
       label('h2', copy.title, 'the onboarding title'),
       label('p', copy.body, 'the onboarding sentence'),
-      label('code', state.command, 'the onboarding command'),
     ]
+    // The resolution's own sentence, and the places it looked, are the
+    // absent-binary screen's alone: the other screen is drawn because a binary
+    // **was** found, so its answer carries neither fact.
+    if (state.kind === 'install-cli') {
+      nodes.push(label('p', state.reason, 'the resolution’s own sentence'))
+    }
+    nodes.push(label('code', state.command, 'the onboarding command'))
     if (state.kind === 'install-cli') {
       nodes.push(label('p', `Looked in: ${state.searched.join(', ')}`, 'the places the console looked'))
     }

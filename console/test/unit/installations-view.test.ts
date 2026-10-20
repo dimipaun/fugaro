@@ -429,22 +429,53 @@ describe('the picker’s document and its view', () => {
     ])
   })
 
-  it('renders the absent-binary screen, with the command and the places it looked', async () => {
+  it('renders the absent-binary screen, with the resolution’s own sentence, the command and the places it looked', async () => {
     const { element } = await mount({ onboard: ONBOARD_CLI, rows: [] })
     const screen = element('picker-onboarding')
     const copy = ONBOARDING_COPY['install-cli']
+    const state = ONBOARD_CLI as Extract<OnboardingState, { kind: 'install-cli' }>
     expect(screen.children.map((child) => [child.tag, child.textContent])).toEqual([
       ['h2', copy.title],
       ['p', copy.body],
+      // The resolution's own sentence, drawn as it arrived. It is the one line
+      // that names what actually went wrong, and it is **not** interchangeable
+      // with the fixed sentence above: three different failures draw this screen
+      // (see the case below), and only one of them is "nothing was found".
+      ['p', state.reason],
       // The command is the main process's, byte for byte: this view spells none
       // of it.
-      ['code', ONBOARD_CLI.kind === 'install-cli' ? ONBOARD_CLI.command : ''],
-      ['p', `Looked in: ${ONBOARD_CLI.kind === 'install-cli' ? ONBOARD_CLI.searched.join(', ') : ''}`],
+      ['code', state.command],
+      ['p', `Looked in: ${state.searched.join(', ')}`],
       ['button', copy.link],
     ])
     // The screen is the whole of what the window says: the status line is empty
     // over it rather than a second voice.
     expect(element('picker-status').textContent).toBe('')
+  })
+
+  it('draws the sentence that names the real problem, for a CLI that was found and refused', async () => {
+    // `installCliState` is built for **every** failure of rule 4's resolution,
+    // and two of the three are not "no binary was found": a candidate that exists
+    // and exits non-zero or times out on `version`, and a `binaryPath` in
+    // `installations.json` that is not absolute. A screen that drew only a fixed
+    // "it found none" sentence would tell an operator to install a CLI they have
+    // -- and the sentence that says what actually happened reaches this view in
+    // `reason`, which is what this case holds.
+    const refused: OnboardingState = {
+      kind: 'install-cli',
+      reason: 'the binary exited 7 for `version`: not a fugaro CLI',
+      searched: ['/opt/homebrew/bin'],
+      command: 'brew install dimipaun/tap/fugaro',
+    }
+    const { element } = await mount({ onboard: refused, rows: [] })
+    const lines = (element('picker-onboarding').children as readonly FakeElement[]).map((child) => child.textContent)
+    expect(lines, 'the sentence naming the real problem was dropped').toContain(
+      'the binary exited 7 for `version`: not a fugaro CLI',
+    )
+    // ...and the fixed sentence does not claim a cause of its own, which is what
+    // makes it true on all three failures. This is the mutation: a `body` that
+    // said the CLI was not found sends this operator to install one they have.
+    expect(ONBOARDING_COPY['install-cli'].body).not.toMatch(/found none|not found|no fugaro/)
   })
 
   it('renders the no-installation screen, with the one command', async () => {

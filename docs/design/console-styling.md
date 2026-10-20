@@ -229,8 +229,8 @@ row button.
 |---|---|---|
 | Heading | (no id — `h1`) | "Installations" |
 | Status line | `#picker-status` | one of the states below |
-| Onboarding screen | `#picker-onboarding` | `h2`, one `p`, the one command as a `code`, and one link `button`; empty when there is nothing to onboard |
-| List | `#picker-list` → `li` rows | `li` with the row text and up to five `button`s ("Choose"/"Chosen", one per `checkouts` directory the CLI listed, "Stop using this checkout", "Remove") |
+| Onboarding screen | `#picker-onboarding` | `h2`, one `p` of fixed words, the one command as a `code`, and one link `button` — plus, for the **absent-binary** screen only, the resolution's own sentence as a `p` and the places it looked as a `p` ("Looked in: …"); empty when there is nothing to onboard |
+| List | `#picker-list` → `li` rows | `li` with the row text and that row's own buttons: "Choose"/"Chosen", then one `Use <directory>` per checkout the CLI listed **except the one in use**, then "Stop using this checkout" when one is in use, and "Remove" when the console holds a record for the installation. **There is no per-row cap** — the buttons are the installation's own `checkouts`, which `checkoutsOf` bounds at `MAX_DISCOVERED_INSTALLATIONS` (256) per row |
 | Warnings | `#picker-warnings` → `li` lines | the CLI's own `warnings` lines, one each |
 
 **The add form is gone** (the owner's ruling of 2026-10-20, `desktop-console.md`

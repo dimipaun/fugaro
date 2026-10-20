@@ -1780,14 +1780,16 @@ eight; there is **no `add`, no `pickBinary`, no `pickConfig` and no `pickCheckou
 so `createPickTokens`, `MAX_OUTSTANDING_PICKS` and the one `dialog.showOpenDialog`
 call are gone with them, and the picker window is where `dialog` is no longer a dep;
 and a **path is not a subject** of any row any more — a row is keyed by a project
-name, plus a directory out of that installation's own `checkouts`. `validateInstallation`
-and the `doctor --json` pairing check are still spawns, but they run on a **choose**
-and on a **checkout** rather than on an add, which is the next section's own record.
+name, plus a directory out of that installation's own `checkouts`. The resolution and
+the version handshake are still spawns, but they run on a **choose**
+(`probeInstallation`, which runs no `doctor`) and the pairing check runs when a
+**checkout** is set (`validateInstallation`, which is where rule 7's `doctor --json`
+is spawned) rather than on an add, which is the next section's own record.
 The full account of what replaced the form is in "The first run asks for nothing"
 below.
 
 `src/main/index.ts` wires it in: `installInstallationPicker(...)` with Electron's
-own `BrowserWindow`, `session.defaultSession`, `ipcMain`, `dialog`, `Menu` and
+own `BrowserWindow`, `session.defaultSession`, `ipcMain`, `shell`, `Menu` and
 `app`, then `installMenu()`, then `openOnFirstRun()` after the handshake has
 settled. The picker keeps the registry, and `picker.installation()` is the
 seam the renderer entry (Task 3.4a) needs to answer the dashboard's
@@ -3755,16 +3757,39 @@ Nothing in the first run wants a repository. The one place a repository is genui
 needed is the pairing check, so that is where the question lives now: a row offers
 the checkouts **the CLI listed for that installation**, one button each, and setting
 one runs the allow-listed `doctor --json` with that directory as the child's working
-directory. A directory the CLI never listed is refused by name — `not one of the
-checkouts the CLI listed` — and a row that already has one offers to drop it, which
-is how an operator gets back to the ordinary no-checkout state. `~/.config/fugaro` is
-still not read by the console: the CLI is the reader.
+directory. That check is `validateInstallation`, and it is handed the same two facts
+a **choose** is probed with: the record's own `binaryPath` — rule 4's first
+*candidate*, so an installation whose only `fugaro` is its override is checked
+against the CLI the console drives rather than against whatever the walk finds — and
+the record's `configPath`, which is rule 3's `--config` for the `doctor`. A record
+with no override passes none, and the walk decides. A directory the CLI never listed
+is refused by name — `not one of the checkouts the CLI listed` — and a row that
+already has one offers to drop it, which is how an operator gets back to the
+ordinary no-checkout state. `~/.config/fugaro` is still not read by the console: the
+CLI is the reader.
+
+### The absent-binary screen carries the resolution's own sentence
+
+`OnboardingState.reason` — the sentence `resolveBinary`, or the version probe inside
+it, answered with — is drawn by the renderer as a paragraph of its own, above the
+install command. The screen's **fixed** sentence is silent about the cause on
+purpose: `installCliState` is built for **every** failure of rule 4's resolution, and
+only one of the three is "nothing was found". A candidate that exists and exits
+non-zero or times out on `version`, and a `binaryPath` in `installations.json` that
+is not absolute, draw this same screen — so a fixed sentence that said the CLI was
+not found sent an operator to install one they already had, and the sentence naming
+the real problem was dropped. The reason reaches no warning line while a screen is
+drawn (`listReply` forwards it only for D13's no-installation state), which is why
+the screen is the one place it is said. `installations-view.test.ts` pins both
+halves: the reason is drawn, and the fixed words claim no cause.
 
 ### The two screens, and the two constants they copy
 
-- **No `fugaro` binary: "Install the Fugaro CLI first"** — the sentence, the places
-  the resolution looked (the answer's own `searched`, drawn as the answer gave it),
-  `brew install dimipaun/tap/fugaro`, and a link button to
+- **No `fugaro` binary: "Install the Fugaro CLI first"** — the fixed sentence, the
+  resolution's **own** sentence (`state.reason`, drawn as it arrived: this screen is
+  what every failure of rule 4's resolution draws, and only one of the three is "it
+  found none"), the places the resolution looked (the answer's own `searched`, drawn
+  as the answer gave it), `brew install dimipaun/tap/fugaro`, and a link button to
   `https://fugaro.dev/getting-started/`.
 - **A binary and no installation: "Set up your first installation"** — one sentence,
   `fugaro init`, and the same link button.
@@ -3773,8 +3798,9 @@ Both commands live in **one constant each** in `src/main/onboarding.ts`, and
 `test/unit/onboarding.test.ts` pins them to the repository's own copies: the install
 command to the `brew install ` lines of `website/data/install.yaml` (whose own Go test
 pins those in turn to the `README.md` line each `source:` names), to `README.md`, and
-to `SOURCE_INSTALL_COMMAND`, the constant `src/source/cli.ts` has carried since Task
-4.4; the setup command to `README.md`'s getting-started step (`1. Run …`) and to
+to `FUGARO_INSTALL_COMMAND`, the constant `src/source/cli.ts` has carried since Task
+4.4 (which `src/main/onboarding.ts` re-exports, so the console spells the command
+once); the setup command to `README.md`'s getting-started step (`1. Run …`) and to
 `internal/cli/config_init.go`'s `Use: "init"`, which is the thing that would have to
 change for the string to be wrong — and the module names `docs/setup-wizard/`, whose
 plan renames it to `fugaro setup`, so the rename is one line and one red test. The
@@ -3919,10 +3945,14 @@ the failure is the red step, and each test goes red **by name**.
 | the store's project-uniqueness check removed (the id one kept) | `installations-store.test.ts`, "refuses two entries for one project" |
 | the source binding given the run's resolution again (`chosen.binary ?? resolvedBinaries.get(chosen.project)`) | `startup.test.ts`, "answers the header from this run's resolution, and keeps the record for the source" |
 | `InstallationRef.source` read from anything but the record's override (`'configured'` in both cases) | `bound-source.test.ts`, "says `configured` only for a record that carries an override, and `well-known` otherwise" |
+| a checkout validated without the record's own binary (`validateInstallation({ project, checkout }, …)`) | `installations-ipc.test.ts`, "probes the record's own override, and its config, rather than a second walk of rule 4" — the installation whose only `fugaro` is its override is refused |
+| a checkout validated without the record's `configPath` | the same case, on the pairing check's `--config` |
+| the absent-binary screen dropping the resolution's own sentence | `installations-view.test.ts`, "draws the sentence that names the real problem, for a CLI that was found and refused" |
+| the screen's fixed sentence claiming a cause again ("it found none at the places it looks") | the same case — the cause is the reason line's, never the fixed words' |
 
 ### The verification, and what it did not cover
 
-`npx vitest run --dir test/unit` under Node 22 is green — **56 files, 2026 passed, 1
+`npx vitest run --dir test/unit` under Node 22 is green — **56 files, 2028 passed, 1
 skipped** (the console's own suite; the verify container runs this repository's Go
 build and test, so the console's tests are run locally and the pull request says so)
 — and `npx tsc --noEmit` is clean, which typechecks the Playwright specs too.

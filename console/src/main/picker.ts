@@ -653,9 +653,14 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * 7's `doctor --json` from that directory with that project). Clearing one
    * runs nothing: there is no pairing to check without a checkout, and an
    * installation without one is a state the console supports (rule 5).
+   *
+   * The check runs against the installation's **own** CLI: the record's override
+   * is candidate one of rule 4's walk, and the `--config` rule 7's `doctor` takes
+   * is the record's own config path -- the same two facts a choose is probed with.
    */
   const setInstallationCheckout = async (project: string, checkout: string | undefined): Promise<unknown> => {
-    if (registry.entry(project) === null && !lastListed.has(project)) {
+    const held = registry.entry(project)
+    if (held === null && !lastListed.has(project)) {
       return { ok: false, reason: `no installation is named ${JSON.stringify(project)}` }
     }
     if (checkout === undefined) {
@@ -672,7 +677,24 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         reason: `${checkout} is not one of the checkouts the CLI listed for ${JSON.stringify(project)}`,
       }
     }
-    const validated = await validateInstallation({ project, checkout }, validationDeps())
+    // The record's own override and config path, exactly as `chooseInstallation`
+    // passes them: the check that runs here is the same rule 4 resolution and the
+    // same version handshake, and rule 7's `doctor` reads the config the record
+    // names. Validating `{ project, checkout }` alone let rule 4's walk decide
+    // which CLI was asked -- so an installation whose only `fugaro` is its
+    // override was refused, and one whose override is a different CLI than the
+    // walk finds was checked by a binary this console does not drive, with no
+    // `--config`. A record with no override passes nothing, and the walk decides,
+    // which is rule 4's ordinary case.
+    const validated = await validateInstallation(
+      {
+        project,
+        checkout,
+        ...(held?.binaryPath === undefined ? {} : { binaryPath: held.binaryPath }),
+        ...(held?.configPath === undefined ? {} : { configPath: held.configPath }),
+      },
+      validationDeps(),
+    )
     if (!validated.ok) return { ok: false, reason: validated.reason }
     registry.setCheckout(project, checkout)
     return { ok: true, data: await listReply() }

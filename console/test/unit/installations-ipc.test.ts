@@ -61,7 +61,7 @@ import {
 import { APP_ENTRY_URL, CONTENT_SECURITY_POLICY } from '../../src/main/protocol'
 import type { ConsoleEventLike, ConsoleHandlers, ConsoleReply, IpcMainLike } from '../../src/main/ipc'
 import { CLI_VERSION_BUILT_AGAINST, classifyCliVersion } from '../../src/shared/version'
-import { FUGARO_BINARY_NAME } from '../../src/main/spawn'
+import { FUGARO_BINARY_NAME, binDirectories } from '../../src/main/spawn'
 import { installStub } from './stub'
 import type { Stub } from './stub'
 
@@ -758,6 +758,75 @@ describe('the picker’s checkout', () => {
     const refused = (await answer(other.ipcMain, 'checkout', { project: 'sandbox', checkout })) as ConsoleReply
     expect(refused.ok).toBe(false)
     if (!refused.ok) expect(refused.reason).toContain('not the project named')
+  })
+
+  it('probes the record’s own override, and its config, rather than a second walk of rule 4', async () => {
+    // `setInstallationCheckout` validated `{ project, checkout }` alone: the
+    // record's own `binaryPath` and `configPath` were not part of the candidate,
+    // so rule 4's walk decided which CLI the version handshake and rule 7's
+    // pairing `doctor` ran. Two installations go wrong at once, and this case
+    // holds both halves:
+    //
+    //   - one whose **only** `fugaro` is the override it carries is refused, by a
+    //     console that could drive it perfectly well;
+    //   - and one whose override is a *different* CLI than the walk finds is
+    //     validated by a binary this console does not drive, with no `--config`.
+    const root = freshDirectory()
+    const userData = join(root, 'user-data')
+    mkdirSync(userData, { recursive: true, mode: 0o700 })
+    const checkout = freshDirectory()
+    const config = join(root, 'sandbox.yaml')
+    const override = installStub(join(root, 'own'), {
+      commands: {
+        version: { stdout: `${CLOCKED}\n` },
+        doctor: { stdout: '{"ok":true,"checks":[]}\n' },
+        'config list': {
+          stdout: `${JSON.stringify({ installations: [{ name: 'sandbox', checkouts: [checkout] }], warnings: [] })}\n`,
+        },
+      },
+    })
+    // The `fugaro` a walk of rule 4 finds when it does not start from the record:
+    // a CLI this console cannot drive. It is on that walk's own list, which is
+    // what makes the assertions below about the *choice* of binary rather than
+    // about a decoy nothing would ever run.
+    const decoy = installStub(join(root, 'elsewhere', 'bin'), {
+      commands: { version: { stdout: '0.5.0\n' } },
+    })
+    expect(binDirectories({ prefixes: [decoy.directory] }), 'the case proves nothing: rule 4 would not find the decoy').toContain(
+      decoy.binary,
+    )
+    writeFileSync(
+      join(userData, INSTALLATIONS_FILE_NAME),
+      serializeInstallationFile({
+        version: 1,
+        active: '0123456789abcdef',
+        installations: [
+          { id: '0123456789abcdef', project: 'sandbox', binaryPath: override.binary, configPath: config },
+        ],
+      }),
+      { mode: 0o600 },
+    )
+    const { picker, ipcMain } = pickerOver({ userData, prefixes: [decoy.directory] })
+    void picker
+    await answer(ipcMain, 'list')
+    const accepted = await answer(ipcMain, 'checkout', { project: 'sandbox', checkout })
+    // The installation works: its override answers the handshake and the pairing
+    // check, and it is the *only* `fugaro` this console should have asked.
+    expect(accepted, 'a working installation whose only fugaro is its override was refused').toMatchObject({ ok: true })
+    expect(
+      [...new Set(override.reports().map((report) => report.argv[0]))].sort(),
+      'the record’s own binary did not run the read, the handshake and the pairing check',
+    ).toEqual(['config', 'doctor', 'version'])
+    expect(decoy.calls(), 'a binary this console does not drive was asked to validate the checkout').toBe(0)
+    // ...and the pairing check ran with the record's own config path, which is a
+    // field of the record for exactly this reason: rule 3's `--config` names the
+    // config `doctor` reads, and a checkout validated without it is validated
+    // against whatever the CLI would have read otherwise.
+    const doctor = override.reports().find((report) => report.argv[0] === 'doctor')
+    expect(doctor, 'the pairing check did not run').toBeDefined()
+    expect(doctor?.argv, 'the pairing check ran without the record’s config path').toContain(config)
+    expect(doctor?.argv).toContain('--config')
+    expect(doctor?.project).toBe('sandbox')
   })
 
   it('clears a checkout when no directory is sent, and checks nothing', async () => {
