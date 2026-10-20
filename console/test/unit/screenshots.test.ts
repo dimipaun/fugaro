@@ -27,7 +27,10 @@
 //      process on Playwright's own stack, and the exit code that stands. The
 //      entry point itself is read here rather than imported -- it launches
 //      Electron, so nothing can import it -- and the one thing asserted about it
-//      is that it wires this handler in.
+//      is that it wires this handler in;
+//   7. **the two commands that take the pictures**: `scripts/console-screenshots.sh`
+//      and the `screenshots` script it documents, which have to do the same work
+//      -- including the build, because what the run launches is the built app.
 //
 // What is *not* here, stated plainly: the Electron launch, the window's real
 // size, and the fact that a screen draws at all. Those need a display, and the
@@ -1164,6 +1167,45 @@ describe('the line a failed run ends with', () => {
     expect(source).toContain('failureLine(error)')
     expect(source).toContain('exitCodeFor(code, process)')
     expect(source).not.toContain(FAILURE_SENTENCE)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 7. The two commands that take the pictures.
+// ---------------------------------------------------------------------------
+
+describe('the two commands the README documents', () => {
+  /** packageScripts is `package.json`'s `scripts`, read rather than imported:
+   * the console's build is a JSON document, and the question here is what the
+   * commands in it *do*. */
+  function packageScripts(): Readonly<Record<string, string>> {
+    const parsed = JSON.parse(readFileSync(join(CONSOLE_ROOT, 'package.json'), 'utf8')) as {
+      scripts: Record<string, string>
+    }
+    return parsed.scripts
+  }
+
+  it('both build the console the run launches', () => {
+    // **The run launches the built app** (`dist/main/index.js`, `package.json`'s
+    // `main`), and `dist/` is git-ignored and untracked: a `screenshots` script
+    // with no build in it launches a file that is not there on a fresh checkout,
+    // or one from a branch ago on the machine of whoever runs it next. The
+    // script the README offers from `console/` therefore builds first, exactly
+    // as `test:e2e` does, and the build is *inside* the script rather than in a
+    // caller: a second command documented as the same run has to be the same
+    // run.
+    const script = packageScripts()['screenshots'] ?? ''
+    expect(script).toContain('npm run build')
+    expect(script.indexOf('npm run build')).toBeLessThan(script.indexOf('capture.js'))
+  })
+
+  it('says so where it offers them', () => {
+    // The finding this holds: the README offered `npm run screenshots` as "the
+    // same thing" as the shell script while the two did different work, so the
+    // second one launched a `dist/` the reader had no reason to have built.
+    const readme = readFileSync(join(CONSOLE_ROOT, 'README.md'), 'utf8')
+    expect(readme).toContain('npm run screenshots')
+    expect(readme).toContain('it builds the console first')
   })
 })
 

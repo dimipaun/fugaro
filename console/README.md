@@ -3652,11 +3652,17 @@ The website's Console page carries pictures of the real application (owner rulin
 
 ```sh
 ./scripts/console-screenshots.sh        # from the repository root
-npm run screenshots                     # the same thing, from console/
+npm run screenshots                     # the same run, from console/ (it builds the console first)
 ```
 
-The script builds the console (`npm ci` then `npm run build`), then runs
-`tools/screenshots/capture.ts`. It **needs a display**: Electron opens a real window, so this
+The script installs the console's pinned toolchain (`npm ci`) and then runs the same
+`screenshots` script the second command names, which **builds the console first** (`npm run
+build`) and then runs `tools/screenshots/capture.ts`. The build is inside the script rather
+than in its caller because what the run launches is the **built** app
+(`package.json`'s `main`, `dist/main/index.js`) and `dist/` is git-ignored and untracked: a
+`screenshots` script that did not build would launch a file that is not there on a fresh
+checkout, or one from a branch ago on the machine of whoever runs it next (review of
+2026-10-20, high finding). It **needs a display**: Electron opens a real window, so this
 is a run on a Mac with a desktop session and never a run in CI — the script's own header says
 so, and with no display the launch fails and the command exits non-zero. It refuses to start
 on any Node but the exact one `package.json`'s `engines.node` pins (`.npmrc` sets

@@ -13,7 +13,7 @@
     "test:e2e": "npm run build && playwright test --pass-with-no-tests",
     "typecheck": "tsc --noEmit",
     "record-fixture": "tsc -p tsconfig.record-fixture.json && node .record-fixture/tools/record-fixture/index.js",
-    "screenshots": "tsc -p tsconfig.screenshots.json && node .screenshots/tools/screenshots/capture.js",
+    "screenshots": "npm run build && tsc -p tsconfig.screenshots.json && node .screenshots/tools/screenshots/capture.js",
     "package": "npm run build && electron-builder --mac --universal --publish never",
     "package:targets": "electron-builder --mac --universal --publish never"
   },

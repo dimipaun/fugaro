@@ -6,8 +6,9 @@
 #   ./scripts/console-screenshots.sh
 #
 # **It needs a display, and it needs to be run on your Mac.** The console is an
-# Electron application: this script builds it (`npm ci`, `npm run build`) and
-# then launches the *built* app in a real window through the same
+# Electron application: this script installs its pinned toolchain (`npm ci`) and
+# then runs the console's own `screenshots` script, which builds the console and
+# launches the *built* app in a real window through the same
 # Playwright/Electron path the e2e suite uses, resizes that window to 1280x800
 # and captures the Live screen, a run's detail and the Spend screen -- then
 # opens the installation picker from the console's own `Installations...` menu
@@ -85,13 +86,13 @@ cd "${console_dir}"
 echo "console-screenshots: installing the console's pinned toolchain (npm ci)"
 npm ci --ignore-scripts --no-audit --no-fund
 
-echo "console-screenshots: building the console (npm run build)"
-npm run build
-
-# The run itself: compiles the tool and launches the built app
-# (`tsconfig.screenshots.json` -> `.screenshots/`, an ignored build artifact).
-# Its exit code is this script's: a blank capture, a window at the wrong size,
-# or a read the fake did not prepare ends the run non-zero, and the pictures it
-# did take are left where they are as evidence.
+# The run itself: builds the console, compiles the tool and launches the built
+# app (`tsconfig.screenshots.json` -> `.screenshots/`, an ignored build
+# artifact). The build is the script's own rather than this one's, so that
+# `npm run screenshots` from `console/` -- the second command `console/README.md`
+# documents -- does the same work on a checkout where `dist/` has never been
+# built. Its exit code is this script's: a blank capture, a window at the wrong
+# size, or a read the fake did not prepare ends the run non-zero, and the
+# pictures it did take are left where they are as evidence.
 echo "console-screenshots: capturing (this opens a window)"
 npm run screenshots
