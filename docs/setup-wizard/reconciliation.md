@@ -1118,7 +1118,9 @@ applies everything `update` owns with no typed confirmation* — which
 of Installation, Firebase, Images, Installation2 and Repository, and its own
 comment says that **within** those stages the Firestore database's location, a
 **Cloud Build**, replacing a registry tag and onboarding an unlisted repository
-**stay `Typed`**. (Those four are `internal/cli` call sites rather than entries
+**stay `Typed`** — the sentence the answer below makes false, and which the plan
+now has W5.1 correct, in that comment only: nothing else in the file moves.
+(Those four are `internal/cli` call sites rather than entries
 in the map — the map is stage names — and two of them ride stages `YesCovers` is
 already true for. The section below says which, because D12's whole answer is
 built there.) A Cloud Build is billable and the Firestore location is
@@ -1176,8 +1178,11 @@ them ride stages whose `YesCovers` is **already true** (the Firestore location
 rides `Firebase` — `init_firebase.go`'s `promptLeft(initflow.Firebase, …)` —
 and the billable build rides `Images`), so no change to `runCovered` could
 relax them and no test written against `YesCovers` could pin them. W5.1
-therefore **reads** `internal/initflow/stage.go` unchanged — the lane written
-for it in an earlier draft, `W1.1 (L0) → W5.1 (L7)`, is **withdrawn** — and
+therefore writes one line in `internal/initflow/stage.go` — the `runCovered`
+comment, whose "stay `Typed`" clause this answer falsifies, restated
+door-neutrally because the package names no command — and changes nothing else
+there: the lane written for it in an earlier draft, `W1.1 (L0) → W5.1 (L7)`,
+stands as a **comment-only** one after being withdrawn as a code change. W5.1
 relaxes `init_firebase.go`'s `confirmLocation` (in `update` only),
 `init.go`'s `buildImages`, `init_images.go`'s `confirmReplace` and
 `init_repo_gate.go`'s `confirmRepo`. W0.1's matrix gains `update`'s column with
