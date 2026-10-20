@@ -188,6 +188,22 @@ func TestSweepDatesTheOutcomeNoEarlierThanTheLaunchDay(t *testing.T) {
 	}
 }
 
+// The launch day is a bound on how *early* the outcome may be dated, never on
+// how late: a run id dated ahead of the sweeper's clock is this clock being
+// behind, and the day it names is one no liveness scan reads (the rules' DAYOK
+// allows today or yesterday), so an outcome dated there would keep the run
+// admitted until its fx — the same hole from the other side.
+func TestSweepDoesNotDateTheOutcomeAheadOfToday(t *testing.T) {
+	e := newSweepEnv(t)
+	future := sweepNow.AddDate(0, 0, 3).Format("20060102-150405") + "-aaaa"
+	e.entry(future, 30*time.Minute)
+	e.sweep()
+	if !e.has(outcomePath(future)) {
+		t.Fatalf("no outcome on today's node (%d) for %s: the sweeper dated it from the run id",
+			budget.Day(sweepNow), future)
+	}
+}
+
 func TestSweepMarksCrashedKeepsCounted(t *testing.T) {
 	e := newSweepEnv(t)
 	day := budget.Day(sweepNow)
