@@ -157,8 +157,9 @@ const (
 	DefaultLeaseTTL = 10 * time.Minute
 
 	// DefaultLeaseResidue and DefaultLeasePrune are the two numbers of the lease
-	// sweep: how many lapsed nodes the reader tolerates, and how many of the
-	// oldest it deletes in one read once there are more than that (Leases).
+	// sweep: how many lapsed nodes the reader tolerates, and the most of the
+	// oldest it deletes in one read once there are more than that — the excess
+	// over the residue, capped (Leases).
 	//
 	// A residue of 64 dead nodes is a few kilobytes and costs a scan nothing, so
 	// the common project — one whose runs are live or recent — pays no writes at
@@ -490,11 +491,14 @@ func (s *RTDBStore) UpdateMark(ctx context.Context, name string, f func(prev Mar
 // belonged to is gone and no other caller knows it exists.
 //
 // So a read prunes the dead nodes it finds: once more than DefaultLeaseResidue
-// of them have lapsed, it deletes the oldest DefaultLeasePrune of them. The next
-// read then decodes (residue + the runs live within one lease TTL) nodes rather
-// than every run in the project's history. The residue is deliberate — 64 dead
-// nodes are a few kilobytes and cost a scan nothing, and pruning on *every* read
-// would turn the hot path into a write path for no benefit.
+// of them have lapsed, it deletes the oldest min(lapsed - DefaultLeaseResidue,
+// DefaultLeasePrune) of them — enough to bring the count back down to the
+// residue, and never more than DefaultLeasePrune in one read, so 65 lapsed
+// nodes cost one delete and 200 cost eight. The next read then decodes (residue
+// + the runs live within one lease TTL) nodes rather than every run in the
+// project's history. The residue is deliberate — 64 dead nodes are a few
+// kilobytes and cost a scan nothing, and pruning on *every* read would turn the
+// hot path into a write path for no benefit.
 //
 // The sweep is best effort in both directions, and both are load-bearing:
 //

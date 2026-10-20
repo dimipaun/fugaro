@@ -759,6 +759,29 @@ func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
 		t.Fatalf("a read inside the residue deleted %d more nodes; want none", db.deletes-before)
 	}
 
+	// Past residue+DefaultLeasePrune lapsed the sweep stops at DefaultLeasePrune:
+	// it deletes the excess over the residue, capped, and not "the oldest
+	// DefaultLeasePrune" — the two differ for every count in between, which is
+	// what the case above pins (6 deleted, not 8). This is the cap's own branch,
+	// and the doc sentence that states both halves is only true with it.
+	const deep = DefaultLeaseResidue + DefaultLeasePrune + 4
+	big, _ := leaseDB(deep)
+	if _, err := (&RTDBStore{DB: big}).Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if big.deletes != DefaultLeasePrune {
+		t.Fatalf("a read over %d lapsed leases deleted %d nodes; want the cap of %d", deep, big.deletes, DefaultLeasePrune)
+	}
+	// And it took the oldest, leaving the newest lapsed and the live hold.
+	for _, r := range []Run{{Slug: "acme", ID: "gone-0"}, {Slug: "acme", ID: "gone-" + strconv.Itoa(DefaultLeasePrune-1)}} {
+		if _, ok := big.nodes[PathLease(r)]; ok {
+			t.Fatalf("the capped sweep left %+v: it deletes the oldest first", r)
+		}
+	}
+	if _, ok := big.nodes[PathLease(Run{Slug: "acme", ID: "gone-" + strconv.Itoa(DefaultLeasePrune)})]; !ok {
+		t.Fatal("the capped sweep deleted a lease newer than its share of the oldest")
+	}
+
 	// A read that finds only live holds deletes nothing, whatever their number:
 	// the cap is about runs working, and the sweep is about runs gone.
 	busy := newFakeDB()
