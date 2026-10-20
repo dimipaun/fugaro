@@ -114,7 +114,7 @@ git:
   provider: github            # github | bitbucket
   base_branch: main
 agent:
-  auth: oauth                 # oauth | api-key | vertex
+  auth: oauth                 # oauth | api-key | vertex | cascade
   review_rounds: 2            # review and fix rounds before the PR is marked ready
   max_budget_usd: 25          # per stage
 workflows:
