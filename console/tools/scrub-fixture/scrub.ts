@@ -135,7 +135,7 @@ export const VOCAB = {
   stage: ['bootstrap', 'queued', 'plan', 'implement', 'review_first', 'review', 'fix'],
   // internal/config/validate.go's allowed `agent.auth` values, plus the `-`
   // internal/watch/build.go's `dash` writes for an empty one.
-  auth: ['vertex', 'api-key', 'oauth', '-'],
+  auth: ['vertex', 'api-key', 'oauth', 'cascade', '-'],
   health: ['ok', 'silent', 'lost'],
   deadline: ['ok', 'near', 'over'],
   status: ['succeeded', 'failed', 'halted', 'cancelled', 'infra_error'],

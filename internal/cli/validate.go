@@ -385,6 +385,62 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	return problems, warnings, notes
 }
 
+// cascadeProblems are the rules a `agent.auth: cascade` workflow is held to
+// here, beyond the file's own (config.Validate's auth list, whose
+// followup.allow_public refusal is the file's own business): the gateway its
+// calls are made by, and O2 — the project policy's switch.
+//
+// The mode is the run's effective one, the same merge budgetProblems and
+// providerProblems read (policy.Merge of the project config's ceiling and the
+// file), because the file's own mode is only a lower bound on the run's: a
+// file that writes no budget under an installation whose ceiling enforces has
+// the gateway on. The ceiling is this file's project's, and a file that
+// belongs to no selected project config has none — the reading the rest of
+// this file gives that state.
+//
+// O2 (the owner's ruling of 2026-10-17, reconciliation.md §4) is the reason
+// this function reads the *published* policy: a repository may ask for the
+// cascade, and only the operator-written project policy — routing.claude's
+// via, O3's spelling — turns it on, so a cascade file whose policy does not
+// carry it is a problem naming exactly what to set and that only the operator
+// can set it. The read fails closed in every direction: no database to read a
+// policy from, no policy published, a policy this Fugaro cannot read (or lists
+// keys it does not know), a routing block absent or written with another via —
+// each refuses the file, with the reason it could not be read, rather than
+// letting a cascade workflow through that no run would be admitted with. The
+// launch refuses the same pair again on its own side (plan Task C1.19); this
+// is where the repository's author is told before pushing.
+func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config) []config.Problem {
+	if cfg.Agent.Auth != config.AuthCascade {
+		return nil
+	}
+	ceiling := policy.Layer{}
+	readable := lc != nil && lc.Name == cfg.Project
+	if readable {
+		ceiling = ceilingLayer(lc)
+	}
+	problems := config.CheckCascadeGateway(cfg.Agent, policy.Merge(ceiling, runner.FileLayer(cfg)).Mode)
+	refuse := func(why string) {
+		problems = append(problems, config.Problem{Path: "agent.auth", Message: fmt.Sprintf(
+			"is refused: %s. Set %s in the project policy and publish it (fugaro project policy publish) — a repository asks for the cascade, and only the operator can set it there (O2)",
+			why, "routing.claude: {via: cascade}")})
+	}
+	if !readable {
+		refuse(fmt.Sprintf("no project config for %s is selected here, so the policy this project has published cannot be read", pluginwire.Printable(cfg.Project)))
+		return problems
+	}
+	p, found, err := projectPolicyRead(ctx, lc)
+	switch {
+	case err != nil:
+		refuse("the project's published policy could not be read (" + oneLineCLI(err.Error()) + ")")
+	case !found || p == nil:
+		refuse("this project has published no policy")
+	case p.Routing == nil || p.Routing.Claude == nil || p.Routing.Claude.ViaValue() != config.RouteCascade:
+		refuse("this project's published policy does not turn the cascade on")
+	}
+	return problems
+}
+
 // claudePin is one of the run's three pins whose model is a canonical Claude
 // ID: the pins the routing switch applies to, because D1a's list is a list of
 // exactly those IDs.
@@ -1439,6 +1495,7 @@ func newValidateCmd() *cobra.Command {
 				problems, warnings, notes = append(problems, pp...), append(warnings, pw...), append(notes, pn...)
 				rtp, rtn := routingProblems(cmd.Context(), ecfg, lc, routes, lcErr)
 				problems, notes = append(problems, rtp...), append(notes, rtn...)
+				problems = append(problems, cascadeProblems(cmd.Context(), ecfg, lc)...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {

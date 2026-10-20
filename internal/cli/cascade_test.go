@@ -1,0 +1,227 @@
+package cli
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"strings"
+	"testing"
+
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+)
+
+// cascadeCLI is the fugaro.yaml a repository asking for the cascade writes:
+// agent.auth: cascade and nothing else about it. What the cascade is *for* is
+// the operator's answer (O2) and lives in the project policy, never here.
+const cascadeCLI = `version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: cascade
+  model: claude-sonnet-5-5
+  models: { background: claude-haiku-4-5 }
+workflows:
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+
+// cascadePolicy is the published policy that turns the cascade on for aurora's
+// cascade workflows: O3's spelling, routing.claude.via, which needs no provider
+// route while tier C for Claude is off (C3.6). The version is the one this
+// binary's reader expects, read from the package rather than restated.
+func cascadePolicy() string {
+	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}}}`, projectpolicy.RulesVersion)
+}
+
+// TestValidateRefusesCascadeWithoutPolicySwitch is O2 — the owner's ruling of
+// 2026-10-17: a repository may *ask* for the cascade, and only the
+// operator-written project policy enables it. `fugaro validate` is the surface
+// that tells the repository's author so, before any run: a cascade file whose
+// published policy does not carry the switch is a problem naming exactly what
+// to set and that only the operator can set it. A policy the command cannot
+// read at all (none published here, no database to read one from) is refused
+// the same way rather than passed silently: a cascade workflow nobody has
+// enabled is not a valid file, whichever side failed to answer.
+func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
+	t.Run("a published policy without the switch", func(t *testing.T) {
+		f := newLaunchBudget(t, "observe")
+		publishPolicy(t, f, `{"version":`+fmt.Sprint(projectpolicy.RulesVersion)+`,"allow_repos":["*"]}`)
+		out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("exit = %d, want %d (err %v, out %q)", ExitCode(err), ExitUserError, err, out)
+		}
+		for _, want := range []string{
+			"agent.auth",
+			"routing.claude: {via: cascade}",
+			"only the operator",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the refusal does not say %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("the policy's switch is published", func(t *testing.T) {
+		f := newLaunchBudget(t, "observe")
+		publishPolicy(t, f, cascadePolicy())
+		out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+		if err != nil {
+			t.Fatalf("validate: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+		}
+		if !strings.Contains(out, "is valid") {
+			t.Fatalf("the switch was published and the file was not valid:\n%s\n%s", out, errOut)
+		}
+	})
+
+	t.Run("no policy published", func(t *testing.T) {
+		f := newLaunchBudget(t, "observe")
+		markRules(t, f, projectpolicy.RulesVersion)
+		out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+		if ExitCode(err) != ExitUserError || !strings.Contains(out, "routing.claude: {via: cascade}") {
+			t.Fatalf("an unpublished policy passed a cascade file: exit %d, out %q, err %v", ExitCode(err), out, err)
+		}
+	})
+
+	t.Run("no database to read one from", func(t *testing.T) {
+		// The project config names no database URL at all: there is no
+		// published policy this command could see, and it says so rather
+		// than reading the silence as an enabled cascade.
+		path := budgetProject(t, "budget: { mode: observe, per_run_usd: 5 }\n", "  auth: cascade")
+		out, _, err := execute(t, "validate", path)
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("exit = %d, want %d (out %q, err %v)", ExitCode(err), ExitUserError, out, err)
+		}
+		for _, want := range []string{"agent.auth", "routing.claude: {via: cascade}", "only the operator"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the refusal does not say %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("another auth is not this rule's business", func(t *testing.T) {
+		f := newLaunchBudget(t, "observe")
+		publishPolicy(t, f, `{"version":`+fmt.Sprint(projectpolicy.RulesVersion)+`,"allow_repos":["*"]}`)
+		other := strings.Replace(cascadeCLI, "auth: cascade", "auth: api-key", 1)
+		out, errOut, err := execute(t, "validate", writeConfig(t, other))
+		if err != nil {
+			t.Fatalf("an api-key file was refused for want of the cascade switch: %v\n%s\n%s", err, out, errOut)
+		}
+	})
+}
+
+// TestValidateRefusesCascadeWithBudgetOff is the gateway rule at the surface
+// that reports it: a cascade run's calls are made by the gateway, so the mode
+// that reaches the run — the effective one, policy.Merge of the installation's
+// ceiling and the file — has to be observe or enforce. Here the ceiling is off
+// and the file says off too, which is the state the refusal names.
+func TestValidateRefusesCascadeWithBudgetOff(t *testing.T) {
+	f := newLaunchBudget(t, "off")
+	publishPolicy(t, f, cascadePolicy())
+	path := writeConfig(t, strings.Replace(cascadeCLI, "workflows:", "budget: { mode: off }\nworkflows:", 1))
+	out, _, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit = %d, want %d (out %q, err %v)", ExitCode(err), ExitUserError, out, err)
+	}
+	for _, want := range []string{"agent.auth", "budget.mode", "off"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the refusal does not say %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "routing.claude: {via: cascade}") {
+		t.Errorf("the gateway refusal also claimed the policy does not enable the cascade, which it does:\n%s", out)
+	}
+}
+
+// TestInitRepoRefusesCascadeOnOlderBaseImage is Task C1.1's skew gate: a
+// fugaro.yaml value is a version-skew break in a strictly decoded config, so
+// `fugaro init --repo` refuses to deploy a cascade repository against an
+// installation whose base image predates the release that reads the value —
+// before any cloud effect. cascadeSince is the release that ships it: an image
+// at it (or past it) passes, a ref that is not a release image is only warned
+// about (nothing can tell what its runner knows), and an installation with no
+// base image at all passes, since its job is built from this release's own
+// image.
+func TestInitRepoRefusesCascadeOnOlderBaseImage(t *testing.T) {
+	cascade := &config.Config{Agent: config.Agent{Auth: config.AuthCascade}}
+	lc := func(ref string) *localcfg.Config {
+		if ref == "" {
+			return &localcfg.Config{}
+		}
+		return &localcfg.Config{BaseImages: map[string]string{"base": ref}}
+	}
+	var out, errOut bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	r := &initRun{o: &initOptions{}, cmd: cmd, w: &out}
+
+	err := r.gateCascadeAuth(r.o, "acme/app", lc("ghcr.io/dimipaun/fugaro-base:0.9.5"), cascade)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want refused", err)
+	}
+	for _, want := range []string{
+		"fugaro " + cascadeSince + " or later",
+		"ghcr.io/dimipaun/fugaro-base:0.9.5, release 0.9.5",
+		"fugaro init --base base",
+		"agent.auth: cascade",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if errOut.Len() != 0 {
+		t.Errorf("stderr = %q, want none (refused, not warned)", errOut.String())
+	}
+
+	// A base image at cascadeSince or past it passes, and one that is not a
+	// release image only warns.
+	for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + cascadeSince, "ghcr.io/dimipaun/fugaro-base:0.9.7"} {
+		var warn bytes.Buffer
+		if err := refuseCascadeSkew("acme/app", config.AuthCascade, ref, &warn); err != nil || warn.Len() != 0 {
+			t.Errorf("%s: err = %v, warn = %q, want neither", ref, err, warn.String())
+		}
+	}
+	for _, ref := range []string{"", "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c"} {
+		var warn bytes.Buffer
+		if err := refuseCascadeSkew("acme/app", config.AuthCascade, ref, &warn); err != nil {
+			t.Errorf("%q: err = %v, want none", ref, err)
+		}
+		if ref != "" && (!strings.Contains(warn.String(), "not a release base image") || !strings.Contains(warn.String(), "is not checked")) {
+			t.Errorf("%q: warn = %q", ref, warn.String())
+		}
+	}
+
+	// Another auth asks nothing of the image: the gate is about the value the
+	// image has to read, and a vertex file is read by every release.
+	for _, auth := range []string{"vertex", "api-key", "oauth"} {
+		var warn bytes.Buffer
+		err := refuseCascadeSkew("acme/app", auth, "ghcr.io/dimipaun/fugaro-base:0.9.5", &warn)
+		if err != nil || warn.Len() != 0 {
+			t.Errorf("auth %q: err = %v, warn = %q, want neither", auth, err, warn.String())
+		}
+	}
+
+	// --forget tears the repository down and --plan-only shows the plan
+	// without applying it: neither deploys the value, so neither is refused
+	// (the same escape the route-switch gate leaves). --print-vars is judged
+	// like a deploy would be — the values it prints are the ones a deploy
+	// would use — and nothing of it lands on stdout.
+	old := lc("ghcr.io/dimipaun/fugaro-base:0.9.5")
+	if err := r.gateCascadeAuth(r.o, "acme/app", old, cascade); err == nil {
+		t.Fatal("a plain deploy was not refused")
+	}
+	for _, o := range []*initOptions{{planOnly: true}, {forget: true}} {
+		if err := (&initRun{o: o, cmd: cmd, w: &out}).gateCascadeAuth(o, "acme/app", old, cascade); err != nil {
+			t.Errorf("%+v: err = %v, want none", o, err)
+		}
+	}
+	out.Reset()
+	pv := &initOptions{printVars: true}
+	if err := (&initRun{o: pv, cmd: cmd, w: io.Discard}).gateCascadeAuth(pv, "acme/app", old, cascade); err == nil {
+		t.Fatal("--print-vars: want refused")
+	}
+	if out.Len() != 0 {
+		t.Errorf("--print-vars wrote to stdout: %q", out.String())
+	}
+}

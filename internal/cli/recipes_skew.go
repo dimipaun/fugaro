@@ -283,6 +283,21 @@ var sealRunnerIntroduced = time.Date(2026, 10, 17, 17, 45, 33, 0, time.UTC)
 // never gated.
 const titlesSince = "0.8.5"
 
+// cascadeSince is the first fugaro release whose config reader accepts
+// fugaro.yaml's agent.auth: cascade (docs/credentials-service, D133): before
+// it the value is not one of config.AgentAuths, so a job built from an older
+// base image refuses the file at bootstrap ("agent.auth: must be one of
+// vertex, api-key, oauth") and the run dies before the agent starts.
+//
+// The judge is the installation's base image — the ref a job of the
+// repository is built from (lc.BaseImage, config.BaseKind) — because that is
+// where the reader lives: unlike the recipe and artifact gates there is no
+// per-workflow build record for a checkout: clone or a derived image that
+// could answer differently, and this value is read by the same config reader
+// either way (refuseCascadeSkew). docs/release.md ("Before you tag") has the
+// checklist verify it equals the release that ships the value.
+const cascadeSince = "0.9.6"
+
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets
 // agent.recipe (an unknown key to an older runner).
@@ -542,6 +557,36 @@ func switchProviders(providers map[string]config.ModelProvider, repo string) []s
 		}
 	}
 	return names
+}
+
+// refuseCascadeSkew refuses fugaro init --repo, before any cloud effect, when
+// the repository's fugaro.yaml asks for the cascade and the installation's
+// base image predates the release whose config reader accepts the value: the
+// job would be deployed, then die at bootstrap on a file the image refuses.
+//
+// auth is the file's agent.auth and ref is the installation's base image
+// (lc.BaseImage(config.BaseKind)); anything but cascade passes — this is the
+// one auth the value is new for, and every other one is read by every release.
+// A ref that is not a release base image is only warned about (nothing can
+// tell what such a runner knows), and no base image at all passes, since the
+// job is then built from this release's own image, which reads it — both the
+// reading checkCloneImageSince gives the same states.
+func refuseCascadeSkew(repo, auth, ref string, warn io.Writer) error {
+	if auth != config.AuthCascade {
+		return nil
+	}
+	subject := "fugaro.yaml's agent.auth: " + config.AuthCascade + " of " + repo
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the value is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, cascadeSince):
+		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner refuses the file at bootstrap, because %s is not one of the agent.auth values it knows. Run fugaro init --base base in your own terminal window to move the installation's base image to a current release, or run this repository with agent.auth: api-key",
+			subject, cascadeSince, pluginwire.Printable(ref), rel, config.AuthCascade)
+	}
+	return nil
 }
 
 // refuseCatalogSwitches refuses fugaro init --repo, before any cloud effect,
