@@ -24,11 +24,8 @@ import (
 // copy of the amended plan with either note removed.
 func TestDocsCredentialsServiceStatesTheRunNodeCleanupAndThePaidKeyStickiness(t *testing.T) {
 	const plan = "docs/credentials-service/implementation-plan.md"
-	// The phrases are matched across the line breaks the plan's prose wraps at
-	// (flattenDoc), so a re-wrapped sentence is not read as a lost claim.
-	doc := flattenDoc(readDoc(t, plan))
 
-	c110 := taskSection(t, plan, doc, "### Task C1.10:")
+	c110 := taskSection(t, plan, "### Task C1.10:")
 	for _, want := range []string{
 		"creds/current/<slug>/<run>",
 		"creds/leases/<slug>/<run>",
@@ -43,7 +40,7 @@ func TestDocsCredentialsServiceStatesTheRunNodeCleanupAndThePaidKeyStickiness(t 
 		}
 	}
 
-	c111 := taskSection(t, plan, doc, "### Task C1.11:")
+	c111 := taskSection(t, plan, "### Task C1.11:")
 	for _, want := range []string{
 		"stickiness keeps a run on the paid key for the rest of the run",
 		"the calls after it take the paid key again",
@@ -65,19 +62,28 @@ func TestDocsCredentialsServiceStatesTheRunNodeCleanupAndThePaidKeyStickiness(t 
 
 // taskSection is one task of the plan: from its heading to the next task
 // heading, so a phrase asserted here is that task's and not another's. The
-// phrases in this test appear once in the document, and slicing keeps it that
+// phrases in these tests appear once in the document, and slicing keeps it that
 // way if a later task quotes them.
-func taskSection(t *testing.T, path, doc, heading string) string {
+//
+// The slice is taken from the RAW document and the sliced text is flattened
+// afterwards. It is not the same thing, and the difference was a real hole: a
+// flattened document holds no newline at all (flattenDoc joins Fields with
+// single spaces), so slicing a flattened one for "\n### " finds nothing and the
+// "section" is the rest of the file — every phrase asserted through this
+// helper, and the negative check that refuses C1.9's old sentence, was then
+// document-wide, which is the opposite of what it claims to be.
+func taskSection(t *testing.T, path, heading string) string {
 	t.Helper()
-	start := strings.Index(doc, heading)
+	raw := readDoc(t, path)
+	start := strings.Index(raw, heading)
 	if start < 0 {
 		t.Fatalf("%s has no %q: the task this test reads is gone", path, heading)
 	}
-	rest := doc[start+len(heading):]
+	rest := raw[start+len(heading):]
 	if end := strings.Index(rest, "\n### "); end >= 0 {
-		return rest[:end]
+		rest = rest[:end]
 	}
-	return rest
+	return flattenDoc(rest)
 }
 
 // TestDocsCredentialsServiceDoesNotClaimTheStateStaysOutOfTheRunBinary pins
@@ -99,7 +105,7 @@ func taskSection(t *testing.T, path, doc, heading string) string {
 // sentence in it, and passes once it says what the boundary test pins.
 func TestDocsCredentialsServiceDoesNotClaimTheStateStaysOutOfTheRunBinary(t *testing.T) {
 	const plan = "docs/credentials-service/implementation-plan.md"
-	doc := taskSectionOf(t, plan, "### Task C1.9:")
+	doc := taskSection(t, plan, "### Task C1.9:")
 	for _, want := range []string{
 		"no run-side package imports it",
 		"credsImporters",
@@ -114,11 +120,4 @@ func TestDocsCredentialsServiceDoesNotClaimTheStateStaysOutOfTheRunBinary(t *tes
 	if strings.Contains(doc, "ever linked into the runner") {
 		t.Errorf("%s's C1.9 says the state is \"ever linked into the runner\" again: cmd/fugaro links internal/cli and the runner into one binary, so that is false, and it is not what keeps a run out of creds/ — the rules are (O1, C1.3)", plan)
 	}
-}
-
-// taskSectionOf is taskSection from the flattened document, for a caller that
-// has no need of the unflattened text.
-func taskSectionOf(t *testing.T, path, heading string) string {
-	t.Helper()
-	return taskSection(t, path, flattenDoc(readDoc(t, path)), heading)
 }

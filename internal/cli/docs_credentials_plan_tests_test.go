@@ -42,7 +42,6 @@ import (
 // unnoticed, which is what the entry is for.
 func TestPlanTestListsNamesOnlyTestsThatExist(t *testing.T) {
 	const plan = "docs/credentials-service/implementation-plan.md"
-	doc := flattenDoc(readDoc(t, plan))
 
 	// One entry per task whose tests are written: the heading that starts its
 	// section, and how many names its list holds. All eighteen of C1.9's names
@@ -56,7 +55,7 @@ func TestPlanTestListsNamesOnlyTestsThatExist(t *testing.T) {
 		{"### Task C1.3:", 14},
 		{"### Task C1.9:", 18},
 	} {
-		section := taskSection(t, plan, doc, task.heading)
+		section := taskSection(t, plan, task.heading)
 		tests := testsLine(t, plan, task.heading, section)
 		names := backtickedTestNames(tests)
 		if len(names) != task.names {
