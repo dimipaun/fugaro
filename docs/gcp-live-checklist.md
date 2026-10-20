@@ -347,12 +347,15 @@ rows stays **NOT RUN**.
 claim this register records** (`docs/setup-wizard/implementation-plan.md`, its
 Task W0.3 — the same task that rewrites Check 27 **in place**, so the wizard's
 own end-to-end pass is Check 27's rewritten section and does not take a second
-number, D10). The highest **written** `## Check N` section in this file is
-**89** (`grep -n '^## Check ' docs/gcp-live-checklist.md`); **90–99 are the
-credentials service's and 100–109 the mobile functional spec's**, neither of
-which is written here, and **110 is claimed by an open pull request** — a claim
-is settled at its merge, and by the rule above, whichever of two open claims
-merges second renumbers itself. **111 is therefore the next free number**, and
+number, D10). The highest **written** `## Check N` section in this file, **read
+at `1d325928` — the commit this change is based on**, was **89**: 90–99 are the
+credentials service's and 100–109 the mobile functional spec's
+(`docs/setup-wizard/implementation-plan.md:119–121`), neither of which is
+written here, and **110 is claimed by an open pull request** — a claim is
+settled at its merge, and by the rule above, whichever of two open claims merges
+second renumbers itself. **111 is therefore the next free number** — the reading
+is pinned to that commit rather than left to a grep of the working tree, which
+now returns 111 itself — and
 this work takes it: its row and its `## Check 111` section are written below,
 the check is owner-run, and it is **NOT RUN**. Its subject is the billing
 picker's failure modes (the Cloud Billing API disabled on the quota project, an
@@ -528,7 +531,7 @@ probe account carries predefined grants only).
 | 82 | The rules deploy and the marker (design `m9-budget-and-dashboard.md` §6.2 and §6.4; mobile plan Task P4.2a writes it, and P2.3 **runs** it): `fugaro init --firebase` puts this release's generated rules document on the database and records the generation the emulator cases and check 81's denial cases are written against — the two act lines in the order the plan prints them — `rules: deploys the security rules (<N> bytes, generated)` when the deployed document differs, and then, as the plan's **last** write, the marker line `config/limits/policyRules: records the rules generation (config/limits/policyRules = 3)` — followed by a second run that writes nothing (`The database already has the rules, mark, project name and mode.`), and by the marker node itself read back holding this release's `projectpolicy.RulesVersion` (3) over a document that `infra.SameJSON` calls `rules.Generate()`'s own output — the same JSON document, formatting ignored; the generated document is 58942 bytes — and that carries the `mailbox` subtree, the device allowlist and the pairing nodes; an installation still on an older generation (1 or 2) is moved to generation 3 by exactly this run, with `fugaro doctor`'s `policy-rules-skew` line as the before-state — and, if its accounts have no device node, every app read refused until they do (check 81 step 1 writes them by hand) | See "Check 82" below; **you** run it, on installation `fugaro` (never `belong`), `fugaro-dev`, at your own terminal, and **you** type the confirmation (a coding agent's session cannot). **No agent applies rules** | One rules deploy of about 58 KB and at most the marker write beside it, under the database step's own confirmation; the marker-above-this-binary refusal is **read, not provoked** (no hand-written marker on the dogfood installation). **USER-RUN, NOT RUN.** |
 | 89 | A signed EAS build, and the store's **internal** track (mobile plan Task P4.2a writes it, and P4.4 **runs** it; D120, C8): a build of the app at `mobile/` — its own artifact, outside the Go module (C2), at the commit whose tag it is versioned from (C6) — signed with **your** distribution credentials (EAS-managed or your own distribution certificate and upload key), and reaching the stores' internal testing tracks only; no public release is implied or made, and the submit track is read before anything is built — step 1's `jq` reads `submit.internal.android.track`, and a profile naming a public track is a stop you take there ("edit it and re-run"), not something the guard reads: the guard hard-stops on the build itself — without `mobile/eas.json` or `mobile/app.config.js` in the checkout (P4.4's), and without the store identity, which it resolves through `app.config.js` out of the two variables you export (the identity is **not** in `app.json` and never will be: the committed config carries no release identity, P3.1's boundary test, and the identity is yours). No agent runs `eas build` or `eas submit`, none touches a signing key, an App Store Connect API key or a Play service-account key, and no store credential enters an agent's environment | See "Check 89" below; **you** run it, at your own terminal, with your own Apple and Google accounts, your own signing keys and your own EAS project, from a clean checkout of the tagged commit; **no agent runs any step of it** (D120, Global Constraint 9). Its guard hard-stops today: P3.1's `mobile/app.json` and P4.4's `mobile/eas.json` and `mobile/app.config.js` are in the tree, so the file tests pass and the stop is the store identity itself — the two variables must be in your shell (or in the EAS project's environment the profile names, for the build job), and until they are, the guard stops before a build that could not reach any track | One build per platform and one submission per platform, on the internal tracks; the signing keys, the App Store Connect API key and the Play service-account key are yours, are never read by this check and are never pasted into a `FACT` line. **USER-RUN, NOT RUN.** |
 
-| 111 | The billing picker's failure modes (setup-wizard plan Task W0.3; D3 and D6): the Cloud Billing API disabled on the quota project — in D3's two cases, the quota project **being** the project set up and the quota project being **another** one — an account without `billing.accounts.list`, and the three sessions that never list anything at all (no TTY, `--json`, an agent session), each asserting the guided `gcloud billing projects link` line, that **nothing was enabled**, and that **no account list appears in any output** | See "Check 111" below; **you** run it at your own terminal, on installation `fugaro` (never `belong`), and **no agent runs any step of it** (an agent session is one of the five modes it observes). | No cost: every step is a refusal, and nothing is created, enabled or linked. **NOT RUN.** |
+| 111 | The billing picker's failure modes (setup-wizard plan Task W0.3; D3 and D6): the Cloud Billing API disabled on the quota project — in D3's two cases, the quota project **being** the project set up and the quota project being **another** one — an account without `billing.accounts.list`, and the three sessions that never list anything at all (no TTY, `--json`, an agent session) — each asserting the guided `gcloud billing projects link` line, that **nothing was enabled**, and that **no account list appears in any output** (the one run where a list *is* expected is the `gcloud` fallback answering an API that refused) | See "Check 111" below; **you** run it at your own terminal, on installation `fugaro` (never `belong`), and **no agent runs any step of it** (an agent session is one of the five modes it observes). | No cost: every step is a refusal, and nothing is created, enabled or linked. **NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -1048,33 +1051,52 @@ Run by the maintainer with temporary Token Creator grants (removed by the script
 - **The run recorded below — 2026-10-04 and 2026-10-05, the `0.2.0` release, the throwaway project `fugaro-live-20261005` — is the record of what the OLD command lines proved**: `fugaro init`, `init --create-project`, `init --link-billing` and `init --firebase`, the lines this rewrite renames to `fugaro setup`, `fugaro update` and `--firebase-project`. It stays exactly as it was written, because it is the **only** evidence the probes this section keeps have (the four Claude Code spikes, the mirror, the hidden secret prompts, the hostile-clone gate, `doctor`, `update-skills`, the teammate's adopt run, `/fugaro:setup` and the prompt-injection probe — `grep -n 'injection\|hostile' docs/gcp-live-checklist.md` names this section and nothing else, so a rewrite that dropped them would delete a record already paid for).
 - **The steps below have not been run at all.** The wizard's question order is new (W3.5), the billing picker is new (W4.3), `--firebase` is renamed, and every command line the owner types has changed.
 
-So the row above, this heading, this prose and the results table all say the same thing: **the probes are proven by the 2026-10-04/05 run; the rewritten text is not run.** Nothing about `setup`, `update`, the two-phase wizard or the picker has met a real service: those ran **offline only** (fakes for Google, `internal/gcpfake/billing.go`, W4.2's injected `gcloud` runner, pty tests), and this check is the first time any of it meets one. Four facts about Claude Code (V1 to V4 of the plan) have only ever been checked from the agent's side. The design's §14 items 2 to 6 and 1(a) to 1(d) are what it settles.
+So the row above, this heading, this prose and the results table all say the same thing: **the probes are proven by the 2026-10-04/05 run; the rewritten text is not run.**
+
+**And the rewritten text cannot run yet, because the code it names does not exist on this tree.** The setup-wizard implementation plan is *"plan only; nothing is implemented; decisions open"* (`docs/setup-wizard/implementation-plan.md:9`, the owner's approval of 2026-10-20), and the tree bears that out: `internal/cli/root.go` registers `init`, `upgrade` and `update-skills` and **no `setup` and no `update`**; there is **no `internal/billing/`**, no picker and no pty test for one; and `internal/gcpfake/billing.go` fakes only `/v1/projects/<id>/billingInfo` (`billing.go:33`) — a project's billing link, not an account list. **Nothing about `setup`, `update`, the two-phase wizard or the billing picker has been run at all, against fakes or against a service.** This section is written now because the plan says so — the checks' text is W0.3's, the code that answers it is W1.x to W5.x's, and the owner runs the check at **W6.1**, against a release that carries them. Four facts about Claude Code (V1 to V4 of the plan) have only ever been checked from the agent's side. The design's §14 items 2 to 6 and 1(a) to 1(d) are what it settles.
 
 **Rules.** Use a throwaway GCP project whose ID you choose (`P`, for example `fugaro-live-20261020`), a throwaway GitHub repository (`R`, `<owner>/<sandbox>`) and its own GitHub App (named `<yourname>-fugaro-sandbox`: App names are unique across GitHub), never `belong` (the installation on project `edge-devel-dimi`), `fugaro-dev` or `edge-devel-dimi` itself. The installation this check sets up is **named `fugaro`** (`N`) on that throwaway project — which is what lets every later step write `--project fugaro` — and its config lives in this check's own `XDG_CONFIG_HOME`, so the machine's own `fugaro` installation is never read and never written. Run every command in your own terminal: typed confirmations, hidden prompts, the billing picker and Claude Code's UI all need one, and no value you type reaches an agent. Use a **release build** of `fugaro` that carries `setup`, `update` and the picker — **0.10.0 or later**: a development build (`fugaro version` prints `dev`) writes no plugin pin and copies no images. Record `fugaro version`, `claude --version`, the date and the OS first. Before starting: `gcloud auth application-default login`, an existing project of yours as the ADC quota project with the Cloud Billing API on it (`gcloud services enable cloudbilling.googleapis.com --project <quota-project>`, then `gcloud auth application-default set-quota-project <quota-project>`), `terraform` 1.9+ on `PATH`, and a billing account ID you may link (`gcloud billing accounts list`). Do not set `GOOGLE_CLOUD_PROJECT` to anything but `P`.
 
 ⚠ **Set these, and pass the hard stops, by running ONE block — and re-run that whole block at the start of every step and before the Restore.** The project and the installation's name are **hard-coded in the block, never read from `gcloud`**, and every `gcloud` command below carries `--project="${P:?}"`: `${VAR:?}` makes an unset or empty variable a hard error rather than an argument `gcloud` would resolve from its ambient configuration, whose project is one of the three this check never touches.
 
+The block keeps its state in **`/tmp/chk27/vars.env`**, the way Check 60's does (`$CHK60/vars.env`): the config root is written down there once and **read back** on every run, because the block is re-run in every step and **a later step may be typed in a new shell**, where a shell variable from an earlier step is simply gone. `${C:-…}` alone would not do that — it would keep the root only inside one shell, and the next shell would silently repoint `XDG_CONFIG_HOME` at an empty directory and lose the installation. **Starting over:** if `/tmp/chk27` is left from an earlier attempt, its `vars.env` is read back as this attempt's; delete the directory first (`rm -rf /tmp/chk27`) and start again at step 1.
+
 ```bash
 # === Check 27: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
-# step and before the Restore. ===
+# step and before the Restore. It reads its own state back out of vars.env,
+# so a step typed in a NEW SHELL keeps the same config root. ===
+CHK27=/tmp/chk27; mkdir -p "$CHK27"; chmod 700 "$CHK27"
 P=fugaro-live-20261020   # YOUR throwaway project: HARD-CODED, never read from gcloud
 N=fugaro                 # the installation's NAME on that project: hard-coded, and asserted below
 R=owner/sandbox          # your throwaway sandbox repository, owner/name: the only repository this check touches
-C=${C:-$(mktemp -d)}     # this check's own config root: the machine's own installations are never read or written,
-                         # and ${C:-…} so that re-running this block reuses the SAME root — the installation
-                         # this check sets up lives in it
-export XDG_CONFIG_HOME="$C"
+
+# The config root this check's installation lives in. It is written down ONCE
+# and read back from there; a later shell has no C of its own.
+[ -f "$CHK27/vars.env" ] || printf 'C=%s\n' "$CHK27/config" > "$CHK27/vars.env"
+. "$CHK27/vars.env"
+# This stop runs BEFORE the block sets XDG_CONFIG_HOME, and that is the point:
+# it refuses a shell that is ALREADY pointed somewhere else (the owner's real
+# ~/.config, or another check's root), which is what a half-pasted or skipped
+# block leaves behind. After the export below it could never fail.
+[ -z "${XDG_CONFIG_HOME:-}" ] || [ "$XDG_CONFIG_HOME" = "${C:?}" ] \
+  || { echo "Check 27 stopped: this shell's XDG_CONFIG_HOME ($XDG_CONFIG_HOME) is not this check's root ($C). Unset it, or start the step in a fresh shell: the machine's own fugaro installation must never be read." >&2; exit 1; }
+export XDG_CONFIG_HOME="${C:?}"
+mkdir -p "$XDG_CONFIG_HOME"
 
 case "$P" in
   ""|belong|fugaro-dev|edge-devel-dimi|fugaro-belong)
     echo "Check 27 stopped: P=$P is empty or names a project this check never touches (belong on edge-devel-dimi, fugaro-dev). Set P to your own throwaway project." >&2; exit 1;;
 esac
+case "${C:?}" in
+  "$CHK27"/*) ;;
+  *) echo "Check 27 stopped: vars.env's C=$C is not under $CHK27 — this check never writes the machine's own config root" >&2; exit 1;;
+esac
 [ "$N" = fugaro ] || { echo "Check 27 stopped: this check sets up the installation named fugaro (N=$N)" >&2; exit 1; }
 [ -n "$R" ] || { echo "Check 27 stopped: set R to your throwaway sandbox repository, owner/name" >&2; exit 1; }
-[ "$XDG_CONFIG_HOME" = "$C" ] || { echo "Check 27 stopped: re-run the whole block (the config root is not this check's own temp dir)" >&2; exit 1; }
+[ "$XDG_CONFIG_HOME" = "$CHK27/config" ] || { echo "Check 27 stopped: the block did not leave XDG_CONFIG_HOME at this check's root (it is $XDG_CONFIG_HOME)" >&2; exit 1; }
 ```
 
-**The stops are the ones a skipped or half-pasted block fails.** The first is `P` itself: it must be set, and it must not name a project this check must never touch. The second is the installation's name — the plan's own allocation for this check is installation `fugaro`, and the name is what every later `--project fugaro` resolves. The third is the repository. The fourth asserts that the block itself ran **and** that the run's config root is this check's own temp directory: with `XDG_CONFIG_HOME` set to it, the dogfood installation named `fugaro` on `fugaro-dev` cannot be the one a `--project fugaro` command finds. **From the first step that has an installation on** (step 2 onwards, never step 1, where none exists yet), add this fifth stop to the block and re-run it:
+**The stops are the ones a skipped or half-pasted block fails.** The first is the config root, and it is the one that matters most: it refuses a shell that already has `XDG_CONFIG_HOME` set to anything but this check's root, so a step typed with the owner's own config in the environment stops instead of reading — or writing — the machine's own `fugaro` installation. The second is `P` itself: it must be set, and it must not name a project this check must never touch. The third asserts that the root `vars.env` records is under `/tmp/chk27`, so a tampered or hand-edited file cannot point the check at the real `~/.config`. The fourth is the installation's name — the plan's own allocation for this check is installation `fugaro`, and the name is what every later `--project fugaro` resolves. The fifth is the repository. The last asserts that the block actually left `XDG_CONFIG_HOME` at the root it recorded. **From the first step that has an installation on** (step 2 onwards, never step 1, where none exists yet), add this stop to the block and re-run it:
 
 ```bash
 fugaro doctor --project fugaro 2>/dev/null | grep -q "(GCP ${P:?}," \
@@ -1148,7 +1170,7 @@ gcloud projects delete "${P:?}" --quiet
 gcloud projects describe "${P:?}" --format='value(lifecycleState)'   # DELETE_REQUESTED
 ```
 
-Also: delete the sandbox repository's App and decline any PRs the runs opened (decline, never merge), remove this check's temporary config directories (`$C` among them), and revoke the OAuth token you made. **Never touch `belong`, EdgeWeb or EdgeServer** — no step of this check writes to them, and the guard block is what makes that so.
+Also: delete the sandbox repository's App and decline any PRs the runs opened (decline, never merge), remove this check's own directory — `rm -rf /tmp/chk27`, which holds both its config root (`$C`) and its `vars.env` — and revoke the OAuth token you made. **Never touch `belong`, EdgeWeb or EdgeServer** — no step of this check writes to them, and the guard block is what makes that so.
 
 **Paste back** (no secret, no token, no PEM, no account IDs you want private): `fugaro version`, `claude --version`, the OS; for each numbered step the result (pass, fail, or not run) and the exact text of every unexpected message or error; **the wizard's questions in the order they were asked, with the default each one proposed** (step 1); **how many accounts the picker listed and which source answered — the API or gcloud** (step 3); the stage list and "No changes" output of steps 11, 13 and 14; the digests of step 14; the number of commands, flags and manual rounds of the clean setup; the V1 to V4 findings in your own words with the Claude Code wording; the V3 `init` event's plugin and skill lists; the Restore's final assertion (every line of it, which must read `0`); and the injection transcript.
 
@@ -5744,71 +5766,235 @@ echo "Check 89 ready: $TAG at $SHA — $APP"
 
 ## Check 111: the billing picker's failure modes — nothing listed, nothing enabled (installation `fugaro`, throwaway projects only, never `belong`; run by you; NOT RUN)
 
-**NOT RUN.** This check is new (setup-wizard plan Task W0.3 writes it, Task W6.2 runs it), and number **111** is the first free number above every claim the register above records — 110 is claimed by an open pull request, and a claim is settled at its merge. Its subject is the other half of the billing picker: **Check 27 step 3 is the picker's success path against a real account, and this is what it does when it cannot list one.** Nothing here is a claim that any of it works: the picker ran against fakes only (`internal/gcpfake/billing.go`, W4.2's injected `gcloud` runner, pty tests), and no live run has ever shown an account list, a refusal or a guided line.
+**NOT RUN.** This check is new (setup-wizard plan Task W0.3 writes it, Task W6.2 runs it), and number **111** is the first free number above every claim the register above records — 110 is claimed by an open pull request, and a claim is settled at its merge. Its subject is the other half of the billing picker: **Check 27 step 3 is the picker's success path against a real account, and this is what it does when it cannot list one.**
+
+**Nothing here is a claim that any of it works, and nothing behind it exists on this tree yet.** The setup-wizard implementation plan is *"plan only; nothing is implemented; decisions open"* (`docs/setup-wizard/implementation-plan.md:9`, the owner's approval of 2026-10-20), and the tree bears that out: `internal/cli/root.go` registers `init`, `upgrade` and `update-skills`, and **no `setup` and no `update`**; there is **no `internal/billing/`**, no picker, and no pty test for one; and `internal/gcpfake/billing.go` fakes `/v1/projects/<id>/billingInfo` alone (`billing.go:33`) — a project's billing *link*, not an account list. **So the picker has not run at all — not against fakes and not against a service** — and the code this section names is W1.x–W5.x's, written after it. This section is written now because the plan says so (W0.3), and the owner runs it at **W6.2**, against a release that carries the picker.
 
 **What it settles (D3 and D6, plan Tasks W4.1–W4.5).** The picker lists the owner's **open** billing accounts by number, at a real terminal only, and **prefers the Cloud Billing API with `gcloud billing accounts list` as a fallback** — it says which one answered, and it is never allowed to list anything at all when `canType()` is false (a real terminal, not `--non-interactive`, not `--json`, not a coding agent's session). Every failure mode below must therefore end in the **same three places**, and each mode asserts all three:
 
-1. the **guided line** — `gcloud billing projects link <project> --billing-account=BILLING_ACCOUNT_ID`, the line `internal/cli/init_project.go`'s `guided()` prints today — reaches the owner, together with how to find the account's ID (the console, or `gcloud billing accounts list`);
+1. the **guided line** — `gcloud billing projects link <project> --billing-account=BILLING_ACCOUNT_ID`, the line `internal/cli/init_project.go`'s `guided()` prints today — reaches the owner, together with how to find the account's ID (the console, or `gcloud billing accounts list`). **The hint is why the words "billing accounts" are expected in the output and are not a leak**; what must never appear is a list of *accounts* — a display name of yours, or an id;
 2. **nothing was enabled**: no API was turned on in any project, and the only way this check may ever enable one is mode 1(a)'s typed offer, which is **declined** here;
 3. **no account list appears in any output** — not on stdout, not on stderr, not in `--json`'s document: no display name, no numbered list, no `billingAccounts/<id>`.
 
-**Rules.** Use the installation **named `fugaro`** (`N`) on your **throwaway** project (`P` — the one Check 27 created, or a fresh one), and, for mode 1(b), a **second** throwaway project of yours whose Cloud Billing API is **off** (`Q`, which you make the ADC quota project). Never `belong` (the installation on `edge-devel-dimi`), `fugaro-dev` or `edge-devel-dimi` itself. Run every command in your own terminal, with a **release build** of `fugaro` that carries the picker — **0.10.0 or later** — and record `fugaro version`, the date and the OS first. **No agent runs any step of this check** — and one of its five modes *is* an agent session, so mode 5 must be run by you, in a session you deliberately mark, never by handing the step to an agent. **Nothing below creates a project, links an account, enables an API or writes a config**: every step is a refusal, so the check costs nothing.
+**A mode here is a failure mode only when *neither* source can answer.** The picker prefers the Cloud Billing API and falls back to `gcloud billing accounts list`; if the fallback can answer, it lists the accounts, which is the **designed** behaviour and Check 27 step 3's success path — not this check. So modes 1(a), 1(b) and 2(b) run with the fallback **maimed by hand** (a `gcloud` wrapper that fails only at `billing accounts`, below: the wizard's own `gcloud` calls must keep working, so removing `gcloud` from `PATH` is *not* the way), and mode 2(a) is the one run here where a list **is** expected — through the fallback, and it is recorded rather than failed.
 
-⚠ **Set these, and pass the hard stops, by running ONE block — and re-run that whole block at the start of every mode.** The project ids and the installation's name are **hard-coded in the block, never read from `gcloud`**, and every `gcloud` command below carries `--project="${VAR:?}"`.
+**Rules.** Use the installation **named `fugaro`** (`N`) on your **throwaway** project (`P` — the one Check 27 created, or a fresh one), and, for modes 1(b), 2(a) and 2(b), a **second** throwaway project of yours whose Cloud Billing API is **off** (`Q`, which mode 1(b) makes the ADC quota project). Never `belong` (the installation on `edge-devel-dimi`), `fugaro-dev` or `edge-devel-dimi` itself. Run every command in your own terminal, in `bash`, with a **release build** of `fugaro` that carries the picker — **0.10.0 or later** — and record `fugaro version`, the date and the OS first. **No agent runs any step of this check** — and one of its five modes *is* an agent session, so mode 5 must be run by you, in a session you deliberately mark, never by handing the step to an agent. **Nothing below creates a project, links an account, enables an API or writes a config**: every step is a refusal, so the check costs nothing.
+
+⚠ **Set these, and pass the hard stops, by running ONE block — and re-run that whole block at the start of every mode.** The project ids and the installation's name are **hard-coded in the block, never read from `gcloud`**, and every `gcloud` command below that names a project carries `--project="${VAR:?}"` (or `${VAR:?}` as its argument). **Starting over:** `rm -rf /tmp/chk111`, then run the block again.
 
 ```bash
-# === Check 111: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
-# mode (1a, 1b, 2, 3, 4, 5). ===
+# === Check 111: guard. RE-RUN THIS WHOLE BLOCK at the start of every mode
+# (1a, 1b, 2a, 2b, 3, 4, 5). It reads its own state back out of vars.env, so a
+# mode typed in a NEW SHELL keeps the same config root. ===
+CHK111=/tmp/chk111; mkdir -p "$CHK111"; chmod 700 "$CHK111"
 P=fugaro-live-20261020   # YOUR throwaway project (Check 27's, or a fresh one): HARD-CODED
 N=fugaro                 # the installation's NAME: hard-coded, and asserted below
-Q=                       # a SECOND throwaway project of yours, Cloud Billing API OFF, for mode 1(b)
-C=${C:-$(mktemp -d)}     # this check's own config root: the machine's own installations are never read or written,
-                         # and ${C:-…} so that re-running this block reuses the SAME root — the installation
-                         # this check sets up lives in it
-export XDG_CONFIG_HOME="$C"
+Q=                       # a SECOND throwaway project of yours, Cloud Billing API OFF: modes 1(b) and 2, checked by need_q below
+
+# This check's own config root. It is written down ONCE, in the check's own
+# directory, and read back from there: a later shell has no C of its own, and
+# ${C:-…} would only have reused it inside one shell.
+# NOTHING of yours is installed here — this check creates no installation at all
+# — the root exists so that the machine's own installations are never read or
+# written by any mode below.
+[ -f "$CHK111/vars.env" ] || printf 'C=%s\n' "$CHK111/config" > "$CHK111/vars.env"
+. "$CHK111/vars.env"
+# This stop runs BEFORE the export below, and that is the point: it refuses a
+# shell that is ALREADY pointed somewhere else (your real ~/.config, or another
+# check's root), which is what a half-pasted or skipped block leaves behind.
+# After the export it could never fail.
+[ -z "${XDG_CONFIG_HOME:-}" ] || [ "$XDG_CONFIG_HOME" = "${C:?}" ] \
+  || { echo "Check 111 stopped: this shell's XDG_CONFIG_HOME ($XDG_CONFIG_HOME) is not this check's root ($C). Unset it, or start the mode in a fresh shell: the machine's own installations must never be read." >&2; exit 1; }
+export XDG_CONFIG_HOME="${C:?}"
+mkdir -p "$XDG_CONFIG_HOME"
 
 case "$P" in
   ""|belong|fugaro-dev|edge-devel-dimi|fugaro-belong)
     echo "Check 111 stopped: P=$P is empty or names a project this check never touches (belong on edge-devel-dimi, fugaro-dev). Set P to your own throwaway project." >&2; exit 1;;
 esac
+case "${C:?}" in
+  "$CHK111"/*) ;;
+  *) echo "Check 111 stopped: vars.env's C=$C is not under $CHK111 — this check never points XDG_CONFIG_HOME at anything but its own directory" >&2; exit 1;;
+esac
 [ "$N" = fugaro ] || { echo "Check 111 stopped: this check runs on the installation named fugaro (N=$N)" >&2; exit 1; }
-[ "$XDG_CONFIG_HOME" = "$C" ] || { echo "Check 111 stopped: re-run the whole block (the config root is not this check's own temp dir)" >&2; exit 1; }
+[ "$XDG_CONFIG_HOME" = "$CHK111/config" ] || { echo "Check 111 stopped: the block did not leave XDG_CONFIG_HOME at this check's root (it is $XDG_CONFIG_HOME)" >&2; exit 1; }
+
+# The display names of YOUR billing accounts, one per line, written ONCE before
+# mode 1. They are what a leak would print, and no check can know them.
+[ -s "$CHK111/account-names.txt" ] || { echo "Check 111 stopped: write your billing accounts' display names to $CHK111/account-names.txt first, one per line — they are the strings a leak would print" >&2; exit 1; }
+
+need_q() {   # modes 1(b) and 2: an unset Q must stop the mode, never no-op it
+  [ -n "${Q:-}" ] || { echo "Check 111 stopped: mode $1 needs Q — a second throwaway project of yours whose Cloud Billing API is off. Set it at the top of this block." >&2; return 1; }
+  [ "$Q" != "$P" ] || { echo "Check 111 stopped: Q must not be P — mode 1(b) is about the quota project being ANOTHER project" >&2; return 1; }
+  case "$Q" in belong|fugaro-dev|edge-devel-dimi|fugaro-belong)
+    echo "Check 111 stopped: Q=$Q names a project this check never touches" >&2; return 1;; esac
+}
+
+# The fallback, maimed BY HAND where a mode needs neither source to answer: a
+# gcloud that fails only at `billing accounts` and passes everything else to the
+# real one, so the wizard's own gcloud calls keep working (removing gcloud from
+# PATH would break the wizard long before the billing stage).
+PATH=${PATH//"$CHK111/bin:"/}; export PATH   # un-maimed by default, at every mode
+REAL_GCLOUD=$(command -v gcloud) || true
+[ -n "$REAL_GCLOUD" ] || { echo "Check 111 stopped: no gcloud on PATH — this check needs one" >&2; exit 1; }
+export REAL_GCLOUD
+mkdir -p "$CHK111/bin"
+cat > "$CHK111/bin/gcloud" <<'WRAP'
+#!/bin/sh
+case "$*" in
+  *"billing accounts"*) echo "gcloud: billing accounts list is unavailable in this run" >&2; exit 1;;
+esac
+exec "$REAL_GCLOUD" "$@"
+WRAP
+chmod +x "$CHK111/bin/gcloud"
+maim_fallback() { PATH="$CHK111/bin:$PATH"; export PATH; echo "the gcloud fallback is maimed: $CHK111/bin/gcloud is first on PATH"; }
+
+# capture <mode> <command…> — a TYPED run, through a pty (script(1)), so the
+# prompts, the picker and your answers all land in that mode's own transcript and
+# the run still sees a real terminal (canType()). Both streams interleave there.
+# (On macOS, script is BSD's: `script -q "$CHK111/mode-$m.log" <command…>`, and
+# the exit code is the transcript's last line.)
+capture() {
+  local m=${1:?}; shift
+  local f="$CHK111/mode-$m.log"
+  script -q -e -c "$(printf '%q ' "$@")" "$f"
+  echo "mode $m exit: $? — transcript in $f"
+  # script's own two lines, not the run's: dropped so the capture is what the run
+  # printed. Its line endings are the pty's; the greps in assert_mode are not
+  # affected by them.
+  grep -v -e '^Script started on ' -e '^Script done on ' "$f" > "$f.clean" && mv "$f.clean" "$f"
+}
+# plain <mode> <command…> — an UNTYPED run (no TTY, the agent marker): both
+# streams into one file and NO pty, which is the point of modes 3 and 5.
+plain() {
+  local m=${1:?}; shift
+  "$@" > "$CHK111/mode-$m.log" 2>&1
+  echo "mode $m exit: $? — output in $CHK111/mode-$m.log"
+}
 ```
 
-**Mode 1(b) needs `Q` and nothing else does.** It is the only step that changes anything outside your shell — `gcloud auth application-default set-quota-project "$Q"` points **your own ADC** at the second throwaway project — so run it last, and put the quota project back when it is done (`gcloud auth application-default set-quota-project <your usual quota project>`), which is also the Restore's first line.
+**The stops are the ones a skipped or half-pasted block fails.** An empty or forbidden `P`; an `N` that is not `fugaro`; a shell whose `XDG_CONFIG_HOME` was already pointed elsewhere; a `vars.env` whose `C` is not under `$CHK111`; a block that did not leave `XDG_CONFIG_HOME` at this check's own root; and a missing `account-names.txt`. `Q` stops its own modes through `need_q` and through `${Q:?}` on the one `gcloud` line that names it — **it ships empty on purpose**: an unset `Q` must stop mode 1(b), not silently point your ADC at nothing while you believe the mode ran.
 
-**The five modes.**
+**Modes 1(b) and 2 need `Q`; nothing else does.** Mode 1(b) is the only step that changes anything outside your shell — `gcloud auth application-default set-quota-project "${Q:?}"` points **your own ADC** at the second throwaway project — so run it last, and put the quota project back when it is done (`gcloud auth application-default set-quota-project <your usual quota project>`), which is also the Restore's first line.
 
-1. **The Cloud Billing API is disabled on the quota project** — and **D3 splits this in two**, which is why it is two sub-modes rather than one. Both disable the API on the project concerned first (`gcloud services disable cloudbilling.googleapis.com --project=<project> --force` — a *throwaway* project only, never one you need) and both then run `fugaro setup --name "$N" --region us-east5 --budget-mode observe` at a real terminal. What separates them is **which project your ADC quota project is**, and that is the whole of D3:
-   **(a) The quota project IS the project being set up.** `gcloud auth application-default set-quota-project "${P:?}"`. This needs `P` to **exist already** (Check 27's project is the easy one): a run that creates a project cannot have it as its own quota project, which is why this mode is never a creation run. The wizard **may offer to enable** `cloudbilling.googleapis.com`, naming the project and the API, behind a **typed** confirmation that `--yes` never covers (D3, D12 — and note this is the one place in the whole wizard where enabling an API is offered at all). **Decline it**, and record: the offer's exact text; that `--yes` alone did not take it (rerun with `--yes` at a terminal and record that the typed banner still comes); and then the three assertions — the guided line, `gcloud services list --enabled --project="${P:?}" --filter='config.name:cloudbilling.googleapis.com'` printing **nothing**, and no account list anywhere. **FACT:** the offer, the decline, and that the API is still disabled after it.
-   **(b) The quota project is ANOTHER project.** `gcloud auth application-default set-quota-project "$Q"`, then run the same `fugaro setup`. Expect a **refusal** — not an offer — that names the exact `gcloud services enable cloudbilling.googleapis.com --project "$Q"` line **and who to ask**, and that enables nothing anywhere. **FACT:** the exact line, the project it names, whether it names a person or a role to ask, that `Q`'s API is still disabled, that `P`'s API is still disabled, and that no account list appeared.
-2. **A user without `billing.accounts.list`.** With the API enabled but the caller lacking the permission (a second Google account without a billing role on the organization is the reliable way; a role removed by hand is the other), the API answers 403. The picker must **fall back to `gcloud billing accounts list`** — and say so — or, when that answers nothing either, print the guided line: what it must **not** do is crash, print a raw API error as its only output, or claim an account exists. **FACT:** the exact message, **which source answered** (the API, gcloud, or neither), and the three assertions. This is also the mode that shows the two sources can disagree: record whether the fallback listed anything the API's own answer would not have.
-3. **No TTY.** `fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe < /dev/null` (a pipe or a redirected stdin is the same case), and `--non-interactive` with it. The picker **never runs**: no list, no prompt, no hang waiting for input. **FACT:** the exit code, the guided line, and the three assertions. A run that blocks, or that prints a numbered list it cannot be answered, is a failure of this mode.
-4. **`--json`.** The same command with `--json`, its stdout kept apart from its stderr (`> /tmp/chk111.json 2> /tmp/chk111.err`). The picker never runs, and **no account list is in the document**: `jq -e '[.. | strings | select(test("billingAccounts/|billing accounts"))] | length == 0' /tmp/chk111.json` must be true, and the numbered-list grep below must find nothing. **FACT:** the exit code, the document's own account of the billing stage, the guided line on stderr, and the three assertions.
-5. **An agent session.** The environment marker a coding agent sets (`CLAUDECODE` and the like) is what `Options.Agent` reads: with it set, nothing is applied at all, `--yes` or not, and every applying stage is *needs-you* ("run this in your own terminal window"). Run the same command **with the marker set by hand in your own shell** — never by asking an agent to run it — and expect the picker not to run, the guided line, and the three assertions. **FACT:** the marker you set, the exact wording of the *needs-you* line, the exit code, and the three assertions.
+**The five modes** — seven runs, because modes 1 and 2 each split in two. Every run keeps its **own** capture under `$CHK111`, and the assertion block below refuses to read a mode whose capture is missing: a mode that was never run is never read as a pass.
 
-The assertion block, run at every mode (it reads, and writes nothing):
+1. **The Cloud Billing API is disabled on the quota project** — and **D3 splits this in two**, which is why it is two sub-modes rather than one. Both disable the API on the project concerned first (`gcloud services disable cloudbilling.googleapis.com --project=<project> --force` — a *throwaway* project only, never one you need), both maim the fallback first (`maim_fallback`: neither source may answer here), and both then run the wizard at a real terminal. What separates them is **which project your ADC quota project is**, and that is the whole of D3:
+   **(a) The quota project IS the project being set up.** `gcloud auth application-default set-quota-project "${P:?}"`, then:
+
+    ```bash
+    maim_fallback
+    capture 1a fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
+    assert_mode 1a
+    ```
+
+   `--gcp-project "${P:?}"` is what keeps this a *converge* run on `P`: `setup` creates by default and offers the id `fugaro-<name>`, i.e. `fugaro-fugaro` — accepting that default would create a different project, and the mode would test neither D3(a) nor `P`. This also needs `P` to **exist already** (Check 27's project is the easy one): a run that creates a project cannot have it as its own quota project, which is why this mode is never a creation run. The wizard **may offer to enable** `cloudbilling.googleapis.com`, naming the project and the API, behind a **typed** confirmation that `--yes` never covers (D3, D12 — and note this is the one place in the whole wizard where enabling an API is offered at all). **Decline it**, and record: the offer's exact text; that `--yes` alone did not take it (rerun the same line with `--yes` at a terminal, labelled `capture 1a-yes …`, and record that the typed banner still comes); and then the assertions — the guided line, `gcloud services list --enabled --project="${P:?}" --filter='config.name:cloudbilling.googleapis.com'` printing **nothing**, and no account list anywhere. **FACT:** the offer, the decline, and that the API is still disabled after it.
+   **(b) The quota project is ANOTHER project.** `need_q 1b && maim_fallback`, then:
+
+    ```bash
+    gcloud auth application-default set-quota-project "${Q:?}"
+    capture 1b fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
+    assert_mode 1b
+    ```
+
+   Expect a **refusal** — not an offer — that names the exact `gcloud services enable cloudbilling.googleapis.com --project "${Q:?}"` line **and who to ask**, and that enables nothing anywhere. **FACT:** the exact line, the project it names, whether it names a person or a role to ask, that `Q`'s API is still disabled, that `P`'s API is still disabled, and that no account list appeared.
+2. **A user without `billing.accounts.list`.** With the API enabled but the caller lacking the permission (a second Google account without a billing role on the organization is the reliable way; a role removed by hand is the other), the API answers 403. This mode is two runs, because the two sources must be tried **separately** — with both able to answer, the fallback's answer hides the API's refusal:
+   **(a) The fallback answers — the one run in this check where a list is expected.** `need_q 2a`, **no `maim_fallback` here**, then:
+
+    ```bash
+    capture 2a fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
+    assert_mode 2a may-list
+    ```
+
+   The picker must **fall back to `gcloud billing accounts list`**, **say which source answered**, and list what it returns. **FACT:** which source answered, the exact message that says so, and whether the fallback listed anything the API's own answer would not have — the two sources can disagree, and that is what this run is for. **A list here is not a leak**: it is the designed fallback, so only the account *ids* are asserted.
+   **(b) Neither answers.** `maim_fallback` first — the API refuses *and* the fallback is maimed — then `capture 2b …` as above and `assert_mode 2b`. The picker must print the guided line: what it must **not** do is crash, print a raw API error as its only output, or claim an account exists. **FACT:** the exact message, **which source answered** (neither), and the assertions.
+3. **No TTY.** No pty here — a pty is exactly what this mode must not have, so **do not use `capture`**:
+
+    ```bash
+    fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe < /dev/null \
+      > "$CHK111/mode-3.log" 2>&1; echo "mode 3 exit: $?"
+    assert_mode 3
+    ```
+
+   (A pipe or a redirected stdin is the same case; `--non-interactive` is the other form of it — record which you used.) The picker **never runs**: no list, no prompt, no hang waiting for input. **FACT:** the exit code, the guided line, and the assertions. A run that blocks, or that prints a numbered list it cannot be answered, is a failure of this mode.
+4. **`--json`.** The same command with `--json`, its stdout kept apart from its stderr:
+
+    ```bash
+    fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe --json \
+      > "$CHK111/mode-4.json" 2> "$CHK111/mode-4.err"; echo "mode 4 exit: $?"
+    jq -e '[.. | strings | select(test("billingAccounts/"))] | length == 0' "$CHK111/mode-4.json"
+    assert_mode 4
+    ```
+
+   The picker never runs, and **no account list is in the document**: the `jq` line must print `true` (that is the API's resource form, `billingAccounts/<id>`), and `assert_mode 4` checks the display names and the numbered list against the document **and** against stderr — the two are kept apart because `--json`'s document is stdout. **FACT:** the exit code, the document's own account of the billing stage, the guided line on stderr, and the assertions.
+5. **An agent session.** The markers `Options.Agent` reads are `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SSE_PORT`, `CLAUDE_CODE_REMOTE`, `CURSOR_AGENT` and `AI_AGENT` (`internal/cli/initsecrets.go:132`): with one set, nothing is applied at all, `--yes` or not, and every applying stage is *needs-you* ("run this in your own terminal window").
+
+    ```bash
+    env | grep -E '^(CLAUDECODE|CLAUDE_CODE_ENTRYPOINT|CLAUDE_CODE_SSE_PORT|CLAUDE_CODE_REMOTE|CURSOR_AGENT|AI_AGENT)=' || echo "no agent marker in this shell"
+    export AI_AGENT=1          # the marker, set BY HAND — never by asking an agent to run this
+    plain 5 fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
+    unset AI_AGENT             # take it back out: it changes every mode in this shell, not just this one
+    assert_mode 5
+    ```
+
+   Expect the picker not to run, the guided line, and the assertions; rerun the same line with `--yes` (`plain 5-yes …`) and record that the *needs-you* line still comes. **FACT:** the marker you set, **the other markers your shell already had** (an exported one changes every mode here), the exact wording of the *needs-you* line, the exit code, and the assertions.
+
+The assertion block, run at every mode. It reads **that mode's own** capture and refuses when it is missing, so a mode that was never run is never read as a pass:
 
 ```bash
-# 1. the guided line reached you: the command above printed it. Paste it.
-# 2. nothing was enabled, in either project:
-echo "P cloudbilling: $(gcloud services list --enabled --project="${P:?}" --filter='config.name:cloudbilling.googleapis.com' --format='value(config.name)' | wc -l)"   # must read 0
-#    (and the same line for Q in mode 1(b), which must read 0 too)
-# 3. no account list, anywhere: no numbered picker list on either stream, and
-#    no account identifier in the JSON document.
-grep -cE '^[[:space:]]*[0-9]+[\).]' /tmp/chk111.err /tmp/chk111.json 2>/dev/null   # must read 0 for both
-jq -e '[.. | strings | select(test("billingAccounts/|billing accounts"))] | length == 0' /tmp/chk111.json
+# assert_mode <mode> [may-list]: the three things, against THAT mode's capture.
+# may-list is mode 2(a) alone — the run where a list through the fallback is the
+# designed behaviour. $files is deliberately unquoted: mode 4 reads two files.
+assert_mode() {
+  local m=${1:?} may=${2:-} f files
+  case "$m" in
+    4) files="$CHK111/mode-4.json $CHK111/mode-4.err"
+       for f in $files; do
+         [ -s "$f" ] || { echo "assert_mode 4: $f is missing or empty — run mode 4, which keeps its two streams apart" >&2; return 1; }
+       done;;
+    *) files="$CHK111/mode-$m.log"
+       [ -s "$files" ] || { echo "assert_mode $m: $files is missing or empty — run mode $m first; a mode with no capture is not a pass" >&2; return 1; };;
+  esac
+  echo "== mode $m — reading $files"
+  # (1) the guided line reached you. Paste it from the capture.
+  grep -n 'gcloud billing projects link' $files || echo "   NO GUIDED LINE in the capture: this mode fails assertion 1"
+  # (2) nothing was enabled, in either project (the greps exit 1 on nothing found: that is the pass)
+  echo "   P cloudbilling: $(gcloud services list --enabled --project="${P:?}" --filter='config.name:cloudbilling.googleapis.com' --format='value(config.name)' | wc -l)  # must read 0"
+  case "$m" in 1b|2a|2b)
+    echo "   Q cloudbilling: $(gcloud services list --enabled --project="${Q:?}" --filter='config.name:cloudbilling.googleapis.com' --format='value(config.name)' | wc -l)  # must read 0";; esac
+  # (3) no account identifier: the API's resource form, and any id you wrote down
+  local ids
+  ids=$(grep -ohE 'billingAccounts/[A-Za-z0-9_-]+' $files | sort -u)
+  [ -z "$ids" ] || echo "   FAIL: an account resource id is in the capture: $ids"
+  if [ -s "$CHK111/account-ids.txt" ]; then
+    ids=$(grep -ohFf "$CHK111/account-ids.txt" $files | sort -u)
+    [ -z "$ids" ] || echo "   FAIL: one of YOUR account ids (account-ids.txt) is in the capture: $ids"
+  fi
+  # (4) no list of accounts: no display name of yours, no numbered list.
+  #     The words "billing accounts" are NOT a leak: the guided line's hint names
+  #     the `gcloud billing accounts list` command on purpose.
+  if [ "$may" = may-list ]; then
+    echo "   mode 2(a): a list here is the fallback answering, not a leak — record which source answered"
+  else
+    local names
+    names=$(grep -ohFf "$CHK111/account-names.txt" $files | sort -u)
+    [ -z "$names" ] || echo "   FAIL: a display name of yours (account-names.txt) is in the capture: $names"
+    grep -cE '^[[:space:]]*(\[[0-9]+\]|[0-9]+[\).:])' $files   # every count must read 0
+  fi
+}
 ```
 
-**Passes when:** each of the five modes ends in the guided `gcloud billing projects link` line; no API was enabled in any project (mode 1(a)'s typed offer was declined, and it is the **only** mode in which an offer may appear at all — mode 1(b) must refuse instead); no numbered account list, display name or account id appears on stdout, on stderr or in `--json`'s document; mode 3 and mode 4 do not block waiting for input; and mode 5's run applies nothing, `--yes` or not.
+**`account-ids.txt` is optional and `account-names.txt` is not.** Write your billing accounts' display names to `$CHK111/account-names.txt`, one per line, before mode 1 — they are the strings a leak would print. Their **ids** go in `$CHK111/account-ids.txt` only if you want them asserted too (the check never needs them and never asks you to paste them): with that file present, every mode's capture is also grepped for the ids themselves. A count above `0` from the numbered-list grep is a numbered line, not necessarily an account list — look at the line: the picker's own list reads `<n>. <display name>` or `<n>) …`, and the display-name grep above is what settles it. If the run's **own** step numbering trips it, say so in the `FACT` line and paste the matching lines.
 
-**Fails when:** any mode prints a list of accounts; any mode enables an API without a typed answer, or mode 1(b) offers to enable instead of refusing and naming who to ask; a mode crashes, or prints a raw API error as its only output, where the guided line belongs; mode 3 or 4 waits for input, or prints a numbered list it cannot be answered; mode 5 applies anything; or a mode writes an account id into a config file. **What failing looks like:** a picker that lists accounts under `--json` (the reversal D6's four conditions exist to keep narrow); an `ErrDisabled` path that runs the enable command itself; a fallback that silently answers with the *project's* own billing info instead of the organization's accounts.
+**Passes when:** **each of the seven runs** (1a, 1b, 2a, 2b, 3, 4, 5) has its own capture under `$CHK111` and `assert_mode` read it without a `FAIL`; each ends in the guided `gcloud billing projects link` line; no API was enabled in any project (mode 1(a)'s typed offer was declined, and it is the **only** mode in which an offer may appear at all — mode 1(b) must refuse instead); no numbered account list, display name or account id appears on stdout, on stderr or in `--json`'s document — **except mode 2(a)**, the one run where the `gcloud` fallback is expected to list, and it must say which source answered; mode 3 and mode 4 do not block waiting for input; and mode 5's run applies nothing, `--yes` or not.
 
-**Paste back** (no secret, no token, and **no account id you want private** — a billing account's ID is the one value this check is about, so paste the guided line with the placeholder intact if you would rather): `fugaro version`, the OS and the date; for each of the five modes the result (pass, fail, or not run), the **exact** guided line, the exact refusal or offer text, the exit code, which source answered in mode 2, and the assertion block's counts (each of which must read `0`); and whether `--yes` ever took mode 1(a)'s offer. Until this check runs, the picker's failure modes are unverified and the row above stays **NOT RUN**.
+**Fails when:** any mode prints a list of accounts (mode 2(a) apart); any mode enables an API without a typed answer, or mode 1(b) offers to enable instead of refusing and naming who to ask; a mode crashes, or prints a raw API error as its only output, where the guided line belongs; **a mode whose capture is missing, or whose assertion block was never run** — an unrun mode is not a pass, which is what `assert_mode`'s first stop is for; mode 3 or 4 waits for input, or prints a numbered list it cannot be answered; mode 2(b) lists accounts although the fallback was maimed (the wrapper is not first on `PATH`, or the run was not the run you think it was); mode 5 applies anything; or a mode writes an account id into a config file. **What failing looks like:** a picker that lists accounts under `--json` (the reversal D6's four conditions exist to keep narrow); an `ErrDisabled` path that runs the enable command itself; a fallback that silently answers with the *project's* own billing info instead of the organization's accounts.
+
+**Paste back** (no secret, no token, and **no account id you want private** — a billing account's ID is the one value this check is about, so paste the guided line with the placeholder intact if you would rather): `fugaro version`, the OS and the date; for **each of the seven runs** the result (pass, fail, or not run), the **exact** guided line, the exact refusal or offer text, the exit code, which source answered in mode 2, and the assertion block's counts (each of which must read `0`); the marker your shell already carried, for mode 5; and whether `--yes` ever took mode 1(a)'s offer. Until this check runs, the picker's failure modes are unverified and the row above stays **NOT RUN**.
 
 **Restore.** Nothing is created, so there is almost nothing to undo — which is itself the check's point:
 
 - **Put your ADC quota project back**: `gcloud auth application-default set-quota-project <your usual quota project>` (mode 1(b) is the only step that changed it).
 - **Re-enable the API you disabled** on the throwaway project the mode used: `gcloud services enable cloudbilling.googleapis.com --project=<that project>`. If the mode's project was a fresh throwaway and you are done with it, delete it instead (`gcloud projects delete <that project>`).
-- **Remove this check's temporary config roots** (`$C` among them) and the two files mode 4 wrote (`/tmp/chk111.json`, `/tmp/chk111.err`).
+- **Remove this check's own directory** — `rm -rf /tmp/chk111`, which holds its config root (`$C`), its `vars.env`, the maimed `gcloud` wrapper, `account-names.txt`/`account-ids.txt`, and every mode's capture (mode 4's two files among them). `unset AI_AGENT` too, if you have not already.
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here writes to them, the guard block is what makes that so, and the guided line this check is about names a project you type, never one of theirs.
