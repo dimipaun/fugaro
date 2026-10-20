@@ -411,7 +411,12 @@ the native behaviour at all.
 *"Hands-free audio: the background mode, the microphone ask, Bluetooth, and
 barge-in"*, attributed to P3.5 and P4.2, and run by the owner; `docs/gcp-live-checklist.md`
 carries no `## Check 86` section yet (checks 80–89 are the mobile block);
-`docs/mobile/README.md` records 80–89 as owner-run.
+`docs/mobile/README.md` **reserves** 80–89 for the mobile work and writes none of
+them (*"Checks 80–89 — this work — reserved here, and no row or section is
+written by this pull request"*). The **owner-run** fact is not in that file but
+in **Global Constraint 10** of `docs/mobile/implementation-plan.md`: *"No test may
+need a live cloud, a real device or a real microphone. Those are checks 80–89,
+owner-run (F30)."*
 
 **Consequence.** This work **does not rewrite 86 and does not claim it**. Where
 the two touch — the Bluetooth route, and the microphone ask — 86 keeps the
@@ -429,9 +434,12 @@ boundary is stated per check in the plan so that the owner runs each once.
 `docs/credentials-service/README.md` holds **90–99**;
 `docs/mobile/functional-spec-reconciliation.md` holds **100–109** (100–104
 proposed, 105–109 **reserved and unused**); `docs/mobile/design/voice-evaluation-switch.md`
-**names 110** and writes none of it (its Q4, answered 2026-10-19); `docs/setup-wizard/README.md`
-takes **111** ("110 is claimed by an open pull request … **111 is therefore the
-next free number**, and it is taken here"). The register's own rules:
+**names 110** and writes none of it (its Q4, answered 2026-10-19); the
+setup-wizard work takes **111** — `docs/setup-wizard/reconciliation.md` (*"110 is
+claimed by an open pull request … **111 is therefore the next free number**"*),
+its `implementation-plan.md` (*"the next free number, and it is taken here"*) and
+its `README.md`'s number table, which is the folder's index and not the sentence's
+source. The register's own rules:
 *"A reserved number is never reused and never renumbered"*, and
 *"the phase that ships the check writes them"*, and a check *"is never run before
 its text is in the register"*.
@@ -450,14 +458,17 @@ deliberately unused** (*"an unused number is not a free number"*), D90–D109
 website, D110–D129 mobile, D130–D159 credentials service, D160–D179 mobile
 functional spec (D174–D179 reserved), D180–D192 website redesign (proposed), and
 *"**D193 onward** — free"*. **Anchored to this work's base commit `c92093b6`**,
-the highest number written anywhere in `docs/` was **D192**, and
+the highest number that command finds anywhere in `docs/` is **D193** —
 `git grep -hoE '\bD[0-9]{2,3}\b' c92093b6 -- docs/ | sort -t D -k2 -n | tail -1`
-is the command that showed it. The anchor matters twice over: this folder's own
-**D201–D220** are written under `docs/` by the commit that carries this
-reconciliation, so from that commit onward the same command returns D220 — and
-`sort -u` would not have surfaced the maximum even at the base commit, because
-`D200` sorts before `D54`. A figure this volatile is given as a **command against
-a commit**, never as a bare number (this document's §0 rule).
+— and the hit is the coordinator table's **own free-block label** (*"D193
+onward"*, the row that allocates the next block), **not a written decision**: the
+highest number ever *written as a decision* is **D192**, the last of the website
+redesign's proposed block. The distinction is the point of the anchor, and the
+figure moves twice over: this folder's own **D201–D220** are written under `docs/`
+by the commit that carries this reconciliation, so from that commit onward the
+same command returns D220. (`sort -u` would not have surfaced the maximum even at
+the base commit, because `D200` sorts before `D54`; a figure this volatile is
+given as a **command against a commit**, never as a bare number — §0's rule.)
 
 **Consequence.** The brief records **D200** as an already-taken ruling
 (*"development builds only, no Expo Go"*, F20) and no such row exists in this
@@ -691,7 +702,7 @@ established from a first-party page and is **not** asserted anywhere in the plan
 | P17 | `READ_PHONE_STATE` has a Play **declaration** requirement | **Unverified** | Play's *Permissions and APIs that Access Sensitive Information* page describes **Restricted Permissions** and its declaration form for **SMS and Call Log** — `READ_PHONE_STATE` is not among the ones the page names. Whether Play's Data safety form treats it specially is **not** established here. See the UNVERIFIED table. |
 | P18 | `ACTION_AUDIO_BECOMING_NOISY` is the "route was lost" signal | **Verified** | *"Broadcast intent, a hint for applications that audio is about to become 'noisy' due to a change in audio outputs. For example, this intent may be sent when a wired headset is unplugged, or when an A2DP audio sink is disconnected, and the audio system is about to automatically switch audio route to the speaker. Applications that are controlling audio streams may consider pausing, reducing volume or some other action on receipt of this intent so as not to surprise the user with audio from the speaker."* Added in API level 3. `developer.android.com/reference/android/media/AudioManager` |
 | P19 | The audio-focus constants mean what §7.3 says | **Verified** | `AUDIOFOCUS_LOSS_TRANSIENT` — *"a transient loss of audio focus"*; `AUDIOFOCUS_GAIN` — *"a gain of audio focus, or a request of audio focus, of unknown duration"*; `AUDIOFOCUS_LOSS` — *"a loss of audio focus of unknown duration"*. `developer.android.com/reference/android/media/AudioManager` |
-| P20 | *"Use `AudioManager.MODE_IN_COMMUNICATION` while active **so the platform applies echo cancellation**"* (§7.3) | **Unverified / not supported by the reference** | The reference documents `MODE_IN_COMMUNICATION` as *"In communication audio mode"* and nothing more. Echo cancellation on Android is a **separate effect**, `AcousticEchoCanceler`, which *"an application creates … to instantiate and control an AEC engine in the audio capture path"* and attaches to a particular `AudioRecord`'s session id — and *"On some devices, an AEC can be inserted by default in the capture path by the platform according to the `MediaRecorder.AudioSource` used."* So it is **device-dependent**, and the plan may not assume it. `developer.android.com/reference/android/media/audiofx/AcousticEchoCanceler`; `…/NoiseSuppressor` |
+| P20 | *"Use `AudioManager.MODE_IN_COMMUNICATION` while active **so the platform applies echo cancellation**"* (§7.3) | **Wrong as written** (the mode is real and the spec's *use* of it is fine; the echo-cancellation attribution is not supported by the reference — see **U3**) | The reference documents `MODE_IN_COMMUNICATION` as *"In communication audio mode"* and nothing more. Echo cancellation on Android is a **separate effect**, `AcousticEchoCanceler`, which *"an application creates … to instantiate and control an AEC engine in the audio capture path"* and attaches to a particular `AudioRecord`'s session id — and *"On some devices, an AEC can be inserted by default in the capture path by the platform according to the `MediaRecorder.AudioSource` used."* So it is **device-dependent**, and the plan may not assume it. `developer.android.com/reference/android/media/audiofx/AcousticEchoCanceler`; `…/NoiseSuppressor` |
 | P21 | `PendingIntent` with `FLAG_IMMUTABLE` | **Verified as an API** | `FLAG_IMMUTABLE` — *"Flag indicating that the created PendingIntent should be immutable"*; it is part of the instance's identity, so the same flags must be supplied to retrieve it. `developer.android.com/reference/android/app/PendingIntent` |
 | P22 | `START_NOT_STICKY` keeps the system from restarting a mic service | **Verified** | `Service.onStartCommand` — *"`START_STICKY` is used for services that are explicitly started and stopped as needed, while `START_NOT_STICKY` or `START_REDELIVER_INTENT` are used for services that should only remain running while processing any commands sent to them."* (This is the **general** contract, not a microphone-specific rule: the plan states it as the general contract.) `developer.android.com/reference/android/app/Service` |
 | P23 | `expo-apple-targets` | **Wrong** | No such npm package (404). See **F14** for the real one, `@bacons/apple-targets`. |

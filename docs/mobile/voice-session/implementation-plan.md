@@ -98,15 +98,17 @@ register, and checks 112–117) · [../../../mobile/README.md](../../../mobile/R
 ## Part summary
 
 Parts are ordered so that **each is mergeable alone and leaves `main` green**.
-VS0, VS1 and VS2 take no decision but D205 (§"What waits for what"); VS3 and
-VS4 are the two platform halves and are independent of each other; VS5 and VS6
-sit on top; VS7 is the owner's.
+VS0 takes one decision (D205) and nothing else; VS1 takes D205 and **D213**
+(its reporting shape); VS2 takes D205 and **D207** (the background mode it
+declares) — the full mapping is §"What waits for what"; VS3 and VS4 are the two
+platform halves and are independent of each other; VS5 and VS6 sit on top; VS7 is
+the owner's.
 
 | Part | What it is | Tasks | Mergeable alone? | What it waits on |
 |---|---|---|---|---|
 | **VS0 — The machine, and its tests** | `mobile/src/voice-session/`: the state machine as a **pure reducer over the spec's §5 event stream**, with its own door, its own scan and a test for every transition — including the timeout and `shouldResume: false` paths the spec's §11 asks for. **No native, no device, no decision but D205.** | VS0.1–VS0.3 | **Yes** — nothing imports it yet | D205 (where the machine lives); safe to start the moment it is answered |
-| **VS1 — The seam** | The controller that joins the machine to reality: it drives `pipeline.start()`/`stop()`, reads `pipeline.speaking()`/`turn()` (never storing them), keeps P3.5's switch and queue where they are, and registers itself as `mobile/index.js`'s one construction site. Native is a **port** with a fake, exactly like `src/audio/`. | VS1.1–VS1.3 | **Yes** — the fake means the app runs unchanged | VS0 |
-| **VS2 — The declarations** | Everything the two platforms need *declared*, through `app.config.js` and a config plugin (F6): the iOS background mode, the usage string, `NSSupportsLiveActivities` and the App Group; the Android permissions and the FGS type. **No native code yet** — this part is what turns the fence red if it is done in `app.json`. | VS2.1–VS2.3 | **Yes** — the declarations are inert until a module uses them | VS1 (the policy scan needs the module to exist) |
+| **VS1 — The seam** | The controller that joins the machine to reality: it drives `pipeline.start()`/`stop()`, reads `pipeline.speaking()`/`turn()` (never storing them), keeps P3.5's switch and queue where they are, and registers itself as `mobile/index.js`'s one construction site. Native is a **port** with a fake, exactly like `src/audio/`. | VS1.1–VS1.3 | **Yes** — the fake means the app runs unchanged | VS0; **D213** (VS1.2's reporting shape) |
+| **VS2 — The declarations** | Everything the two platforms need *declared*, through `app.config.js` and a config plugin (F6): the iOS background mode, the usage string, `NSSupportsLiveActivities` and the App Group; the Android permissions and the FGS type. **No native code yet** — this part is what turns the fence red if it is done in `app.json`. | VS2.1–VS2.3 | **Yes** — the declarations are inert until a module uses them | VS1 (the policy scan needs the module to exist); **D207** (VS2.1's background mode) |
 | **VS3 — Android** | The local Expo module's Kotlin half: `VoiceSessionModule.kt`, `VoiceSessionService.kt`, `AudioFocusController.kt`, the notification, the route signal, the `START_NOT_STICKY` contract. | VS3.1–VS3.3 | **Yes**, and independent of VS4 | VS2; **D209** (call state), **D210** (notifications denied), **D218** (the category) |
 | **VS4 — iOS** | The module's Swift half, the `ios/Shared/` sources compiled into both targets, the widget target and the Live Activity with its buttons. **The only part with owner-only steps in the Apple portal.** | VS4.1–VS4.4 | **Yes**, and independent of VS3 | VS2; **D204** (the minimum iOS version), **D203** (what Hang Up does), **D216**, **D217** |
 | **VS5 — What a kill leaves behind** | `cleanupStaleSessions()` on every launch, the Android self-stop when JS goes quiet, and the assertion that a **paused** session touches no credential (F24) and no transcript (F9). | VS5.1–VS5.2 | **Yes** | VS3 and VS4 |
@@ -243,10 +245,14 @@ event is refused and changes nothing; and the **P8 caveat** — an
 **Files.** `mobile/src/voice-session/index.js` (new);
 `mobile/src/voice-session/index.test.js` (new).
 **Depends on.** VS0.2.
-**What it does.** Exports the machine, the events and the session controller
-(VS1.1) from one place, in the shape of `mobile/src/audio/index.js` and
-`mobile/src/voice/index.js` — the app imports the door and never a file inside.
-**Tests.** The door's export list is pinned against a literal list; the same
+**What it does.** Exports **the machine and the events, and nothing else** —
+the session controller does not exist until VS1.1, and the door is only extended
+to carry it in VS1.3, the task that constructs it. One door, in the shape of
+`mobile/src/audio/index.js` and `mobile/src/voice/index.js` — the app imports
+the door and never a file inside.
+**Tests.** The door's export list is pinned against a literal list (the
+machine and the events in this task; VS1.3 widens the literal when it adds the
+controller, in the same commit as the export); the same
 three recursive scans `src/audio/index.test.js` runs (no package imports; only
 `shared/` outside `mobile/`; no clock, random, file or network) run over
 `src/voice-session/`; and two **new** assertions this work adds: **a paused
@@ -353,7 +359,9 @@ no new environment variable name appears outside `app.config.js`; the derivation
 of the widget identifier from `FUGARO_IOS_BUNDLE_ID` is a unit test over the
 pure helper.
 **Verification.** `cd mobile && npx expo config --type introspect` (the
-introspection must show the four and no more), then **`fugaro verify test`**.
+introspection must show the four and no more; it runs **locally, offline, over
+`mobile/node_modules`** — the `npm ci` that installs them is itself a network
+step and is not part of the verification), then **`fugaro verify test`**.
 **Reviewer.** **SECURITY-SENSITIVE-adjacent** — Global Constraint 14 applies to
 the app-group and usage-string change, because those are the two declarations
 that decide what the microphone and the shared container mean: **independent
@@ -376,8 +384,8 @@ output and not a file in the tree.
 **Tests.** The permission list is exactly the expected set (an equality, not a
 containment — a stray permission must fail the test); `READ_PHONE_STATE` is
 absent under D209's recommendation and the test says which decision it encodes.
-**Verification.** `cd mobile && npx expo config --type introspect`, then
-**`fugaro verify test`**.
+**Verification.** `cd mobile && npx expo config --type introspect` (local and
+offline over `mobile/node_modules`, as VS2.1), then **`fugaro verify test`**.
 **Reviewer.** standard (the permission list is public by construction).
 
 ### Task VS2.3: The identity fence, again — **edited**
@@ -418,9 +426,15 @@ focus and routes.
 port's shape and nothing else; a JVM unit test (if the module's Gradle setup has
 one) asserts the module's method names — otherwise the port test is the whole of
 it, and the plan says so rather than pretending.
-**Verification.** `cd mobile && npx expo prebuild -p android --clean` must
-succeed and leave the generated manifest carrying VS2.2's declarations; then
-**`fugaro verify test`**.
+**Verification.** **What an agent runs:** `cd mobile && npm test` (**`fugaro
+verify test`** for the whole suite) — the dependency scan, the port's shape test
+and the module door are all CI-assertable, and they are the whole of this task's
+verification under Global Constraint 13. **Owner-run and local, and deliberately
+not an agent's verification:** `cd mobile && npx expo prebuild -p android --clean`
+— it needs `mobile/node_modules` (installed by `npm ci`, itself a network step),
+it downloads and writes native projects, and Global Constraint 13 excludes both a
+network and a device from a task's verification. When the owner runs it, the
+generated manifest must carry VS2.2's declarations.
 **Reviewer.** standard.
 
 ### Task VS3.2: The service, the notification, focus, routes — **new**
@@ -443,9 +457,13 @@ table, and the call-state listener is registered **only if D209 says yes**.
 **Tests.** The route/focus/unplug transitions are tested in **JS** through the
 fake (VS0.2's machine) — the Kotlin's own transitions are the checks in VS7.4,
 because a JVM test cannot produce a call.
-**Verification.** `cd mobile && npx expo prebuild -p android --clean`, then a
-**`development`-profile build** on a device for the fast loop; **`fugaro verify test`**
-for the suite.
+**Verification.** **What an agent runs:** `cd mobile && npm test` (**`fugaro
+verify test`** for the whole suite) — the focus, route and unplug transitions live
+in the machine and are asserted over the fake (VS0.2 extended). **Owner-run:**
+`npx expo prebuild -p android --clean` and a **`development`-profile build** on a
+device for the fast loop — a build is a store-credential step (Global Constraint
+9) and a device is Global Constraint 10's exclusion, so neither is an agent's
+verification.
 **Reviewer.** **SECURITY-SENSITIVE** — this is the foreground service that holds
 the microphone open, and Global Constraint 14 applies: **independent review.**
 
@@ -495,8 +513,12 @@ the app to restart on user action, rather than silently rebuilding and resuming
 `routeChanged { unsafe: true }` (P9), on the secondary thread it is posted on.
 **Tests.** The route and interruption transitions are the machine's, tested in
 JS; the Swift's job is to emit the right event, which VS7.2 checks on a device.
-**Verification.** `cd mobile && npx expo prebuild -p ios --clean` must succeed;
-then **`fugaro verify test`**.
+**Verification.** **What an agent runs:** `cd mobile && npm test` (**`fugaro
+verify test`** for the whole suite) — the route and interruption transitions are
+the machine's and are asserted over the fake. **Owner-run and local:**
+`cd mobile && npx expo prebuild -p ios --clean` — it needs **macOS with Xcode and
+CocoaPods** as well as `mobile/node_modules`, so it cannot be an agent's
+verification at all (Global Constraint 13).
 **Reviewer.** **SECURITY-SENSITIVE** — the audio session and the microphone
 (F2, Global Constraint 14): **independent review.**
 
@@ -520,10 +542,13 @@ and expanded presentations.
 no token, no transcript (F25) — in a JS test over the shared writer, and the
 widget's own source gets its **own scan** (it is outside `src/`, so the existing
 scans do not reach it — F25).
-**Verification.** `cd mobile && npx expo prebuild -p ios --clean` shows the
-target; then an **`internal`-profile** build (store distribution, F16) is what
-the check installs. **Fugaro never runs the build** — the owner does (Global
-Constraint 9).
+**Verification.** **What an agent runs:** `cd mobile && npm test` (**`fugaro
+verify test`**) — the App Group writer's four scalars and the widget source's own
+scan are pure and CI-assertable. **Owner-run and local, on macOS:**
+`cd mobile && npx expo prebuild -p ios --clean` shows the target, and an
+**`internal`-profile** build (store distribution, F16) is what the check
+installs. **Fugaro never runs the build** — the owner does (Global Constraint 9),
+and Global Constraint 13 keeps `prebuild` out of an agent's verification.
 **Reviewer.** standard.
 
 ### Task VS4.3: The buttons — **new**
@@ -541,7 +566,9 @@ and **does not open the app** (spec §10; D203's recommended answer).
 deep link and **no** buttons, which is a second UI and a second behaviour to
 check — the cost D204's row names.
 **Tests.** None device-free beyond the shared scan; the behaviour is VS7.3.
-**Verification.** As VS4.2.
+**Verification.** As VS4.2: an agent runs `cd mobile && npm test` / **`fugaro
+verify test`**; the `prebuild` and the `internal`-profile build are the owner's,
+on macOS (Global Constraints 9 and 13).
 **Reviewer.** standard.
 
 ### Task VS4.4: The activity's lifecycle — **new**
@@ -725,7 +752,9 @@ waits for, in one line:
 
 | To start | The owner must have |
 |---|---|
-| **VS0, VS1, VS2** | answered **D205** (where the machine lives), and **D207** before VS2.1 |
+| **VS0** | answered **D205** (where the machine lives) — and no other decision |
+| **VS1** | VS0 merged, and **D213** (VS1.2's reporting shape) |
+| **VS2** | VS1 merged, and **D207** (the background mode VS2.1 declares) |
 | **VS3** | VS2 merged, and **D209**, **D210**, **D218** |
 | **VS4** | VS2 merged, **D204**, **D203**, and the **Apple portal steps** of the reconciliation's §6.1 | 
 | **VS5** | VS3 and VS4 merged |
