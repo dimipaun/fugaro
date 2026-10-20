@@ -59,10 +59,13 @@ func TestRemovalIdentityString(t *testing.T) {
 		// A value is written as it is, except for the two characters the
 		// encoding uses: a space separates the parts and a backslash escapes,
 		// so a value holding either is escaped (identityPart) rather than
-		// written in a way another value could imitate.
-		{RemovalIdentity{Type: "t", Name: "a bucket"}, `type=t name=a\ bucket`},
+		// written in a way another value could imitate. A value's space is
+		// escaped to \x20 and not to a backslash-and-space pair: the printers
+		// rebuild a line with strings.Fields, which would read that pair plus
+		// the separator beside it as one space (identityValue).
+		{RemovalIdentity{Type: "t", Name: "a bucket"}, `type=t name=a\x20bucket`},
 		{RemovalIdentity{Type: "t", Name: `a\b`}, `type=t name=a\\b`},
-		{RemovalIdentity{Type: "t", Name: `a \ b`}, `type=t name=a\ \\\ b`},
+		{RemovalIdentity{Type: "t", Name: `a \ b`}, `type=t name=a\x20\\\x20b`},
 	} {
 		if got := tc.id.String(); got != tc.want {
 			t.Errorf("RemovalIdentity%v.String() = %q, want %q", tc.id, got, tc.want)
@@ -493,6 +496,10 @@ func TestThePrintedIdentityIsTheIdentityAnEntryHolds(t *testing.T) {
 		{"a carriage return", "fmgd\rdata"},
 		{"an invalid byte", "fmgd\xffdata"},
 		{"an escape sequence", "fmgd\x1b[2Jdata"},
+		{"a space", "fmgd data"},
+		{"a name that ends in a space", "fmgd-data "},
+		{"a name that starts with a space", " fmgd-data"},
+		{"a name of spaces", "   "},
 		{"a long name", "fmgd-" + strings.Repeat("x", 300)},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
@@ -534,6 +541,58 @@ func TestThePrintedIdentityIsTheIdentityAnEntryHolds(t *testing.T) {
 				t.Errorf("an entry holding the identity the refusal printed does not approve the removal: %s", why)
 			}
 		})
+	}
+}
+
+// TestAnIdentityIsOnePrintableLineWithSingleSpaces is the invariant the two
+// ends of the loop rest on, asserted over every position a space can sit in a
+// part: an identity this encoder writes holds printable ASCII, has no space
+// but the ones between its parts, two of them never in a row, and none at
+// either end.
+//
+// Each clause is a printer or a reader of this program. safetext rebuilds a
+// line with strings.Fields (safetext.fieldRewrite), which collapses a run of
+// whitespace into one space and drops it at either end — so a value whose own
+// space met the space between two parts would come out of a refusal one space
+// shorter than the entry the gate compares, and a value ending in a space
+// would lose it entirely (the escape written as "\ " was exactly that bug).
+// fugaro allow-delete trims the argument it is handed (approveArgument), and
+// it may: what the trim removes is the whitespace a paste added, never a byte
+// of an identity, because no identity begins or ends with one. A TERMINAL
+// takes what is printable ASCII as it is. Every value here is a value the
+// representation would break on if the escaping did not cover it.
+func TestAnIdentityIsOnePrintableLineWithSingleSpaces(t *testing.T) {
+	values := []string{
+		"", "a", " a", "a ", " ", "   ", "a b", "a  b", "\ta", "a\t", "a\n", "\r", "\\", "a\\ b", "\\ ", "a\\b",
+	}
+	for _, v := range values {
+		ids := []RemovalIdentity{
+			{Type: "t", Project: v, Name: v, ID: v, Instance: v},
+			{Type: v, Project: v, Name: v, ID: v},
+			{Type: "t", Project: v, Name: v, ID: v}, // a type with no per-instance part: the id is written last
+			{Type: "t", Name: v},
+			{Type: v},
+		}
+		for _, id := range ids {
+			text := id.String()
+			if got := safetext.FieldUncut(text); got != text {
+				t.Errorf("FieldUncut(%q) = %q, want the identity unchanged", text, got)
+			}
+			if got := safetext.MultiLine(text); got != text {
+				t.Errorf("MultiLine(%q) = %q, want the identity unchanged", text, got)
+			}
+			if trimmed := strings.TrimSpace(text); trimmed != text {
+				t.Errorf("the command's trim would cut %q to %q", text, trimmed)
+			}
+			if strings.Contains(text, "  ") {
+				t.Errorf("the identity %q holds two spaces in a row, which a printer rebuilds as one", text)
+			}
+			for _, r := range text {
+				if r != ' ' && (r < 0x21 || r > 0x7e) {
+					t.Errorf("the identity %q holds %U, which no printer of this program leaves alone", text, r)
+				}
+			}
+		}
 	}
 }
 

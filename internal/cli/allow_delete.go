@@ -91,7 +91,7 @@ retyping it; it is printed there bare, and one matched pair of double quotes
 around it is stripped if you paste it quoted anyway, because a shell or a
 message may have added them (a quote at one end only is a character of the
 identity, and is kept). The two ends agree byte for byte because the identity
-is written in an escaped form — a space in a value as \ , a backslash as \\,
+is written in an escaped form — a space in a value as \x20, a backslash as \\,
 and any other byte with no printable form as \xHH — so that what a refusal
 prints is exactly what a plan shows. An identity longer than 8192 characters is
 refused here and by the plan: no refusal prints one, and the plan refuses the
@@ -317,6 +317,12 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 // The whole argument and each half are trimmed, and the halves are compared
 // with a plan's by exact equality: a stray space around either would be an
 // approval of nothing.
+//
+// Trimming an identity cannot lose a character of one: an identity is escaped
+// so that the only whitespace in it is the single space between two of its
+// parts, with none at either end (tf.identityValue, pinned by
+// TestAnIdentityIsOnePrintableLineWithSingleSpaces), so what the trim removes
+// here is a shell's or a paste's own space and never the identity's.
 //
 // One MATCHED pair of double quotes around the identity is stripped before that
 // comparison, because it is a mark a sentence can have and an identity cannot:

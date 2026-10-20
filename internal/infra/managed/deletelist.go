@@ -88,6 +88,14 @@ const (
 	// identities they lack) — and the version-2 format itself arrived with
 	// Task 6.3, on a branch whose managed mode has never shipped, so there is
 	// no list anywhere that a version bump would have to migrate.
+	//
+	// The same holds for the one part of the identity's encoding that changed
+	// after version 2 was written (a value's space escaped as \x20 rather than
+	// as a backslash and a space, tf.identityValue): an entry an earlier build
+	// of this unshipped branch wrote for an address whose object holds a space
+	// matches no removal now, and is read as the version-2 entry it is, so it
+	// costs its owner a delete refused once and re-approved from the refusal —
+	// not a version this package cannot read.
 	AllowDeleteVersion = 2
 	// allowDeleteMaxBytes bounds the read: the object is a list of Terraform
 	// addresses, and a caller that acts on it should not be reading a body

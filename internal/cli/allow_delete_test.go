@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -893,6 +894,66 @@ func TestAllowDeleteCommandListsALongIdentityWhole(t *testing.T) {
 	}
 	if strings.Contains(out, "…") {
 		t.Errorf("the listing cut a line, so a paste from it would approve nothing:\n%s", out)
+	}
+}
+
+// refusalRemoval is the removal a refusal is about, built as the plan's own
+// JSON shows it (a delete's before view), so the identity is read off it the
+// way the gate reads one rather than spelled out beside it.
+func refusalRemoval(name string) tf.ResourceChange {
+	return tf.ResourceChange{
+		Address: "module.managed.google_storage_bucket.fmgd_data",
+		Type:    "google_storage_bucket",
+		Change: tf.Change{Actions: []string{"delete"}, Before: map[string]any{
+			"id": name, "name": name, "project": initProject, "time_created": "2026-01-02T03:04:05.678Z"}},
+	}
+}
+
+// TestAllowDeleteCommandRecordsTheIdentityARefusalPrints: the loop the delete
+// list works by is textual — a refusal prints the identity of the object the
+// plan removes, the owner pastes that text into this command, and the entry it
+// records is compared with the plan's identity byte for byte (tf.Approves) —
+// so both ends of it are walked here on the values whose escaping is doing
+// work: a value with a space in it, a value that ENDS in one (the escaped
+// space and the space between two parts would be a run of whitespace, which
+// every printer of this program collapses with strings.Fields, and which this
+// command's own TrimSpace takes off the end of an argument), a value that is
+// only spaces, and an ordinary one.
+func TestAllowDeleteCommandRecordsTheIdentityARefusalPrints(t *testing.T) {
+	for _, name := range []string{"fmgd-data", "fmgd data", "fmgd-data ", "  "} {
+		t.Run(fmt.Sprintf("a name %q", name), func(t *testing.T) {
+			rc := refusalRemoval(name)
+			// What a refusal prints is what the gate compares, before anything
+			// is pasted.
+			if printed, want := tf.RemoveIdentityText(rc), tf.RemovedIdentity(rc).String(); printed != want {
+				t.Fatalf("a refusal prints %q and the gate compares %q", printed, want)
+			}
+			r := allowDeleteRig(t)
+			// The paste: the line a refusal printed, with the whitespace a
+			// terminal or a message adds around it.
+			arg := "  " + rc.Address + "=" + tf.RemoveIdentityText(rc) + "  "
+			if out, _, err := execute(t, "allow-delete", arg); err != nil {
+				t.Fatalf("the identity a refusal printed was refused: %v\n%s", err, out)
+			}
+			got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
+			if !ok {
+				t.Fatal("nothing was written")
+			}
+			var obj struct {
+				Version int              `json:"version"`
+				Entries []tf.DeleteEntry `json:"entries"`
+			}
+			if err := json.Unmarshal([]byte(got), &obj); err != nil {
+				t.Fatalf("the object is not a delete list (%v):\n%s", err, got)
+			}
+			want := tf.ApprovalFor(rc)
+			if len(obj.Entries) != 1 || obj.Entries[0] != want {
+				t.Errorf("the object holds %+v, want the one entry that approves the removal (%+v)", obj.Entries, want)
+			}
+			if ok, why := tf.Approves(obj.Entries, rc); !ok {
+				t.Errorf("the entry recorded from the refusal does not approve the removal: %s", why)
+			}
+		})
 	}
 }
 

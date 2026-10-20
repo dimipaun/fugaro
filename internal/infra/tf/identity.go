@@ -62,9 +62,16 @@ import (
 // closes only when what the refusal printed is byte for byte what the gate
 // compares, and a sentence this program writes puts the values it carries
 // through safetext.Field or safetext.MultiLine, both of which rewrite what
-// they do not expect (Field additionally cuts it at its own bound). So every
-// byte a value of an identity holds that those transforms would touch is
-// escaped as well (identityPart), and an identity too long to print whole is
+// they do not expect (Field additionally cuts it at its own bound, and both
+// rebuild a line with strings.Fields, which collapses a run of whitespace and
+// drops it at either end). So every byte a value of an identity holds that
+// those transforms would touch is escaped as well (identityPart) — a space
+// among them, written as \x20 rather than as the backslash-and-space pair the
+// other escapes use, since beside the space that separates two parts it would
+// be a run of whitespace and be rebuilt as one space: a refusal would print an
+// identity one byte short of the one the gate compares, its reader would
+// record an entry that matches nothing, and the removal could never be
+// approved (identityValue) — and an identity too long to print whole is
 // refused rather than printed in part (RemovalIdentityPrintMax), which is the
 // same fail-closed direction as the rest of the rule: a printed identity that
 // is a prefix of the real one would be an approval of nothing.
@@ -201,7 +208,13 @@ type RemovalIdentity struct {
 // text compared — and every byte a value holds that a printer of this program
 // would rewrite, drop or cut is escaped too (identityPart), which leaves the
 // identity one line of printable ASCII that safetext.Field and
-// safetext.MultiLine carry unchanged. Nothing parses it back into parts: the
+// safetext.MultiLine carry unchanged. The one byte that takes more than
+// leaving alone is the space: a value's own space is written as \x20 and never
+// as the backslash-and-space pair the two-character escapes use, because the
+// space between two parts is the only whitespace an identity may hold and a
+// printer rebuilding the line with strings.Fields (safetext.fieldRewrite)
+// would merge the pair with it, printing a text one byte short of the one the
+// gate compares (identityValue). Nothing parses it back into parts: the
 // identity is a string the command compares whole, and the escaping is what
 // makes that safe rather than ambiguous.
 func (i RemovalIdentity) String() string {
@@ -220,15 +233,17 @@ func (i RemovalIdentity) String() string {
 // escaped so that no value can be mistaken for another and no printer of this
 // program can change it.
 //
-// Two of the escapes are the encoding's own: a backslash (the escape itself,
-// escaped first) and a space (which separates the parts), and escaping exactly
-// those two is what makes the whole encoding injective — distinct values
-// escape to distinct text, unescaping is its inverse, and an escaped space
-// cannot end a part (String's own doc records it, and
-// TestRemovalIdentityStringIsInjective fails without it). Quoting is
-// deliberately not used: the identity is printed for the owner to paste into
-// fugaro allow-delete as ADDRESS=IDENTITY, and the command compares it byte
-// for byte.
+// Two of the escapes are the encoding's own, and both are needed for the
+// encoding to be injective — distinct values escape to distinct text,
+// unescaping is its inverse, and no escaped byte can end a value the way
+// another value's raw byte would: a backslash is the escape itself and is
+// escaped first (\\), and a space, which is what separates the parts, is
+// escaped too — as \x20, one of the printable escapes below, and not as a
+// backslash and a space (String's own doc records why the pair cannot be
+// written, and TestRemovalIdentityStringIsInjective fails without the
+// escaping). Quoting is deliberately not used: the identity is printed for the
+// owner to paste into fugaro allow-delete as ADDRESS=IDENTITY, and the command
+// compares it byte for byte.
 //
 // The rest of the escaping is for the PRINTING: a refusal prints this identity
 // for its reader to copy back, and every sentence this program writes puts the
@@ -240,23 +255,40 @@ func (i RemovalIdentity) String() string {
 // than the one an entry holds, and the loop refusal → copy → allow-delete
 // could never close. So every byte a value holds that those transforms would
 // not leave alone is escaped as well: a byte outside printable ASCII becomes
-// \xHH. An ordinary identity — a type, a project, a DNS-shaped name, a
-// provider id — holds none of them and reads exactly as it always did.
+// \xHH, a space among them. An ordinary identity — a type, a project, a
+// DNS-shaped name, a provider id — holds none of them and reads exactly as it
+// always did.
 func identityPart(k, v string) string {
 	return k + "=" + identityValue(v)
 }
 
 // identityValue is a value as an identity writes it: itself, when every byte
-// of it is one the printers leave alone, and otherwise with a backslash, a
-// space and every byte outside printable ASCII escaped (\xHH, two lowercase
-// hex digits, one escape per byte of a multi-byte character).
+// of it is one the printers leave alone, and otherwise with a backslash and
+// every byte outside printable ASCII escaped (\xHH, two lowercase hex digits,
+// one escape per byte of a multi-byte character) — a space among them, and
+// NOT as a backslash and a space.
+//
+// A value's space is escaped as \x20 and never written as `\ `, because the
+// only whitespace an identity may hold is the single space between two of its
+// parts. safetext rebuilds a line with strings.Fields (safetext.fieldRewrite),
+// which collapses a run of whitespace into one space and drops it at either
+// end, so the pair `\ ` beside the space that separates the parts would come
+// out of a refusal as ONE space — one byte short of the identity the gate
+// compares — and a value ending in a space, whose escape would be the
+// identity's last two bytes, would lose it entirely. That is the bug this
+// escaping closes: the refusal printed an identity its reader could copy into
+// fugaro allow-delete and that matched no removal, so the refused removal
+// could never be approved. An identity written this way holds no whitespace
+// but that separator, no two spaces in a row and none at either end, which is
+// what makes Field, MultiLine, the command's own trim of its argument
+// (approveArgument) and a terminal all leave it exactly as it is
+// (TestAnIdentityIsOnePrintableLineWithSingleSpaces).
 //
 // The result is one line of printable ASCII with no byte safetext.Field,
 // safetext.MultiLine or a terminal has anything to say about, so what is
 // printed is what an entry holds — and the escaping stays injective: a
-// backslash in the value is doubled, an escaped space cannot end a part, and a
-// literal "\x41" in a value writes "\\x41", so no two values escape to one
-// text.
+// backslash in the value is doubled, a space is written as \x20, and a literal
+// "\x41" in a value writes "\\x41", so no two values escape to one text.
 func identityValue(v string) string {
 	if !strings.ContainsFunc(v, func(r rune) bool {
 		return r == '\\' || r < 0x21 || r > 0x7e
@@ -270,8 +302,6 @@ func identityValue(v string) string {
 		switch c := v[i]; {
 		case c == '\\':
 			b.WriteString(`\\`)
-		case c == ' ':
-			b.WriteString(`\ `)
 		case c < 0x21 || c > 0x7e:
 			b.WriteString(`\x`)
 			b.WriteByte(hex[c>>4])
