@@ -41,9 +41,20 @@ import (
 //     running, and a VM young enough that Batch may simply be mid-teardown are
 //     all REFUSED and reported (§3.4: "never a VM or job it cannot
 //     attribute").
-//   - It cancels -- never deletes -- a job that has sat in QUEUED past the
-//     queue deadline (§1.4): the record survives, which is what fugaro ls,
-//     diagnose, watch and the sweeper read, and jobs.delete would erase it.
+//   - It deletes -- it cannot cancel -- a job that has sat in QUEUED past the
+//     queue deadline (§1.4). jobs.delete is the only verb available for it:
+//     jobs.cancel is not a permission Google has (see the permissions below),
+//     so a role that named it could never be created. That is the one case
+//     where erasing the record is affordable, because a job that never left
+//     QUEUED never ran a task -- but the run is NOT what is erased with it:
+//     launch.json is written by the launcher, not by the job (cli/run.go:
+//     Launch, then WriteLaunch), so it survives the delete and fugaro ls,
+//     diagnose and watch, which read the runs bucket, keep showing the run.
+//     What the job's record did hold is its own state and status message, and
+//     those go with it. result.json never existed (the runner writes it in
+//     finalize) and no VM ever did (Batch creates them at SCHEDULED). A job
+//     that DID leave QUEUED keeps its record, and the queue deadline never
+//     deletes one (deleteQueued reads the job back before it acts).
 //   - It never deletes a finished job's record. That record is history, and
 //     the VM of a finished job is Batch's own teardown; §3.4's "the reaper
 //     deletes the job" is about the jobs it has decided must go (a stuck
@@ -60,7 +71,7 @@ import (
 // It is idempotent: everything it deletes is gone afterwards, every refusal
 // is refusable again, and a second pass over the same project reports the
 // same refusals and no actions. DryRun lists what a real pass would delete
-// and touches nothing at all -- no cancel either.
+// and touches nothing at all.
 //
 // The permissions this needs are Task 6's to grant (§3.7, C22); the reaper is
 // its own dedicated, project-wide service account and must not share the
@@ -68,17 +79,29 @@ import (
 //
 //   - batch.jobs.list and batch.jobs.get -- to read every Fugaro job in the
 //     region, which is where each decision comes from.
-//   - batch.jobs.cancel -- the queue deadline (§1.4). It is not optional: a
-//     job stuck QUEUED past the deadline counts against max_parallel and can
-//     wait out Batch's own 2-day ceiling.
-//   - batch.jobs.delete -- the destructive one, and the reason for a separate
-//     account: it erases a job and its history, so it belongs to a stuck job
-//     the reaper has decided must go and to nothing else.
+//   - batch.jobs.get and batch.jobs.delete -- the queue deadline (§1.4) needs
+//     both. A job stuck QUEUED past the deadline counts against max_parallel
+//     and can wait out Batch's own 2-day ceiling, and the verb that clears it
+//     is jobs.delete: jobs.cancel is NOT a permission Google defines. The
+//     API's *methods* on a job do include cancel -- which is why `gcloud batch
+//     jobs cancel` exists and §9 of the design uses it -- but the permissions
+//     it defines on jobs are create, get, list and delete, and
+//     `batch.jobs.cancel` is in no permission list and no predefined role: the
+//     six-permission role this file used to describe could never be created --
+//     which is what kept --provision-batch refused until the role was fixed.
+//     delete is also the destructive one, and the reason for a separate
+//     account: it erases a job and its history, so it belongs to a job the
+//     reaper has decided must go -- a stuck SCHEDULED/RUNNING job, a stuck
+//     deletion, or a job that never left QUEUED -- and to nothing else. The
+//     get is what keeps the last of those honest: the reaper reads a queued
+//     job back before deleting it and leaves one that has left QUEUED alone,
+//     so a run that started between the listing and the delete is never the
+//     one erased.
 //   - compute.instances.list -- the project-wide aggregated list, which is
 //     how a Fugaro-labelled VM in any of the region's zones is found.
 //   - compute.instances.delete -- the other destructive one.
 //
-// Six permissions, and the grant must be a custom role that carries exactly
+// Five permissions, and the grant must be a custom role that carries exactly
 // these: roles/batch.jobsEditor and roles/compute.instanceAdmin.v1 -- the
 // roles Google's own pages name for creating, cancelling and deleting a job
 // and for deleting an instance -- are both far wider. jobsEditor also carries
@@ -89,11 +112,11 @@ import (
 // SSH keys reach a VM (the full permission list of each built-in role is
 // Google's and was NOT re-read for this task: UNVERIFIED). A reaper account
 // that could create jobs and VMs would be a second launcher, not a janitor.
-// Design §3.7 and docs/backends.md state the same six for the same reason:
+// Design §3.7 and docs/backends.md state the same five for the same reason:
 // this header is where a reviewer checks the role against the code.
 //
 // IAM cannot scope a delete by label. Nothing in the grant says "only
-// fugaro=managed": the six permissions are project-wide, `jobs.delete` erases
+// fugaro=managed": the five permissions are project-wide, `jobs.delete` erases
 // any job in the project and `instances.delete` any VM in it, and no Condition
 // can express "the resource carries this label" (Conditions match resource
 // names and types -- design §3.7's Check 57a step 9 question -- not labels).
@@ -104,7 +127,7 @@ import (
 // narrowness is trusting reapJob's and reapInstances' refusals, not the IAM.
 //
 // Nothing here reads a secret, and nothing here needs Secret Manager, storage
-// or logging: the reaper's whole surface is the six permissions above.
+// or logging: the reaper's whole surface is the five permissions above.
 
 // ReapMargin is the margin the reaper's age filter adds on top of the longest
 // a run may be active (see NewReaper's base), its slack and the queue
@@ -132,9 +155,13 @@ const MaxDeadline = 30 * 24 * time.Hour
 // ActionKind is what the reaper did, or in a dry run would do.
 type ActionKind string
 
+// There is no cancel action, and there must not be one: jobs.cancel is not a
+// permission Google has, so the reaper's role cannot carry it and nothing this
+// package emits can be a cancel. A constant nothing emits is a permission
+// someone re-adds -- which is how the role came to name six permissions for a
+// verb that does not exist.
 const (
 	ActionDeleteJob ActionKind = "delete-job" // jobs.delete: the job and its VMs
-	ActionCancelJob ActionKind = "cancel-job" // jobs.cancel: the queue deadline
 	ActionDeleteVM  ActionKind = "delete-vm"  // compute.instances.delete
 )
 
@@ -189,8 +216,6 @@ func actionVerb(k ActionKind, dryRun bool) string {
 	switch k {
 	case ActionDeleteJob:
 		present, past = "delete job", "deleted job"
-	case ActionCancelJob:
-		present, past = "cancel job", "cancelled job"
 	case ActionDeleteVM:
 		present, past = "delete VM", "deleted VM"
 	default:
@@ -215,7 +240,7 @@ type ReaperOptions struct {
 	// max(longest, backend.MaxRunTime) -- see NewReaper's base.
 	Timeouts Timeouts
 	// QueueDeadline is how long a job may sit in QUEUED before the queue
-	// deadline cancels it (design §1.4, C8). Zero means the longest a run
+	// deadline deletes it (design §1.4, C8). Zero means the longest a run
 	// may be active -- the longest configured task timeout, or a run's own
 	// override ceiling (backend.MaxRunTime) when that is longer -- plus
 	// backend.TaskTimeoutSlack: "the launcher's own task timeout", the
@@ -239,7 +264,7 @@ type ReaperOptions struct {
 	// moments after its job ended is not yet evidence of a leak (§3.4).
 	//
 	// It bounds no job. A job's deadlines are separate and both about time
-	// spent, not age: a QUEUED job is cancelled when it has waited longer than
+	// spent, not age: a QUEUED job is deleted when it has waited longer than
 	// QueueDeadline (§1.4, C8) and never when it reaches MaxAge, and a job in
 	// any other state is deleted only by the time it has spent in that state
 	// (stateSince, bounded by Reaper.RunBudget), never by its age since
@@ -252,7 +277,7 @@ type ReaperOptions struct {
 	// than obeyed.
 	MaxAge time.Duration
 	// DryRun makes Reap list what it would delete and touch nothing: no
-	// instance is deleted and no job is cancelled either.
+	// instance is deleted and no job is deleted from the job pass either.
 	DryRun    bool
 	Endpoints Endpoints
 	// HTTPClient, when set, is the client the API calls use (tests).
@@ -267,7 +292,7 @@ type ReaperOptions struct {
 
 // Reaper is the job-first reaper of design §3.4: one installation's leaked
 // Batch jobs and leaked Compute Engine instances, deleted (or, for a queued
-// job past the deadline, cancelled) as its own scheduled job would.
+// job past the deadline, deleted) as its own scheduled job would.
 type Reaper struct {
 	o             ReaperOptions
 	batch         *batch.Service
@@ -290,7 +315,7 @@ type Reaper struct {
 // NewReaper connects to Cloud Batch and the Compute Engine API with
 // Application Default Credentials unless NoAuth. The account it runs as is
 // the dedicated project-wide reaper account (design §3.7, C22): see this
-// file's header for the exact six permissions it needs and nothing else.
+// file's header for the exact five permissions it needs and nothing else.
 func NewReaper(ctx context.Context, o ReaperOptions) (*Reaper, error) {
 	switch {
 	case o.GCPProject == "" || o.Region == "":
@@ -498,7 +523,7 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 		// started has been waiting since it was created, and the wait between
 		// creation and the API reporting QUEUED is a few milliseconds the
 		// reaper reads as waiting -- the conservative side of a deadline that
-		// cancels rather than deletes.
+		// deletes rather than leaves.
 		if age <= r.queueDeadline {
 			// Still waiting for capacity, within the deadline the design
 			// gives a queue wait. It owns its VM if it has somehow been given
@@ -506,22 +531,21 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 			owned.own(run, "its job is QUEUED, still within the queue deadline: Batch is still managing it")
 			return nil
 		}
-		// Cancelled, never deleted (§1.4). A cancel does not free its VMs for
-		// the instance pass either: a cancelled job goes to
-		// CANCELLATION_IN_PROGRESS and Batch tears its VMs down from there, so
-		// the VM is owned. That includes a cancel the API refused because the
-		// job had finished on its own in the meantime: the job is left to the
-		// next pass, which will read it as finished and reap its VM then.
+		// Deleted, not cancelled: jobs.cancel is not a permission Google has
+		// (see this file's header), and a job that never left QUEUED never ran
+		// a task, so there is no result.json and no VM to lose -- what the
+		// delete does take with it is the job's own record, its status message
+		// included, and the run's launch.json is the launcher's own object and
+		// stays. deleteQueued owns
+		// the run as well -- Batch tears a deleted job's VMs down itself, so
+		// the VM is left to the pass after this one -- and it reads the job
+		// back before it acts, because "never left QUEUED" is the fact the
+		// delete rests on and the listing it came from is a snapshot.
 		//
-		// The tense follows the pass, as the delete path's does: a dry run
-		// cancels nothing, and a report that says a job "was cancelled" when
-		// it was not is a line an operator cannot act on.
-		cancelled := "its job was QUEUED past the queue deadline and was cancelled, not deleted: Batch tears its VMs down from CANCELLATION_IN_PROGRESS"
-		if r.o.DryRun {
-			cancelled = "its job is QUEUED past the queue deadline and this pass would cancel it, not delete it: Batch tears a cancelled job's VMs down from CANCELLATION_IN_PROGRESS"
-		}
-		owned.own(run, cancelled)
-		return r.cancelQueued(ctx, j, run, age, rep)
+		// What it must never do is delete a job that DID leave QUEUED: that
+		// run may have executed a task, and its record is what the run's ls,
+		// diagnose and watch read.
+		return r.deleteQueued(ctx, j, run, age, owned, rep)
 	case "SCHEDULED", "RUNNING":
 		// Judged on the time spent IN THIS STATE, not on the job's age: a run
 		// may wait in the queue far longer than the queue deadline (the
@@ -587,23 +611,23 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 		return r.deleteJob(ctx, j, run, fmt.Sprintf("a deletion that has not finished in %.0f minutes", spent.Minutes()), owned, rep)
 	case "CANCELLATION_IN_PROGRESS":
 		// NOT a finished job, though the seam's own table maps it to the
-		// cancelled state (stateOf): a cancel goes CANCELLATION_IN_PROGRESS ->
-		// CANCELLED (§1.4), and Batch is still tearing the run's VMs down for
-		// as long as this state lasts. Reading it as finished would delete the
-		// VM of a job that Batch is mid-teardown on -- the race §3.4 exists to
-		// avoid, and the case the cancel branch above this one promises is not
-		// the instance pass's ("a cancelled job keeps its VMs out of the
-		// instance pass ... the next pass reads the job as finished"). So the
-		// run is owned here, and stays owned: this is not a state a VM is ever
-		// freed from.
+		// cancelled state (stateOf): a cancellation goes
+		// CANCELLATION_IN_PROGRESS -> CANCELLED (§1.4), and Batch is still
+		// tearing the run's VMs down for as long as this state lasts. Reading
+		// it as finished would delete the VM of a job that Batch is
+		// mid-teardown on -- the race §3.4 exists to avoid. So the run is
+		// owned here, and stays owned: this is not a state a VM is ever freed
+		// from.
 		//
 		// This job is also never deleted, whatever its time in state, where a
-		// stuck DELETION_IN_PROGRESS is: deleting a cancelled job erases the
-		// record that the run's ls, diagnose and watch read, which is why
-		// §1.4 and C8 make jobs.cancel the cancel and not jobs.delete. A
-		// cancellation that has not finished within the run budget is
-		// therefore reported, not acted on -- a line an operator can look at,
-		// which is all this build can honestly do with it.
+		// stuck DELETION_IN_PROGRESS is: a job in this state was cancelled by
+		// someone -- an operator's `fugaro cancel`, or a QueueDeadline the
+		// cancelled run's own record is the history of -- so its record is
+		// what the run's ls, diagnose and watch read. A cancellation that has
+		// not finished within the run budget is therefore reported, not acted
+		// on -- a line an operator can look at, which is all this build can
+		// honestly do with it. (The reaper itself never cancels anything: see
+		// its header. This state is reached by someone else's cancel.)
 		spent, ok := stateSince(j, r.now())
 		if !ok {
 			return r.refuseUnknownStateTime(j, state, run, owned, rep)
@@ -641,8 +665,8 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 }
 
 // refuseUnknownStateTime is what a job whose time in the current state cannot
-// be read gets: nothing is done to it (no delete, no cancel -- a job whose
-// stuckness is unknown is not stuck), it is owned so the instance pass leaves
+// be read gets: nothing is done to it (a job whose stuckness is unknown is not
+// stuck), it is owned so the instance pass leaves
 // its VMs alone, and the refusal says why. It is the same posture as an
 // unreadable createTime: fail closed, and name it in the report.
 func (r *Reaper) refuseUnknownStateTime(j *batch.Job, state, run string, owned owners, rep *Report) error {
@@ -654,7 +678,7 @@ func (r *Reaper) refuseUnknownStateTime(j *batch.Job, state, run string, owned o
 
 // refuseStaleStateEvent is what a job whose only measurement of its time in
 // state may date an earlier state gets, in the two branches that have no
-// second measurement: nothing is done to it (no delete, no cancel), it is
+// second measurement: nothing is done to it, it is
 // owned so the instance pass leaves its VMs alone, and the refusal says why. It
 // is the same posture as an unreadable time in state -- fail closed, and name
 // it in the report -- because "this measurement may not be about the state it
@@ -688,38 +712,90 @@ func stateEventPostdatesQueueDeadline(j *batch.Job, created time.Time, queueDead
 	return !ev.IsZero() && ev.After(created.Add(queueDeadline))
 }
 
-// cancelQueued is the queue deadline: a job that has not reached SCHEDULED or
-// RUNNING within the deadline is cancelled with jobs.cancel -- never deleted,
-// because its record is what the run's ls, diagnose and watch read (§1.4,
-// C8) -- and the run shows a queue-timeout outcome (internal/cli).
-func (r *Reaper) cancelQueued(ctx context.Context, j *batch.Job, run string, age time.Duration, rep *Report) error {
-	reason := fmt.Sprintf("queued for %.0f minutes, past the queue deadline of %.0f", age.Minutes(), r.queueDeadline.Minutes())
+// deleteQueued is the queue deadline: a job that has not reached SCHEDULED or
+// RUNNING within the deadline is deleted (§1.4's queue deadline is
+// Fugaro-side, and a job that never left QUEUED never ran a task, so what is
+// erased is the job's own record -- its state and the status message Batch
+// attaches -- and nothing else: the run's launch.json is the launcher's, not
+// the job's, and survives, so ls, diagnose and watch keep showing the run).
+//
+// It is a delete and not a cancel because jobs.cancel is not a permission
+// Google has: the role this package's header used to describe -- six
+// permissions, one of them a verb the Batch API does not define -- could never
+// be created, which is what kept --provision-batch refused. jobs.delete is
+// already the reaper's, and it is strictly the more destructive verb; what a
+// cancel would have kept is the job's record, and the record of a job that
+// never ran is not worth a permission that does not exist.
+//
+// Before it deletes, it reads the job back. The decision came from a listing,
+// which is a snapshot: a job that STARTED between that listing and this call is
+// a live run with a task in it, and deleting it would erase a record the run's
+// ls, diagnose and watch read -- the one thing this file exists never to do.
+// So a job that is no longer QUEUED is left to the pass after this one, which
+// judges it on the time it spends in the state it has reached, exactly as it
+// judges every other job. The read costs one API call per queued job past the
+// deadline, which is a rare shape; the alternative is a delete decided from a
+// stale snapshot.
+func (r *Reaper) deleteQueued(ctx context.Context, j *batch.Job, run string, age time.Duration, owned owners, rep *Report) error {
+	reason := fmt.Sprintf("queued for %.0f minutes and never left QUEUED, past the queue deadline of %.0f", age.Minutes(), r.queueDeadline.Minutes())
+	deleting := "is being deleted by this pass for the queue deadline"
 	if r.o.DryRun {
-		rep.Actions = append(rep.Actions, Action{Kind: ActionCancelJob, Target: j.Name, Reason: reason})
+		deleting = "would be deleted by this pass for the queue deadline"
+	}
+	// Owned is a first-wins map (owners.own), so the clause is written once,
+	// on the path the pass actually took: a run whose job left QUEUED is not
+	// one this pass deleted, and its VM is refused for the reason that is
+	// true of it.
+	own := func(why string) {
+		owned.own(run, "its job "+why+", and Batch tears a deleted job's VMs down itself: leaving the VM to the pass after this one")
+	}
+	if r.o.DryRun {
+		own(deleting)
+		rep.Actions = append(rep.Actions, Action{Kind: ActionDeleteJob, Target: j.Name, Reason: reason})
 		return nil
 	}
-	if _, err := r.batch.Projects.Locations.Jobs.Cancel(j.Name, &batch.CancelJobRequest{}).Context(ctx).Do(); err != nil {
-		// A job that is already gone needed no cancel: someone else's delete
+	// The read-back. It is where the "never left QUEUED" in the reason is
+	// checked rather than assumed.
+	got, err := r.batch.Projects.Locations.Jobs.Get(j.Name).Context(ctx).Do()
+	if err != nil {
+		// A job that is already gone needed no delete: someone else's delete
 		// (or Batch's own 60-day one) removed it between the listing and this
 		// call. Reading that 404 as a failure would end the whole pass -- one
 		// vanished job stopping the reaper from doing anything else it had
-		// decided to do, which is the opposite of the idempotence the deletes
-		// below have (deleteJob's isNotFound). Nothing is recorded, exactly as
-		// a delete of something already gone records nothing.
+		// decided to do, which is the opposite of the idempotence deleteJob
+		// has. Nothing is recorded, and the run is owned for this pass as if
+		// the delete had happened: the pass decided on it, and one pass of
+		// grace costs an interval on a leak the next pass reaps (§3.4).
+		if isNotFound(err) {
+			own(deleting)
+			return nil
+		}
+		return apiError("reading queued job "+j.Name, err)
+	}
+	if state := jobState(got); state != "QUEUED" {
+		// It left the queue: it is a run now, and its record is the run's.
+		owned.own(run, fmt.Sprintf("its job left QUEUED (%s) between the listing and the queue deadline's delete, so the reaper left it to the next pass", state))
+		return nil
+	}
+	own(deleting)
+	if _, err := r.batch.Projects.Locations.Jobs.Delete(j.Name).Context(ctx).Do(); err != nil {
+		// The same idempotence deleteJob has: a job removed between the
+		// read-back and the delete is a pass that has nothing left to do.
 		if isNotFound(err) {
 			return nil
 		}
-		// The job may also have started, or finished, between the listing and
-		// this call. Read it back: a terminal job needed no cancel, which is
-		// the same tolerance Cancel has (§2.3, live check 5). Anything else is
-		// a real failure and ends the pass.
-		if got, rerr := r.batch.Projects.Locations.Jobs.Get(j.Name).Context(ctx).Do(); rerr == nil && jobIsTerminal(got) {
-			return nil
-		}
-		return apiError("cancelling queued job "+j.Name, err)
+		return apiError("deleting queued job "+j.Name, err)
 	}
-	rep.Actions = append(rep.Actions, Action{Kind: ActionCancelJob, Target: j.Name, Reason: reason})
+	rep.Actions = append(rep.Actions, Action{Kind: ActionDeleteJob, Target: j.Name, Reason: reason})
 	return nil
+}
+
+// jobState is the raw Batch state a job reports, or "" when it reports none.
+func jobState(j *batch.Job) string {
+	if j.Status == nil {
+		return ""
+	}
+	return j.Status.State
 }
 
 // deleteJob is jobs.delete: the job and, with it, its VMs. Only jobs the
@@ -1119,17 +1195,6 @@ func latestJobEvent(j *batch.Job) time.Time {
 		}
 	}
 	return latest
-}
-
-// jobIsTerminal reports whether a job has finished, by the same mapping the
-// backend uses (stateOf): it is what makes a cancel that races a job's own
-// end a no-op rather than an error.
-func jobIsTerminal(j *batch.Job) bool {
-	if j.Status == nil {
-		return false
-	}
-	st, known := stateOf(j.Status.State)
-	return known && st.Terminal()
 }
 
 // isNotFound reports whether err is the API's 404, for a delete that is

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -17,22 +18,25 @@ import (
 // the implementation plan for the Cloud Batch compute backend (design
 // docs/design/compute-backend.md), written against the tree the branch
 // fugaro/20261019-204914-8a1b stands on (= the branch `integration-0.9.5`, cut
-// from `integration-0.9.0` at `af953e5e`; the branch's own commits are this plan
-// and this test, the documents and tests a review of them corrected, the
-// credentials-service documents and their own pin test (a later, separate piece
-// of work whose owner ruling is recorded in
-// docs/credentials-service/reconciliation.md §4), and no Terraform and no
-// workflow). The one behavioural line among those corrections is
+// from `integration-0.9.0` at `af953e5e`; when this file was added the branch's
+// own commits were this plan and this test, the documents and tests a review of
+// them corrected, the credentials-service documents and their own pin test (a
+// later, separate piece of work whose owner ruling is recorded in
+// docs/credentials-service/reconciliation.md §4), and no workflow — and no task
+// of the plan was built). The one behavioural line among those corrections is
 // internal/managed/stateaccounts.go's table, which learns the compute module's
 // three types — the NAT as the table's empty answer, corrected on a later
-// review; everything else the branch adds is a comment, a test or a document.
-// **The owner approved the plan on 2026-10-19 ("Approve and start", every
-// recommendation P1–P8 accepted as written), and two of its tasks are built**:
-// Task 14 (the seal's carrier on Batch, its refusal kept and documented — see
-// internal/backend/batch/run.go and docs/design/budget-token-channel.md),
-// merged into the base, and Task 8's first half, on this branch. The plan's
-// Status line and its OWNER APPROVAL GATE say so, and
-// TestDocsComputeBackendStatusMatchesTheBranch holds both paragraphs to the
+// review; everything else those earlier commits add is a comment, a test or a
+// document. **The owner approved the plan on 2026-10-19 ("Approve and start",
+// every recommendation P1–P8 accepted as written), and three of its tasks are
+// built**: Task 14 (the seal's carrier on Batch, its refusal kept and
+// documented — see internal/backend/batch/run.go and
+// docs/design/budget-token-channel.md) and Task 8's first half, both merged
+// into the base, and Task 9, landed on the branch that carries it — which is
+// why this file's release check is read against the tree rather than against
+// the branch as it was when it was added. The plan's Status line and its OWNER
+// APPROVAL GATE say so, and TestDocsComputeBackendStatusMatchesTheBranch and
+// TestDocsComputeBackendPlanStatusMatchesTheTree hold both paragraphs to the
 // tree, so a branch that carries more (or less) than they claim fails.
 const computeBackendPlan = "docs/plans/2026-10-19-compute-backend.md"
 
@@ -92,7 +96,7 @@ func TestDocsComputeBackendCitationsExist(t *testing.T) {
 		"internal/gcpfake/batch.go",
 		"internal/gcpfake/compute.go",
 		// The CLI sites the three TODO(compute-backend Task 8) markers sit in,
-		// and the stage that refuses --provision-batch.
+		// and the stage `fugaro init --provision-batch` runs (Task 9 shipped it).
 		"internal/cli/cloud.go",
 		"internal/cli/run.go",
 		"internal/cli/validate.go",
@@ -175,7 +179,7 @@ var computeBackendSymbols = map[string][]string{
 	},
 	"internal/backend/batch/reap.go": {
 		"Reaper", "NewReaper", "func (r *Reaper) Reap", "ReaperOptions",
-		"ActionDeleteJob", "ActionCancelJob", "ActionDeleteVM", "Report",
+		"ActionDeleteJob", "ActionDeleteVM", "Report",
 		"ReapMargin", "MaxDeadline", "QueueDeadline",
 	},
 	"internal/backend/batch/batch_test.go": {
@@ -198,7 +202,11 @@ var computeBackendSymbols = map[string][]string{
 		"TestBackendsLsListsTheOpenerMapsNames", "TestBackendsLsMarksTheProjectsOwnBackend",
 	},
 	"internal/cli/recipes_skew.go": {
-		"batchProvisionShipped", "batchProvisionDisabled", "refuseBatchProvisionNotShipped",
+		// The gate the plan is about. Task 9 flips it and removes the refusal
+		// beside it; the three names that go are in computeBackendAbsent below,
+		// which is what makes a re-added cancel action or a re-added refusal
+		// fail rather than read as present.
+		"batchProvisionShipped",
 	},
 	"internal/cli/launch_budget.go": {"budgetMintOn"},
 	"internal/cli/root.go":          {"AddCommand"},
@@ -214,8 +222,10 @@ var computeBackendSymbols = map[string][]string{
 		"RunSchedulerJob", "PreloadedImage", "propagating",
 	},
 	"deploy/terraform/gcp/modules/compute/iam.tf": {
-		// The permission Task 9 removes, and the resource that names it.
-		"google_project_iam_custom_role", "batch.jobs.cancel", "batch.jobs.delete",
+		// The resource that names the permissions. The one Task 9 removes
+		// (batch.jobs.cancel, which no GCP role can carry) is in
+		// computeBackendAbsent below.
+		"google_project_iam_custom_role", "batch.jobs.delete",
 	},
 	"deploy/terraform/gcp/modules/compute/preload.tf": {
 		"google_cloud_scheduler_job", "preload_rebuild",
@@ -225,13 +235,122 @@ var computeBackendSymbols = map[string][]string{
 		"google_cloud_run_v2_job", "google_cloud_scheduler_job", "history_sweep",
 	},
 	"deploy/terraform/terraform_test.go": {
-		// The two pins Task 9 updates in the same commit as the permission list.
-		"TestComputeReaperRoleIsExactlySix", "TestCustomRolePermissionsAreAllowedByGoogle", "knownInvalid",
+		// The two pins Task 9 updates in the same commit as the permission
+		// list. The first is renamed with its assertion: a pin called "exactly
+		// six" that asserts five is a name that has stopped being true.
+		"TestComputeReaperRoleIsExactlyFive", "TestCustomRolePermissionsAreAllowedByGoogle", "knownInvalid",
 	},
 	"internal/cli/docs_artifact_runs_test.go": {
 		// The shape Task 12's TestChecklistHasCheck57 is written in.
 		"TestChecklistHasCheck58", "check58Guard",
 	},
+}
+
+// computeBackendAbsent are the names Task 9 removed, each with the files it was
+// removed from. They are asserted **gone** rather than merely dropped from
+// computeBackendSymbols above, and that is the point of the table: a name that
+// goes and is not held against the tree is a name the next reader re-adds, which
+// is what removed it in the first place. `ActionCancelJob` is the sharpest of
+// them -- a cancel action nothing emits is a permission someone re-adds to the
+// reaper's role, and that permission (batch.jobs.cancel) is not one GCP has, so
+// re-adding it breaks --provision-batch again.
+//
+// The files are where each name lived, and the walk in
+// TestDocsComputeBackendRemovedNamesAreGone is over the whole tree for the same
+// names: a name that reappears anywhere in code, Terraform or a script fails
+// there, whether or not it is the file it was removed from.
+var computeBackendAbsent = map[string][]string{
+	"internal/backend/batch/reap.go": {
+		// The queue deadline deletes now (Task 9). The action a cancel would
+		// be recorded as is gone from the package, and cancelling a queued job
+		// is not a verb the reaper has.
+		"ActionCancelJob",
+	},
+	"internal/cli/recipes_skew.go": {
+		// The pair around the gate and the refusal it fed: an open gate
+		// nothing closes and a refusal nothing can reach are names a later
+		// reader re-opens.
+		"batchProvisionOpen", "batchProvisionDisabled", "refuseBatchProvisionNotShipped",
+	},
+	"deploy/terraform/gcp/modules/compute/iam.tf": {
+		// The permission Google does not define, which made the reaper's role
+		// uncreatable and refused --provision-batch.
+		"batch.jobs.cancel",
+	},
+}
+
+// The two names the walk below leaves out of its repo-wide search: this file,
+// which quotes every one of them in the table above, and the plan, which cites
+// them. Both are prose about the tree rather than the tree.
+var computeBackendAbsenceSkips = []string{"internal/cli/docs_compute_backend_test.go", computeBackendPlan}
+
+// TestDocsComputeBackendRemovedNamesAreGone: every name Task 9 removed is
+// asserted absent from the tree's **code**, in the file it was removed from and
+// anywhere else, so that re-adding one fails here rather than leaving a plan
+// whose task has been undone silently. Comments are stripped before the search
+// for the same reason computeBackendSymbols strips them: the files that explain
+// these removals say the names (iam.tf says why batch.jobs.cancel is gone, and
+// says it is not to come back), and a doc comment naming a symbol is not the
+// symbol.
+func TestDocsComputeBackendRemovedNamesAreGone(t *testing.T) {
+	for file, names := range computeBackendAbsent {
+		text, err := os.ReadFile("../../" + file)
+		if err != nil {
+			t.Errorf("%s: %v", file, err)
+			continue
+		}
+		code := stripLineComments(string(text))
+		for _, name := range names {
+			if strings.Contains(code, name) {
+				t.Errorf("%s still has %s in its code: Task 9 removed it, and this table is what makes a re-add fail (the plan's Tasks are written in terms of these having gone)", file, name)
+			}
+		}
+	}
+	// The same names, over the whole tree. A name re-added in another package
+	// (a caller that still expects a cancel, a test that pins one) is the same
+	// regression as one re-added where it lived.
+	err := filepath.WalkDir("../..", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		rel := strings.TrimPrefix(filepath.ToSlash(p), "../../")
+		if slices.Contains(computeBackendAbsenceSkips, rel) {
+			return nil
+		}
+		switch filepath.Ext(rel) {
+		case ".go", ".tf", ".sh":
+		default:
+			return nil
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		code := stripLineComments(string(data))
+		for _, names := range computeBackendAbsent {
+			for _, name := range names {
+				if !strings.Contains(code, name) {
+					continue
+				}
+				for i, line := range strings.Split(code, "\n") {
+					if strings.Contains(line, name) {
+						t.Errorf("%s:%d names %s in code: Task 9 removed it from %s (or from the package it lived in), and this walk is what holds the removal over the whole tree rather than over one file", rel, i+1, name, "the tree")
+						break
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 // computeBackendTodoMarker is the marker the design's Task 8 left at each call
@@ -275,9 +394,9 @@ func stripLineComments(text string) string {
 }
 
 // TestDocsComputeBackendSymbolsExist: the plan's tasks are written in terms of
-// names in other packages — the opener map, the constant that refuses
-// --provision-batch, the six-permission role, the test that pins the seal's
-// refusal. Each is asserted present in the file the plan says it is in, and
+// names in other packages — the opener map, the gate the --provision-batch
+// stage ships behind, the five-permission reaper role, the test that pins the
+// seal's refusal. Each is asserted present in the file the plan says it is in, and
 // asserted in that file's **code** rather than anywhere in its text, so a
 // rename fails here rather than leaving a task that tells an implementer to
 // change something that no longer exists.
@@ -552,8 +671,8 @@ func TestDocsComputeBackendCheck57IsStillOnlyARow(t *testing.T) {
 // says the plan answers none of them, or the reversal — a section that looks
 // answered while the gate still refuses to let a task start. Both fail here.
 //
-// Both paragraphs also name the tasks that have landed — Task 14 and Task 8's
-// first half — so a plan whose tasks are built while its prose still reads as
+// Both paragraphs also name the tasks that have landed — Task 14, Task 8's
+// first half and Task 9 — so a plan whose tasks are built while its prose still reads as
 // a proposal fails here too.
 func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
@@ -596,8 +715,8 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 		"**Task 12 is OWNER-RUN**",
 		// The gate and the Status line agree on what the approval has built:
 		// Task 14 and Task 8's first half, and nothing else.
-		"Two tasks have been built since: Task 14",
-		"**Task 14 is built, and so is Task 8's first half, and nothing else here is**",
+		"Three tasks have been built since: Task 14",
+		"**Task 14 is built, and so are Task 8's first half and Task 9, and nothing else here is**",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Errorf("%s's OWNER APPROVAL GATE no longer says %q", computeBackendPlan, want)
@@ -611,8 +730,8 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	status := section(t, doc, "**Status:", "**Spec:**")
 	for _, want := range []string{
 		"**Status: the owner APPROVED this plan on 2026-10-19 (\"Approve and start\")",
-		"Two tasks have been built since: **Task 14**",
-		"**No task's commit exists except Task 14's and Task 8's**",
+		"Three tasks have been built since: **Task 14**",
+		"**No task's commit exists except Task 14's, Task 8's and Task 9's**",
 	} {
 		if !strings.Contains(status, want) {
 			t.Errorf("%s's Status line no longer says %q", computeBackendPlan, want)
@@ -1039,22 +1158,35 @@ func TestDocsComputeBackendSaysWhatTheTreeDisagreesWith(t *testing.T) {
 	if walked == 0 {
 		t.Fatalf("no files under docs/ were walked: %s's Spot fact is a claim about the whole directory", computeBackendPlan)
 	}
-	// The release: the tree says 0.9.0 in the released notes and in the
-	// constant's own comment, and the plan follows the brief's 0.9.5 and says so.
-	// The constant's comment is the one of the three 0.9.0's own release content
-	// rewrote: it read "batchProvisionShipped is false until 0.9.0" and reads
-	// "false until a later release" with the exclusion from 0.9.0 in the lines
-	// below it, so the pin follows the tree's new truth rather than the wording
-	// the plan was first written against.
+	// The release: the tree's own surfaces say 0.9.5 now and the plan follows
+	// the brief's 0.9.5, and the only 0.9.0 the release fact still quotes is the
+	// released notes' and the design's status line, which Task 9 does not turn
+	// back.
+	//
+	// The constant is asserted by its **new** words. This assertion used to read
+	// "is false until 0.9.0" (and, after 0.9.0's release content, "is false
+	// until a later release") out of internal/cli/recipes_skew.go, and that was
+	// the assertion Task 9 was written to falsify -- a pin that keeps the old
+	// sentence is a pin that fails the moment the gate it is about ships, so it
+	// is flipped with the thing it asserts rather than deleted. The absence
+	// assertions beside it are what make a revert of step 5 -- the refusal back
+	// on, under either old wording -- fail here.
 	for _, want := range []string{
-		"**0.9.5**", "is false until a later release", "The reaper will be redesigned for 0.9.0",
+		"**0.9.5**", "both are planned to return in 0.9.0 after a redesign", "The reaper will be redesigned for 0.9.0",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s no longer quotes %q in its release fact", computeBackendPlan, want)
 		}
 	}
-	if !strings.Contains(readDoc(t, "internal/cli/recipes_skew.go"), "is false until a later release") {
-		t.Errorf("internal/cli/recipes_skew.go no longer says the Batch provisioning is false until a later release: Task 9's commit is the one that changes it, so a change here means that task has landed and %s's release fact has to change with it", computeBackendPlan)
+	skew := readDoc(t, "internal/cli/recipes_skew.go")
+	if !strings.Contains(skew, "batchProvisionShipped is true as of 0.9.5") {
+		t.Errorf("internal/cli/recipes_skew.go no longer says the Batch provisioning is true as of 0.9.5: Task 9's commit is the one that flips that constant to the release it lands in, so the flag is refused again for a release the plan does not name and %s's release fact has to change with it", computeBackendPlan)
+	}
+	if strings.Contains(skew, "is false until 0.9.0") {
+		t.Errorf("internal/cli/recipes_skew.go says the Batch provisioning is false until 0.9.0 again: Task 9 is the commit that retires that sentence -- the module the stage applies is fixed in 0.9.5, so re-landing the refusal under the old release name is the state this pin exists to catch")
+	}
+	if strings.Contains(skew, "is false until a later release") {
+		t.Errorf("internal/cli/recipes_skew.go says the Batch provisioning is false until a later release again: Task 9 is the commit that retires that sentence, and re-landing it is a revert of step 5")
 	}
 }
 
@@ -1066,6 +1198,22 @@ func TestDocsComputeBackendSaysWhatTheTreeDisagreesWith(t *testing.T) {
 // rerelease checklist's verifying line, the Terraform pin's comment and its
 // known-invalid entry, the design's own status line, and the init flag table's
 // entry for the stage the refusal covers.
+//
+// It held nine entries before Task 9 and holds four after it, and the four are
+// the whole of what that task leaves: docs/releases/v0.8.6.md's two lines and
+// docs/releases/v0.9.0.md's known-limit bullet, which are **released notes** --
+// they were true when they were written, and a plan does not edit history --
+// and the design's own status line, which says the backend is not in 0.9.0
+// and which Task 9 rewrote to say what stays refused. The five that went are
+// the surfaces Task 9 changes or removes: the constant's comment,
+// docs/release.md's verifying bullet and managed_test.go's init flag entry
+// (rewritten to 0.9.5 by that task), and deploy/terraform/terraform_test.go's
+// comment and knownInvalid entry (which went with the entry step 4 takes out
+// of the map); the refusal text and the assertion that held it went with
+// batchProvisionDisabled and refuseBatchProvisionNotShipped, which the absence
+// table above holds gone. A reader who finds a fifth entry here has found a
+// surface a commit reverted, and the walk below is what says so rather than a
+// reader's count.
 //
 // It is a table of places rather than of lines because the words are the fact
 // and the line number is not: the tree's 0.9.0 release content landed on this
@@ -1080,26 +1228,27 @@ func TestDocsComputeBackendSaysWhatTheTreeDisagreesWith(t *testing.T) {
 // is complete, and a count nobody can check is how this fact said "two places"
 // for a tree that has nine: so the two walks below are its bounds.
 // TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed searches the tree for a
-// 0.9.x release name beside one of this work's gating identifiers and fails on
+// 0.9.0 release name beside one of this work's gating identifiers and fails on
 // any line that is not one of these; TestDocsComputeBackendReleaseProseDocumentsAreNamed
-// does the same for the documents under docs/ that place this work in a 0.9.x
-// release in prose. The difference between the two sets is the plan's own and is
-// what Task 9 implements: these are what that task changes, and the documents
-// the second walk finds are the record of an earlier ruling, which no task here
-// rewrites.
+// does the same, over 0.9.x, for the documents under docs/ that place this work
+// in such a release in prose. The difference between the two sets is the plan's
+// own and is what Task 9 implements: these are what that task changes, and the
+// documents the second walk finds are the record of an earlier ruling, which no
+// task here rewrites -- which is why this walk reads 0.9.0 and that one reads
+// any 0.9.x. The narrowed pattern is deliberate and is not a weakening: 0.9.5
+// beside a gating identifier is what this task's commit **puts** in the tree
+// (the constant's comment, the verifying line, the flag table's entry), so a
+// search that kept 0.9.x would require the plan to list its own new lines; what
+// it must keep finding is every line that still claims this work ships in
+// **0.9.0**, and after Task 9 the four places in the table are the whole of it.
 var computeBackendZeroNineZero = []struct {
 	file   string
 	anchor string
 	text   string
 }{
-	{"internal/cli/recipes_skew.go", "batchProvisionShipped is false until a later release", "excluded from 0.9.0"},
 	{"docs/releases/v0.8.6.md", "Managed projects and `fugaro init --provision-batch` are turned off in this release", "both are planned to return in 0.9.0 after a redesign"},
 	{"docs/releases/v0.8.6.md", "**`fugaro init --provision-batch` is disabled.**", "The reaper will be redesigned for 0.9.0."},
-	{"docs/release.md", "**Verify `managedDeployerShipped` and `batchProvisionShipped`", "excluded from 0.9.0"},
-	{"deploy/terraform/terraform_test.go", "Known-invalid entries not fixed by this change", "backend is excluded from 0.9.0"},
-	{"deploy/terraform/terraform_test.go", `"gcp/modules/compute/iam.tf|batch.jobs.cancel"`, "which is not 0.9.0 (batchProvisionShipped)"},
-	{"internal/cli/managed_test.go", `"provision-batch":`, "excluded from 0.9.0; init_compute.go"},
-	{"docs/design/compute-backend.md", "**Not shipped, and not in 0.9.0.**", "`fugaro init --provision-batch` refuses"},
+	{"docs/design/compute-backend.md", "**Not shipped, and not in 0.9.0.**", "`fugaro init --provision-batch` no longer refuses"},
 	{"docs/releases/v0.9.0.md", "**The Batch backend is still disabled.**", "would return in 0.9.0, and neither returns here"},
 }
 
@@ -1228,7 +1377,7 @@ func TestDocsComputeBackendNamesWhereTheTreeSaysZeroNineZero(t *testing.T) {
 // TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed: fact 1's count is a
 // claim about the tree, and a claim about the tree is only as good as the search
 // behind it. This is that search for the surfaces the plan enumerates: every
-// line in the tree carrying a 0.9.x release name beside one of this work's
+// line in the tree carrying a **0.9.0** release name beside one of this work's
 // gating identifiers must be one of the places the plan lists.
 //
 // It is the direction the earlier counts never had. "Two places" and then
@@ -1236,6 +1385,16 @@ func TestDocsComputeBackendNamesWhereTheTreeSaysZeroNineZero(t *testing.T) {
 // internal/cli/managed_test.go's init flag entry — is exactly the kind a reading
 // misses: it breaks no compile, fails no other test, and is a line of prose in a
 // table. A count is only a fact if something searches for the tenth.
+//
+// **The pattern is 0.9.0 and not any 0.9.x, and Task 9 is why**: that task's
+// commit is the one that *puts* 0.9.5 beside these identifiers (the constant's
+// comment, the verifying line, the init flag table's entry, the Terraform
+// pin's comment and the module pin's own), so a search over 0.9.x after it
+// would be requiring the plan to list the lines the plan's own task just wrote
+// -- a bound that grows with the work rather than holding it. What this must
+// keep finding is every line that still claims this work ships in 0.9.0, which
+// after Task 9 is the four places the table lists and nothing else: a line
+// rewritten back to 0.9.0, or a new one, is a fifth surface and fails here.
 //
 // Two files are skipped by name: this test file, whose table quotes every one of
 // the lines, and the plan, which cites them.
@@ -1251,7 +1410,7 @@ func TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed(t *testing.T) {
 		}
 		listed[fmt.Sprintf("%s:%d", e.file, i+1)] = true
 	}
-	release := regexp.MustCompile(`0\.9\.[0-9]`)
+	release := regexp.MustCompile(`0\.9\.0`)
 	found := 0
 	err := filepath.WalkDir("../..", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -1297,7 +1456,7 @@ func TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed(t *testing.T) {
 			}
 			found++
 			if !listed[fmt.Sprintf("%s:%d", rel, i+1)] {
-				t.Errorf("%s:%d carries a 0.9.x release name beside one of this work's gating identifiers (%s) and is not among the places %s's fact 1 lists: the count there is a claim about this tree, so a tenth surface is either a line the plan has to list or a release name that has to move with the work", rel, i+1, strings.Join(computeBackendGateIdentifiers, ", "), computeBackendPlan)
+				t.Errorf("%s:%d carries a 0.9.0 release name beside one of this work's gating identifiers (%s) and is not among the places %s's fact 1 lists: the count there is a claim about this tree, so a third surface is either a line the plan has to list or a release name that has to move with the work", rel, i+1, strings.Join(computeBackendGateIdentifiers, ", "), computeBackendPlan)
 			}
 		}
 		return nil
@@ -1305,8 +1464,12 @@ func TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if found < 5 {
-		t.Fatalf("the walk found %d lines carrying a 0.9.x name beside a gating identifier while the table lists %d: the search is matching less than the plan does, so it is a bound that cannot fail", found, len(computeBackendZeroNineZero))
+	// The floor is the table's own length: this walk reads 0.9.0, and the table
+	// is every 0.9.0 line beside an identifier that is left, so a search finding
+	// fewer lines than the table lists is not matching what the plan states and
+	// is a bound that cannot fail.
+	if found < len(computeBackendZeroNineZero) {
+		t.Fatalf("the walk found %d lines carrying a 0.9.0 name beside a gating identifier while the table lists %d: the search is matching less than the plan does, so it is a bound that cannot fail", found, len(computeBackendZeroNineZero))
 	}
 }
 
@@ -1416,6 +1579,248 @@ func TestDocsComputeBackendReleaseProseDocumentsAreNamed(t *testing.T) {
 	}
 	if len(found) < 8 {
 		t.Fatalf("the walk found %d documents naming a 0.9.x release in this work's context while the table lists %d: the search is matching less than the plan does, so it is a bound that cannot fail", len(found), len(computeBackendReleaseProse))
+	}
+}
+
+// TestDocsReleaseChecklistNamesEveryShippedGate: docs/release.md's "Before you
+// tag" list is where a release verifies the shipped-gate constants, and Task 9
+// is what showed the list can lose one silently. The commit that flipped
+// `batchProvisionShipped` rewrote the bullet that held it and dropped the
+// `managedDeployerShipped` half with it — a gate that is still `false`, and so a
+// checklist that stopped verifying a refusal that is still live — and nothing in
+// the tree said so: the list enumerates constants by hand, and no test read it
+// against them. This is that reading, taken from the constants themselves, so a
+// later commit that folds one bullet into another fails here rather than in a
+// release.
+//
+// Mutation (verified, run and restored): delete the `managedDeployerShipped`
+// bullet this change restores — this fails naming that constant.
+func TestDocsReleaseChecklistNamesEveryShippedGate(t *testing.T) {
+	skew := readDoc(t, "internal/cli/recipes_skew.go")
+	gates := regexp.MustCompile(`(?m)^const (\w+Shipped) = (?:true|false)$`).FindAllStringSubmatch(skew, -1)
+	if len(gates) < 4 {
+		t.Fatalf("internal/cli/recipes_skew.go declares %d *Shipped constants and this check requires at least four (cloneShipped, catalogShipped, managedDeployerShipped, batchProvisionShipped): the declaration shape moved and the walk below would pass over nothing", len(gates))
+	}
+	const beforeYouTag = "**Before you tag"
+	doc := readDoc(t, "docs/release.md")
+	start := strings.Index(doc, beforeYouTag)
+	if start < 0 {
+		t.Fatalf("docs/release.md has no %q list: the checklist is where a release verifies every gate constant", beforeYouTag)
+	}
+	section := doc[start:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+	for _, g := range gates {
+		if !strings.Contains(section, "`"+g[1]+"`") {
+			t.Errorf("docs/release.md's Before-you-tag list names no `%s`: every gate constant in internal/cli/recipes_skew.go is verified there, or a release ships one that nothing checks", g[1])
+		}
+	}
+}
+
+// TestDocsComputeBackendReaperRoleCountMatchesTheModule: the reaper's role is
+// built in deploy/terraform/gcp/modules/compute/iam.tf, and the prose that
+// describes it drifted from it — Task 9 rewrote two of the three places that
+// said "six permissions" and the third survived (§7.2's Built note), so the
+// same tree stated both counts for the same list. The count is read out of the
+// module the role is created from, and the design's own present-tense claims
+// are read against it; the historical sentences ("an earlier shape of this note
+// named a sixth") are not what this bans, the "six permissions" claim is.
+//
+// Mutation (verified, run and restored): put "the six permissions §3.7 lists"
+// back into §7.2's Built note — this fails naming it.
+func TestDocsComputeBackendReaperRoleCountMatchesTheModule(t *testing.T) {
+	iam := readDoc(t, "deploy/terraform/gcp/modules/compute/iam.tf")
+	role := regexp.MustCompile(`(?s)resource "google_project_iam_custom_role" "reaper" \{.*?\n\}`).FindString(iam)
+	if role == "" {
+		t.Fatal("deploy/terraform/gcp/modules/compute/iam.tf has no google_project_iam_custom_role \"reaper\": the module is where the reaper's permission list is written, and the prose below is read against it")
+	}
+	list := regexp.MustCompile(`(?s)permissions = \[(.*?)\]`).FindStringSubmatch(role)
+	if list == nil {
+		t.Fatal("the reaper's custom role carries no `permissions = [...]` list")
+	}
+	var perms []string
+	for _, p := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(list[1], -1) {
+		perms = append(perms, p[1])
+	}
+	if len(perms) != 5 {
+		t.Fatalf("the reaper's role carries %d permissions (%v), and every surface that states the count says five: the module and the prose have to agree on the one number the role is built from", len(perms), perms)
+	}
+	// Flattened, as everywhere else in this file: the design wraps at about 78
+	// columns, and a phrase that only ever appears wrapped is a phrase a
+	// substring check written without it will miss.
+	design := flattenDoc(readDoc(t, "docs/design/compute-backend.md"))
+	if strings.Contains(design, "six permissions") || strings.Contains(design, "six-permission") {
+		t.Error("docs/design/compute-backend.md claims the reaper's list is six permissions: the module's role carries five, and the note that named a sixth is history (it says so itself) — a present-tense six in the same document as §3.7's five is the drift Task 9 left behind")
+	}
+	if !strings.Contains(design, "as **five** permissions") {
+		t.Error("docs/design/compute-backend.md's §3.7 Built note no longer states the count as **five** permissions: that sentence is what the tree's module is read against")
+	}
+	backends := flattenDoc(readDoc(t, "docs/backends.md"))
+	if strings.Contains(backends, "below this one") {
+		t.Error("docs/backends.md points at \"the note below this one\" for the sixth permission: nothing below it discusses the reaper's permissions, and the note that named the sixth is the design's §3.7 Built note — cite it by document and section")
+	}
+	if !strings.Contains(backends, "§3.7") {
+		t.Error("docs/backends.md's permission sentence cites no section for the sixth permission it records")
+	}
+}
+
+// TestReleaseChecklistCopiesNoApplyFailure: "fails partway through its apply" is
+// true of one bullet only — `managedDeployerShipped`, whose flip re-enables an
+// installation apply the deployer's fence refuses — and it was copied into the
+// `catalogSince` bullet above it, where the failure is not an init at all:
+// `catalogSince` names a release that does not exist yet, so the base-image age
+// check passes for every image there is, the deploy goes through, and the RUN
+// fails at bootstrap on a `FUGARO_MODEL_PROVIDERS` field its runner refuses to
+// decode. The sentence is read against the bullet it sits in, so a later copy
+// fails here rather than in a release.
+//
+// Mutation (verified, run and restored): put the copied sentence back into the
+// `catalogSince` bullet — this fails naming it.
+func TestReleaseChecklistCopiesNoApplyFailure(t *testing.T) {
+	const beforeYouTag = "**Before you tag"
+	doc := readDoc(t, "docs/release.md")
+	start := strings.Index(doc, beforeYouTag)
+	if start < 0 {
+		t.Fatalf("docs/release.md has no %q list: the checklist is where a release verifies every gate constant", beforeYouTag)
+	}
+	section := doc[start:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+	bullets := strings.Split(section, "\n- **")
+	if len(bullets) < 10 {
+		t.Fatalf("the Before-you-tag list parsed as %d bullets: the walk below would pass over nothing", len(bullets))
+	}
+	const phrase = "fails partway through its apply"
+	for _, b := range bullets {
+		if strings.Contains(b, phrase) && !strings.Contains(b, "managedDeployerShipped") {
+			t.Errorf("a Before-you-tag bullet that is not `managedDeployerShipped` says %q: that sentence is the deployer fence's apply failure, and the catalog gate's flip leaves the deploy whole and fails the run at bootstrap instead", phrase)
+		}
+	}
+	var catalog string
+	for _, b := range bullets {
+		if strings.Contains(b, "Verify `catalogSince`") {
+			catalog = b
+			break
+		}
+	}
+	if catalog == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no `catalogSince` bullet")
+	}
+	if !strings.Contains(catalog, "bootstrap") {
+		t.Error("the `catalogSince` bullet does not name the bootstrap failure its flip brings back: those keys are decoded with DisallowUnknownFields, so it is the run that fails at bootstrap, not the init's apply")
+	}
+}
+
+// TestDocsComputeBackendPlanStatusMatchesTheTree: the plan's Status line and its
+// OWNER APPROVAL GATE are claims about the branch the plan is read on, and Task 9
+// is what made them false — the line said no task's commit existed, that no
+// Terraform on the branch changed and that `batchProvisionShipped` was `false`,
+// while the same file's fact 1 already said Task 9 had landed and the constant in
+// the tree was `true`. No test read the Status line against the tree, so the
+// contradiction survived a review of the plan that wrote it. This one does, from
+// the two facts the tree can be asked about: the constant's value and whether a
+// task's commit has landed beside it.
+//
+// Mutation (verified, run and restored): put "no task's commit exists" back into
+// the Status line — this fails naming it.
+func TestDocsComputeBackendPlanStatusMatchesTheTree(t *testing.T) {
+	skew := readDoc(t, "internal/cli/recipes_skew.go")
+	plan := readDoc(t, computeBackendPlan)
+	if !strings.Contains(skew, "const batchProvisionShipped = true") {
+		t.Skip("the tree's batchProvisionShipped is not true, so the plan's Status line is not read: this check is about the branch the task landed on")
+	}
+	var status string
+	for _, line := range strings.Split(plan, "\n") {
+		if strings.HasPrefix(line, "**Status:") {
+			status = line
+			break
+		}
+	}
+	if status == "" {
+		t.Fatalf("%s's Status line is not a line starting with **Status:, so the claims a reader takes from it are not held by anything", computeBackendPlan)
+	}
+	if !strings.Contains(status, "Task 9") {
+		t.Errorf("%s's Status line does not name Task 9 while the tree carries its landed work (batchProvisionShipped is true): the line is what tells a reader which of the tasks below exist", computeBackendPlan)
+	}
+	for _, stale := range []string{
+		"no task's commit exists",
+		"still refuses before any cloud call",
+		"`batchProvisionShipped` is `false`",
+	} {
+		if strings.Contains(status, stale) {
+			t.Errorf("%s's Status line still says %q while Task 9 has landed and the tree's batchProvisionShipped is true: a Status line is a claim about the branch, and this one is the shape the plan's own fact 1 contradicts", computeBackendPlan, stale)
+		}
+	}
+	if strings.Contains(plan, "**UNAPPROVED.") {
+		t.Errorf("%s's OWNER APPROVAL GATE still opens with UNAPPROVED while the tree carries Task 9's landed work: a gate that forbids every task while a task has landed is the contradiction this check is for", computeBackendPlan)
+	}
+}
+
+// TestDocsComputeBackendQueueDeadlineKeepsLaunchJSON: the design justifies
+// deleting a job that never left `QUEUED` — rather than cancelling it, which the
+// reaper's five-permission role cannot do — on what such a job leaves behind,
+// and an earlier draft of that argument said "there is no `launch.json`", which
+// is false: `fugaro run` writes `launch.json` to the runs bucket as `Launch`
+// returns (`internal/cli/run.go`: `be.Launch`, then `WriteLaunch`), and a job
+// that has been created is `QUEUED` before it is anything else, so the run does
+// not vanish from `fugaro ls` when the job's record is deleted. The claim is
+// read here against the code it rests on and against the reaper's own header,
+// so the false shape cannot come back silently in either.
+//
+// Mutations (verified, run and restored): put "there is no `launch.json`" back
+// into §1.4's amended paragraph — this fails naming it; and put "nothing an
+// operator reads back is lost with the record" back into the reaper's
+// deleteQueued comment — this fails on that phrase, which is the false half of
+// the argument in the place a reader of the code meets it.
+func TestDocsComputeBackendQueueDeadlineKeepsLaunchJSON(t *testing.T) {
+	// The code fact the argument rests on: launch.json is the launcher's write,
+	// made after the create returns, so it is not the job's record.
+	run := readDoc(t, "internal/cli/run.go")
+	launch := strings.Index(run, "env.be.Launch(lctx, lspec)")
+	write := strings.Index(run, "s.WriteLaunch(hctx, l)")
+	if launch < 0 || write < 0 || write < launch {
+		t.Fatalf("internal/cli/run.go no longer launches and then writes launch.json (%d, %d): the design's argument that a QUEUED job's run survives the reaper's delete rests on that order", launch, write)
+	}
+	for _, path := range []string{"docs/design/compute-backend.md", "internal/backend/batch/reap.go", "docs/backends.md"} {
+		text := flattenDoc(readDoc(t, path))
+		for _, bad := range []string{"no `launch.json`", "no launch.json", "no launch.json and"} {
+			if strings.Contains(text, bad) {
+				t.Errorf("%s says %q about a job that never left QUEUED: launch.json is written by the launcher as the create returns, so it survives the delete and the run stays readable by fugaro ls, diagnose and watch", path, bad)
+			}
+		}
+	}
+	// And the amended passage has to say what the delete does not touch, not
+	// only what it costs.
+	design := readDoc(t, "docs/design/compute-backend.md")
+	const amended = "**Amended by Task 9: the deadline deletes, not cancels**"
+	i := strings.Index(design, amended)
+	if i < 0 {
+		t.Fatalf("docs/design/compute-backend.md no longer carries §1.4's %q paragraph: that paragraph is where the delete is justified", amended)
+	}
+	passage := design[i:]
+	if end := strings.Index(passage, "\n  **Built**"); end >= 0 {
+		passage = passage[:end]
+	}
+	if !strings.Contains(passage, "`launch.json`") || !strings.Contains(passage, "survives") {
+		t.Errorf("docs/design/compute-backend.md's §1.4 amendment names no surviving `launch.json`: a reader is left with \"the delete destroys nothing that matters\" and no statement of what it does destroy, which is the shape a false claim grew in")
+	}
+	// The other side of the same claim: the delete is affordable because of
+	// what it costs as well as what it spares, and the job's own record --
+	// status message included -- is what it costs. A comment that says
+	// "nothing an operator reads back is lost" is the false half back again.
+	reap := flattenDoc(readDoc(t, "internal/backend/batch/reap.go"))
+	for _, bad := range []string{
+		"nothing an operator reads back is lost",
+		"nothing an operator reads back is lost with the record",
+	} {
+		if strings.Contains(reap, bad) {
+			t.Errorf("internal/backend/batch/reap.go's queue-deadline comment says %q: the job's own record and the status message Batch attaches go with the delete (design §1.4), so what is affordable is the delete, not a claim that nothing is lost", bad)
+		}
+	}
+	if !strings.Contains(reap, "status message") {
+		t.Errorf("internal/backend/batch/reap.go's queue-deadline comment never names the job's status message as what the delete costs: the design §1.4 amendment says that is the price of jobs.cancel not existing")
 	}
 }
 

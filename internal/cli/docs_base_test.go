@@ -22,6 +22,15 @@ func readDoc(t *testing.T, path string) string {
 	return string(data)
 }
 
+// flattenDoc collapses a file's whitespace and drops its line-comment markers,
+// so a phrase can be searched for across the line breaks prose and Go comments
+// wrap at. A guard that matches only the unwrapped spelling misses the claim it
+// is meant to catch the moment someone re-wraps the sentence.
+func flattenDoc(s string) string {
+	s = strings.ReplaceAll(s, "//", " ")
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // TestMigrationDocCoversEveryKind: the doc every refusal names exists and
 // says, per removed kind, what to write and what moves (design section 10).
 func TestMigrationDocCoversEveryKind(t *testing.T) {

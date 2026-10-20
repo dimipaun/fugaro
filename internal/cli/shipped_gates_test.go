@@ -10,15 +10,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// closeShippedGates puts managedDeployerOpen and batchProvisionOpen back to
-// their constants for one test: TestMain opens both so the managed and Batch
-// paths' own tests can run, and these tests are about the release as it ships.
-// Never call it from a parallel test: the two are package variables.
+// closeShippedGates puts managedDeployerOpen back to its constant for one
+// test: TestMain opens it so the managed paths' own tests can run, and these
+// tests are about the release as it ships. Never call it from a parallel test:
+// it is a package variable.
+//
+// --provision-batch has no gate any more (0.9.5 closed it: the reaper's role
+// is five permissions and batchProvisionShipped is true), so there is nothing
+// of the Batch side left to put back.
 func closeShippedGates(t *testing.T) {
 	t.Helper()
-	m, b := managedDeployerOpen, batchProvisionOpen
-	managedDeployerOpen, batchProvisionOpen = managedDeployerShipped, batchProvisionShipped
-	t.Cleanup(func() { managedDeployerOpen, batchProvisionOpen = m, b })
+	m := managedDeployerOpen
+	managedDeployerOpen = managedDeployerShipped
+	t.Cleanup(func() { managedDeployerOpen = m })
 }
 
 // runGated runs the root command with args in a scratch project directory, as
@@ -114,35 +118,12 @@ func TestManagedEntryPointsAreAllGated(t *testing.T) {
 	}
 }
 
-// --provision-batch refuses the same way while batchProvisionShipped is false:
-// the compute module's reaper role names batch.jobs.cancel, which Google does
-// not have, so its apply cannot complete.
-func TestProvisionBatchRefusedWhileNotShipped(t *testing.T) {
-	closeShippedGates(t)
-	for name, args := range map[string][]string{
-		"init --provision-batch":        {"init", "--provision-batch"},
-		"init --repo --provision-batch": {"init", "--repo", "--provision-batch"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			out, err := runGated(t, args...)
-			if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), batchProvisionDisabled) {
-				t.Fatalf("fugaro %s: exit %d (%v), want the user error %q\n%s", strings.Join(args, " "), ExitCode(err), err, batchProvisionDisabled, out)
-			}
-		})
-	}
-}
-
 // The refusals name what the operator needs: which feature, why, where the
 // design is, and that the ordinary paths are unaffected.
 func TestShippedGateMessages(t *testing.T) {
 	for _, want := range []string{"managed projects are disabled in this release", "scoped role and its binding are not created yet", "docs/design/managed-projects.md", "without --managed is unaffected"} {
 		if !strings.Contains(managedDisabled, want) {
 			t.Errorf("managedDisabled does not say %q", want)
-		}
-	}
-	for _, want := range []string{"--provision-batch is disabled in this release", "batch.jobs.cancel", "a later release"} {
-		if !strings.Contains(batchProvisionDisabled, want) {
-			t.Errorf("batchProvisionDisabled does not say %q", want)
 		}
 	}
 	for _, f := range []string{"../../docs/design/managed-projects.md", "../../docs/design/compute-backend.md"} {
@@ -152,18 +133,16 @@ func TestShippedGateMessages(t *testing.T) {
 	}
 }
 
-// The gates' variables are the constants in production: no non-test file of
-// this package assigns either after its declaration, so only a test can open
-// one.
+// The gate's variable is the constant in production: no non-test file of this
+// package assigns it after its declaration, so only a test can open it.
 func TestShippedGateVariablesAreOnlyTheConstants(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	assign := regexp.MustCompile(`(?m)^\s*(managedDeployerOpen|batchProvisionOpen)\b[^=\n]*=[^=]|(managedDeployerOpen|batchProvisionOpen)\s*,[^\n]*=[^=]`)
+	assign := regexp.MustCompile(`(?m)^\s*managedDeployerOpen\b[^=\n]*=[^=]|managedDeployerOpen\s*,[^\n]*=[^=]`)
 	decl := map[string]bool{
 		"var managedDeployerOpen = managedDeployerShipped": false,
-		"var batchProvisionOpen = batchProvisionShipped":   false,
 	}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
@@ -179,7 +158,7 @@ func TestShippedGateVariablesAreOnlyTheConstants(t *testing.T) {
 			}
 		}
 		if m := assign.FindString(string(b)); m != "" {
-			t.Errorf("%s assigns a shipped gate: %q", f, m)
+			t.Errorf("%s assigns the shipped gate: %q", f, m)
 		}
 	}
 	for d, ok := range decl {

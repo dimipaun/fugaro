@@ -51,6 +51,14 @@ type computeStage struct {
 	// stage prints and what its result records. It is not something Verify
 	// can hold to anything of its own (see Verify).
 	image string
+	// gidLabel is the label every generation in that image's family records
+	// its socket gid under, from the same outputs (infra.ComputeOutputs). The
+	// stage carries the NAME and never a value: the gid is read off the
+	// builder VM by the build itself and written onto the image it makes, so
+	// there is nothing here to hold and nothing here to guess. What a run's
+	// `--group-add` needs is that value once the image exists, which is what
+	// Check 57b measures and a later `doctor` check reads back (see Verify).
+	gidLabel string
 	// t and spec are the compute root this stage is working on, kept
 	// between the plan, the apply and the outputs.
 	t    *tf.TF
@@ -165,8 +173,8 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 	if err := s.readOutputs(ctx); err != nil {
 		return initflow.Outcome{}, err
 	}
-	fmt.Fprintf(r.w, "provisioned; the preloaded boot image %s is being built now (Cloud Build, about two minutes), and rebuilt on its schedule\n", s.image)
-	return initflow.Outcome{Changed: true, Detail: "applied: " + counts.String() + " (preload image " + s.image + ")"}, nil
+	fmt.Fprintf(r.w, "provisioned; the preloaded boot image %s is being built now (Cloud Build, about two minutes), and rebuilt on its schedule; each generation records the socket's gid under its %s label, read off the builder VM\n", s.image, s.gidLabel)
+	return initflow.Outcome{Changed: true, Detail: "applied: " + counts.String() + " (preload image " + s.image + ", socket gid label " + s.gidLabel + ")"}, nil
 }
 
 // grants refuses a plan whose grants are not the compute module's (see the
@@ -274,8 +282,10 @@ func (s *computeStage) plan(ctx context.Context) (*tf.Plan, error) {
 	return s.t.Show(ctx, infra.PlanFile)
 }
 
-// readOutputs is what the stage reports: the names the apply created, and the
-// preloaded image's name the root's state carries.
+// readOutputs is what the stage reports: the names the apply created, the
+// preloaded image's name the root's state carries, and the label that image's
+// family records the socket gid under (the value itself is not terraform's:
+// see infra.ComputeOutputs.PreloadSocketGIDLabel).
 func (s *computeStage) readOutputs(ctx context.Context) error {
 	raw, err := s.t.Output(ctx)
 	if err != nil {
@@ -286,6 +296,7 @@ func (s *computeStage) readOutputs(ctx context.Context) error {
 		return remote(err)
 	}
 	s.image = outs.PreloadImage
+	s.gidLabel = outs.PreloadSocketGIDLabel
 	return nil
 }
 

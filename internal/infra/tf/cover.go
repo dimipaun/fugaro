@@ -410,10 +410,14 @@ var RolePermissions = map[string][]string{
 	"fugaroTagMover":       {"artifactregistry.tags.delete"},
 	"fugaroTokenMinter":    {"iam.serviceAccounts.signJwt"},
 	"fugaroHistory":        {"run.executions.list", "run.executions.get", "run.jobs.get", "run.jobs.list", "run.operations.get"},
-	// The reaper's six, and no others (design compute-backend §3.7): it is
+	// The reaper's five, and no others (design compute-backend §3.7): it is
 	// never roles/batch.jobsEditor and never roles/compute.instanceAdmin.v1,
-	// both of which carry the create permissions a reaper must not have.
-	"fugaroReaper": {"batch.jobs.list", "batch.jobs.get", "batch.jobs.cancel", "batch.jobs.delete", "compute.instances.list", "compute.instances.delete"},
+	// both of which carry the create permissions a reaper must not have. It
+	// named six until 0.9.5, the sixth being batch.jobs.cancel -- a permission
+	// Google does not define, which is why the role could not be created and
+	// --provision-batch was refused. The queue deadline deletes a job that
+	// never left QUEUED instead (internal/backend/batch/reap.go).
+	"fugaroReaper": {"batch.jobs.list", "batch.jobs.get", "batch.jobs.delete", "compute.instances.list", "compute.instances.delete"},
 	// The preloaded boot image's build: boot one COS VM, read its serial
 	// output, stop it, image its disk, delete it — and nothing else, setMetadata
 	// (how SSH keys reach a VM) among the nothing else.
