@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -34,63 +35,216 @@ import (
 // the second front door's column, where the owner's D12 answer covers more in
 // `update`; nothing here changes for `setup`.
 
-// cliStage is one stage converge() registers: the constructor it is built
-// with, the flag it is behind, and the two facts the loop decides about it —
-// noYes (--yes never confirms the stage) and runCovered (the run's one
-// confirmation covers its ordinary steps).
+// cliStage is one stage initStages() registers: the constructor it is built
+// with, the flag it is behind, and the three facts the loop decides about it —
+// noYes (--yes never confirms the stage), runCovered (the run's one
+// confirmation covers its ordinary steps) and self (the stage keeps its own
+// confirmations: initflow.SelfConfirming, which is what lets the loop run it
+// with no terminal at all and refuse only where the stage's own apply says so).
+//
+// Every column is checked against the product and not only recorded: build is
+// the constructor itself, called on a real engine and compared by type with
+// the stage initStages() put in the list, and behind is checked by building
+// the list twice, with and without the flag. ctor is the name initStages()
+// has to use, matched inside that function's body.
 type cliStage struct {
 	stage   string
-	ctor    string
-	behind  string
+	ctor    string // the marker initStages()' body must contain: the constructor call, or the literal for the one stage built without one
+	build   func(*initEngine) initflow.Stage
+	behind  string // the flag the stage is registered under, "" for always
 	noYes   bool
 	covered bool
+	self    bool
 }
 
-// cliStages is the pin: a slot that loses its noYes, or a runCovered entry
-// that appears or goes, fails TestRefusalMatrixListsEveryStageTheCLIRegisters.
+// cliStages is the pin: a slot that loses its noYes, a runCovered entry that
+// appears or goes, a stage that becomes SelfConfirming (or stops being), a
+// stage dropped from initStages()' list, or a flag that stops gating one,
+// fails TestRefusalMatrixListsEveryStageTheCLIRegisters.
 var cliStages = []cliStage{
-	{stage: initflow.Preflight, ctor: "preflightStage"},
-	{stage: initflow.Installation, ctor: "newInstallationStage", covered: true},
-	{stage: initflow.Firebase, ctor: "newFirebaseStage", covered: true},
-	{stage: initflow.Images, ctor: "newImagesStage", covered: true},
-	{stage: initflow.Installation2, ctor: "newInstallation2Stage", covered: true},
-	{stage: initflow.Secrets, ctor: "newSecretsStage", noYes: true},
-	{stage: initflow.Plugin, ctor: "newPluginStage"},
-	{stage: initflow.Repository, ctor: "newRepositoryStage", covered: true},
-	{stage: initflow.Project, ctor: "newProjectStage", behind: "--create-project", noYes: true},
-	{stage: initflow.Compute, ctor: "newComputeStage", behind: "--provision-batch", noYes: true},
+	{stage: initflow.Preflight, ctor: "&preflightStage{",
+		build: func(e *initEngine) initflow.Stage { return &preflightStage{e} }},
+	{stage: initflow.Installation, ctor: "newInstallationStage(", covered: true, self: true,
+		build: func(e *initEngine) initflow.Stage { return newInstallationStage(e) }},
+	{stage: initflow.Firebase, ctor: "newFirebaseStage(", covered: true, self: true,
+		build: func(e *initEngine) initflow.Stage { return newFirebaseStage(e) }},
+	{stage: initflow.Images, ctor: "newImagesStage(", covered: true, self: true,
+		build: func(e *initEngine) initflow.Stage { return newImagesStage(e) }},
+	{stage: initflow.Installation2, ctor: "newInstallation2Stage(", covered: true, self: true,
+		build: func(e *initEngine) initflow.Stage { return newInstallation2Stage(e) }},
+	{stage: initflow.Secrets, ctor: "newSecretsStage(", noYes: true,
+		build: func(e *initEngine) initflow.Stage { return newSecretsStage(e) }},
+	{stage: initflow.Plugin, ctor: "newPluginStage(",
+		build: func(e *initEngine) initflow.Stage { return newPluginStage(e) }},
+	{stage: initflow.Repository, ctor: "newRepositoryStage(", covered: true, self: true,
+		build: func(e *initEngine) initflow.Stage { return newRepositoryStage(e) }},
+	{stage: initflow.Project, ctor: "newProjectStage(", behind: "--create-project", noYes: true,
+		build: func(e *initEngine) initflow.Stage { return newProjectStage(e) }},
+	{stage: initflow.Compute, ctor: "newComputeStage(", behind: "--provision-batch", noYes: true,
+		build: func(e *initEngine) initflow.Stage { return newComputeStage(e) }},
+}
+
+// prodEngine is an engine with nothing but the flags: the stage constructors
+// read the run's options and nothing else, so initStages() builds the real
+// list from it without a terminal, a config or a cloud.
+func prodEngine(o initOptions) *initEngine {
+	return &initEngine{r: &initRun{o: &o}}
+}
+
+// flagOptions is the run the flag in a row's behind turns on: the two flags
+// the CLI registers a stage behind, named as the flag the row records. ok is
+// false for a name that turns nothing on, which is a row whose behind is not a
+// flag at all.
+func flagOptions(behind string) (o initOptions, ok bool) {
+	switch behind {
+	case "--create-project":
+		return initOptions{createProject: true}, true
+	case "--provision-batch":
+		return initOptions{provisionBatch: true}, true
+	}
+	return initOptions{}, false
+}
+
+func namesOf(stages []initflow.Stage) []string {
+	out := make([]string, len(stages))
+	for i, s := range stages {
+		out[i] = s.Name()
+	}
+	return out
+}
+
+// stageNamed is the stage the list has under a name.
+func stageNamed(stages []initflow.Stage, name string) (initflow.Stage, bool) {
+	for _, s := range stages {
+		if s.Name() == name {
+			return s, true
+		}
+	}
+	return nil, false
+}
+
+// initStagesBody is the text of initStages in init_stages.go: the one region a
+// row's constructor has to be named in. A whole-file search would pass on a
+// constructor that appears anywhere else in the file — and would still pass
+// with the stage dropped from the list, which is the mistake the list check
+// above is for.
+func initStagesBody(t *testing.T) string {
+	t.Helper()
+	src, err := os.ReadFile("init_stages.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := strings.Index(string(src), "\nfunc initStages(")
+	if i < 0 {
+		t.Fatalf("init_stages.go has no func initStages(: the rows of this table are its registration, and converge() must run what it returns")
+	}
+	body := string(src)[i+1:]
+	if j := strings.Index(body, "\n}\n"); j >= 0 {
+		body = body[:j+2]
+	}
+	return body
 }
 
 // TestRefusalMatrixListsEveryStageTheCLIRegisters crosses the table above with
-// the loop's own declarations, in both directions: a row whose stage does not
-// behave as the row says fails, and a canonical stage with no row fails.
+// the product and with the loop's own declarations, in both directions: the
+// list initStages() builds — with and without the two flags — has to be the
+// table, each stage has to be the type its row's constructor makes and has to
+// be SelfConfirming exactly where the row says, and a canonical stage with no
+// row fails.
+// TestRefusalMatrixListsEveryStageTheCLIRegisters crosses the table above with
+// the product and with the loop's own declarations, in both directions: the
+// list initStages() builds — with no flags, and with both flags on — has to be
+// the table, each stage has to be the type its row's constructor makes and has
+// to be SelfConfirming exactly where the row says, and a canonical stage with
+// no row fails.
+//
+// It reads the list by calling initStages(), the function converge() runs, and
+// not a copy of it: a stage dropped from the list is a row the list does not
+// have, and a stage added to it is a stage no row records.
 func TestRefusalMatrixListsEveryStageTheCLIRegisters(t *testing.T) {
+	// The table itself: no stage twice, and the flag each row names is a flag.
 	registered := map[string]bool{}
 	for _, s := range cliStages {
 		if registered[s.stage] {
 			t.Errorf("%s is listed twice", s.stage)
 		}
 		registered[s.stage] = true
+		if s.behind != "" {
+			if _, ok := flagOptions(s.behind); !ok {
+				t.Errorf("%s: the table puts it behind %q, which turns nothing on", s.stage, s.behind)
+			}
+		}
 	}
-	// Every canonical stage but the one slot the CLI never registers. Services
-	// is a slot in internal/initflow's canonical order that converge() does not
-	// fill (it builds its list from the engines), and W5.1's `update` list is
-	// built the same way: "there is no services stage".
-	for _, name := range initflow.Names() {
-		if name == initflow.Services {
+
+	plain := initStages(prodEngine(initOptions{}))
+	all := initStages(prodEngine(initOptions{createProject: true, provisionBatch: true}))
+
+	// The set of stages, both directions, and the flag each is behind: a
+	// stage behind a flag is not in the unflagged list, and every other row is.
+	plainNames, allNames := setOf(namesOf(plain)), setOf(namesOf(all))
+	for _, s := range cliStages {
+		if !allNames[s.stage] {
+			t.Errorf("%s: a row, and initStages() does not register it: the row and the list have to be the same stages", s.stage)
+		}
+		if plainNames[s.stage] != (s.behind == "") {
+			t.Errorf("%s: in the unflagged list %v, and the table puts it behind %q: a stage behind a flag is registered under that flag and nowhere else", s.stage, plainNames[s.stage], s.behind)
+		}
+	}
+	for _, n := range append(namesOf(plain), namesOf(all)...) {
+		if !registered[n] {
+			t.Errorf("%s: initStages() registers it and no row records it: add the row, with the flag it is registered under", n)
+		}
+	}
+
+	// The canonical stages: every one but the slot the CLI never fills, in the
+	// loop's own order.
+	if sorted, err := initflow.Validate(all); err != nil {
+		t.Errorf("the stages initStages() registers are not a run the loop accepts: %v", err)
+	} else if got, want := namesOf(sorted), withoutServices(initflow.Names()); !slices.Equal(got, want) {
+		t.Errorf("the loop orders the registered stages as %v, want %v: the CLI registers every canonical stage but %s", got, want, initflow.Services)
+	}
+	// Each row's type and its SelfConfirming, against the constructor's own
+	// value. The stage value is the one in the list; the row's build makes the
+	// comparison, so a row cannot claim a constructor it does not use.
+	body := initStagesBody(t)
+	for _, s := range cliStages {
+		if !strings.Contains(body, s.ctor) {
+			t.Errorf("initStages() does not contain %q, the marker the table gives for %s: the constructor a row names has to be the one the registration uses", s.ctor, s.stage)
+		}
+		p, ok := stageNamed(plain, s.stage)
+		if !ok {
+			p, ok = stageNamed(all, s.stage)
+		}
+		if !ok {
+			continue // reported above
+		}
+		if got, want := reflect.TypeOf(p), reflect.TypeOf(s.build(prodEngine(initOptions{}))); got != want {
+			t.Errorf("%s: initStages() registers a %v, and the table's constructor makes a %v", s.stage, got, want)
+		}
+		if _, isSelf := p.(initflow.SelfConfirming); isSelf != s.self {
+			t.Errorf("%s: SelfConfirming %v, and the table says %v: it is what lets the loop run a stage with no terminal at all, so a stage that gains or loses it changes the refusal matrix", s.stage, isSelf, s.self)
+		}
+	}
+
+	// And the four typed steps sit inside stages the CLI registers, in stages
+	// whose SelfConfirming is the table's.
+	for _, s := range typedSteps() {
+		row, ok := rowFor(s.stage)
+		if !ok {
+			t.Errorf("%s: %s is not a stage the CLI registers", s.what, s.stage)
 			continue
 		}
-		if !registered[name] {
-			t.Errorf("%s is a canonical stage and no row lists it: add it, with the flag converge() registers it under", name)
+		if row.self != s.self {
+			t.Errorf("%s: the row says %s is SelfConfirming %v, and the step's row says %v", s.what, s.stage, row.self, s.self)
 		}
 	}
-	if registered[initflow.Services] {
-		t.Errorf("a row for %s: internal/cli registers no services stage", initflow.Services)
-	}
+
 	// The slot the CLI leaves empty is still not one --yes covers.
 	if !initflow.YesCovers(initflow.Services) || initflow.RunCovers(initflow.Services) {
 		t.Errorf("services: YesCovers %v, RunCovers %v; want true, false", initflow.YesCovers(initflow.Services), initflow.RunCovers(initflow.Services))
 	}
+
+	// The loop's own declarations, per row.
 	for _, s := range cliStages {
 		if !slices.Contains(initflow.Names(), s.stage) {
 			t.Errorf("%s is not a stage the loop knows", s.stage)
@@ -105,22 +259,31 @@ func TestRefusalMatrixListsEveryStageTheCLIRegisters(t *testing.T) {
 			t.Errorf("%s: the run's one confirmation covers a stage --yes does not", s.stage)
 		}
 	}
-	// A row cannot be invented: converge() has to name the constructor.
-	src, err := os.ReadFile("init_stages.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+}
+
+// rowFor is the table's row for a stage.
+func rowFor(stage string) (cliStage, bool) {
 	for _, s := range cliStages {
-		if !strings.Contains(string(src), s.ctor) {
-			t.Errorf("init_stages.go does not name %s, the constructor the table gives for %s", s.ctor, s.stage)
+		if s.stage == stage {
+			return s, true
 		}
 	}
-	// And the four typed steps sit inside stages the CLI registers.
-	for _, s := range typedSteps() {
-		if !slices.ContainsFunc(cliStages, func(c cliStage) bool { return c.stage == s.stage }) {
-			t.Errorf("%s: %s is not a stage the CLI registers", s.what, s.stage)
-		}
+	return cliStage{}, false
+}
+
+func setOf(names []string) map[string]bool {
+	out := make(map[string]bool, len(names))
+	for _, n := range names {
+		out[n] = true
 	}
+	return out
+}
+
+// withoutServices is the canonical stage names but the one slot the CLI never
+// fills (converge() has no services stage, and W5.1's update list is built the
+// same way).
+func withoutServices(names []string) []string {
+	return slices.DeleteFunc(slices.Clone(names), func(n string) bool { return n == initflow.Services })
 }
 
 // typedStep is one thing only a person may confirm, and the stage that owns
@@ -156,7 +319,7 @@ func typedSteps() []typedStep {
 		{what: "project creation", stage: initflow.Project, left: projectCreateLeft},
 		{what: "the billing link", stage: initflow.Project, left: projectLinkLeft},
 		{what: "the Firestore location", stage: initflow.Firebase, left: firestoreLocationLeft, self: true, yesCovers: true},
-		{what: "a billable first image build", stage: initflow.Repository, left: billableBuildLeft, yesCovers: true},
+		{what: "a billable first image build", stage: initflow.Repository, left: billableBuildPrompt, self: true, yesCovers: true},
 	}
 }
 
@@ -196,11 +359,14 @@ func firestoreLocationLeft(t *testing.T) initflow.Left {
 	return ny.Left
 }
 
-// billableBuildLeft is the left-for-you the repository stage leaves for a
-// billable first image build: the same promptLeft call init.go makes when a run
-// cannot take the build's typed confirmation.
-func billableBuildLeft(*testing.T) initflow.Left {
-	return promptLeft(initflow.Repository, "type the project's name at the first image build's prompt (it is billable)", "init", "--repo")
+// billableBuildPrompt is the left-for-you the repository stage leaves for a
+// billable first image build: init.go's own billableBuildLeft, the one function
+// repoEngine builds that step's left with, called the way the converge calls it
+// (embedded: the repository stage is the run's own, not fugaro init --repo). It
+// is not a copy of the prompt here, so a change to the prompt — its kind
+// included, which is the thing this matrix is about — moves this row with it.
+func billableBuildPrompt(*testing.T) initflow.Left {
+	return billableBuildLeft(true)
 }
 
 // TestTheFourTypedStepsLeaveAPrompt is the other half of the plan's sentence:
