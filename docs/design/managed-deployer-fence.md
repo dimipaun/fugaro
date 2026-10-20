@@ -140,7 +140,7 @@ cannot test it and this run makes no live call.
 | C4 | an unconditioned binding of a role defeats a conditioned binding of the same role; effective grant = union over bindings of (role's permissions ∩ resources the condition matches) | `deployer.tf:19-21`; enforced by `internal/infra/tf`'s `deployerGrant`/`unconditionedDeployerViolations` | **established in-tree** (the cover refuses the plan) |
 | C5 | `resource.type` for the nine types D75 names, and the name shapes (`projects/_/buckets/<b>`, `projects/<n>/secrets/<s>`, …) | `deployer.tf:51-64`; `internal/infra/tf/cover.go`'s clause model | recorded, and the storage form is proved (Check 32) |
 | C6 | `resource.name.extract("<template>")` takes a template of literal text around **one** `{identifier}` placeholder and returns the text that placeholder matched — **read here as** the reference defining that by **occurrence**: with a prefix-only template, the characters after the **first** occurrence of the literal prefix (to the end of the name), and with a suffix as well, the characters between that first occurrence of the prefix and the **first subsequent** occurrence of the suffix. A template with more than one placeholder is not the form these templates use, and not the form this design reads as documented | **uncited** — no source in this tree quotes the reference's text. `deployer.tf`'s header states the rule without naming a document, and Task 1.5 (`docs/plans/2026-10-16-managed-projects.md:454`) cites the reference for the services' *name shapes*, never for this grammar | **UNVERIFIED — recorded, not cited.** The fence's templates are written in that form and only that form, pinned by `TestDeployerExtractTemplatesAreTheRecordedForm`, and the first cut of this fence wrote `extract("projects/{project}/secrets/{secret}")`, two placeholders in the shape of a resource name, which is not that form — and the form the other four services carried, `extract("projects/{project}/locations/{location}/keys/{key}")`, is the three-placeholder one: either `setIamPolicy` refuses the expression (F1's failure, the 0.8.6 outage again) or the call extracts nothing and the role grants nothing. What is UNVERIFIED is the grammar and the **first**-occurrence rule above: they are this repository's reading, and the review that reclassified them as settled could point at no source — so the templates stand as the reading's form, and remain the reason to quote the reference's text before the fence is trusted |
-| C7 | a name that does not carry the template's literal text matches nothing, so `extract` returns the empty string, and `"".startsWith("fmgd-")` is false — a non-match denies | the same reading, taken with C2 (`startsWith` is the function applied to the result); **uncited**, like C6 | **UNVERIFIED**, and unmeasurable live. It follows from C6, which is itself uncited, and the two things that model it in the tree — `extractSegment` (`internal/infra/tf/cover_test.go`) and the fail-closed rows of `TestDeployerConditionFencesOnlyTheManagedPrefix` — are this repository's reading rather than evidence for it. **No step of §9 can falsify it**: every conditioned type's real names carry their own clause's anchor, so no probe can construct the non-match, and the near miss tests the prefix, not the template. The two readings of the grammar differ only in which half of the fence grants nothing — a whole-name template extracts the project number or the location and never matches the prefix, and an anchored mid-name template cannot match at all — and both are fail-closed. So the residual is not a measured fact but a risk about the reference itself, **including the one direction that is not fail-closed**: a non-matching name making the condition TRUE would invert the fence rather than close it, and this check cannot reach that either. Until the reference's text is quoted in §3, C7 is in the same class as C3 and C9 |
+| C7 | a name that does not carry the template's literal text matches nothing, so `extract` returns the empty string, and `"".startsWith("fmgd-")` is false — a non-match denies, so the fence is **fail-closed** in this direction | the same reading, taken with C2 (`startsWith` is the function applied to the result); **the tree is cited for the direction, no source is cited for Google's behaviour** — `extractSegment` (`internal/infra/tf/cover_test.go`) models the reading and `TestExtractSegmentModelsTheRecordedReading` pins the model, and the fail-closed rows of `TestDeployerConditionFencesOnlyTheManagedPrefix` assert that a name which does not match is denied | **UNVERIFIED for Google, established in-tree for this repository**, and unmeasurable live. What the tree establishes is what *this* code does with the reading — the model and its pins are the citation for the fail-closed direction — while whether `extract` on Google's side returns the empty string for a non-match is uncited, like C6. **No step of §9 can falsify it**: every conditioned type's real names carry their own clause's anchor, so no probe can construct the non-match, and the near miss tests the prefix, not the template. The two readings of the grammar differ only in which half of the fence grants nothing — a whole-name template extracts the project number or the location and never matches the prefix, and an anchored mid-name template cannot match at all — and both are fail-closed. So the residual is not a measured fact but a risk about the reference itself, **including the one direction that is not fail-closed**: a non-matching name making the condition TRUE would invert the fence rather than close it, and this check cannot reach that either. Until the reference's text is quoted in §3, C7 is in the same class as C3 and C9 |
 | C8 | a project-level binding of a custom role reaches only that project's resources | IAM's resource hierarchy; also how every other Fugaro grant is written | recorded |
 | C9 | `resource.matchTag` exists and can test a tag on a resource, but tag *values* are per-project and a tag key has to be created in the organisation/project first | Task 1.5's option list; no Fugaro code uses tags today | **UNVERIFIED** |
 | C10 | `cloudscheduler.jobs.resume` does not exist; resume is `cloudscheduler.jobs.enable` | `deployer.tf:164` (the second 0.8.6 defect, already fixed) | recorded |
@@ -389,6 +389,28 @@ recommendation because it gives up the prefix inside the managed project, which
 is a spec decision (§8, open point 1) that this run must not take unilaterally,
 and because it needs a new per-managed-project bootstrap that does not exist.
 
+**The fallback, written out and ready: option 2, with its trigger.** The risk
+this recommendation runs is C3, and it is the one risk no reading can settle
+here: **the IAM Conditions reference does not list `resource.name` support for
+IAM service accounts, Cloud Run jobs, Cloud Scheduler jobs, Artifact Registry
+repositories or API keys** — five of the seven services. If `resource.name` is
+unsupported for a type, that type's clause can never be satisfied, the role
+grants nothing, and the fence is fail-closed but absent: the deployer would hold
+five roles that do nothing. §9's Check 68 measures it per service in both
+directions (a condition IAM refuses in step 2/3, or a denied positive action in
+step 4), and **the trigger is explicit: a condition IAM will not store, or a
+step-4 denial for one of those five services, is STOP and redesign — not a
+patch.** Option 2 above is that redesign and it is ready: project-level bindings
+in the managed project, no condition at all, no `extract`, no `resource.name`,
+no per-service reasoning, and the only option that depends on no UNVERIFIED
+Google behaviour beyond C8. What it needs before it can be taken is the two
+decisions §8's open point 1 and option 2's own "what it needs from the owner"
+name — whether "whatever is in the project it was given" is the intent, and who
+creates the managed project — and those are the owner's, taken with Check 68's
+results in hand. One service failing is the smaller case and R5 covers it: the
+type is dropped from the design and its permissions with it. Most of them
+failing is this fallback.
+
 **Why not 3.** The most moving parts, the most owner setup, and the only option
 whose viability depends on provider support this repository cannot check.
 
@@ -535,6 +557,38 @@ unchanged.
 7. **The condition title.** This design keeps one title for all seven bindings.
    If the owner would rather see which service a binding fences in the policy
    listing, the title becomes per-service and the pin test changes with it.
+
+**Ruled by the owner on 2026-10-20.** Recorded as rulings, and each one's
+consequence is a dependency this branch does not take — the branch's job is the
+measurement, and a ruling that changed the tree before the measurement would be
+the shape decided by the document rather than by the answer.
+
+- **Point 2 — the `extract` form is the design**, in the one-placeholder form C6
+  records, and **Check 68 is the arbiter**: if IAM refuses the expression, or a
+  service's positive action is denied, what runs is §5's fallback and not a
+  re-opened form.
+- **Point 3 — the acceptable drops are API keys, Cloud Scheduler jobs, Artifact
+  Registry repositories and Secret Manager secrets.** IAM service accounts and
+  Cloud Run jobs are not acceptable drops: they are the feature's own use, so a
+  C3 failure there is a fallback question (§5's option 2) rather than an R5 drop.
+- **Point 6 — seven roles in EVERY installation**, `belong` included: the roles
+  are not conditional on the flag, and `belong` is not exempt. **This is the one
+  ruling whose consequence has to wait for Check 68, and the reason is the 0.8.6
+  outage**: the installation root is what every installation's `fugaro init`
+  applies, so a shape IAM refuses is not one installation's bad apply — it is
+  `setIamPolicy` refusing the binding and stopping **every** init, `belong`
+  included, which is exactly what the 0.8.6 expression did (F1). Today the seven
+  roles and their bindings sit behind `count = var.managed_deployer_scoped ? 1 :
+  0` (`deploy/terraform/gcp/modules/installation/deployer.tf`), false in every
+  installation, so nothing plans them and `belong` keeps only the unconditioned
+  role — and that gate is what makes the ruling safe to record before the
+  measurement: **the change that un-gates them is the change that follows Check
+  68's pass**, made with the
+  measurement in hand and in the release that carries it, not here. A repeat of
+  the 0.8.6 init outage across every installation is the risk this dependency
+  exists to keep out of the branch that has not measured the shape.
+- **Point 7 — one shared condition title** for all seven bindings
+  (`fugaro-managed-prefix`), as implemented; a per-service title is not taken.
 
 ## 9. The live check (owner-run; `docs/gcp-live-checklist.md` Check 68)
 

@@ -31,6 +31,10 @@ import (
 // Restore), and each of the hand mutations the review named fails one of them
 // — deleting a flag, reintroducing a removed command, or dropping a safety
 // stop fails here rather than passing on the section's heading alone.
+//
+// Two mutations of the row's wording were verified, run and restored: the
+// sentence back to "written and answered" (the phrase that read as a result)
+// → FAIL, and "written and **NOT RUN**" weakened to "written and read" → FAIL.
 func TestChecklistHasCheck52(t *testing.T) {
 	const path = "../../docs/gcp-live-checklist.md"
 	data, err := os.ReadFile(path)
@@ -85,7 +89,21 @@ func TestChecklistHasCheck52(t *testing.T) {
 		// Bitbucket credential, project or scratch repository.
 		"no longer a probe",
 		"nothing on the Bitbucket side",
+		// And the row must not read as if the check had been answered. It said
+		// "the UNVERIFIED questions phase 3 depends on, written and answered
+		// before any phase 3 code" — a sentence an owner reads as a result,
+		// while the same row's cost column says NOT RUN, the section heading
+		// says NOT RUN, and no result of Check 52 exists anywhere in the tree
+		// (docs/design/budget-token-channel.md:325 records "The owner has not
+		// run Check 52"). The plan's own words are "they are answered before
+		// any phase 3 code is written" — a requirement, not a result — and the
+		// row now says NOT RUN in the same breath as that requirement.
+		"written and **NOT RUN**",
+		"before any phase 3 code is written",
 	})
+	if strings.Contains(doc, "written and answered") {
+		t.Error("docs/gcp-live-checklist.md says a probe of Check 52 is \"written and answered\": nothing of this check has been run — its row and its heading both say NOT RUN, its U2/U3/U4 have no results, and the design that depends on U3 (docs/design/managed-deployer-fence.md:51,102) records it as NOT RUN. A sentence that reads as a result where there is none is the one mistake this document cannot afford")
+	}
 	for _, dead := range []string{"scratch Bitbucket", "project access token", "fugaro-probe-1"} {
 		if strings.Contains(row, dead) {
 			t.Errorf("the Check 52 row still describes U1 as a running probe (%q)", dead)
