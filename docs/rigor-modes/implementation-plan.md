@@ -592,8 +592,10 @@ not change for anyone who has not configured a mode.
 - **Tests.** The mode's ceiling lowers the rounds and never raises them above
   what `Overrides.ReviewRounds`, `agent.review_rounds` and the recipe's
   `max_rounds` already agree on (F6's precedence is asserted, not restated); a
-  mode cannot set a ceiling above `MaxReviewRounds`; and `first_line_rounds`
-  keeps its own bound and is not touched by the mode unless D7's table says so.
+  mode cannot set a ceiling above `MaxReviewRounds`; `first_line_rounds`
+  keeps its own bound and is not touched by the mode unless D7's table says so;
+  and a mode raised between rounds by an area or a floor (T1.4, T3.5) bounds the
+  rounds that remain rather than the rounds already spent.
 - **Red step.** The precedence test fails: the mode is not an input to it.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/runner -run 'Round|Plan' -count=1 -timeout 30m`
 - **Depends on.** T3.1.
