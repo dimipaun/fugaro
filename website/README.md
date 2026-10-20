@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **975,034 bytes in a checkout with no tags** and to **975,034 bytes with the
+  commit builds to **980,960 bytes in a checkout with no tags** and to **980,960 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -459,6 +459,17 @@ added or removed without this sentence moving fails there:
     four glyphs are shapes in the markup, and `test/home.mjs` reads each one back off the built
     page and refuses an icon that references a file or an origin. The words are the ones the
     section already carried, so the word ceiling did not move.
+  - **How It Works is one diagram of the run, and the run in words under it** (the owner
+    approved the draft "How it works, draft 2 (diagram)" on 2026-10-19 with "build it", and
+    item P8's step-by-step timeline came out). It moved the site figure alone, 975,034 →
+    **980,960**, by **5,926 bytes**: one inline `<svg>` per width — the run read left to right,
+    and the same run read top to bottom below the site's 48 rem breakpoint, both drawn from
+    the same labels in `RunDiagram.astro` — the box, pill, arrow and band rules that paint
+    them from the palette's tokens, and the two lists of the repository's own lines under the
+    picture. Both drawings are markup in the page and nothing is fetched for either; the page
+    weight and the script did not move, because the heaviest page is the docs hub and the page
+    carries no JavaScript. The words are the diagram's own labels and the page's remaining
+    facts, so the word ceiling did not move either.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -485,7 +496,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,556 bytes. Three times 350,852: the heaviest page, the
     docs hub, at 280,681 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,656,379 bytes. Three times 1,218,793 (every file in `dist/`, 975,034
+  - **Whole site:** 3,678,600 bytes. Three times 1,226,200 (every file in `dist/`, 980,960
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
