@@ -28,9 +28,16 @@
 //      entry point itself is read here rather than imported -- it launches
 //      Electron, so nothing can import it -- and the one thing asserted about it
 //      is that it wires this handler in;
-//   7. **the two commands that take the pictures**: `scripts/console-screenshots.sh`
-//      and the `screenshots` script it documents, which have to do the same work
-//      -- including the build, because what the run launches is the built app.
+//   7. **what the run's own documents promise about it**: the two commands that
+//      take the pictures (`scripts/console-screenshots.sh` and the `screenshots`
+//      script it documents, which have to do the same work -- including the
+//      build, because what the run launches is the built app), the README's
+//      picture table (one table, the omission in it), and the shell script's
+//      header, which says what the run reaches as well as what it does not;
+//   8. **the captures' selectors** (`tools/screenshots/screens.ts`): each one is
+//      held to the renderer file that has to draw its class or id, so a renamed
+//      renderer fails here rather than as a `waitForSelector` timeout on the
+//      owner's Mac.
 //
 // What is *not* here, stated plainly: the Electron launch, the window's real
 // size, and the fact that a screen draws at all. Those need a display, and the
