@@ -46,8 +46,11 @@ and `internal/cli/testdata/init_retire.golden` (`-update-retire`).
   default is used. Nothing about `fugaro-runs-<gcp-project>`,
   `fugaro-tfstate-<gcp-project>` or the managed fact's path moves.
 - **No historical rewrite.** `docs/plans/**`, `docs/releases/v*`,
-  `docs/design/**` describing shipped state and `docs/credentials-service/**`
-  keep the old name (D9, F20). The rename's guard test enforces the line.
+  `docs/design/**` describing shipped state, `docs/credentials-service/**` and
+  **`docs/setup-wizard/**` itself** keep the old name (D9, F20). The rename's
+  guard test enforces the line, and this folder is on the exempt side of it:
+  these three documents are where the retirement is described, so they name
+  the retired command 71 times by necessity.
 - **No fourth verb** (O1): `setup`, `update`, `upgrade`, the hidden `init`
   tombstone, and `fugaro config init` left alone.
 - **No `fugaro upgrade` change beyond its text.** D1 (recommended) keeps the two
@@ -159,7 +162,9 @@ rewritten stays the same number and is not reused elsewhere.
     `internal/cli` is one lane, which is why the table looks thin.
 11. **The dated records are read-only** (D9): `docs/plans/**`,
     `docs/releases/v*`, `docs/design/**`, `docs/credentials-service/**` and
-    `docs/setup-wizard/spec.md` are never edited by a rename task.
+    **this whole folder, `docs/setup-wizard/**`** — never edited by a rename
+    task. Its prose is *about* the retirement and cannot stop naming the
+    retired command; W0.2's census exempts it for that reason.
 
 ---
 
@@ -171,9 +176,13 @@ rewritten stays the same number and is not reused elsewhere.
    files outside `docs/`; this pull request does not.)
 2. **No task is approved.** Each starts on the owner's explicit go for that task
    or a named group.
-3. **Slices 1–5 wait for the D-rows they depend on**: W1.2/W1.3 on D1 and D2 (the
-   tombstone's text and whether there is an alias at all), W3.1/W3.3 on D4,
-   W3.4 on D5, W3.5 on D11, every W4.x on D3 and D6, W2.x on D7 and D9.
+3. **Slices 1–5 wait for the D-rows they depend on**, and the
+   "Decisions → tasks" table below is this map in full: W1.2 on **D2** (the
+   tombstone's text, and whether there is an alias at all) and W1.3 on **D11**
+   (does `setup` create by default?); W3.1 and W3.2 on **D4**, W3.3 on **D7**,
+   W3.4 on **D5**; W4.1, W4.3 and W4.5 on **D6**, W4.4 on **D3**; W5.1 on
+   **D1** and **D5**; W2.3 on **D8**; W0.2 and W2.6 on **D9**; W0.3, W6.1 and
+   W6.2 on **D10**. W3.5 waits on **F12** rather than on a decision.
 4. **The wizard never softens a confirmation.** `--yes`, `--non-interactive`,
    `--json`, a pipe and an agent session behave exactly as
    `internal/initflow`'s `YesCovers`/`CanConfirm` say today; W0.1's matrix is the
@@ -251,7 +260,7 @@ A reviewer of a **task** reads its own "Reviewer" line.
 | `internal/billing/accounts.go` (**new**) | W4.1 | The Cloud Billing client: open accounts only, ids and display names, a typed disabled error |
 | `internal/billing/gcloud.go` (**new**) | W4.2 | The `gcloud billing accounts list` fallback behind an injected runner |
 | `internal/cli/billing_prompt.go` (**new**) | W4.3 | The picker: numbering, the single-account default, the none case, the four conditions |
-| `internal/e2e/update_test.go` (**new**, from `init_test.go`) | W5.2 | The fourteen `TestInitRepo*` tests, renamed |
+| `internal/e2e/update_test.go` (**new**, from `init_test.go`) | W5.2 | The 26 `TestInitRepo*` tests (of 27 `TestInit*`), renamed |
 | `internal/cli/{install,wizard,converge}*.go` (**new**, from `init*.go`) | W2.7 | The pure rename, if the owner wants it (droppable) |
 
 ### Edited (the shared ones; every task lists its own)
@@ -270,7 +279,7 @@ A reviewer of a **task** reads its own "Reviewer" line.
 | `internal/preflight/google.go` | W4.4 (L10) |
 | `README.md`, `docs/gcp-setup.md`, `docs/project-*.md`, `docs/multi-model.md`, `docs/git-providers.md`, `docs/dogfooding.md`, `docs/release.md`, `SECURITY.md`, `plugin/skills/**`, `.claude/skills/new-release/SKILL.md` | W2.3 (L3) |
 | `website/data/install.yaml`, `website/src/pages/getting-started.astro`, `website/src/components/Changelog.astro`, `website/test/*.mjs`, `website/content/cli-reference.md`, `website/content/security.md` | W2.4 (L4) |
-| `deploy/terraform/**/*.tf` (36 files), `deploy/terraform/terraform.go`, `deploy/terraform/gcp/roots/repo/tests/testdata/README.md` | W2.5 (L2) |
+| `deploy/terraform/**/*.tf` (29 files naming the command, of 58 in the tree), `deploy/terraform/terraform.go`, `deploy/terraform/gcp/roots/repo/tests/testdata/README.md` | W2.5 (L2) |
 | `internal/config/example.yaml`, `internal/config/example.go`, `schemas/fugaro.schema.json`, `images/verify-public.sh` | W2.6 (L5) |
 | `internal/e2e/init_test.go` → `update_test.go` | W5.2 (L8) |
 
@@ -311,17 +320,27 @@ W6.2 ← W4.4, W4.5 (owner; plus a release)
 | **L3** | W1.3 `setup` is the wizard · W2.3 live markdown, README and the skills | opus · standard | `internal/cli/{setup,init_stages,init_project}.go` · `README.md`, `docs/`, `plugin/skills/**`, `.claude/skills/new-release/SKILL.md` |
 | **L4** | W3.1 the id default · W3.3 `--firebase-project` · W2.4 the website and the generated reference | standard · standard · standard | `internal/cli/init_inputs.go` · `internal/cli/{init,init_firebase,init_project}.go` · `website/**` |
 | **L5** | W3.2 the region and the Firestore location · W3.4 the first-repository question · W2.6 the census emptied and the tail | standard · standard · standard | `internal/cli/init_inputs.go` · `internal/cli/{init_repo_gate,init_repo_target,setup}.go` · `internal/config/{example.yaml,example.go}`, `schemas/`, `images/verify-public.sh`, `docs/gcp-live-checklist.md`, `docs_live_init_census_test.go` |
-| **L6** | W3.5 the two-phase wizard stage · W2.7 the pure file rename | opus · standard | `internal/cli/wizard_stage.go`, `init_inputs.go` · the `init*.go` → `install*.go` move |
+| **L6** | W3.5 the two-phase wizard stage | opus | `internal/cli/wizard_stage.go`, `init_inputs.go` |
 | **L7** | W5.1 `update`'s stage set, refusals and non-interactive contract | opus | `internal/cli/{update,init_stages,init}.go`, `docs/gcp-setup.md` (its `update` section) |
 | **L8** | W5.2 the e2e tests, renamed | standard | `internal/e2e/init_test.go` → `update_test.go` |
 | **L9** | W4.3 the picker prompt | **opus + mandatory** | `internal/cli/billing_prompt.go`, `init_project.go`, `init_inputs.go` |
 | **L10** | W4.4 the API-enable refusal · W4.5 the comments that become false | **opus + mandatory** · standard | `internal/cli/billing_prompt.go`, `internal/preflight/google.go` · `internal/cli/init_project.go`, `internal/infra/projectcreate.go` |
-| **L11** | W6.1 Check 27 · W6.2 Check 111 | owner · owner | none (the owner records the FACT lines) |
+| **L11** | W2.7 the pure file rename | standard | the `internal/cli/init*.go` → `install*.go` move only |
+| **L12** | W6.1 Check 27 · W6.2 Check 111 | owner · owner | none (the owner records the FACT lines) |
 
 **Widest levels: L0 (five) and L5 (three).** No two tasks in a level write one
 file. The thinness is the honest shape of this work: **`internal/cli` is one
-lane**, so the six tasks that reshape the wizard follow one another by file even
+lane**, so the tasks that reshape the wizard follow one another by file even
 where they do not depend on each other logically.
+
+**W2.7 has a level to itself (L11), and that is not cosmetic.** Its edge,
+`W2.7 ← W2.6`, puts it at L6 alongside W3.5, and W3.5 *edits*
+`internal/cli/init_inputs.go` while W2.7 *renames* it — two writers of one file
+in one level, which Convention 10 forbids. The rename wants to be last anyway
+(one reviewable `git mv` commit, no content change), so it sits after L10, when
+every behaviour and every edit to an `init*.go` file has landed, and the two
+owner-run checks move to L12 behind it — which is where their other edge,
+`W6.1 ← W2.7`, already asked them to be.
 
 ### The critical path
 
@@ -348,8 +367,12 @@ or owner-built binary.
    input phase has to exist.
 5. **W4.1 and W4.2 before W4.3.** The picker asks a client that lists accounts.
 6. **W2.1–W2.5 before W2.6**, which empties the census and flips its assertion
-   to "the list is empty".
-7. **W4.3 before W4.4 and W4.5.** The refusal and the corrected comments are
+   to "`pendingRename` is empty and `retirementText` is exactly the four files
+   whose subject is the retirement".
+7. **W3.5 before W2.7**, even though nothing in W2.7 depends on it: W3.5 edits
+   `internal/cli/init_inputs.go` and W2.7 renames it, and the rename waits until
+   nothing else writes an `init*.go` file (L11, after L10).
+8. **W4.3 before W4.4 and W4.5.** The refusal and the corrected comments are
    about code that must exist first.
 
 ---
@@ -361,8 +384,9 @@ or owner-built binary.
 ### Task W0.1: The refusal matrix, pinned — test
 
 **Files.** `internal/cli/setup_refusals_test.go` (**new**).
-**What it pins.** A table over the stages of `internal/init_stages.go`'s
-`runCovered` and its `noYes` set, crossed with five run modes — `--yes`,
+**What it pins.** A table over the stages `internal/cli/init_stages.go`
+registers, crossed with `internal/initflow/stage.go`'s `runCovered` map and its
+`noYes` declarations, and five run modes — `--yes`,
 `--non-interactive` (with and without `--yes`), `--json`, no terminal, and an
 agent session — asserting for each the state the loop reaches and, specifically,
 that **project creation, the billing link, the Firestore location and a billable
@@ -389,15 +413,23 @@ and asserts that set equals a checked-in `pendingRename` list plus the
 `datedRecords` list. A new occurrence fails (the set grew); a renamed file that
 was not removed from `pendingRename` fails (the set shrank). The
 `datedRecords` list is `docs/plans/`, `docs/releases/v`, `docs/design/`,
-`docs/credentials-service/` — matching
+`docs/credentials-service/` and **`docs/setup-wizard/` itself** — matching
 `plugin/readme_test.go`'s `TestReadmeNamesNoRetiredSkill` `skip` regex in
 spirit. The handful of *generated* files (`website/content/cli-reference.md`,
 `website/content/security.md`) are asserted to be in `pendingRename` and are
 removed from it by W2.4, which regenerates them rather than editing them.
+**A second exemption class, `retirementText`, is needed for the flip to be
+achievable**, and it is not a judgement call: `internal/cli/retired.go` and its
+test, `internal/cli/testdata/init_retire.golden` and this census file itself
+name `fugaro init` **as the retired verb** — that is their whole job, and no
+rename can remove it. They are listed separately, so "the live tree names
+`fugaro init` nowhere" stays a claim with teeth: W2.6 asserts `pendingRename` is
+empty and `retirementText` is exactly those four paths.
 **Red step.** None: passes today with `pendingRename` = today's census
-(≈84 Go files, 112 markdown files, 36 Terraform files). W2.6 **flips the last
-assertion to `len(pendingRename) != 0 → fatal`**, and that is where the pin
-bites.
+(410 non-test Go lines across 107 files, 378 test lines across 106 files, 111
+markdown files outside this folder, 29 Terraform files naming the command of
+58). W2.6 **flips the last assertion to `len(pendingRename) != 0 → fatal`**,
+and that is where the pin bites.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Census|RetiredInit' -count=1`.
 **Depends on.** Nothing. **Reviewer.** standard.
 **Commit.** `cli: the census of every file that still names fugaro init, and the line the rename must not cross`
@@ -630,7 +662,10 @@ command's name moves. The dated records are untouched (Convention 11).
 `fugaro init` → `fugaro setup`; `/fugaro:setup` unchanged; `fugaro upgrade
 --local` unchanged), `website/src/pages/getting-started.astro` (3 mentions, the
 seven-step `#setup` `<ol>` collapsing to about three, and the anchor fragment
-`the-short-path-fugaroinitthen-fugarosetup`, which appears **twice**),
+`the-short-path-fugaro-init-then-fugarosetup`, which appears **twice** — the
+slug keeps the hyphen inside `fugaro-init` that the name itself does not have,
+because it is the heading's words joined; the heading and both fragments move
+together, and `website/test/*.mjs` resolves them),
 `website/src/components/Changelog.astro`, `website/test/docs-hub.mjs`,
 `website/test/caps-and-costs.mjs`, `website/content/cli-reference.md`
 (**regenerated** with `go run ./internal/clidoc`, never hand-edited),
@@ -656,7 +691,8 @@ the generator is rerun after W1.2's cobra changes, and its diff is the review.
 
 ### Task W2.5: Terraform, the schema and the example config — standard
 
-**Files.** 36 `deploy/terraform/**/*.tf` files (variable and output
+**Files.** 29 of the tree's 58 `deploy/terraform/**/*.tf` files — those whose
+variable and output
 `description`s naming the command, e.g.
 `deploy/terraform/gcp/modules/repo/variables.tf`, `modules/installation/*.tf`,
 `modules/firebase/*.tf`, `modules/workflow/*.tf`, `modules/project/job.tf`,
@@ -687,11 +723,14 @@ reflow).
 ### Task W2.6: The census emptied, and the tail — standard
 
 **Files.** `internal/cli/docs_live_init_census_test.go` (W0.2's file: the final
-assertion flips to "`pendingRename` is empty"), the leftovers the other rename
+assertion flips to "`pendingRename` is empty, and `retirementText` is exactly
+the four files whose subject is the retirement"), the leftovers the other rename
 tasks did not own — `docs/gcp-live-checklist.md`'s remaining prose mentions
 (other than Checks 27 and 111, which are W0.3's and already name the new
-commands), `docs/website/redesign/**` **no** (a dated record, D9),
-`docs/credentials-service/**` **no** (another plan's record).
+commands). Three roots are **exempt and not touched**, D9: `docs/website/
+redesign/**` (a dated record), `docs/credentials-service/**` (another plan's
+record) and `docs/setup-wizard/**` (this folder, 71 mentions — these three
+documents are where the retirement is described).
 **Tests.** `internal/cli/docs_live_init_census_test.go` — the flip **is** the
 test.
 **Red step.** Flip the assertion first: it fails and prints the files still
@@ -709,7 +748,11 @@ siblings as the owner prefers, and the corresponding `init*_test.go` files.
 **Why last.** Doing it first would put a rename in every subsequent diff; doing
 it last makes one reviewable commit. It changes **no content**, so it can be
 dropped entirely without affecting any other task — the two front doors live in
-`setup.go` and `update.go` and the engines' file names are cosmetic.
+`setup.go` and `update.go` and the engines' file names are cosmetic. Its level
+is **L11, on its own**: its only logical edge is `W2.7 ← W2.6` (L5), which
+would place it at L6 next to W3.5 — and W3.5 edits `init_inputs.go` while this
+task renames it, two writers of one file in one level. Renaming after L10, when
+every edit to an `init*.go` file has landed, keeps Convention 10 true.
 **Tests.** None new: the whole suite must pass **unchanged**, which is the proof
 the move was pure.
 **Red step.** n/a (no behaviour). **Verification.** `git show --stat` reports
@@ -979,7 +1022,8 @@ to* is never printed — the half of the old rule that survives).
 ### Task W5.1: `update`'s stage set, its refusals and its non-interactive contract — opus
 
 **Files.** `internal/cli/update.go`, `internal/cli/init_stages.go` (the stages
-`update` registers and `runCovered` for it), `internal/cli/init.go` (the
+`update` registers, and the `runCovered` row that says whether `--yes` may
+cover them — the map lives in `internal/initflow/stage.go`), `internal/cli/init.go` (the
 `errNoState` family's wording), `docs/gcp-setup.md` (its `fugaro update`
 section), their tests.
 **What it is (F11, F16, D1, D5).** `update` registers everything `setup` does
@@ -1013,12 +1057,29 @@ else's — that is what "non-interactive friendly" means, and W0.1's matrix gain
 ### Task W5.2: The e2e tests, renamed for what they test — standard
 
 **Files.** `internal/e2e/init_test.go` → `internal/e2e/update_test.go`; its
-fourteen `TestInitRepo*` tests become `TestUpdate*` (or `TestSetup*` for the two
-that build the installation), and every one of them keeps its assertions: the
-confirmation, the base image, the Resource Manager enable, `--forget` and its
-resume, the fresh-secrets print, the missing installation, the unnamed
-installation, the storage-disabled remote error, the tag-mover refusal, the
-print-vars no-calls case.
+**26 `TestInitRepo*` tests become `TestUpdate*`**, plus the 27th `TestInit*`,
+`TestInitForgetThenReinitImports`, which takes the same prefix — the split is
+the one already in the file: the two that build an installation
+(`TestInitRepoBuildsThenDeploys`, `TestInitRepoBuildNeedsConfirmation`) are the
+only candidates for `TestSetup*`, and that is the owner's to call with W1.3.
+Every one of the 26 keeps its assertions, in the groups the file already has:
+
+- **adoption** — `AdoptsBootstrapResources`, `AdoptedSwitchesImageAfterBuild`;
+- **the build** — `BuildsThenDeploys`, `FailedBuildStillRecordsRepo`,
+  `BuildNeedsConfirmation`, `WarnsBaseImageOutsideBaseRegistry`;
+- **what the run records** — `RecordsVertex`, `LeavesInstallationWorkdir`;
+- **refusals** — `RefusesForeign`, `RefusesInstallationFlags`,
+  `RefusesUnnamedInstallation`, `RefusesForgottenInstallation`,
+  `RefusesInstallationWithoutTagMover`, `NeedsInstallation`, `NeedsFugaroYAML`,
+  `GitHubNeedsAppID`;
+- **idempotence** — `Idempotent`;
+- **secrets and variables** — `FreshPrintsSecrets`, `PrintVarsNoCalls`,
+  `AllowJobDeleteHighlighted`;
+- **`--forget` and its resumption** — `Forget`,
+  `ForgetResumesAfterPartialFailure`, `ForgetStateRmFailsKeepsObject`,
+  `ForgetRefusesUnversionedStateBucket`;
+- **cloud errors and enables** — `StorageDisabledIsRemote`,
+  `EnablesResourceManager`.
 **Why it is its own task.** These are the closest thing to a whole-run test this
 repository has without a live cloud, and they are the proof that `update` is the
 same behaviour under a new name.
@@ -1086,7 +1147,7 @@ Each needs its own plan amendment and the owner's go.
   call site, a real terminal only, nothing stored, nothing under `--json` — but
   the decision, not the plan, is what makes that true, and W4.1 and W4.3 are
   marked for a mandatory independent review because of it.
-- **The rename is 900 Go lines and 112 markdown files.** Its risk is not
+- **The rename is ~790 Go lines and 111 markdown files.** Its risk is not
   effort but *silence*: a stale `fugaro init` in live text is a user typing a
   command that no longer exists. W0.2's census and W2.6's flip are the
   mitigation, and they are the reason the census is written before anything
