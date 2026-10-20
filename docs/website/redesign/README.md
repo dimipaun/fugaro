@@ -1056,10 +1056,11 @@ in the commit that made it.
   `home.mjs`, `fold.mjs`, `budget.mjs`, `wording.mjs` and `base-styles.mjs` were re-pointed in
   the same commit), not dropped.
 - **What the gates hold, and what they cannot.** The page's order, the three tabs and the three
-  panels, the panel each fragment shows, the absence of a script, the 44 px targets and the
-  steps' provenance are `website/test/slider.mjs`'s five rules, with twenty-one planted cases
-  under them; the hero's links against `features.console_downloads`, the prompt line's source,
-  the watch block and the capture's slot are `home.mjs`'s; the lead's word count is
+  panels, the panel each fragment shows, the absence of a script, the 44 px targets — read at
+  360 px and at 1280 px, so a minimum that holds at one of the two and not the other is refused —
+  and the steps' provenance are `website/test/slider.mjs`'s five rules, with twenty-two planted
+  cases under them; the hero's links against `features.console_downloads`, the prompt line's
+  source, the watch block and the capture's slot are `home.mjs`'s; the lead's word count is
   `budget.mjs`'s and the byte figures are `website/README.md`'s, re-derived from the gate's own
   build in the commit that moved them (D192). **Whether the page looks like the owner's draft
   is the owner's check** (70a–70c, P9, D190): no gate here can see an image, and no screenshot

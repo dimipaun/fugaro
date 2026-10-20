@@ -90,19 +90,28 @@ function lengthPx(value, css) {
 }
 
 /**
- * True when a rule's enclosing conditions hold at `width` px. A condition this reading cannot
- * parse is treated as not holding, which is the safe direction for a check that refuses things:
- * a rule the reading cannot place is a rule it does not refuse.
+ * True when a rule's enclosing conditions hold at `width` px. A rule with no condition at all is
+ * one the width does not gate, and it holds. A condition the width does not decide is treated as
+ * *not* holding, the way `base-styles.mjs`'s own `appliesAt` treats it: a query with no width in
+ * it (`prefers-reduced-motion`, `hover`) and a width in a unit this reading cannot turn into
+ * pixels (`em`, `ch`) are both rules the reading cannot place, and a check that refuses things
+ * does not refuse a rule it cannot place.
+ *
+ * The two forms a width is written in are read as one list: `min-width: 48rem` and `width>=48rem`
+ * are the same bound, and a query carrying both forms carries both bounds.
  */
 function appliesAt(conditions, width) {
   for (const condition of conditions) {
     const at = /@media([^{]*)/i.exec(condition)
     if (!at) return false
-    for (const [, named, name, colon, value, unit, range, rangeValue, rangeUnit] of at[1].matchAll(
-      /(?:\(\s*(min-width|max-width)\s*:\s*([\d.]+)(px|rem)\s*\))|(?:\(\s*width\s*(>=|<=|>|<)\s*([\d.]+)(px|rem)\s*\))/gi,
-    )) {
-      const limit = (unit ?? rangeUnit) === 'px' ? Number(value ?? rangeValue) : Number(value ?? rangeValue) * 16
-      const least = (named ?? '').toLowerCase() === 'min-width' || range === '>=' || range === '>'
+    const bounds = [
+      ...at[1].matchAll(/\(\s*(min-width|max-width)\s*:\s*([\d.]+)(px|rem)\s*\)/gi),
+      ...at[1].matchAll(/\(\s*width\s*(>=|<=|>|<)\s*([\d.]+)(px|rem)\s*\)/gi),
+    ]
+    if (bounds.length === 0) return false
+    for (const [, named, amount, unit] of bounds) {
+      const limit = unit.toLowerCase() === 'px' ? Number(amount) : Number(amount) * 16
+      const least = /^min-width$/i.test(named) || named === '>=' || named === '>'
       if (least && width < limit) return false
       if (!least && width > limit) return false
     }
@@ -531,6 +540,13 @@ test('every refusal the slider reading makes fires on the defect it names', () =
       /the owner's brief asks a control for a 44 px target/,
     ],
     [
+      'a tab that is 44 px only on a phone',
+      `${css.replace(/(\.tab\[data-astro-cid-\w+\]\{[^}]*?)min-height:44px/, '$1min-height:20px')}
+@media (width<=30rem){.tab[data-astro-cid-d3mmljir]{min-height:44px}}`,
+      html,
+      /at 1280 px the tabs declare `min-height: 20px`/,
+    ],
+    [
       'a tab row that cannot wrap',
       css.replace(/(\.tab-bar\[data-astro-cid-\w+\]\{[^}]*?)flex-wrap:wrap;/, '$1'),
       html,
@@ -569,6 +585,27 @@ test('every refusal the slider reading makes fires on the defect it names', () =
       `${what}: the reading refused ${failures.length} thing(s) and none of them is this defect:\n  ${failures.join('\n  ') || '(nothing)'}`,
     )
   }
+})
+
+// The reading above is a reading *at* a width, and the one way it can stop being one is a media
+// query it does not evaluate: every rule then holds at every width, and the width the reading was
+// taken at decides nothing. Both directions are held here — a wide rule the phone meets is
+// refused, the same rule behind a query the phone does not meet is not — because a reading that
+// ignores the width fails the second and a reading that ignores media queries fails the first.
+test('a wide box behind a query the phone does not meet is not a box the phone has to fit', () => {
+  const { html, css } = built()
+  const wide = '.easy-steps[data-astro-cid-d3mmljir]{min-width:900px}'
+  const atPhone = `${css}\n${wide}`
+  const abovePhone = `${css}\n@media (width>=48rem){${wide}}`
+  assert.ok(
+    sliderFailures(atPhone, html).some((line) => /a box wider than the phone/.test(line)),
+    `a 900 px box declared at every width is not refused at ${PHONE} px, and the phone reading is what keeps the block inside a phone`,
+  )
+  assert.deepEqual(
+    sliderFailures(abovePhone, html),
+    [],
+    `a 900 px box declared only above 48rem is refused at ${PHONE} px, and the phone never meets that query: a reading that refuses it is a reading the width argument does not reach`,
+  )
 })
 
 test('every refusal the steps reading makes fires on the defect it names', () => {
