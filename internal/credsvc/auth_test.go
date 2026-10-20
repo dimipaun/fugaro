@@ -845,10 +845,22 @@ func TestVerifyRefusesWhenTheOutcomeCannotBeRead(t *testing.T) {
 // A run id that names no launch time cannot be checked day by day, so it is
 // refused; and one claiming a launch older than any run can be is refused
 // rather than scanned.
+//
+// The rule is internal/task's ValidRunID (^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$),
+// the rule the launcher's NewRunID mints to and internal/runstore reads with,
+// and the ids below are the ones a laxer rule would let through: fifteen bytes
+// that happen to parse as a timestamp are not a run id, and a run id this
+// repository never minted is not a run.
 func TestVerifyRefusesARunIDItCannotPlace(t *testing.T) {
 	unplaceable := map[string]string{
 		"a run id too short to hold a time": "not-a-run-id",
 		"a run id whose head is not a time": "abcdefgh-ijklmn-ee55",
+		// A timestamp and then a sixteenth byte: the head parses, the id is
+		// not a run id.
+		"a run id whose head is a time and whose tail is not": "20261020-090000X",
+		"a run id whose tail is not four hex digits":          "20261020-090000-xyz",
+		"a run id whose tail is not lower-case hex":           "20261020-090000-AB12",
+		"a run id with no tail at all":                        "20261020-090000-",
 	}
 	for name, run := range unplaceable {
 		t.Run(name, func(t *testing.T) {

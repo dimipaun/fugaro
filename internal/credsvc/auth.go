@@ -58,6 +58,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The refusals. Each is a sentinel so a caller can answer the wire contract's
@@ -500,12 +501,15 @@ func (a *Authenticator) checkLive(ctx context.Context, slug, run string, now tim
 	return nil
 }
 
-// runDay is the UTC day a run id (20060102-150405-xxxx, internal/task) was
-// minted. It is parsed here rather than through internal/runstore's RunTime so
-// the service's binary does not pull a blob store in for fifteen bytes of
-// timestamp; the format is the one both of them read.
+// runDay is the UTC day a run id was minted. The rule the id is held to is
+// internal/task's (ValidRunID, the shape the launcher's NewRunID mints and the
+// shape internal/runstore reads), so a string that is not a run id is refused
+// whole rather than half-read: fifteen bytes that happen to parse as a
+// timestamp are not a run id. The day is then parsed from the id's head here
+// rather than through internal/runstore's RunTime, which would pull a blob
+// store into the service's binary for those fifteen bytes.
 func runDay(run string) (int64, bool) {
-	if len(run) < 15 {
+	if !task.ValidRunID(run) {
 		return 0, false
 	}
 	t, err := time.Parse("20060102-150405", run[:15])
@@ -532,10 +536,13 @@ func splitRunUID(uid string) (slug, run string, ok bool) {
 	return slug, run, true
 }
 
-// decodeJWT decodes a compact JWT's header and payload WITHOUT verifying it:
-// the caller decides what proof it needs (Google's key set for the run
-// identity, Cloud Run IAM for the caller's). Nothing here is trusted on its
-// own.
+// decodeJWT decodes a compact JWT's header and payload WITHOUT verifying it.
+// It is a decoder and nothing else: the proof a token needs is the caller's to
+// demand, and both callers demand it. verifyRun holds the run identity's RS256
+// signature against the keys Google publishes; verifyJob holds the caller's ID
+// token to the same RS256 check against JobKeys, on top of the Cloud Run IAM
+// admission that got the call here at all. Nothing this returns is trusted on
+// its own.
 func decodeJWT(tok string) (head, claims map[string]any, err error) {
 	if tok == "" || len(tok) > maxTokenBytes {
 		return nil, nil, errors.New("credsvc: not a JWT of a usable size")
