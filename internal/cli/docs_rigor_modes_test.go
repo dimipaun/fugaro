@@ -51,6 +51,15 @@ const (
 	// rigorModesQuestionsHeading is the spec's own section of open questions, the
 	// one the spec guard counts and no document here may answer.
 	rigorModesQuestionsHeading = "## Open questions"
+
+	// rigorModesBacklogHeading is the reconciliation's section for the owner's
+	// backlog ruling of 2026-10-20, and rigorModesBacklogFolder the folder every
+	// document in the set puts the items in. The ruling is a deliverable of that
+	// amendment the way the scope ruling was of the one before it, so it is held
+	// the same way: by the section and the path a later edit would quietly drop,
+	// not by the prose around them.
+	rigorModesBacklogHeading = "### 1.3 The backlog ruling"
+	rigorModesBacklogFolder  = "docs/backlog/"
 )
 
 // rigorModesRevision is the commit the reconciliation was read at. A later run
@@ -119,6 +128,10 @@ func TestDocsRigorModesIsWritten(t *testing.T) {
 		// (110 named by the mobile P5.3 design, 111 the setup wizard's, 112
 		// the Windows CLI's, 113-118 the voice session's six).
 		"**Check 119**",
+		// The backlog the owner ruled on, named in the index by the folder its
+		// items live in: an index that stops naming it is an index a reader
+		// cannot find the backlog in.
+		rigorModesBacklogFolder,
 	}, rigorModesIndexedFiles...) {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s lacks %q", rigorModesReadme, want)
@@ -129,6 +142,8 @@ func TestDocsRigorModesIsWritten(t *testing.T) {
 		rigorModesStatus,
 		"## 3. Findings",
 		rigorModesCensusHeading,
+		rigorModesBacklogHeading,
+		rigorModesBacklogFolder,
 		"## 5. Decisions for the owner",
 		"## 9. UNVERIFIED",
 		"**None of these is taken.**",
@@ -146,6 +161,7 @@ func TestDocsRigorModesIsWritten(t *testing.T) {
 		rigorModesStatus,
 		rigorModesSlicesHeading,
 		rigorModesGateHeading,
+		rigorModesBacklogFolder,
 		"**This gate is not passed, and nothing below is approved.**",
 		// The live check this work proposes, named in the plan as well as in the
 		// index, because a number claimed in two places is a number to check.

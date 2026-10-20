@@ -5,11 +5,16 @@
 Nine slices, ordered so that each one merges alone and leaves `main` green, and
 so that the first six change nothing a user can observe until the mode is
 configured. This plan is written from [reconciliation.md](reconciliation.md)'s
-findings **F1–F41**, decisions **D1–D25**, items **O1–O7** and the UNVERIFIED
-table **U1–U10**, and it cites them rather than restating them. Slice 1 is
+findings **F1–F48**, decisions **D1–D32**, items **O1–O7** and the UNVERIFIED
+table **U1–U12**, and it cites them rather than restating them. Slice 1 is
 ordered by the owner's scope ruling of 2026-10-20 (the reconciliation's §1.2):
 the project-wide default lands first, the repository's override second, the area
-override last, and each of the three merges on its own.
+override last, and each of the three merges on its own. Slice 4's last five tasks
+are ordered by the owner's backlog ruling of the same day (the reconciliation's
+§1.3): the item's format and its first files land first, the generated index and
+its two pins second, the filing command and the run that files third, the
+per-mode rule fourth, and closing with the one-backlog practice last — each
+merging alone.
 
 ## 0. What this does not do
 
@@ -30,8 +35,15 @@ override last, and each of the three merges on its own.
   readiness rule, or a second configuration file.** F13, F9, F4 and D5: the
   existing ones are reused, and a task that proposes a new one is proposing a
   decision, not a task.
-- **It does not decide the open questions.** D1–D25 are recommendations, O1–O7
-  are items and U1–U10 are unverified claims. A task below that depends on one
+- **It does not put the backlog in a provider's issues, in a second repository,
+  or in a scheduler.** The owner's ruling of 2026-10-20 keeps the backlog as
+  Markdown under `docs/backlog/` (the reconciliation's §1.3): a run files an item
+  into its own repository and its own branch, because that is the one repository
+  its token reaches and the one it can push (F43, F44), and **D29** is the owner's
+  question about which repository holds a project's items, with a recommendation
+  first.
+- **It does not decide the open questions.** D1–D32 are recommendations, O1–O7
+  are items and U1–U12 are unverified claims. A task below that depends on one
   says so in its **Depends on** line.
 
 ## 1. Builds on merged code
@@ -55,6 +67,11 @@ one of them is named so a reader can check the claim:
 | `internal/cli/budget_preview.go` `StageBound` | the mode's ceiling | F17 |
 | `internal/cli/diagnose.go` `Diagnosis.Findings` | reading the backlog back out | F18 |
 | `internal/runner/refused.go` `workflowGuard` | the refusal a mode may never route around | F12 |
+| `internal/gitprov/github/apptoken.go` `tokenSource.Token` | the one repository a run's token reaches, and the reason an item is filed where the run is | F43 |
+| `internal/gitprov/gitprov.go` `PRSpec` | the provider call a filed item travels in, and the reason a cross-repo filing is a task and not a line | F43 |
+| `internal/clidoc`, and `internal/pricing/catalog/gencatalog` for the other half of the discipline | the generated-index pattern the backlog's index follows, and the trap its second guard answers | F45 |
+| `internal/runstore` `ReviewSummary`, and the stored transcript `fugaro diagnose` re-reads | what a deferred finding looks like today: a count on the record, its text in the transcript | F46, F47 |
+| `docs/plans/2026-10-17-managed-projects-review-follow-ups.md` (and the two sections beside it) | the deferral practice the backlog replaces, and what D32's sweep converts | F46 |
 
 ## 2. The slices, in one table
 
@@ -64,14 +81,17 @@ one of them is named so a reader can check the claim:
 | **1** | the mode's three layers, and where they show | the resolved mode and the layer that won are recorded and printed; behaviour unchanged | 0 |
 | **2** | the score, acted on by nothing | findings carry scores in the transcript and the prompt asks for them | 1 |
 | **3** | the run loop applies the mode | a configured mode tolerates what it says it tolerates | 2 |
-| **4** | the backlog surface | the tolerated findings are readable in the PR and by `fugaro diagnose` | 3 |
+| **4** | the backlog surface, and the Markdown backlog | the tolerated findings are readable in the PR and by `fugaro diagnose`; an item is a file under `docs/backlog/`, and the index is generated | 3 (T4.1–T4.2); the backlog's own five tasks depend on Slice 0 alone |
 | **5** | the task file, and Hotfix | a task may ask for a mode; Hotfix opens a ready PR | 3 |
 | **6** | cost | per-mode budget defaults; `budget preview --mode` | 3 |
 | **7** | the documentation and the practice | `docs/rigor-modes.md`, the project layer, `docs/dogfooding.md` | 4, 5, 6 |
 | **8** | the live checks, and the migration note | Check 119; the release note | 7 |
 
 Slices 4, 5 and 6 are independent of each other and may be built in any order or
-in parallel (§6). Slice 7 needs all three because it documents them.
+in parallel (§6). Slice 7 needs all three because it documents them. The
+backlog's five tasks (T4.3–T4.7) are independent of Slices 2 and 3 as well: an
+item filed by hand needs no mode (T4.3, T4.4), and only the run-side filing
+(T4.5) waits for a mode to exist at all.
 
 ## 3. Check numbers this plan takes
 
@@ -99,7 +119,7 @@ into the gap: it keeps 119, which is free whichever way that collision falls. Th
 task that writes the check (T8.1) owns any renumbering and the register line in
 the same commit.
 
-**This plan takes no D-number.** Its decisions are **D1–D25**, folder-local and
+**This plan takes no D-number.** Its decisions are **D1–D32**, folder-local and
 distinct by folder, like `docs/windows-cli/`'s D1–D16 and
 `docs/setup-wizard/`'s D1–D12. The register
 (`docs/coordinator/README.md` §"The numbers this work holds") allocates
@@ -179,11 +199,11 @@ listed in the order they must land, except where a task says otherwise in its
 | Level | Tasks |
 | --- | --- |
 | 0 | T0.1, T0.2 |
-| 1 | T1.1; T2.1 (no dependency on Slice 1 at all) |
-| 2 | T1.2, T1.3, T1.5, T1.6, T2.2, T2.3 |
-| 3 | T1.4 (needs T1.3's key), T1.7, T2.4, T3.1, T3.2 |
+| 1 | T1.1; T2.1 and T4.3 (neither depends on Slice 1 at all) |
+| 2 | T1.2, T1.3, T1.5, T1.6, T2.2, T2.3, T4.4 |
+| 3 | T1.4 (needs T1.3's key), T1.7, T2.4, T3.1, T3.2, T4.5, T4.7 |
 | 4 | T3.3, T3.4, T5.1 |
-| 5 | T4.1, T4.2, T5.2, T5.3, T6.1 |
+| 5 | T4.1, T4.2, T4.6, T5.2, T5.3, T6.1 |
 | 6 | T5.4, T5.5, T6.2, T6.3, T3.5 |
 | 7 | T7.1, T7.2, T7.3 |
 | 8 | T8.1, T8.2, T8.3 |
@@ -193,17 +213,20 @@ conflict; two tasks in the same lane may not.
 
 | Lane | Files | Tasks |
 | --- | --- | --- |
-| A | `internal/rigor/**` (new package) | T1.1, T1.4, T1.5, T2.3, T5.3 |
+| A | `internal/rigor/**` (new package) | T1.1, T1.4, T1.5, T2.3, T4.6, T5.3 |
 | B | `internal/config/**`, `schemas/fugaro.schema.json` | T1.2, T1.3, T1.4, T6.1 |
 | C | `internal/runner/**` | T1.4, T1.6's PR line, T2.1, T2.2, T3.1, T3.2, T3.3, T5.4 |
 | D | `internal/runstore/**`, `schemas/result.schema.json`, `internal/task/**` | T1.2, T3.4, T5.1, T5.5 |
 | E | `internal/cli/**`, `website/content/cli-reference.md` | T1.6, T4.1, T6.2, T6.3 |
 | F | `docs/**` (outside this folder) | T1.2 and T1.4 (the project layer's table and its rule), T7.1, T7.2, T7.3, T8.1, T8.3 |
 | G | `docs/rigor-modes/**`, `internal/cli/docs_rigor_modes_test.go` | T0.1, T0.2 |
-| H | `internal/budget/**`, `internal/watch/**`, `console/docs/json-contract.md` | T1.6's console contract, T1.7 |
+| H | `internal/budget/**`, `internal/watch/**`, `console/docs/json-contract.md` | T1.6's console contract, T1.7, T4.4's `--json` entry |
+| I | `internal/backlog/**` (new package), `internal/cli/backlog.go`, `docs/backlog/**` | T4.3, T4.4, T4.5, T4.7 |
 
 **Critical path:** T0.2 → T1.1 → T1.2 → T2.1 → T2.3 → T3.1 → T3.3 → T3.4 → T4.1
-→ T7.1 → T8.1. Everything else hangs off it.
+→ T7.1 → T8.1. Everything else hangs off it, and the backlog ruling does not
+lengthen it: T4.3–T4.7 hang off T0.1, and only T4.5's run-side half waits for
+T1.2 (see §6's levels).
 
 **What must be sequential, and why:**
 
@@ -217,6 +240,11 @@ conflict; two tasks in the same lane may not.
   against the rule that will exist.
 - **`internal/cli/run.go`.** T1.6 defines the flags (`--mode`, `--path`); T5.2
   makes `--mode` raise-only on a follow-up; T6.3 prints the mode. In that order.
+- **`docs/backlog/README.md`.** It is a generated file with one writer at a time
+  (D28): T4.4 commits the generator and the first index, T4.5's filing command and
+  T4.7's close regenerate it rather than edit it, and two branches that
+  regenerated it at once are reconciled by re-running `fugaro backlog index`, not
+  by merging the file. A hand edit to it is the thing its own pin refuses.
 - **The pin test in Slice 0** must land before any slice that a reader would want
   held, because a later slice that edits a document this folder's index names
   updates the pin in the same commit.
@@ -238,7 +266,12 @@ What a reviewer of these pull requests should look at, in order:
 5. **Does a new schema property land with its pin?** F20 and F7: the corpus tests
    and `TestResultSchemaAcceptsRunnerRecords` are the check.
 6. **Is anything security-sensitive being done by a run?** §5's last constraint.
-7. **Is the order stated in more than one place, or can a layer reach under a
+7. **Is there still one backlog?** An item is one file under `docs/backlog/` and
+   the index is generated (D26–D32): a hand-edited index, a new deferral list in
+   a `docs/plans` file, or a finding "left open by policy" with no item behind it
+   is the drift this question exists to catch (F46, D32). Asking it of a pull
+   request that touches Slices 3 or 4 is the cheap moment to catch it.
+8. **Is the order stated in more than one place, or can a layer reach under a
    floor?** The ruling asks for one resolver and one statement (D6, D20): §2 of
    `docs/project-layer.md` and `internal/rigor`'s `Resolve` are the two places it
    may live, and a third restatement in a comment, a doc or a test name is the
@@ -273,8 +306,8 @@ product code.
 - **Files.** `internal/cli/docs_rigor_modes_test.go` (new).
 - **Tests.** `TestDocsRigorModesIsWritten` (the index exists, carries the status
   line word for word, names the other three files and the revision);
-  `TestDocsRigorModesFindingsDecisionsAndItemsAreNumbered` (F1–F41, D1–D25,
-  O1–O7 and U1–U10 run from 1 with no gap, every finding carries one of the five
+  `TestDocsRigorModesFindingsDecisionsAndItemsAreNumbered` (F1–F48, D1–D32,
+  O1–O7 and U1–U12 run from 1 with no gap, every finding carries one of the five
   class words, and the index's stated ranges are checked against the counts
   rather than trusted); `TestDocsRigorModesCensusStatesItsCommands` (every census
   row carries a command); `TestDocsRigorModesEveryTaskIsComplete` (every
@@ -668,7 +701,16 @@ not change for anyone who has not configured a mode.
   the floors themselves.
 - **Commit.** `runner: a raised mode decides readiness and says so in the reason`
 
-### Slice 4 — the backlog surface
+### Slice 4 — the backlog surface, and the Markdown backlog
+
+T4.1 and T4.2 are the surface the tolerated findings are read on. T4.3–T4.7 build
+the backlog the owner ruled on 2026-10-20 (the reconciliation's §1.3, D26–D32):
+one Markdown file per item under `docs/backlog/`, a generated index two guards
+hold, a filing command, a per-mode rule and a way to close an item. They are one
+slice because they are one subject, and five tasks because each has to merge
+alone — T4.3 changes no Go code at all, T4.4 adds no behaviour to a run, T4.5 is
+the first that writes an item from a run, and T4.6 and T4.7 are rules about what
+is already written.
 
 **T4.1 — `fugaro diagnose` shows the score and the mode**
 - **Files.** `internal/cli/diagnose.go` (`Diagnosis.Findings`, `seniorRound`,
@@ -695,19 +737,106 @@ not change for anyone who has not configured a mode.
 - **Reviewer.** senior (in-loop).
 - **Commit.** `runner: the run's report lists what the mode tolerated`
 
-**T4.3 — the ledger, deferred on purpose** *(not a task — a recorded omission)*
-- **Files.** none. The precedent is `docs/plans/2026-10-13-project-secrets.md` and
-  `docs/plans/2026-10-17-managed-projects-review-follow-ups.md` (F32), and D9
-  defers it to a later slice with its own merge policy, format and pin.
-- **Tests.** none.
-- **Red step.** none.
-- **Verification.** none.
-- **Depends on.** D9.
-- **Reviewer.** —
-- **Commit.** —
-  This entry exists because the brief asks for the backlog's carriers to be named
-  and for anything unfinished to be listed rather than dropped: the ledger is
-  named, and this is where it is deliberately not built.
+**T4.3 — the backlog's folder, its format, and its first items**
+- **Files.** `docs/backlog/FORMAT.md` **(new)** — the front-matter table, the id
+  rule, the body headings and the closing rule, as D26, D27 and D31 state them —
+  the first item files under `docs/backlog/`, and
+  `internal/cli/docs_backlog_test.go` **(new)**, the folder's own pin. This task
+  also moves §4's pin-count row in the reconciliation, because it writes the
+  forty-ninth `docs_*_test.go` in `internal/cli`.
+- **Tests.** The new pin parses every `docs/backlog/*.md` and asserts the eight
+  required front-matter keys, the four body headings, `status` in the three-word
+  vocabulary, an `id` equal to the file name's first two segments, and no two
+  items sharing an id. Written red first, against a folder that does not exist.
+- **Red step.** The pin fails: there is no `docs/backlog/`, so the first item it
+  demands is absent.
+- **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Backlog' -count=1 -timeout 30m`
+- **Depends on.** T0.1, and nothing else: an item filed by hand needs no mode to
+  exist, and `mode: none` is what it records until T4.6.
+- **Reviewer.** senior (in-loop).
+- **Commit.** `docs(backlog): one file per item, and the format they follow`
+
+**T4.4 — the index, the tool, and the two pins**
+- **Files.** `internal/backlog/` **(new)** — the item parser, the `Render` D28
+  specifies and the id allocation D26 defines — `internal/cli/backlog.go` **(new)**
+  for the read-only pair `fugaro backlog index` and `fugaro backlog list`,
+  `docs/backlog/README.md` (generated, carrying `internal/clidoc`'s header line),
+  `console/docs/json-contract.md` §6 if `list` ships a `--json`, and
+  `website/content/cli-reference.md` (regenerated).
+- **Tests.** Two guards of different kinds (F45): the **regenerate-and-compare**
+  pin, which renders the folder in memory and compares byte for byte with the
+  committed index (`internal/clidoc`'s model), and the **tree-derived completeness**
+  guard, which counts the item files, asserts a row for every id in the tree and
+  no row for an id that is not, so a generator that silently skips an item is
+  caught by the guard that does not consult the generator. Plus determinism (two
+  renders are equal, and no clock is read) and an item added without regenerating
+  the index going red.
+- **Red step.** The regenerate-and-compare pin fails on a missing index; the
+  completeness guard fails on a folder with items and no rows.
+- **Verification.** `go run ./internal/clidoc && GOFLAGS=-p=2 go test ./internal/backlog ./internal/cli -run 'Backlog|Index|CliRef' -count=1 -timeout 30m`
+- **Depends on.** T4.3.
+- **Reviewer.** senior (in-loop).
+- **Commit.** `cli(backlog): the index is generated, and two guards hold it`
+
+**T4.5 — filing an item: the command, and the run that files**
+- **Files.** `internal/cli/backlog.go` (`add`), `internal/backlog/write.go`,
+  `internal/runner/runner.go` (`finalize`, which files the run's items before the
+  pull request is settled) and `internal/runner/prflow.go` (the status section
+  names the item ids beside the findings),
+  `internal/runstore/runstore.go` + `schemas/result.schema.json` (the filed ids,
+  additive, with `version` staying 1 per D9's note), and
+  `website/content/cli-reference.md` (regenerated).
+- **Tests.** `add` writes the file, allocates the id, refuses a duplicate and
+  regenerates the index; a run at a mode that files produces the item in its own
+  branch (asserted on the tree the run pushes, not on the working directory) and
+  its ids on the record; the pull request body names them; and the record decodes
+  with and without the new field, which is `TestResultSchemaAcceptsRunnerRecords`
+  extended rather than replaced.
+- **Red step.** There is no `fugaro backlog add`, and `finalize` writes no item,
+  so a run at a mode that tolerates something leaves nothing behind.
+- **Verification.** `GOFLAGS=-p=2 go test ./internal/backlog ./internal/runner ./internal/cli ./internal/runstore -run 'Backlog|Item|Finalize|Schema' -count=1 -timeout 40m`
+- **Depends on.** T4.4; **T1.2 supplies the mode**, and T1.4 the area name — until
+  T1.4 lands an item filed by a run records `area: repo`, and this task says so in
+  its commit message rather than guessing an area.
+- **Reviewer.** senior (in-loop).
+- **Commit.** `runner(backlog): a run files the items it left open`
+
+**T4.6 — how each of the five modes files, and nothing else**
+- **Files.** the filing decision beside the policy T3.1 owns, in `internal/rigor/`
+  — D30's table, so the per-mode rule is one table rather than a condition inside
+  the runner.
+- **Tests.** POC files nothing and its pull request body's line is the whole
+  record; Startup and Pro file one item per tolerated finding; Critical files none
+  of its own (D7 tolerates nothing) and a run whose mode is unconfigured files
+  nothing new (D19); Hotfix files its follow-up item always, including when it
+  tolerated nothing; and no mode can suppress an item the owner asked for by hand.
+- **Red step.** No mode files anything: T4.5's run-side write is reached by no
+  mode, so a Pro run that tolerated three findings files none.
+- **Verification.** `GOFLAGS=-p=2 go test ./internal/rigor ./internal/runner -run 'Rigor|File|Item|Mode' -count=1 -timeout 30m`
+- **Depends on.** T4.5, T3.1, T3.4.
+- **Reviewer.** senior (in-loop).
+- **Commit.** `rigor: the mode decides what is filed, and nothing else`
+
+**T4.7 — closing an item, and the one-backlog practice**
+- **Files.** `docs/backlog/FORMAT.md` (the closing rule), the item a fixing pull
+  request flips, `docs/dogfooding.md` (the practice sentence: a deferral is filed
+  as an item, and nothing new is written in the shape F46 counts), and — if D32 is
+  answered for the sweep rather than the freeze — the three `docs/plans` sections,
+  each keeping its own text with a one-line pointer to the items it became.
+- **Tests.** A `closed` item with no `## Closed by` line naming the pull request
+  fails the folder's pin; a `dropped` item with no reason fails it; and flipping
+  `status` without regenerating the index fails T4.4's regenerate-and-compare pin,
+  which is the assertion that makes "closed in the same commit" a rule the tree
+  holds rather than a sentence here.
+- **Red step.** The closing rule is unwritten and nothing enforces it: an item
+  flipped to `closed` with a stale index passes everything.
+- **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Backlog|Docs' -count=1 -timeout 40m`
+- **Depends on.** T4.4, and D32 for the sweep half — which lands as its own commit
+  with the count of converted rows in its message, because that count is volatile
+  and this plan does not state a figure without its command.
+- **Reviewer.** senior (in-loop), and **operator** for the sweep half, which
+  rewrites documents the owner wrote.
+- **Commit.** `docs(backlog): an item is closed by the pull request that fixes it`
 
 ### Slice 5 — the task file, and Hotfix
 
@@ -785,10 +914,16 @@ not change for anyone who has not configured a mode.
   (`task.Parse`), names the PR, the paths and the area's normal mode, and whose
   mode is **not** Hotfix; and the file is *not* run automatically (D15: there is
   no scheduler, and the test asserts the absence by asserting that nothing in the
-  run's exit path starts one).
+  run's exit path starts one). **The item half** (D15's amendment, D30): the run
+  also files one item, whose `mode:` is the area's normal mode and never `hotfix`,
+  and whose `filed-in:` names the run — so a reader of the backlog sees the
+  follow-up without reading the pull request.
+- **Note.** The task file is what to run; the item is where it is written down.
+  If Slice 4 has not landed, the item half waits for T4.5 and the task file half
+  ships without it — which is why this task's **Depends on** line names both.
 - **Red step.** No such text is produced.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/runner ./internal/task -run 'Hotfix|Followup' -count=1 -timeout 30m`
-- **Depends on.** T5.4.
+- **Depends on.** T5.4, and T4.5 for the item half.
 - **Reviewer.** senior (in-loop).
 - **Commit.** `runner: a hotfix records the task that revisits it`
 
@@ -836,7 +971,9 @@ not change for anyone who has not configured a mode.
 - **Red step.** The line is one figure across every mode, whatever the records
   say.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Typical|Budget|Runs' -count=1 -timeout 30m`
-- **Depends on.** T1.6 (the row), and D9's deferral of a real ledger.
+- **Depends on.** T1.6 (the row), and D9 as amended by the backlog ruling: the
+  ledger is ruled (D26–D32), and this task is the statistic rather than the
+  carrier.
 - **Reviewer.** senior (in-loop).
 - **Commit.** `cli(budget): the empirical typical: line, per mode`
 
@@ -942,10 +1079,13 @@ a claim rather than a fact.
 | 7 | a run started with `--ref` at a branch whose `rigor:` disagrees with the base branch's | the answer D25 is waiting for: which revision the mode came from |
 | 8 | a run whose diff matches two areas, and a run whose second round reaches a new one | a real diff in both areas, and a live multi-round agent |
 | 9 | `fugaro watch` on a live run after `fugaro init --firebase` redeploys the rules | a deployed database, and the old-rules path F40 records |
+| 10 | the pull request that fixes a filed item — the flip and the regenerated index in one commit (D31) | a real pull request, read as a diff by a person |
+| 11 | two branches filing items on the same day, merged in either order (D26, D28: a rename, and one command to reconcile the index) | two real branches and the provider's own conflict |
 
-Checks 1–9 are **Check 119**, written by T8.1 and run by T8.2. Checks 6–9 are the
-scope ruling's own (the reconciliation's §1.2 and §7), and check 9 is the only one
-that needs a deploy before it can be run at all.
+Checks 1–11 are **Check 119**, written by T8.1 and run by T8.2. Checks 6–9 are the
+scope ruling's own (the reconciliation's §1.2 and §7); checks 10 and 11 are the
+backlog ruling's (§1.3); and check 9 is the only one that needs a deploy before
+it can be run at all.
 
 ## 10. Risks
 
@@ -963,15 +1103,23 @@ that needs a deploy before it can be run at all.
 | a live `watch` deploy breaks an installation whose rules are older | F40 | the drop-and-warn path T1.7 takes from `Recipe`, tested; the marker-and-halt path is the alternative if the owner prefers it |
 | cost: the modes make runs cheaper in theory and not in fact | **U2**, unverified | T6.3's per-mode reporting and D17's refusal to forecast |
 | a Hotfix ships a wrong fix with the record agreeing it was confident | D14's weak point | the gate is the diff, not the agent's number (T5.3), and the follow-up task exists (T5.5) |
+| the backlog's index conflicts on every parallel filing | F46's precedent: two pull requests writing one list | D26 (one file per item) and D28 (the index is regenerated, never merged); U12 is the unverified half of the claim |
+| two branches file the same day's Nth item | D26's allocation has no central counter | the pin's duplicate-id guard (T4.3), and the rename-second rule the registers already use; the collision surfaces on the branch that would merge second, where a rename is cheap |
+| the backlog becomes a second backlog beside the `docs/plans` notes | F46, D32 | the practice sentence (T4.7), the conversion count in that pull request's own body, and §7's first review question |
+| an item is closed and the index left stale, or an item deleted | D31 | the regenerate-and-compare pin: the flip and the regeneration are one commit or the tree is red |
 
 ## OWNER APPROVAL GATE
 
 **This gate is not passed, and nothing below is approved.**
 
-1. **The decisions are open.** D1–D25 are recommendations; the owner answers them
+1. **The decisions are open.** D1–D32 are recommendations; the owner answers them
    (or does not) before Slice 1 starts. The tasks that depend on one say so in
    their **Depends on** line, and a task whose dependency is unanswered does not
-   start.
+   start. Three of the new ones are the owner's own questions and are worth an
+   answer before Slice 4's last five tasks are picked up: **which repository holds
+   a project's items** (D29, recommended first), the **id and the front matter**
+   (D26, D27), and **whether the existing deferral notes are converted or frozen**
+   (D32).
 2. **D19 is the gate on the whole feature.** If the owner wants a default other
    than Critical, that is a different first cut — the plan's slices are ordered so
    that an unconfigured repository does not change, and a default of Pro breaks

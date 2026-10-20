@@ -11,7 +11,7 @@
 | Document | What it is |
 | --- | --- |
 | [spec.md](spec.md) | the owner's spec, **verbatim**, in its own commit. Nothing is added to it, and its open questions stay open here. |
-| [reconciliation.md](reconciliation.md) | what the tree says back: five corrections to the premises, **F1–F41** findings each classified Wrong / Exists / Gap / Rule / Open, the census with its commands, **D1–D25** decisions recommended but not taken, **O1–O7** items, and the **U1–U10** UNVERIFIED table. |
+| [reconciliation.md](reconciliation.md) | what the tree says back: five corrections to the premises, **F1–F48** findings each classified Wrong / Exists / Gap / Rule / Open, the census with its commands, **D1–D32** decisions recommended but not taken, **O1–O7** items, and the **U1–U12** UNVERIFIED table. |
 | [implementation-plan.md](implementation-plan.md) | nine slices that each merge alone and leave `main` green, each task with its files, tests, red step, verification, dependency and reviewer — and an **OWNER APPROVAL GATE** that is **not passed**. |
 | this file | the index, and the numbers this work holds. |
 
@@ -68,15 +68,41 @@ six decisions the ruling raised (D20–D25) is a recommendation with its
 alternatives and their costs, like the rest of the block: **the ruling is
 settled, the design it needs is not.**
 
+## The backlog ruling: one Markdown file per item
+
+The owner ruled on 2026-10-20 that where the modes have to save or file tickets for
+the backlog, the backlog is **Markdown files in the repository under `docs/`**: one
+file per item, plus a generated index that a small tool regenerates and a test pins
+as current, so that parallel pull requests filing tickets never conflict on one
+file. The [reconciliation](reconciliation.md) §1.3 is the index of where each part
+lands, and the design is **D26–D32**: the id and the file name (D26), the front
+matter and the three-word status vocabulary (D27), the index, its tool and its two
+pins (D28), **which repository holds a project's items** (D29 — the owner's own
+question, with a recommendation first), how each of the five modes files (D30), how
+an item is closed (D31), and the relation to the deferred-leftover practice so that
+there is **one backlog and not two** (D32). The plan builds it in Slice 4's last
+five tasks — the format and the first items (T4.3), the index and its pins (T4.4),
+the filing command and the run that files (T4.5), the per-mode rule (T4.6), and
+closing plus the practice (T4.7) — each of which merges alone.
+
+Two things this ruling does not change: the [spec](spec.md) stays verbatim, and
+every decision in this folder stays **open**. What it does change is where a
+deferred leftover is written down: a run files an item into **its own repository and
+its own branch**, because that is the one repository its installation token reaches
+and the one it can push (F43, F44), and the designated project repository holds the
+items filed in it — which is why D29 is a decision for the owner rather than a
+setting this folder picks.
+
 ## The numbers this work holds
 
 | Numbers | State |
 | --- | --- |
-| **F1–F41** | the reconciliation's findings. Every one carries a path and a symbol and **no line numbers**, and one of the five class words. |
-| **D1–D25** | this work's decisions, all written, **all open**. They are a *folder-local* namespace, distinct by folder — the same choice [docs/windows-cli/](../windows-cli/) made with its D1–D16 and [docs/setup-wizard/](../setup-wizard/) with its D1–D12. The register of every block is [docs/coordinator/README.md](../coordinator/) §"The numbers this work holds": **D1–D192 is the owner's allocation**, its own figure — *"the highest number written anywhere in `docs/` at `c6009b5f` is D192"* — quoted with the anchor it was read at, and **D193 onward is free**. **Read at this work's own base, that free range is not this tree's.** At `1d325928` the register's own command returns **D220**, because [docs/mobile/voice-session/](../mobile/voice-session/) writes **D201–D220** there; so **D193–D200** are written nowhere but are not free either — voice-session left them alone and started at **D201** rather than take **D200**, which the owner's brief records as an already-taken ruling this tree cannot cite (its F20 and O5). **Recommendation: keep D1–D25 local and distinct by folder, as the two folders above did; if the owner prefers one sequence, the next free block read from this branch's base is D221 onward, not D193 onward; renumbering is mechanical and changes nothing but the numbers** (O7, which states the reading, the command and the collision). |
+| **F1–F48** | the reconciliation's findings. Every one carries a path and a symbol and **no line numbers**, and one of the five class words. |
+| **D1–D32** | this work's decisions, all written, **all open**. They are a *folder-local* namespace, distinct by folder — the same choice [docs/windows-cli/](../windows-cli/) made with its D1–D16 and [docs/setup-wizard/](../setup-wizard/) with its D1–D12. The register of every block is [docs/coordinator/README.md](../coordinator/) §"The numbers this work holds": **D1–D192 is the owner's allocation**, its own figure — *"the highest number written anywhere in `docs/` at `c6009b5f` is D192"* — quoted with the anchor it was read at, and **D193 onward is free**. **Read at this work's own base, that free range is not this tree's.** At `1d325928` the register's own command returns **D220**, because [docs/mobile/voice-session/](../mobile/voice-session/) writes **D201–D220** there; so **D193–D200** are written nowhere but are not free either — voice-session left them alone and started at **D201** rather than take **D200**, which the owner's brief records as an already-taken ruling this tree cannot cite (its F20 and O5). **Recommendation: keep D1–D32 local and distinct by folder, as the two folders above did; if the owner prefers one sequence, the next free block read from this branch's base is D221 onward, not D193 onward; renumbering is mechanical and changes nothing but the numbers** (O7, which states the reading, the command and the collision). |
 | **O1–O7** | items for the owner that are deliberately not decisions — a measurement (calibration), two questions about the strictest mode, the drain of a ready Hotfix PR, an App permission, the CLI's own names, and the D-block above. |
-| **U1–U10** | claims this work could not check from the tree, each with what would verify it. Two of them — whether a cheap model scores reliably (U1) and whether a mode is in fact cheaper (U2) — are answered by the live checks and by the plan's T2.4, not by reading. |
+| **U1–U12** | claims this work could not check from the tree, each with what would verify it. Two of them — whether a cheap model scores reliably (U1) and whether a mode is in fact cheaper (U2) — are answered by the live checks and by the plan's T2.4, not by reading. |
 | **Check 119** | the live check this work proposes. The register is [docs/gcp-live-checklist.md](../gcp-live-checklist.md): **1–109 are taken or reserved**, and **110–118 are all held** — 110 claimed by the always-on orchestrator design (PR #632) and named by the mobile P5.3 design, and written by nobody either way, 111 taken by [docs/setup-wizard/](../setup-wizard/), 112 proposed by [docs/windows-cli/](../windows-cli/), and 113–118 taken by [docs/mobile/voice-session/](../mobile/voice-session/)'s six numbered checks. Those five are claims rather than written sections, so this work does **not** move up into a gap if one is yielded: 119 is free whichever way that collision falls, and the register's own rule applies — **whichever of two open claims merges second renumbers itself**, never a number an earlier plan has already written. |
+| **The backlog ruling** | one Markdown file per item under `docs/backlog/`, a generated index, and one backlog rather than two: §1.3, F42–F48, D26–D32, plan T4.3–T4.7. It adds no config key except D29's designated repository, no schema and no check number. |
 | **No new D-block, no new check range, no new schema** | the three registers this folder touches, and the reason each is written down here rather than discovered later. |
 
 ## What this folder is not
@@ -104,7 +130,11 @@ settled, the design it needs is not.**
   and the convention this one follows: its own pin test, its own D-block, its own
   status line.
 - [docs/dogfooding.md](../dogfooding.md) — the practice the modes automate
-  (F30). The modes are a formalisation of sentences the owner already wrote.
+  (F30). The modes are a formalisation of sentences the owner already wrote, and
+  the document the backlog ruling's practice sentence lands in (D32, T4.7).
+- [docs/plans/2026-10-17-managed-projects-review-follow-ups.md](../plans/2026-10-17-managed-projects-review-follow-ups.md)
+  — the deferral practice the backlog replaces (F46), and what D32's sweep would
+  convert into items.
 - [docs/credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md)
   — Global Constraint 10, the independent-review rule the security section keeps
   (F31, §6 of the reconciliation).

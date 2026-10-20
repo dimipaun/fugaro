@@ -26,20 +26,21 @@ Nothing was changed in this repository to write these documents: no code, no
 config, no schema, no workflow. The several files this reconciliation says must
 change are the *plan's* files, not this commit's.
 
-### 1.1 The ten things the documents settle, and where
+### 1.1 The eleven things the documents settle, and where
 
 | The spec's question | Settled in |
 | --- | --- |
 | The score model and the per-mode thresholds | §5, D1–D4, plan T2.1–T2.4 |
 | Where mode config lives, and precedence | §5, D5, D6, D8, D20, D21, D25, plan T1.1–T1.6 |
 | What each mode changes in the run loop | D7, D10, D11, plan T3.1–T3.5, T5.4 |
-| The backlog, and where a tolerated finding goes | D9, plan T3.3, T3.4, T4.1–T4.2 |
+| The backlog, and where a tolerated finding goes | D9, D26–D32, plan T3.3, T3.4, T4.1–T4.7 |
 | Hotfix | §5, D12–D15, plan T5.1–T5.5 |
 | Cost accounting | D16, D17, plan T6.1–T6.3 |
 | Security | §6, D18, plan T1.5, T3.5, T5.3 |
 | Tests and the live checks the owner runs | §7, plan T8.1–T8.3 |
 | Migration and the CLI/doc surface | D19, plan T1.6, T7.1–T7.3, T8.3 |
 | The scope ruling of 2026-10-20: project, repo, area | §1.2, F35–F41, D20–D25, plan T1.1–T1.7 |
+| The backlog ruling of 2026-10-20: one Markdown file per item, and one backlog | §1.3, F42–F48, D26–D32, plan T4.3–T4.7 |
 
 ### 1.2 The scope ruling of 2026-10-20, and where each of its five parts lands
 
@@ -61,7 +62,35 @@ last, since that one is a plan matter rather than a design one:
 
 Two things the ruling does not change, and this amendment does not touch: the
 spec stays verbatim (its own commit, `37ea0d9d`), and every decision below stays
-**open** — D20–D25 are recommendations with alternatives, exactly like D1–D25.
+**open** — D20–D25 are recommendations with alternatives, exactly like the
+whole block.
+
+### 1.3 The backlog ruling of 2026-10-20, and where each of its parts lands
+
+The owner ruled that where the rigor modes have to save or file tickets for the
+backlog, the backlog is maintained as **Markdown files in the repository under
+`docs/`**: one file per item, plus a generated index that a small tool regenerates
+and a test pins as current, so that parallel pull requests filing tickets never
+conflict on one file. This is §1.1's eleventh row. The ruling is settled; the design
+it needs is not, and the seven decisions below (D26–D32) are recommendations with
+their alternatives and their costs, exactly like the whole block. The parts, and
+where each lands:
+
+| The ruling's part | Where it lands |
+| --- | --- |
+| One file per item under `docs/backlog/`, named `<id>-<slug>.md` | D26; the folder, the format and the first items are plan T4.3 |
+| The front matter — id, title, mode, area, status, filed-by, filed-in, date | D27, which names where each value comes from in the record today (F47); plan T4.3 |
+| Area and mode tags follow the project / repo / area scoping | D27 for the value; §1.2, D20–D22 for where the value comes from; F47 |
+| A generated index (`docs/backlog/README.md`) a small tool regenerates, and a test pins as current | D28; the tool and its **two** pins are plan T4.4 (F45) |
+| Project-level items live in one designated repo, named by the project config | D29 — the owner's own question, recommendation first; F42, F43 |
+| How each mode files | D30: POC none or a line, Startup and Pro one item per tolerated finding, Critical none of its own, Hotfix always one for what it deferred; plan T4.6 |
+| How an item is closed | D31: the pull request that fixes it flips `status` and regenerates the index in the same commit; plan T4.7 |
+| The relation to the deferred-leftover ledger practice, so there is one backlog and not two | D32 and F46; the practice sentence, and the sweep, are plan T4.7 |
+| The plan part for the format, the index tool and the filing command, each mergeable alone | the plan's Slice 4, re-cut into T4.3 (the format and the first items), T4.4 (the index and its pins), T4.5 (the filing command and the run that files), T4.6 (how each mode files) and T4.7 (closing, and the one-backlog practice) |
+
+Two things the ruling does not change, and this amendment does not touch: the spec
+stays verbatim (its own commit, `37ea0d9d`), and every decision below stays
+**open** — D26–D32 are recommendations with alternatives, like the whole block.
 
 ## 2. Corrections to the premises this task was given
 
@@ -598,6 +627,20 @@ surface with its own schema and its own trust question, and the branch that writ
 it is the branch under review — the same objection F35 raises, with no base-branch
 read to answer it).
 
+**F42 — A project-wide item has no repository to live in: no project-level key names one.** Class: **Gap**. The one place a project-wide value lives is the project layer's closed `defaults:` (F36), and that closure is the reason there is nothing to point at: `internal/config/layer.go`'s `LayerDefaults` admits `git` and `agent` and nothing else, `schemas/project-layer.schema.json` pins the same set, and the local project config's `Repos` reads repositories from a file on **one machine**, not from anything in the repository. The structures that do name repositories are plural or per-account: `projectpolicy.Policy.AllowRepos`, its `CloneURLs` keyed by canonical name, and `Account.AllowRepos`. Consequence: D29's designated repository needs one new member of a closed struct, its schema entry, its scope row and one sentence in `docs/project-layer.md` — the same price F36 names for the mode's own key, and one more reason to spend it once.
+
+**F43 — A run cannot write into a repository other than its own.** Class: **Gap**. The installation token is narrowed to exactly one repository: `internal/gitprov/github/apptoken.go`'s `tokenSource.Token` mints with `{"repositories": []string{s.repo}, "permissions": perms}`, and `MintInstallationToken` refuses without an owner and a repository. The provider contract names no repository either: `internal/gitprov/gitprov.go`'s `PRSpec` carries `Number`, `Branch`, `Base`, `Title`, `Body`, `Draft`, `Labels` and `Reviewers`, so a pull request is always opened in the client's own repository. A run works in one checkout (`internal/runner/runner.go`'s `openCheckout`, `r.d.WorkDir`), pushes one branch and opens one pull request. The narrowing is a mint parameter rather than a permission — `internal/gitprov/github/apprepos.go` mints an installation token with a permissions map and **no** `repositories` list, which is how the App lists an installation's repositories — so it is liftable, at the price of a second token, a second checkout, a second push and a second pull request. Consequence: D29 cannot recommend that a run anywhere files into the designated repository; the designated repository holds the items filed **in** it, and a cross-repo filing is a task of its own rather than a line in the filing command.
+
+**F44 — Filing during a run writes into the branch under review.** Class: **Exists**. A run's writes are its branch's: `internal/runner/runner.go`'s `openCheckout` checks the branch out, `internal/runner/checkpoint.go`'s checkpoints commit as the run goes, and the push at the end carries all of it into the pull request. One path is refused outright, whatever the mode: `internal/runner/refused.go`'s `workflowGuard` (F12). Consequence: the item a run files arrives as a commit in the pull request it is about, which is the honest reading of the ruling rather than a problem. The pull request is where a reader meets the deferred leftover, `filed-in:` is a number the record already holds (`runstore.Record.PR`), and the write passes the same refusal every other write does — which is free, because the backlog lives under `docs/` and `.github/workflows/` is the only refused path.
+
+**F45 — The generated-document pattern exists, and its one trap is already written down.** Class: **Exists**. `internal/clidoc` renders `website/content/cli-reference.md` from the command tree and is invoked by `go run ./internal/clidoc`: exactly the "a small tool regenerates it" shape the ruling asks for, with the header line that tells a reader not to edit it. `internal/pricing/catalog/gencatalog` (through `scripts/gen-price-catalog.sh`) shows the other half of the discipline — a required date, sorted rows and a determinism re-run — so the generator reads no wall clock. Two guards of different kinds hold the CLI reference: `internal/clidoc/cliref_test.go`'s `TestCliReferenceIsCurrent` regenerates and compares, and `internal/cli/docs_website_cliref_test.go` derives the same claim from the command tree instead of from the generator. The trap is named in `internal/cli/docs_website_security_test.go`'s own comment: a test written against the generator agrees with whatever the generator does, which is the one thing a drift test must not do. Consequence: the backlog's index needs both kinds of guard (D28), and its generator must take every date from the item rather than from the clock.
+
+**F46 — Deferrals are written in three places today, and none of them is a backlog.** Class: **Gap**. The `docs/plans` sections (`## Deferred review items`, `## Known follow-ups …`, and `## Accepted as deferred`; §4's census counts **three** at this commit); the pull request's own body, whose status section names what a run tolerated and no addressable item (F28); and the run record, where `runstore.ReviewSummary.Findings` is a **count** — the finding text survives only in the stored transcript, which `internal/cli/diagnose.go` reads back (F18). None of the three is a list a later reader can close one line of, and two of them die with the artifact that carries them: the pull request body is history the moment the pull request merges, and a review round's table is a snapshot of that round. Consequence: "one backlog and not two" is a change of practice as much as a format (D32), and the item file is the first carrier that outlives both the ephemeral job and the merged pull request.
+
+**F47 — Every front-matter field the ruling names has a source in the record except the area.** Class: **Exists**. `runstore.Record.RunID`, `Record.PR` (`PRRef{Number, URL}`), `Record.FinishedAt`, `Record.Repo` and the launch's `LaunchedBy` (read back as `runview.Row.LaunchedBy`) give `filed-in`, `date`, `filed-by` and the repository with no new field at all; the resolved mode and the layer that won are D24's recorded value, from T1.2; and `id`, `title` and `status` are the filer's own words. The area is the one field a mixed run has no single answer for: D22's resolution names the areas that matched, and D23's rule — still **open** — is what turns them into one. Consequence: the front matter is cheap everywhere except `area:`, where D23 arrives in the file a reader meets it in.
+
+**F48 — What the ruling's own shape rejects, and why.** Class: **Rule** — the rule being that what did not survive is recorded, so the next reader does not re-propose it. Rejected: that the backlog should be the provider's issues (O5's permission question is unanswered, and the ruling puts it in the repository); that one file per month, per mode or per work would do (two pull requests filing at once is the reason the ruling gives for one file per **item**, and every one of those shapes puts them in one file); that a hand-maintained index would do (a list a hand edits is a list the pin then has to accept, and the ruling asks for a generator); that an item should be filed after the merge by something scheduled (D15 deferred the scheduler, and an item exists the moment the run ends — filing it later would lose the ones whose pull request is never merged); that an item should carry the finding's text (the transcript holds it and `fugaro diagnose` reads it back, F18; the item is what to do next, not what was found); and that one ledger file per work — D9's carrier before this ruling — is enough (F46: it is the file two runs filing in the same week conflict on).
+
 ## 4. The census, and what it is scoped to
 
 Every count below is stated with the command that produces it, because a count
@@ -624,6 +667,11 @@ folders' plus `internal/cli/docs_rigor_modes_test.go`.
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 48 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 3 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
+| Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
+| Fields of `gitprov.PRSpec` whose name is a repository | 0 | `sed -n '/^type PRSpec struct {/,/^}/p' internal/gitprov/gitprov.go \| grep -ci repo` |
+| Sites that narrow an installation token to one repository | 1 | `git grep -hc '"repositories": \[\]string{s.repo}' internal/gitprov/github/apptoken.go` |
+| Sections in `docs/plans` that record deferred leftovers | 3 | `git grep -hE '^## .*(Deferred\|[Ff]ollow-ups)' -- docs/plans \| wc -l` |
+| Item files under `docs/backlog/` | 0 | `ls docs/backlog/*.md 2>/dev/null \| wc -l` |
 
 Every one of those commands prints the number in the Count column and nothing
 else on stdout, so a reader — and this folder's guard — can re-run the row rather
@@ -642,13 +690,24 @@ fallback), `prompts.go` (the label) and `reviewmode.go` (the label again) — th
 is the entire surface a scoring change touches inside the runner, which is why D3
 is as small as it is.
 
-The four rows the 2026-10-20 amendment added are the layering ones: **4** layers
-a key may be set in (F37), **2** blocks the project layer's closed `defaults:`
-may set (F36), **4** fields of `task.Spec.Overrides` and **0** fields of
-`task.Spec` or `recipe.Step` whose name is a path (F38). The last row counts
-*declared fields*, which is why its command matches a field name at the start of
-a line rather than any mention: the `Spec` struct's prose mentions a path, and a
-count of prose is not a count of inputs.
+The four layering rows the 2026-10-20 amendment added are these: **4** layers a
+key may be set in (F37), **2** blocks the project layer's closed `defaults:` may
+set (F36), **4** fields of `task.Spec.Overrides` and **0** fields of `task.Spec`
+or `recipe.Step` whose name is a path (F38). The last row counts *declared
+fields*, which is why its command matches a field name at the start of a line
+rather than any mention: the `Spec` struct's prose mentions a path, and a count of
+prose is not a count of inputs.
+
+The five rows the backlog ruling's amendment adds are that ruling's two structural
+facts and their witnesses: **0** blocks of the project layer's `defaults:` name a
+repository and **0** fields of `gitprov.PRSpec` name one, while an installation
+token is narrowed to a single repository in exactly **one** place (F42, F43) —
+which is why D29 recommends a designated repository rather than a cross-repo
+write; **3** sections in `docs/plans` are the deferral practice the ruling
+replaces (F46); and **0** item files exist under `docs/backlog/`, which is this
+amendment's own claim about itself: it changes documents and nothing else. A later
+slice that writes its own pin moves the pin-count row above in the same commit
+(the plan's T4.3 is the first that will).
 
 The **48** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and
@@ -922,6 +981,17 @@ with their schema entries in one commit. The recommendation is to **keep
 compatibility claim nothing enforces, while the additive field is genuinely
 compatible.
 
+**Amended 2026-10-20, by the backlog ruling.** The three carriers the first cut
+recommends stand unchanged — the finding objects on the record, the status
+section of the pull request body, and `fugaro diagnose` — and the fourth carrier
+this decision deferred is now ruled: the ledger is `docs/backlog/`, **one file per
+item**, with a generated index (D26–D32), and the plan's Slice 4 builds it
+(T4.3–T4.7). What the ruling changes is that carrier's shape, not its order in
+the work: F46 is why one file per item is the safe form and one file per work is
+not, and a run files into its own repository and its own branch (F43, F44). A
+provider issue stays deferred, and O5's permission question is what has to be
+settled before it is planned rather than during.
+
 ### D10 — The verify stage's gate is the recipe's `check`, not a mode switch
 
 **Recommended: the mode selects the recipe (and so the `check` gate and the
@@ -1038,6 +1108,15 @@ the run record names the original Hotfix so a regression trace points at it. An
 automatic revert is not proposed: `gitprov` has no merge path, so a revert is a
 pull request anyway, and a machine-initiated revert of a machine-initiated fix
 needs the same review the fix skipped.
+
+**Amended 2026-10-20, by the backlog ruling.** The follow-up is now also an
+**item** — the ruling's own words are "a follow-up item for what the hotfix
+deferred" — filed under `docs/backlog/` by the run that opened the pull request
+(D30, plan T4.5–T4.6), so that a follow-up outlives the pull request that
+recorded it and sits where every other deferred leftover sits. The task file this
+decision recommends stands exactly as written: the **item** is what to do next and
+where a reader finds it, the **task file** is a thing to run, and T5.5 keeps
+producing it.
 
 **Alternative: a scheduled job that scans merged Hotfix PRs and opens the
 follow-up task.** Cost: a scheduler, its credentials, its own failure mode
@@ -1321,6 +1400,229 @@ argument. What it accepts: a branch sets its own mode until the floors stop it,
 and the floor set is the only backstop. This is the alternative to weigh against
 the recommendation, and neither is taken here.
 
+### D26 — An item's id is its file name: a date, a sequence, and a slug
+
+**Recommended: the file is `docs/backlog/<id>-<slug>.md`, where `<id>` is
+`YYYYMMDD-NN` — the day the item was filed and a two-digit sequence that day,
+allocated by scanning the folder — and `<slug>` is lower-kebab words from the
+title.** The front matter's `id:` repeats the id, so the name and the field are
+checked against each other and an id resolves to a path without a lookup, which is
+the same "a path and a symbol survive, a line number does not" rule this folder
+states for its own citations (F32's neighbours). Reason: the ruling's whole point
+is that **parallel pull requests filing tickets never conflict on one file**, and a
+date-plus-slug name reaches that with no allocator: two runs on two branches write
+two differently named files, and the merge is a union of disjoint files rather
+than a conflict. The one collision left — two branches filing the day's Nth item
+— is a **rename of one file**, mechanical and visible, and this repository's
+registers already carry the rule for exactly that case: *whichever of two open
+claims merges second renumbers itself*. The pin (T4.3) refuses a duplicate id and
+a front matter whose `id:` disagrees with its file name, so the collision surfaces
+on the branch that would merge second rather than on `main`.
+
+**Alternative: a single global counter (`B1`, `B2`, …).** Cost: a counter nobody
+owns. With no central allocator two parallel filers mint the same number, and
+because the sequence is not in the folder's own state the collision is silent
+until CI — which is precisely the failure the ruling's one-file-per-item shape
+exists to avoid. **Alternative: the filing run's id as the item's id.** Cost: a
+hand-filed item has no run, so the folder would need two id shapes and two
+parsers; and a run id is opaque in a pull request body, where a reader meets the
+citation first.
+
+### D27 — The front matter: eight required fields, three statuses, and a body with headings
+
+**Recommended: the eight fields the ruling names, each required, with `status` in
+a closed three-word vocabulary and the body carrying named headings.** The fields
+and where each value comes from today:
+
+| Field | Where the value comes from |
+| --- | --- |
+| `id` | the file name (D26) |
+| `title` | the filer's words, one line |
+| `mode` | the **resolved** mode the run ran under (D24's value on the record); `none` for an item filed by hand |
+| `area` | the matched area's `name` (`rigor.areas`, D20); `project` or `repo` for an item about the whole layer; and, for a mixed run, the several names **once D23 is ruled** — until then the strictest name and the others beside it |
+| `status` | `open`, `closed` or `dropped` — three words, and no fourth |
+| `filed-by` | `runstore.Launch.LaunchedBy` (read back as `runview.Row.LaunchedBy`) for a run; the filer's login for a hand-filed item |
+| `filed-in` | `run:<run id>` or `pr:<number>`, both already on `runstore.Record` |
+| `date` | the record's `FinishedAt` in UTC as `YYYY-MM-DD` — never the clock of whoever regenerates the index |
+
+Reason: F47 shows seven of the eight are free and the eighth is D23's problem
+arriving where a reader meets it, so the format should not invent a second place
+to disagree about any of them. The mode and the area are recorded as the
+**resolved** values, not as the configuration's words, so an item is readable
+without the config that produced it — which is the same reason D24 records the
+mode on the run. The body's headings are `## What was left open`, `## Why`,
+`## What done looks like` and `## Links`, with the first two required, so an item
+cannot be a title with no text; and `date` reads the record's own finish time,
+because a generator that reads a clock produces a different index every day and
+the pin would fail on a document nobody edited (F45's lesson from `gencatalog`).
+
+**Alternative: JSON front matter, or one JSON file per item.** Cost: the pull
+request diff — the one place a reviewer meets an item — becomes a machine file
+nobody reads, and the id/title/status would have to be rendered back into Markdown
+for the index anyway. **Alternative: two files per item, the item and a `closed`
+marker.** Cost: two things to keep in step, two chances to drift, and the pin then
+has to hold a relation between files rather than a field.
+
+### D28 — The index is generated, pinned twice, and never hand-merged
+
+**Recommended: `docs/backlog/README.md`, generated by a small tool, with two
+guards of different kinds, and a stated rule for two branches that regenerated it
+at once.** The index is one row per item — id (linked to its file), title, mode,
+area, status, filed-by and date, sorted by id, so by date — plus a count line and
+the `closed` and `dropped` rows grouped under the open ones. `internal/backlog`'s
+`Render` produces it; `fugaro backlog index` writes it; `fugaro backlog list`
+prints it and `--json` gives the console the same rows (a new §6 entry in
+`console/docs/json-contract.md`, the contract the console already reads). Its
+first line is a generated-by header, as `internal/clidoc`'s documents have, and
+its text says the file is regenerated rather than edited.
+
+Two guards, because one is not enough (F45): **`internal/cli/docs_backlog_test.go`'s
+regenerate-and-compare pin**, which renders the folder in memory and compares it
+byte for byte with the committed index — the `internal/clidoc` model — **and a
+tree-derived completeness guard**, which counts the item files in the tree and
+asserts the index has a row for every id found and no row for an id that is not,
+so a generator that silently skips an item is caught by the guard that does not
+ask the generator. The second guard is the one `docs_website_security_test.go`
+teaches the reason for: a test written against the generator agrees with whatever
+the generator does. **The rule for two branches:** the index is never merged by
+hand — whoever lands second re-runs `fugaro backlog index`, which is one command
+that touches no item file.
+
+Reason: the ruling asks for exactly this pair (an index a tool regenerates, a test
+that pins it), the two kinds of guard are what this repository's two existing
+generated documents between them demonstrate, and the "re-run the generator" rule
+is cheap because the index is derived state: it holds nothing a reader cannot get
+back in one command, which is what makes it safe to overwrite rather than merge.
+The tool reads no network and no clock (D27), so regeneration is deterministic and
+a conflict has one resolution rather than two.
+
+**Alternative: a `merge=union` attribute for the index.** Cost: a union merge of
+two generated documents concatenates both bodies and both headers, so the result
+is *valid Markdown and wrong*, and only the pin would catch it — where a conflict
+is loud, immediate and costs one command. It would also add the repository's first
+`.gitattributes` for one file. **Alternative: print the index and never commit
+it.** Cost: the folder loses its browsable front door and a reader on the provider
+sees a list of file names instead of a list of items — which is the reader the
+ruling's index exists for.
+
+### D29 — Project-level items live in the project layer's own repository (the owner's question)
+
+**Recommended: one new member of the project layer's closed `defaults:` —
+`defaults.backlog.repo`, a canonical `<provider>/<owner>/<name>` — and, for this
+installation, its value is this repository (`dimipaun/fugaro`), the one whose
+`fugaro.yaml` carries `project: fugaro` and `gcp_project: fugaro-dev`.** The rule
+the value follows is §1.2's, unchanged: the project layer states the default, a
+repository's own block may override it, and an item's `area:` says which area it
+belongs to. Reason: a project-wide item has to live **somewhere in a repository**
+that a reader of the project can find, and the project layer is the one place a
+project-wide value already lives (F36); naming it there means the value is edited
+in the file the owner already edits and is checkable against the enrollment the
+policy lists (`projectpolicy.Policy.AllowRepos`, `CloneURLs`). This repository is
+the recommendation for the value rather than a principle: it is the project's own
+home, and an item about the project filed in the project's repository is the
+shortest path from a reader to the thing.
+
+**The honest limit, and it decides the first cut (F43).** A run's token reaches one
+repository and `PRSpec` names none, so **a run in another repository cannot file
+into the designated one**. In the first cut, therefore, the designated repository
+holds the items filed **in it** — by the owner by hand, or by a run in that
+repository — and a run elsewhere files into its own repository with `area:`
+naming the area, which is what the ruling's "project-level items live in one
+designated repo" means in practice at this tree: a **scope** rule, not a
+cross-repo write. The cross-repo filing is a real task of its own (a second token
+mint, a second checkout, a second push and a second pull request), and it should
+be decided on its merits rather than hidden inside a filing command.
+
+**Alternative: a dedicated `fugaro-backlog` repository.** Cost: a new repository
+with its own CI, its own image, its own enrollment in the policy and its own
+review surface, holding files nobody reads in a pull request — and the cross-repo
+write is still missing, so it buys nothing the designated-repo key does not.
+**Alternative: the first entry of the published policy's `allow_repos`.** Cost: the
+value becomes order-dependent state in a published document, and changing it means
+re-publishing the policy rather than editing a file. **Alternative: the local
+project config's `repos:` map.** Cost: it lives on one machine and in no
+repository, which contradicts the ruling's first line — the backlog is Markdown
+files **in the repository**.
+
+### D30 — How each of the five modes files
+
+**Recommended: one mechanism, and the mode decides only whether the tolerated set
+is empty — except Hotfix, which always files one.**
+
+| Mode | What it files |
+| --- | --- |
+| **POC** | nothing of its own. Its pull request body's one line and the run record are the whole account, and the owner may file an item by hand — the ruling's "none or one-line" |
+| **Startup** | one item per tolerated finding, filed by the run, in the same pull request |
+| **Pro** | one item per tolerated finding, filed by the run, in the same pull request. The two modes differ in their thresholds (D7), not in how they file |
+| **Critical** | nothing of its own — it tolerates nothing (D7). If the owner's own instruction defers something, the caller files the item and it records `mode: critical` |
+| **Hotfix** | **always one item** for what the hotfix deferred (the ruling; D15), plus one per tolerated finding if a floor or a path forced the run into a lower mode |
+
+Reason: the modes differ in what they tolerate, and a filing rule that also varied
+per mode would make a per-mode difference where there is none, which is the
+"one rule, one place" argument this folder makes everywhere else (D6, D20).
+Critical filing nothing is the same statement as its empty tolerated set, and
+Hotfix's unconditional item is the ruling's own sentence and the substance of the
+spec's "automatic follow-up task to revisit the fix properly". The mechanism is
+T4.5's filing path; the table is T4.6's decision, held beside the policy T3.1
+owns so it is a table rather than a condition inside the runner.
+
+**Alternative: a per-mode switch over which carrier is used (an item for some
+modes, the pull request body for others).** Cost: two records of one finding, and
+the moment "one backlog and not two" (D32) breaks — by the mechanism that was
+supposed to file.
+
+### D31 — Closing: the pull request that fixes it flips the status in the same commit
+
+**Recommended: `status: open` → `closed` (or `dropped`, with its reason in the
+body) **in the same commit as the fix**, by the pull request that fixes it, which
+names the item id in its body and regenerates the index in that same commit.** A
+closed item's file is **never deleted**: its id stays resolvable forever, because
+older pull request bodies cite it, and this folder's own rule is that a path and a
+symbol survive where a number does not. The pin holds what a tree can hold: a
+`closed` item must carry a `## Closed by` line naming the pull request that closed
+it, and a `dropped` item must carry its reason; the index row moves in the same
+commit because the regenerate-and-compare pin (D28) refuses anything else. What a
+test cannot hold is the honest rule beside it — **a run may not close an item it
+did not fix** — and that is a review rule, stated here so a reviewer can ask.
+
+Reason: the ruling says the pull request that fixes an item flips its status in the
+same commit, and the mechanism that makes that cheap is the pin: an item flipped
+without regenerating the index is red, so there is no way to close an item and
+leave the list stale. Deleting the file instead of flipping it would be the
+alternative with a real cost, below.
+
+**Alternative: delete the item file when it closes.** Cost: every citation in an
+older pull request stops resolving, and a reader who greps for the id finds
+nothing — the opposite of what a backlog is for. **Alternative: move closed items
+into a `closed/` subdirectory.** Cost: the move renames the path that carries the
+id, so the citations break unless the id lives only in the front matter — which
+D26 rejects, and which would make a link to an item depend on a lookup.
+
+### D32 — One backlog: the practice, and what happens to the existing deferral notes
+
+**Recommended: the item is the one live backlog. Going forward, a deferral is
+filed as an item and no new `docs/plans/*-review-follow-ups.md` file of that shape
+is written; the practice sentence lands in `docs/dogfooding.md`; and the three
+existing deferral sections (§4's census) are converted in one mechanical pull
+request that states the number of converted rows in its own body, each converted
+section keeping its text with a one-line pointer to the items it became.**
+Reason: the ruling's words are "so there is one backlog and not two", and the
+three sections are not merely a precedent — they are a second live list until
+they are converted or explicitly frozen. Converting them is mechanical (a table
+row becomes a file, and the file's front matter comes from the section's date and
+the work it belongs to), and each section keeps its own words, because the prose
+around a deferred item is what a reader of that plan needs. The merge-then-follow-up
+practice is unchanged by any of this: what changes is where the follow-up is
+**written down**, and the sentence in `docs/dogfooding.md` is what says so.
+
+**Alternative: leave the history alone and start the backlog empty.** Cost: two
+live backlogs until the last hand-written section ages out, and a reader who greps
+for "deferred" finds both without being told which one is authoritative — which
+is the state the ruling exists to end. **Alternative: convert them and also rewrite
+the plan files' surrounding prose.** Cost: the history of a review round stops
+reading as a review round, and the diff stops being mechanical; the one-line
+pointer buys the same thing for a fraction of the review.
+
 ## 6. The security section, stated once
 
 The brief asks for this explicitly, and it is the part of the design that must
@@ -1356,6 +1658,14 @@ not be reconstructed by a reader from the decisions:
    mode, no later resolution lowers it, so a path that turns out to be sensitive
    cannot be made cheap by touching more of it. This is the same property the
    floors have, and it is what makes the three resolution moments compose.
+9. **The backlog is written by the run, into its own repository and its own
+   branch, and nowhere else.** An item a run files is a Markdown file under
+   `docs/backlog/` on the run's branch (F44), because that is the one repository
+   its installation token reaches (`apptoken.go`'s
+   `{"repositories": []string{s.repo}}`, F43) and the one place it can push; it
+   passes `workflowGuard` like every other write; it carries no finding text the
+   stored transcript does not already hold (F18); and a run never writes into the
+   designated project repository (D29) unless it is a run **in** that repository.
 
 ## 7. What the owner would run, and what would go red
 
@@ -1374,6 +1684,8 @@ The live checks below are the ones a person runs, because a container cannot:
 | A run whose diff matches two areas, one Critical and one POC | the mixed-area rule is the strictest of the matched, and the record names both (D23) | needs a real diff that lands in both |
 | A run whose first round stays in one area and whose second round reaches another | the raised mode bought the rounds that remained, and never fell back (D22) | needs a live agent and a multi-round run |
 | `fugaro watch` on a live run after the rules are redeployed | the mode and its layer reach a live row, and an installation with old rules drops the field and warns instead of failing the entry (F40) | needs a deployed database and `fugaro init --firebase` |
+| The pull request that fixes a filed item | the item's `status` flips and the index regenerates in that same commit, and the pin goes red if either is forgotten (D31) | a real pull request, reviewed as a diff |
+| Two branches filing items on the same day, merged in either order | the id collision is a rename rather than a silent clash, and the index conflict is resolved by re-running the generator (D26, D28) | two real branches, two merges, and the provider's own conflict |
 
 ## 8. Items for the owner — not decisions this folder takes
 
@@ -1430,7 +1742,7 @@ work's base commit `1d325928`**, the register's own command
 returns **D220**, because voice-session — merged at the fork point, the same work
 whose **D219** the plan's check table cites — writes **D201–D220**. So **D193
 onward is not the free range at this tree**, and the move named below is not
-merely cosmetic: it would land this work's twenty-five decisions inside
+merely cosmetic: it would land this work's thirty-two decisions inside
 voice-session's block, which is the collision both readings exist to avoid — a
 number an earlier plan has already written is never taken. **D193–D200** are
 written nowhere in this tree, but voice-session **left them alone** deliberately
@@ -1438,13 +1750,13 @@ and started at **D201** rather than collide with **D200**, which the owner's bri
 records as an already-taken ruling this tree cannot cite (voice-session's F20 and
 O5) — so they are not this work's to take on this tree's evidence either.
 
-This folder numbers its decisions **D1–D25** anyway, which collides numerically
+This folder numbers its decisions **D1–D32** anyway, which collides numerically
 with `docs/setup-wizard/`'s D1–D12 and `docs/windows-cli/`'s D1–D16 —
 the same choice the newer of those two made and recorded in its own index
 ("**Recommendation: keep D1–D16 local and distinct by folder, or move this work
 to D193 onward; renumbering is mechanical and changes nothing but the numbers**").
 The recommendation here is the same in its first half and corrected in its
-second: keep D1–D25 **folder-local**, distinct by folder, as the two folders
+second: keep D1–D32 **folder-local**, distinct by folder, as the two folders
 above did; and if the owner prefers one sequence, the next free block read from
 this branch's base is **D221 onward**, not the unanchored **D193 onward** that
 voice-session's own index had to correct the same way. Either way the register
@@ -1470,3 +1782,5 @@ the plan says so where it touches one.
 | U8 | a narrower `check` gate for POC fits inside `fugaro.yaml`'s verify timeout on a real repository | a timed run of each mode's gate |
 | U9 | an area rule matches the paths a real run actually touches at a moment when the run can still act on it (D22's moments are the tree's, not a measurement) | a live multi-round run whose diff crosses an area boundary, read from the record's own resolution note |
 | U10 | adding a child to the registry entry is accepted by a deployed database after `fugaro init --firebase`, and refused readably before it (F40) | the rules deployed to a real project, then one run live in `fugaro watch` |
+| U11 | an item filed by a run into its own branch is read by the reviewer of that pull request as a record rather than as a change under review (F44) | one real run that files an item, and a reading of that pull request's diff by a person |
+| U12 | the generated index stays mergeable when two branches filed on the same day, in either merge order, without a hand edit (D28) | two real branches filing items, merged in one order and then the other |
