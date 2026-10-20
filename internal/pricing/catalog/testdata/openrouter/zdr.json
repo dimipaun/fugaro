@@ -2,7 +2,27 @@
  "data": [
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "nebius/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "sail-research/fp4/us"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "deepinfra/fp8/priority"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "deepinfra/fp8/flex"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
    "tag": "primeintellect"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "sail-research/fp4/us"
   },
   {
    "model_id": "moonshotai/kimi-k3",
@@ -11,6 +31,10 @@
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
    "tag": "crusoe/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-flash",
+   "tag": "cloudflare"
   },
   {
    "model_id": "deepseek/deepseek-v4-pro",
@@ -45,6 +69,10 @@
    "tag": "ionstream"
   },
   {
+   "model_id": "deepseek/deepseek-v4-pro",
+   "tag": "relace/fp4"
+  },
+  {
    "model_id": "moonshotai/kimi-k3",
    "tag": "akashml/fp4"
   },
@@ -74,7 +102,7 @@
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "baseten/fp8/us"
+   "tag": "baseten/us"
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
@@ -87,6 +115,10 @@
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
    "tag": "phala"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-pro",
+   "tag": "cloudflare"
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
@@ -106,7 +138,7 @@
   },
   {
    "model_id": "deepseek/deepseek-v4-flash",
-   "tag": "wafer"
+   "tag": "wafer/mxfp4"
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
@@ -114,11 +146,11 @@
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "wafer"
+   "tag": "wafer/mxfp4"
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "baseten/fp8"
+   "tag": "baseten"
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
