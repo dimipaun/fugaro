@@ -148,6 +148,11 @@ const (
 	// maxJobNameBytes is internal/backend/gcp's maxJobName: Cloud Run's own 63
 	// less room for the execution token the execute page adds.
 	maxJobNameBytes = 49
+	// maxRefusalMessageBytes bounds the free-text message of a refusal body
+	// (ReadWireError). Every message this file writes is a sentence of a few
+	// hundred bytes, and the longest one — an exhausted answer's list of the
+	// credentials tried — is bounded by how many credentials a bundle may hold.
+	maxRefusalMessageBytes = 8 << 10
 )
 
 // Why a credential was not used, in the tried list. They are display strings:
@@ -287,6 +292,12 @@ func WriteWireError(w http.ResponseWriter, status int, e WireError) {
 // this contract are this repository's code, and a field added to the refusal
 // body is a change to this file.
 //
+// The message is bounded (review finding M3): it is the only field here that is
+// free text, it reaches a log line and a halt message, and a body carrying more
+// of it than any refusal this code writes is not a refusal this contract wrote.
+// A body over the bound is refused rather than clipped, so no half of another
+// writer's sentence is displayed as this service's words.
+//
 // The body is a caller's text — it arrives from the service, and nothing
 // about it is trusted — so no error here repeats it: a decoder's own message
 // names the byte it choked on, and this code says only that the body is not
@@ -301,6 +312,9 @@ func ReadWireError(status int, body []byte) (WireError, error) {
 	}
 	if e.Error == "" {
 		return WireError{}, errors.New("credsvc: the refusal body names no error type")
+	}
+	if len(e.Message) > maxRefusalMessageBytes {
+		return WireError{}, errors.New("credsvc: the refusal body's message is longer than this contract's")
 	}
 	return e, nil
 }

@@ -466,6 +466,26 @@ func TestWireErrorCarriesTheTypeAndNoIdentity(t *testing.T) {
 	if w.Error != ErrorUnverifiedRunIdentity {
 		t.Errorf("the refusal's type field = %q, want %q", w.Error, ErrorUnverifiedRunIdentity)
 	}
+	// The message is the one free-text field of the body, and it reaches a log
+	// line and a halt message, so it is bounded (review finding M3): a body
+	// carrying more of it than any refusal this code writes is not one this
+	// contract wrote. Refused rather than clipped, so no half of another
+	// writer's sentence is displayed as the service's words — and the error
+	// says the message is too long without repeating any of it.
+	long := strings.Repeat("m", maxRefusalMessageBytes+1)
+	_, err = ReadWireError(StatusUnverified, []byte(`{"error":"state_unavailable","message":"`+long+`"}`))
+	if err == nil {
+		t.Fatal("ReadWireError accepted a body whose message is longer than any refusal this code writes")
+	}
+	if strings.Contains(err.Error(), "mmm") {
+		t.Errorf("err = %q carries the message it refused", err)
+	}
+	// One byte inside the bound is read: the bound is a bound and not a rule
+	// against long sentences.
+	ok := strings.Repeat("m", maxRefusalMessageBytes)
+	if got, err := ReadWireError(StatusUnverified, []byte(`{"error":"state_unavailable","message":"`+ok+`"}`)); err != nil || len(got.Message) != maxRefusalMessageBytes {
+		t.Fatalf("ReadWireError refused a message at the bound: %v", err)
+	}
 }
 
 // headerWriter is an http.ResponseWriter that keeps what was written, so a
