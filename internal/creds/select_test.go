@@ -34,6 +34,14 @@ type fakeStore struct {
 	// placeErr is the failure SetPlacement answers with, so a test can state
 	// what a selection does when the decision it made cannot be recorded.
 	placeErr error
+
+	// readErr is the failure each of the four reads answers with — one field per
+	// read, because a single fault would be reported by whichever read runs
+	// first and the other three returns would stay unproved: Marks, Leases and
+	// Current are all read before the decision, and RoundRobin only in a tie.
+	readErr struct {
+		marks, leases, current, roundRobin error
+	}
 }
 
 func newFakeStore() *fakeStore {
@@ -92,6 +100,12 @@ func (f *fakeStore) currentOf(r Run) (string, bool) {
 func (f *fakeStore) Marks(context.Context) (map[string]Mark, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.readErr.marks != nil {
+		// The error and NOT the map: a caller that ignores the error must not be
+		// handed the state anyway, which is what a real database cannot do
+		// either — an unreadable state is not an empty one.
+		return nil, f.readErr.marks
+	}
 	out := make(map[string]Mark, len(f.marks))
 	for k, v := range f.marks {
 		out[k] = v
@@ -115,6 +129,9 @@ func (f *fakeStore) UpdateMark(_ context.Context, name string, fn func(prev Mark
 func (f *fakeStore) Leases(context.Context, time.Time) ([]Lease, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.readErr.leases != nil {
+		return nil, f.readErr.leases
+	}
 	out := make([]Lease, 0, len(f.leases))
 	for _, l := range f.leases {
 		out = append(out, l)
@@ -141,6 +158,9 @@ func (f *fakeStore) SetPlacement(_ context.Context, r Run, name string, l Lease)
 }
 
 func (f *fakeStore) Current(_ context.Context, r Run) (string, bool, error) {
+	if f.readErr.current != nil {
+		return "", false, f.readErr.current
+	}
 	n, ok := f.currentOf(r)
 	return n, ok, nil
 }
@@ -156,6 +176,12 @@ func (f *fakeStore) setRoundRobin(n int64) {
 func (f *fakeStore) RoundRobin(context.Context) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.readErr.roundRobin != nil {
+		// Nothing is counted: a read the database refused did not advance the
+		// counter, and a caller that ignored the error must not be able to
+		// spread runs on the strength of a value that was never read.
+		return 0, f.readErr.roundRobin
+	}
 	used := f.rr
 	f.rr++
 	return used, nil
@@ -1199,6 +1225,84 @@ func TestAnUnrecordedPlacementFailsTheSelection(t *testing.T) {
 	}
 	if l, _ := stuck.lease(run); !l.Until.Equal(now.Add(time.Minute)) {
 		t.Fatalf("a refused sticky placement left the lease %+v; want the one that was there", l)
+	}
+}
+
+// An unreadable state is not an empty one: every read a selection makes fails
+// the selection rather than being read as "no marks", "no leases", "no stickiness"
+// or "no counter". A selection that went on to answer a credential from a
+// state it could not read would spend a token the state may already have held —
+// and the cascade is the path every call the project makes takes, so the read
+// it happens on is the common one. Each of the four reads is pinned by one test
+// below, because the first read to fail is the only one whose returned error a
+// single fault would prove.
+func TestAnUnreadableMarkSetFailsTheSelection(t *testing.T) {
+	failed := errors.New("the database refused the read")
+	st := newFakeStore()
+	st.setMark(a1.Name, Mark{State: StateExhausted, Until: now.Add(time.Hour)})
+	st.readErr.marks = failed
+
+	// a1 is the only candidate and its own mark holds it, so a selection that
+	// ignored the error would have to see the mark to refuse it — and reading
+	// the empty set instead answers a1, which is the spend this return stops.
+	c, _, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
+	if !errors.Is(err, failed) {
+		t.Fatalf("a selection over an unreadable mark set = %q, %v; want the store's error", c.Name, err)
+	}
+	if len(st.leases) != 0 || len(st.current) != 0 {
+		t.Fatalf("a failed mark read wrote %d leases and %d placements", len(st.leases), len(st.current))
+	}
+}
+
+func TestAnUnreadableLeaseSetFailsTheSelection(t *testing.T) {
+	failed := errors.New("the database refused the read")
+	st := newFakeStore()
+	// Another run holds a1's only slot, so this run is only refused at all
+	// because the leases were read: an empty set in their place answers a1.
+	st.setLease(Run{Slug: run.Slug, ID: "other"}, Lease{Credential: a1.Name, Until: now.Add(time.Minute)})
+	st.readErr.leases = failed
+
+	_, _, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
+	if !errors.Is(err, failed) {
+		t.Fatalf("a selection over an unreadable lease set = %v; want the store's error", err)
+	}
+	if len(st.leases) != 1 || len(st.current) != 0 {
+		t.Fatalf("a failed lease read wrote %d leases and %d placements; want only the other run's hold", len(st.leases), len(st.current))
+	}
+}
+
+func TestAnUnreadablePlacementFailsTheSelection(t *testing.T) {
+	failed := errors.New("the database refused the read")
+	st := newFakeStore()
+	st.readErr.current = failed
+
+	c, _, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
+	if !errors.Is(err, failed) {
+		t.Fatalf("a selection over an unreadable placement = %q, %v; want the store's error", c.Name, err)
+	}
+	if len(st.leases) != 0 || len(st.current) != 0 {
+		t.Fatalf("a failed placement read wrote %d leases and %d placements", len(st.leases), len(st.current))
+	}
+}
+
+func TestAnUnreadableTieBreakCounterFailsTheSelection(t *testing.T) {
+	failed := errors.New("the database refused the read")
+	st := newFakeStore()
+	// No cap, so the two candidates stay tied and the selection has to read the
+	// counter — a fault here alone would never be reached.
+	set := noWindow()
+	set.ConcurrencyPerToken = ptr(0)
+	st.readErr.roundRobin = failed
+
+	c, _, err := selector(st, set).Select(ctx, run, []Credential{a1, a2})
+	if !errors.Is(err, failed) {
+		t.Fatalf("a tied selection over an unreadable counter = %q, %v; want the store's error", c.Name, err)
+	}
+	if st.rr != 0 {
+		t.Fatalf("a failed counter read advanced it to %d", st.rr)
+	}
+	if len(st.leases) != 0 || len(st.current) != 0 {
+		t.Fatalf("a failed counter read wrote %d leases and %d placements", len(st.leases), len(st.current))
 	}
 }
 
