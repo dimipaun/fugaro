@@ -22,11 +22,13 @@
 // labels in the header's row (item 1), and the console's link in the homepage's call to
 // action (item 6), which renders from the console's flag — and the console's release (W3.1),
 // which turned that flag on and so put the link, the console's downloads and Getting Started's
-// console option into this build — and, from the same brief, the security page's cut to three
-// things (the policy document's own *In short* section, its own reporting section and a link to
-// the document), which is the round this build's site figure comes from and the one named in the
-// list below, together with the 2 bytes the new spacing gate's own find cost the console page —
-// plus 25 %, which is D192's rule and the rule the README's
+// console option into this build — and, from the same brief, the security page's cut to the
+// policy document's own *In short* section, its own reporting section and a link to the
+// document — and, from the owner's brief of **2026-10-20**, the boundary diagram that page now
+// opens with (its labels, the facts under it and the two lines below them, all of them the
+// document's own words), which is the round this build's site figure comes from and the one
+// named in the list below, together with the 2 bytes the new spacing gate's own find cost the
+// console page — plus 25 %, which is D192's rule and the rule the README's
 // loose figures are three times.
 //
 // The count below is read off **the gates' own build of the site**, which is the artifact the
@@ -102,8 +104,10 @@
 // block rule and the four icons and the type step the points were given after it; the privacy
 // statement's software part, the phone app's reporting written into
 // it and the deletion section carved out from under it; the app's reporting made always-on, with
-// no switch in the app (the owner's ruling of 2026-10-19); the security page cut to three
-// things, with its review rounds; and the header put on a layer of its own — each re-derived
+// no switch in the app (the owner's ruling of 2026-10-19); the security page's cut to the
+// document's own *In short* section, its reporting section and a link, with its review rounds,
+// and the boundary diagram it now opens with (the owner's brief of 2026-10-20); and the header
+// put on a layer of its own — each re-derived
 // in the commit that moved it (D192). None of those figures is
 // repeated here, because a figure in a comment is a figure that moves with
 // nothing when the build moves, which is what happened to the copy that used to be in this one;

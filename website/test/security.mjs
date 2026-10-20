@@ -36,8 +36,10 @@
 //      as a short list under it)", and "EVERY label must follow SECURITY.md's 'In short'
 //      section"). One `<svg>`, named, carrying the drawing's labels; the facts as one list
 //      under it and the two limit lines below that; every label of the picture present in the
-//      document's "In short" section or in the page's own text; every word the region carries
-//      a phrase of the document; and no script anywhere near it (the brief: "No JavaScript").
+//      document's "In short" section or in the words the region carries beside the picture —
+//      its heading, those facts and those lines, and not the rest of the page; every word the
+//      region carries a phrase of the document; and no script anywhere near it (the brief: "No
+//      JavaScript").
 //   3. **The summary is `SECURITY.md`'s own "In short" section, bullet for bullet** (the
 //      brief: "a short high-level description of the security model and its boundaries";
 //      D189: "rendered from a file, never written on the page"). Each rendered bullet is
@@ -471,8 +473,9 @@ function checkLinks(region, { document, heading, kind, fail, what }) {
  * The boundary diagram, held to the brief's own rules (the owner's brief of 2026-10-20).
  *
  * The rule this gate exists for is the label one: **the picture is one named image, and each
- * of its labels is a phrase of `SECURITY.md`'s own "In short" section or of the words the page
- * renders beside it.** The drawing is the only place on this page where the page writes
+ * of its labels is a phrase of `SECURITY.md`'s own "In short" section or of the words the
+ * diagram region carries beside the picture** — its heading, the facts under it and the two
+ * lines below them. The drawing is the only place on this page where the page writes
  * anything itself, and a security page is where a sentence the policy does not state does the
  * most damage — so a label that drifts, a claim added or a limit softened, is refused here
  * rather than read as prose (D99). `security.astro` proves the same thing while it builds
@@ -483,7 +486,7 @@ function checkLinks(region, { document, heading, kind, fail, what }) {
  * `aria-label`, the labels inside it, the document's own facts as one list under the picture,
  * the two lines below that, and no script (the brief: "No JavaScript").
  */
-function checkDiagram(region, { document, pageText, fail }) {
+function checkDiagram(region, { document, beside, fail }) {
   const headings = childElements(region).filter((child) => child.name === 'h2')
   if (headings.length !== 1) {
     fail(
@@ -560,12 +563,16 @@ function checkDiagram(region, { document, pageText, fail }) {
   }
 
   // The brief's own rule, by name: every label of the picture appears in the document's
-  // "In short" section or in the text the page renders beside the picture.
+  // "In short" section or in the text the page renders beside the picture. "Beside the
+  // picture" is the diagram region with the drawing taken out — the heading over it, the facts
+  // under it and the two lines below that — and not the whole page: a label drawn from a
+  // sentence that only the reporting section carries, or only the pointer, is a label the page
+  // renders *elsewhere*, which is not what the brief asks for and not what this rule says.
   const inShort = documentPhrases(bulletsOf(document, SUMMARY).join(' '))
-  const beside = pageText.toLowerCase()
+  const besideText = beside.toLowerCase()
   for (const label of labels) {
     const said = label.text.replace(/[*`]/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
-    if (!inShort.includes(said) && !beside.includes(said)) {
+    if (!inShort.includes(said) && !besideText.includes(said)) {
       fail(
         `${label.what} says ${JSON.stringify(label.text)}, which ${SOURCE} does not say: a label of the boundary diagram is a phrase of the document's "${SUMMARY}" section or of the words the page renders beside the drawing, and a label the policy does not state is a security claim the page made up (the owner's brief of 2026-10-20, D99)`,
       )
@@ -685,12 +692,13 @@ export function securityFailures(dist = DIST) {
   }
 
   // 1c. The diagram itself: one named picture, the document's words on it, the facts as a list
-  //     under it and the two lines below that. The page's own text is read with the picture
-  //     taken out, so "the words beside the drawing" are the words beside it and not its own
-  //     labels read back.
+  //     under it and the two lines below that. "The words beside the drawing" are the region's
+  //     own words with the picture taken out — the heading, the facts and the two lines — and
+  //     not the rest of the page: the rule reads the words the drawing sits among, so a label
+  //     the page carries only in another region is refused.
   checkDiagram(diagram, {
     document: sourceDocument(),
-    pageText: prose(text(without(article, 'svg'))),
+    beside: prose(text(without(diagram, 'svg'))),
     fail,
   })
 
@@ -975,6 +983,24 @@ test('the gate refuses each planted defect', (t) => {
   const claim = verdict(t, claimed).join('\n')
   assert.match(claim, /the drawing's label \d+ says "the agent can read every secret"/, 'a drawing label the document does not say is not refused, so the drawing is free to make a security claim of its own')
   assert.match(claim, /which SECURITY\.md does not say/, 'the label is refused for the wrong reason, or not at all')
+
+  // A label drawn from a sentence the page renders, but not beside the picture: the reporting
+  // section carries it and the document carries it, so the label rule is the only rule that can
+  // refuse it — and it does, because "the words beside the drawing" are the diagram region's own
+  // words and not the rest of the page. This is the plant the reading of that phrase is held by:
+  // widen it to the whole article and this label passes, which is the defect it is here for.
+  const rendered = planted(html, />can read its \/proc </, '>Please do not open a public issue <')
+  const faraway = verdict(t, rendered).join('\n')
+  assert.match(
+    faraway,
+    /the drawing's label \d+ says "Please do not open a public issue"/,
+    'a label drawn from a sentence the page renders only in another region is not refused, so "the words beside the drawing" is reading the whole page rather than the words the drawing sits among',
+  )
+  assert.match(
+    faraway,
+    /is a phrase of the document's "In short" section or of the words the page renders beside the drawing/,
+    'the label is refused for the wrong reason, or not at all',
+  )
 
   // The picture with its name taken off: a screen reader reads the drawing as nothing. The
   // plant is anchored on the drawing's own class, because the layout's own markup carries

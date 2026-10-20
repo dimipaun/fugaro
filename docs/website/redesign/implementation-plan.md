@@ -240,7 +240,10 @@ things about the constraint are not what this branch ships:
 
 - **The page is not the document.** `/security/` is the brief's three things and nothing
   else: the document's own "In short" section as the page's summary, its own "Reporting a
-  vulnerability" section, and a link to the policy. The cross-references those two sections
+  vulnerability" section, and a link to the policy — **and a fourth since the owner's brief of
+  2026-10-20: the boundary diagram the page opens with** (one inline SVG of the trust
+  boundaries, its labels the document's own words, the same facts as a list under it and the
+  document's two limit lines below that). The cross-references those two sections
   carry are rewritten — `#known-limits` becomes a link into `SECURITY.md` in the repository
   at that section, because the page does not render the section it names, while
   `#reporting-a-vulnerability` resolves to the page's **own** anchor, because the page does
@@ -254,8 +257,18 @@ things about the constraint are not what this branch ships:
   page's own anchor where the page renders that section, the repository URL for the rest —
   refuses a
   reference rendered as a link where the document has no heading for it, and refuses a page
-  that is anything other than the three things. That file — not the Go test — is where a
-  change to the page's shape fails.
+  that is anything other than the three things and the drawing. That file — not the Go test —
+  is where a change to the page's shape fails.
+- **The drawing changes what "never paraphrased" has to mean, and the gate carries the
+  change** (the owner's brief of 2026-10-20). Every word of the page is still the document's —
+  the drawing's labels are phrases of `SECURITY.md` and a phrase the document does not carry
+  stops the build (D99) — but a picture **arranges** the words it is made of, and two of the
+  document's sentences set beside each other can read as a claim the document makes only as a
+  conditional. So the constraint's substance is kept and stated more exactly: no security claim
+  on the page is a word the document does not use, and the arrangement is a decision written
+  down in `security.astro` (its decision 3) because no test here reads a picture's arrangement —
+  the one place it could mislead is the model-key card, whose conditional the page draws as the
+  one sentence the document states it in.
 - **The Go pin reads the generated copy, and always did.** The constraint's other half
   survives untouched and is what `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd`
   actually enforces: it reads **`website/content/security.md`**, the file the content

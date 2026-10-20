@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **979,966 bytes in a checkout with no tags** and to **979,966 bytes with the
+  commit builds to **980,034 bytes in a checkout with no tags** and to **980,034 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -460,7 +460,7 @@ added or removed without this sentence moving fails there:
     page and refuses an icon that references a file or an origin. The words are the ones the
     section already carried, so the word ceiling did not move.
   - **The security page opens with the trust boundary drawn** (the owner's brief of 2026-10-20),
-    and it moved the site figure alone, 975,034 → **979,966**, by **4,932 bytes**. The page is
+    and it moved the site figure alone, 975,034 → **980,034**, by **5,068 bytes**. The page is
     four things now and nothing else: the drawing comes first, above the document's *In short*
     section, and it is one inline `<svg>` — the source of the task and the people who can steer
     a run, the one container per run and what it holds, the pull request that leaves it, and the
@@ -468,12 +468,16 @@ added or removed without this sentence moving fails there:
     list under it and its two limit lines below that. **Every label of the drawing is a phrase of
     `SECURITY.md`**, and `website/test/security.mjs` reads each one back off the built page and
     refuses a label that is in neither the document's own *In short* section nor the words the
-    page renders beside the drawing — which is why the drawing says "one container per run" and
-    "ends every run with a pull request" where the brief's own sketch said "your own cloud
+    region carries beside the picture — its heading, the facts under it and the two lines below
+    them, and not the rest of the page — which is why the drawing says "one container per run"
+    and "ends every run with a pull request" where the brief's own sketch said "your own cloud
     project" and "a draft pull request you merge": the policy makes neither of those claims. The
-    drawing is shapes and text in the markup and loads nothing, so the page weight and the script
-    did not move: the heaviest page is still the docs hub, and no file the site ships was added.
-    The clone figure moved by the same bytes.
+    model-key card draws the document's conditional as the one sentence it is — the budget
+    gateway is not on by default, so the real model key sits in the agent's environment — rather
+    than setting the gateway and the key's place side by side as two facts, which would be a
+    claim the policy never makes. The drawing is shapes and text in the markup and loads
+    nothing, so the page weight and the script did not move: the heaviest page is still the docs
+    hub, and no file the site ships was added. The clone figure moved by the same bytes.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -500,7 +504,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,556 bytes. Three times 350,852: the heaviest page, the
     docs hub, at 280,681 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,674,874 bytes. Three times 1,224,958 (every file in `dist/`, 979,966
+  - **Whole site:** 3,675,129 bytes. Three times 1,225,043 (every file in `dist/`, 980,034
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 

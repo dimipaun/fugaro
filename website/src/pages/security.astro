@@ -25,7 +25,7 @@
  * page carries no summary prose of its own: a sentence here that the document does not state
  * is the one thing a security page may not have (D99), and there is now nowhere to write one.
  *
- * Five decisions are visible in the file:
+ * Six decisions are visible in the file:
  *
  *   1. **Both sections are the document's, word for word under the renderer.** They are
  *      extracted from the generated `website/content/security.md` — the file `go run
@@ -45,7 +45,22 @@
  *      is in **your own cloud project** — and a label that would need them is a label the page
  *      does not carry: the drawing says the document's own "ends every run with a pull
  *      request", and the container is the document's "one container per run".
- *   3. **A cross-reference inside the document becomes a link into the document.** The "In
+ *   3. **The drawing arranges the document's words, and the arrangement is a decision no gate
+ *      reads.** Every label being the document's own is what the build and
+ *      `website/test/security.mjs` prove; what the labels *say together* is drawn by hand, and
+ *      a picture can put two of the document's sentences side by side into a claim the
+ *      document makes only as a conditional. The model-key card is the one place that could
+ *      happen, so it is drawn as the document states it: `SECURITY.md`'s "What is not on by
+ *      default" bullet is one sentence — the budget gateway is **not on by default**, so the
+ *      real model key **sits in the agent's environment** — and its "With the budget gateway
+ *      on, model keys stay out of the agent's environment" is the other half of that same
+ *      conditional, never a second fact beside the first. So the card's title names the
+ *      gateway, its first line the default, and its last two lines the key and where it sits:
+ *      one state, the default one, which is the state the facts under the picture state too.
+ *      Drawing "the budget gateway" and "sits in the agent's environment" as two co-equal
+ *      lines would assert both halves of the conditional at once, and no test here reads a
+ *      picture's arrangement — which is why the arrangement is written down.
+ *   4. **A cross-reference inside the document becomes a link into the document.** The "In
  *      short" bullets each end by naming the section they come from
  *      (`([Known limits](#known-limits))`), and the page renders two of those sections and no
  *      others. A reference to one of the two the page carries — today the summary's
@@ -68,10 +83,10 @@
  *      fragment-less one against the fact that it is not a link — so a fragment dropped,
  *      aimed at another heading, sent to GitHub though the page carries it, or rendered as an
  *      anchor fails there.
- *   4. **The link is the repository's, and its path is read rather than typed.** The URL is
+ *   5. **The link is the repository's, and its path is read rather than typed.** The URL is
  *      built from `site.yaml`'s repository and the generated file's own `source:` header, so
  *      the page cannot point at a document this repository does not carry.
- *   5. **The styles are global and token-only.** The rendered sections arrive through
+ *   6. **The styles are global and token-only.** The rendered sections arrive through
  *      `set:html`, which Astro's scoped styles do not reach, so the block below is
  *      `is:global` and every selector is prefixed with the page's own marker attribute so it
  *      cannot reach another page. Colours come from W1.2's semantic tokens and never from a
@@ -391,14 +406,14 @@ const DIAGRAM_LIMITS = [
         boundaries, the same facts as a list under it, and the two limits below that. Every
         label is a phrase of SECURITY.md, proved while the page builds (`quoted()` above), and
         the drawing is one picture with a name: `role="img"` and an aria-label, so a screen
-        reader reads the name and then the list rather than 16 loose labels. No script reads
-        it and none is loaded for it. */}
+        reader reads the name and then the list rather than every label of the drawing as a
+        loose string of its own. No script reads it and none is loaded for it. */}
     <section data-security-diagram>
       <h2>{DIAGRAM_HEADING}</h2>
       <figure>
         <svg
           class="boundary-drawing"
-          viewBox="0 0 360 664"
+          viewBox="0 0 360 688"
           role="img"
           aria-label={DIAGRAM_LABEL}
           focusable="false"
@@ -417,7 +432,7 @@ const DIAGRAM_LIMITS = [
           {/* The boundary itself: one container per run, and what the document says is inside
               it. The dashed box is the boundary, so nothing is drawn crossing it except the
               two arrows that leave it. */}
-          <rect class="boundary-boundary" x="12" y="130" width="336" height="400" rx="16" />
+          <rect class="boundary-boundary" x="12" y="130" width="336" height="424" rx="16" />
           <text class="boundary-heading" x="32" y="166">{diagramLabel('one container per run')}</text>
 
           <rect class="boundary-card" x="32" y="182" width="274" height="72" rx="10" />
@@ -434,25 +449,35 @@ const DIAGRAM_LIMITS = [
           <text class="boundary-line" x="48" y="392">{diagramLabel('their own service accounts')}</text>
           <text class="boundary-line" x="48" y="416">{diagramLabel('narrow git credentials')}</text>
 
-          <rect class="boundary-card" x="32" y="446" width="274" height="72" rx="10" />
-          <text class="boundary-title" x="48" y="472">{diagramLabel('the real model key')}</text>
-          <text class="boundary-line" x="48" y="494">{diagramLabel("sits in the agent's environment")}</text>
-          <text class="boundary-line" x="48" y="512">{diagramLabel('the budget gateway')}</text>
+          {/* The key the container holds, and the gateway that would keep it out of the agent's
+              environment — the document's own conditional, in the order it states it: the
+              gateway is *not on by default*, so the real key sits in the agent's environment.
+              The two are one sentence and not two facts, so they are drawn as one: the card's
+              title names the gateway, its first line the default, and its last two lines the
+              key and where it sits. Drawing "the budget gateway" beside "sits in the agent's
+              environment" as two co-equal lines would be a conjunction the document never
+              states (SECURITY.md:64 and :72 are the two halves of one conditional), and the
+              drawing is the one thing here no gate reads. */}
+          <rect class="boundary-card" x="32" y="446" width="274" height="96" rx="10" />
+          <text class="boundary-title" x="48" y="472">{diagramLabel('the budget gateway')}</text>
+          <text class="boundary-line" x="48" y="494">{diagramLabel('not on by default')}</text>
+          <text class="boundary-line" x="48" y="512">{diagramLabel('the real model key')}</text>
+          <text class="boundary-line" x="48" y="530">{diagramLabel("sits in the agent's environment")}</text>
 
           {/* Out of the container: the pull request every run ends with. */}
           <g class="boundary-arrow">
-            <line x1="150" y1="530" x2="150" y2="547" />
-            <polygon class="boundary-arrow-head" points="150,556 144,545 156,545" />
+            <line x1="150" y1="554" x2="150" y2="571" />
+            <polygon class="boundary-arrow-head" points="150,580 144,569 156,569" />
           </g>
-          <rect class="boundary-card" x="12" y="556" width="298" height="64" rx="12" />
-          <text class="boundary-title" x="28" y="594">{diagramLabel('ends every run with a pull request')}</text>
+          <rect class="boundary-card" x="12" y="580" width="298" height="64" rx="12" />
+          <text class="boundary-title" x="28" y="618">{diagramLabel('ends every run with a pull request')}</text>
 
           {/* And out of the boundary, past it: the egress the document says nothing stops. */}
           <g class="boundary-arrow">
-            <path d="M316 504 H 328 V 607" />
-            <polygon class="boundary-arrow-head" points="328,616 322,605 334,605" />
+            <path d="M316 528 H 328 V 631" />
+            <polygon class="boundary-arrow-head" points="328,640 322,629 334,629" />
           </g>
-          <text class="boundary-line" x="348" y="640" text-anchor="end">{diagramLabel('network egress is unrestricted')}</text>
+          <text class="boundary-line" x="348" y="664" text-anchor="end">{diagramLabel('network egress is unrestricted')}</text>
         </svg>
 
         <ul class="boundary-facts">
