@@ -333,7 +333,10 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 //     authorised identity did. The email claim must be one of the
 //     installation's job service accounts (the owner's answer of 2026-10-19),
 //     verified, for this service's own audience, unexpired, and issued by
-//     Google.
+//     Google. An account that belongs to a *shared* project job is refused
+//     here too, before that membership check, because the account is the only
+//     part of "which job is this run in" that the caller cannot write (Global
+//     Constraint 6, C3.9).
 func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time) (string, error) {
 	head, claims, err := decodeJWT(tok)
 	if err != nil {
