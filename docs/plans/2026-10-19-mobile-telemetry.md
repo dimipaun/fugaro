@@ -20,16 +20,20 @@ the answers rather than the questions.** §3's *Owner's answer* column carries t
 one: **D194** (the project is **`fugaro-prod`**, the project that already hosts the
 website), **D195** (**always on** — no consent switch and no first-launch sheet, **against
 this plan's opt-in recommendation**, which stays visible as the recommendation it was),
-**D196**, **D197**, **D198** and **D200** (each as recommended), and **D199**, which is
-**still open** because the owner asked a question about it instead of answering it. §5, §6,
-§8.3, §9, P7.2 and §12 are rewritten to the answers.
+**D196**, **D197**, **D198** and **D200** (each as recommended), and **D199**, which the
+owner **accepted** — the *telemetry* project's two native config files are **built into the
+app** as EAS file secrets, while **each installation's own** Firebase connection cannot be,
+because it differs per installation and is unknown at build time: it arrives in the
+**encrypted pairing payload** and lives in the phone's **secure storage**. **That acceptance
+amends D111's record** from two items per account to **four**, and §4.4 states the new record
+item by item. §5, §6, §8.3, §9, P7.2 and §12 are rewritten to the answers.
 
 **Answering a row is not approving a task, and this document says so wherever it could be
 misread.** The answers approve nothing: no phase is allocated, no task of P7.1–P7.5 may
 start, and the approval gate in
 [mobile/implementation-plan.md](../mobile/implementation-plan.md) is unchanged — Phase 7
-is still **PROPOSED, not approved**, and its own step **7b** now names **D199** as the one
-row still owed.
+is still **PROPOSED, not approved**. **Every row it names is answered** — D199's acceptance
+was the last one — and its step **7b** records that, while approving nothing.
 
 **Three things this document deliberately does not claim.**
 
@@ -79,11 +83,11 @@ the sentence it was written for without anything looking wrong.
 
 | Fact | Where it was read | What it means here |
 |---|---|---|
-| The app is an Expo app at `mobile/`, its own artifact outside the Go module, with **no Firebase SDK wired at all** | `mobile/package.json` (`engines: node ">=22 <23"`, `npm ">=10"`, `test: node --test "src/**/*.test.js"`); `mobile/index.js` (the entry wires `expo-secure-store`, `expo-async-storage`, `react`, `react-native` — and nothing else) | The telemetry work is the **first** thing that would put a Firebase SDK in the app. It therefore meets the app's unbuilt Firebase wiring head-on, and §3's **D199** is that question. |
+| The app is an Expo app at `mobile/`, its own artifact outside the Go module, with **no Firebase SDK wired at all** | `mobile/package.json` (`engines: node ">=22 <23"`, `npm ">=10"`, `test: node --test "src/**/*.test.js"`); `mobile/index.js` (the entry wires `expo-secure-store`, `expo-async-storage`, `react`, `react-native` — and nothing else) | The telemetry work is the **first** thing that would put a Firebase SDK in the app. It therefore meets the app's unbuilt Firebase wiring head-on, and §3's **D199** is that question — **answered 2026-10-19, and the answer is §4.4's three-way split.** |
 | `mobile/app.json` carries the **EAS project id** and nothing Firebase-shaped | `mobile/app.json` (`expo.extra.eas.projectId = "70e67d4a-77d3-4110-9db6-e600266db345"`) | The EAS project the native config files would be delivered into already exists. |
 | **`mobile/app.config.js` and `mobile/eas.json` are on `main`** — P4.4's, merged by **PR #675** for the store path (check 89) | `ls mobile/`: `README.md`, `app.config.js`, `app.json`, `eas.json`, `index.js`, `package-lock.json`, `package.json`, `src/`; `mobile/eas.json` carries three build profiles — **`development`**, **`preview`** and **`internal`** — over the EAS environments `development`, `preview` and `production` | P7.1 **modifies both existing files**: the plugin entry and the build-time guard in `app.config.js`, the two `env` entries in each of `eas.json`'s three build profiles, and the Firebase entries in `mobile/.gitignore`. **Neither file is created by this change, and this plan no longer waits on #675.** |
-| The app's account tuple is **four fields and holds no connection value** | `mobile/src/accounts/account.js` — `ACCOUNT_FIELDS = ['id', 'firebaseProjectId', 'authUid', 'fugaroProject']` | There is no `rtdbURL` and no web API key in an account today. D199 is the row that has to add them, and §3 explains why. |
-| The settings store **refuses an `AIza…` value outright**, and refuses the *word* `apiKey` as a key segment | `mobile/src/accounts/settings.js` — `SECRET_SHAPES` (whose Google entry is `['google-api-key', /^AIza[0-9A-Za-z_-]{35}$/]`), `judge` (which returns `SECRET_VALUE` for a match) and **`FORBIDDEN_KEY_SEGMENTS`**, the frozen list `apiKey` is a member of. **Cited by symbol, not by line**: a line number into a file this plan does not edit goes stale silently, and the symbols are what a reader greps for. | **This is the repository rule the brief names**: the Firebase web API key appears nowhere the app stores or the app ships. It is why D199's recommendation puts the installation's connection values in **secure storage**, not in the tuple's settings entry. |
+| The app's account tuple is **four fields and holds no connection value** | `mobile/src/accounts/account.js` — `ACCOUNT_FIELDS = ['id', 'firebaseProjectId', 'authUid', 'fugaroProject']` | There is no `rtdbURL` and no web API key in an account today. **D199 (accepted 2026-10-19) is the row that puts them in secure storage rather than in the tuple**, and §3 and §4.4 explain why. |
+| The settings store **refuses an `AIza…` value outright**, and refuses the *word* `apiKey` as a key segment | `mobile/src/accounts/settings.js` — `SECRET_SHAPES` (whose Google entry is `['google-api-key', /^AIza[0-9A-Za-z_-]{35}$/]`), `judge` (which returns `SECRET_VALUE` for a match) and **`FORBIDDEN_KEY_SEGMENTS`**, the frozen list `apiKey` is a member of. **Cited by symbol, not by line**: a line number into a file this plan does not edit goes stale silently, and the symbols are what a reader greps for. | **This is the repository rule the brief names**: the Firebase web API key appears nowhere the app stores or the app ships. It is why D199's accepted answer puts the installation's connection values in **secure storage**, not in the tuple's settings entry — and why the store's fence is left exactly as it is (§4.4). |
 | The app's own config test already holds that rule for `app.json`, **with a planted `AIza…` value as its positive control** | `mobile/src/app-config.test.js` — the planted `expo.extra.firebase.apiKey` in its sample config, the `['$.expo.extra.firebase.apiKey', 'google-api-key']` entry in its walk's list, and the two assertions that `bundleIdentifier` and `package` are absent from `app.json`. **Cited by symbol, not by line**: P7.1 edits this file in this phase, so its line numbers move under anything written against them | The fence exists and is mutation-proven. P7.1 extends it to the two **native** config files and to `app.config.js`; it does not invent a new rule. |
 | The app's source is already scanned for a `firebase` SDK import, and the scan's pattern **does not match `@react-native-firebase/…`** | `mobile/src/mailbox/write-path.test.js` — rule 2, whose `pattern` is `/['"]@?firebase\/[a-z-]+['"]/` with `allow: ['index.js']` | A screen could import `@react-native-firebase/analytics` today and no fence would catch it. P7.3 adds that rule; it is a **real gap**, not a hypothetical one. |
 | The app writes to the database in exactly one file, and the fence is a scan with a positive control | `mobile/src/mailbox/write-path.test.js` (rules 1–3), `mobile/src/boundary.test.js` | The shape P7.3's allow-list scan copies, deliberately. |
@@ -127,13 +131,21 @@ keep the numbers the redesign proposed, D174–D179 stay reserved and unused, an
 **D79–D89 stay deliberately unused** (`docs/website/redesign/implementation-plan.md`: *"an
 unused number is not a free number"*).
 
-**Seven of the eight rows are answered**, by the owner on 2026-10-19, and each answer is
-written into the row that carries it: **D193** (the ruling the plan is built on), **D194**,
-**D195** (against this plan's recommendation), **D196**, **D197**, **D198** and **D200**
-(each as recommended). **D199 is the one row still open**: the owner asked a question about
-it rather than answering it, and the question, the clarification and the trade the owner is
-asked to accept are all recorded in that row. **An answered row approves no task** — §3
-says so, and the approval gate is unchanged.
+**All eight rows are answered**, by the owner on 2026-10-19, and each answer is written into
+the row that carries it. The block reads, row by row:
+
+- **D193: answered, owner 2026-10-19** — the ruling the plan is built on.
+- **D194: answered, owner 2026-10-19** — the project is **`fugaro-prod`**.
+- **D195: answered, owner 2026-10-19** — **always on**, against this plan's recommendation.
+- **D196: answered, owner 2026-10-19** — as recommended.
+- **D197: answered, owner 2026-10-19** — as recommended.
+- **D198: answered, owner 2026-10-19** — the second build carries the SDKs.
+- **D199: accepted, owner 2026-10-19** — the telemetry project's native config is **built
+  into the app**; each installation's own Firebase connection arrives in the **pairing
+  payload** and lives in **secure storage** (§4.4).
+- **D200: answered, owner 2026-10-19** — as recommended.
+
+**An answered row approves no task** — §3 says so, and the approval gate is unchanged.
 
 ### 2.2 Checks: **111, 112 and 113**, and why those
 
@@ -209,16 +221,15 @@ on #675, and the "Depends on" lines that used to say so now name the decision ro
 
 ## 3. Owner decisions (D193–D200)
 
-Eight rows, and the owner answered **seven** of them on **2026-10-19**. **D193** is the
-ruling the plan is built on; **D194**, **D195**, **D196**, **D197**, **D198** and **D200**
-carry the owner's answers in the right-hand column — **D195 against this plan's
-recommendation**, the rest as recommended, with each superseded recommendation left visible
-in the column it was written in (D129's habit) rather than deleted. **D199 is the one row
-still open**: the owner asked a question instead of answering it, and the row carries the
-question verbatim, the clarification that goes with it, and the trade the owner is still
-asked to accept explicitly. **Answering a row does not approve a task** — the plan's
+Eight rows, and the owner answered **all eight** on **2026-10-19**. **D193** is the ruling
+the plan is built on; **D194**, **D195**, **D196**, **D197**, **D198**, **D199** and
+**D200** carry the owner's answers in the right-hand column — **D195 against this plan's
+recommendation**, **D199 accepted** (the owner asked *"firebase config should be built into
+the app, no?"* and then took the recommendation), the rest as recommended, with each
+superseded recommendation and each question left visible in the column it was written in
+(D129's habit) rather than deleted. **Answering a row does not approve a task** — the plan's
 approval gate still stands, Phase 7 is still proposed, and [mobile/implementation-plan.md](../mobile/implementation-plan.md)'s
-step **7b** names D199 as the row still owed.
+step **7b** records that every row it names is answered while approving nothing.
 
 | # | Question | Recommendation | The alternative, and what it costs | Owner's answer |
 |---|---|---|---|---|
@@ -228,7 +239,7 @@ step **7b** names D199 as the row still owed.
 | **D196** | **What is sent, what is never sent, and what holds that line?** | **A closed allow-list of event names and parameter values, and a ban list that is checked by a scan** (§7). Nothing that names a message, a mailbox, an account, an installation or a repository is ever sent; the crash path is redacted through `shared/digest`'s `redact`; `setUserId`, `setUserProperty` and free-text custom keys are refused **outright** and a test fails on the call. Reason: the app's whole security model (D111–D113) is that a phone holds two items and writes two paths; a telemetry SDK that can carry free text is a third channel, and it is the only one that leaves the user's own infrastructure. | **Send everything the SDK collects by default and rely on the ban list being respected.** Cost: Firebase Analytics' default events carry an app-instance id and screen names, and Crashlytics' default reports carry the device model, the OS, log output and — unless it is switched off — the advertising id; "we never send message content" becomes an assertion about a library's defaults rather than about our code. **Or no allow-list, only review.** Cost: the first screen that logs a node path ships it, and no test notices. | **Owner answered 2026-10-19: as recommended.** The closed allow-list of §7.2, the ban list of §7.1, the redaction rule through `shared/digest`'s `redact` (§7.3), and `setUserId`, `setUserProperty`, `setAttributes`/`setAttribute` and free-text custom keys **refused outright** by the scan of §7.4. **This row approves no task and allocates no phase.** |
 | **D197** | **The store labels and the privacy page: which categories, and when do the website's words change?** The owner has already ticked Play's Data safety form: **Crash logs · Diagnostics · Other app performance data · Device or other IDs · User IDs · Other in-app messages**. The site's privacy page (`website/src/pages/privacy.astro`) describes the website's GA4 and says nothing about an app; PR **#689** (not on this base) keeps the site free of an analytics SDK claim. | **Answer the labels from what the SDKs actually collect, and change the website's page in the same release that ships the SDKs — not before, and not after.** The ticked set stays as it is (§8 explains, category by category, which of the six the app's own traffic justifies), the **App Store** label is answered from the same list, and the site's privacy page gains **the app's paragraph** in the same commit as the first build that carries a telemetry SDK. Reason: a label written before the traffic has been read is a guess, and a privacy page that promises "no analytics SDK" while a store build carries one is a false statement on the owner's own domain. | **Change the website page first, then ship the SDKs.** Cost: between the two commits the site says the app sends telemetry and the app sends none — the safe direction, but the page must then be honest about a build that does not exist. **Or ship the SDKs and change the page later.** Cost: the exact falsehood the brief warns about, published on `fugaro.dev/privacy/` for as long as the gap lasts. **Or narrow the ticked set before shipping.** Cost: a form re-answered twice, against a policy risk in the direction that matters (under-declaring). | **Owner answered 2026-10-19: as recommended** — the two store forms are answered from what the SDKs actually collect (§8.1, §8.2), and the website's words move with the release that ships the SDKs. **One fact has moved under that answer, and the plan records it rather than smoothing it over:** the privacy statement **already carries the app's paragraph and already says the reports are always on** (read on `origin/main`, PRs **#689** and **#705**, neither on this base), so **the page is AHEAD of the SDKs by design and says so itself** (*"Earlier builds of the app send nothing at all."*). §8.3 is therefore rewritten from *"change the page in the same release"* to *"hold the live page's sentences true of the build that ships"*, and P7.4 follows §8.3. **This row approves no task and allocates no phase.** |
 | **D198** | **Which build carries the SDKs: the first, voice-less internal build on both stores, or the second?** | **The second build.** The first internal build ships **neither SDK**: its job is to prove the store path (P4.4, check 89), the development build, and the app's own wiring on a real device, and every one of those is easier to read without a native config plugin in the same change. The consent sheet, the allow-list scan, the redaction rule, the labels and the privacy page ship as **one unit** with the SDKs, and a first build that carried the SDKs without the website's paragraph would be D197's own failure mode, one release early. | **Crashlytics alone in the first build, Analytics in the second.** Cost: the labels and the privacy page are answered twice, and the first build still needs the consent gate (D195 defers both SDKs the same way), so the "one unit" is already split. **Or both in the first build.** Cost: the store path, the native project and the telemetry contract all change in one release, and a failure in any of the three is hard to attribute; it also puts the labels and the website paragraph under the first build's deadline. | **Owner answered 2026-10-19: the SECOND build carries the SDKs; the first internal build ships neither**, as recommended. §9 says what that means now that D195 is always-on: the first build's job is still the store path, and it carries **no** telemetry and **no** native config plugin. **This row approves no task and allocates no phase.** |
-| **D199** | **Which Firebase project do the app's native config files name, and where does the app's *other* Firebase configuration come from?** A build carries **one** `google-services.json` and **one** `GoogleService-Info.plist`, and whichever project they name is the app's **default** Firebase app. The app serves several installations (D114), and the tuple it stores carries **no** connection values (`ACCOUNT_FIELDS`), while the settings store **refuses an `AIza…` value** — `SECRET_SHAPES`'s `google-api-key` entry, applied by `judge`'s `SECRET_VALUE` branch. | **The native files name the Fugaro-operated telemetry project** (D194), so the **default app is the telemetry app** — the only project that can be compiled into one build serving every installation. **Every installation's Firebase becomes a named app** (`firebase.app(<account id>)`), built at runtime from the account. **The consequence is the owner's to accept, and it is the point of this row:** the tuple must gain the two connection values it does not carry today — the installation's Realtime Database URL and its web API key (`init_firebase.go` records both; G18 already reads them for the QR) — and they **cannot** live in the settings entry, because `SettingsStore` refuses that value shape. They therefore go to **secure storage**, which widens **D111**'s list from two items to **four**. D111's own cell says why this is a row and not a detail: *"D54b's precedent is to list every item held, not only the obvious one."* | **Name an installation's project in the native files.** Cost: one build serves one installation, which is exactly what D114 refuses (*"several, non-overlapping"*), and a second installation needs a second build and a second store submission. **Or exempt the `AIza…` shape in the settings store** so the tuple can carry it. Cost: it weakens a fence (`settings.js`) that protects the *whole* app, to hold a value the repository already documents as *not* a secret — the wrong trade: move the value, not the fence. **Or keep the default app as the installation's and give telemetry a named app** built from a JS config object. Cost: the JS config object is where the apiKey would have to be written — which is D193's rule broken in the one place the repository's own test (the planted `apiKey` control in `mobile/src/app-config.test.js`) exists to catch. | **NOT ANSWERED — the owner asked a question instead, and it is recorded here verbatim:** *"firebase config should be built into the app, no?"* **The clarification that goes with it, and the row's state:** **yes** — the *telemetry* project's native config files **ARE built into the app**, delivered as **EAS file secrets** and applied at prebuild (§4.3, D200), which is why the default Firebase app **every** build carries **is** the Fugaro project's (D194). What **cannot** be built into a build is **each installation's own** Firebase connection — its Realtime Database URL and its web API key differ per installation and **are not known at build time** — so the recommendation stands that they are delivered **in the encrypted pairing payload from the user's own installation** (the CLI records both — G18) and held in **secure storage**, never in git, never in a fixture and never in the settings entry. **What the owner must still accept explicitly** is the consequence: it **changes D111's *two items per account*** to **four**, and it **narrows what the settings store's refusal of API-key-shaped values is protecting** — `SECRET_SHAPES` is **not** relaxed and a settings entry may still never carry an `AIza…` value, but this plan's stronger sentence, that the app stores no such value *anywhere*, no longer holds once the installation's own key lives in secure storage. **The row is OPEN, and it gates P7.1's *Depends on* line.** |
+| **D199** | **Which Firebase project do the app's native config files name, and where does the app's *other* Firebase configuration come from?** A build carries **one** `google-services.json` and **one** `GoogleService-Info.plist`, and whichever project they name is the app's **default** Firebase app. The app serves several installations (D114), and the tuple it stores carries **no** connection values (`ACCOUNT_FIELDS`), while the settings store **refuses an `AIza…` value** — `SECRET_SHAPES`'s `google-api-key` entry, applied by `judge`'s `SECRET_VALUE` branch. | **The native files name the Fugaro-operated telemetry project** (D194), so the **default app is the telemetry app** — the only project that can be compiled into one build serving every installation. **Every installation's Firebase becomes a named app** (`firebase.app(<account id>)`), built at runtime from the account. **The consequence was the owner's to accept, and it is the point of this row — the owner accepted it on 2026-10-19:** the tuple must gain the two connection values it does not carry today — the installation's Realtime Database URL and its web API key (`init_firebase.go` records both; G18 already reads them for the QR) — and they **cannot** live in the settings entry, because `SettingsStore` refuses that value shape. They therefore go to **secure storage**, which widens **D111**'s list from two items to **four**. D111's own cell says why this is a row and not a detail: *"D54b's precedent is to list every item held, not only the obvious one."* | **Name an installation's project in the native files.** Cost: one build serves one installation, which is exactly what D114 refuses (*"several, non-overlapping"*), and a second installation needs a second build and a second store submission. **Or exempt the `AIza…` shape in the settings store** so the tuple can carry it. Cost: it weakens a fence (`settings.js`) that protects the *whole* app, to hold a value the repository already documents as *not* a secret — the wrong trade: move the value, not the fence. **Or keep the default app as the installation's and give telemetry a named app** built from a JS config object. Cost: the JS config object is where the apiKey would have to be written — which is D193's rule broken in the one place the repository's own test (the planted `apiKey` control in `mobile/src/app-config.test.js`) exists to catch. | **Owner answered 2026-10-19: ACCEPTED.** The row was first answered with a question — *"firebase config should be built into the app, no?"* — and the question and its clarification are kept visible below (D129's habit); **the owner then accepted the recommendation**, consequence and all, and this cell is the record. **What the answer settles, in three parts — §4.4 states it item by item, and D111's record carries the amendment:** **(1) Built into the app:** the *telemetry* project's two native config files, naming **`fugaro-prod`** (D194), delivered as **EAS file secrets** and applied at prebuild (§4.3, D200), so the default Firebase app **every** build carries **is** the Fugaro project's. **(2) In the pairing payload:** **each installation's own** Firebase connection — its Realtime Database URL and its web API key. They differ per installation and **are not known at build time**, so no build can carry them: they arrive **inside the encrypted pairing payload from the user's own installation** (the CLI records both, `init_firebase.go`; G18 already reads them for the QR) and travel under **D113b**'s pairing key. **(3) In secure storage:** those same two values, per account, joined to D111's **ID token** and **per-pairing MAC key** — **four items per account**, never in git, never a fixture, never the settings entry, never a log line. **The consequence the owner accepted with the answer:** **D111's *two items per account* is now four**, and the settings store's refusal of API-key-shaped values protects **less than it did** — `SECRET_SHAPES` is **not** relaxed and a settings entry may still never carry an `AIza…` value, but this plan's stronger sentence, that the app stores no such value *anywhere*, no longer holds once the installation's own key lives in secure storage by design. **What the answer does not do:** it approves no task, and it does not settle whether the *product* uses the value — the app still wires **no** Firebase SDK until a task is approved. **The row is ANSWERED, and P7.1's *Depends on* line names a ruling rather than a question.** |
 | **D200** | **Expo Go, the development build, and how the native config files reach a build.** `@react-native-firebase`'s config plugin changes the **native** project, which Expo Go cannot carry. | **The app's development workflow becomes a development build; Expo Go stops being a supported way to run it, and the change is stated in `mobile/README.md` in the same commit that adds the plugin.** The native config files are **never committed** and reach a build as **EAS file secrets** (§4.3), named in `eas.json` by environment variable; a CI/EAS build that cannot see them **fails loudly** rather than building an app with no Firebase. Reason: silently building without the config produces an app whose crash reporting is dead in a way nobody notices until a crash is missing — the worst possible failure for a telemetry feature. | **Keep Expo Go working by making the plugin optional.** Cost: two native projects, two code paths, and a plugin whose presence depends on how the app was started — the configuration matrix is where telemetry bugs live. **Or commit the native config files.** Cost: forbidden. They name the project, and `.gitignore` plus the scan in §4.3 exist to make that structural rather than a matter of discipline. | **Owner answered 2026-10-19: yes, as recommended.** The app's development workflow becomes a **development build** and **Expo Go stops being a supported way to run the app**, stated in `mobile/README.md` in the same commit that adds the plugin; the two native config files are **never committed** and reach a build as **EAS file secrets**; and a build that cannot see them **fails loudly** rather than shipping an app with no Firebase. **This row approves no task and allocates no phase.** |
 
 ---
@@ -249,7 +260,7 @@ moment. The three consequences that decide half this plan:
    `mobile/README.md` says so in the same commit that adds the plugin.
 2. **The native config files are what names the project.** No `apiKey` is written in
    JavaScript anywhere: the JS side asks the native module, which read the file. **That is
-   why D199's recommendation is possible at all** — and why the alternative (a JS config
+   why D199's accepted answer is possible at all** — and why the alternative (a JS config
    object for the named app) would put an `AIza…` value in the app's source, which
    the planted `apiKey` control in `mobile/src/app-config.test.js` refuses today.
 3. **The native files are per-build artifacts, not source.** They are generated in the
@@ -257,7 +268,8 @@ moment. The three consequences that decide half this plan:
    key. §4.3 is how they are kept out of git and how a build gets them. **They ARE built into
    the app** — that is what the plugin does, and it is the answer to the owner's question on
    D199: the *telemetry* project's config is compiled in. **An installation's own** Firebase
-   connection is the one thing that cannot be, and D199 is where that is decided.
+   connection is the one thing that cannot be, and D199 is where that was decided — **the
+   owner accepted it on 2026-10-19**, and §4.4 states the resulting record item by item.
 
 ### 4.2 The flags, named exactly
 
@@ -384,6 +396,40 @@ D200). The EAS file secret is the one route where the file exists **only** on th
 machine, is scoped to the project's own build profiles, and is never in a checkout, a
 fixture, a log or a pull request — the same property `docs/pending-workflows/README.md`
 describes for the jobs that must not hold material on every pull request.
+
+### 4.4 What is built in, what arrives in the pairing payload, and what is in secure storage (D199, accepted)
+
+**D199 is the row that asked where the app's Firebase configuration comes from, and the owner
+accepted the recommendation on 2026-10-19.** The answer splits the configuration in two, and
+the split is the whole of the row: **what is the same for every installation is compiled in;
+what is different for every installation cannot be, and travels the pairing's own encrypted
+path into the phone's secure storage.**
+
+| | What it is | How it gets there | Where it is written down |
+|---|---|---|---|
+| **Built into the build** | **The telemetry project's two native config files** — `mobile/google-services.json` and `mobile/GoogleService-Info.plist`, naming **`fugaro-prod`** (D194). The plugin applies them at prebuild, so the app's **default** Firebase app is the Fugaro telemetry project for every installation, and no `apiKey` is ever written in JavaScript (§4.1). | **EAS file secrets**, named by `eas.json`'s profiles and applied on the build machine — §4.3's four-part rule: ignored at both `.gitignore`s, scanned by a tracked-files test with a planted control, refused by `app.config.js` when a profile carries neither, and never read by an agent. | **Nowhere in this repository.** Never committed, never a fixture, never a log line, never a pull request. |
+| **Inside the pairing payload** | **The installation's own Firebase connection** — its **Realtime Database URL** and its **web API key**. They differ per installation and **are not known at build time**, so no build can carry them. | **The encrypted pairing payload** the user's own installation hands over when an account is added by hand. The CLI already records both (`init_firebase.go`), and **G18** already reads them for the QR. They travel under **D113b**'s pairing key — the same key D111's item (2) is. | **Nowhere in this repository**, and nowhere on the wire unencrypted. |
+| **In the phone's secure storage** | **Four items per account** — D111's two, plus D199's two: **(1)** the Firebase Auth **ID token**, **(2)** the **per-pairing MAC key** (D113b's option (a)), **(3)** the installation's **Realtime Database URL**, **(4)** the installation's **web API key**. | **Platform secure storage** (Keychain / Keystore), the same store D111's two already use. Never logged, never a fixture, never a settings entry — `SettingsStore`'s `SECRET_SHAPES` and `FORBIDDEN_KEY_SEGMENTS` are unchanged. | **D111's row** in [mobile/reconciliation.md](../mobile/reconciliation.md) and **Global Constraint 4** in [mobile/implementation-plan.md](../mobile/implementation-plan.md), each carrying a **dated amendment of 2026-10-20** that records the owner's acceptance of 2026-10-19 and keeps the original *two items* text visible. |
+
+**Why the connection values cannot be built in.** A build carries **one**
+`google-services.json` and **one** `GoogleService-Info.plist`, and they name **one** project.
+The app serves several installations (**D114**, *"several, non-overlapping"*), and each
+installation's database URL and web API key are its own; a build that named one installation's
+would serve that installation and no other — which is the alternative D199 refused, at the
+cost of a build and a store submission per installation.
+
+**What this changes, and what it does not.** It changes **D111's record** from *two items per
+account* to **four**; D111's own cell says why the list is exhaustive rather than illustrative
+(*"D54b's precedent is to list every item held, not only the obvious one"*). It **narrows what
+the settings store's refusal of API-key-shaped values protects**: `SECRET_SHAPES`'s
+`google-api-key` entry and `judge`'s `SECRET_VALUE` branch are **not relaxed**, a settings
+entry may still never carry an `AIza…` value, and the store's own fence is exactly as it was;
+what no longer holds is this plan's **stronger** sentence, that the app stores no such value
+*anywhere*, because the installation's own key now lives in secure storage **by design**. **No
+value is written into this repository by that**: this section names the two values' *kinds*
+and never a value, and nothing here is a secret-shaped literal. **And no task is approved by
+it**: D199's acceptance is a ruling, not a green light, and the app still wires **no** Firebase
+SDK until Phase 7 is approved and P7.1 is implemented.
 
 ---
 
@@ -517,11 +563,14 @@ and it is not what the owner chose; its cost (nothing is reported about the popu
 never answers the sheet) is what the owner weighed against this one. **The plan records the
 trade and does not re-argue it.**
 
-**The device holds no consent value, so D111 is untouched by consent.** The key this section
+**The device holds no consent value, so consent adds nothing to D111.** The key this section
 used to reserve — `telemetry.consent`, in the settings store and deliberately not a `secret.`
-key — **is not reserved any more**: nothing is stored and nothing is read back. D111's list
-widens **only** if the owner answers D199 as recommended, and it widens by the installation's
-two connection values, not by anything here.
+key — **is not reserved any more**: nothing is stored and nothing is read back. **D111's list
+widens by D199's acceptance (2026-10-19) and by nothing here**: the owner took the
+recommendation, so D111's *two items per account* becomes **four** — the installation's
+Realtime Database URL and its web API key join the ID token and the per-pairing MAC key
+(§4.4) — and those two new items arrive in the **pairing payload**, not from consent.
+Consent itself still stores nothing.
 
 ## 7. What is and is NOT sent (D196)
 
@@ -813,10 +862,10 @@ MVP's tasks keep their own ordering.
 *Five tasks, each independently mergeable, each with a reviewer tier and a verification that
 runs with no device, no live cloud and no network. The phase is **proposed**: no task here may
 start before the owner passes [mobile/implementation-plan.md](../mobile/implementation-plan.md)'s
-approval gate for it. **The rows the tasks wait on are answered now — D193, D194, D195, D196,
-D197, D198 and D200 on 2026-10-19 — and D199 is the one still open**, so P7.1's "Depends on"
-line is the only one that still names a question rather than a ruling. **Answering a row
-approved no task**: the gate is unchanged, and Phase 7 stays PROPOSED.*
+approval gate for it. **Every row the tasks wait on is answered — D193 to D200, all eight, on
+2026-10-19, D199's acceptance last of all** — so **no "Depends on" line below names an open
+question**; each names a ruling. **Answering a row approved no task**: the gate is unchanged,
+and Phase 7 stays PROPOSED.*
 
 ### Task P7.1: The config plugin, the native files, and the development build
 
@@ -830,10 +879,12 @@ for), and `mobile/src/app-config.test.js` (the tracked-file and ignore rules of 
 extension of the existing credential walk to `app.config.js`, and **the ad-ID test of §7.4**,
 which reads the plugin options, `mobile/firebase.json` and — when they exist — the generated
 `AndroidManifest.xml` and `Podfile.lock`).
-**Depends on.** **D199 — the one row still open**, and the only thing P7.1 waits on that is not
-settled (D200 answered yes, and **D194 answered `fugaro-prod`**, the project that already
-exists, so the "project before its file" half is done the day the owner registers the two apps
-in it). **PR #675 is not a dependency**: it is merged, and P7.1 modifies the two files it added
+**Depends on.** **D199 — accepted 2026-10-19**, the row that decides which project the native
+files name, which app is the default, and where an installation's own connection comes from
+(§4.4). **It was the last row P7.1 waited on, and it is answered**, so this line names a ruling
+rather than a question — as does every other dependency: D200 answered yes, and **D194 answered
+`fugaro-prod`**, the project that already exists, so the "project before its file" half is done
+the day the owner registers the two apps in it. **PR #675 is not a dependency**: it is merged, and P7.1 modifies the two files it added
 where they stand.
 **Verification.** `cd mobile && npm test` — the extended `app-config.test.js`: both native
 paths are untracked and ignored; `app.config.js` contains no `AIza…`-shaped value (planted
@@ -846,7 +897,7 @@ permission removal is the plugin's own option) is resolved at this task's first 
 reading the pinned `@react-native-firebase` source, and §4.2's table is corrected in that commit
 if a name is wrong.
 **Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.** It is the change that
-decides which project the app's default Firebase app is (D199), and it is the change that
+decides which project the app's default Firebase app is (D199, accepted 2026-10-19), and it is the change that
 would put a native config file in the tree if it were wrong.
 
 ### Task P7.2: The always-on statement, and the link
@@ -932,8 +983,8 @@ step of 111, 112 or 113.**
 ### 10.1 Order and levels
 
 ```
-D193, D194, D200 (answered) ─┐        D195, D196, D197 (answered)
-D199 (STILL OPEN) ───────────┴─► P7.1 ──┬─► P7.2 ──┐
+D193, D194, D199, D200 (answered) ─┐   D195, D196, D197 (answered)
+                                    ┴─► P7.1 ──┬─► P7.2 ──┐
 P0.3 (shared/url, merged) ──────────────┘          ├─► P7.4
                                        P7.3 ───────┴─► P7.5
 #675 (merged: app.config.js, eas.json) ──► P7.1
@@ -941,9 +992,8 @@ P0.3 (shared/url, merged) ──────────────┘         
            the app's paragraph and the always-on sentence) ──► P7.4
 ```
 
-**Seven of the eight rows are answered; D199 is the one that is not**, and it is the only edge
-above that is a question rather than a ruling. **Every other edge is a ruling, and none of them
-approves a task** — the gate in
+**All eight rows are answered — D199's acceptance on 2026-10-19 was the last — so every edge
+above is a ruling rather than a question. None of them approves a task** — the gate in
 [mobile/implementation-plan.md](../mobile/implementation-plan.md) still has to be passed.
 
 | Level | Tasks | Reviewer | Files touched |
@@ -992,9 +1042,11 @@ none** (§13): the owner decides whether one is wanted when the first task lands
 - **No Terraform, no `fugaro` command, no Cloud Run job, no workflow.** The only live action
   in the whole phase is the owner creating the Firebase project (D194) and uploading two file
   secrets (§4.3).
-- **No credential in the app beyond D111's list, widened only by D199 and only if the owner
-  answers it as recommended.** The app's D111 items stay in platform secure storage; the
-  consent boolean is deliberately **not** one of them (§6).
+- **No credential in the app beyond D111's list, as D199's acceptance widens it — four items
+  per account, and no more.** The app's D111 items and the installation's two connection values
+  all stay in platform secure storage, and none of them is ever in a settings entry, a fixture,
+  a log line or this repository (§4.4); the consent boolean is deliberately **not** one of them
+  (§6).
 - **No `belong` anywhere.** No fixture, no project, no read.
 - **No change to any existing mobile task's ordering.** Phase 3, Phase 6 and Phase 7 are
   independent, and the voiceless MVP is unaffected (D198).
@@ -1034,8 +1086,13 @@ touched.**
 
 | Path | The edit |
 |---|---|
-| `docs/mobile/README.md` | The index: one row for this plan in the file table, and a status sentence saying the plan exists, that it is **plan only**, that **the owner answered seven of the eight rows on 2026-10-19** — **D193 to D198, and D200**, with **D199 still open** — and that this work takes **D193–D200** and **checks 111–113**. The "numbers this work holds" table gains the two rows. |
-| `docs/mobile/implementation-plan.md` | **Phase 7 — PROPOSED, not approved**: the phase summary row, the five tasks with their files, dependencies, verification and reviewer tier, the level table, and the check rows; a step **7b** in the approval gate, which now names **D199 as the one row still owed**; an open item; and the cross-task dependency rows. **P7.2 is rewritten to D195's answer** (the always-on statement and the link, in place of the consent gate), and the check rows to **111/112/113**'s new text. |
+| `docs/mobile/README.md` | The index: one row for this plan in the file table, and a status sentence saying the plan exists, that it is **plan only**, that **the owner answered all eight rows on 2026-10-19** — **D193 to D200**, **D199 accepted last** — and that this work takes **D193–D200** and **checks 111–113**. The "numbers this work holds" table gains the two rows. **Re-edited 2026-10-20 for D199's acceptance**; the status block is now dated to that answer. |
+| `docs/mobile/implementation-plan.md` | **Phase 7 — PROPOSED, not approved**: the phase summary row, the five tasks with their files, dependencies, verification and reviewer tier, the level table, and the check rows; a step **7b** in the approval gate, which now records that **every row it names is answered, D199's acceptance last**, and approves nothing; an open item; and the cross-task dependency rows. **Re-edited 2026-10-20**: **Global Constraint 4**'s *two items per account* carries a dated amendment to **four** (§4.4). **P7.2 is rewritten to D195's answer** (the always-on statement and the link, in place of the consent gate), and the check rows to **111/112/113**'s new text. |
+| `docs/mobile/reconciliation.md` | **D111's own row**, amended 2026-10-20 for **D199's acceptance**: the recommendation column's *"Exactly two items, per account"* keeps its original text, and a **dated note** under it records that the owner accepted D199 on 2026-10-19, that the list is now **four** — the ID token, the per-pairing MAC key, the installation's **Realtime Database URL** and its **web API key** — and that the two new items arrive in the **pairing payload** and live in the same secure storage. The two later sentences that repeat *"two items per account"* (the tension-(b2) note and the summary line) carry the same dated amendment. |
+| `docs/mobile/implementation-plan.md` (**Global Constraint 4**) | The constraint that says the app holds **exactly two items per account**, amended 2026-10-20 in the style **Global Constraint 12** already uses: the original sentence stays, and a dated note records D199's acceptance and the **four** items, with §4.4 of this plan as the record and the pairing payload named as where the two new ones come from. |
+| `docs/mobile/design/push-notifications.md` | The two sentences that say the phone holds *"exactly two items per account 'in these words and no wider ones'"*, each amended 2026-10-20 with a dated note: the words are D111's and the list they close is now **four**, widened by D199's acceptance and by nothing in that document. |
+| `docs/mobile/design/voice-evaluation-switch.md` | The sentence that quotes Global Constraint 4's *"exactly two credential items per account"*, amended 2026-10-20 with a dated note pointing at the same **four**-item record. |
+| `docs/mobile/functional-spec-reconciliation.md` | The row that cites **D111 / tension (b2)** for pairing-token lifetime and revocation, amended 2026-10-20 with a dated note: the *two items per account* it repeats is now **four** under D199's acceptance. |
 | `docs/coordinator/README.md` | The **numbers table** — the one table in this repository that lists every work's block. The telemetry plan's block is registered there the way the website redesign's is, and the row that read *"**D193 onward** — free"* now reads *"**D201 onward**"*, keeping the original words visible in a dated parenthetical (D129's habit). Its checks row gains the dated note that **111, 112 and 113** were taken on 2026-10-19 from the first free number after every claim — **105–109 are reserved and 110 is claimed**, so none of either is taken and **114 onward stays free**. |
 | `internal/cli/docs_mobile_plan_test.go` | The Phase 6 status pin, **rescoped rather than dodged**. Its flag-word half banned `NOT APPROVED` anywhere in the plan, which was a stand-in for *"no approved phase may still claim to be unapproved"* and held only while Phase 6 was the last phase written. Phase 7 is written and genuinely unapproved, so the ban is now applied **per line** to the lines naming `Phase 6` or `P6.`, and the **converse** is asserted for Phase 7 (its heading carries `PROPOSED 2026-10-19` and `NOT APPROVED`; each `P7.n` row carries its own tag). All four mutations were run. |
 | `internal/cli/docs_coordinator_test.go` | The coordinator's block table gains the `D193–D200` entry, read from `docs/mobile/README.md` the way the redesign's is read from its own README. |
@@ -1088,12 +1145,13 @@ line below is a claim this plan makes **without** a source in this tree:
    which, and the plan's requirement is the same either way (the file exists only on the build
    machine).
 3. **`@react-native-firebase`'s support for a second Firebase project in one binary.** D199's
-   recommendation needs the **default** app to be the telemetry project and each installation
-   to be a **named** app (`firebase.app(<account id>)`). The plugin's config, and how a named
-   app is given a project the binary does not carry a native file for, are **not verified
-   here**. P7.1's first commit reads the SDK's own documentation for it, and if the named-app
-   route is unavailable, **D199's alternative is what the owner is asked to weigh** — the plan
-   states both rather than assuming the mechanism.
+   **accepted** answer needs the **default** app to be the telemetry project and each
+   installation to be a **named** app (`firebase.app(<account id>)`). The plugin's config, and
+   how a named app is given a project the binary does not carry a native file for, are **not
+   verified here**. P7.1's first commit reads the SDK's own documentation for it, and if the
+   named-app route turns out to be unavailable, **the plan's alternative is a new question for
+   the owner** — D199 is answered, and re-opening it is the owner's to do, not P7.1's — the plan
+   states both routes rather than assuming the mechanism.
 4. **`mobile/app.config.js` and `mobile/eas.json`.** They are P4.4's, merged to `main` by **PR
    #675** since this plan was written. §4.3's guard and §10's P7.1 are written against the shape
    that PR landed — the dynamic `({ config }) => …` export, the three-state `EAS_BUILD` /
@@ -1135,15 +1193,18 @@ line below is a claim this plan makes **without** a source in this tree:
 *Status of this document: a plan. Nothing is built, nothing is approved, and no code,
 configuration or workflow *of the app, the website, the CLI or CI* is written by the change
 that adds it — it adds this document, the entries registering it, and the one Go test that pins
-them (§13). **The owner answered seven of
-the eight rows on 2026-10-19**: **D193** (the ruling the plan is built on — Crashlytics and
+them (§13). **The owner answered all eight rows on
+2026-10-19**: **D193** (the ruling the plan is built on — Crashlytics and
 Analytics, reporting to **`fugaro-prod`**, a Firebase project Fugaro operates), **D194**,
 **D195** (**always on** — no switch, no sheet, against this plan's opt-in recommendation,
-which stays visible in the row), **D196**, **D197**, **D198** and **D200** (each as
-recommended). **D199 is the one row still open** — the owner asked whether the Firebase config
-should be built into the app, and the row carries the question, the answer to it and the one
-consequence still to be accepted. **Answering a row approves no task**: Phase 7 stays
-PROPOSED, its step **7b** names D199 as the row still owed, and no task of P7.1–P7.5 may
+which stays visible in the row), **D196**, **D197** and **D198** (each as
+recommended), **D199 — accepted** (the telemetry project's two native config files are
+**built into the app** as EAS file secrets; **each installation's own** Firebase connection
+cannot be, so it arrives in the **encrypted pairing payload** and lives in **secure storage**,
+which amends D111 from two items per account to **four** — §4.4 states the record), and
+**D200** (as recommended). **Answering
+a row approves no task**: Phase 7 stays PROPOSED, its step **7b** records that every row it
+names is answered while approving nothing, and no task of P7.1–P7.5 may
 start. This work takes **D193–D200** — the next free decision block — and **checks 111, 112
 and 113**, the first free numbers after every claim (105–109 are reserved and 110 is
 claimed), leaving 114 onward free. Cheers: none of the three checks has

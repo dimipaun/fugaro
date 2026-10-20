@@ -235,15 +235,18 @@ func TestTelemetryPlanTakesTheNextFreeDecisionBlock(t *testing.T) {
 		}
 	}
 
-	// The block is now seven answered rows and one open one. The plan must say
-	// both, because the difference is what a reader takes to the owner: an
-	// answered row is a ruling a task can be built on, and D199 is the row that
-	// governs P7.1.
+	// The block is answered in full as of 2026-10-19, D199 last. The plan has to
+	// say so in the words the block's own list of decisions uses, because that
+	// list is what a reader takes to the owner: an answered row is a ruling a
+	// task can be built on, and D199 is the row that governed P7.1.
 	if !strings.Contains(doc, "D193 is already answered") && !strings.Contains(doc, "**D193 is answered**") && !strings.Contains(doc, "answered 2026-10-19") {
 		t.Errorf("%s does not record that D193 is answered by the owner's ruling of 2026-10-19: the whole plan is built on that ruling, and a block whose first row is answered must say so", telemetryPlan)
 	}
-	if !strings.Contains(doc, "D199 is the one row still open") {
-		t.Errorf("%s does not record that D199 is the one row of D193–D200 the owner has not answered: the owner answered seven of the eight on 2026-10-19, D199 gates P7.1's \"Depends on\" line, and a block that reads as wholly answered would let P7.1 start on a recommendation — while a block that reads as wholly open would hide the seven rulings this plan is now built on", telemetryPlan)
+	if !strings.Contains(doc, "D199: accepted, owner 2026-10-19") {
+		t.Errorf("%s does not carry the line \"D199: accepted, owner 2026-10-19\" in its list of decisions: D199 is the row that decides which project the native config files name and where an installation's own connection comes from, the owner accepted it on 2026-10-19, and a list that still reads as seven-answered-one-open sends a reader to the gate for an answer that is already in §3", telemetryPlan)
+	}
+	if strings.Contains(doc, "D199 is the one row still open") {
+		t.Errorf("%s still says D199 is the one row still open: the owner accepted it on 2026-10-19, and the sentence is the one a reader would take to the owner as a reason not to start P7.1", telemetryPlan)
 	}
 }
 
@@ -263,15 +266,17 @@ func telemetryAnswerCell(t *testing.T, row string) string {
 }
 
 // TestTelemetryPlanKeepsNoAnsweredRowOpen is the pin the owner's answers of
-// 2026-10-19 need. The owner answered seven of the block's eight rows — D193,
-// D194, D195 (always on, AGAINST the plan's opt-in recommendation), D196, D197,
-// D198 and D200 — and D199 is the one still open. Two failures are possible and
-// this test catches both: an answered row left reading as open (which sends the
-// owner back to answer a question they have answered, and hides a ruling the
-// plan is now built on), and the block described in prose as still open while
-// the rows say otherwise. The recommendation the owner overruled stays visible
-// in D195's row, which is checked here too: superseding a recommendation is not
-// deleting it.
+// 2026-10-19 need. The owner answered all eight rows of the block — D193, D194,
+// D195 (always on, AGAINST the plan's opt-in recommendation), D196, D197, D198,
+// D200, and D199 ACCEPTED last, the row that asks whether the Firebase config is
+// built into the app. Two failures are possible and this test catches both: an
+// answered row left reading as open (which sends the owner back to answer a
+// question they have answered, and hides a ruling the plan is now built on), and
+// the block described in prose as still open while the rows say otherwise. Two
+// things stay visible and are checked here too: the recommendation D195's answer
+// overruled, and the question D199's answer was first given in place of — since
+// superseding a recommendation, or answering a question, is not deleting
+// either.
 func TestTelemetryPlanKeepsNoAnsweredRowOpen(t *testing.T) {
 	doc := readDoc(t, telemetryPlan)
 	decisions := planSection(t, doc, "## 3. Owner decisions")
@@ -286,6 +291,7 @@ func TestTelemetryPlanKeepsNoAnsweredRowOpen(t *testing.T) {
 		{"D196", "as recommended"},
 		{"D197", "as recommended"},
 		{"D198", "SECOND build"},
+		{"D199", "ACCEPTED"},
 		{"D200", "as recommended"},
 	}
 	for _, tc := range answered {
@@ -303,25 +309,24 @@ func TestTelemetryPlanKeepsNoAnsweredRowOpen(t *testing.T) {
 		}
 	}
 
-	// D199 is the exception, and it has to read as one: the owner asked a
-	// question instead of answering, so the row carries the question VERBATIM,
-	// the answer to it, and the consequence still to be accepted. A row that
-	// quietly reads as recommended here would let P7.1 start on the plan's own
-	// recommendation — the one thing the gate forbids.
+	// D199's answer was first given as a question, and the question stays in the
+	// row (D129's habit): the owner asked "firebase config should be built into
+	// the app, no?" and then accepted the recommendation. What must NOT survive
+	// is the row reading as an open question, which the loop above already
+	// catches; what must survive is the question itself, so that the answer is
+	// legible against what it answered.
 	d199 := telemetryAnswerCell(t, telemetryRowWith(t, decisions, "| **D199** |"))
 	for _, want := range []string{
-		"NOT ANSWERED",
-		"OPEN",
 		"firebase config should be built into the app, no?",
 		"secure storage",
 	} {
 		if !strings.Contains(d199, want) {
-			t.Errorf("%s's D199 row does not carry %q: the owner asked a question instead of answering, so the row has to hold the question verbatim, the answer to it (the telemetry config IS built into the app; an installation's own Firebase connection cannot be) and the consequence the owner still has to accept", telemetryPlan, want)
+			t.Errorf("%s's D199 row does not carry %q: the owner answered the question by accepting the recommendation, and the question and the secure-storage consequence it names have to stay legible in the row a reader lands on", telemetryPlan, want)
 		}
 	}
 
-	// And no prose in the plan may describe the block as open when seven of its
-	// rows are answered. Each string below was true before 2026-10-19 and is
+	// And no prose in the plan may describe the block as open when every one of
+	// its rows is answered. Each string below was true before 2026-10-19 and is
 	// false now; leaving one in sends a reader to the gate for answers that are
 	// already in §3.
 	for _, stale := range []string{
@@ -330,12 +335,140 @@ func TestTelemetryPlanKeepsNoAnsweredRowOpen(t *testing.T) {
 		"D194–D200 are open for the owner",
 		"D194–D200 open for the owner",
 		"each with a recommendation",
+		"D199 is the one row still open",
+		"seven of the eight rows are answered",
+		"Seven of the eight rows are answered",
+		"seven of the eight are answered",
 	} {
 		if strings.Contains(telemetryPlain(doc), telemetryPlain(stale)) {
-			t.Errorf("%s still says %q: the owner answered seven of the eight rows on 2026-10-19, and a sentence that still describes the whole block as open is a sentence that hides the rulings this plan is built on", telemetryPlan, stale)
+			t.Errorf("%s still says %q: the owner answered all eight rows on 2026-10-19, D199's acceptance last, and a sentence that still describes the whole block as open is a sentence that hides the rulings this plan is built on", telemetryPlan, stale)
 		}
 	}
 }
+
+// TestTelemetryPlanRecordsWhatIsBuiltInAndWhatThePairingPayloadCarries is the
+// pin D199's acceptance needs. The row was answered with a question — "firebase
+// config should be built into the app, no?" — and the answer is a SPLIT, not a
+// yes or a no: the telemetry project's two native config files are the same for
+// every installation and so are compiled in, while each installation's own
+// Firebase connection differs per installation and is unknown at build time, so
+// it cannot be. A plan that records only half of that split is wrong in one of
+// two directions: "the config is built in" alone would have a build carry one
+// installation's database URL and web API key, and "it is not built in" alone
+// would leave the SDKs with no project at all. §4.4 is where the split is
+// written, so every assertion here is scoped to §4.4 rather than to the
+// document: the same words appear in §3's row and in §4.1, and a document-wide
+// Contains would stay green with §4.4's table deleted.
+//
+// Two further failures are caught here. The section must name the mechanism on
+// each side of the split (EAS file secrets for what is compiled in; the
+// encrypted pairing payload, the CLI's own record and G18 for what is not),
+// because a split with no mechanism is an intention. And no line of the plan
+// may carry a secret-shaped literal: the whole point of D199's answer is that
+// the installation's web API key lives in secure storage and in the pairing
+// payload, so the plan names the value's KIND and never a value.
+//
+// Mutations (verified, run and restored): delete §4.4's "Inside the pairing
+// payload" row; delete "Realtime Database URL" from §4.4; delete "EAS file
+// secrets" from §4.4; change "four items per account" to "two items per
+// account" in §4.4; delete "init_firebase.go" from §4.4; delete the dated
+// amendment from docs/mobile/reconciliation.md's D111 row; delete the dated
+// amendment from Global Constraint 4; or write a 39-character `AIza…` value
+// into §4.4 — this test fails, each of them.
+func TestTelemetryPlanRecordsWhatIsBuiltInAndWhatThePairingPayloadCarries(t *testing.T) {
+	doc := readDoc(t, telemetryPlan)
+	s44 := planSubsection(t, doc, "### 4.4 What is built in, what arrives in the pairing payload, and what is in secure storage (D199, accepted)")
+
+	// The three groups, named as the row's answer names them.
+	for _, want := range []string{
+		"Built into the build",
+		"Inside the pairing payload",
+		"In the phone's secure storage",
+	} {
+		if !strings.Contains(telemetryPlain(s44), want) {
+			t.Errorf("%s §4.4 does not carry the %q group: D199's answer is a split into what is compiled in, what arrives in the pairing payload and what is held in secure storage, and a reader who cannot find one of the three cannot tell which value goes where", telemetryPlan, want)
+		}
+	}
+
+	// What is compiled in: the telemetry project's two native files, delivered
+	// as EAS file secrets.
+	for _, want := range []string{
+		"google-services.json",
+		"GoogleService-Info.plist",
+		"EAS file secrets",
+		"fugaro-prod",
+	} {
+		if !strings.Contains(s44, want) {
+			t.Errorf("%s §4.4 does not name %q among what is built into the build: the same-for-every-installation half of D199's answer is the telemetry project's two native config files, delivered as EAS file secrets and naming the project the owner answered for (D194)", telemetryPlan, want)
+		}
+	}
+
+	// What arrives in the pairing payload: the installation's own connection,
+	// which no build can carry.
+	for _, want := range []string{
+		"encrypted pairing payload",
+		"Realtime Database URL",
+		"web API key",
+		"not known at build time",
+		"init_firebase.go",
+		"G18",
+	} {
+		if !strings.Contains(s44, want) {
+			t.Errorf("%s §4.4 does not name %q in the pairing-payload half of D199's answer: the installation's own Firebase connection differs per installation and is unknown at build time, so it is delivered inside the encrypted pairing payload the user's own installation hands over — and the CLI already records both values, which G18 reads for the QR", telemetryPlan, want)
+		}
+	}
+
+	// What is in secure storage: four items, and the settings store's fence is
+	// NOT relaxed to hold them. SECRET_SHAPES is matched against the raw text,
+	// not telemetryPlain's flattening, because the underscores are what a reader
+	// greps for.
+	if !strings.Contains(s44, "SECRET_SHAPES") {
+		t.Errorf("%s §4.4 does not name SECRET_SHAPES: the two new items must NOT be held in the settings entry, and the store's refusal of an API-key-shaped value is the reason D199's answer puts them in secure storage instead of relaxing that fence", telemetryPlan)
+	}
+	if !strings.Contains(telemetryPlain(s44), "four items per account") {
+		t.Errorf("%s §4.4 does not say the app holds four items per account: D199's acceptance is what amends D111's record from two to four, and the section that states the new record is the section that has to state its size", telemetryPlan)
+	}
+	for _, want := range []string{
+		"ID token",
+		"per-pairing MAC key",
+		"Realtime Database URL",
+		"web API key",
+		"Keychain / Keystore",
+	} {
+		if !strings.Contains(s44, want) {
+			t.Errorf("%s §4.4 does not name %q among the four items in secure storage: D54b's precedent is to list every item held and not only the obvious one, and a list that stops at D111's two hides the two D199 adds", telemetryPlan, want)
+		}
+	}
+
+	// No secret-shaped literal, anywhere in the plan. The plan names the two
+	// values' KINDS — a Realtime Database URL and a web API key — and the
+	// repository's own rule is that no `AIza…` value appears anywhere it ships.
+	if m := telemetryAPIKeyRE.FindString(doc); m != "" {
+		t.Errorf("%s carries the secret-shaped literal %q: the plan names the installation's web API key as a KIND and never as a value, because the whole of D199's answer is that the value lives in the pairing payload and in secure storage and nowhere in this repository", telemetryPlan, m)
+	}
+
+	// And the two documents that repeat D111's record carry the amendment. A
+	// plan that amends a constraint only in its own section leaves the constraint
+	// itself reading "exactly two items", which is the record a task is built on.
+	for _, tc := range []struct{ path, marker string }{
+		{"docs/mobile/reconciliation.md", "D111"},
+		{"docs/mobile/implementation-plan.md", "Global Constraint 4"},
+	} {
+		body := readDoc(t, tc.path)
+		if !strings.Contains(telemetryPlain(body), "four items per account") {
+			t.Errorf("%s does not record that D111's list is now four items per account: D199's acceptance amends a record that document repeats, and an amendment kept in one file while the constraint it amends still reads \"exactly two items\" is a record that disagrees with itself", tc.path)
+		}
+		if !strings.Contains(body, "2026-10-20") {
+			t.Errorf("%s carries no dated amendment for D199's acceptance: the repository's habit is to keep the superseded text visible under a dated note (D129), and an undated change to a constraint a task is built on cannot be told from the text it replaced", tc.path)
+		}
+	}
+}
+
+// telemetryAPIKeyRE matches a Google API key VALUE, not the shape's name: 39
+// characters starting `AIza`, which is `SECRET_SHAPES`'s own `google-api-key`
+// pattern. The plan writes the ellipsis form (`AIza…`) when it names the shape,
+// which is not a value and does not match.
+var telemetryAPIKeyRE = regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`)
 
 // telemetryRangeRE finds a decision-number range as the documents write it:
 // "D1–D20", "D180–D192", "**D193–D200**", "D39–D54b". It needs the dash, so an

@@ -913,7 +913,11 @@ channel does not give. Three facts bound what the phone can do:
   **ID token and the per-pairing MAC key** with it through a **keychain access group** — which
   **touches D111**: tension (b2) resolved that the phone holds exactly two items per account
   "in these words and no wider ones", and a second process reading them is a widening of where
-  they may be reached, not just where they are stored. **Q6 now asks this**, with the
+  they may be reached, not just where they are stored. **(Amended 2026-10-20: the telemetry
+  plan's **D199** was accepted on 2026-10-19, so D111's list is now **four items per account**
+  — the ID token, the per-pairing MAC key, the installation's Realtime Database URL and its web
+  API key. **This paragraph is unaffected**: Q6's question is about *where* the items may be
+  reached, not how many there are, and it now covers four rather than two.)** **Q6 now asks this**, with the
   alternatives (a visible generic payload instead of local text; a publisher relay that renders
   the notification server-side; or iOS notifications off, which is the honest baseline).
   Android has no such constraint (a foreground service or the app's own notification builder
@@ -1561,7 +1565,9 @@ really compose the lock-screen text?**
     **visible** app-composed alert needs an NSE (`mutable-content`) — which has to authenticate,
     which means sharing `idToken`/`macKey` through a **keychain access group**, which **touches
     D111** ("Exactly two items, per account, both in platform secure storage (Keychain / Keystore)
-    … and nothing else"). **Q6 now asks the owner for that.**
+    … and nothing else" — **amended 2026-10-20: the list is now **four items per account** under
+    the telemetry plan's **D199**, accepted 2026-10-19; Q6's question is unchanged and covers
+    all four**). **Q6 now asks the owner for that.**
     Where the platform allows is "Android freely; iOS only with an NSE and a D111 amendment".
 - *(ii) Category plus a random opaque id*, mapped server-side to the detail: useful only if the
   app ever needs to know *which* thing changed before it can read (it does not), and it adds a
