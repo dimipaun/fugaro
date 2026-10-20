@@ -2533,10 +2533,10 @@ func escapedNameRune(r rune) string {
 const printableNameMax = safetext.FieldMax
 
 // normalisedSpaces is s with Field's whitespace rule applied and nothing else.
-// Field does the same and then drops the format characters (and the invalid
-// UTF-8) as well; those are kept here, because printableName escapes them
-// rather than dropping them, so that two names that differ in one still read
-// as two.
+// Field does the same and then drops the characters the escape set covers (the
+// format characters among them) and the invalid UTF-8 as well; those are kept
+// here, because printableName escapes them rather than dropping them, so that
+// two names that differ in one still read as two.
 func normalisedSpaces(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
