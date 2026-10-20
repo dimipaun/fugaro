@@ -100,9 +100,10 @@
    * number of its own, which is what `website/test/stacking.mjs` refuses a content rule. A
    * positioned block with no `z-index` paints
    * with every other such block in tree order, and the header is the first of them: a page
-   * that draws a positioned block after it — `ArchitectureDiagram.astro`'s steps are what
-   * its arrows are placed against — had that block painted across an open menu, which is the
-   * owner's reading of 2026-10-19 on `/how-it-works/` at phone width. So the header takes
+   * that draws a positioned block after it — the retired four-step flow's steps are what its
+   * arrows were placed against, and the homepage's slider is the positioned block that stands
+   * where they stood — had that block painted across an open menu, which is the owner's
+   * reading of 2026-10-19 on `/how-it-works/` at phone width. So the header takes
    * this layer and becomes a stacking context, which paints it, panel included, above every
    * block a page draws, on every page and at every width.
    *

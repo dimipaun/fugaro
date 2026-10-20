@@ -1030,9 +1030,11 @@ down).
   Item 4 asks for the homepage's four-step flow and for the HOW IT WORKS page to "open with the
   SAME diagram (one shared component, not two copies)". That page opens with the run's own
   diagram now: one drawing of the run — the draft's `[fix ─► review(2)]` loop and all — with
-  the same facts in words under it, drawn by `RunDiagram.astro`. The homepage keeps
+  the same facts in words under it, drawn by `RunDiagram.astro`. The homepage kept
   `ArchitectureDiagram.astro` and its four quoted captions, and the two components are two
-  drawings of two things rather than two copies of one. The reading is the owner's and it is
+  drawings of two things rather than two copies of one; the owner's ruling of 2026-10-20 retires
+  that component and the four-step flow with it, so this branch has one drawing of a run and the
+  homepage's block where the flow stood is the slider. The reading is the owner's and it is
   the whole of the amendment: **item 4's "one shared component" holds for the picture the two
   pages used to share, and the page that answers "what happens between asking for the work and
   getting the pull request" answers it with the run**, which is a picture the homepage's flow
@@ -1046,8 +1048,8 @@ down).
 - **Every line of the drawing is quoted from the repository, and the drawing is markup.** Both
   drawings are inline `<svg>` rendered from one set of labels, each label carrying the document
   it is quoted from (`data-source`), and nothing is fetched: no picture file, no font, no
-  origin, no script (D183, D190). The four steps `ArchitectureDiagram.astro` draws cite their
-  captions the same way, and the run's diagram cites the redesign's own changes spec,
+  origin, no script (D183, D190). The four steps the retired flow drew cited their captions the
+  same way, and the run's diagram cites the redesign's own changes spec,
   `docs/design/v1.md` and the plugin's skills.
 - **The shape is a gate, and each claim has a fixture.** `website/test/how-it-works.mjs` reads
   the built page and refuses: a figure that is not one diagram, a drawing without an
@@ -1153,8 +1155,10 @@ in the commit that made it.
   renders is a component whose build-time guards stop running, and every line the site still
   publishes is still held to the document it quotes. `ArchitectureDiagram.astro` is off the
   homepage because the draft's page is those three blocks and the picture of the run is not one
-  of them — the slider's first panel is the flow the reader is shown — and it still draws
-  `/how-it-works/`, which is now the one page that renders it. The checks that were about the
+  of them — the slider's first panel is the flow the reader is shown — and it drew
+  `/how-it-works/` for a while; the owner's ruling of 2026-10-20 then retires the component and
+  the flow with it, so the site's picture of a run is `RunDiagram.astro`'s and it is on
+  `/how-it-works/` alone. The checks that were about the
   chat were replaced by checks about what replaced it (`website/test/slider.mjs` is new;
   `home.mjs`, `fold.mjs`, `budget.mjs`, `wording.mjs` and `base-styles.mjs` were re-pointed in
   the same commit), not dropped.

@@ -27,15 +27,15 @@
 //      **the owner's real capture** (owner spec of 2026-10-18, item 5; PR #622) — the slot's
 //      own hook, a non-empty `alt`, the capture's declared dimensions and a same-origin path,
 //      so the page carries the wordmark and the working terminal and nothing else.
-//   4. **The flow carries the changes spec's four steps, in order**, one short line each,
-//      from one component on both pages: the names, and the caption of each step, are read
-//      out of the spec's own item 4 and of the section of a document of this repository the
-//      step cites, in that section's order — three of the four captions are lines of the
-//      README, so a source alone would let them be shuffled among the steps. `ArchitectureDiagram.astro` supersedes D185's
-//      step names; the run's own detail — the stages, the caps, the trust boundary — is on How
-//      It Works under `RunDiagram.astro`, whose labels are held to the documents they cite by
-//      `test/how-it-works.mjs`, and whose absence from the homepage is a case of its own
-//      (changes spec item 4).
+//   4. **The run is How It Works' picture of it, and the homepage carries the slider instead**
+//      (changes spec of 2026-10-18, item 4; the owner's ruling of 2026-10-20). The four-step
+//      flow and its component, `ArchitectureDiagram.astro`, are retired, and what this file
+//      held the flow to is held to what took its place: the drawing's four boxes are the
+//      spec's item 4's four names in the ruling's order, every word on the figure — the labels
+//      inside each drawing and the two lists of the run in words under it — is a line of the
+//      section it cites, in that section's order, and the homepage's block is the slider, whose
+//      three steps and three panels are read on the page. The run's stages and its caps are on
+//      How It Works, where `test/how-it-works.mjs` holds them to the documents they cite.
 //   5. **Neither page names a claim the product cannot back**: no console download, no
 //      Windows/WSL support, no "~2 h", no ballpark ranges (F50, D102, W1.4 step 4). The
 //      video slot is checked against `site.yaml`'s own flag rather than against today's
@@ -118,7 +118,7 @@ function text(html) {
 
 /**
  * A node's text as a reader receives it: the decoration the page marks `aria-hidden` left
- * out (the flow's step numbers are drawing, not words), entities decoded,
+ * out (the slider's step numbers and its icons are drawing, not words), entities decoded,
  * runs of whitespace one space. This is what the page says, which is what the checks below
  * hold to the repository.
  */
@@ -786,7 +786,7 @@ export function benefitFailures(benefits, reasons) {
     }
     if (!icon.focusable) {
       out.push(
-        `${where}: its icon is not marked out of the tab order (focusable="false"), which is the other half of the decoration contract this site already writes on a drawing — \`a11y.mjs\` holds the flow's arrows to the same pair — and an icon is decoration on both (the owner's feedback of 2026-10-19)`,
+        `${where}: its icon is not marked out of the tab order (focusable="false"), which is the other half of the decoration contract this site already writes on a drawing — \`a11y.mjs\` holds the slider's step icons to the same pair — and an icon is decoration on both (the owner's feedback of 2026-10-19)`,
       )
     }
     if (icon.reference !== '') {
