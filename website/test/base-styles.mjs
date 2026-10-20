@@ -1701,14 +1701,17 @@ test('the rhythm refusal fires on the doubled gap, and the pairs that keep the r
       [/\.home-slider ends with 112 px under it and \.home-install opens with 32 px over it, so the gap between them is 144 px/],
     ],
     // And the same edit on the block between the two: the slider's top padding over the hero's
-    // bottom one — 32 px over 32 px, which is the pair the hero's own `--space-lg` makes. Every
-    // block on this page declares its own rule in the component that renders it (there is no
-    // page-level `<style>` on `index.astro` any more), so the two plants above and here are the
-    // two gaps the page has, each padded twice by the rule of the block below it.
+    // bottom one, which is the pair the hero's own bottom padding makes. Every block on this
+    // page declares its own rule in the component that renders it (there is no page-level
+    // `<style>` on `index.astro` any more), so the two plants above and here are the two gaps
+    // the page has, each padded twice by the rule of the block below it. The sum is the hero's
+    // own room — `--space-2xl`, and `--space-3xl` from 60 rem up, since the bold redesign
+    // gives the hero the bottom of the scale — plus the slider's planted `--space-lg`: 144 px
+    // on a desktop and 104 px on a tablet or a phone, which is the pair the pattern reads.
     [
       'the slider padding the gap the hero above it already pads',
       plantRule('.home-slider[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
-      [/the gap between them is 64 px/],
+      [/the gap between them is 1(?:44|04) px/],
     ],
     // **And what the reading does not reach**: the benefits panel. The section is rendered
     // inside the slider's second panel since the owner's approved draft of 2026-10-19, so it is

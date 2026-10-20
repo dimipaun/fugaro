@@ -729,11 +729,17 @@ added or removed without this sentence moving fails there:
     are inside the `h1`'s own container — on the homepage as it was, with its install
     commands and its chat between the hero and the flow's first step heading, they were 24
     words from that container and 134 from the plan's region, and the stricter one is the
-    one enforced). On the homepage today the first `h2` is the slider's first panel title,
-    *Easy to use*, and the region is the request the hero renders under the headline, the
-    promise, its three calls to action and the slider's three tab labels — the tabs sit above
-    the panel heading the region stops at, so the labels a reader chooses between are part of
-    what they read before the first section: 30 words. A
+    one enforced). On the homepage today the first `h2` is the slider's own line over its
+    control, *Say it. Get pull requests.*, and the region is the hero's lead paragraph and
+    its row of links: **16 words**. Two things between the two headings are taken out of the
+    count, and both are named: the hero's illustration — `figure.hero-shot`, the terminal
+    card the bold redesign draws beside the copy, which is a picture with a caption rather
+    than the page's opening prose, and which `test/fold.mjs`'s rule 1 takes out of the lead
+    region in the same way — and the block the first `h2` belongs to, which is how the
+    slider's tab labels stayed out of the region when the block's heading moved above them.
+    Before the bold redesign the same region held the request the hero printed under the
+    headline, the promise, its three calls to action and the slider's three tab labels: 30
+    words. A
     page that carries blocks between its `h1` and
     its first `h2` is a page whose lead those blocks are part of, so the fix for a long lead
     is a shorter lead or an earlier first `h2`, never a reader that looks somewhere else. A page
