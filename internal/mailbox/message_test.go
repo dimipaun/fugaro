@@ -597,17 +597,6 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 		}
 		return record
 	}
-	heartbeat := func(over Record) Record {
-		record := Record{
-			"at": number("1700000000000"), "boot": "boot-01",
-			"agents": []any{agent("orchestrator", "Orchestrator")},
-			"mac":    strings.Repeat("f", MACMax),
-		}
-		for key, value := range over {
-			record[key] = value
-		}
-		return record
-	}
 	cancel := func(over map[string]any) map[string]any {
 		return action(map[string]any{
 			"id": "a-0001", "verb": "cancel",
@@ -648,7 +637,7 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"a body of no characters says nothing"},
 		{"an empty option label", message(Record{"kind": "prompt", "options": []any{""}}), false, CodeEmptyString, "options[0]",
 			"an option with no label cannot be read aloud or answered"},
-		{"an empty agent name", heartbeat(Record{"agents": []any{agent("orchestrator", "")}}), true, CodeEmptyString, "agents[0].name",
+		{"an empty agent name", heartbeatRecord(Record{"agents": []any{agent("orchestrator", "")}}), true, CodeEmptyString, "agents[0].name",
 			"an agent with no spoken name cannot be named"},
 		{"an empty id", message(Record{"id": ""}), false, CodeEmptyString, "id",
 			"an id is how a message is deduped on (sender, id)"},
@@ -672,7 +661,7 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 		// says "none"; an empty list says the writer meant to fill one.
 		{"a prompt with no options", message(Record{"kind": "prompt", "options": []any{}}), false, CodeTooFew, "options",
 			"present but empty is not the same as absent"},
-		{"a heartbeat with no agents", heartbeat(Record{"agents": []any{}}), true, CodeTooFew, "agents",
+		{"a heartbeat with no agents", heartbeatRecord(Record{"agents": []any{}}), true, CodeTooFew, "agents",
 			"an empty list is offline, which a heartbeat says by carrying no list at all"},
 
 		// unknown-kind: the kind is a closed vocabulary of four.
@@ -682,7 +671,7 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 		// duplicate-entry: two identical entries are one entry with two answers.
 		{"two identical options", message(Record{"kind": "prompt", "options": []any{"merge it", "merge it"}}), false, CodeDuplicateEntry, "options[1]",
 			"the app answers a prompt by position, so two labels are two right answers"},
-		{"two agents under one id", heartbeat(Record{"agents": []any{
+		{"two agents under one id", heartbeatRecord(Record{"agents": []any{
 			agent("orchestrator", "Orchestrator"), agent("orchestrator", "Shadow")}}), true, CodeDuplicateEntry, "agents[1].id",
 			"two agents under one id make \"talk to <agent>\" ambiguous"},
 
@@ -694,7 +683,7 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"a dot opens a path in the database the message is stored in"},
 		{"a character a body cannot carry", message(Record{"text": "a\x01b"}), false, CodeBadCharacter, "text",
 			"a control character is not one the phone can display"},
-		{"an agent that is not an object", heartbeat(Record{"agents": []any{"orchestrator"}}), true, CodeNotAnObject, "agents[0]",
+		{"an agent that is not an object", heartbeatRecord(Record{"agents": []any{"orchestrator"}}), true, CodeNotAnObject, "agents[0]",
 			"an entry of the list is {id, name}, not a bare id"},
 		{"a merge whose target is a run", message(Record{"kind": "action", "action": merge(map[string]any{
 			"target": map[string]any{"run": "20261018-125859-d3c8"}})}), false, CodeBadTarget, "action.target",
@@ -738,7 +727,7 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"a sender names a mailbox on one line, and a newline in one is log-line injection"},
 		{"an option carrying a line break", message(Record{"kind": "prompt", "options": []any{"merge\nit"}}), false, CodeBadCharacter, "options[0]",
 			"an option is read aloud and answered by position, so a label is a single line like every other non-body string"},
-		{"an agent name carrying a line break", heartbeat(Record{"agents": []any{agent("orchestrator", "Orches\ntrator")}}), true, CodeBadCharacter, "agents[0].name",
+		{"an agent name carrying a line break", heartbeatRecord(Record{"agents": []any{agent("orchestrator", "Orches\ntrator")}}), true, CodeBadCharacter, "agents[0].name",
 			"a spoken name is a single line: a newline in one splits the sentence it is read out in"},
 		{"a body carrying DEL", message(Record{"text": "a\u007fb"}), false, CodeBadCharacter, "text",
 			"DEL is not a character the phone can display, in a body as anywhere else"},
@@ -751,16 +740,16 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"an agent id is [A-Za-z0-9._:-] and nothing else"},
 		{"options that are not a list", message(Record{"kind": "prompt", "options": "merge it"}), false, CodeWrongType, "options",
 			"one option is not a list of options"},
-		{"agents that are not a list", heartbeat(Record{"agents": "orchestrator"}), true, CodeWrongType, "agents",
+		{"agents that are not a list", heartbeatRecord(Record{"agents": "orchestrator"}), true, CodeWrongType, "agents",
 			"an advertised list is a list, not one id"},
 
 		// A list's own bound and the entries it holds.
-		{"more agents than a heartbeat advertises", heartbeat(Record{"agents": manyAgents(AgentsMax + 1)}), true, CodeTooMany, "agents",
+		{"more agents than a heartbeat advertises", heartbeatRecord(Record{"agents": manyAgents(AgentsMax + 1)}), true, CodeTooMany, "agents",
 			"a heartbeat advertises at most AgentsMax agents"},
-		{"an advertised agent with a field the schema does not name", heartbeat(Record{"agents": []any{
+		{"an advertised agent with a field the schema does not name", heartbeatRecord(Record{"agents": []any{
 			map[string]any{"id": "orchestrator", "name": "Orchestrator", "role": "boss"}}}), true, CodeUnknownField, "agents[0].role",
 			"an advertised agent is {id, name}, exactly"},
-		{"an advertised agent with no name", heartbeat(Record{"agents": []any{
+		{"an advertised agent with no name", heartbeatRecord(Record{"agents": []any{
 			map[string]any{"id": "orchestrator"}}}), true, CodeMissingField, "agents[0].name",
 			"an agent the app cannot say aloud cannot be advertised"},
 
@@ -882,11 +871,11 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"`acked` says whether the phone has read the message, and that is true or false"},
 
 		// The heartbeat's own three fields.
-		{"a heartbeat at a time before the epoch", heartbeat(Record{"at": number("-1")}), true, CodeBadTimestamp, "at",
+		{"a heartbeat at a time before the epoch", heartbeatRecord(Record{"at": number("-1")}), true, CodeBadTimestamp, "at",
 			"a heartbeat is stamped like every other record"},
-		{"a boot id drawn from outside its alphabet", heartbeat(Record{"boot": "boot/01"}), true, CodeBadCharacter, "boot",
+		{"a boot id drawn from outside its alphabet", heartbeatRecord(Record{"boot": "boot/01"}), true, CodeBadCharacter, "boot",
 			"a boot id is drawn from the same alphabet an agent id is"},
-		{"a heartbeat tag that is not hex", heartbeat(Record{"mac": strings.Repeat("F", MACMax)}), true, CodeBadMAC, "mac",
+		{"a heartbeat tag that is not hex", heartbeatRecord(Record{"mac": strings.Repeat("F", MACMax)}), true, CodeBadMAC, "mac",
 			"hex has one spelling here, so one tag has one string"},
 	}
 	for _, tc := range table {
@@ -1118,11 +1107,14 @@ func TestTheBoundsThemselvesAreAccepted(t *testing.T) {
 
 // TestTheDocSaysWhichValuesAreNotArgvSafe pins the package doc's claim about
 // the alphabets, and it is the test the five-minor follow-up owes m5: the doc
-// says that only `action.target.run` and `action.target.repo` (whose patterns
-// refuse a leading flag character and a leading dot) are argv-safe, and that a
-// key may be a single space and may begin with `-` while an identity may be `.`
-// or `..` or begin with `-`. A claim that says "the validator accepts these and
-// a later task must not pass them to a program" is worth no more than the test
+// names the values that ARE argv-safe — `mac`, `kind`, `verb`, `at`, `target.pr`,
+// `action.head_sha`, and the two alphabet-checked targets whose patterns refuse a
+// leading flag character and a leading dot — and says that every other string is
+// not, because a key may be a single space and may begin with `-` while an
+// identity may be `.` or `..` or begin with `-`. The rows below are the two
+// alphabets that warning is about: a key, and an identity. A claim that says
+// "the validator accepts these and a later task must not pass them to a
+// program" is worth no more than the test
 // that holds it, because a task that TIGHTENED these alphabets would break the
 // merged module's contract, and a task that tightened the doc's warning away
 // would break nothing else.

@@ -6,9 +6,11 @@
 # at the end, in mac.js, the tag's own module — and every one of them must make
 # `npm test` fail. A guard whose mutation survives is a guard no test defends,
 # which for this module -- the protocol P1.1, P3.6 and P4.1 speak -- is the
-# difference between a fence and a comment. Section 6 is the one group that does
-# not delete a check: it moves a comparison by one, which is the mutation this
-# module has actually been wrong about.
+# difference between a fence and a comment. Section 6 is the group about the
+# bounds: most of its rows move a comparison by one, which is the mutation this
+# module has actually been wrong about, and three of them narrow a rule by
+# removing one of its terms instead (DEL from the two character rules, and the
+# second head-SHA length from the SHA rule).
 #
 #   shared/mailbox-schema/mutation-proof.sh
 #
@@ -419,9 +421,16 @@ run "canonicalBytes: -0 is refused" \
 #
 # Every guard above is DISABLED: a check deleted, a pattern replaced by `false`.
 # None of them moves a comparison by one, and that is the mutation this module
-# was actually wrong about. `repo.length > TARGET_MAX` narrowed to `>=
-# TARGET_MAX` refused a repository of exactly the bound; widened to
-# `> TARGET_MAX + 1` it accepted one code unit past it. Both survived every test
+# was actually wrong about. Most of the rows below move one instead, and three
+# of them do not: `string: DEL is no longer refused` and `id: DEL is no longer
+# refused` drop the `|| code === 0x7f` term of a character rule, and `action: the
+# second head-SHA length is dropped` drops the `&& value.length !== SHA_MAX`
+# conjunct of the SHA rule. They are here for the reason the group exists: a
+# rule narrowed by one character or one length is not what a mutant that deletes
+# the whole check beside it measures. The mutation this group was written for is
+# the other one: `repo.length > TARGET_MAX` narrowed to `>= TARGET_MAX` refused a
+# repository of exactly the bound; widened to `> TARGET_MAX + 1` it accepted one
+# code unit past it. Both survived every test
 # in this package AND every test on the Go side, in both directions, until the
 # T1 follow-up of PR #715 added the rows that catch them.
 #

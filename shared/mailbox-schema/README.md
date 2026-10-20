@@ -403,10 +403,13 @@ tag, the canonical serialisation — including the code-point sort and the strin
 refuses — and, in `mac.js`, that the tag is computed over the canonical bytes and that
 `verifyMac` answers `false` rather than throwing.
 
-Section 6 is the one group that does not delete a check: it **moves a bound's
-comparison by one** — `> MAX` to `>= MAX`, and to `> MAX + 1` — because that,
-rather than a deleted check, is the mutation this module has actually been wrong
-about: `repo.length > TARGET_MAX` narrowed to `>= TARGET_MAX` refused a repository
+Section 6 is the group about the bounds. Most of its rows **move a comparison by
+one** — `> MAX` to `>= MAX`, and to `> MAX + 1` — because that, rather than a
+deleted check, is the mutation this module has actually been wrong about. Three
+of the eighteen move nothing and drop a term instead — DEL from each of the two
+character rules, and the second head-SHA length from the SHA rule, which is the
+same class of mistake one step further from the check's edge.
+`repo.length > TARGET_MAX` narrowed to `>= TARGET_MAX` refused a repository
 of exactly the bound, and widened to `> TARGET_MAX + 1` it accepted one a code
 unit past it, with every test in this package **and** every test on the Go side
 green. A bound that can be missed in either direction therefore takes two mutants

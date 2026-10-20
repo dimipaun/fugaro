@@ -17,15 +17,19 @@
 // bytes than the phone did. That is why a message is a Record (a decoded JSON
 // object) first and a Message second.
 //
-// Only four of the values the schema accepts are argv-safe, and a later task
-// must not treat the others as if they were: `action.target.run` and
-// `action.target.repo` are the two whose alphabets keep a value out of a
-// program's flag and path positions (runPattern and repoPattern refuse a
-// leading `-` or `.` and a `..`), and `target.pr` and `action.head_sha` are a
-// bounded positive integer and a bounded hex object name. Everything else is
-// NOT argv-safe and NOT a safe path segment: an `agent`, an advertised agent's
-// id and a `boot` are drawn from `[A-Za-z0-9._:-]`, so they may begin with `-`
-// and may be `.` or `..`; a key (`id`, `reply_to`, `action.id`,
+// Only a handful of the values the schema accepts are argv-safe, and a later
+// task must not treat the others as if they were. The safe ones are `mac`
+// (exactly 64 characters of lowercase hex), `kind` (one of `message`, `prompt`,
+// `answer`, `action`), `action.verb` (one of `cancel`, `merge`, `confirm`) and
+// `at` (a non-negative safe integer); inside the action record, `target.pr` is a
+// bounded positive integer and `action.head_sha` a bounded hex object name; and
+// `action.target.run` and `action.target.repo` are the two alphabet-checked
+// values a program consumes, whose patterns keep them out of its flag and path
+// positions (runPattern and repoPattern refuse a leading `-` or `.` and a
+// `..`). Every other string the schema accepts is NOT argv-safe and NOT a safe
+// path segment: an `agent`, an advertised agent's id and a `boot` are drawn
+// from `[A-Za-z0-9._:-]`, so they may begin with `-` and may be `.` or `..`;
+// a key (`id`, `reply_to`, `action.id`,
 // `action.confirmation.id`) may begin with `-`, may be a single space, and may
 // carry `*`, `?`, `\`, quotes and format characters — the characters it
 // refuses are `% . $ # [ ] /`, the C0 range, DEL, U+2028, U+2029 and a lone
