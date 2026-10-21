@@ -38,6 +38,18 @@
 #             the token file is removed, the scratch directory goes. The trap
 #             re-checks its own marker file before rm -rf, as the section's
 #             step 9 did.
+# TLS:        the proxy verifies the upstream with a context it builds itself
+#             (ssl.create_default_context, verification never turned off), and
+#             picks the trust store rather than assuming one: the python.org
+#             macOS build ships an EMPTY store until its Install
+#             Certificates.command has been run, and every proxied call from a
+#             machine in that state failed as a bare "502 ... upstream error".
+#             Python's own store first, then SSL_CERT_FILE, then the macOS
+#             (system and Homebrew), Debian and RHEL bundle paths; the one that
+#             was used is the block's `ca-bundle` row. With no bundle anywhere
+#             the run STOPS (exit 2) rather than verifying nothing. An upstream
+#             the proxy cannot reach answers 502 with the exception's own type
+#             name in the reason phrase, which the block quotes.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 90 RESULT,
 #             to copy back to the coordinator. Exit 0 when tier A is viable,
 #             1 when it is not, 2 when the run could not tell (a control that
@@ -56,6 +68,11 @@
 # it skips. Setting either REPLACES the two directories the guard looks at on a
 # real machine, so a test never reads this machine's own managed settings (a
 # runner here has one, and it would decide the run instead of the test).
+#
+# CHK90_TEST_CA_BUNDLES is the same kind of name, and the PROXY this script
+# writes is what reads it: it replaces the CA bundle candidates the proxy tries,
+# and it is also what puts the proxy on that path at all in a test, whose
+# upstream is plain http on loopback and which would otherwise verify nothing.
 # -E (errtrace) is what makes the ERR trap below fire for a failure INSIDE a
 # function or a command substitution too, which is where an internal error is
 # most likely to happen; without it the trap only sees top-level failures.
@@ -551,11 +568,34 @@ for the whole of a phase -- minutes, on the delayed one. It is a per-run secret
 that any process on this machine could replay at the listener, so it is read
 from the 0600 file the check wrote it into, and the file goes with the scratch
 directory.
+
+The upstream connection is verified against an explicit TLS context, and the
+trust store is chosen rather than assumed: the python.org macOS build ships an
+EMPTY one until its Install Certificates.command is run, and on a machine like
+that every https call here failed with ssl.SSLCertVerificationError and reached
+the owner as "502 ... upstream error" and nothing else. So when Python's own
+store holds no CA certificate the first candidate bundle that loads one is
+used, the bundle is named in a startup FACT, and when none of them loads the
+proxy REFUSES to run: a proxy that verified nothing would answer every call and
+be measuring a different endpoint than the one this check is about. What it
+never does is turn verification off.
 """
-import argparse, http.client, http.server, json, time
+import argparse, http.client, http.server, json, os, ssl, sys, time
 
 ARGS = None
 TOKEN = None
+# The TLS context the upstream is verified with (None when the upstream is
+# plain http), set once in main() before this proxy listens.
+CTX = None
+# The bundles tried, in order, when Python's own store holds no CA certificate:
+# SSL_CERT_FILE first (see ca_bundle_candidates), then the macOS locations --
+# the system bundle and the two Homebrew ones -- then Debian's and RHEL's.
+CA_BUNDLE_ENV = "CHK90_TEST_CA_BUNDLES"
+CA_BUNDLES = ("/etc/ssl/cert.pem",
+              "/opt/homebrew/etc/ca-certificates/cert.pem",
+              "/usr/local/etc/ca-certificates/cert.pem",
+              "/etc/ssl/certs/ca-certificates.crt",
+              "/etc/pki/tls/certs/ca-bundle.crt")
 HOP = {"authorization", "x-api-key", "host", "content-length", "connection",
        "transfer-encoding", "accept-encoding", "expect", "proxy-connection",
        "keep-alive", "te", "upgrade"}
@@ -574,6 +614,52 @@ def read_capped(resp, limit=65536):
             break
         out += chunk
     return out
+
+
+def ca_bundle_candidates():
+    """The bundles to try, in order. CHK90_TEST_CA_BUNDLES replaces the list and
+    exists for this script's own test only: the test's upstream is plain http on
+    loopback (the rule that keeps the token on this machine), so that variable is
+    also what puts this proxy on the TLS-context path at all, where a real run
+    takes it because its upstream is https."""
+    override = os.environ.get(CA_BUNDLE_ENV)
+    if override is not None:
+        return [p for p in override.split(os.pathsep) if p]
+    out = []
+    if os.environ.get("SSL_CERT_FILE"):
+        out.append(os.environ["SSL_CERT_FILE"])
+    return out + list(CA_BUNDLES)
+
+
+def build_ssl_context():
+    """(context, where) for the upstream, or (None, tried).
+
+    The context is created by ssl.create_default_context(), so verification is
+    on and hostnames are checked; nothing here ever turns either off. When that
+    store holds no CA certificate -- the python.org macOS build before its
+    Install Certificates.command has been run -- each candidate bundle is tried
+    in order and the first one that loads a CA certificate is used. `where` is
+    the path of the bundle that was used, or "python-default" when Python's own
+    store was the one that worked."""
+    ctx = ssl.create_default_context()
+    if ctx.cert_store_stats()["x509_ca"]:
+        # create_default_context already loaded something: OpenSSL's own default
+        # paths, which IS SSL_CERT_FILE when it is set. Name the file that was
+        # really read rather than a bundle that was not.
+        env = os.environ.get("SSL_CERT_FILE")
+        return ctx, env if env and os.path.isfile(env) else "python-default"
+    tried = []
+    for path in ca_bundle_candidates():
+        if not os.path.isfile(path):
+            continue
+        tried.append(path)
+        try:
+            ctx.load_verify_locations(cafile=path)
+        except (ssl.SSLError, OSError):
+            continue
+        if ctx.cert_store_stats()["x509_ca"]:
+            return ctx, path
+    return None, tried
 
 
 def loopback_host(host, port):
@@ -654,8 +740,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if ARGS.delay:
             fact("delaying", ARGS.delay, "seconds before answering")
             time.sleep(ARGS.delay)
-        cls = http.client.HTTPSConnection if ARGS.upstream_scheme == "https" else http.client.HTTPConnection
-        conn = cls(ARGS.upstream, timeout=ARGS.timeout)
+        if ARGS.upstream_scheme == "https":
+            conn = http.client.HTTPSConnection(ARGS.upstream, timeout=ARGS.timeout,
+                                               context=CTX)
+        else:
+            conn = http.client.HTTPConnection(ARGS.upstream, timeout=ARGS.timeout)
         try:
             conn.putrequest(self.command, self.path, skip_host=True,
                             skip_accept_encoding=True)
@@ -668,8 +757,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             conn.endheaders(body)
             resp = conn.getresponse()
         except Exception as e:
+            # The exception's TYPE reaches the client as well as the log: a 502
+            # whose reason says nothing is what turned an empty trust store into
+            # "502 ... upstream error" with no way to tell it from a refusal.
+            # The type name only -- an exception's message can quote the request.
             fact("upstream-error", type(e).__name__, "after", "%.1fs" % (time.time() - started))
-            self.send_error(502, "chk90proxy: upstream error")
+            self.send_error(502, "chk90proxy: upstream error: " + type(e).__name__)
             return
         fact("response", resp.status, resp.reason, "headers:",
              ",".join(n.lower() for n, _ in resp.getheaders()))
@@ -735,6 +828,29 @@ def main():
     if not ARGS.no_swap:
         TOKEN = open(ARGS.token_file, "rb").read().strip().decode()
     DROP = {d.lower() for d in ARGS.drop}
+    # The upstream's TLS trust store, before this proxy serves anything. The
+    # FACT is printed on every path -- which bundle was used, that none was
+    # needed (a plain-http upstream), or that there was none to use -- because
+    # the run's block is where the owner reads it, and because a proxy that
+    # refused to start has to say so in a row rather than in a mystery exit.
+    global CTX
+    if ARGS.upstream_scheme == "https" or os.environ.get(CA_BUNDLE_ENV) is not None:
+        CTX, where = build_ssl_context()
+        if CTX is None:
+            tried = ", ".join(where) or "no candidate path exists on this machine"
+            msg = ("the throwaway proxy has no trusted CA certificates: this "
+                   "Python's own trust store is empty and none of these holds a "
+                   "CA certificate: %s. On a python.org build run Install "
+                   "Certificates.command, or set SSL_CERT_FILE to a CA bundle, "
+                   "and run the check again" % tried)
+            fact("ca-bundle", "FAIL", msg)
+            print("chk90proxy: " + msg, file=sys.stderr, flush=True)
+            sys.exit(2)
+        fact("ca-bundle", "PASS", where)
+    else:
+        fact("ca-bundle", "INFO",
+             "not measured: the upstream is plain http on loopback, so no "
+             "certificate is verified")
     server = http.server.ThreadingHTTPServer(("127.0.0.1", ARGS.port), Handler)
     print("chk90proxy listening on 127.0.0.1:%d, upstream %s" % (ARGS.port, ARGS.upstream),
           flush=True)
@@ -771,6 +887,32 @@ print(" ".join(sorted(set(keys))))
 KEYS_EOF
 }
 
+# The proxy's own startup line about the trust store it verifies the upstream
+# with, as it printed it: FACT ca-bundle PASS|FAIL|INFO <detail>, or empty. It
+# is printed BEFORE the proxy listens -- and before it refuses to -- so it is
+# there for a run that stopped at the proxy as well, which is the run that needs
+# it most: "the proxy did not start" with nothing about an empty trust store is
+# exactly the report this line exists to replace.
+ca_bundle_fact() { # ca_bundle_fact LOGFILE
+  grep -m1 '^FACT ca-bundle ' "$1" 2>/dev/null || true
+}
+
+# record_ca_bundle LOGFILE -- fold that line into the block, once. Every phase
+# starts its own proxy and prints the same line, and print_block takes the first
+# line per key, as everywhere else in this block. The VERDICT comes from the
+# proxy: PASS names the bundle that was used, FAIL is the refusal below, and
+# INFO says this run measured no trust store at all (the test's own upstream is
+# plain http on loopback, so there is no certificate to verify).
+record_ca_bundle() { # record_ca_bundle LOGFILE
+  local line verdict detail
+  if grep -q '^ca-bundle|' "$FACTS_FILE" 2>/dev/null; then return 0; fi
+  line=$(ca_bundle_fact "$1")
+  [ -n "$line" ] || return 0
+  verdict=$(printf '%s\n' "$line" | cut -d' ' -f3)
+  detail=$(printf '%s\n' "$line" | cut -d' ' -f4-)
+  fact "ca-bundle" "$verdict" "$detail"
+}
+
 start_proxy() { # start_proxy LOGFILE [extra args...]
   local log=$1
   shift
@@ -784,8 +926,18 @@ start_proxy() { # start_proxy LOGFILE [extra args...]
   PROXY_PID=$!
   local i=0
   while [ "$i" -lt 50 ]; do
-    if grep -q 'listening on' "$log" 2>/dev/null; then return 0; fi
+    if grep -q 'listening on' "$log" 2>/dev/null; then
+      record_ca_bundle "$log"
+      return 0
+    fi
     if ! kill -0 "$PROXY_PID" 2>/dev/null; then
+      # A proxy that refused to run for want of a CA bundle says so in its own
+      # row and stops the run with that reason: the refusal is a measurement
+      # this check could not make on this machine, not a proxy that misbehaved.
+      record_ca_bundle "$log"
+      if grep -q '^ca-bundle|FAIL|' "$FACTS_FILE" 2>/dev/null; then
+        stop "$(sed -n 's/^ca-bundle|FAIL|//p' "$FACTS_FILE" | head -n 1)"
+      fi
       stop "the proxy did not start: $(tail -n 3 "$log" | tr '\n' ' ')"
     fi
     sleep 0.1
@@ -1262,7 +1414,7 @@ tier_a() {
 # FAIL — not reached, and any other recorded key (the per-header drops) follows,
 # sorted. That is what makes the block safe to diff between two runs.
 BLOCK_KEYS=(claude-version env-cleared managed-settings-dir settings-routing
-  token-file token-validity control observed-control swap swap-credential-header
+  token-file token-validity control ca-bundle observed-control swap swap-credential-header
   stream headers-observed headers-required headers-optional usage-limit
   timeout-retry restore tier-a)
 

@@ -236,7 +236,10 @@ conn.request("POST", "/v1/messages", body, {
 resp = conn.getresponse()
 resp.read()
 if resp.status != 200:
-    sys.stderr.write("fake claude: HTTP %d\n" % resp.status)
+    # What the REAL client prints, reason phrase and all: "API Error: 502 ...
+    # <what the proxy said>". That text is what the block quotes, so a test can
+    # read what the client was told about a failure it cannot otherwise see.
+    sys.stderr.write("fake claude: API Error: %d %s\n" % (resp.status, resp.reason))
     sys.exit(1)
 if prompt.startswith("Write the numbers"):
     for i in (1, 2, 3):
@@ -435,6 +438,11 @@ test_happy_path() {
   expect_contains "$out" "CHECK 90 RESULT" "happy path: the block"
   expect_contains "$out" "FACT control: PASS" "happy path: the control"
   expect_contains "$out" "FACT observed-control: PASS" "happy path: the observed control"
+  # The trust store the proxy verifies its upstream with. The test's upstream is
+  # plain http on loopback, so this run measured none -- and the row says that
+  # rather than PASSing at something that never happened.
+  expect_contains "$out" "FACT ca-bundle: INFO — not measured: the upstream is plain http on loopback" \
+    "happy path: the trust store row says what this run did not measure"
   expect_contains "$out" "FACT swap: PASS" "happy path: the swap"
   expect_contains "$out" "FACT stream: PASS" "happy path: the stream"
   expect_contains "$out" "FACT header-drop-anthropic-beta: FAIL" "happy path: a required header"
@@ -487,7 +495,7 @@ test_block_format() {
   # The keys the register and Task C1.7 name must all be there, whatever the run did.
   local key
   for key in claude-version env-cleared managed-settings-dir settings-routing \
-    token-file token-validity control observed-control swap swap-credential-header \
+    token-file token-validity control ca-bundle observed-control swap swap-credential-header \
     stream headers-observed headers-required headers-optional usage-limit \
     timeout-retry restore tier-a; do
     printf '%s' "$out" | grep -q "^FACT $key: " || fail "format: the block has no '$key' line"
@@ -1270,6 +1278,136 @@ test_default_managed_settings_names_both_platforms() {
     "default managed settings: the macOS directory"
 }
 
+# A CA bundle this machine really has, for the test below. Python's own
+# compiled-in cafile first (a machine whose Python verifies anything has one),
+# then the locations the proxy itself tries: the fix this test is about is that
+# the OS bundle exists where Python's own store does not, so a test that needed
+# Python's store would not be testing it.
+machine_ca_bundle() {
+  local p py
+  py=$(python3 -c 'import ssl; print(ssl.get_default_verify_paths().openssl_cafile or "")' 2>/dev/null || true)
+  for p in "$py" /etc/ssl/cert.pem /etc/ssl/certs/ca-certificates.crt \
+    /etc/pki/tls/certs/ca-bundle.crt \
+    /opt/homebrew/etc/ca-certificates/cert.pem \
+    /usr/local/etc/ca-certificates/cert.pem; do
+    if [ -n "$p" ] && [ -f "$p" ]; then
+      printf '%s' "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# The macOS python.org build ships an EMPTY trust store until its Install
+# Certificates.command is run, so the proxy's every https upstream call failed
+# with ssl.SSLCertVerificationError and reached the owner as "502 ... upstream
+# error" and nothing else. The proxy now builds its context explicitly and
+# falls back to the machine's own bundle.
+#
+# The test's upstream is loopback http — the rule that keeps the token on this
+# machine — so CHK90_TEST_CA_BUNDLES is what puts the proxy on the TLS-context
+# path at all, and it is also how these tests decide which candidate files
+# exist. SSL_CERT_FILE and SSL_CERT_DIR point at paths that are not there, which
+# is what empties Python's own store on a machine (like this one) whose Python
+# verifies fine: without that, the fallback would never be reached and the test
+# would prove nothing about it.
+test_the_proxy_uses_the_first_ca_bundle_that_loads() {
+  local dir=$work/cabundles bundle
+  bundle=$(machine_ca_bundle) || {
+    fail "CA bundle: this machine has no CA bundle anywhere (Python's own cafile, /etc/ssl/cert.pem, /etc/ssl/certs/ca-certificates.crt, ...), so neither this test nor check90.sh can run here"
+    return 0
+  }
+  mkdir -p "$dir/ca"
+  cp "$bundle" "$dir/ca/first.pem"
+  cp "$bundle" "$dir/ca/second.pem"
+  printf 'this file exists and holds no certificate\n' >"$dir/ca/empty.pem"
+
+  # Three candidates in one run, and the order of them is the whole assertion:
+  # the first holds no certificate and cannot be loaded at all, so it is
+  # SKIPPED rather than accepted; the second is a real bundle and is the one the
+  # block names; the third is a real bundle too, and must NOT be named, which is
+  # what says the list was walked in order rather than the last one taken.
+  run90 cabundles ok "" \
+    CHK90_TEST_CA_BUNDLES="$dir/ca/empty.pem:$dir/ca/second.pem:$dir/ca/first.pem" \
+    SSL_CERT_FILE="$dir/ca/absent" SSL_CERT_DIR="$dir/ca/absent"
+  expect_status "$status" 0 "CA bundle: the run"
+  expect_contains "$out" "FACT ca-bundle: PASS — $dir/ca/second.pem" \
+    "CA bundle: the first candidate that loads is the one used"
+  expect_absent "$out" "$dir/ca/empty.pem" \
+    "CA bundle: a file that holds no certificate is not the bundle that was used"
+  expect_absent "$out" "$dir/ca/first.pem" \
+    "CA bundle: the candidate after the one that loaded is not named"
+}
+
+# With no bundle to verify the upstream with, the proxy refuses to run at all:
+# a proxy that verified nothing would answer every call and measure a different
+# endpoint than the one this check is about. The refusal is a FACT in the block
+# and a stop (exit 2 — "could not tell"), not a proxy that quietly would not
+# start, and it names both ways out: Install Certificates.command and
+# SSL_CERT_FILE.
+test_a_machine_with_no_ca_bundle_stops_before_the_first_call() {
+  local dir=$work/noca
+  mkdir -p "$dir/ca"
+  printf 'this file exists and holds no certificate\n' >"$dir/ca/empty.pem"
+  run90 noca ok "" \
+    CHK90_TEST_CA_BUNDLES="$dir/ca/empty.pem:$dir/ca/absent.pem" \
+    SSL_CERT_FILE="$dir/ca/absent" SSL_CERT_DIR="$dir/ca/absent"
+  expect_status "$status" 2 "no CA bundle: the run"
+  expect_contains "$out" "FACT ca-bundle: FAIL — the throwaway proxy has no trusted CA certificates" \
+    "no CA bundle: the fact says what the proxy could not find"
+  expect_contains "$out" "Install Certificates.command" \
+    "no CA bundle: the fact names the python.org fix"
+  expect_contains "$out" "SSL_CERT_FILE" \
+    "no CA bundle: the fact names the variable that points at another bundle"
+  expect_contains "$out" "FACT aborted: FAIL — the throwaway proxy has no trusted CA certificates" \
+    "no CA bundle: the stop carries the same reason"
+  expect_absent "$out" "FACT observed-control: PASS" \
+    "no CA bundle: no call went through a proxy that could not verify its upstream"
+  expect_contains "$err" "no trusted CA certificates" "no CA bundle: stderr says why"
+  # It never listened, so nothing was measured and nothing was swapped.
+  expect_absent "$(cat "$dir/logs/"*.log)" "listening on" "no CA bundle: the proxy never served a request"
+}
+
+# A 502 whose reason says nothing is what turned an empty trust store into
+# "502 ... upstream error" with no way to tell it from a refusal: the owner had
+# to go and run python3 by hand to find out what had failed. The exception's
+# TYPE now reaches the client (and so the block, which quotes what the client
+# said), and it is only the type: an exception's message can quote the request
+# it was making.
+#
+# The upstream here is a loopback port nothing listens on, which is a failure
+# the proxy really hits on any machine; the test's fake client prints the
+# reason phrase the way the real one does.
+test_the_upstream_error_type_reaches_the_block() {
+  local dead
+  dead=$(free_port)
+  run90 uptype ok "" CHECK90_UPSTREAM="127.0.0.1:$dead"
+  expect_status "$status" 2 "upstream error type: the run"
+  expect_contains "$out" "FACT observed-control: FAIL" \
+    "upstream error type: the call through the proxy failed"
+  expect_contains "$out" "ConnectionRefusedError" \
+    "upstream error type: the block names what the proxy's connect raised, not only 502"
+  expect_contains "$(cat "$work/uptype/logs/"*.log)" "FACT upstream-error ConnectionRefusedError" \
+    "upstream error type: the proxy's own log records the same type"
+}
+
+# A source pin, and the shape the fix must keep: the bundle is CHOSEN, and
+# verification is never turned off. A proxy that accepted any certificate would
+# answer every call — and would be measuring a different endpoint than the one
+# this check exists to measure.
+test_the_proxy_never_disables_certificate_verification() {
+  local text bad
+  text=$(cat "$script")
+  for bad in "_create_unverified_context" "CERT_NONE" "check_hostname = False" \
+    "check_hostname=False"; do
+    expect_absent "$text" "$bad" "certificate verification: the script must never contain '$bad'"
+  done
+  expect_contains "$text" "ssl.create_default_context()" \
+    "certificate verification: the proxy builds its context explicitly"
+  expect_contains "$text" "context=CTX" \
+    "certificate verification: the upstream connection is given that context"
+}
+
 # A second Ctrl-C DURING the cleanup must not kill the shell that is running it:
 # the first one has already ended the run, and what cleanup is doing is wiping
 # the token file and removing the scratch directory. Killed here, the token file
@@ -1380,6 +1518,10 @@ test_child_is_not_started_with_debug_logging
 test_placeholder_is_never_in_a_process_argv
 test_managed_settings_reads_every_directory_it_names
 test_default_managed_settings_names_both_platforms
+test_the_proxy_uses_the_first_ca_bundle_that_loads
+test_a_machine_with_no_ca_bundle_stops_before_the_first_call
+test_the_proxy_never_disables_certificate_verification
+test_the_upstream_error_type_reaches_the_block
 test_second_interrupt_during_cleanup_does_not_kill_it
 
 if [ "$failures" -ne 0 ]; then

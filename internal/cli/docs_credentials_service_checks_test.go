@@ -270,6 +270,31 @@ func TestCheck90ScriptKeepsItsPromises(t *testing.T) {
 			t.Errorf("%s lacks %q", check90Script, want)
 		}
 	}
+	// The upstream TLS trust store, which is what a python.org macOS build
+	// (an EMPTY store until its Install Certificates.command is run) turned
+	// into a bare "502 ... upstream error" with nothing to read. The bundle is
+	// chosen; verification is never turned off. The script's own suite proves
+	// the choice and the refusal, in test_the_proxy_uses_the_first_ca_bundle_
+	// that_loads and test_a_machine_with_no_ca_bundle_stops_before_the_first_
+	// call; these are the structural halves.
+	for _, want := range []string{
+		"ssl.create_default_context()",
+		"context=CTX",
+		"Install Certificates.command",
+		"SSL_CERT_FILE",
+		`fact("ca-bundle", "FAIL"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s lacks %q, one of the ways the proxy picks the trust store it verifies the upstream with", check90Script, want)
+		}
+	}
+	for _, bad := range []string{
+		"_create_unverified_context", "CERT_NONE", "check_hostname = False",
+	} {
+		if strings.Contains(text, bad) {
+			t.Errorf("%s contains %q: the throwaway proxy must never turn certificate verification off, which would answer every call and measure a different endpoint", check90Script, bad)
+		}
+	}
 	// The token reaches the hidden read, the 0600 file and the one child that
 	// needs it, and nothing else. What proves the value never survives a run
 	// is the script's own test, which feeds it a sentinel and greps every file
