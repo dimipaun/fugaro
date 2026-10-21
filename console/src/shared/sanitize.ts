@@ -677,6 +677,87 @@ export const TOKEN_SHAPES: readonly RegExp[] = Object.freeze([
 const ENTROPY_RE = /(?<![\p{L}\p{N}_+/=.-])[A-Za-z0-9_+/=-]{20,}(?![\p{L}\p{N}_+/=-])/gu
 
 /**
+ * PATH_RUN_RE matches a run of the entropy net's own alphabet that is rooted at
+ * `/` with a second slash behind it: a root and at least two segments, which is
+ * `ABS_PATH_RE`'s own definition of a path. It is the first half of `isPathRun`'s
+ * question, below.
+ *
+ * **A path is not a token, and the net read one.** The owner's report of
+ * 2026-10-21, from the screenshot run: the console's header drew the CLI's
+ * binary path as `[redacted-token]` -- `acme-platform [redacted-token] 0.8.1 ·
+ * ok` -- and the e2e entry spec had failed the same way in PR #751, where the
+ * drawn header held `[redacted-token].local/bin/fugaro`. The value is the path
+ * the run installed its fake CLI in: `mkdtemp(join(tmpdir(),
+ * 'fugaro-cli-stub-'))`, then `home/.local/bin/fugaro` (`test/support/cliStub.ts`)
+ * -- and it reached the net through `drawInstallation`, which draws the binary
+ * path with `sanitizeRefusal`, the one door that runs **no path rule**, because
+ * a refusal that names the operator's own path is the remedy and the design draws
+ * it as the CLI printed it (`sanitizeRefusal`).
+ *
+ * **Why the net read a path, and what tells a path from a key.** `ENTROPY_RE`'s
+ * alphabet is every character a token is spelled with *and* every character a
+ * path segment is spelled with -- `/`, `-`, `_` and `=` are all in it -- and its
+ * two lookarounds ask only for a character outside that class on either side. A
+ * root and a space are therefore enough for the net to take a whole path as one
+ * candidate run, and that run's length, case mix and digits are then exactly
+ * `isHighEntropy`'s three questions, which a path answers by accident: a
+ * `mkdtemp` suffix mixes case and digits, and a path is long. The one thing a
+ * path never has is **a token**: a name is words run together by separators,
+ * while a token is one unbroken stretch of the alphabet. So a run is a path when
+ * it is rooted (`isRootedRun`) **and no word of it is a candidate on its own**
+ * (`isHighEntropy`, the net's own question, asked of one word at a time): the net
+ * found this run only by running a path's words together, and no part of the path
+ * is a secret it would have found without them.
+ *
+ * **What that keeps.** The words are asked, not the segment, so a *token written
+ * inside a path* still goes -- a word of `/home/x/<32-character key>/key` is a
+ * candidate by itself, so the run is not a path and the whole run is redacted
+ * exactly as before, which is the invariant `split-secrets.test.ts` pins for the
+ * refusal door. And because the question is `isHighEntropy`'s, no second
+ * threshold can drift from `ENTROPY_RE`'s.
+ *
+ * **The trade, said out loud.** A blob *spelled with separators* -- a base64url
+ * body with a `-` or `_` in it, written into a path -- reads as a name here, and
+ * in the refusal door it is drawn as written. Everything the shape rules find is
+ * still replaced there, including every token family, because every shape rule
+ * runs **before** the net: that is what `sanitize-path-runs.test.ts` holds, both
+ * halves of it.
+ *
+ * The recorder (`src/source/redact.ts`) carries no such guard and needs none: it
+ * runs the path rule in every reading, so a rooted run never reaches its net. The
+ * one thing the two layers cannot share is exactly the door that makes the guard
+ * necessary -- see `FREE_TEXT_RULES`' list of the differences.
+ */
+const PATH_RUN_RE = /^\/[^/]*\//
+
+/** PATH_WORD_RE reads a run into **the words a name is made of**, which is how a
+ * path segment is spelled: words run together by `/`, `-` and `_`. It splits
+ * nothing else -- `+` and `=` are token-alphabet characters and not separators a
+ * name is spelled with, and `.` cannot appear inside a run at all, since
+ * `ENTROPY_RE`'s lookarounds list it. None of the three is a boundary to
+ * `ENTROPY_RE`: they are run characters, which is the whole of the defect above.
+ * So this is the reading the net does *not* do, and the one that tells a path
+ * from a key.
+ */
+const PATH_WORD_RE = /[^/_-]+/g
+
+/** isRootedRun answers whether a run is rooted at `/` with a second slash behind
+ * it -- a root and at least two segments, `ABS_PATH_RE`'s own definition of a
+ * path. */
+function isRootedRun(run: string): boolean {
+  return PATH_RUN_RE.test(run)
+}
+
+/** isPathRun answers whether a candidate run is a path rather than a token: it is
+ * rooted, and no word of it is a candidate on its own. It is the guard the net
+ * reads, so that "a path is not a token" is one decision in one place. */
+function isPathRun(run: string): boolean {
+  if (!isRootedRun(run)) return false
+  for (const word of run.match(PATH_WORD_RE) ?? []) if (isHighEntropy(word)) return false
+  return true
+}
+
+/**
  * isHighEntropy is the recorder's split-token rule (`src/source/redact.ts`,
  * copied): either a 32+ character hexadecimal run with both letters and digits,
  * or a 20+ character run that mixes upper case, lower case and digits at 3.5 or
@@ -993,7 +1074,7 @@ interface OneRule {
  * repository paths, GCP names, network addresses, hosts, and the entropy net
  * last, over what the shapes left.
  *
- * **This is the list `src/source/redact.ts` runs**, bar two things this layer
+ * **This is the list `src/source/redact.ts` runs**, bar three things this layer
  * cannot reproduce and does not pretend to:
  *
  *   - **the people pass.** The recorder replaces a requester's name everywhere
@@ -1006,6 +1087,14 @@ interface OneRule {
  *     project name, paths and hosts, folded; the renderer is not given them, and
  *     a literal list in the renderer would be a list of the very strings the
  *     redaction exists to remove.
+ *   - **the net's guard on paths.** The net here declines a run that is a path
+ *     rather than a token -- rooted, with no word of it a candidate on its own
+ *     (`isPathRun`, and `PATH_RUN_RE` for why). The recorder carries no such
+ *     guard and needs none: it runs the path rule in every reading, so a rooted
+ *     run never reaches its net. But the refusal door, which runs no path rule,
+ *     is one of the rule sets assembled from this list, and without the guard its
+ *     net marked the operator's own binary path as a credential -- the owner's
+ *     report of 2026-10-21.
  *
  * Everything else is here. Where the recorder writes a *keyed pseudonym* --
  * `r-.../r-...` for a repository, `<project>` and `<bucket>` for a GCP name --
@@ -1068,20 +1157,25 @@ const FREE_TEXT_RULES: readonly OneRule[] = Object.freeze([
   {
     flag: 'neutralised-credential',
     apply: (text) =>
-      text.replace(ENTROPY_RE, (run) => (isHighEntropy(run) ? TOKEN_PLACEHOLDER : run)),
+      text.replace(ENTROPY_RE, (run) =>
+        isHighEntropy(run) && !isPathRun(run) ? TOKEN_PLACEHOLDER : run,
+      ),
   },
 ])
 
 /**
  * isPathShapedSecret is a high-entropy run the path rule would otherwise split:
- * it does not start at a `/` (a rooted run is a path, redacted whole by the
- * path rule) and holds two or more slashes, so the path rule's unrooted
- * alternative would take `/a/b` and leave the run's first fragment on screen
- * (review round 2 of PR 494). One slash is a repository path and is the
- * repository rule's. The recorder runs the same rule at the same place.
+ * it is not rooted -- a rooted run is a path, redacted whole by the path rule,
+ * which is `isRootedRun`'s question and not `isPathRun`'s, because this rule
+ * runs *before* the path rule and asking the net's question here would take a
+ * blob inside a path away from it -- and holds two or more slashes, so the path
+ * rule's unrooted alternative would take `/a/b` and leave the run's first
+ * fragment on screen (review round 2 of PR 494). One slash is a repository path
+ * and is the repository rule's. The recorder runs the same rule at the same
+ * place.
  */
 function isPathShapedSecret(run: string): boolean {
-  return !run.startsWith('/') && (run.match(/\//g) ?? []).length >= 2 && isHighEntropy(run)
+  return !isRootedRun(run) && (run.match(/\//g) ?? []).length >= 2 && isHighEntropy(run)
 }
 
 /**
@@ -1252,7 +1346,10 @@ const TRACKED_RULES: readonly TrackedRule[] = Object.freeze<TrackedRule[]>([
         : { keep: (match[1] ?? '').length + (match[2] ?? '').length, replacement: TOKEN_PLACEHOLDER, kind: COVER_TOKEN },
   },
   { pattern: ENTROPY_RE, decide: (match) => (isPathShapedSecret(match[0]) ? TOKEN_EDIT : null) },
-  { pattern: ENTROPY_RE, decide: (match) => (isHighEntropy(match[0]) ? TOKEN_EDIT : null) },
+  {
+    pattern: ENTROPY_RE,
+    decide: (match) => (isHighEntropy(match[0]) && !isPathRun(match[0]) ? TOKEN_EDIT : null),
+  },
 ])
 
 /** Traced is one reading as the tracked rules rewrite it: its text, and for
