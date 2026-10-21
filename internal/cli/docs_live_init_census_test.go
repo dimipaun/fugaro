@@ -331,6 +331,24 @@ const censusRoot = "../.."
 // retired word -- and stay with them. docs/gcp-live-checklist.md itself is on
 // the list for the same reason.
 //
+// **What W2.6 has to settle before the flip can pass, written here because the
+// flip's own output is where it surfaces.** Nine of the files above are the
+// plan records of other artifacts -- docs/coordinator/'s three,
+// docs/in-job-review/reconciliation.md, docs/mobile/'s four, and
+// docs/windows-cli/reconciliation.md -- and D9 (answered 2026-10-20, W2.3's
+// own task text) rules exactly those four folders dated records. They are on
+// this list today because `datedRecords` above is W0.2's six and does not
+// carry them, and the two halves have to agree before the flip is reachable:
+// a file that is exempt is skipped by the walk, so listing one fails the
+// census in the direction it fails when a name was missed, and renaming one
+// contradicts D9. Nothing W2.3 can do resolves it -- the rename must not enter
+// them and this constant is not its to grow -- so the residue is left visible
+// rather than settled by a walk that stopped looking. The same holds for the
+// three folders whose plans arrived after W0.2 was written
+// (docs/central-orchestrator/, docs/rigor-modes/ and docs/mobile-auth/): the
+// plan's W2.6 names ten exempt roots and none of them is among the ten, so
+// whichever task flips this file rules on those too.
+//
 // Each task that renames a string takes the file off this list in the same
 // commit, and W2.6 empties it.
 var pendingRename = []string{
