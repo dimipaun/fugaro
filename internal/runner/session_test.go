@@ -307,6 +307,80 @@ func TestFixResumesLatestSessionID(t *testing.T) {
 	}
 }
 
+// TestReviewSessionSaved: a review is a session of its own (agentLoop hands
+// each review a fresh ID) and it is usually the last thing a run did, so it
+// is the session the run saves (C1.17, D138) — a follow-up on the pull
+// request resumes the review, not the implement stage before it.
+func TestReviewSessionSaved(t *testing.T) {
+	h := newHarness(t, "", nil)
+	reviewed := agent.NewSessionID()
+	rec, err := h.run(t, withSession(implement("feature"), "", "implement\n"),
+		withSession(review("ship", 0), reviewed, "reviewed\n"))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if impl := h.agent.calls[0].SessionID; impl == reviewed {
+		t.Fatal("the review ran in the implement stage's session; this test proves nothing")
+	}
+	m, data, err := h.store.ReadSession(context.Background())
+	if err != nil || m.ID != reviewed || string(data) != "reviewed\n" {
+		t.Fatalf("session = %+v, %q, %v; want the review's own session %s", m, data, err, reviewed)
+	}
+	objs := bucketObjects(t, h.bucket)
+	if _, ok := objs[h.store.Prefix()+"session/"+reviewed+".jsonl"]; !ok {
+		t.Errorf("the review's session object was not stored")
+	}
+}
+
+// TestFixResumesWorkSessionAfterReviewReportsOne: saving the review's
+// session must not make it the one a fix resumes. A fix continues the work
+// (and only the work session still exists in the repository it works in),
+// so when a review that was handed a fresh session reports it, the next fix
+// still resumes the implement stage's.
+func TestFixResumesWorkSessionAfterReviewReportsOne(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "review_rounds: 2", "review_rounds: 3", 1)
+	h := newHarness(t, cfg, nil)
+	work := agent.NewSessionID()
+	reviewed := agent.NewSessionID()
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if !req.Resume || req.SessionID != work {
+			t.Errorf("fix resumed %q (resume %v), want the work session %q", req.SessionID, req.Resume, work)
+		}
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{SessionID: work}, nil
+	}
+	rec, err := h.run(t, withSession(implement("feature"), work, "implement\n"),
+		withSession(review("changes", 1), reviewed, "reviewed\n"), fix, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	m, _, err := h.store.ReadSession(context.Background())
+	if err != nil || m.ID != work {
+		t.Fatalf("saved session = %+v, %v; want the work session %s (the last review reported none)", m, err, work)
+	}
+}
+
+// TestReviewSessionRedacted: the review's session goes through the same
+// save as any other stage's, so what it holds is redacted before it is
+// uploaded — a review reads the repository's diff, which is exactly where a
+// pasted credential turns up.
+func TestReviewSessionRedacted(t *testing.T) {
+	h := newHarness(t, "", nil)
+	content := `{"tool_result":"ANTHROPIC_API_KEY=test-key"}` + "\n" + `{"prompt":"review this"}` + "\n"
+	if _, err := h.run(t, withSession(implement("feature"), "", "implement\n"),
+		withSession(review("ship", 0), agent.NewSessionID(), content)); err != nil {
+		t.Fatal(err)
+	}
+	_, data, err := h.store.ReadSession(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("test-key")) || !bytes.Contains(data, []byte("[REDACTED]")) || !bytes.Contains(data, []byte(`{"prompt":"review this"}`)) {
+		t.Fatalf("the review's session was not redacted: %q", data)
+	}
+}
+
 // commentHook runs hook before each comment the fake provider posts.
 type commentHook struct {
 	*fake.Provider
@@ -640,16 +714,23 @@ func TestFakeClaudeRunSavesSession(t *testing.T) {
 		t.Fatalf("calls = %d, fix args %q", len(calls), calls[min(2, len(calls)-1)].Args)
 	}
 	// The fake's own session file, named as Claude Code names it, is what
-	// was saved: implement's prompt, then fix's, under the resumed ID.
+	// was saved: the last review's, which is the session of its own that
+	// the run last worked in (C1.17, D138) — a follow-up resumes the
+	// review, not the fix it asked for. The fix's own ID is the one it
+	// resumed, and it must not be what was saved.
 	m, data, err := h.store.ReadSession(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := calls[2].Args[slices.Index(calls[2].Args, "--resume")+1]
-	if m.ID != id || !m.Pushed || m.HeadSHA != rec.PushedHead || strings.Count(string(data), `"prompt"`) != 2 {
-		t.Fatalf("session = %+v, %q", m, data)
+	fixID := calls[2].Args[slices.Index(calls[2].Args, "--resume")+1]
+	reviewID := calls[3].Args[slices.Index(calls[3].Args, "--session-id")+1]
+	if reviewID == fixID {
+		t.Fatalf("the review ran in the fix's session (%s); this test proves nothing", reviewID)
 	}
-	if _, ok := bucketObjects(t, h.bucket)[h.store.Prefix()+"session/"+id+".jsonl"]; !ok {
+	if m.ID != reviewID || !m.Pushed || m.HeadSHA != rec.PushedHead || strings.Count(string(data), `"prompt"`) != 1 {
+		t.Fatalf("session = %+v, %q; want the last review's %s", m, data, reviewID)
+	}
+	if _, ok := bucketObjects(t, h.bucket)[h.store.Prefix()+"session/"+reviewID+".jsonl"]; !ok {
 		t.Fatal("no session/ object in the store")
 	}
 }
