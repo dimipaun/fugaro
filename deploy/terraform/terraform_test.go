@@ -3652,6 +3652,12 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 // a variable, so dropping it needs its own list, and a module that spells it
 // wrong leaves the job's account with the private key of the installation's
 // GitHub App.
+//
+// The accessor and the mount are one rule and are pinned as one (C2.3, review
+// finding F1): job_secret_names drops what the account may not read, and
+// job_mounts — the container's own env — drops what it may not mount, which is
+// the App key and only the App key, because C1.20 is the task that takes the
+// model credentials' mounts away with the runner's switch to the service.
 func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	const path = "gcp/modules/workflow/sa.tf"
 	b, err := os.ReadFile(path)
@@ -3735,6 +3741,27 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	}
 	if strings.Contains(grant, "condition") {
 		t.Errorf("%s: the job's invoker grant carries a condition; the service's own ID-token check is what decides which of the accounts IAM admits are served (Q6):\n%s", path, grant)
+	}
+
+	// And the other half of the same rule (C2.3, review finding F1): the
+	// MOUNT goes with the accessor. A container that still declares a secret
+	// its account may not read is not a job with one credential too many, it
+	// is a job Cloud Run refuses to create -- every GitHub run of an
+	// installation that opted in would fail. The two are one expression's
+	// halves here, and the tftest run credentials_service_on_github_app_key
+	// plans them together.
+	if !strings.Contains(squash(code), "env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical)") {
+		t.Errorf("%s: job_mounts must keep every mount while the credentials service is off and drop the service-held ones (the App key) once it is on, by logical name:\n%s", path, code)
+	}
+	// The container is the consumer of that local, and it is what a missing
+	// pass-down would leave out: iterating var.workflow.secret_env instead
+	// plans the App key's mount back into a job whose account cannot read it.
+	jb, err := fs.ReadFile(FS, "gcp/modules/workflow/job.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(squash(stripComments(string(jb))), `dynamic "env" { for_each = local.job_mounts`) {
+		t.Errorf("gcp/modules/workflow/job.tf: the container's secret env must iterate local.job_mounts rather than var.workflow.secret_env, or the App key's mount outlives its accessor (C2.3, F1):\n%s", jb)
 	}
 }
 

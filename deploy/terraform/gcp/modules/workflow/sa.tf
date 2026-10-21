@@ -101,6 +101,32 @@ locals {
     for env, logical in var.workflow.secret_env :
     logical if var.credentials_service == null || !local.is_service_held[env]
   ])
+
+  # The secrets the job's CONTAINER still declares, by the variable each is
+  # mounted as: every mount while the credentials service is off — byte for
+  # byte the map the module declared before it knew about the service (D147) —
+  # and, once it is on, every mount except the GitHub App's private key. A
+  # mount the job's account has no accessor on is not a weaker mount, it is a
+  # job Cloud Run refuses to create, so the mount has to go with the accessor
+  # (C2.3, review finding F1).
+  #
+  # Only the App key goes here, and not the model credentials the accessor
+  # drop above covers as well, because the two are removed by different tasks
+  # at different times: C1.18 drops the job's accessor on the model
+  # credentials and C1.20 the mount, together with the runner's switch to
+  # reading them from the service (C1.15) — a mount this module removed for a
+  # runner that cannot read the service yet would break every run. The App
+  # key needs no such pairing: no run reads it at all once C2.1/C2.2 make the
+  # service mint the installation tokens, so C2.3 drops accessor and mount
+  # together. service_held_secret_names is the App key alone, which is
+  # exactly the difference; is_service_held would take the model mounts too.
+  #
+  # The check job is not this module: it runs as the build account, which
+  # keeps its accessor on the App key and clones with it (D148, F3).
+  job_mounts = {
+    for env, logical in var.workflow.secret_env :
+    env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical)
+  }
 }
 
 # Each secret the job mounts and may read, at the secret level, never the
