@@ -146,7 +146,7 @@ func TestImageRenderReadsTheCopyAndChecksItsSum(t *testing.T) {
 	}
 }
 
-// Review fix (1), security (decision L16): fugaro init's first builds are a
+// Review fix (1), security (decision L16): fugaro setup's first builds are a
 // billable Cloud Build submission, never lenient like the repository and
 // anchor stages' own earlier read (loadCheckoutConfigAt, read with lc==nil,
 // before lc itself is even loaded). A bucket that cannot be read, with

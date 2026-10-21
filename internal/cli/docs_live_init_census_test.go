@@ -168,7 +168,7 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 182 files -- 68 non-test Go files, 71 test files,
+// command, sorted. It is 180 files -- 68 non-test Go files, 69 test files,
 // 37 markdown files, and the six that fall in none of those groups: the
 // website's four (its install data, its two pages and its test script), the
 // getting-started design board the redesign was approved from,
@@ -254,7 +254,10 @@ const censusRoot = "../.."
 // in W2.1's first pass and the walk put them back the moment the expectations
 // were restored to the strings the tree actually emits: an assertion that pins
 // another package's text is a mention the other package's task takes off, not
-// this one's. One file went the other way in the same pass:
+// this one's. Two came off it in the same pass, because their only mention
+// was this package's own prose: internal/cli/init_firebase_test.go's note about
+// what a plain run keeps, and internal/cli/image_layer_test.go's about the
+// first builds being billable. One file went the other way in the same pass:
 // internal/cli/sharedcfg_validate_test.go asserted the refusal sharedcfg.go
 // writes, which IS this package's own line, so its expectation moved with the
 // rename and it left the list -- the swap it makes with doctor_bucket_test.go
@@ -333,10 +336,8 @@ var pendingRename = []string{
 	"internal/cli/docs_setup_wizard_checks_test.go",
 	"internal/cli/doctor_bucket_test.go",
 	"internal/cli/image.go",
-	"internal/cli/image_layer_test.go",
 	"internal/cli/image_refresh_steps_test.go",
 	"internal/cli/init.go",
-	"internal/cli/init_firebase_test.go",
 	"internal/cli/init_test.go",
 	"internal/cli/managed_apply.go",
 	"internal/cli/managed_apply_test.go",

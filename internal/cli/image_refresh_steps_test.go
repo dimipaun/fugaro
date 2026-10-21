@@ -743,7 +743,7 @@ func TestRefreshBuildsDeclineStopsSubsequentBuilds(t *testing.T) {
 // The job has to be a clone job for that to be the right move at all —
 // infra.PlanWorkflowJob refuses one whose container does not carry
 // FUGARO_CHECKOUT=clone, since moving such a job's image would leave it
-// expecting a baked checkout — so the test deploys it the way `fugaro init
+// expecting a baked checkout — so the test deploys it the way `fugaro update
 // --repo` does, env included.
 //
 // Mutation (run, restore): set cloneShipped back to false in recipes_skew.go

@@ -831,7 +831,7 @@ func TestInitFirebaseWritesConfigAndHistoryJob(t *testing.T) {
 	}
 }
 
-// A plain fugaro init keeps the history account and job while the config
+// A plain fugaro setup keeps the history account and job while the config
 // records the Firebase project (else it would plan their deletion).
 func TestInitKeepsBudgetBackend(t *testing.T) {
 	r := newFBRig(t)
