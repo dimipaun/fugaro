@@ -287,9 +287,15 @@ func TestLeaseOnlyTheRecordedHolderMayRenewOrRelease(t *testing.T) {
 // standstill with a changed holder is a takeover with the token left behind,
 // which is what makes the old holder's next call look valid.
 //
+// Every case here writes as another account, so the holder conjunct alone
+// refuses all four of them and the renew branch's own generation clause —
+// `newData.generation == data.generation` — is never what refuses anything:
+// dropping *that* conjunct is TestLeaseTheHolderCannotRewriteItsOwnGeneration's
+// job, and this case cannot see it.
+//
 // Hand mutation this fails on: dropping `data.child('generation').val() + 1`
-// (any generation may be written over any other), or the renew branch's
-// `newData.generation == data.generation`.
+// (any generation may be written over any other, by a claimant who is not the
+// holder).
 func TestLeaseGenerationCannotJumpOrStandStill(t *testing.T) {
 	h := newHarness(t)
 	bob := h.phone(bobUID)
@@ -311,6 +317,72 @@ func TestLeaseGenerationCannotJumpOrStandStill(t *testing.T) {
 	// The successor is accepted, so the four refusals above are the clause and
 	// not the rules refusing every write to a stale seat.
 	mustTake(h, bob, leasePath, leaseRecord(bobUID, 6))
+}
+
+// TestLeaseTheHolderCannotRewriteItsOwnGeneration is the half of the generation
+// clause the case above cannot reach, and it is written for the mutation that
+// survives that one: every case there writes as *another* account (Bob over
+// Alice's seat), so the renew branch's holder conjunct refuses them on its own
+// and `newData.child('generation').val() == data.child('generation').val()` is
+// never the clause that refuses anything. Drop that single conjunct from the
+// renew branch and the whole file still passed — measured, before this case
+// existed — while a writer whose uid is already the recorded one can walk the
+// generation wherever it likes, which is the fencing token gone: the number a
+// holder acts on stops meaning "the seat I hold".
+//
+// The seat is the writer's own, freshly stamped, in every case below, so the
+// identity clause is satisfied and the only thing left to refuse the write is
+// the generation. The stale-process case is the one the generation exists for:
+// a holder is a *named identity*, and the same identity runs in two places (the
+// same account on a laptop and on the resident service), so a record whose
+// holder_uid is still this writer's says nothing about whether the generation
+// this writer carries is the current one — internal/lease states the same thing
+// in Renew's comment and pins it in
+// TestTheSameIdentityOnTwoMachinesIsStillTwoHolders.
+//
+// Hand mutation this fails on: dropping `" + gen + " == " + oldGen` from the
+// renew branch of leaseWrite — the holder rewrites its own generation forward
+// or backward and the stale process's write lands over a newer generation.
+func TestLeaseTheHolderCannotRewriteItsOwnGeneration(t *testing.T) {
+	h := newHarness(t)
+	alice, bob := h.phone(aliceUID), h.phone(bobUID)
+	h.set(leasePath, leaseSeed(aliceUID, 5, time.Now().UnixMilli()))
+
+	for _, c := range []struct {
+		why string
+		rec map[string]any
+	}{
+		{"the holder moving its own generation forward", leaseRecord(aliceUID, 7)},
+		{"the holder moving its own generation backwards", leaseRecord(aliceUID, 4)},
+	} {
+		if err := take(h, alice, leasePath, c.rec); !errors.Is(err, rtdb.ErrPermission) {
+			t.Errorf("%s: %v, want the rules to refuse it", c.why, err)
+		}
+	}
+
+	// The same identity, holding a generation the seat has moved past: the seat
+	// is Alice's at generation 6 and this process still writes the 5 it read —
+	// the shape a laptop that lost the seat to a takeover of its own account
+	// leaves behind. The uid clause cannot tell the two apart; the generation is
+	// what does, and the renew branch is the only branch it could ever satisfy.
+	h.set(leasePath, leaseSeed(aliceUID, 6, time.Now().UnixMilli()))
+	if err := take(h, alice, leasePath, leaseRecord(aliceUID, 5)); !errors.Is(err, rtdb.ErrPermission) {
+		t.Errorf("a stale process of the holder's own identity writing the generation it still holds over a newer one: %v, want the rules to refuse it", err)
+	}
+	// And nothing above moved the seat: it is still Alice's at generation 6.
+	if got := h.value(leasePath); !strings.Contains(got, `"holder_uid":"`+aliceUID+`"`) || !strings.Contains(got, `"generation":6`) {
+		t.Fatalf("after the refused writes the lease is %s, want Alice at generation 6", got)
+	}
+
+	// The controls, so the refusals above are the generation clause and not a
+	// seat this identity cannot write at all: Alice's own heartbeat at the
+	// generation she holds lands, and so does the successor a takeover writes.
+	mustTake(h, alice, leasePath, leaseRecord(aliceUID, 6))
+	h.set(leasePath, leaseSeed(aliceUID, 6, stale()))
+	mustTake(h, bob, leasePath, leaseRecord(bobUID, 7))
+	if got := h.value(leasePath); !strings.Contains(got, `"holder_uid":"`+bobUID+`"`) || !strings.Contains(got, `"generation":7`) {
+		t.Fatalf("after the takeover the lease is %s, want Bob at generation 7", got)
+	}
 }
 
 // TestLeaseFieldByFieldWritesAreRefused is the case the security review asked
