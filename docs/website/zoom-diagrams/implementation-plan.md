@@ -166,9 +166,11 @@ by the documents this amendment is written in, and the part still starts on the 
 4. **The nav.** `{ href: '/why-gcp/', label: 'Why GCP' }` in the **Product** group, placed
    **after** "How it works" (D238), and the sentence D182 left standing amended in the same
    commit — `Base.astro:126` and `:338`, `base.css:201` and `base-styles.mjs:2755,2778` all
-   say "three groups of three" on the tree as #842's merge leaves it (the reconciliation's
-   ZF54 cites the same two failures at `:2635-2636`, which is where they stood at its own base
-   `3021f4b3`). **The owner's later brief (PR #845, 2026-10-21) drops
+   say "three groups of three" on the tree as #842's merge leaves it. The reconciliation's
+   ZF54 cites the same two failures at its own base `3021f4b3`, and they were not in one
+   range there: the count failure it names is `:2636`, inside the `:2635-2636` it quotes, and
+   the group-with-no-links message is `:2659`, inside the `:2639-2693` block that quotes the
+   rest of the contract. **The owner's later brief (PR #845, 2026-10-21) drops
    the Reference group**, so the menu this item joins is two groups — Product (How it works,
    Getting started, Caps and costs, Console) and Project (Docs, Security, FAQ, Community,
    Changelog) — and "Why GCP" is placed after "How it works" in Product rather than counted
