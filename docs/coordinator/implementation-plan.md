@@ -434,18 +434,21 @@ existing allow-list and changes no CSP, and the review's job is to confirm exact
 **Scope.** Two halves, and only the first is this work's unconditionally.
 
 - **The type.** `google_cloud_run_v2_service` and its `*_iam_member` enter
-  `internal/infra/tf/cover.go`'s `allowedTypes`, `internal/infra/tf/managed_cover.go`'s
-  `managedTypes`, and the cost tables `internal/infra/tf/managed_cost.go` already carries rows in
-  (its `managedCostMaxMinInstances` is the entry for the service's own scaling knob), with
-  `internal/cli/init_review.go`'s `notCovered` still firing the typed confirmation the owner
-  designed. This is the load-bearing admission of finding #2, and the part adds the type to the
-  **refusal's** allow-list and to nothing else — **no Terraform module in this part**.
+  `internal/infra/tf/cover.go`'s `allowedTypes` and `internal/infra/tf/managed_cover.go`'s
+  `managedTypes`, which hold `google_cloud_run_v2_job` and its own `*_iam_member` today and **do
+  not hold the service** — that absence is finding #2, and admitting a type is exactly the act
+  its allow-list exists to make deliberate, so `internal/cli/init_review.go`'s `notCovered` must
+  still fire the typed confirmation the owner designed. **The cost table already knows the type**:
+  `internal/infra/tf/managed_cost.go` carries the service's rows, and its own comment says they
+  *"become load-bearing the moment the allowlist admits a service"* — so this part adds the type
+  to the two refusal lists, changes no cost row, and **writes no Terraform module**.
 - **The credential.** Q2(A)'s plumbing: a `fugaro` command that mints the Google ID token for the
   coordinator's URL from the CLI's own user ADC (`internal/backend/gcp/gcp.go`), so nobody types
   `gcloud auth print-identity-token`; and the per-person Cloud Run IAM invoker member, in the
   shape `deploy/terraform/gcp/modules/project/iam.tf`'s `google_cloud_run_v2_job_iam_member
   "launcher"` uses — **one person per member, no `allUsers`, no `allAuthenticatedUsers`, no
-  `domain:`**, which is the rule the compute module's own variables refuse to break.
+  `domain:`**, which is the rule `internal/cli/init_review.go`'s `reviewScreen` already refuses in
+  a plan and `internal/cli/doctor_launcher.go` reports as a problem when it finds one.
 
 **Where the service itself is built is D196.** Q10(A) says there is **one resident service per
 installation, with the coordinator as a role it plays**; the resident service is the central
