@@ -1,10 +1,11 @@
 ---
 /**
  * website/src/components/ScreenshotSlider.astro — the console's screenshots (owner feedback
- * 2026-10-19: "Console: we need a screenshot slider at the top").
+ * 2026-10-19: "Console: we need a screenshot slider at the top"; the owner's approved board
+ * `website/design-ref/ConsoleV2.dc.html`, 2026-10-20).
  *
- * **What it is: a scroll container with snap points, and dots that are anchors.** There is
- * no script here and none is needed to use it. The track is a horizontally scrolling box
+ * **What it is: a framed scroll container with snap points, and dots that are anchors.** There
+ * is no script here and none is needed to use it. The track is a horizontally scrolling box
  * with `scroll-snap-type: x mandatory`, so a swipe, a trackpad, a scrollbar drag and the
  * keyboard's own arrow keys all move it and the browser lands on a whole screenshot rather
  * than halfway between two; each dot is an `<a href="#…">` pointing at its slide, so a
@@ -14,11 +15,30 @@
  * the slider). That is the whole of the
  * control, which is why the site's one script file (D183) knows nothing about it.
  *
+ * **The frame draws whether or not there is a picture in it.** The board puts the slider in a
+ * bordered panel with the dots under it, and the console has no screenshot yet — the owner
+ * takes them from the released console — so an empty data file draws the frame with
+ * **labelled placeholder slides**: the same track, the same snap points, the same dots and the
+ * same captions, each slide saying which of how many it is and that the real screenshot goes
+ * there. That is what makes the later real slider a data change rather than a rewrite: the row
+ * that arrives renders into the shape this file already draws, and the placeholder is what the
+ * page shows until then (the board draws three; the count is this component's own and no
+ * document holds it, so it is listed in the pull request for the owner to veto).
+ *
+ * **No prev/next buttons, and that is a deliberate difference from the board.** The board
+ * draws a pair of arrows beside the slide, and the site's slider has no script: an arrow that
+ * moved the track would be code (a second thing on a page the site keeps script-free), and an
+ * arrow that only linked to the next slide would duplicate the dots and point at itself at
+ * either end. The dots are the control — each one an anchor into its own slide — and the
+ * keyboard's arrow keys move the focused track.
+ *
  * **Keyboard and screen reader.** The track is focusable (`tabindex="0"`) and named, which
  * is what makes a scroll container scrollable by arrow keys at all and what tells a screen
  * reader what the box is; the dots carry no text of their own — they are drawn as dots — so
  * each one carries an accessible name; every picture carries `alt` and every slide a
- * `<figcaption>`, both read out of the data file rather than written here.
+ * `<figcaption>`, both read out of the data file rather than written here. A placeholder slide
+ * says in its own text what it is, so a reader who cannot see the frame is told the same thing
+ * a reader who can is.
  *
  * **No autoplay, and the reduced-motion path is the site's own.** Nothing here moves on its
  * own: there is no timer, no animation and no carousel behaviour, and the only motion the
@@ -26,13 +46,11 @@
  * `prefers-reduced-motion: reduce` rule neutralises for a visitor who asked for less motion
  * (D105). The stylesheet declares no `animation` at all.
  *
- * **The slides are data, and the data file ships empty.** `website/data/console-screens.yaml`
- * carries one row per screenshot — the file's name under `public/images/console/`, its
- * `alt`, its caption and its own pixel dimensions — and this component renders the rows it
- * is handed and nothing else. The console's screenshots are the owner's to take from the
- * released console, so the list is empty today and the console page renders **no slider and
- * no placeholder** while it is: no section, no heading, no empty frame and no `<img>`. The
- * empty state is the `screens.length > 0` guard below, and `website/test/console-screens.mjs`
+ * **The slides are data.** `website/data/console-screens.yaml` carries one row per screenshot —
+ * the file's name under `public/images/console/`, its `alt`, its caption and its own pixel
+ * dimensions — and this component renders the rows it is handed and nothing else. The
+ * console's screenshots are the owner's to take from the released console, so the list is empty
+ * today; the empty state is the placeholder branch below, and `website/test/console-screens.mjs`
  * builds both states — the empty one, and one with two fixture slides.
  *
  * The facts come in as props rather than being read here, the way `Downloads.astro` takes
@@ -51,8 +69,8 @@ import type { ConsoleScreen } from '../content.ts'
 
 interface Props {
   /**
-   * The slides, in the order the data file lists them. An empty list renders nothing at
-   * all, which is the state the console page ships in.
+   * The slides, in the order the data file lists them. An empty list renders the frame's
+   * placeholder slides, which is the state this checkout ships.
    */
   screens: ConsoleScreen[]
 }
@@ -60,75 +78,124 @@ interface Props {
 const { screens } = Astro.props
 
 // The section's own heading and the hook `website/test/console-screens.mjs` reads: the
-// section is the slider, and "there is no slider" is a statement about this element.
+// section is the slider, and "the slider is there" is a statement about this element.
 const HEADING = 'Screenshots'
 const SLOT = 'console-screens'
+
+/**
+ * How many placeholder slides the empty frame draws, and the board's own count
+ * (`website/design-ref/ConsoleV2.dc.html` draws three dots and three slides). It is a number
+ * this component picks and no document of this repository holds — the page shows the frame
+ * that is waiting for the pictures — and the pull request lists it for the owner to veto.
+ */
+const PLACEHOLDER_SLIDES = 3
+
+/** What a placeholder slide says: which of how many it is, and what will be there. */
+const PLACEHOLDER_LABEL = (index: number) =>
+  `Screenshot placeholder ${index + 1} / ${PLACEHOLDER_SLIDES}`
+const PLACEHOLDER_NOTE = 'Real console screenshot goes here (not taken yet)'
+/** The line under a placeholder, where a real slide's caption goes. */
+const PLACEHOLDER_CAPTION = 'A line naming the screen goes here.'
+
+// One list, two sources: the data file's rows when it has any, and the placeholders when it
+// does not. The rest of this file is written once for both, which is what keeps the frame, the
+// track, the snap points and the dots the same shape whichever the page renders.
+type Slide = { screen: ConsoleScreen } | { screen: null }
+const slides: Slide[] =
+  screens.length > 0
+    ? screens.map((screen) => ({ screen }))
+    : Array.from({ length: PLACEHOLDER_SLIDES }, () => ({ screen: null }))
 
 // Each slide's id: what its dot points at, and what an anchor from anywhere else can name.
 const slideId = (index: number) => `console-screen-${index + 1}`
 ---
 
-{
-  screens.length > 0 && (
-    <section class="screens" data-slot={SLOT} aria-labelledby="console-screens-heading">
-      <h2 id="console-screens-heading">{HEADING}</h2>
+<section class="screens" data-slot={SLOT} aria-labelledby="console-screens-heading">
+  <h2 id="console-screens-heading">{HEADING}</h2>
 
-      {/* The track. `tabindex="0"` is not decoration: a scroll container that cannot be
-          focused cannot be scrolled by the keyboard, and the slides off the right-hand edge
-          would be reachable only with a pointer. The label says what the box is, because a
-          focusable region is announced as an unnamed group without one. */}
-      <ul
-        class="screens-track"
-        tabindex="0"
-        aria-label={`${HEADING} of the console. Scroll sideways to see the rest.`}
-      >
-        {screens.map((screen, index) => (
+  {/* The frame: the panel the board draws the slider in, and the box the track scrolls
+      inside. It is here rather than in the track's own rules because it is the frame that
+      holds the dots' row and the slide's caption together with the picture. */}
+  <div class="screens-frame">
+    {/* The track. `tabindex="0"` is not decoration: a scroll container that cannot be
+        focused cannot be scrolled by the keyboard, and the slides off the right-hand edge
+        would be reachable only with a pointer. The label says what the box is, because a
+        focusable region is announced as an unnamed group without one. */}
+    <ul
+      class="screens-track"
+      tabindex="0"
+      aria-label={`${HEADING} of the console. Scroll sideways to see the rest.`}
+    >
+      {
+        slides.map((slide, index) => (
           <li class="screen" id={slideId(index)}>
             <figure class="screen-figure">
-              <img
-                class="screen-image"
-                src={screen.src}
-                alt={screen.alt}
-                width={screen.width}
-                height={screen.height}
-                loading={index === 0 ? 'eager' : 'lazy'}
-                decoding="async"
-              />
-              <figcaption class="screen-caption">{screen.caption}</figcaption>
+              {slide.screen ? (
+                <img
+                  class="screen-image"
+                  src={slide.screen.src}
+                  alt={slide.screen.alt}
+                  width={slide.screen.width}
+                  height={slide.screen.height}
+                  loading={index === 0 ? 'eager' : 'lazy'}
+                  decoding="async"
+                />
+              ) : (
+                /* A placeholder is drawn, not fetched: no `<img>`, no file, and no URL
+                   anywhere — the frame says a picture will be here and nothing loads. */
+                <div class="screen-placeholder" data-placeholder>
+                  <p class="screen-placeholder-label">{PLACEHOLDER_LABEL(index)}</p>
+                  <p class="screen-placeholder-note">{PLACEHOLDER_NOTE}</p>
+                </div>
+              )}
+              <figcaption class="screen-caption">
+                {slide.screen ? slide.screen.caption : PLACEHOLDER_CAPTION}
+              </figcaption>
             </figure>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+
+  {/* One dot per slide, and none at all for a single slide: a control that can only
+      take a reader where they already are is noise. Each dot is an anchor into its
+      slide, so the whole control is the browser's own — and it carries its name in an
+      `aria-label`, because a dot drawn by the stylesheet has no text for a screen
+      reader to announce. */}
+  {
+    slides.length > 1 && (
+      <ul class="screens-dots">
+        {slides.map((_, index) => (
+          <li class="screen-dot-item">
+            <a
+              class="screen-dot"
+              href={`#${slideId(index)}`}
+              aria-label={`Show screenshot ${index + 1} of ${slides.length}`}
+            />
           </li>
         ))}
       </ul>
-
-      {/* One dot per slide, and none at all for a single slide: a control that can only
-          take a reader where they already are is noise. Each dot is an anchor into its
-          slide, so the whole control is the browser's own — and it carries its name in an
-          `aria-label`, because a dot drawn by the stylesheet has no text for a screen
-          reader to announce. */}
-      {
-        screens.length > 1 && (
-          <ul class="screens-dots">
-            {screens.map((screen, index) => (
-              <li class="screen-dot-item">
-                <a
-                  class="screen-dot"
-                  href={`#${slideId(index)}`}
-                  aria-label={`Show screenshot ${index + 1} of ${screens.length}`}
-                />
-              </li>
-            ))}
-          </ul>
-        )
-      }
-    </section>
-  )
-}
+    )
+  }
+</section>
 
 <style>
   /* Tokens only (W1.2): every colour below is the palette in force, so the contrast check
      in `website/test/a11y.mjs` is about the colours this slider actually paints. */
   .screens {
-    margin: 0 0 var(--space-lg);
+    margin: 0 0 var(--space-2xl);
+  }
+
+  /* The frame: the panel the board draws around the slide, and the room the slide and its
+     caption are given inside it. The border is a hairline of the palette's own tones rather
+     than a gradient, because the panel already sits a step above the ground and a second
+     drawing on top of it is a shape the page does not need. */
+  .screens-frame {
+    padding: var(--space-sm);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--panel);
   }
 
   /* **The track is the scroller.** `grid-auto-flow: column` with a full-width column puts
@@ -169,8 +236,56 @@ const slideId = (index: number) => `console-screen-${index + 1}`
     width: 100%;
     height: auto;
     border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     background: var(--surface);
+  }
+
+  /* The placeholder: the box the picture will land in, drawn at the picture's own shape so
+     the frame does not change height the day the file arrives. It is a dashed hairline
+     (`--border`) and a stripe of the palette's own two grounds (`--ground` and `--panel`), all
+     of them tokens painted at full opacity — which is what the colour-literal scan reads, and
+     it needs no pair of its own because no text sits on it: the pair set is about text and
+     about a graphic a reader has to perceive to operate the page, and a decoration under a
+     label is neither, which is the same reason `--border` is out of it
+     (`website/test/a11y.mjs`). */
+  .screen-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2xs);
+    box-sizing: border-box;
+    aspect-ratio: 16 / 10;
+    padding: var(--space-md);
+    border: calc(var(--border-width) * 2) dashed var(--border);
+    border-radius: var(--radius-lg);
+    background-image: repeating-linear-gradient(
+      135deg,
+      var(--ground) 0,
+      var(--ground) 18px,
+      var(--panel) 18px,
+      var(--panel) 36px
+    );
+    text-align: center;
+  }
+
+  /* The two lines of a placeholder: the label is the louder of the two, and the note under it
+     is the quieter tone — the same pair a card's heading and its line are set in. */
+  .screen-placeholder-label {
+    margin: 0;
+    max-width: none;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-tight);
+  }
+
+  .screen-placeholder-note {
+    margin: 0;
+    max-width: none;
+    color: var(--text-muted);
+    font-size: var(--font-size-base);
   }
 
   .screen-caption {
@@ -179,19 +294,43 @@ const slideId = (index: number) => `console-screen-${index + 1}`
     font-size: var(--font-size-sm);
   }
 
-  /* The dots: one per slide, in a row under the track. They are the second way to a slide
+  /* The dots: one per slide, in a row under the frame. They are the second way to a slide
      and the only control here that is a link, so they take the focus ring `base.css` gives
      every `:focus-visible` element. */
   .screens-dots {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: var(--space-2xs);
     margin: var(--space-sm) 0 0;
     padding: 0;
     list-style: none;
   }
 
+  /* A dot is a target a reader taps, so it is at least 44 px of box with the dot drawn
+     inside it: the board draws a 10 px dot, and a 10 px target is not one a finger can hit
+     (the owner's brief of 2026-10-19 measures every control against 44 px). It is written as
+     a minimum rather than a height, because that is the declaration the site's one
+     reading of the brief looks for — `website/test/lib/controls.mjs`, which the home
+     page's case and this page's both call — and because the box may grow: the dot is centred
+     in whatever the anchor's content comes to. */
+  .screen-dot-item {
+    display: flex;
+  }
+
   .screen-dot {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 44px;
+    min-height: 44px;
+  }
+
+  /* The dot itself, drawn by the anchor's own pseudo-element so that the target above is
+     invisible and the mark is the small pill the board draws. */
+  .screen-dot::before {
+    content: '';
     display: block;
     width: var(--space-xs);
     height: var(--space-xs);
@@ -200,7 +339,12 @@ const slideId = (index: number) => `console-screen-${index + 1}`
     background: var(--surface);
   }
 
-  .screen-dot:hover {
+  .screen-dot:hover::before {
     border-color: var(--accent);
+  }
+
+  .screen-dot:focus-visible::before {
+    border-color: var(--accent);
+    background: var(--accent);
   }
 </style>

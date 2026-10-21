@@ -2022,7 +2022,14 @@ test('the tokens the pages name are the ones the design layer declares', () => {
   )
 })
 
-/** The homepage's own controls, and what each one is, as a failure names it. */
+/**
+ * The homepage's own controls, and what each one is, as a failure names it. **Every control the
+ * page asks a reader to tap is at least 44 px tall**, and the page's own controls are the hero's
+ * two links in the action row, the run band's link to the page that draws the run, and the one
+ * button in the closing call to action (`HomeRunBand.astro`, `HomeInstall.astro`); the slider's
+ * three tabs are `test/slider.mjs`'s, which reads them at the widths the page is read at, so this
+ * reading is about the controls outside the slider.
+ */
 const CONTROL_TARGETS = [
   ['hero-cta', "the hero's filled call to action"],
   ['hero-cta-quiet', "the hero's quiet call to action"],
