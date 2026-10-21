@@ -60,6 +60,11 @@ func managedPlanConfigured(rc ResourceChange, expressions map[string]json.RawMes
 // project, the shape a managed plan's own grants point at.
 const managedAccount = ManagedPrefix + "run@proj-1.iam.gserviceaccount.com"
 
+// managedServiceIngress is the ingress a managed service states: one of the
+// two internal values, which are the only ones a managed plan may carry. The
+// other, INGRESS_TRAFFIC_INTERNAL_ONLY, is accepted beside it.
+const managedServiceIngress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+
 // TestManagedAllowedTypesGolden pins both halves of the decision against
 // literals: the 15 types a managed plan may contain, and the 12 entries of
 // allowedTypes it may not. A widening — or a type dropped without a reason —
@@ -168,9 +173,15 @@ var managedKeptFixture = map[string]ResourceChange{
 	"google_cloud_run_v2_job_iam_member": mrc("google_cloud_run_v2_job_iam_member", map[string]any{
 		"name": ManagedPrefix + "job", "member": "serviceAccount:" + managedAccount, "role": "roles/run.invoker"}),
 	// The service's account is one level shallower than the job's: a service's
-	// template is the revision's, a job's carries the task's template inside it.
+	// template is the revision's, a job's carries the task's template inside
+	// it. It states its reach too: a managed service is reachable from inside
+	// the managed project only, so the invoker check stays on and the ingress
+	// is stated as one of the two internal values
+	// (TestManagedCoverRefusesAPublicService).
 	"google_cloud_run_v2_service": mrc("google_cloud_run_v2_service", map[string]any{
-		"name": ManagedPrefix + "svc",
+		"name":                 ManagedPrefix + "svc",
+		"invoker_iam_disabled": false,
+		"ingress":              managedServiceIngress,
 		"template": []any{map[string]any{
 			"service_account": managedAccount,
 			"containers":      []any{map[string]any{"image": "us-east5-docker.pkg.dev/proj-1/" + ManagedPrefix + "img:1"}},
@@ -572,9 +583,14 @@ func TestManagedCoverRefusesTheDefaultComputeAccount(t *testing.T) {
 					"template": []any{map[string]any{"template": []any{map[string]any{tc.attr: tc.account}}}},
 				})
 			case "google_cloud_run_v2_service":
+				// The service's own reach, stated as the kept fixture states
+				// it: this test is about the account, so the account is the
+				// only thing that may make the difference.
 				fixture = mrc(tc.typ, map[string]any{
-					"name":     ManagedPrefix + "svc",
-					"template": []any{map[string]any{tc.attr: tc.account}},
+					"name":                 ManagedPrefix + "svc",
+					"invoker_iam_disabled": false,
+					"ingress":              managedServiceIngress,
+					"template":             []any{map[string]any{tc.attr: tc.account}},
 				})
 			default:
 				fixture = mrc(tc.typ, map[string]any{
@@ -600,25 +616,90 @@ func TestManagedCoverRefusesTheDefaultComputeAccount(t *testing.T) {
 // refused rather than read as "nothing to check". A service is the same
 // resource shape one level shallower, and the same rule.
 func TestManagedCoverRefusesAnUnsetJobAccount(t *testing.T) {
-	for name, fixture := range map[string]ResourceChange{
-		"a job with no account": mrc("google_cloud_run_v2_job", map[string]any{
+	for name, tc := range map[string]struct {
+		fixture ResourceChange
+		why     string
+	}{
+		"a job with no account": {mrc("google_cloud_run_v2_job", map[string]any{
 			"name":     ManagedPrefix + "job",
 			"template": []any{map[string]any{"template": []any{map[string]any{"containers": []any{}}}}},
-		}),
-		"a service with no account": mrc("google_cloud_run_v2_service", map[string]any{
+		}), "a job with no service account, which would run as the project's default compute account"},
+		"a service with no account": {mrc("google_cloud_run_v2_service", map[string]any{
 			"name":     ManagedPrefix + "svc",
 			"template": []any{map[string]any{"containers": []any{}}},
-		}),
-		"a scheduler with no account": mrc("google_cloud_scheduler_job", map[string]any{
+		}), "a service with no service account, which would run as the project's default compute account"},
+		"a scheduler with no account": {mrc("google_cloud_scheduler_job", map[string]any{
 			"name":        ManagedPrefix + "sweep",
 			"http_target": []any{map[string]any{}},
-		}),
+		}), "a scheduler with no service account, which would call as the project's default compute account"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if out := managedTestCover().NotCovered(managedPlan(fixture), nil); len(out) != 1 {
-				t.Fatalf("%s gives %q, want one refusal", name, out)
+			// The message is pinned, not just the refusal: it is what tells the
+			// operator which resource the gate is asking about, and the three
+			// resources read three different attributes, so a rule that
+			// answered with another type's sentence would still be one
+			// refusal.
+			out := managedTestCover().NotCovered(managedPlan(tc.fixture), nil)
+			want := tc.fixture.Address + " (" + tc.why + ")"
+			if len(out) != 1 || out[0] != want {
+				t.Fatalf("%s gives %q, want exactly %q", name, out, want)
 			}
 		})
+	}
+}
+
+// TestManagedCoverRefusesAPublicService: a managed service is reachable from
+// inside the managed project only. invoker_iam_disabled = true turns the
+// invoker check off, so the service answers anyone who can reach it — the
+// allUsers refusal by another name, which is why this gate refuses it — and an
+// ingress of INGRESS_TRAFFIC_ALL is the same exposure one step earlier. Both
+// are refused, and so is leaving either unstated or computed: the provider's
+// own default ingress is ALL, and a value the plan does not state is not a
+// value this gate read.
+func TestManagedCoverRefusesAPublicService(t *testing.T) {
+	svc := func(m map[string]any, drop ...string) ResourceChange {
+		tmpl := map[string]any{"service_account": managedAccount,
+			"invoker_iam_disabled": false, "ingress": managedServiceIngress}
+		for k, v := range m {
+			tmpl[k] = v
+		}
+		for _, k := range drop {
+			delete(tmpl, k)
+		}
+		return mrc("google_cloud_run_v2_service", map[string]any{"name": ManagedPrefix + "svc", "template": []any{tmpl}})
+	}
+	for name, tc := range map[string]struct {
+		fixture ResourceChange
+		why     string
+	}{
+		"the invoker check off": {svc(map[string]any{"invoker_iam_disabled": true}),
+			"a service with the invoker check off (invoker_iam_disabled), which answers anyone who can reach it"},
+		"the invoker setting unstated": {svc(nil, "invoker_iam_disabled"),
+			"a service that does not state invoker_iam_disabled: write it out as false, the setting that keeps the invoker check on"},
+		"the invoker setting computed": {withUnknown(svc(nil, "invoker_iam_disabled"), map[string]any{"invoker_iam_disabled": true}),
+			"a service that does not state invoker_iam_disabled: write it out as false, the setting that keeps the invoker check on"},
+		"ingress all": {svc(map[string]any{"ingress": "INGRESS_TRAFFIC_ALL"}),
+			"a service with ingress INGRESS_TRAFFIC_ALL, which is reachable from the internet: state INGRESS_TRAFFIC_INTERNAL_ONLY or INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"},
+		"ingress unstated": {svc(nil, "ingress"),
+			"a service with no ingress stated, which the provider defaults to INGRESS_TRAFFIC_ALL: state INGRESS_TRAFFIC_INTERNAL_ONLY or INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"},
+		"ingress computed": {withUnknown(svc(nil, "ingress"), map[string]any{"ingress": true}),
+			"a service with no ingress stated, which the provider defaults to INGRESS_TRAFFIC_ALL: state INGRESS_TRAFFIC_INTERNAL_ONLY or INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out := managedTestCover().NotCovered(managedPlan(tc.fixture), nil)
+			want := tc.fixture.Address + " (" + tc.why + ")"
+			if len(out) != 1 || out[0] != want {
+				t.Fatalf("gives %q, want exactly %q", out, want)
+			}
+		})
+	}
+	// The two internal ingresses are the ones a managed plan may state, and
+	// the fixture above states the other of them: a service that says so is
+	// covered.
+	for _, ing := range []string{"INGRESS_TRAFFIC_INTERNAL_ONLY", "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"} {
+		if out := managedTestCover().NotCovered(managedPlan(svc(map[string]any{"ingress": ing})), nil); len(out) != 0 {
+			t.Errorf("ingress %s gives %q, want it covered", ing, out)
+		}
 	}
 }
 

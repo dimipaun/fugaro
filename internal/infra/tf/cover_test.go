@@ -60,14 +60,59 @@ func sched(uri, email string) ResourceChange {
 
 // service is a Cloud Run service as the central orchestrator's own module will
 // write it (docs/central-orchestrator/implementation-plan.md, P4): the type
-// P1 admits to allowedTypes, a name and the revision template's account. The
-// fixture is deliberately the shape a module writes rather than the smallest
-// one that passes: what P1 decides is the type, and the attribute checks a
-// service will owe are P4's, whose module literals they pin.
+// P1 admits to allowedTypes, a name and the revision template's account. What
+// P1 decides is the type; the checks a service owes are P4's, whose module
+// literals they pin, and until that module lands attributes refuses every
+// service (serviceUntilP4), this fixture included.
 func service(name string) ResourceChange {
 	return rc("google_cloud_run_v2_service", map[string]any{"name": name,
 		"template": []any{map[string]any{"service_account": "fugaro-orchestrator@proj-1.iam.gserviceaccount.com"}}},
 		map[string]any{}, "create")
+}
+
+// serviceUntilP4 is the refusal every Cloud Run service gets until P4 lands.
+// P1 puts the type on allowedTypes, so a plan holding one reaches the checks
+// the type owes instead of being refused as an unknown type; those checks are
+// the module's, and the module is P4's. The message names the type and the
+// part and carries no value out of the plan.
+const serviceUntilP4 = "a Cloud Run service, whose checks arrive with the module that writes one (central-orchestrator part P4)"
+
+// TestCoverRefusesEveryServiceUntilP4 is the fail-closed half of P1's
+// admission, and what makes admitting the type before its module safe: until
+// the module that writes a service lands, attributes refuses every service, so
+// no service is covered by the run's one confirmation. Each fixture below is a
+// service an unchecked admission would have covered — the exposure the
+// admission would otherwise open, one attribute at a time: ingress, the
+// invoker check, the image, the account it runs as, its scaling, and a
+// template the plan does not state. Every one of them gets the same refusal,
+// so the refusal is a function of the type alone.
+func TestCoverRefusesEveryServiceUntilP4(t *testing.T) {
+	const acct = "fugaro-orchestrator@proj-1.iam.gserviceaccount.com"
+	svc := func(m map[string]any) ResourceChange {
+		return rc("google_cloud_run_v2_service", map[string]any{"name": "fugaro-orchestrator", "template": []any{m}}, map[string]any{}, "create")
+	}
+	for name, c := range map[string]ResourceChange{
+		"a plain service": service("fugaro-orchestrator"),
+		"a service open to the world": svc(map[string]any{"service_account": acct,
+			"ingress": "INGRESS_TRAFFIC_ALL"}),
+		"a service with the invoker check off": svc(map[string]any{"service_account": acct,
+			"invoker_iam_disabled": true}),
+		"a service on an image outside the run's registry": svc(map[string]any{"service_account": acct,
+			"containers": []any{map[string]any{"image": "docker.io/library/nginx:latest"}}}),
+		"a service as the project's default compute account": svc(map[string]any{
+			"service_account": "123456789-compute@developer.gserviceaccount.com"}),
+		"a service scaled up": svc(map[string]any{"service_account": acct,
+			"scaling": []any{map[string]any{"min_instance_count": 50}}}),
+		"a service whose template is computed": rc("google_cloud_run_v2_service",
+			map[string]any{"name": "fugaro-orchestrator"}, map[string]any{"template": true}, "create"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{c}}, nil)
+			if want := c.Address + " (" + serviceUntilP4 + ")"; len(got) != 1 || got[0] != want {
+				t.Fatalf("NotCovered = %q, want exactly %q", got, want)
+			}
+		})
+	}
 }
 
 // serviceGrant is a grant on a service, through the *_iam_member type beside
@@ -188,11 +233,14 @@ func TestCoverNotCovered(t *testing.T) {
 		"service account key":   {[]ResourceChange{rc("google_service_account_key", nil, nil, "create")}, false},
 		"unknown resource type": {[]ResourceChange{rc("google_compute_instance", nil, nil, "create")}, false},
 		// The central orchestrator's service type is admitted deliberately
-		// (central-orchestrator P1, D19): a plan holding one is covered, while
-		// the type beside it — the invoker grant, which no module declares and
+		// (central-orchestrator P1, D19), and the type is all that is decided
+		// yet: the checks a service owes are P4's, so every service is refused
+		// by attributes until they land, with a refusal of its own rather
+		// than the unknown type's (TestCoverRefusesEveryServiceUntilP4). The
+		// type beside it — the invoker grant, which no module declares and
 		// whose roles no table decides — stays refused, and so does every type
 		// nobody has decided on (the row above).
-		"a Cloud Run service":                     {[]ResourceChange{service("fugaro-orchestrator")}, true},
+		"a Cloud Run service":                     {[]ResourceChange{service("fugaro-orchestrator")}, false},
 		"an invoker grant on a Cloud Run service": {[]ResourceChange{serviceGrant("user:me@example.com", "roles/run.invoker")}, false},
 		"allUsers":                  {[]ResourceChange{grant("google_storage_bucket_iam_member", "allUsers", "roles/storage.objectViewer")}, false},
 		"allAuthenticatedUsers":     {[]ResourceChange{grant("google_storage_bucket_iam_member", "allAuthenticatedUsers", "roles/storage.objectViewer")}, false},
