@@ -36,10 +36,11 @@ before a single animation exists.
    2026-10-20 they are re-derived **only when the owner asks**
    (`docs/website/redesign/README.md:889-898`), while the ceilings hold on every run. A part
    that grows `site.js` says by how much in its own pull-request body.
-3. **The word ceilings hold on every build.** Lead ≤ **40** words, page ≤ **949** words
-   (`website/README.md:854-876`), measured by `website/test/budget.mjs`'s `wordFailures`.
+3. **The word ceilings hold on every build.** Lead ≤ **40** words (`website/README.md:821-826`)
+   and page ≤ **949** words (`:854-876`), measured by `website/test/budget.mjs`'s
+   `wordFailures`.
 4. **Motion is gated or neutralised, and the neutraliser is universal**
-   (`website/src/layouts/Base.astro:236-246`; `website/test/a11y.mjs:592-608`). ZU1 is the
+   (`website/src/layouts/Base.astro:236-246`; `website/test/a11y.mjs:592-624`). ZU1 is the
    open question about what that rule does to a scroll timeline, and Part 5 begins with it.
 5. **No-JS is not a fallback, it is the base case.** The markup renders everything; the script
    reveals controls it emitted `hidden` (`website/src/components/ScreenshotSlider.astro:162-168`).
@@ -146,11 +147,19 @@ D251 (the owner's slides exist), D252 (the Watch slide stays).
 `website/data/faq.yaml`; `website/src/layouts/Base.astro`; `website/test/wording.mjs`;
 `website/test/faq-community.mjs`; `website/test/linkcheck.mjs` (only if a new allowed host is
 needed — it should not be); `website/README.md` (the route count and the whole-site figure);
-`docs/website/README.md`, `docs/website/reconciliation.md` and
-`docs/website/implementation-plan.md` (the "eleven routes" prose on each one's line 3 — the
-dated clauses stay, the present-tense ones move; ZF57). **This line of work's own three
-documents are not edited by any part**: each is dated and anchored to the tree at `3021f4b3`,
-so "eleven routes" in them is a fact about that commit and stays true of it.
+`website/test/budget.mjs` (its derivation comment names the pages); `docs/website/redesign/README.md`
+and `docs/website/redesign/capture-screenshots.mjs` (the "eleven routes" prose ZF57 lists as
+present tense).
+
+**What this part does *not* edit, and why.** ZF57's list has two kinds of entry and only one
+of them moves. The **dated** ones — `docs/website/README.md:3`,
+`docs/website/reconciliation.md:3`, `docs/website/implementation-plan.md:3` and
+`docs/website/redesign/reconciliation.md:19-21,649,653` — are sentences about the day the site
+landed (2026-10-16/17/18) or about the tree at a named commit, and a twelfth route does not
+falsify a sentence about that day or that commit. This line of work's own three documents are
+the same case twice over: each is anchored to `3021f4b3`. The **present-tense** ones move with
+the page, and they are in the Files list above. A round that edits a dated sentence to keep a
+count current has changed a record of the past to say something that was not true of it.
 
 **Tests.** Hermetic, mutation-proven:
 
@@ -202,10 +211,16 @@ nav item, and changes no component and no script.
 6. **The nav.** `{ href: '/mobile/', label: 'Mobile' }` in the **Reference** group, beside
    "Console", or in Product — the brief says "sister page to the console page", which reads
    as Reference.
+7. **The live check** (D247): **113**, written and **not run** in this part — the owner opens
+   the built page and the live page and confirms the badge is there, no release date is, and
+   every claim is either shipped today or marked as planned. This check belongs to this part
+   and not to Part 5, which may be cancelled by its own spike; a part that can ship alone
+   carries its own check.
 
 **Files.** `website/src/pages/mobile.astro`; `website/data/mobile-claims.yaml`;
 `website/data/mobile-screens.yaml` (empty rows); `website/src/layouts/Base.astro`;
-`website/test/mobile.mjs` (new); `website/README.md` (the route count and figures).
+`website/test/mobile.mjs` (new); `website/README.md` (the route count and figures);
+`docs/gcp-live-checklist.md` (Check 113).
 
 **Tests.** Hermetic, mutation-proven:
 
@@ -225,7 +240,7 @@ nav item, and changes no component and no script.
 
 **The owner's visual check.** That the badge does not read as an apology, that the page looks
 like the console page's sister, and that the planned/shipped marking is visible without
-reading every line.
+reading every line. The same three questions on the **live** page are Check 113.
 
 **Independently mergeable because** it adds one route and two data files and changes no
 component, no script and no existing page.
@@ -251,7 +266,9 @@ as **inline SVG**, in order, all visible with no script.
    `RunDiagram.astro` (D237), inside a `<section>` with its own `<h2>`.
 4. **The accessibility.** One `<nav>` of level anchors with accessible names (D245), a
    `<figcaption>` per level, and `role="img"` with an `aria-label` only where a level is a
-   single picture; where a level is a list of labelled parts, the parts carry the text.
+   single picture; where a level is a list of labelled parts, the parts carry the text. The
+   anchors are `#level-1` … `#level-4` (D245's ids, and Part 5 reuses them rather than adding
+   a second set); each `<figure>` carries the matching `id`.
 
 **Files.** `website/src/components/ZoomLevels.astro`; `website/data/zoom-levels.yaml`;
 `website/src/pages/how-it-works.astro`; `website/test/how-it-works.mjs` (the paint gate's
@@ -268,7 +285,8 @@ extensions, `:1110`); `website/test/a11y.mjs`; `website/README.md` (figures).
   drawing's element kinds — a new kind refuses until the reading is taught it, which is the
   gate's own rule (ZF42).
 - **The labels**: every label is a row of the data file, and every row renders — the
-  `how-it-works.mjs:1658` pattern of holding each line to its source.
+  `how-it-works.mjs:617-625` pattern (`runDiagramFailures`'s `held`), where a label attributed
+  to a document that does not carry that line is refused by name.
 - **The no-JS case**: all four levels' text is in the built HTML, in order, with the script
   never run.
 - **The a11y gates**: one `<h1>` on the page still, named landmarks, no positive `tabindex`,
@@ -283,8 +301,8 @@ story the brief wants without captions.
 **Independently mergeable because** it adds one component, one data file and one section to a
 page that exists. It is the brief's "still" half, complete on its own.
 
-**Depends on** D237 (where it lives), D244 (the symbol rule). It does **not** depend on D245
-or Part 5.
+**Depends on** D237 (where it lives), D244 (the symbol rule), D245 (the markers — this part
+builds them). It does **not** depend on Part 5.
 
 ### Part 5 — the pinned, scroll-driven section (ZU1; D245, D247)
 
@@ -303,8 +321,10 @@ spike, and the spike may cancel the part.**
 2. **The section**, if the spike passes: one sticky container, four level panels, each
    scaled and faded by the scroll timeline, all four present in the markup in order and all
    four fully readable when the timeline is not running (the no-JS case is Part 4's).
-3. **The markers.** `<a href="#zoom-level-N">` anchors in a `<nav>` with an accessible name
-   (D245), placed beside the pinned container on a wide screen and above it on a phone.
+3. **The markers.** Part 4's `#level-1` … `#level-4` anchors (D245) **moved**, not rebuilt:
+   the same `<nav>` and the same ids, placed beside the pinned container on a wide screen and
+   above it on a phone. A second set of anchors would be a second set of ids, and the
+   linkcheck gate resolves both to the same `<figure>`s.
 4. **The reduced-motion path.** A `@media (prefers-reduced-motion: reduce)` rule on the
    section that shows the four levels as stills — the same markup, no timeline — so the
    answer to the spike is not load-bearing for the reader who asks for less motion.
@@ -366,8 +386,11 @@ Both are **proposed, not taken**. If the owner reallocates, the plan follows.
 | `website/src/pages/` | — | `why-gcp.astro` | `mobile.astro` | `how-it-works.astro` | — |
 | Routes | 11 | 12 | 13 | 13 | 13 |
 | Nav groups | 3 × 3 | 3 × 4 | 3 × 4 or 5 | — | — |
-| `website/README.md` figures | JS, page, site | site | site, route count | page, site | page, site |
-| Live checks | — | — | — | — | 112, 113 |
+| `website/README.md` figures | JS, page, site | site, route count | site, route count | page, site | page, site |
+| `website/test/budget.mjs` derivation comment | — | the page list | — | — | — |
+| `docs/website/redesign/` route prose | — | `README.md`, `capture-screenshots.mjs` | — | — | — |
+| `docs/gcp-live-checklist.md` | — | — | Check 113 | — | Check 112 |
+| Live checks | — | — | **113** | — | **112** |
 
 ## 6. Order and the owner's go
 

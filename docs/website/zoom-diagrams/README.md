@@ -17,7 +17,7 @@ claim in them was read out of the tree at `3021f4b3` on 2026-10-21.
 | Document | What it is |
 |---|---|
 | [spec.md](spec.md) | **The owner's text, verbatim** — committed alone in this branch's first commit, byte for byte, before anything that answers it. It is the source document for the other three, and it is not edited when they disagree with it. |
-| [reconciliation.md](reconciliation.md) | What the brief asks for, checked against `3021f4b3`. **Fifty-nine numbered findings** classified **Wrong / Exists / Gap / Rule / Open**, each citing a path and a symbol; six claim tables (§3 the job's loop, §4 "Why GCP", §5 the mobile page, §6 the waitlist, §7 the pinned zoom section, §8 the "See it" slider); **five UNVERIFIED items** (`ZU1`–`ZU5`); and **sixteen decision rows `D237`–`D252`** under "Open for the owner", each with the recommendation first. |
+| [reconciliation.md](reconciliation.md) | What the brief asks for, checked against `3021f4b3`. **Fifty-nine numbered findings** classified **Wrong / Partly / Exists / Gap / Rule / Open** — six labels, one per finding, and the headings use no seventh — each citing a path and a symbol; six claim tables (§3 the job's loop, §4 "Why GCP", §5 the mobile page, §6 the waitlist, §7 the pinned zoom section, §8 the "See it" slider); **five UNVERIFIED items** (`ZU1`–`ZU5`); and **sixteen decision rows `D237`–`D252`** under "Open for the owner", each with the recommendation first. |
 | [implementation-plan.md](implementation-plan.md) | The plan that executes the reconciliation: **five parts**, each independently mergeable, each with its files, its hermetic and mutation-proven tests, a command an agent can run, and the owner's visual check. Two proposed live checks (112, 113), written and not taken. |
 | this file | The index, the status line above, and the typo record below. |
 
@@ -32,7 +32,8 @@ one `<img>` where the brief wants a slider.
 The corrections the reconciliation makes, in one line each:
 
 - **Level 1's loop is close to the runner and wrong in three of its six lines.** The "cheap
-  reviewer" is the coder's own model (`internal/config/config.go:208`); the senior review is a
+  reviewer" is the coder's own model (`internal/config/config.go:208` `StageRole`, `:226`
+  `ModelFor`); the senior review is a
   **loop** of up to `agent.review_rounds` rounds, default 2, not "one final review"
   (`internal/runner/runner.go:1764`); and a draft PR flips to ready on a senior `ship` **and**
   a verified passing test on the final commit (`internal/runner/outcome.go:31`). The

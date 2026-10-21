@@ -36,20 +36,38 @@ this document exists before the pages do.
 
 ## 1. How to read this
 
-Five labels, and each finding carries exactly one:
+**Six labels, and each finding carries exactly one of them.** The headings use these six
+strings and no others — `grep -oE '^### ZF[0-9]+ — \*\*[^*]+\*\*' | sort -u` is the check:
 
-- **Wrong** — the tree or its documents state something that is not true today.
-- **Exists** — the brief asks for something the site already does; the work is to keep it,
+- **Wrong** (15) — the tree or its documents state something that is not true today.
+- **Partly** (6) — the item is true of one part of the tree and false of another, and the
+  finding says which is which. A label of its own and not a hedge: a `Partly` finding is as
+  settled as a `Wrong` one, and it is the honest label for the brief's claims that are right
+  about the shape and wrong about the detail.
+- **Exists** (8) — the brief asks for something the site already does; the work is to keep it,
   not to build it.
-- **Gap** — nothing does it. The brief's item, unanswered.
-- **Rule** — a rule of this repository that constrains how the gap may be closed. A `Rule`
-  is not an obstacle to argue with in a plan; it is the shape of the answer.
-- **Open** — a question no reader can settle from the tree. `Open` findings become the
+- **Gap** (8) — nothing does it. The brief's item, unanswered.
+- **Rule** (19) — a rule of this repository that constrains how the gap may be closed. A
+  `Rule` is not an obstacle to argue with in a plan; it is the shape of the answer. Where a
+  rule's behaviour in one case is not known, the finding says so in its body and the case
+  becomes a `ZU` rather than a qualifier on the label (ZF37, ZU1).
+- **Open** (3) — a question no reader can settle from the tree. `Open` findings become the
   numbered decisions in §12.
+
+The counts are the headings' own and are not asserted anywhere, so a finding added without
+this list moving is a numbering error rather than a failing gate; the label *strings* are the
+thing the list promises.
 
 Findings are numbered **`ZF<n>`** — "zoom finding" — because `F1`–`F63` belong to the first
 line of work and `RF1`–`RF26` to the redesign, and a re-used number is a false citation.
 Things this document could not verify are **`ZU<n>`** (§10), as the redesign's are `RU<n>`.
+
+**"The brief" in this document means [spec.md](spec.md) and nothing else** — the owner's text,
+committed verbatim, and the only document quoted here. The **task text** that commissioned
+this folder (the run's own instruction) is committed nowhere and is *not* the brief; where a
+finding turns on something in it rather than in `spec.md`, the finding names it as the task
+text. Two do: ZF14 and ZF51. Neither claim is in `spec.md`, and quoting it as though they were
+would be the one defect this document exists to prevent.
 
 Every finding cites the file and the symbol it was read from. Every measurement was taken on
 2026-10-21 on this branch's base, `3021f4b3`, and the command that took it is named where it
@@ -180,9 +198,11 @@ P0–P3 merged, and `mobile/README.md:19-21`: it "ships **without an engine**: t
 build is voiceless (the owner's ruling of 2026-10-19)". A first iOS submission succeeded on
 2026-10-20 from the owner's terminal (`mobile/README.md:37-40`).
 
-### ZF14 — **Wrong** — the brief's "0.10.0 / 0.11.0" frame does not exist yet
+### ZF14 — **Wrong** — the task text's "0.10.0 / 0.11.0" frame does not exist yet
 
-The newest release documented and tagged is **v0.9.5** (2026-10-20). `0.11.0` is the
+The **task text** asks what is in 0.10.0, what is in 0.11.0 and what is in neither; `spec.md`
+names no version at all. Neither version exists to ask about. The newest release documented and
+tagged is **v0.9.5** (2026-10-20). `0.11.0` is the
 coordinator line's **target** (`docs/coordinator/README.md:3`), not a shipped version, and
 there is no 0.10.0 in `docs/releases/` or in the tags. A page that says "in 0.11.0" would be
 promising a release number the repository has not committed to a date for.
@@ -334,7 +354,7 @@ Specified (`docs/mobile/functional-spec-v0.1.md:66-72,110`), decisions D163 and 
 (`docs/mobile/implementation-plan.md:46-49`). What exists is **account** switching across
 installations (D114, `mobile/README.md:474`).
 
-### ZF26 — **Exists, in half** — status and spend are built; the roster is not
+### ZF26 — **Partly** — status and spend are built; the roster is not
 
 The job list is built (P3.3) and reads status and spend straight from the Realtime Database
 (`mobile/src/jobs/list.js`; `mobile/src/feed/nodes.js:121-122`; `mobile/src/feed/recompute.js`).
@@ -367,8 +387,15 @@ deliberately keeps behind a switch that is not built.
 
 Eleven routes, none of them about the phone (`website/src/pages/`). The only mention of the
 app on the live site is the privacy page's "The phone app" section
-(`website/src/pages/privacy.astro:237-267`). A repo-wide search finds no "coming soon"
-wording under `website/`, `docs/website/`, `docs/mobile/` or `README.md`.
+(`website/src/pages/privacy.astro:237-267`).
+
+**The site says "coming soon" nowhere.** `grep -rin 'coming soon' website/` is empty: no page,
+no data file, no test. The phrase exists in this repository only in documents about work not
+yet done — the brief itself (`spec.md:77` "Mobile app page (coming soon)", `spec.md:79` a
+`"Coming soon"` badge) and this folder's own four files. An earlier draft of this finding
+claimed a search over `docs/website/` found none, which was false for the reason the search was
+meant to catch: `spec.md` is under `docs/website/`, and it is where the phrase comes from. What
+a reader can load is the claim that matters, and no reader can load it.
 
 ### ZF30 — **Open** — a "coming soon" page argues with the site's own hold-back rule
 
@@ -454,7 +481,7 @@ head. **A scroll-driven section therefore has to be CSS-first, or an addition to
 The JS budget is read out of `website/README.md:771-812` and re-derived only when the owner
 asks (D192 and the owner's ruling of 2026-10-20, `docs/website/redesign/README.md:889-898`).
 
-### ZF37 — **Rule, with an unverified edge** — the reduced-motion neutraliser and scroll timelines
+### ZF37 — **Rule** — the reduced-motion neutraliser and scroll timelines
 
 `website/src/layouts/Base.astro:236-246` writes one universal rule:
 
@@ -471,7 +498,7 @@ asks (D192 and the owner's ruling of 2026-10-20, `docs/website/redesign/README.m
 }
 ```
 
-`website/test/a11y.mjs:592-608` (`motionFailures`) requires every `animation`, `transition`
+`website/test/a11y.mjs:592-624` (`motionFailures`) requires every `animation`, `transition`
 and `scroll-behavior: smooth` a page declares to be gated on `no-preference` **or**
 neutralised by a matching `reduce` rule, and the universal rule satisfies it — which means a
 CSS scroll-driven animation **passes the gate**. Whether it also *behaves* is a different
@@ -501,7 +528,7 @@ stills, in order, all readable**, with the markers as anchors — which is also 
 
 ### ZF40 — **Rule** — accessibility, and what a new component inherits
 
-`website/test/a11y.mjs` (`pageA11yFailures`, `:611-778`): one `<h1>`, one `main`, one
+`website/test/a11y.mjs` (`pageA11yFailures`, `:627-778`): one `<h1>`, one `main`, one
 page-level `<header>` and `<footer>`, at least one **named** `<nav>`, a skip link first,
 every `<img>` with `alt`, every `<svg role="img">` **named**, every control with an accessible
 name, **no positive `tabindex`**, no focusable element inside `aria-hidden="true"`, no
@@ -515,7 +542,7 @@ control floor. Every new page inherits all of it on the first build.
 The brief's constraint — "a job is always the same tile, the orchestrator always the same
 shape" — is the one thing that makes a zoom sequence legible, and **no test can see it**
 because the model that would write it cannot view an image (ZF43). The repository's nearest
-precedent is `RunDiagram.astro:44-53`: "Two layouts of one picture, both generated from the
+precedent is `RunDiagram.astro:66-69`: "Two layouts of one picture, both generated from the
 labels above, so the wide drawing and the tall one cannot say different things", held by
 `website/test/how-it-works.mjs:36-38`. The testable version of the brief's rule is an
 **SVG `<symbol>` rule**: one `<defs>` of entity symbols, every level drawing entities only
@@ -573,7 +600,7 @@ the console's class names — and `website/test/slider.mjs:447-460` forbids `sit
 naming `home-slider`, `tab-bar`, `easy-step` or any id inside the home slider. The honest
 answer is a rename to `data-slider-*` hooks. §12 D246.
 
-### ZF47 — **Wrong** — two assertions pin the homepage's pictures to exactly two files
+### ZF47 — **Wrong** — three assertions pin the homepage's pictures to exactly two files
 
 `website/test/home.mjs:1477-1484` asserts the whole homepage's `<img>` sources are exactly
 `['/logo.png', '/images/fugaro-watch.png']`, with the comment "A homepage that grew a third
@@ -611,13 +638,16 @@ in the same commit, and "a test may not commit a picture either" (`:1547`).
 So the slider's slides arrive as the owner's files plus a data row each; the plan writes the
 slot and the gate, never the pixels.
 
-### ZF51 — **Open** — the brief's "#842" is not in this checkout
+### ZF51 — **Open** — the task text's "#842" is not in this checkout
 
-The brief says the home slider is "being reworked in PR #842 (feedback A)". This branch's
-base is `3021f4b3` (#841) and `git log --all` carries no `#842`; the three-tab
-`HomeSlider.astro` described above is the pre-#842 state. Part 1 of the plan is therefore
-written to land **after** #842 and to re-read the component rather than assume its shape.
-§12 D250.
+The **task text** says the home slider is being reworked in PR #842. `spec.md` says only
+"Replace the single Fugaro Watch screenshot with a slider" (`spec.md:53`) and names no pull
+request, no issue and no branch; the phrase "feedback A" occurs nowhere in this repository
+except in the sentence that used to make this claim. This branch's base is `3021f4b3` (#841)
+and `git log --all` carries no `#842`; the three-tab `HomeSlider.astro` described above is the
+state the checkout has. **#842 may exist, may be merged, and may already have changed this
+component — this checkout cannot see it either way.** Part 1 of the plan is therefore written
+to land **after** #842 and to re-read the component rather than assume its shape. §12 D250.
 
 ## 9. Site structure: the page, the nav and the FAQ
 
@@ -670,11 +700,36 @@ and the whole-site figure), `a11y.mjs`, `meta.mjs`, `origins.mjs`, `consent.mjs`
 links `/privacy/`) and `base-styles.mjs` all iterate the built pages, so a twelfth route is
 held to all of them on its first build. There is **no** sitemap (`astro.config.mjs`'s
 `integrations: []`; `website/test/layout.mjs:458` refuses a `rel="sitemap"`), and **no test
-asserts the route count** — "eleven routes" is prose in `docs/website/README.md:3`,
-`docs/website/reconciliation.md:3`, `docs/website/implementation-plan.md:3` and
-`website/README.md:248,254,433,436`, and it goes stale the moment a page lands. Three of the
-four name 2026-10-17, the day the site landed, and a twelfth route does not falsify a sentence
-about that day; `website/README.md`'s four are present tense and move with the page.
+asserts the route count**. The count is prose, it is in more places than any one list can be
+trusted to hold, and it goes stale the moment a page lands. The list below was taken on
+2026-10-21 with
+
+```
+grep -rn "eleven route\|eleven page\|11 route\|11 page" docs/ website/ README.md
+```
+
+and a round that adds a route re-runs it rather than reading this paragraph as exhaustive.
+Two kinds of entry, and only one of them moves:
+
+- **Present tense — move with the page.** `website/README.md:248,254,433,436` (the byte
+  arithmetic: "each of the eleven pages … 278 bytes lighter"); `website/test/budget.mjs:102`
+  (the derivation comment naming the pages `dist/` holds);
+  `docs/website/redesign/README.md:49` ("It writes 22 JPEGs (eleven routes at 1280 × 900 and
+  390 × 844)"), `:266` and `:331` (the same byte arithmetic); and
+  `docs/website/redesign/capture-screenshots.mjs:155` (a comment about which routes show a
+  command — "eight of the eleven routes").
+- **Dated or commit-anchored — stay.** `docs/website/README.md:3`,
+  `docs/website/reconciliation.md:3` and `docs/website/implementation-plan.md:3` are sentences
+  about 2026-10-17, the day the site landed; `docs/website/redesign/README.md:11-12` is
+  "measured at `08d57ed4`", and `docs/website/redesign/reconciliation.md:19-21,649,653` are
+  anchored to `85758e1` and dated 2026-10-18. A twelfth route does not falsify a sentence about
+  that day or that commit, and rewriting one to keep a count current would change a record of
+  the past to say something that was not true of it. The distinction is the redesign README's
+  own habit at `:11-12` — it states its route count and then names the commit it measured at —
+  and this rule is that habit written down.
+
+This line of work's own three documents are the dated case twice over — each is anchored to
+`3021f4b3` — so no part edits them.
 
 ### ZF58 — **Rule** — a competitor claim needs a source and a date
 
@@ -704,7 +759,8 @@ mutation-prove. §12 D249.
   behaviour this repository cannot test: the gates are hermetic and drive a stub DOM, and the
   model writing this document cannot view a page. **Owner's browser, or a Playwright spike in
   the plan's Part 5.** The brief's whole "Format" bullet rests on the answer.
-- **ZU2 — what PR #842 does to the home slider.** Not in this checkout (ZF51).
+- **ZU2 — what the task text's PR #842 does to the home slider.** #842 is not in this checkout
+  (ZF51), so neither its existence nor its shape is observable here.
 - **ZU3 — whether the owner's design tool has a board for the zoom sequence.** D190 puts the
   design there and the repository keeps only the numbers; nothing under
   `website/design-ref/` covers four levels. If a board exists, the plan's Parts 4 and 5 should
@@ -760,6 +816,6 @@ something else.**
 | **D247** | Does the zoom work take a live check, and which number? | Yes — **112** and up (70d if the redesign's block is preferred), written and **not** run, as 69a–69c and 70a–70c are | The highest written check is **111** (`docs/gcp-live-checklist.md:5781`); a visual feature with no owner-run check is a feature nobody looks at on the live site (ZF43) | No check — the pinned section's behaviour under reduced motion (ZU1) is then never observed anywhere |
 | **D248** | May the page print "disposable"? | No. Use "one integrated project", and where the word is wanted, define it: a managed project is **new** and holds only Fugaro's resources | ZF15: `docs/design/managed-projects.md:18,211` rejects "disposable" and lists what would be lost; the brief's own suggested framing uses the word, so this is the owner's to keep or drop | Keep "disposable" — the page then contradicts `docs/design/`, and the FAQ's "where does the code run" answer becomes the second place the site disagrees with itself |
 | **D249** | How is the framing rule enforced? | A `wording.mjs`-style pair: a **banned** list (`no real alternative`, `no alternative`, `the only cloud`) and a **required** sentence the page must carry ("no other cloud offers this as one integrated project"), each with a planted defect | ZF58/ZF59: the rule is the owner's and no gate holds it; the repository's own `RETIRED_CLAIMS` is the precedent | Convention only — the next round re-introduces the phrase and nobody notices |
-| **D250** | When does Part 1 (the shared slider) land? | After PR #842 merges, re-reading `HomeSlider.astro` first | ZF51: #842 is not in this checkout and it touches the same component; landing first means writing an assertion against markup that is about to change | Land now against the pre-#842 component — two rounds of `home.mjs` churn for one feature |
+| **D250** | When does Part 1 (the shared slider) land? | After PR #842 merges, re-reading `HomeSlider.astro` first | ZF51: the task text names #842 as reworking this component and #842 is not in this checkout, so landing first means writing assertions against markup that may already have moved | Land now against the component as this checkout has it — `home.mjs` churn twice for one feature, and if #842 has landed the assertions are written against a shape that no longer exists |
 | **D251** | Who supplies the slides? | The owner, as files plus a `MANIFEST.json`-shaped record and a data row each, exactly as the console's four did (`website/README.md:1409-1562`) | ZF49, ZF50: no phone screenshot exists and no agent may commit one; the console's own process is the precedent and is already gated | An agent generates placeholder images — D190 and `website/README.md:1547` forbid it, and a placeholder that ships is worse than an empty slot |
-| **D252** | What happens to the `fugaro watch` slide? | Keep it, last, as the brief says, with its existing alt text and caption, and keep `fugaro-watch.txt` as its text fallback | The brief asks for it; the alt text and the transcription are already gated (`home.mjs:1487-1533`), so the move is a reordering, not a rewrite | Drop it — the brief explicitly keeps it, and the transcription is the only accessible rendering of a terminal screen the site has |
+| **D252** | What happens to the `fugaro watch` slide? | Keep it, last, as the brief says, with its existing alt text and caption, and keep `fugaro-watch.txt` as its text fallback | The brief asks for it; the alt text and its floor are already gated (`home.mjs:1430-1441`), and the caption by the design-record test (`home.mjs:1487-1533`), so the move is a reordering, not a rewrite | Drop it — the brief explicitly keeps it, and the transcription is the only accessible rendering of a terminal screen the site has |
