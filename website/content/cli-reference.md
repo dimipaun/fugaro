@@ -175,9 +175,19 @@ Run it in your own terminal, as an operator, with your own credentials. Pass
 the entries to approve, and they replace the list: an invocation that leaves an
 entry out removes that approval, so the command names the entries it would drop
 and asks for the project's name before writing such a list. With no arguments
-the command prints the list — each entry in the same ADDRESS=IDENTITY form, so
-a line can be pasted back — and writes nothing; it never empties the list,
-because an empty list is what an absent one already means.
+the command prints the list — each entry in the same ADDRESS=IDENTITY form —
+and writes nothing; it never empties the list, because an empty list is what an
+absent one already means. A printed line is one you can paste back as far as its
+IDENTITY half goes: the command that recorded the entry escaped it, so the
+printers leave it alone and a line inside the listing's own bound carries it
+back byte for byte. The address half is the plan's own — not escaped here and
+not bounded here — so an address holding a tab, a run of spaces or a byte
+outside printable ASCII is printed as the printers rewrite it: that line is not
+the entry, and pasting it back records an entry about an address no plan has,
+which the plan refuses rather than deleting anything. A line longer than twice
+the identity's own bound is printed through the bounded sanitiser instead, cut
+and marked as cut: what you read there is visibly a text and not an entry. The
+entry itself is unchanged in the object either way.
 
 What the object is for: a run's own credentials cannot write it, and the
 deployer account a managed apply impersonates will not be able to (D75, Task
@@ -920,8 +930,23 @@ This command has no subcommands.
 List the Fugaro installations this machine has
 
 List the project configs under $XDG_CONFIG_HOME/fugaro/projects (else
-~/.config/fugaro/projects), with the GCP project and region of each and what
-is known about its published shared config.
+~/.config/fugaro/projects), with the GCP project and region of each, what
+is known about its published shared config, and the checkouts of its
+repositories this machine remembers.
+
+The checkouts are remembered by the commands that run in one and are
+not reads the desktop console spawns (fugaro init --repo, fugaro run,
+fugaro validate, fugaro backends and the rest of them), in a machine-local
+state file beside the project configs. The commands the console's spawn
+allow-list covers never record: fugaro doctor and fugaro accounts ls
+resolve a checkout too, but a read writes nothing, whoever runs it — the
+command cannot tell who spawned it. Every path is re-validated on this
+read: a path that
+was moved or deleted, that is no longer a git checkout, or whose
+fugaro.yaml no longer names this project and this repository is reported
+with "valid": false and a reason, and is never silently dropped. The
+paths are local state: they are never published to the runs bucket, to
+the shared config or to any log.
 
 This is a local read: it opens no bucket and needs no project selected, so it
 works outside a checkout and with no config at all (an empty list).
@@ -2942,7 +2967,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for validate |
 | `--json` | bool | `false` | no | print machine-readable output |
-| `--offline` | bool | `false` | no | never read the runs bucket: resolve against the cached project layer, if any |
+| `--offline` | bool | `false` | no | never read the runs bucket or the project's published policy: resolve against the cached project layer, if any; a cascade file is refused, not admitted unproven |
 | `--project-layer` | string | "" | no | resolve against this project layer file instead of the published one (also checks the file; for CI without bucket access, and before fugaro config publish) |
 
 Subcommands:

@@ -1245,6 +1245,12 @@ func listRepoScope(cmd *cobra.Command, env *cloudEnv, o secretsOptions, r *secre
 // listProjectWide lists the installation's project-wide containers by name,
 // versions and the repositories the local config allows (an operator-only
 // view, never a live call), and reads no value.
+//
+// A container with no fugaro_secret label is skipped, as listRepoScope does:
+// the label is what says which logical secret of the project's secret set a
+// container holds, and the credentials service's bundle container carries the
+// ownership marks and deliberately not this one (C1.18). Listing it would put
+// a row with no name in front of an operator and a nameless entry in --json.
 func listProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions) error {
 	ctx := cmd.Context()
 	sm, err := gcp.NewSecrets(ctx, env.gcp)
@@ -1258,6 +1264,9 @@ func listProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions) error 
 	entries := make([]secretEntry, 0, len(list))
 	for _, s := range list {
 		name := s.Labels[gcp.LabelSecret]
+		if name == "" {
+			continue
+		}
 		entries = append(entries, secretEntry{Name: name, Scope: scopeProject, Allowed: projectSecretAllowed(env.lc, name), SecretInfo: s})
 	}
 	sortSecretEntries(entries)

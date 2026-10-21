@@ -720,6 +720,44 @@ func TestARefusalWhyPastItsBoundIsCut(t *testing.T) {
 	}
 }
 
+// The wider bound belongs to the gates whose rules print an identity, and not
+// to every gate (the review finding on Task 6.3: refusalWhy lifted the
+// safetext.Field cut to refusalWhyMax — some 22.5 kB — for the cost gate's whys
+// too). A cost finding is the plan's own values about what a change states
+// (tf.ManagedCostFinding) and names an identity nowhere, so its why is one
+// Field, cut at FieldMax with Field's own marker; the same line through a gate
+// that judges a change against the owner's delete list is carried whole,
+// because for those the bound exists: the identity its reader has to copy out.
+// The whole journey of such an identity — the verdict, the apply's text, and
+// the entry read back out of it — is TestTheIdentityARefusalPrintsIsOneAnEntry
+// CanHold's, above.
+func TestOnlyTheListJudgingGatesGetTheIdentitysBound(t *testing.T) {
+	long := strings.Repeat("a", safetext.FieldMax*3)
+	item := "module.managed.google_storage_bucket.x (machine_type: " + long + ")"
+
+	cost := refusals(costGate, []string{item})
+	if len(cost) != 1 {
+		t.Fatalf("refusals %+v, want one refusal", cost)
+	}
+	if n := utf8.RuneCountInString(cost[0].Why); n > safetext.FieldMax {
+		t.Errorf("the cost gate's why is %d runes, past the %d one Field writes: the identity bound is not the cost gate's to use", n, safetext.FieldMax)
+	}
+	if !strings.HasSuffix(cost[0].Why, "…") {
+		t.Errorf("the cost gate's why is not marked as cut: %q", cost[0].Why)
+	}
+	if strings.Contains(cost[0].Why, long) {
+		t.Errorf("the cost gate's why carries the plan's %d-rune value unbounded", len(long))
+	}
+
+	cover := refusals(coverGate, []string{item})
+	if len(cover) != 1 {
+		t.Fatalf("refusals %+v, want one refusal", cover)
+	}
+	if !strings.Contains(cover[0].Why, long) {
+		t.Errorf("the cover's why is cut to %d runes: the gate that judges a change against the owner's delete list is the one the wider bound is for:\n%q", utf8.RuneCountInString(cover[0].Why), cover[0].Why)
+	}
+}
+
 // findRefusal is the refusal one gate made about one address, and whether it
 // made one.
 func findRefusal(rs []Refusal, gate, address string) (Refusal, bool) {

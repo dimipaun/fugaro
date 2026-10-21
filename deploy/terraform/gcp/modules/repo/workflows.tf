@@ -28,4 +28,10 @@ module "workflow" {
   launchers        = var.installation.launchers
   operators        = var.installation.operators
   allow_job_delete = var.allow_job_delete
+
+  # The installation's credentials service, when it has one (D146, D147): the
+  # workflow module grants each job's account roles/run.invoker on it and drops
+  # that job's model-secret accessors. Null on an installation that has not
+  # opted in, which is every installation today, and then nothing changes.
+  credentials_service = var.installation.credentials_service
 }

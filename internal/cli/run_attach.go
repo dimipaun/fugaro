@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -492,7 +493,8 @@ func attachCaps(ctx context.Context, spec *task.Spec) config.Inputs {
 
 // The names D9's line uses for the route a model no provider claims takes.
 // agent.auth decides which one it is: vertex sends the call to Google, the
-// other two to Anthropic, on its API or on a subscription's token.
+// other three to Anthropic, on its own API, on a subscription's token, or with
+// the credential the credentials service attaches.
 const (
 	attachRouteVertex = "Google Vertex AI"
 	// attachDirectAnthropic is Anthropic's own API, which agent.auth api-key
@@ -508,28 +510,62 @@ const (
 	// "oauth token" would name a credential the owner cannot find and could
 	// not tell from the next one.
 	attachRouteOAuth = "Anthropic (" + config.ClaudeOAuthToken + ")"
+	// attachRouteCascade is Anthropic reached with the credential the
+	// credentials service attaches to the call: tier A's shared subscription
+	// token or tier B's API key, chosen and attached inside the service, and
+	// never a credential the job holds (docs/credentials-service, D133,
+	// D143). Tier C for Claude is off, so the call still goes to Anthropic
+	// under Claude's own model IDs (config.RouteCascade's comment). The label
+	// names the service, not a secret, because there is no one secret to
+	// name: which credential carries a given call is the service's to decide
+	// per call, and the destination the owner is being told about is the
+	// service's own route rather than any credential of this repository's.
+	attachRouteCascade = "Anthropic (via the credentials service)"
 )
+
+// attachRouteUnknownMarker is the phrase attachRouteFor answers a value
+// outside config.AgentAuths with, and it is a phrase rather than a destination
+// on purpose: the launcher cannot know where such a value's bytes go, so the
+// line D9 prints says that instead of naming a destination the bytes may miss.
+// A test reads it by name to tell a value with an arm from one without
+// (TestAttachRouteForCoversEveryAgentAuth), which is why it is a constant.
+const attachRouteUnknownMarker = "an auth route this Fugaro does not know"
 
 // attachRouteFor names the destination of a model no provider claims, which
 // is the run's own auth route and nothing else. agent.auth vertex — and ""
 // with it, since config.applyDefaults writes vertex into every config the
 // launcher reads and a launch made outside the checkout hands this function a
 // zero config.Agent — sends Claude calls to Google Vertex AI; api-key sends
-// them to Anthropic's own API; oauth to Anthropic on a subscription's token.
-// A single "Anthropic (direct)" for all three would tell the owner of a
+// them to Anthropic's own API; oauth to Anthropic on a subscription's token;
+// cascade to Anthropic with the credential the credentials service attaches.
+// A single "Anthropic (direct)" for all of them would tell the owner of a
 // default configuration that their screenshot goes straight to Anthropic when
-// the call, and the bytes in it, go to Google. config.Validate admits only
-// these three, so there is no fourth answer to give; the default arm answers
-// with the one applyDefaults writes.
+// the call, and the bytes in it, go to Google.
+//
+// The four values are four arms, and there is no default arm that names a
+// destination. The arm this replaces answered with the one applyDefaults
+// writes, on the premise that config.Validate admits only three values — and
+// `cascade` is what falsified that premise: the value is legal in a
+// fugaro.yaml, so a cascade launch was told its bytes go to Google Vertex AI,
+// the one destination a cascade run never takes (docs/credentials-service,
+// D133). A fifth value therefore inherits no destination: it gets the sentence
+// below, which says the launcher cannot know where its bytes go, and
+// TestAttachRouteForCoversEveryAgentAuth fails until the value has an arm of
+// its own. Naming no destination is the only honest line D9 can print for a
+// value this file cannot read; naming Vertex's would be a false one, which is
+// exactly what happened while this switch had a default.
 func attachRouteFor(auth string) string {
 	switch auth {
+	case "", config.DefaultAgentAuth:
+		return attachRouteVertex
 	case "api-key":
 		return attachDirectAnthropic
 	case "oauth":
 		return attachRouteOAuth
-	default:
-		return attachRouteVertex
+	case config.AuthCascade:
+		return attachRouteCascade
 	}
+	return attachRouteUnknownMarker + " (" + pluginwire.Printable(auth) + ")"
 }
 
 // attachProviders lists, sorted, every destination the attached bytes may
@@ -554,10 +590,10 @@ func attachRouteFor(auth string) string {
 //     config.NeedsAnthropicKey's own rule — a model no allowed provider
 //     claims goes direct — and is the case a default Claude workflow always
 //     takes. The route is named by ag.Auth, because "direct" is Vertex for a
-//     default configuration and Anthropic only under api-key or oauth: the
-//     models arrive at a destination the auth mode picks, and the line has to
-//     name the one the bytes reach (config.CheckProviderAuth's own reading of
-//     the three).
+//     default configuration and Anthropic only under api-key, oauth or
+//     cascade: the models arrive at a destination the auth mode picks, and the
+//     line has to name the one the bytes reach (config.CheckProviderAuth's own
+//     reading of the four).
 //
 // The three models are NeedsAnthropicKey's own three, in its own order
 // (coder, reviewer, EffectiveBackground) — NOT Agent.PinnedModels, whose

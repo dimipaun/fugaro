@@ -118,3 +118,40 @@ func TestServerRefuse(t *testing.T) {
 		t.Errorf("lifted: %d", code)
 	}
 }
+
+// A service's get answers the state an enable and a disable leave it in, and
+// it does not consume the propagation count: that counts calls to the
+// service's own API, so `fugaro doctor` reading a state while an enable
+// propagates must not use one of them up.
+func TestServiceUsageGetAnswersTheState(t *testing.T) {
+	su := NewServiceUsage(t)
+	if code, body := getJSON(t, su.URL+"/v1/projects/p/services/compute.googleapis.com"); code != http.StatusOK || body["state"] != "ENABLED" {
+		t.Fatalf("an API the fake was never told about: %d %v, want ENABLED", code, body)
+	}
+	su.Disable("batch.googleapis.com")
+	if code, body := getJSON(t, su.URL+"/v1/projects/p/services/batch.googleapis.com"); code != http.StatusOK || body["state"] != "DISABLED" {
+		t.Fatalf("a disabled API: %d %v, want DISABLED", code, body)
+	}
+	// A propagation count of one, so that a get which consumed it is visible:
+	// with two, the assertion below could not fail whatever the get did — the
+	// enable would set stale to 2 and one consumed count would leave 1, and
+	// both refuse a call — and the fake's invariant would be unguarded.
+	su.Propagation = 1
+	resp, err := http.Post(su.URL+"/v1/projects/p/services/batch.googleapis.com:enable", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if code, body := getJSON(t, su.URL+"/v1/projects/p/services/batch.googleapis.com"); code != http.StatusOK || body["state"] != "ENABLED" {
+		t.Fatalf("after the enable: %d %v, want ENABLED", code, body)
+	}
+	// The API's own call is still refused: the get is not one of them.
+	if !su.refuses("batch.googleapis.com") {
+		t.Error("the get consumed the propagation call: the API's own first call is no longer refused")
+	}
+	// And exactly one call was left to refuse — the count was whole, not
+	// partly spent — so the second one answers.
+	if su.refuses("batch.googleapis.com") {
+		t.Error("the API still refuses a call after its propagation count is used up")
+	}
+}

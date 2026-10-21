@@ -105,6 +105,12 @@ func validateRoutes(u Upstream, routes []Route) error {
 	if len(routes) == 0 {
 		return nil
 	}
+	if u.Kind == KindOAuth {
+		// Tier A (D133, oauth.go): a route is a provider's endpoint, and an
+		// OAuth token is only ever sent to Anthropic's own. An OAuth
+		// upstream takes no routes at all, whatever they name.
+		return fmt.Errorf("gateway: the OAuth upstream takes no routes: %w", errOAuthOnRoute)
+	}
 	if u.Kind != "anthropic" {
 		return fmt.Errorf("gateway: routes need the anthropic upstream, not %q (a run does not mix credentials)", u.Kind)
 	}
@@ -113,6 +119,11 @@ func validateRoutes(u Upstream, routes []Route) error {
 		switch {
 		case !routeNameRE.MatchString(r.Name):
 			return fmt.Errorf("gateway: route name %q isn't a name", r.Name)
+		case strings.EqualFold(r.Auth, authOAuth):
+			// Tier A (D133): a route is a provider's endpoint, so it never
+			// carries an OAuth credential -- refused by name, here and in
+			// attachCredential, rather than by the generic auth message.
+			return fmt.Errorf("%s: %w", at, errOAuthOnRoute)
 		case r.Credential == nil:
 			return fmt.Errorf("%s has no credential source", at)
 		case r.Auth != "bearer" && r.Auth != "x-api-key":
@@ -170,6 +181,13 @@ func hasVariantSuffix(model string) bool { return strings.Contains(model, ":") }
 // attachCredential sets the route's key on the upstream request. The agent's
 // own credentials were already dropped by forwardHeaders.
 func (r *Route) attachCredential(h http.Header) (key string, err error) {
+	if strings.EqualFold(r.Auth, authOAuth) {
+		// Tier A (D133, oauth.go): a route is a provider's endpoint, and an
+		// OAuth token is only ever sent to Anthropic's own. Refused here as
+		// well as in validateRoutes, so a Route built in code -- past
+		// validation -- cannot put the token on the wire either.
+		return "", errOAuthOnRoute
+	}
 	key, err = r.Credential()
 	if err != nil || key == "" {
 		return "", errors.New("the provider key isn't available")

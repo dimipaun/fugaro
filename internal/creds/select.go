@@ -169,7 +169,7 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 			}
 		}
 		if len(usable) > 0 {
-			c, err := s.leastRecentlyExhausted(ctx, usable, marks, set)
+			c, err := s.leastRecentlyExhausted(ctx, usable, marks)
 			if err != nil {
 				return Credential{}, 0, err
 			}
@@ -299,6 +299,14 @@ func (s *Selector) Mark(ctx context.Context, name string, f func(prev Mark, foun
 // failed probe (which doubles). Both are D153's schedule, and both are here so
 // that a caller does not have to hold the settings and the mark algebra apart.
 func (s *Selector) Record(ctx context.Context, name string, f func(prev Mark, found bool, set Settings) (Mark, error)) (Mark, error) {
+	// The same guard Mark has, and here rather than left to Mark: f is wrapped
+	// below, so the closure Mark receives is never nil and Mark's own check
+	// cannot fire — the nil call would happen inside the store's compare-and-set
+	// callback instead, as a nil-pointer panic where Mark returns an error. The
+	// two entry points are one mistake apart, so they answer it the same way.
+	if f == nil {
+		return Mark{}, fmt.Errorf("creds: a record of %q was asked for with no change to make", name)
+	}
 	set := s.Settings.withDefaults()
 	return s.Mark(ctx, name, func(prev Mark, found bool) (Mark, error) { return f(prev, found, set) })
 }
@@ -369,10 +377,12 @@ func (s *Selector) Probed(ctx context.Context, name string, tier Tier) (Mark, er
 	})
 }
 
-// Cleared records a successful probe's *operator* — the clear of a broken mark
-// (C1.21). It is the operator's write and the only one that takes a broken mark
-// off: a probe answers through Probed, which is a no-op on anything but a
-// backed-off mark (ProbeSucceeded), so a probe's success cannot clear a 401.
+// Cleared records the operator's clear (C1.21): the transition that takes a
+// broken or exhausted mark off, after the operator has replaced the token or
+// judged the account fit to serve again. It is the operator's write and the only
+// one that takes a broken mark off: a probe answers through Probed, which is a
+// no-op on anything but a backed-off mark (ProbeSucceeded), so a probe's success
+// cannot clear a 401.
 func (s *Selector) Cleared(ctx context.Context, name string) (Mark, error) {
 	return s.Mark(ctx, name, func(Mark, bool) (Mark, error) { return Cleared(), nil })
 }
@@ -412,7 +422,15 @@ func (s *Selector) take(ctx context.Context, run Run, c Credential, now time.Tim
 // been idle for a week and one that has just come back from a reset are the
 // same thing to a token's owner — quota they can spend — and the round robin is
 // what spreads new runs over them evenly.
-func (s *Selector) leastRecentlyExhausted(ctx context.Context, usable []Credential, marks map[string]Mark, set Settings) (Credential, error) {
+//
+// It reads no Settings, and it takes none: the tie-break's policy is the
+// round-robin counter in creds/ and the marks it orders by, both of which it
+// has, and a setting it consulted would be a policy input this signature
+// promised and the body never read — the shape a later reader takes for
+// "wired, and the round robin is where a per-tier rule would go" and then
+// looks for a caller that sets it. The settings the selection does turn on are
+// read where the tier is known (free, and the mark rules beside it).
+func (s *Selector) leastRecentlyExhausted(ctx context.Context, usable []Credential, marks map[string]Mark) (Credential, error) {
 	ordered := make([]Credential, len(usable))
 	copy(ordered, usable)
 	since := func(c Credential) time.Time { return recency(marks[c.Name]) }
