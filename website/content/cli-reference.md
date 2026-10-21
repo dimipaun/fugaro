@@ -33,6 +33,7 @@ Subcommands:
 - `fugaro cancel` -- Cancel a run, letting the runner open a draft PR first
 - `fugaro completion` -- Generate the autocompletion script for the specified shell
 - `fugaro config` -- Work with fugaro.yaml
+- `fugaro coordinator` -- The coordinator's project view: what is in flight, and what collides
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
 - `fugaro help` -- Help about any command
@@ -938,6 +939,67 @@ Flags:
 | `--offline` | bool | `false` | no | never read the runs bucket: resolve against the cached project layer, if any |
 | `--project-layer` | string | "" | no | resolve against this project layer file instead of the published one |
 | `--workflow` | string | "" | no | show only this workflow's keys besides the top-level ones |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator`
+
+The coordinator's project view: what is in flight, and what collides
+
+The coordinator's deterministic half (docs/coordinator/implementation-plan.md).
+Nothing here holds a model credential, a service of its own or a store of its
+own: these commands read what fugaro already reads.
+
+Advisory, never authoritative: a collision is reported and never blocks,
+reorders or refuses a merge (spec §3).
+
+Usage: `fugaro coordinator`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for coordinator |
+
+Subcommands:
+
+- `fugaro coordinator status` -- Show one repository's work in flight, and where it collides
+
+## `fugaro coordinator status`
+
+Show one repository's work in flight, and where it collides
+
+Join one repository's pull requests with its run records and print the view:
+each pull request, the runs behind it, the branch and target release it declares,
+the files and services those runs touched, and every pair of work still in
+flight that touches the same file or service.
+
+A pull request the store holds no run for is listed as having none: it is work
+somebody has open, and dropping it is the one thing this view must not do.
+
+The launcher of a run is printed as what it is — the string the run's own launch
+record wrote about itself — and never as an identity.
+
+This command reads and writes nothing: no store of the coordinator's own, no
+service, no credential of its own. It is the per-repository read the CLI already
+performs with the repository's own provider credential, and the runs bucket.
+
+Usage: `fugaro coordinator status`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for status |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository to read (owner/name; default: the local config's, when it lists one) |
+| `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 
 Subcommands:
 
