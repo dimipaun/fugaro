@@ -875,18 +875,18 @@ added or removed without this sentence moving fails there:
 
   - **The four zoom levels are stills under the run** (the owner's brief of 2026-10-21, the
     zoom-diagrams plan's Part 4, D237/D244/D245) re-derived both figures from the gate's own
-    build: the site figure 1,437,824 → **1,448,623**, by **10,799 bytes**, and **the per-file
+    build: the site figure 1,437,824 → **1,448,644**, by **10,820 bytes**, and **the per-file
     comparison of the two builds shows that is the whole of the move** —
-    `dist/how-it-works/index.html` goes 40,775 → **51,574 bytes** and no other file in `dist/`
+    `dist/how-it-works/index.html` goes 40,775 → **51,595 bytes** and no other file in `dist/`
     moved a byte, so the count of files stays **28** and the count of pages **11**. What the
-    page's own 10,799 are: the four `<figure>`s and the `<figcaption>` naming each level, the
+    page's own 10,820 are: the four `<figure>`s and the `<figcaption>` naming each level, the
     four `<svg>` drawings those figures carry, the one zero-size `<svg>` holding the single
     `<defs>` of five `<symbol>`s — the job tile, the orchestrator, the developer, the console and
     the project — that every level draws each entity through, the four anchor markers of the
     level list, and the scoped stylesheet the page inlines, because Astro inlines a component's
     rules into the one page that renders it. **The page weight does not move, and that is the
     check worth keeping**: the heaviest page is the console page, at 427,596 bytes, which renders
-    none of this, while the How It Works page is 129,515 → **140,314**. The script did not move
+    none of this, while the How It Works page is 129,515 → **140,335**. The script did not move
     either — `public/scripts/site.js` is the same 66,189 bytes — and that is the shape the brief
     asks for: the four levels are markup and text, all four are in the document with no script
     at all, and the pinned scroll-driven zoom between them is Part 5, not this round. Nothing is
@@ -896,7 +896,12 @@ added or removed without this sentence moving fails there:
     its own copy of an entity, the markers, and every label a row of `website/data/zoom-levels.yaml`
     in the document the row cites — and `test/a11y.mjs` holds the markers and the captions; the
     drawings themselves are the owner's to read, and that is Check 112 in
-    `docs/gcp-live-checklist.md`.
+    `docs/gcp-live-checklist.md`. **Twenty-one of those bytes are the spaces at the end of the
+    drawing's own labels**, which `test/spacing.mjs` asked for and the first full run of the suite
+    is what found: the gate reads a built page the way a browser does, so two `<text>` labels
+    written on adjacent lines are two words a reader reads as one (`workflowone`, `goneruns`), and
+    the space belongs inside the run that carries it — which is what the security drawing's own
+    labels do.
 
   - **JavaScript per page:** 248,211 bytes. Three times 82,737: the one script the site ships,
     `public/scripts/site.js` (66,189 bytes), plus 25 %. What the file carries is the copy

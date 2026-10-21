@@ -112,7 +112,7 @@ function labelTexts(rows: { text: string; source: string }[], x: number, first: 
   return rows
     .map((row, i) => {
       const y = first + i * LINE
-      return `<text class="zoom-label ${klass}" x="${x}" y="${y.toFixed(1)}" font-size="${size}">${esc(row.text)}</text>`
+      return `<text class="zoom-label ${klass}" x="${x}" y="${y.toFixed(1)}" font-size="${size}">${esc(row.text)} </text>`
     })
     .join('')
 }
@@ -187,7 +187,7 @@ function fan(level: { parts: { entity: string; labels: { text: string; source: s
     parts.push(entityUse(job.entity, centre - tileW / 2, rowTop, tileW, tileH))
     lines[index].forEach((text, row) => {
       const y = rowTop + tileH + 22 + row * COLUMN_LINE
-      parts.push(`<text class="zoom-label" x="${centre.toFixed(1)}" y="${y.toFixed(1)}" font-size="${labelSize}" text-anchor="middle">${esc(text)}</text>`)
+      parts.push(`<text class="zoom-label" x="${centre.toFixed(1)}" y="${y.toFixed(1)}" font-size="${labelSize}" text-anchor="middle">${esc(text)} </text>`)
     })
   })
 
@@ -235,7 +235,7 @@ function project(level: { parts: { entity: string; labels: { text: string; sourc
     parts.push(entityUse(part.entity, centre - tileW / 2, y, tileW, tileH))
     part.labels.flatMap((label) => wrap(label.text, labelRoom, labelSize)).forEach((line, row) => {
       const lineY = y + tileH + 20 + row * COLUMN_LINE
-      parts.push(`<text class="zoom-label" x="${centre.toFixed(1)}" y="${lineY.toFixed(1)}" font-size="${labelSize}" text-anchor="middle">${esc(line)}</text>`)
+      parts.push(`<text class="zoom-label" x="${centre.toFixed(1)}" y="${lineY.toFixed(1)}" font-size="${labelSize}" text-anchor="middle">${esc(line)} </text>`)
     })
   })
   return { markup: parts.join(''), height }
