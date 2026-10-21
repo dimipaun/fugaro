@@ -64,6 +64,29 @@ On a pull request that was retargeted, check the base its runs recorded before l
 - **Cost.** `fugaro diagnose` shows it, and its JSON has `row.cost.route_by`, which splits the spend by route (a provider model's route, for example), and `row.cost.reported_usd`, what a provider claimed, kept beside the priced figure and never replacing it. Subscription (`oauth`) spend is notional, never billed.
 - **Statuses and halts** are in `reference/status.md` and `reference/diagnose.md`. A halt is a budget cap or a kill switch working as intended.
 
+## Inspect the expensive runs daily
+
+Once a day, list the last 24 hours of runs (`fugaro runs ls --since 24h`) and read the dearest 10-20% of them by the COST column — one or two rows in twenty. The reading is read-only, and it is where the next run gets cheaper.
+
+Take each of those through `fugaro diagnose RUN` for the cost and the halt, then `fugaro logs RUN`, and look for:
+
+- **the review stage costing far more than implement.** The log lines `[implement] model call`, `[review] model call` and `[fix] model call` are one line per model call that stage's agent made; the snippet below counts them. A review making many times implement's calls for a small change has read too much, and often the wrong diff base (below).
+- **sub-agent fan-outs** — `tool Agent:` lines, each a sub-agent the stage spawned, with its own calls on top of the stage's.
+- **the wrong diff base** — the review's own `git diff origin/<base>...HEAD` naming a base the pull request does not target (the long-lived-branch section above is about those runs).
+- **repeated identical commands**, a resumed session re-reading the whole repository, rounds that end at the same cap, and a relaunch that redoes work already landed.
+
+Write each lesson where the next run will read it — the project's `CLAUDE.md` or its agent instructions — and fix the cause it names: the task's brief, the configuration, or the product itself.
+
+This counts a run's calls without changing anything: `fugaro logs` only reads, and so does `grep -c`.
+
+```bash
+RUN=<run>
+fugaro logs "$RUN" | grep -c '\[implement\] model call'
+fugaro logs "$RUN" | grep -c '\[review\] model call'
+fugaro logs "$RUN" | grep -c '\[fix\] model call'
+fugaro logs "$RUN" | grep -c 'tool Agent:'
+```
+
 ## A usage limit on the Claude account
 
 A `failed` run can mean its Claude account ran out of its subscription's usage limit, never any other kind of failure. `reference/diagnose.md`'s usage-limit section says exactly what counts as that evidence and what doesn't — read it before concluding a run hit a limit, never infer one from this paragraph alone. When it applies, `fugaro accounts ls --repo <owner/name> --json` lists the other accounts the repository may use, and `reference/followup.md` (with a pull request) or `reference/launch.md` (with none yet) relaunches the same work on one of them, naming it with `--token`, never in a loop past every allowed account.

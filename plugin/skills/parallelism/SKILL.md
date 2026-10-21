@@ -48,4 +48,5 @@ For one hard task where the approach is uncertain, the user may choose two to fo
 - `max_parallel` (default 20 in the project's config) refuses a new launch at that many active runs. Launch fewer, or wait.
 - Run `fugaro budget show` before a wide launch: it shows the caps and the headroom. A batch that exceeds the day's headroom will halt, with draft pull requests holding the work done so far.
 - Tell the user the number of runs and the worst-case cost before launching a batch, and get their yes for the whole batch.
+- After the batch, the dearest runs are worth reading: the `working` skill's daily inspection.
 - Changes to `.github/workflows/*` cannot be done by a run on GitHub; leave them out of every task.
