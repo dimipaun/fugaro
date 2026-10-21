@@ -47,6 +47,15 @@ package cli
 //    friends) -- and each excuse is checked the only way an excuse can be: the file it names
 //    must still be absent from this tree, so the day the pull request merges the test fails and
 //    demands a real anchor rather than quietly holding nothing.
+//
+// One thing the table cannot write down is a path under the console's directory: no Go file in
+// this package may carry one (docs_console_boundary_test.go holds the ONE-entry allow list of
+// files that may, and docs_voice_module_test.go's precedent is that not even a comment may name
+// one). Seven of the reconciliation's citations name console files, so those entries name the
+// citation by the tail of its token, and the test resolves the tail back to the path through
+// consoleDirName -- the boundary test's own constant -- and requires the document to cite that
+// tail exactly once. Every one of the seven is anchored on a line of the console file, so the
+// boundary rule costs the citations nothing.
 
 import (
 	"crypto/sha256"
