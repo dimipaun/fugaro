@@ -89,6 +89,23 @@ function section(document, heading) {
 const CLASSES_OF = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
 const HAS = (el, name) => CLASSES_OF(el).includes(name)
 
+/**
+ * The block's OWN elements matching `pred`: everything inside it that belongs to no nearer
+ * slider. The homepage's "See it" panel renders a slider of its own — the console page's
+ * `ScreenshotSlider`, whose rows are `[data-slider-slide]` and whose dots are `[data-slider-dot]`
+ * — and the two blocks share those two hook names (D246). So this case reads the outer block's
+ * three panels and three dots and not the inner block's four slides: the same rule `site.js`'s
+ * own `own()` reads, which is what keeps this reading and the script's in step.
+ */
+function ownOf(block, pred) {
+  return findAll(block, pred).filter((el) => {
+    for (let at = el.parent; at; at = at.parent) {
+      if (at !== block && at.name !== undefined && at.attrs.has('data-slider')) return false
+    }
+    return true
+  })
+}
+
 /** The three slides, in the order the page reads them: the labels the dots are announced with
  *  and the headings the panels carry. */
 const LABELS = ['Easy to use', 'Why Fugaro?', 'See it']
@@ -277,8 +294,8 @@ export function sliderFailures(css, html) {
   const block = blocks[0]
 
   // 1. the three slides, the three dots, and the pairing between them.
-  const panels = findAll(block, (el) => el.attrs.has('data-slider-slide'))
-  const dots = findAll(block, (el) => el.attrs.has('data-slider-dot'))
+  const panels = ownOf(block, (el) => el.attrs.has('data-slider-slide'))
+  const dots = ownOf(block, (el) => el.attrs.has('data-slider-dot'))
   if (!block.attrs.has('data-slider')) {
     out.push(
       'the block carries no `data-slider` attribute, and that attribute is the whole of how the site’s one script finds it: without it the block is three panels and three links with no clock, no step controls and no mark on the dot a reader is looking at',
@@ -346,7 +363,7 @@ export function sliderFailures(css, html) {
     ['previous', 'data-slider-prev'],
     ['next', 'data-slider-next'],
   ]) {
-    const found = findAll(block, (el) => el.attrs.has(attribute))
+    const found = ownOf(block, (el) => el.attrs.has(attribute))
     if (found.length !== 1) {
       out.push(`the block carries ${found.length} ${what}-slide controls, and the draft asks for one of each: a reader who has only the dots cannot step through the block without moving their hands`)
       continue

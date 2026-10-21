@@ -97,29 +97,53 @@
  */
 import type { ConsoleScreen } from '../content.ts'
 
+/**
+ * **The slider is shared, and the three props on the right are what make it so** (D246, the
+ * owner's feedback of 2026-10-21: the homepage's "See it" panel renders the same rows). It was
+ * the console page's own component until the homepage needed one: it hard-coded its heading
+ * (`'Screenshots'`), its `data-slot` (`console-screens`) and the ids its dots point at
+ * (`console-screen-1`), and every one of those is a fact about the page it is rendered on. The
+ * three are props now, with the console page's own values as their defaults so that a caller
+ * that wants the console's slider says nothing; the homepage passes its own, and `website/test/
+ * home.mjs` holds the homepage's slot to the rows of its own data file. What does NOT move: the
+ * named focusable track, the `hidden` bar, the dot anchors, the 44 px controls and the
+ * first-slide-eager rule — the component's own shape, which both pages carry because it is the
+ * shape the owner asked for.
+ */
 interface Props {
   /**
    * The slides, in the order the data file lists them. An empty list renders the section at
    * all: there is no picture to draw and no frame to draw it in.
    */
   screens: ConsoleScreen[]
+  /** The section's own heading, which is also what names it for a screen reader. */
+  heading?: string
+  /**
+   * The section's `data-slot`, and the prefix of the id its heading carries: the hook a gate
+   * reads to find this slider, and one name rather than two so that the two cannot disagree.
+   */
+  slot?: string
+  /** Each slide's id prefix: what its dots point at, and what an anchor from elsewhere names. */
+  idPrefix?: string
+  /** What the focusable track is called and what it says a reader should do with it. */
+  label?: string
 }
 
-const { screens } = Astro.props
+const {
+  screens,
+  heading = 'Screenshots',
+  slot = 'console-screens',
+  idPrefix = 'console-screen',
+  label = 'Screenshots of the console. Scroll sideways to see the rest.',
+} = Astro.props
 
-// The section's own heading and the hook `website/test/console-screens.mjs` reads: the
-// section is the slider, and "the slider is there" is a statement about this element.
-const HEADING = 'Screenshots'
-const SLOT = 'console-screens'
-
-// Each slide's id: what its dot points at, and what an anchor from anywhere else can name.
-const slideId = (index: number) => `console-screen-${index + 1}`
+const slideId = (index: number) => `${idPrefix}-${index + 1}`
 ---
 
 {
   screens.length > 0 && (
-    <section class="screens" data-slot={SLOT} data-slider aria-labelledby="console-screens-heading">
-      <h2 id="console-screens-heading">{HEADING}</h2>
+    <section class="screens" data-slot={slot} data-slider aria-labelledby={`${slot}-heading`}>
+      <h2 id={`${slot}-heading`}>{heading}</h2>
 
       {/* The frame: the panel the board draws the slider in, and the box the track scrolls
           inside. It is here rather than in the track's own rules because it is the frame that
@@ -131,11 +155,12 @@ const slideId = (index: number) => `console-screen-${index + 1}`
             focusable region is announced as an unnamed group without one. */}
         <ul
           class="screens-track"
+          data-slider-track
           tabindex="0"
-          aria-label={`${HEADING} of the console. Scroll sideways to see the rest.`}
+          aria-label={label}
         >
           {screens.map((screen, index) => (
-            <li class="screen" id={slideId(index)}>
+            <li class="screen" data-slider-slide id={slideId(index)}>
               <figure class="screen-figure">
                 <img
                   class="screen-image"
@@ -178,6 +203,7 @@ const slideId = (index: number) => `console-screen-${index + 1}`
             <li class="screen-dot-item">
               <a
                 class="screen-dot"
+                data-slider-dot
                 href={`#${slideId(index)}`}
                 aria-label={`Show screenshot ${index + 1} of ${screens.length}`}
               />

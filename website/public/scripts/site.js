@@ -546,14 +546,42 @@
 
   // The console slider's own three, and the two the bar is drawn from: the track it scrolls,
   // the slides it counts, the dots it marks, the bar itself and the count in it.
+  //
+  // **The interior is `data-slider-*` too, and that is the correction of 2026-10-21** (the
+  // homepage's "See it" panel became a slider that renders the console page's own rows, D246).
+  // These three were `.screens-track`, `.screen` and `.screen-dot` — the console page's class
+  // names — and a second page can only reuse this driver by borrowing the classes of a page it
+  // has nothing to do with. The classes stay, because they are what the stylesheet draws; what
+  // the script reads is the attribute, which is the same shape as the door above it. The
+  // homepage's own slider reads `[data-slider-slide]` and `[data-slider-dot]` for its panels
+  // and its dots, so the two drivers now share those two names and the two blocks differ in
+  // what they put under them: a track of slides against a block of panels.
   var SLIDER_BAR = '[data-slider-bar]'
-  var SLIDER_TRACK = '.screens-track'
-  var SLIDER_SLIDE = '.screen'
-  var SLIDER_DOT = '.screen-dot'
+  var SLIDER_TRACK = '[data-slider-track]'
+  var SLIDER_SLIDE = '[data-slider-slide]'
+  var SLIDER_DOT = '[data-slider-dot]'
   var SLIDER_COUNT = '[data-slider-counter]'
 
+  /**
+   * The elements of `block`'s OWN slider: everything `selector` matches inside it that belongs
+   * to no nearer slider. The homepage's "See it" panel holds one of these blocks inside the
+   * homepage's own, so a plain `block.querySelectorAll('[data-slider-slide]')` would hand the
+   * outer block the inner one's slides — and the two drivers would count, mark and move each
+   * other's. `closest('[data-slider]')` is what tells them apart, and it answers the block
+   * itself for everything of the block's own: the same expression a browser answers, so the
+   * rule needs no bookkeeping and cannot go stale.
+   */
+  function own(block, selector) {
+    var found = block.querySelectorAll(selector)
+    var kept = []
+    for (var i = 0; i < found.length; i++) {
+      if (found[i].closest(SLIDER) === block) kept.push(found[i])
+    }
+    return kept
+  }
+
   function slider(section) {
-    var track = section.querySelector(SLIDER_TRACK)
+    var track = own(section, SLIDER_TRACK)[0]
     if (!track) return
     var slides = track.querySelectorAll(SLIDER_SLIDE)
     // One slide is nowhere to go, and the markup renders no bar for it either: this is that
@@ -563,7 +591,7 @@
 
     var bar = section.querySelector(SLIDER_BAR)
     var count = section.querySelector(SLIDER_COUNT)
-    var dots = section.querySelectorAll(SLIDER_DOT)
+    var dots = own(section, SLIDER_DOT)
     var prev = section.querySelector(SLIDER_PREV)
     var next = section.querySelector(SLIDER_NEXT)
     var index = 0
@@ -1038,16 +1066,22 @@
    * shows. This is the clock, the two controls and the mark on the current dot.
    *
    * The block is handed in by `start()`, which found every `[data-slider]` on the page once and
-   * gave each one to both of this file's sliders. A block with no panels in it — the console
-   * page's, whose slider is a scroll container — is one this function returns from at once.
+   * gave each one to both of this file's sliders. A block with no panels of its own in it — the
+   * console page's, whose slider is a scroll container, and the panel the homepage's own slider
+   * renders that scroll container in — is one this function returns from at once.
    */
   function panels(block) {
-    var slides = block.querySelectorAll(SLIDE)
+    // A block that carries a track of its OWN is the console-style slider's, and its slides are
+    // the track's `<li>`s rather than the block's panels: the driver above moves it, and two
+    // drivers on one block would each write the other's state. The homepage's block holds one
+    // of those inside its third panel, which is the case this reads.
+    if (own(block, SLIDER_TRACK).length > 0) return
+    var slides = own(block, SLIDE)
     // One slide is not a slider, and no slide is a block this file has nothing to say about.
     // A block that grew a second panel gets the whole behaviour from the same markup.
     if (slides.length < 2) return
 
-    var dots = block.querySelectorAll(DOT)
+    var dots = own(block, DOT)
     var back = block.querySelector(SLIDER_PREV)
     var on = block.querySelector(SLIDER_NEXT)
     var at = 0
@@ -1244,10 +1278,11 @@
     // 2026-10-21 — so neither is behind the clipboard gate the copy controls stand behind below.
     //
     // One query, for the one attribute a slider's block is marked with, and each of the two
-    // drivers below is handed every block: the console's slider returns at once from a block
-    // with no `.screens-track` in it and this file's homepage slider at once from a block with
-    // no panels, so a page carrying one of the two blocks takes the same path as a page
-    // carrying the other, and a page carrying both would get both.
+    // drivers below is handed every block: the console slider's returns at once from a block
+    // with no track of its own in it and this file's homepage slider at once from a block with
+    // no panels of its own, so a page carrying one of the two blocks takes the same path as a
+    // page carrying the other, and a page carrying one inside the other — the homepage — gets
+    // both, each on its own block and neither on the other's elements.
     var sliders = document.querySelectorAll(SLIDER)
     for (var s = 0; s < sliders.length; s++) {
       slider(sliders[s])
