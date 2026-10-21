@@ -822,7 +822,12 @@ func credentialsBatchRig(t *testing.T) *imagesRig {
 	r := credentialsStageRig(t)
 	r.appendConfig(t, "base_images:\n  "+config.BaseKind+": "+computePin+"\n")
 	r.iam.AddServiceAccount(initProject, "fugaro-acme-web@proj-1234.iam.gserviceaccount.com", "Fugaro job acme/sandbox web")
-	r.sched.SetJob(initProject, "us-east5", infra.PreloadSchedulerJob,
+	// The rebuild job the compute stage starts once its apply is done, in the
+	// SCHEDULER region and not the installation's: Cloud Scheduler does not
+	// serve us-east5, so the module creates it in us-east4 and the stage starts
+	// it there (the compute rig registers it the same way, and the module's
+	// scheduler_region says why).
+	r.sched.SetJob(initProject, "us-east4", infra.PreloadSchedulerJob,
 		"https://cloudbuild.googleapis.com/v1/projects/proj-1234/builds", "fugaro-preload@proj-1234.iam.gserviceaccount.com")
 	r.script["output@compute"] = map[string]any{"stdout": computeOutputsJSON(t)}
 	r.save(t)
