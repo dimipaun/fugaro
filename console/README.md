@@ -128,6 +128,7 @@ npm run test:e2e                               # playwright, test/e2e/*.spec.ts;
 npm run test:e2e -- security                   # just the window's spec
 npm run typecheck                              # tsc --noEmit over src/, test/, tools/ and the root config files
 npm run record-fixture -- --help               # the recorder; OWNER-RUN, see "Recorded, redacted fixtures"
+npm run screenshots                            # the website's pictures; OWNER-RUN on a Mac with a display, see "The console's screenshots for the website"
 ```
 
 `npm ci` — never `npm install` — is the install step in this file, in the plan's
@@ -3664,6 +3665,209 @@ ran. Apple's icon shape: macOS draws its own rounded-rect mask over a full-bleed
 the mark is not redrawn, recoloured or inset to anticipate it — that would be editing the
 website's artwork. And any signed or notarised build: unchanged from Task 4.1's record
 above.
+
+## The console's screenshots for the website (the owner's run, fixture data only)
+
+The website's Console page carries pictures of the real application (owner ruling of
+2026-10-20), and they are taken from **fixture data** by one command the owner runs:
+
+```sh
+./scripts/console-screenshots.sh        # from the repository root
+npm run screenshots                     # the same run, from console/ (it builds the console first)
+```
+
+The script installs the console's pinned toolchain (`npm ci`) and then runs the same
+`screenshots` script the second command names, which **builds the console first** (`npm run
+build`) and then runs `tools/screenshots/capture.ts`. The build is inside the script rather
+than in its caller because what the run launches is the **built** app
+(`package.json`'s `main`, `dist/main/index.js`) and `dist/` is git-ignored and untracked: a
+`screenshots` script that did not build would launch a file that is not there on a fresh
+checkout, or one from a branch ago on the machine of whoever runs it next (review of
+2026-10-20, high finding). It **needs a display**: Electron opens a real window, so this
+is a run on a Mac with a desktop session and never a run in CI — the script's own header says
+so, and with no display the launch fails and the command exits non-zero. It refuses to start
+on any Node but the exact one `package.json`'s `engines.node` pins (`.npmrc` sets
+`engine-strict=true`, so `npm ci` is the check) with a one-line error rather than a stack
+trace — and the version it wants is *read from that file* and compared exactly, because a
+major-only guard lets Node 22.11 through to precisely the `npm ci` EBADENGINE failure the
+guard exists to prevent, with a message that said the version was fine.
+
+### What it launches, and the checks that keep it fake
+
+The console under the camera is the **built** application, launched through the e2e suite's
+own Playwright/Electron path (`test/support/launch.ts`'s `launchConsole`, with the ETXTBSY
+retry) so its real startup handshake, resolver, `watch` supervisor and screens all run. What
+it is *not* is a console pointed at an installation. The fake CLI is the unit suite's own
+`test/unit/stub.ts`, installed into this run's scratch tree from the documents in
+`test/fixtures/screenshots/`, and it **refuses** (exit 2) any command the run did not prepare
+— so a screen whose read was not prepared is a picture of a refusal rather than of an empty
+document. It makes **one launch and takes four pictures from it**, and three rules are checked
+before the window exists, in `tools/screenshots/isolation.ts`:
+
+1. **the binary, asked the way the launch asks it.** Every launch seeds the console's own
+   store with one installation *chosen*, naming the fake's absolute path — and before the
+   window opens, `assertLaunchIsFixture` reads that store back with the console's own reader
+   (`readInstallationFile`) and resolves the chosen row with the console's own **one-path**
+   resolution (`resolveInstalledBinary`), refusing the launch unless the path is the fixture's
+   exactly, naming the path it resolved. A store that chooses *no* installation is refused
+   too, because the handshake of a console with nothing chosen walks
+   `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin` and `/usr/bin` — the directories where
+   the operator's own `fugaro` lives. It deliberately does **not** ask the machine's resolver
+   what it would find: that walk probes the winner by *executing* it, so the question itself
+   would run the operator's real CLI and then refuse the run — a check that both touched the
+   thing it exists to avoid and made the run impossible on the one machine it is for (review of
+   2026-10-20, high finding). The picker picture is opened from the console's own
+   `Installations…` menu item for the same reason: the second launch this run used to make —
+   a console with nothing chosen — was that walk;
+2. **the paths.** `PATH`, `HOME`, `XDG_CONFIG_HOME` and `TMPDIR` are written into one fresh
+   scratch tree, and the window is given a fresh `--user-data-dir` under it; a launch whose
+   environment or profile names anything else — or that names the operator's real `HOME` or
+   `XDG_CONFIG_HOME` — is refused, naming the key and the path. Nothing here reads
+   `~/.config`, and the seeded `installations.json` is written into the fresh profile.
+   `TMPDIR` is redirected rather than carried because the console builds the private working
+   directory its children run in as `$TMPDIR/fugaro-console-<uid>/cwd`: an ambient one is a
+   directory this run would write to and never remove;
+3. **the rest of the environment.** The child's environment is built from an allow-list of
+   eight window-drawing keys, not a denylist: `FUGARO_CONFIG`, `GOOGLE_APPLICATION_CREDENTIALS`
+   and `SSH_AUTH_SOCK` cannot reach the app or the CLI it spawns, and the run's own log ends
+   with the fake child's account of every spawn. **The only `fugaro` any child of this run
+   executes is the fake** — the binary check above is one path, and the probe it makes is that
+   fake's own `version`.
+
+### What comes back: four pictures, a manifest, and the check on the bytes
+
+The captures land in `console/screenshots/` — **git-ignored, never committed**: a picture of a
+window is an artefact of a machine and a day, and the website's owner copies the one they want
+into `website/` deliberately. Each is 1280x800 CSS pixels at device scale factor 2 (2560x1600
+pixels), dark theme, the platform's title bar excluded (a `page.screenshot` reads the window's
+web contents). The four captures — three screens of one window and the picker's own window,
+all from the **same launch** — are:
+
+| File | Screen |
+|---|---|
+| `console-live.png` | the Live screen: three runs (one in review with its verification passed, one in review and near its deadline, one queued), two repositories, and the day's spend at 34.85% of a $120 cap |
+| `console-run.png` | the run detail the Live screen's first row names: stages, verification, findings, the log tail |
+| `console-spend.png` | the Spend screen: thirty days of daily spend, the totals and the caps |
+| `console-installations.png` | the picker, opened from the console's own `Installations…` menu item: three installations, each naming the fake, with `acme-platform` the chosen one |
+| `console-first-run.png` | **not taken.** The no-installation onboarding page is #751, which is not on `main`, so there is no such screen in this console; the manifest carries the omission and the reason rather than a silence |
+
+The fifth row is the omission, and it is a row because that is where the four are: the manifest
+carries it as a fact (`omissions[]`), and a reader who expected the owner's fifth picture finds
+the reason beside the pictures that exist rather than after two paragraphs about alt text.
+
+**One picture carries a machine-specific path, and that is a decision.** The picker's rows draw
+each installation's stored binary path, and the path in these rows is the fake the run installed
+in its own scratch tree — `/var/folders/…/fugaro-console-screenshots-XXXXXX/bin/fugaro` on macOS,
+a different path on every run, and a directory that is gone when the run finishes. The
+alternative was to hide it, and hiding it was rejected: the console draws the stored path
+verbatim (`rowText`/`viewOf`), so a picture with a path-shaped hole in it would be a picture of
+something the console does not draw, and the point of this capture is that a real store is being
+drawn. What the path does *not* name: no home directory, no checkout, no real `fugaro`, and no
+project or repository that exists — the projects are invented. The alt text that travels with
+the picture therefore describes the path rather than quoting it (asserted in
+`test/unit/screenshots.test.ts`). **If the owner would rather not publish a path at all,
+`console-installations.png` is the one to leave out of `website/`**: it is the only capture whose
+subject is a path, and the other three carry none.
+
+Every alt text says only what its screen **draws**: the Live screen draws `runs`, `repos` and
+`total`, and the frame's `finished[]` list is decoded and drawn nowhere — an earlier version of
+that sentence counted it ("five runs … one that opened pull request acme/platform-core#412 and
+one that failed"), which was a fact about the fixture and in no picture, shipping to the
+website inside `MANIFEST.json` (review of 2026-10-20, medium finding). `test/unit/screenshots.test.ts`
+now asserts the *absences* as well as the figures.
+
+**And every figure in every alt text is read out of the screen's own model**, built from the same
+fixture the capture is taken of: the run detail's "build, test and lint verification" is the kinds
+of `buildRunModel(...).stages`, its "three findings" is that model's finding count, the spend
+picture's "thirty days" is `buildSpendModel(...).rows.length`, and the Live picture's round, stage,
+verification word, deadline flag and queued row are the last frame's own (review of 2026-10-20,
+medium finding — two of the four sentences were asserted by nothing). The run both pictures are of
+is held to one story as well: the Live row's `stage` and `verify` are the ones `diagnose.json`
+tells, because the run-detail capture is reached by clicking that row and the two screens draw the
+same run's words (review of 2026-10-20, medium finding). The picker's status line is *read out of*
+`src/renderer/installations.ts` rather than written into the test, so the sentence the alt quotes is
+the renderer's and not a copy of it (review of 2026-10-20, low finding).
+
+`tools/screenshots/png.ts` reads the PNG bytes itself and refuses a capture that is blank (the
+standard deviation of its pixel luminance, sampled, must be above `BLANK_STDDEV_FLOOR`) or is
+not exactly the size the manifest declares. It reads PNGs rather than adding an image library
+because every specifier in `package.json` is an exact pin (`test/unit/pinning.test.ts`), and
+reading its own bytes is forty lines of `node:zlib`. `tools/screenshots/manifest.ts` writes
+`screenshots/MANIFEST.json`: one entry per picture with its pixel size, its sha256 and a
+one-sentence alt text drafted from the fixture, plus what was omitted. And
+`tools/screenshots/failure.ts` is the run's failure path: the one sentence a failed run ends
+with, and the handler that prints it for the rejections `main()` never awaits — Playwright
+reports a failed launch on promises nobody holds, and Node 22's default
+`--unhandled-rejections=throw` would otherwise end the process on a playwright-core stack
+before the run's own words were printed (review of 2026-10-20, high finding).
+
+### The tests, and the mutations each one was run against
+
+`test/unit/screenshots.test.ts` holds everything the run decides **without a window** — 63
+tests, and every rule below was seen red against a planted change before it was committed:
+
+| Claim | Mutation it was run against |
+|---|---|
+| the launch's store is the only thing the handshake may read | `assertLaunchIsFixture`'s `assertFixtureBinary` call dropped — "refuses a store that names another binary" red |
+| a store that chooses no installation is refused | the `active === null` refusal removed — red, and it is the rule that keeps the machine's `fugaro` out of the walk |
+| the check runs its probe nowhere real | the probe's working directory changed from `isolation.userData` to `/tmp` — the child's own `cwd` in the fake's report red (it is taken from the `Isolation`, so no caller can point it elsewhere) |
+| the resolver must find the fixture binary | `assertFixtureBinary`'s equality check replaced by `return` — "the same path is not a refusal" and the store cases both red |
+| a path outside the scratch tree is refused | `assertIsolated`'s `inside.some(...)` check disabled — red, naming the planted `HOME` |
+| the operator's own `HOME` is refused **even inside** a scratch tree | the `forbidden` entry not set — red |
+| `TMPDIR` is redirected, not carried | `env['TMPDIR'] = isolation.tmp` removed — "drops an ambient key that is empty" / the allow-list case red, and `assertIsolated`'s `TMPDIR` check disabled — the refusal case red |
+| an empty ambient value is an absent one | `&& value !== ''` dropped from the allow-list loop — red |
+| no credential-shaped key reaches the child | `launchEnvironment`'s allow-list loop replaced by `Object.keys(ambient)` — the `GOOGLE_APPLICATION_CREDENTIALS`/`FUGARO_CONFIG`/`SSH_AUTH_SOCK`/`AWS_PROFILE` case red |
+| the alt text describes the screen, not the frame | `#412` restored to `LIVE_SCREEN.alt` — the absence assertions red; the picker's "none of them chosen" restored — red too |
+| every document the dashboard draws names one project | `diagnose.json`'s `project` key removed — the agreement test red (it was the key the fixture was missing) |
+| the fixtures are documents the console reads | the five fixtures driven through the console's **own** readers: `decodeSnapshot` for the feed's frames, `buildSpendModel` for `report`/`budget show`, `buildRunModel` for `diagnose` + `logs`. `max_reserve_usd` read from `global` instead of the top level — red |
+| the log window has no refused line | the fixture read as a bare list rather than through `parseLogEntries` — the `refused` assertion red |
+| a seed row must be sixteen hex characters | the id pattern loosened to `/^.*$/` — red |
+| two seed rows may not share an id | the duplicate check disabled — red |
+| the feed fixture must hold frames | the non-empty check disabled — red |
+| a missing fixture document is named | the wrapper's sentence replaced by the raw `ENOENT` — red |
+| the fake refuses an unknown command | `default.code` 2 → 0 — red |
+| the fake prints the version the console was built against | the version line replaced by `0.1.0` — red |
+| a manifest may not list one file twice | the duplicate check disabled — red |
+| a capture's name carries no path | `FILE_RE` loosened to `/^.*\.png$/` — red |
+| a size is a positive whole number | the `<= 0` half of the check dropped — red |
+| an entry carries an alt sentence | the empty-alt check disabled — red |
+| the manifest's key order is canonical | `screens` serialized before `window` — red |
+| a blank rectangle is refused | the `spread < BLANK_STDDEV_FLOOR` gate disabled — red |
+| a capture of the wrong size is refused | (driven directly: the test plants a 64x64 file against a 128x128 expectation) |
+| a Sub-filtered scanline is reversed | `case 1: value = raw + left` → `value = raw` — red |
+| an RGB file's channels are read apart | the green and blue bytes read from the red byte — red, two tests |
+| the entry point handles the rejection nobody awaits | `installFailureHandler(process)` not installed — red; the event name changed to `uncaughtException` — red; `String(reason)` instead of the `Error`'s message — red |
+| a run that printed a failure line does not report success | `target.exitCode = 1` dropped from the handler — red; `exitCodeFor` returning the work's own code — red |
+| the documented `screenshots` script builds the app it launches | `npm run build &&` removed from the script — red; the build moved after the capture — red; the README's sentence about it withdrawn — red |
+| the picture table is one table | the omission row moved back after the prose — red; the row dropped — red |
+| the shell script's header says what it reaches | the old "nothing here talks to GitHub, the cloud, or the network" restored — red; the registry read left unnamed — red |
+| the frames carry the e2e suite's ten keys | a key added to a frame — red; a key added to the recording the claim names — red |
+| the capture size is a number, not its own definition | the device scale factor set to 1 — red; the window set to 1440x800 — red |
+| the selectors are the renderers' own class names | `drawnBy` naming the wrong renderer — red; a selector renamed — red; a renderer renaming its class — red; the picker's list losing its id — red |
+| the picker's alt describes its path rather than quoting one | a path put into the sentence — red; the description removed — red |
+| the two pictures of one run tell one story | the feed's first row put back to `implement`/`pending` while `diagnose.json` says `review` with every verify record passed — the cross-file test red; the alt's "in review with its verification passed" changed — red |
+| every alt figure is the fixture's | `RUN_SCREEN`'s "three findings" → "four findings" — red; "build, test and lint" → "build and test" — red; `SPEND_SCREEN`'s "thirty days" → "thirty-one days" — red; the Live alt's round, deadline flag and queued row each changed — red |
+| the picker's sentence is the renderer's own | the alt's quoted sentence changed to `(reduced)` — red; `viewOf`'s own template reworded in `src/renderer/installations.ts` — red (the alt still quotes the old one) |
+| this file's index names its sections | the allow-list's `// 2.` banner removed — red, naming the header item with no banner |
+| the picture table says what the fixture holds, not what it used to | the Live row's "one in review with its verification passed" put back to "one implementing" — "describes each picture with the fixture's own words" red (the table test compared row names only, so the drift was unchecked; review of 2026-10-21, medium finding) |
+| the build's `include` list is the run's own import graph | `test/support/cliStub.ts` — the *e2e specs'* fake, which nothing the run reaches imports — put back into `tsconfig.screenshots.json`'s `include` — "compiles exactly the files the run reaches" red, naming the entry (review of 2026-10-21, low finding) |
+
+The blank check is driven by a PNG **encoder** written in the test file (`node:zlib`'s
+`deflateSync`, a CRC per chunk, filters 0 and 1 really applied), because the only way to drive
+a check that reads pixels is with a picture whose pixels are known, and an image library is a
+dependency the console is not allowed to gain.
+
+### What this run cannot prove from here
+
+**The Electron launch itself.** No test in this repository opens the console's window — there
+is no display in CI, and the container this was written in has none either — so "the window
+comes up, the screen draws, the capture is not blank" is exercised by the owner's own run of
+`./scripts/console-screenshots.sh`, which is also the only thing that can produce the pictures.
+The first run is the check: a screen that does not draw fails its `waitForSelector` with the
+selector it waited for, a blank capture fails on its own numbers, and the fake's spawn report
+prints which commands the console actually asked for. The menu click that opens the picker is
+in the same category: `test/e2e/installations.spec.ts` drives that same click, but only a run
+with a display exercises it against the built app and the frozen menu this run installs.
 
 ## The Linux build, unsigned (the owner's ruling of 2026-10-20)
 

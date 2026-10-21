@@ -526,6 +526,13 @@ describe('the committed synthetic fixture', () => {
       'synthetic.ndjson',
       'degraded.ndjson',
       'bin',
+      // `screenshots` is the owner-run screenshot tool's data
+      // (`test/fixtures/screenshots/`, ruling of 2026-10-20): a directory of
+      // documents an e2e-shaped run feeds the built console, so the `.ndjson`
+      // sweep above never looks inside it and this is where it is named. Its
+      // own README says what is in it and `test/unit/screenshots.test.ts` holds
+      // every document in it to the console's decoders.
+      'screenshots',
       ...FIXTURE_CASES.map((name) => `${name}.ndjson`),
     ])
     const present = readdirSync(FIXTURE_DIRECTORY)
