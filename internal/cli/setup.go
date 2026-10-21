@@ -87,15 +87,15 @@ first, at the start, before any plan.
 
 setup runs as a converge of stages (preflight, installation, with
 --firebase-project the Firebase backend and the images, the secrets, the
-plugin wiring and the repository, and on a first run the project — the one stage that may create the
-GCP project, and it does that only when the first question's answer was to
-create: an answer of "adopt" reads nothing and creates nothing), each with its
-own confirmation, in order,
-and stops at the first that fails or needs you; a rerun resumes, and one
-with nothing to do says "No changes" and exits 0. Exit codes: 0 done (or
-only planned), 1 a refusal, or a step left for you (see left_for_you in
---json), 2 a cloud failure; --json prints the stages, left_for_you and the
-failed stage on every outcome.
+plugin wiring and the repository, and on a first run the project — the one
+stage that may create the GCP project, and it does that only when the first
+question's answer was to create: an answer of "adopt" reads nothing and
+creates nothing), each with its own confirmation, in order, and stops at the
+first that fails or needs you; a rerun resumes, and one with nothing to do
+says "No changes" and exits 0. Exit codes: 0 done (or only planned), 1 a
+refusal, or a step left for you (see left_for_you in --json), 2 a cloud
+failure; --json prints the stages, left_for_you and the failed stage on every
+outcome.
 
 setup --anchor, run in the checkout of a repository the project lists, writes
 only the gcp_project: line of its fugaro.yaml (the line teammates find the
