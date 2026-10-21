@@ -1118,7 +1118,6 @@ test('the page states nothing its data file does not carry', async (t) => {
     data.name,
     data.what.text,
     data.released.text,
-    data.released.verify,
     data.not_released.text,
     ...data.properties.map((property) => property.text),
     // Each asset's own checksum, which the section prints beside its link: a 64-character

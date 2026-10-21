@@ -377,19 +377,20 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
     return { tagPrefix, version, tag: `${tagPrefix}${version}`, source: asText(map.source, 'release.source') }
   })()
 
-  // What the section says once the console has shipped: the platform, the signing
-  // and notarisation, the CLI-first rule, and the command a reader checks a
-  // download with. The checksums themselves are per asset (below), because a
-  // checksum is a fact about one file rather than about the release.
+  // What the section says once the console has shipped: the platform, the signing and
+  // notarisation, and the CLI-first rule. The checksums themselves are per asset (below),
+  // because a checksum is a fact about one file rather than about the release — and **the
+  // section carries no verification command**: the owner read the page on 2026-10-21 and
+  // asked for `shasum -a 256 Fugaro.Console-*` to come out, so the released block is one
+  // sentence and its source now, and a file that grew a key back is refused below.
   const released = (() => {
     const map = asMap(doc.released, 'released')
     for (const key of Object.keys(map)) {
-      if (!['text', 'verify', 'source'].includes(key)) {
-        refuse(`released carries the key "${key}", and the console's released state is the sentence a page renders, the command that verifies a download and the source of both`)
+      if (!['text', 'source'].includes(key)) {
+        refuse(`released carries the key "${key}", and the console's released state is the sentence a page renders and the source of it`)
       }
     }
-    const claim = asClaim({ text: map.text, source: map.source }, 'released')
-    return { ...claim, verify: asText(map.verify, 'released.verify') }
+    return asClaim({ text: map.text, source: map.source }, 'released')
   })()
 
   const notReleased = (() => {

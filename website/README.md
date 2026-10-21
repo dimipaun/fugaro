@@ -176,8 +176,8 @@ added or removed without this sentence moving fails there:
   - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
     flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
     moves the **site figure up** by the console option's own markup on the three pages that
-    render it: the console page's downloads section (each artifact's checksum beside its link,
-    and the verification command), Getting Started's option and the homepage's call to action. It
+    render it: the console page's downloads section (each artifact's checksum beside its link),
+    Getting Started's option and the homepage's call to action. It
     moves the **page weight not at all**: the heaviest page is the docs hub, which renders no
     install option, no download and no hero. The copy the gates build of the unreleased state is
     therefore the smaller of the two, and that is the direction a reader of this list needs:
