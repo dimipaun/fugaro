@@ -25,6 +25,18 @@
  *
  * Nothing here fetches anything: the build is network-free and reads this repository only
  * (Global Constraints 4 and 5).
+ *
+ * **The page's own look is the bold one, and it is the owner's brief of 2026-10-21** — the
+ * same look the owner approved on the home page (`website/design-ref/HomeV3.dc.html`,
+ * `src/pages/index.astro`) applied to this page, which has no board of its own. So the page
+ * opens with the display scale's largest step: `Changelog` at the weight, the tracking and the
+ * leading the boards set a headline in (`base.css`'s `.display-xl`), its word in the accent's
+ * gradient (`.gradient-text`, the same class the hero's last two words are drawn in), with the
+ * room under it a page's first block gets. **The page adds no words to do it**: the headline is
+ * still the page's one `h1` and the only text above the first release, which is why the page
+ * has no eyebrow, no pill and no lead paragraph — every sentence on this page is a release
+ * file's or a release summary's, and `website/test/changelog-page.mjs` refuses one that is
+ * neither. The entries under it are the cards `Changelog.astro` draws.
  */
 import path from 'node:path'
 import Base from '../layouts/Base.astro'
@@ -63,6 +75,31 @@ const repository = loadSite().facts.repository
 ---
 
 <Base title="Changelog">
-  <h1>Changelog</h1>
+  {/* The page's head: the headline, and the room under it. `header` inside `main` is not a
+      landmark (a banner is a `header` of the body, and `website/test/a11y.mjs` counts the
+      page-level ones), so it is a box and nothing more. */}
+  <header class="changelog-head">
+    <h1 class="changelog-title display-xl">
+      <span class="gradient-text">Changelog</span>
+    </h1>
+  </header>
   <Changelog entries={entries} summaries={summaries} repository={repository} />
 </Base>
+
+<style>
+  /* The page's head, in the page's own stylesheet: the headline and the room under it. The
+     room above it is `main`'s own padding, which every page of the site gets, and the gutter
+     is `main`'s too — this block adds only the step between the headline and the first card,
+     and it is a step of the spacing scale rather than a number. */
+  .changelog-head {
+    padding-block: var(--space-lg) var(--space-2xl);
+  }
+
+  .changelog-title {
+    margin: 0;
+    /* The headline is one word, and the display scale's balance (`text-wrap: balance`) has
+       nothing to balance: it is set on one line at every width it fits, which the clamp in
+       `.display-xl` is what decides. */
+    max-width: 20ch;
+  }
+</style>

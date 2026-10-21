@@ -42,6 +42,20 @@
  *
  * The notes block is a `<details>`, so it opens and closes with no JavaScript: the site's
  * pages are readable and usable with the one script off (D183).
+ *
+ * **The entries are cards, and that is the bold look** (the owner's approved home page,
+ * `website/design-ref/HomeV3.dc.html`, applied to this page by the owner's brief of
+ * 2026-10-21). Each release is one `base.css` `.card` — the panel the boards draw everything
+ * on, one step above the ground with a hairline and the larger radius — and the four things
+ * inside it are the entry's hierarchy rather than four paragraphs of one size: the tag is the
+ * card's title at the display scale's middle step (`display-md`), the summary is the loudest
+ * prose in the card, the collapsed notes are a control a reader can see and reach (the accent's
+ * hairline, a target the owner's brief of 2026-10-19 measures every control against), and the
+ * file's own lines under it are the quietest tone. The list of them is a grid with a gap of a
+ * spacing step rather than the hairline-separated stack the page used to be, so two releases
+ * read as two things rather than as one long list. **No word of any of it changes**: the classes
+ * are markup and the styles are layout, and `website/test/changelog-page.mjs` still holds every
+ * sentence on the page to a release file or to `website/data/release-summaries.yaml`.
  */
 
 /**
@@ -165,16 +179,22 @@ function summaryOf(entry: Entry): string {
 
 <div class="changelog">
   {entries.map((entry) => (
-    <article class="release">
+    /* The entry is a card: the board's panel, so two releases are two boxes rather than one
+       list, and `website/test/changelog-page.mjs` holds this element to the class. */
+    <article class="release card">
       {/* The tag is the entry's own heading and its anchor, and it links to the GitHub
-          release: the one place a date and the artifacts are stated (D100). */}
-      <h2 id={entry.tag}>
+          release: the one place a date and the artifacts are stated (D100). It is the card's
+          title at the display scale's middle step, and the `id` stays the first attribute
+          because it is what the entry is linked by. */}
+      <h2 id={entry.tag} class="release-tag display-md">
         <a href={`${repository}/releases/tag/${entry.tag}`} rel="noopener">{entry.tag}</a>
       </h2>
 
       {/* Not a release that happened: the file is on main, and the plugin's version has not
-          reached it yet (the owner's brief of 2026-10-19). */}
-      {!entry.released && <p class="release-status" data-status="not-yet-released">not yet released</p>}
+          reached it yet (the owner's brief of 2026-10-19). It is a pill — the board's shape for
+          a badge of one or two words — and the warning tone, because it is the one line of the
+          card that says "not yet". */}
+      {!entry.released && <p class="release-status pill" data-status="not-yet-released">not yet released</p>}
 
       {/* The summary a reader reads first: the site's own data, and the one line of the entry
           that is not a line of the release file. The tag is carried as an attribute so the
@@ -205,50 +225,78 @@ function summaryOf(entry: Entry): string {
 </div>
 
 <style>
-  /* The page's own shape, and nothing else: the spacing, the type scale and the measure
-     come from W1.2's tokens, and this component names **no colour** — the palette layer
-     paints the site, and a colour chosen here would be a second copy of it that the
-     contrast check cannot see. A declaration whose token is not in the build (the styles
-     land in W1.2, which the shell reads) resolves to nothing rather than to a value this
-     file invented. */
+  /* The bold look's shapes, and the entry's own hierarchy (the owner's brief of 2026-10-21).
+     The spacing, the type scale, the radii and the tones come from W1.2's tokens and from the
+     card, pill and display classes `base.css` writes once for the site; this block adds the
+     layout of the list and the four sizes an entry is read in, and **names no colour of its
+     own** — every tone below is a palette token, so `website/test/a11y.mjs` can compute the
+     pair it is read against. */
+
+  /* The releases, one card each: a grid with a step of the spacing scale between two of them,
+     which is what makes two releases read as two things rather than as one long list (the
+     hairline-separated stack this page used to be). The step is a token and not a number, so
+     `website/test/changelog-page.mjs` can read it back and the page's room is comparable with
+     the room the rest of the site gives. */
   .changelog {
-    max-width: var(--measure);
+    display: grid;
+    gap: var(--space-lg);
   }
 
+  /* The card's own column: the title, the status pill, the summary and the notes, one gap
+     apart, each at the card's own padding (`.card` in `base.css`). Every child's own margin is
+     dropped, because the gap is the whole of the room between them — a paragraph's default
+     bottom margin on top of the gap would be a second one. */
   .release {
-    padding-block: var(--space-lg);
-    border-bottom: var(--border-width) solid var(--border);
+    display: grid;
+    gap: var(--space-sm);
   }
 
-  .release h2 {
+  .release > * {
     margin: 0;
-    font-size: var(--font-size-xl);
-    line-height: var(--leading-tight);
-    letter-spacing: var(--tracking-tight);
   }
 
-  .release h3 {
-    margin-block: var(--space-md) var(--space-2xs);
-    font-size: var(--font-size-base);
-  }
-
+  /* The pill is inline-flex, and a grid item is stretched to the column's width: without this
+     the "not yet released" badge would run the width of the card instead of hugging its words. */
   .release-status {
-    margin-block: var(--space-2xs) 0;
-    font-size: var(--font-size-sm);
+    justify-self: start;
+    color: var(--warn);
   }
 
+  /* The summary: the loudest prose in the card, one step up the type scale from the body, and
+     the page's own measure (which every paragraph gets from `base.css`). It is the line a
+     reader reads first, so it is set at the size a line read first is set at. */
   .release-summary {
-    margin-block: var(--space-xs) 0;
-    line-height: var(--leading-normal);
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-snug);
   }
 
+  /* The file's own lines under the notes: the quietest tone in the card, because they are the
+     operator's detail rather than what the release gives a reader (the owner's brief of
+     2026-10-19). */
   .release-notes {
-    margin-block-start: var(--space-sm);
+    color: var(--text-muted);
   }
 
+  /* The notes' control: the board's chip — the accent's hairline, the larger radius and the
+     accent's legible tone — at a target the owner's brief of 2026-10-19 measures every control
+     against. The disclosure marker is the browser's own (the element keeps its default
+     `display`), so the block still says whether it is open with no markup of ours. */
   .release-notes summary {
-    font-size: var(--font-size-sm);
-    color: var(--text-muted);
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: var(--space-xs) var(--space-md);
+    border: var(--border-width) solid var(--accent);
+    border-radius: var(--radius-lg);
+    color: var(--accent-on-dark);
+    font-size: var(--font-size-base);
+    font-weight: var(--weight-semibold);
+  }
+
+  .release-notes h3 {
+    margin-block: var(--space-md) var(--space-2xs);
+    color: var(--text);
+    font-size: var(--font-size-base);
+    letter-spacing: var(--tracking-tight);
   }
 
   .release-notes ul {
@@ -258,5 +306,13 @@ function summaryOf(entry: Entry): string {
   .release-notes li,
   .release-notes p {
     line-height: var(--leading-normal);
+  }
+
+  /* A code span inside the card is drawn on the ground rather than on the surface it is
+     already sitting on (the card is the surface, `base.css`): the same tone the page's own
+     ground is, so a command in a release note still reads as a chip rather than as a word in
+     the mono face. `--text` on `--ground` is a pair the contrast check computes. */
+  .release-notes code {
+    background: var(--ground);
   }
 </style>
