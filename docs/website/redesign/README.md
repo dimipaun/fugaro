@@ -1350,10 +1350,10 @@ under the run's picture are a real list.
   same cards out in a row — the source card, the arrow, the boundary box with its two rows of
   two cards, the pull request and the unrestricted egress below. Both carry the same
   `aria-label` and there is still no raster image anywhere on the page: **the layout is markup
-  and CSS, and no screenshot was committed** (D190). The precedent is the homepage's own
-  `website/src/components/RunDiagram.astro`, which has drawn its picture twice — a wide default
-  and a tall twin with `hidden` — since the run's timeline came out; this page follows it rather
-  than inventing a second way to do the same thing.
+  and CSS, and no screenshot was committed** (D190). The precedent is How It Works' own
+  `website/src/components/RunDiagram.astro` (`src/pages/how-it-works.astro`), which has drawn its
+  picture twice — a wide default and a tall twin with `hidden` — since the run's timeline came
+  out; this page follows it rather than inventing a second way to do the same thing.
 - **Which one a reader gets, and where the changeover sits.** The shared
   `.boundary-drawing` rule renders the drawing block and full-width; `.boundary-drawing-tall`
   adds `max-width: 22.5rem` and `display: none`, and one `@media (max-width: 70rem)` block swaps
@@ -1385,10 +1385,17 @@ under the run's picture are a real list.
   hidden; the changeover has to be one width, read from below, with the tall drawing block and
   the wide one off; the wide drawing's smallest label has to stay at or above 12 px in the
   column it is actually shown in at that width; and the headline plus the whole drawing has to
-  fit 1440 × 800. Each refusal has a plant that proves it fires: a third unclassed `<svg>`, a
-  wide drawing stripped of its class, a mismatched label, a tall drawing that is not hidden, a
-  changeover read the wrong way round, a shared rule that shows neither drawing, a label shrunk
-  to 8 units, and a `viewBox` made 900 units tall so the arithmetic stops fitting.
+  fit 1440 × 800. **Each refusal of the four rules has a plant that proves it fires**: a third
+  unclassed `<svg>`, a wide drawing stripped of its class, a mismatched label, a shared rule with
+  no `display` left on it (so neither layout has a value where no query holds), a tall drawing
+  left rendered, a drawing turned off with no `hidden` on it, a changeover read the wrong way
+  round, a `viewBox` made 900 units tall so the arithmetic stops fitting a first screen, a
+  `viewBox` with no readable width and another with no readable height, a page whose media query
+  is taken out and a page with a second one, the wide drawing left on below the changeover, a
+  label shrunk to 8 units, and the two values the arithmetic is read through (`--page-max`, and
+  `--leading-display` under the headline) made unreadable. The reader-guard branches — a column,
+  a `viewBox` and a room the check cannot turn into pixels — are planted with those same unreadable
+  values rather than left as branches nothing has seen fire.
 - **The five facts are a list, and they always were one.** The "Also true of a run" panel on
   How It Works is a `<ul>` of five `<li>`s drawn from the owner's board — the panel, the hairline
   between two rows and the larger radius are the board's — but every row was set with
@@ -1397,13 +1404,23 @@ under the run's picture are a real list.
   RunDiagram.astro`'s `.run-also` now says `list-style: disc`, which draws the bullet outside
   the item's content box at the room the row's own `padding-left` (`--space-lg`, 32 px) leaves,
   so it sits inside the row rather than at the panel's edge, in the quieter tone `base.css` gives
-  every marker on the site. `website/test/how-it-works.mjs` holds it: the page's own
-  `list-style` for the list has to name a marker and may not be `none`, and the case that proves
-  the refusal fires adds `list-style: none` back to the page's own rule. The plant **adds** the
-  declaration rather than swapping one in, because the build's CSS minifier rewrites
-  `list-style: disc` into `list-style: outside` — `disc` is `list-style-type`'s initial value, so
-  a plant that wrote `list-style: none` in one place and expected to read it back would pass or
-  fail on the minifier rather than on the rule.
+  every marker on the site. `website/test/how-it-works.mjs` holds it, and holds it in the two
+  halves a marker actually has: **the type the page's own stylesheet leaves in force** — the
+  `list-style` shorthand and the `list-style-type` longhand read together, in the stylesheet's
+  order, because the two are one answer in the cascade (`list-style: none inside`,
+  `list-style: outside none` and a `list-style-type: none` written after a shorthand all leave the
+  browser nothing to draw while the shorthand alone still names a marker) — and **the rows still
+  being list items**, since a marker is generated for a list item and the board draws these rows as
+  flex rows: `display: flex` on the item blockifies it and the bullet goes with it however the
+  list's own `list-style` reads, and `display: flex` on the list does the same to its children.
+  The cases that prove each refusal fires add the declaration back to the page's own rule —
+  `list-style: none`, `list-style-type: none`, `display: flex` on a row and on the list. Each
+  plant **adds** its declaration rather than swapping one in, because the build's CSS minifier
+  rewrites `list-style: disc` into `list-style: outside` — `disc` is `list-style-type`'s initial
+  value, so a plant that wrote `list-style: none` in one place and expected to read it back would
+  pass or fail on the minifier rather than on the rule; the shorthand plant is what caught the
+  first reading of this rule, which asked whether **every** word of the value was `none` and so
+  called `list-style: none inside` a bulleted list.
 - **The figures, and the numbers that did not move.** Nothing here is re-derived. The built
   `/security/` page weighs **92,541 bytes** (HTML 30,102, of which inline CSS 15,560; fetched
   files 62,439) inside the 1,498,995-byte page budget, and the whole site is **1,404,138 bytes**

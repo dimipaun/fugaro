@@ -2063,6 +2063,63 @@ test('the gate refuses each planted defect', (t) => {
     'a wide drawing turned off outside every query is not refused, so a desktop above the changeover gets no drawing',
   )
 
+  // The first rule's other half: the two layouts given no `display` at all outside a media query.
+  // The plant takes the value off the rule both classes fall back to, so which drawing a reader at
+  // a width no query names gets is the browser's own rendering of an `<svg>` rather than the
+  // page's — and the check says that rather than passing the pair.
+  const undeclared = planted(
+    html,
+    '.boundary-drawing{width:100%;height:auto;display:block}',
+    '.boundary-drawing{width:100%;height:auto}',
+  )
+  assert.match(
+    verdict(t, undeclared).join('\n'),
+    /declares no `display` for the wide drawing outside a media query/,
+    'a page whose stylesheet gives the layouts no `display` where no query holds is not refused, so which drawing a reader gets can be the browser\'s choice rather than the page\'s',
+  )
+
+  // The second rule's other half: the drawing the stylesheet turns off with nothing on it to say
+  // so. `hidden` is what a reader whose stylesheet never arrives gets, and that reader is left
+  // with whichever drawing the markup and the CSS disagree about.
+  const unmarked = planted(html, 'focusable="false" hidden>', 'focusable="false">')
+  assert.match(
+    verdict(t, unmarked).join('\n'),
+    /the tall drawing is `display: none` outside every media query and does not carry the `hidden` attribute/,
+    'a drawing the stylesheet turns off with no `hidden` on it is not refused, so a reader whose stylesheet never arrives gets no drawing at all',
+  )
+
+  // The third rule with no changeover at all, and with two. The query is the page's own built
+  // text rather than a shape typed here: `planted` refuses an edit that does not land, so a
+  // stylesheet that wrote its query another way fails this fixture rather than passing it.
+  const QUERY =
+    '@media (width<=70rem){[data-security-diagram] .boundary-drawing-wide{display:none}[data-security-diagram] .boundary-drawing-tall{display:block}}'
+  const nowhere = planted(html, QUERY, '')
+  assert.match(
+    verdict(t, nowhere).join('\n'),
+    /has no media query that declares either drawing, so the two layouts never change over/,
+    'a page with no changeover at all is not refused, so a phone is left with the shrunk wide drawing above every width',
+  )
+
+  const two = planted(
+    html,
+    QUERY,
+    `${QUERY}@media (width<=50rem){[data-security-diagram] .boundary-drawing-wide{display:none}}`,
+  )
+  assert.match(
+    verdict(t, two).join('\n'),
+    /switches the two drawings at 2 different widths/,
+    'two changeovers are not refused, so a reader between the two widths gets a layout the page never chose',
+  )
+
+  // And the wide drawing left on below the changeover: both layouts at once, which is the picture
+  // drawn twice and read twice.
+  const wideshown = planted(html, QUERY, QUERY.replace('.boundary-drawing-wide{display:none}', '.boundary-drawing-wide{display:block}'))
+  assert.match(
+    verdict(t, wideshown).join('\n'),
+    /turned off below the same width the tall one is turned on below/,
+    'a wide drawing left on below the changeover is not refused, so a desktop is shown both drawings at once',
+  )
+
   // And the wide drawing's own two numbers: its labels too small to read where it is shown, and
   // a picture too tall for the first screen. Both are the arithmetic the desktop layout rests on
   // rather than anything a reader can see in the markup.
@@ -2078,6 +2135,44 @@ test('the gate refuses each planted defect', (t) => {
     verdict(t, tall).join('\n'),
     /the headline and the whole drawing do not fit a 1440 × 800 first screen/,
     'a wide drawing too tall for the first screen is not refused, which is the very thing the owner asked for: the drawing does not fit above the fold on a desktop',
+  )
+
+  // The four refusals that are about what this check **cannot read**: the page's own numbers, or
+  // the drawing's own shape, turned into something nothing here can turn back into pixels. They
+  // are guard rails rather than defects a reader meets, and each is planted the same way — the one
+  // value the arithmetic is taken at is made unreadable — because a branch whose refusal has never
+  // been seen to fire is a branch nobody knows the shape of, which is the same reason every other
+  // rule here has a plant.
+  const noCeiling = planted(html, '--page-max:72rem;', '--page-max:fit-content;')
+  assert.match(
+    verdict(t, noCeiling).join('\n'),
+    /that column is where the wide drawing's label size is taken/,
+    'a column this check cannot read is not refused, so the label floor is taken against a guess or against nothing',
+  )
+
+  // The plant takes the drawing's own **width** out of its `viewBox`: the labels are still the
+  // page's, and the number they are scaled into is the one nothing here can take. (`nope` in the
+  // height's place is a different refusal — the one below — because a missing height is a fold
+  // nothing can be claimed about while a missing width is a label size nothing can be taken at.)
+  const noNumbers = planted(html, 'viewBox="0 0 1180 400"', 'viewBox="0 0 nope 400"')
+  assert.match(
+    verdict(t, noNumbers).join('\n'),
+    /and \d+ label sizes this check cannot read/,
+    'a drawing whose own units cannot be read is not refused, so the size its labels are rendered at is not a number anything here can take',
+  )
+
+  const noHeight = planted(html, 'viewBox="0 0 1180 400"', 'viewBox="0 0 1180 0"')
+  assert.match(
+    verdict(t, noHeight).join('\n'),
+    /with no height this check can read, so nothing here can say whether it fits a first screen/,
+    'a drawing with no readable height is not refused, so the fold is claimed about a shape nothing here has',
+  )
+
+  const noLeading = planted(html, '--leading-display:.94;', '--leading-display:roomy;')
+  assert.match(
+    verdict(t, noLeading).join('\n'),
+    /the room above the drawing and the column it is drawn in at 1440 px cannot be read out of the page's own stylesheet/,
+    'a part of the room above the drawing that cannot be read is not refused, so the fold is measured with a header, a headline or a heading standing in as nothing',
   )
 
   // A script in the drawing: the brief's "No JavaScript", and the site loads one first-party

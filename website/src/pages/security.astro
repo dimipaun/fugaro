@@ -7,10 +7,13 @@
  * **The page is four things, and nothing else**: three of them are the document's own words,
  * and the fourth is the page's own drawing written in them.
  *
- *   1. the **boundary diagram** (the owner's brief of 2026-10-20): one inline SVG of the
- *      trust boundaries, the same facts as a list under it, and the two limits the document's
- *      own summary names below that — every label a phrase of `SECURITY.md`, proved while the
- *      page builds (`quoted()` below);
+ *   1. the **boundary diagram** (the owner's brief of 2026-10-20, and the owner's feedback of
+ *      2026-10-21 that put it in two layouts): one picture of the trust boundaries, drawn as
+ *      two inline SVGs — the wide one a desktop is shown and the tall one a phone is — with
+ *      the same facts as a list under it and the two limits the document's own summary names
+ *      below that: every label a phrase of `SECURITY.md`, proved while the page builds
+ *      (`quoted()` below), and the same words in the same order on both sides, proved by
+ *      `website/test/security.mjs`;
  *   2. the **summary**, which is `SECURITY.md`'s own "In short" section, rendered from the
  *      generated copy of the document;
  *   3. the **"Reporting a vulnerability" section**, rendered from the same copy;
@@ -26,7 +29,7 @@
  * page carries no summary prose of its own: a sentence here that the document does not state
  * is the one thing a security page may not have (D99), and there is now nowhere to write one.
  *
- * Seven decisions are visible in the file:
+ * Eight decisions are visible in the file:
  *
  *   1. **Both sections are the document's, word for word under the renderer.** They are
  *      extracted from the generated `website/content/security.md` — the file `go run
@@ -108,7 +111,6 @@
  *      preview (the redesign's 70a–70c, P9). **No word of the page changed for it**: the look
  *      is a way of drawing the document's text, and decision 1 still holds every word of it
  *      to `SECURITY.md`.
- *
  *   8. **The drawing is one picture at two layouts**, and the stylesheet shows one of them at
  *      a time (the owner's feedback of 2026-10-21: the tall drawing "works well in mobile"
  *      but "on desktop doesn't fit above the fold", so a desktop shows "a horizontal layout

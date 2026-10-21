@@ -662,19 +662,61 @@ export function runDiagramFailures(html, css, docs = sources()) {
 
   // And that list is a bulleted list, one bullet to an item (the owner's feedback of
   // 2026-10-21). The owner read the five facts as one run-on paragraph, because the panel drew
-  // the rows the board draws and every one of them was set with `list-style: none` — a list
-  // whose items carry no marker is a list a reader meets as prose. What a reader sees is the
-  // marker, so the reading is the declaration the page's own stylesheet makes for the list: a
-  // marker named by `list-style`/`list-style-type`, whichever of the two the page writes, and
-  // no `none` among what it names. `base.css` gives every marker on the site its colour
-  // (`:where(li)::marker`), so the marker's tone is the site's and not this page's, and its
-  // place is the row's own padding — neither is a declaration to read here.
-  const marker = declaredFor(css, 'run-also', 'list-style') ?? declaredFor(css, 'run-also', 'list-style-type')
-  const markerWords = marker === undefined ? [] : marker.value.trim().split(/\s+/)
-  if (marker === undefined) {
-    out.push('the list of the facts beside the picture declares no `list-style`, and the page draws no bullet of its own: the items of that list carry a bullet point each (the owner\'s feedback of 2026-10-21), so the marker is the stylesheet\'s to name and a list nothing declares one for falls back to the browser\'s own, which is a marker the page has not chosen')
-  } else if (markerWords.every((word) => word === 'none')) {
-    out.push(`the list of the facts beside the picture is \`list-style: ${marker.value}\`, and the owner's feedback of 2026-10-21 asks for a bullet point on each of its items: a list drawn with \`none\` is the run-on paragraph the owner read — the rows the board draws, with nothing in front of them`)
+  // the rows the board draws and every one of them was set with `list-style: none` — a list whose
+  // items carry no marker is a list a reader meets as prose.
+  //
+  // What a reader sees is the **marker the browser generates**, so this reads the two
+  // declarations that decide it — `list-style` and `list-style-type` — **together and in the
+  // stylesheet's own order**, because the shorthand and the longhand are one answer in the
+  // cascade rather than two: `list-style: none inside` and `list-style: outside none` both leave
+  // the browser nothing to draw, and a `list-style-type: none` written after a shorthand takes
+  // the marker away again. So the reading walks the rules for the class and keeps the **type** in
+  // force: the shorthand's own half about the marker (its two position words, `inside` and
+  // `outside`, and a `url(...)` image say nothing about it) replaces the type, `none` being the
+  // one word in it that is about the marker and taking it away, and a shorthand naming no type
+  // leaves the initial `disc` in place — which is the shape this page is built in, `list-style:
+  // disc` being what the minifier writes as `list-style: outside`. `declaredFor` above reads one
+  // property's last declaration, which is one answer out of the two and the bug this reading was
+  // written for.
+  //
+  // A list drawn with no marker at all is the other half, and it is not a declaration: a marker
+  // is generated for a **list item**, so the rows have to still be the list's items where they
+  // are laid out. The board this panel came from draws those rows as flex rows, and a flex row is
+  // not a list item — `display: flex` on the item blockifies it and the marker goes with it,
+  // whatever the list's own `list-style` reads — so both the list and its items are read for a
+  // `display` that takes the marker away.
+  //
+  // `base.css` gives every marker on the site its colour (`:where(li)::marker`), so the marker's
+  // tone is the site's and not this page's, and its place is the row's own padding — neither is a
+  // declaration to read here.
+  const POSITION_WORDS = new Set(['inside', 'outside'])
+  let markerType = null
+  const markerReadings = []
+  for (const rule of cssRules(css)) {
+    if (!new RegExp(`\\.run-also(?![\\w-])`).test(rule.selector ?? '')) continue
+    for (const [property, value] of cssDeclarations(rule.body ?? '')) {
+      if (property !== 'list-style' && property !== 'list-style-type') continue
+      markerReadings.push(`${property}: ${value}`)
+      if (property === 'list-style-type') {
+        markerType = value.trim()
+        continue
+      }
+      const about = value.trim().split(/\s+/).filter((word) => !POSITION_WORDS.has(word.toLowerCase()) && !/^url\(/i.test(word))
+      markerType = about.includes('none') ? 'none' : (about[0] ?? 'disc')
+    }
+  }
+  if (markerType === null) {
+    out.push('the list of the facts beside the picture declares no `list-style` and no `list-style-type`, and the page draws no bullet of its own: the items of that list carry a bullet point each (the owner\'s feedback of 2026-10-21), so the marker is the stylesheet\'s to name and a list nothing declares one for falls back to the browser\'s own, which is a marker the page has not chosen')
+  } else if (markerType === 'none') {
+    out.push(`the list of the facts beside the picture is drawn with no marker on its items (${markerReadings.join(', ')}, which leaves \`list-style-type: none\` in force), and the owner's feedback of 2026-10-21 asks for a bullet point on each of its items: a list with no marker is the run-on paragraph the owner read — the rows the board draws, with nothing in front of them`)
+  }
+  const ITEM_DISPLAY = /^(flex|inline-flex|grid|inline-grid)$/
+  const listDisplay = declaredFor(css, 'run-also', 'display')
+  const itemDisplay = declaredFor(css, 'run-also-item', 'display')
+  if (listDisplay !== undefined && ITEM_DISPLAY.test(listDisplay.value.trim())) {
+    out.push(`the list of the facts beside the picture is \`display: ${listDisplay.value.trim()}\`, and the items of that list carry a bullet point each (the owner's feedback of 2026-10-21): a flex or grid container lays its children out as its own boxes, and a child that is not laid out as a list item is a child the browser draws no marker for, which is the run-on paragraph the owner read whatever the list's own \`list-style\` says`)
+  } else if (itemDisplay !== undefined && itemDisplay.value.trim() !== 'list-item') {
+    out.push(`the rows of the list beside the picture are \`display: ${itemDisplay.value.trim()}\`, and the items of that list carry a bullet point each (the owner's feedback of 2026-10-21): a marker is generated for a list item, so a row laid out as a block, a flex row or a grid cell is a row the browser draws no marker for — the board draws these rows as rows, and the marker is what a reader sees`)
   }
 
   // The drawings scale to the column and never scroll sideways.
@@ -1841,6 +1883,28 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       // which is the one in force.
       declare('run-also', 'list-style:none'),
       /asks for a bullet point on each of its items/,
+    ],
+    // The same defect written the long way: the marker is taken away by the longhand rather than
+    // by the shorthand, which is the pair the reading above has to hold together — a shorthand
+    // that names a marker and a `list-style-type: none` after it leave the browser nothing to
+    // draw, and a reading that stopped at the shorthand would call that list bulleted.
+    [
+      'a list of facts whose marker the longhand takes away',
+      declare('run-also', 'list-style-type:none'),
+      /leaves `list-style-type: none` in force/,
+    ],
+    // And the same defect again, with the marker named on the list and the rows laid out as
+    // something that is not a list item: the board draws these rows as rows, and a row the
+    // browser blockifies is a row with no marker, whatever the list's own `list-style` reads.
+    [
+      'rows of the list laid out as flex rows',
+      declare('run-also-item', 'display:flex'),
+      /rows of the list beside the picture are `display: flex`/,
+    ],
+    [
+      'a list of facts laid out as a flex row itself',
+      declare('run-also', 'display:flex'),
+      /the list of the facts beside the picture is `display: flex`/,
     ],
     // A ceiling under the phone's own column: the drawing is scaled down rather than up, and
     // the phone's label size is taken in that box.
