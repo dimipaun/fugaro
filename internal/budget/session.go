@@ -130,8 +130,11 @@ type Session struct {
 
 	newKeysChecked bool // checkNewKeys has probed action/tokens once
 	newKeysRefused bool // the rules refused action/tokens; both are dropped
-	// credsKeysProbed is checkCascadeKeys's own once: a heartbeat carrying
-	// the cascade's children was refused and the probe has run.
+	// credsKeysProbed is checkCascadeKeys's own once: the probe has a
+	// definite answer — the entry without the cascade's children was refused
+	// too — so it need not run again. An outage, a transient success or any
+	// other inconclusive result leaves it false, and the next refused
+	// heartbeat probes again.
 	credsKeysProbed bool
 	haltOnce        sync.Once
 	halted          bool

@@ -235,10 +235,19 @@ func (s *Session) checkNewKeys(ctx context.Context) {
 // answer (C1.10, C1.16) and `waiting_until` from a wait the service's
 // exhausted-until started (C1.17). A non-cascade run's entry carries
 // neither, so this probe never runs for it.
+//
+// Like checkNewKeys, the probe caches only a definite answer about the
+// children — the entry without them refused too, which says they are not the
+// cause — and stays armed otherwise. An outage, a 503 or any other
+// non-permission error says nothing about the rules, and neither does a
+// write that succeeds: the refusal that summoned the probe was a blip, but
+// the next one may not be, and a probe that stood down after the first would
+// leave the rest of the run writing an entry the rules silently strip —
+// exactly the state the named halt exists to prevent. Nothing is lost by
+// asking again: the probe runs only after a heartbeat the rules refused.
 func (s *Session) checkCascadeKeys(ctx context.Context) {
 	s.mu.Lock()
 	probed := s.credsKeysProbed
-	s.credsKeysProbed = true
 	s.mu.Unlock()
 	if probed {
 		return
@@ -249,21 +258,73 @@ func (s *Session) checkCascadeKeys(ctx context.Context) {
 	}
 	path := PathAgent(s.cfg.Slug, s.cfg.Run)
 	write := func(v AgentEntry) error { return s.db.Patch(ctx, "", map[string]any{path: v}) }
-	if err := write(e); err == nil {
-		// The refusal the heartbeat met is gone: a blip, or a stale race
-		// with another writer of the same entry, and not these children.
+	switch out := probeCascadeKeys(write, e); {
+	case out == cascadeProbeChildrenRefused:
 		s.dbOK()
-		return
+		s.halt(Halt{Reason: ReasonCredsRulesDenied, Scope: ScopeRun, Detail: credsRulesDeniedDetail})
+	case out.definite():
+		// The children are not the cause: a definite answer, and the only one
+		// this probe caches.
+		s.mu.Lock()
+		s.credsKeysProbed = true
+		s.mu.Unlock()
+	case out == cascadeProbeAccepted:
+		// The entry the rules took carried the children, so this says nothing
+		// about them: the probe stays armed. The write did land, so the
+		// database is reachable.
+		s.dbOK()
+	}
+}
+
+// cascadeProbe is what one run of the probe learned about the deployed rules
+// and the two children of the run's own entry.
+type cascadeProbe int
+
+const (
+	// cascadeProbeAccepted: the entry was taken as the heartbeat sent it, with
+	// the children in it. The refusal that summoned the probe was a blip or a
+	// stale race with another writer of the same entry — and no answer about
+	// the children at all.
+	cascadeProbeAccepted cascadeProbe = iota
+	// cascadeProbeUnavailable: a write failed for something that is not a
+	// permission refusal (an outage), or the second write did not settle what
+	// the first raised. The rules never answered.
+	cascadeProbeUnavailable
+	// cascadeProbeRefusedWithoutTheChildren: refused as the heartbeat sent it
+	// and refused without the children too, so the children are not the cause.
+	cascadeProbeRefusedWithoutTheChildren
+	// cascadeProbeChildrenRefused: refused as the heartbeat sent it and
+	// accepted without them: they are what the rules do not know.
+	cascadeProbeChildrenRefused
+)
+
+// definite reports whether the probe reached an answer about the children,
+// which is the only kind it may cache (M11). Every other outcome — the entry
+// accepted with them, an outage, a second write that settled nothing — leaves
+// the probe armed, so the next refused heartbeat asks again.
+func (p cascadeProbe) definite() bool { return p == cascadeProbeRefusedWithoutTheChildren }
+
+// probeCascadeKeys asks the deployed rules the one question a run can ask
+// them: the entry as the heartbeat sent it, then the same entry without the
+// cascade's children. write is the run's own patch of that entry.
+func probeCascadeKeys(write func(AgentEntry) error, e AgentEntry) cascadeProbe {
+	if err := write(e); err == nil {
+		return cascadeProbeAccepted
 	} else if !errors.Is(err, rtdb.ErrPermission) {
-		return // not a permission matter; the heartbeat reports it
+		return cascadeProbeUnavailable // not a permission matter; the heartbeat reports it
 	}
 	e.Credential, e.WaitingUntil = "", 0
-	if err := write(e); err != nil {
-		// Refused without them too: the children are not the cause.
-		return
+	switch err := write(e); {
+	case err == nil:
+		return cascadeProbeChildrenRefused
+	case errors.Is(err, rtdb.ErrPermission):
+		return cascadeProbeRefusedWithoutTheChildren
+	default:
+		// The second write failed the way the first did not settle: an
+		// outage in the middle of the probe tells it nothing about the
+		// children.
+		return cascadeProbeUnavailable
 	}
-	s.dbOK()
-	s.halt(Halt{Reason: ReasonCredsRulesDenied, Scope: ScopeRun, Detail: credsRulesDeniedDetail})
 }
 
 // snapshotEntry is the entry as the next heartbeat sends it.
