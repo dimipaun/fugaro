@@ -70,6 +70,21 @@ call `wslpath` in both directions and keep its own store on the host), the **can
 settles on `close` and kills with `SIGTERM`/`SIGKILL`, `spawn.ts:1224`), and **three first-run
 pages** in the existing no-binary pattern (`console/src/renderer/screens/degraded.ts:575`).
 
+**A dated note on the paragraph above: Part B landed on 2026-10-21.** What it says about the
+**packer** was true of `ccc406b2`, the base this folder was reconciled against, and it is a
+finding-time record rather than a description of the tree today: the `win32` row, the `win` block
+and the fourth Electron checksum are all in `console/` now, so `electron-builder --win` writes
+`release/win-unpacked/Fugaro Console.exe` and flips its fuses instead of refusing the platform
+(the console's own README, "The Windows build, unsigned", is where that half is described and where
+what it was verified against is written down). The symbols above move with every one of these edits,
+which is the census rule this folder already states — read them as of the base, not as line numbers
+to land on.
+
+**What is still outstanding is the second half of that paragraph: the two POSIX assumptions are
+untouched.** `isExecutableFile`'s mode read, the `':'` splits and `privateWorkingDirectory` are Parts
+A and C, and until they land the staged `console-windows.yml` job's test step is red on a Windows
+runner — which is the one thing its header still refuses the copy-in for.
+
 ## The numbers this work holds
 
 | Block | State |

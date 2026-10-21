@@ -800,31 +800,34 @@ POSIX repairs below worth doing. The e2e suite is not run here — it drives the
 console's real window under its real CSP and needs a display, which is the
 owner's manual checklist's job, not a runner's.
 
-**Read this before copying it in: it is red until three things in `console/` have
-landed, and they are not this directory's to do.**
+**Read this before copying it in: one thing in `console/` is still outstanding,
+and it is not this directory's to do.**
 
-1. `console/package.json` has no `package:win` script and no `win` block, and
-   `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is `['darwin','linux']`
-   with `fuseTarget` **throwing** for anything else. `afterPack` is the pack's
-   only fuse flipper, so `electron-builder --win` produces **no artifact at
-   all** today, and the pack step cannot succeed
-   ([docs/console-windows/reconciliation.md](../console-windows/reconciliation.md)
-   F35, and implementation-plan.md Part B).
-2. The unit suite has never run on Windows: `spawn.ts`'s `isExecutableFile`
-   reads `stat.mode & 0o111`, which Windows never sets, and the suite's stubs
-   are host executables (F4, F33) — so the test step is red on a Windows runner
-   until that is platform-aware, along with the `':'` split of the app's own
-   `PATH` (F5).
-3. `console/package.json`'s `build.electronDownload.checksums` pins three zips —
-   `darwin-arm64`, `darwin-x64`, `linux-x64` — and **no `win32-x64` one**, so the
-   Electron step downloads its distribution against no pinned hash on this
-   runner. That fourth hash is a supply-chain pin and an owner-reviewable edit
-   rather than a convenience (F37, Part B), and it lands with the other two.
+**What Part B landed (2026-10-21)**, so that this page does not read as if the
+pack were still impossible: `console/package.json` has a `package:win` script
+and a `win` block that names NSIS and x64, `console/src/main/fuses.ts`'s
+`SUPPORTED_PLATFORMS` carries a `win32` row whose `fuseTarget` resolves
+`<appOutDir>/<productFilename>.exe` rather than **throwing**, and
+`build.electronDownload.checksums` pins the fourth archive,
+`electron-v<version>-win32-x64.zip`. So the pack step resolves, the fuse hook
+flips the Windows executable, and the Electron step is verified against a hash in
+this repository
+([docs/console-windows/reconciliation.md](../console-windows/reconciliation.md)
+F35, F36, F37).
 
-The order the plan gives is: **stage this file, land those three edits, then copy
-it in.** Staging it now is the point of this directory — the file is reviewable
-while it is still a proposal, and the header's first paragraph says the same
-thing to whoever opens the file rather than this page.
+1. **Still outstanding: the unit suite has never run on Windows.** `spawn.ts`'s
+   `isExecutableFile` reads `stat.mode & 0o111`, which Windows never sets, and
+   the suite's stubs are host executables (F4, F33) — so the test step is red on
+   a Windows runner until that is platform-aware, along with the `':'` split of
+   the app's own `PATH` (F5). That is Parts A and C, and it is the last thing
+   between this file and the copy-in.
+
+The order the plan gives was: **stage this file, land those edits, then copy it
+in.** Two of the three are landed and the third is Parts A and C's, so the
+copy-in is one part away — and this file stays staged, which is the point of this
+directory: the file is reviewable while it is still a proposal, and the header's
+first paragraph says the same thing to whoever opens the file rather than this
+page.
 
 **Why it is its own workflow rather than a second job in `console-tests.yml`.**
 Exactly `console-linux.yml`'s reason, which is a test rather than a taste: **the

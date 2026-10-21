@@ -20,31 +20,30 @@
 # match the applied ones.)
 #
 # DO NOT COPY THIS IN YET. Read this paragraph first, because it is not a
-# formality: **this job is red until three things in console/ have landed**, and a
-# red pack is worse than no pack, because it arrives at release time.
+# formality: **one thing in console/ has still not landed**, and a red pack is
+# worse than no pack, because it arrives at release time.
 #
-#   1. `console/package.json` has no `package:win` script and no `win` block,
-#      and `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is
-#      `['darwin','linux']` with `fuseTarget` **throwing** for anything else.
-#      `afterPack` is the pack's only fuse flipper, so `electron-builder --win`
-#      produces **no artifact at all** today, and the pack step below cannot
-#      succeed. (docs/console-windows/implementation-plan.md Part B, findings
-#      F35 and F36.)
-#   2. The unit suite has never run on Windows. `spawn.ts`'s `isExecutableFile`
-#      reads `stat.mode & 0o111`, which Windows never sets, and the suite's
-#      stubs are host executables -- so the test step below is red on a Windows
-#      runner until that is platform-aware, along with the `':'` split of the
-#      app's own `PATH`. (Parts A and C.)
-#   3. `console/package.json`'s `build.electronDownload.checksums` pins three
-#      zips -- darwin-arm64, darwin-x64, linux-x64 -- and no `win32-x64` one, so
-#      the Electron step below downloads its distribution against **no pinned
-#      hash** on this runner. Adding the fourth is a supply-chain pin and
-#      therefore an owner-reviewable edit rather than a convenience, and it
-#      lands with the other two. (Part B, finding F37.)
+# **Part B is landed (2026-10-21).** The three edits this paragraph used to ask
+# for are in the tree, and the pack step below is no longer red for any of them:
+# `console/package.json` has a `package:win` script and a `win` block that names
+# its target and its arch, `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS`
+# carries a `win32` row whose `fuseTarget` resolves
+# `<appOutDir>/<productFilename>.exe` rather than refusing the platform, and
+# `build.electronDownload.checksums` pins the fourth archive,
+# `electron-v<version>-win32-x64.zip`. (Findings F35, F36 and F37; the console's
+# own README describes that half and what it was verified against.)
 #
-# The order the plan gives is: stage this file, land those three edits, then copy
-# it in. Staging it now is the point of the staging directory -- the file is
-# reviewable while it is still a proposal.
+#   1. **Still outstanding: the unit suite has never run on Windows.**
+#      `spawn.ts`'s `isExecutableFile` reads `stat.mode & 0o111`, which Windows
+#      never sets, and the suite's stubs are host executables -- so the test step
+#      below is red on a Windows runner until that is platform-aware, along with
+#      the `':'` split of the app's own `PATH`. That is Parts A and C, and it is
+#      the only thing between this file and the copy-in.
+#
+# The order the plan gave was: stage this file, land those edits, then copy it
+# in. Two of the three are landed and the third belongs to Parts A and C, so the
+# copy-in is one part away -- and this file stays staged, because a proposal is
+# what the staging directory is for.
 #
 # WHEN THIS RUNS, AND WHY THAT IS THE OWNER'S RULING RATHER THAN A CHOICE HERE
 #
@@ -119,13 +118,14 @@
 #     of the undecided "does the installer join the release" question above. So
 #     the artifact is named `Fugaro.Console-0.0.0-win-x64.exe` (the same product
 #     name and the same arch the Linux job's artifacts carry).
-#   - x64 only. There is no `build.win.target` in console/package.json today and
-#     this file does not add one: Part B does, pinned to x64, for the reason that
-#     a second architecture would be a cross-build nothing here can launch -- the
-#     same packer on the same runner, with the same fuses. That same part must
-#     also add the `win32-x64` hash to `build.electronDownload.checksums`, which
-#     pins three zips today and no Windows one, so that the Electron step below
-#     downloads against a pinned hash rather than merely fetching (finding F37).
+#   - x64 only, and this file adds no architecture of its own: `build.win.target`
+#     in console/package.json names NSIS and x64 (`{ target: 'nsis', arch:
+#     ['x64'] }`, landed by Part B on 2026-10-21), for the reason that a second
+#     architecture would be a cross-build nothing here can launch -- the same
+#     packer on the same runner, with the same fuses. The same part added the
+#     `win32-x64` hash to `build.electronDownload.checksums`, so the Electron
+#     step below downloads against a pinned hash rather than merely fetching
+#     (finding F37).
 
 name: console-windows
 
@@ -202,11 +202,10 @@ jobs:
       - name: run the unit suite
         run: npm run test:unit
       # Electron's own download of its distribution, checked against the pinned
-      # package's `checksums.json`: `electron-v<version>-win32-x64.zip` will be
-      # one of the hashes `build.electronDownload.checksums` pins **once the
-      # win32-x64 pin this file's header asks for has landed** (finding F37) --
-      # today that block pins three zips and none of them is a Windows one, so
-      # this step fetches Electron unverified. Then the build the packer packs
+      # package's `checksums.json`: `electron-v<version>-win32-x64.zip` **is** one
+      # of the four hashes `build.electronDownload.checksums` pins, so this step
+      # downloads against a hash in the repository rather than merely fetching
+      # (finding F37, landed with Part B on 2026-10-21). Then the build the packer packs
       # (`npm run build` is what writes the file package.json's `main` points
       # at).
       - name: download Electron and build the app
