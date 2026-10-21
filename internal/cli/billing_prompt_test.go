@@ -258,20 +258,21 @@ func TestPickerNeverRunsUnderJSON(t *testing.T) {
 	f := gcpfake.NewBilling(t)
 	acct := pickerAccountID(t, "one")
 	f.AddAccountNamed(acct, "the operator's own account", true)
-	r, out := pickerRun(t, true, pickerAnswers("1"), &initOptions{asJSON: true})
+
+	// Every other input comes from the flags, so the run is past the questions
+	// that would refuse it: the only thing between this run and the account
+	// list is the condition under test.
+	r, out := pickerRun(t, true, "", &initOptions{asJSON: true, createProject: true, name: "aurora",
+		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}})
 	pickerSources(t, f)
-	err := r.gatherInputs(t.Context())
-	if err == nil {
-		t.Fatalf("a first run with no flags at all exited 0:\n%s", out)
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(err.Error(), "--gcp-project") || ExitCode(err) != ExitUserError {
-		t.Errorf("the refusal is not today's (every missing flag, one error): %v", err)
+	if out.Len() != 0 {
+		t.Errorf("--json is a document, and the wizard wrote a question into it:\n%s", out)
 	}
 	if r.o.linkBilling != "" || billingListCalls(f) != 0 {
 		t.Errorf("the picker ran under --json: linkBilling %q, %d list call(s)\n%s", r.o.linkBilling, billingListCalls(f), out)
-	}
-	if strings.Contains(out.String(), acct) {
-		t.Errorf("an account is printed under --json:\n%s", out)
 	}
 }
 
@@ -281,12 +282,17 @@ func TestPickerNeverRunsNonInteractive(t *testing.T) {
 	f := gcpfake.NewBilling(t)
 	acct := pickerAccountID(t, "one")
 	f.AddAccountNamed(acct, "the operator's own account", true)
-	r, out := pickerRun(t, true, pickerAnswers("1"), &initOptions{nonInteractive: true})
+
+	r, out := pickerRun(t, true, "", &initOptions{nonInteractive: true, createProject: true, name: "aurora",
+		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}})
 	pickerSources(t, f)
-	if err := r.gatherInputs(t.Context()); err == nil {
-		t.Fatalf("a first run with no flags and --non-interactive exited 0:\n%s", out)
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
-	if r.o.linkBilling != "" || billingListCalls(f) != 0 || strings.Contains(out.String(), acct) {
+	if out.Len() != 0 {
+		t.Errorf("--non-interactive is a run nobody answers, and the wizard asked something:\n%s", out)
+	}
+	if r.o.linkBilling != "" || billingListCalls(f) != 0 {
 		t.Errorf("the picker ran with --non-interactive: %q, %d list call(s)\n%s", r.o.linkBilling, billingListCalls(f), out)
 	}
 }
@@ -323,13 +329,66 @@ func TestPickerNeverRunsWithoutATerminal(t *testing.T) {
 	f := gcpfake.NewBilling(t)
 	acct := pickerAccountID(t, "one")
 	f.AddAccountNamed(acct, "the operator's own account", true)
-	r, out := pickerRun(t, false, pickerAnswers("1"), nil)
+
+	r, out := pickerRun(t, false, "", &initOptions{createProject: true, name: "aurora",
+		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}})
 	pickerSources(t, f)
-	if err := r.gatherInputs(t.Context()); err == nil {
-		t.Fatalf("a first run with no terminal and no flags exited 0:\n%s", out)
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if out.Len() != 0 {
+		t.Errorf("a pipe is no terminal, and the wizard asked something into it:\n%s", out)
+	}
+	if r.o.linkBilling != "" || billingListCalls(f) != 0 {
+		t.Errorf("the picker ran without a terminal: %q, %d list call(s)\n%s", r.o.linkBilling, billingListCalls(f), out)
+	}
+}
+
+// TestPickerNeverRunsWhenTheAnswerIsAdopt: the question is asked only where
+// its answer is one this run acts on. On an answer of adoption the project
+// stage skips before it reads anything (init_project.go's Check), so a
+// --link-billing this run recorded would reach no link at all: a person who
+// answered it would have been asked something the run then ignored. Nothing is
+// listed, and the account they have is not the run's to read either.
+func TestPickerNeverRunsWhenTheAnswerIsAdopt(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	acct := pickerAccountID(t, "one")
+	f.AddAccountNamed(acct, "the operator's own account", true)
+
+	r, out := pickerRun(t, true, "proj-1234\n"+"\n"+setupAnswerAdopt+"\n"+"\n"+"1\n", nil)
+	pickerSources(t, f)
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if r.o.createProject {
+		t.Fatalf("the answer %q recorded creation:\n%s", setupAnswerAdopt, out)
 	}
 	if r.o.linkBilling != "" || billingListCalls(f) != 0 || strings.Contains(out.String(), acct) {
-		t.Errorf("the picker ran without a terminal: %q, %d list call(s)\n%s", r.o.linkBilling, billingListCalls(f), out)
+		t.Errorf("the picker ran on an answer of adoption: %q, %d list call(s)\n%s", r.o.linkBilling, billingListCalls(f), out)
+	}
+}
+
+// TestPickerNeverReplacesALinkBillingAlreadyGiven: --link-billing is the flag
+// that answers this question without a terminal (and the documented way to
+// link billing to a project this run did not create). A run that passed it has
+// answered: the question is not asked, nothing is listed, and the account the
+// operator named is the one the run keeps.
+func TestPickerNeverReplacesALinkBillingAlreadyGiven(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	other := pickerAccountID(t, "other")
+	f.AddAccountNamed(other, "another account", true)
+
+	given := pickerAccountID(t, "given")
+	r, out := pickerRun(t, true, pickerAnswers("1"), &initOptions{linkBilling: given})
+	pickerSources(t, f)
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if r.o.linkBilling != given {
+		t.Errorf("the account the run was given became %q, want %q\n%s", r.o.linkBilling, given, out)
+	}
+	if billingListCalls(f) != 0 || strings.Contains(out.String(), other) {
+		t.Errorf("the question listed the accounts, and --link-billing had answered it: %d call(s)\n%s", billingListCalls(f), out)
 	}
 }
 
@@ -342,15 +401,18 @@ func TestPickerNeverRunsUnderYes(t *testing.T) {
 	f := gcpfake.NewBilling(t)
 	acct := pickerAccountID(t, "one")
 	f.AddAccountNamed(acct, "the operator's own account", true)
-	pickerSources(t, f)
 
 	o := &initOptions{yes: true, createProject: true, name: "aurora",
 		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}}
-	r, out := pickerRun(t, true, pickerAnswers("1"), o)
+	r, out := pickerRun(t, true, "", o)
+	pickerSources(t, f)
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if r.o.linkBilling != "" || billingListCalls(f) != 0 || strings.Contains(out.String(), acct) {
+	if out.Len() != 0 {
+		t.Errorf("--yes wants no question answered, and the wizard asked one:\n%s", out)
+	}
+	if r.o.linkBilling != "" || billingListCalls(f) != 0 {
 		t.Errorf("the picker ran under --yes: %q, %d list call(s)\n%s", r.o.linkBilling, billingListCalls(f), out)
 	}
 }
