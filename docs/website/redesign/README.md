@@ -906,10 +906,14 @@ changes are cited as the feedback's own.
   its first `h2`, so the lead stays 16 words. The number is read off the built page by
   `website/test/budget.mjs`'s `wordsCeilingFailures`, which is where every figure here comes
   from. The three byte figures are re-derived in the same commit, as the rounds in
-  `website/README.md`'s list re-derive theirs: the site figure moves 1,432,910 → **1,446,433**,
-  and **the heaviest page of the site is the homepage now** (561,685 bytes, the four pictures it
+  `website/README.md`'s list re-derive theirs: the site figure moves 1,437,824 → **1,447,967**,
+  and **the heaviest page of the site is the homepage now** (563,219 bytes, the four pictures it
   fetches), where every derivation before this one named the console page or the docs hub — so
-  the page-weight ceiling is derived from the homepage here.
+  the page-weight ceiling is derived from the homepage here. The review round of the same pull
+  request moved the script's bytes again (the guard that keeps the shared slider's count and dots
+  on the slide its track is showing while its panel is `display: none`, the two step controls read
+  through `own()`, and the gates that run the shared slider as the homepage renders it), and the
+  three figures are re-derived from that build rather than from the round before it.
 - **The byte figures are not re-derived, and that is the owner's ruling and not an omission.**
   The owner ruled on 2026-10-20 that the three figures `website/README.md` states are re-derived
   **only when the owner asks** — `website/test/budget.mjs` runs D192's exact derivation only with

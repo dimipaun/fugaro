@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,446,433 bytes in a checkout with no tags** and to **1,446,433 bytes with the
+  commit builds to **1,447,967 bytes in a checkout with no tags** and to **1,447,967 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -888,23 +888,29 @@ added or removed without this sentence moving fails there:
     `closest('[data-slider]')` is the block it started from, which is what keeps the homepage's
     own slider's panels out of the shared slider's reading and the shared slider's slides out of
     the homepage block's. **The move is three files and nothing else**: `dist/scripts/site.js`
-    66,189 → **68,482** (+2,293), `dist/index.html` 50,808 → **56,969** (+6,161, the slider's
+    66,189 → **70,016** (+3,827: the shared slider's own 2,293 bytes and the 1,534 of the review
+    round below), `dist/index.html` 50,808 → **56,969** (+6,161, the slider's
     markup and the shared component's rules) and `dist/console/index.html` 31,874 → **32,029**
-    (+155, the same rows' hooks), so the site figure moves 1,432,910 → **1,446,433** by exactly
-    those 8,609 — no file is added or removed (`dist/` stays **28 files**, the site **11 pages**)
+    (+155, the same rows' hooks), so the site figure moves 1,437,824 → **1,447,967** by exactly
+    those 10,143 — no file is added or removed (`dist/` stays **28 files**, the site **11 pages**)
     and no other file moves a byte. **The page weight is re-derived from another page**: the
     homepage fetches the three console captures and the watch capture now, so it is the heaviest
-    page of the site, 561,685 bytes, where the figure before this round was the console page's
-    427,596 (the console page is 430,044). The homepage's words go 461 → **563** — the three
+    page of the site, 563,219 bytes, where the figure before this round was the console page's
+    427,596 (the console page is 431,578). The homepage's words go 461 → **563** — the three
     leading slides' `alt` texts, which are the console page's own — and D188's number moves with
     them, 500 → **600** (the reading is in the words ceiling below and in
     `docs/website/redesign/README.md`). `test/home.mjs` holds the slot to the rows the data file
     names in the order it names them, the three shared rows to the console's own file, the Watch
     row's declared size to the design record, and the whole slider to the no-JS page; the
-    console's own gate, `test/console-screens.mjs`, runs unchanged against it.
+    console's own gate, `test/console-screens.mjs`, runs unchanged against it. **The review round
+    on this pull request added the gates for the second slider**: `test/slider.mjs` now runs
+    `site.js` against the built homepage and drives the shared slider inside the "See it" panel —
+    its four rows counted, marked and stepped, and its clock refused while the panel is
+    `display: none` — and holds every hook read in the file to `own()`, which is what keeps a
+    block from being handed a nested slider's elements by document order.
 
-  - **JavaScript per page:** 256,809 bytes. Three times 85,603: the one script the site ships,
-    `public/scripts/site.js` (68,482 bytes), plus 25 %. What the file carries is the copy
+  - **JavaScript per page:** 262,560 bytes. Three times 87,520: the one script the site ships,
+    `public/scripts/site.js` (70,016 bytes), plus 25 %. What the file carries is the copy
     control, the menu, the consent gate and **both of the site's sliders** — the console page's,
     which the feedback-B round above added, and the homepage's, which the feedback-A round above
     it added.
@@ -921,13 +927,21 @@ added or removed without this sentence moving fails there:
     `scroll-behavior: smooth`) and a first reading taken from the track rather than from the
     first slide. `test/console-screens.mjs` runs the file in `test/lib/dom.mjs`'s stub browser
     to hold that half, and refuses a planted defect in each part of it. **The homepage's half is
-    the feedback-A round's 13,211 bytes, and the round above this one is the last this file has
-    gained**: its 2,293 bytes are the shared slider's own — the three interior hooks are
+    the feedback-A round's 13,211 bytes, and the last 1,534 of them are this pull request's own
+    review fix**: the guard that keeps a track the page
+    is not laying out out of the count (the "See it" panel is `display: none` until its dot is
+    pressed, and the count and the dots were advancing inside it), the block's two step controls
+    read through `own()` like every other hook, and the gates that run the shared slider as this
+    page renders it. The 2,293 bytes before the review round are the hooks and the `own()` rule
+    themselves — the three interior hooks are
     `data-slider-*` rather than the console page's class names, and the driver keeps a hook only
     when `closest('[data-slider]')` is the block it started from, which is what lets one file
     drive two blocks that carry the same hooks.
     `test/slider.mjs` runs the same file against the built homepage in a stub DOM of its own, to
-    hold the clock, the wrap, the two holds and the mark on the dot, each case planted against
+    hold the clock, the wrap, the two holds and the mark on the dot, the two blocks' hooks read
+    through `own()`, and **the shared slider as this page renders it** — the four rows it counts,
+    marks and steps, and the beats it refuses while its panel is `display: none` — each case
+    planted against
     the line of the script it reads. **The two halves share the four names they have to agree on
     and nothing else** — the block's attribute, the two step controls, the six seconds and the
     motion query are declared once, with the console's section, and each half drives its own kind
@@ -954,10 +968,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 2,106,321 bytes. Three times 702,107: the heaviest page, the
-    homepage, at 561,685 bytes (its HTML, the four screenshots it renders, and the files
+  - **Page weight per page:** 2,112,072 bytes. Three times 704,024: the heaviest page, the
+    homepage, at 563,219 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,424,126 bytes. Three times 1,808,042 (every file in `dist/`, 1,446,433
+  - **Whole site:** 5,429,877 bytes. Three times 1,809,959 (every file in `dist/`, 1,447,967
     bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 

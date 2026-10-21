@@ -37,7 +37,18 @@
 //      the dots and the two controls and the arrow keys all move the block, and a reader who
 //      arrives on a fragment opens on that slide. Each case is planted below with the line it
 //      reads taken out of the script, so a case that cannot fail is caught here.
-//   6. **The three steps are the repository's own lines.** Each step's line is a line of the
+//   6. **The page's second slider, run too** (D246, D250). The block's "See it" panel renders
+//      the console page's own component, which is a slider in its own right — a second
+//      `[data-slider]`, whose four slides, four dots, count, two arrows and six-second clock are
+//      the console page's, in the homepage's markup. Two of the cases in 5 are about it: that it
+//      counts, marks, steps and clocks its OWN four rows while the block around it is not moved
+//      by any of it, and that it stands still — reading the first of its four, marking the first
+//      dot — while its panel is `display: none`, because a track the page lays out nowhere can
+//      be scrolled nowhere and a reading that moved anyway would tell a reader who opens the
+//      panel about a slide they are not shown. No other gate runs it: `home.mjs` reads its
+//      markup, `console-screens.mjs` runs it on the console page, and this is the page in
+//      between.
+//   7. **The three steps are the repository's own lines.** Each step's line is a line of the
 //      section of the document it cites, in that section's order — the same reading the
 //      component's own build guard takes, held here against the page a reader receives, so a
 //      guard removed from the component is a red gate rather than a page that paraphrases.
@@ -668,6 +679,36 @@ test('the site’s one script is joined to the block by its data attributes and 
   )
 })
 
+/**
+ * The hook reads in `site.js` that are not `own()`'s: every `querySelector(All)` of a slider hook
+ * written on something other than the document (the door every `[data-slider]` block is found
+ * through) or the track (`SLIDER_TRACK` having resolved the block's own track already). A read
+ * left on the block is the read the homepage's nested blocks make wrong: the "See it" panel
+ * holds a slider of the block's own, whose slides, dots and arrows carry the same four hook names
+ * the block's do, so `block.querySelector('[data-slider-prev]')` answers with whichever is
+ * written first in the document and is right only by document order.
+ */
+function bareHookReads(source) {
+  return [...source.matchAll(/([\w$]+)\.(querySelector|querySelectorAll)\((SLIDER_[A-Z]+)\)/g)]
+    .map(([, receiver, method, hook]) => `${receiver}.${method}(${hook})`)
+    .filter((read) => !/^(document|track)\./.test(read))
+}
+
+test('every slider hook is read through own(), so a nested slider cannot be handed the wrong elements', () => {
+  const bare = bareHookReads(SCRIPT_SOURCE)
+  assert.deepEqual(
+    bare,
+    [],
+    `website/public/scripts/site.js reads ${bare.join(', ')} straight off a slider block: the homepage's block holds a slider of its own, whose elements carry the same hooks, and \`own(block, hook)\` is the rule this file's readings, the script's drivers and the case above all use`,
+  )
+  // The plant: the read the drivers carried before, in the one place it is visible — the block's
+  // own Previous arrow, which today is the block's and would be the inner slider's the day the
+  // two are written the other way round.
+  const planted = SCRIPT_SOURCE.replace('    var prev = own(section, SLIDER_PREV)[0]\n', '    var prev = section.querySelector(SLIDER_PREV)\n')
+  assert.notEqual(planted, SCRIPT_SOURCE, 'the planted edit changed nothing in the script, so this case proves nothing')
+  assert.deepEqual(bareHookReads(planted), ['section.querySelector(SLIDER_PREV)'], 'a hook read straight off a block was not refused by this case')
+})
+
 test('the three steps are the repository’s own lines, in the order their sections write them', () => {
   const { html } = built()
   assert.deepEqual(stepFailures(html), [], `the slider's first panel is not the reader's three steps:\n  ${stepFailures(html).join('\n  ')}`)
@@ -692,6 +733,10 @@ test('the three steps are the repository’s own lines, in the order their secti
 const CLOCK_MS = 6000
 const CALM_QUERY = '(prefers-reduced-motion: reduce)'
 
+/** The width a laid-out track reports in this stub: one number, because a slide is one track
+ *  wide (`grid-auto-columns: 100%`) and every move the cases below make is a whole slide. */
+const BOX = 1000
+
 /** A built page as a document the site's one script can run in. */
 function stubPage(html, { hash = '', hidden = false, calm = false, script = SCRIPT_SOURCE } = {}) {
   const root = parse(html)
@@ -702,6 +747,9 @@ function stubPage(html, { hash = '', hidden = false, calm = false, script = SCRI
   const hashWrites = []
   const windowListeners = new Map()
   const state = { activeElement: null }
+  // Where each scroll box stands, by node: the track the shared slider drives is the one that
+  // reads and writes this, and a case reads it back to see where a move landed.
+  const scrolled = new Map()
   let shown = !hidden
   // The reader's system preference is not fixed: `setCalm` below is that reader turning reduced
   // motion on (or off) under a page that has already loaded, which a browser reports to the lists
@@ -737,6 +785,41 @@ function stubPage(html, { hash = '', hidden = false, calm = false, script = SCRI
     })
   }
 
+  const isPanel = (node) => (node.attrs.get('class') ?? '').split(/\s+/).includes('panel')
+
+  /**
+   * Whether the page lays a node out, which in this stub is what a `clientWidth` comes to. A
+   * browser lays nothing out inside an element carrying `hidden`, and nothing out inside a panel
+   * its block has not put on screen: the homepage's block shows one of its three panels at a
+   * time — the name the script wrote on the block, or the fragment the reader arrived on, or the
+   * first panel while the page says neither, which is the stylesheet's own three rules — and
+   * everything inside the panels it is not showing reports a zero `clientWidth`.
+   *
+   * **That zero is the whole of what the "See it" panel means to the shared slider inside it**,
+   * and the case below about a slider in a panel nobody has opened is written on it. It is a
+   * stub's reading of a browser's layout, and it says so: what a real panel does to a real track
+   * is the owner's own check of the page.
+   */
+  function laidOut(node) {
+    for (let at = node; at && at.name !== '#document'; at = at.parent) {
+      if (at.attrs.has('hidden')) return false
+      if (!isPanel(at)) continue
+      let block = null
+      for (let up = at.parent; up && up.name !== '#document'; up = up.parent) {
+        if (up.attrs.has('data-slider')) {
+          block = up
+          break
+        }
+      }
+      if (!block) continue
+      const panels = [...walk(block)].filter(isPanel)
+      const active = block.attrs.get('data-active')
+      const named = active ? at.attrs.get('data-slider-slide') === active : panels[0] === at || at.attrs.get('id') === hash.replace(/^#/, '')
+      if (!named) return false
+    }
+    return true
+  }
+
   /** One parsed element, with the DOM surface the site's script touches. */
   class Element {
     constructor(node) {
@@ -745,6 +828,26 @@ function stubPage(html, { hash = '', hidden = false, calm = false, script = SCRI
     }
     get name() {
       return this.node.name
+    }
+    /** The box the page gives this element: the stub's one width while the page lays it out,
+     *  and nothing at all while it does not. The script reads it off the track, which is where
+     *  the difference between a slider a reader is looking at and one inside a panel they have
+     *  not opened lives. */
+    get clientWidth() {
+      return laidOut(this.node) ? BOX : 0
+    }
+    /** Where this scroll box stands, and the move a `scrollTo` makes: the offset the script
+     *  asked for, and the `scroll` event the box hears afterwards, which is what the script's
+     *  own reading of a scroll position is bound to. */
+    get scrollLeft() {
+      return scrolled.get(this.node) ?? 0
+    }
+    set scrollLeft(value) {
+      scrolled.set(this.node, Number(value))
+    }
+    scrollTo(init = {}) {
+      this.scrollLeft = typeof init.left === 'number' ? init.left : 0
+      this.dispatch('scroll', { target: this })
     }
     get attrs() {
       return this.node.attrs
@@ -884,11 +987,22 @@ function stubPage(html, { hash = '', hidden = false, calm = false, script = SCRI
       return list
     },
     setTimeout(handler, ms) {
-      const timer = { handler, ms, cancelled: false }
+      const timer = { handler, ms, cancelled: false, kind: 'timeout' }
       timers.push(timer)
       return timer
     },
     clearTimeout(timer) {
+      if (timer) timer.cancelled = true
+    },
+    // The shared slider's clock is an interval and the homepage's block's is a timeout, and the
+    // readers below keep the two apart: `pending()` is the block's own clock and `beats()` is the
+    // shared slider's, so neither is counted as the other's.
+    setInterval(handler, ms) {
+      const timer = { handler, ms, cancelled: false, kind: 'interval' }
+      timers.push(timer)
+      return timer
+    },
+    clearInterval(timer) {
       if (timer) timer.cancelled = true
     },
     localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
@@ -917,9 +1031,46 @@ function stubPage(html, { hash = '', hidden = false, calm = false, script = SCRI
   const own = (selector) => block.querySelectorAll(selector).filter((el) => el.closest('[data-slider]') === block)
   const dots = own('[data-slider-dot]')
   const slides = own('[data-slider-slide]')
-  const back = block.querySelector('[data-slider-prev]')
-  const on = block.querySelector('[data-slider-next]')
-  const pending = () => timers.filter((timer) => !timer.cancelled)
+  const back = own('[data-slider-prev]')[0] ?? null
+  const on = own('[data-slider-next]')[0] ?? null
+  // The block's clock, as distinct from the shared slider's: both are six seconds, and what a
+  // case fires by hand is the one it is about.
+  const pending = () => timers.filter((timer) => !timer.cancelled && timer.kind === 'timeout')
+
+  // **The shared slider, as this page renders it: the console page's own component, in the
+  // homepage's "See it" panel** (D246, D250). It is a second `[data-slider]` inside the block
+  // above, and the cases below drive it as a reader does — its count, the mark on its dots, where
+  // its track stands and its own clock — because it is the page's second slider and no other gate
+  // runs it: `home.mjs` reads its markup statically, this file's cases above drive the block
+  // around it, and `console-screens.mjs` drives the same component on the console page.
+  const innerBlock = document.querySelectorAll('[data-slider]').find((el) => el !== block) ?? null
+  const innerOwn = (selector) => (innerBlock ? innerBlock.querySelectorAll(selector).filter((el) => el.closest('[data-slider]') === innerBlock) : [])
+  const innerTrack = innerOwn('[data-slider-track]')[0] ?? null
+  const innerCount = innerOwn('[data-slider-counter]')[0] ?? null
+  const innerDots = innerOwn('[data-slider-dot]')
+  const inner = innerBlock && {
+    block: innerBlock,
+    track: innerTrack,
+    count: innerCount,
+    dots: innerDots,
+    slides: innerTrack ? innerTrack.querySelectorAll('[data-slider-slide]') : [],
+    back: innerOwn('[data-slider-prev]')[0] ?? null,
+    on: innerOwn('[data-slider-next]')[0] ?? null,
+    /** What the reader is told: the count the script writes, as `n / N`. */
+    reading: () => (innerCount?.textContent ?? '').trim(),
+    /** Which of the slides the dots mark as the one on screen, as their 1-based numbers. */
+    marked: () => innerDots.map((dot, at) => (dot.getAttribute('aria-current') === 'true' ? at + 1 : null)).filter((at) => at !== null),
+    /** Where the shared slider's track stands, in pixels. */
+    at: () => innerTrack?.scrollLeft ?? null,
+    /** Whether the shared slider's clock is running. */
+    running: () => timers.filter((timer) => !timer.cancelled && timer.kind === 'interval').length,
+    /** Six seconds of the shared slider's clock: one beat of the interval it asked for. */
+    beat() {
+      const timer = timers.find((one) => !one.cancelled && one.kind === 'interval' && one.ms === CLOCK_MS)
+      assert.ok(timer, `the shared slider has no clock to run: ${timers.length} timer(s) have been asked for and none of them is its ${CLOCK_MS} ms interval`)
+      timer.handler()
+    },
+  }
 
   return {
     block,
@@ -927,6 +1078,7 @@ function stubPage(html, { hash = '', hidden = false, calm = false, script = SCRI
     slides,
     back,
     on,
+    inner,
     timers,
     queries,
     hashWrites,
@@ -937,7 +1089,8 @@ function stubPage(html, { hash = '', hidden = false, calm = false, script = SCRI
       dots
         .filter((dot) => dot.getAttribute('aria-current') === 'true')
         .map((dot) => dot.getAttribute('data-slider-dot')),
-    /** The block's clock, as the timers it has asked for and not cancelled. */
+    /** The block's clock, as the timeouts it has asked for and not cancelled. The shared
+     *  slider's interval is a clock of its own and is not counted here. */
     pending,
     /** Six seconds passing. */
     tick() {
@@ -1126,6 +1279,87 @@ const CASES = [
       assert.deepEqual(page.marked(), ['see'], 'the block opened on the third slide and marked another dot as the one on screen')
     },
     plant: ['      for (var h = 0; h < slides.length; h++) if (idOf(slides[h]) === hash) opening = slides[h]\n', ''],
+  },
+  {
+    name: 'the shared slider in the block counts its own four slides, and the block around it is not moved by them',
+    // The reader is on the "See it" panel: the whole of the shared slider's behaviour is read
+    // here, in the one state where the panel the block renders it in is the panel on screen.
+    options: { hash: '#home-panel-see' },
+    check(page) {
+      assert.ok(page.inner, 'the homepage renders one `[data-slider]` block and this case is about the second one — the console page’s slider inside the block’s "See it" panel (D246)')
+      const inner = page.inner
+      assert.equal(inner.slides.length, 4, `the shared slider renders ${inner.slides.length} slide(s); the panel is the four screenshots its data file lists (D251)`)
+      assert.equal(inner.dots.length, 4, `the shared slider carries ${inner.dots.length} dot(s), and one per slide is what the console page's own slider carries`)
+      assert.equal(inner.reading(), '1 / 4', `the shared slider opens reading ${JSON.stringify(inner.reading())}: the count is the track’s own position, and a reader who has moved nothing is on the first screenshot`)
+      assert.deepEqual(inner.marked(), [1], `the shared slider opened on its first slide and marked ${JSON.stringify(inner.marked())} as the dot on screen`)
+      assert.equal(inner.at(), 0, `the shared slider's track is at ${inner.at()}px and its first slide is at 0`)
+      assert.equal(inner.running(), 1, `the shared slider runs ${inner.running()} clock(s) with nobody reading it, and the console page's slider advances every six seconds wherever it is rendered`)
+
+      // Six seconds of this slider's own clock: the count, the mark and the track move together,
+      // and the block around them — its own slide, its own dots — is left where it was. The two
+      // clocks are separate timers on one page, and a driver that moved the other's slides would
+      // be reading and writing state it does not own.
+      inner.beat()
+      assert.equal(inner.reading(), '2 / 4', `six seconds passed and the shared slider did not move on: the count reads ${JSON.stringify(inner.reading())}`)
+      assert.deepEqual(inner.marked(), [2], 'the shared slider moved on and the mark on its dots did not follow')
+      assert.equal(inner.at(), BOX, `the shared slider stands on its second slide and its track is at ${inner.at()}px of a ${BOX}px-wide box`)
+      assert.equal(page.active(), 'see', `the shared slider moved and the block around it went to ${JSON.stringify(page.active())}: the two blocks are driven by one file and each moves only its own slides`)
+      assert.deepEqual(page.marked(), ['see'], 'the shared slider moved and the block’s own dots were marked by it')
+
+      // And the shared slider’s own controls, in the panel a reader has opened: the two arrows,
+      // which step it and wrap, and a dot, whose anchor the script takes over.
+      page.click(inner.on)
+      assert.equal(inner.reading(), '3 / 4', 'the shared slider’s Next arrow did not step it on')
+      page.click(inner.back)
+      assert.equal(inner.reading(), '2 / 4', 'the shared slider’s Previous arrow did not step it back')
+      const press = page.click(inner.dots[3])
+      assert.equal(inner.reading(), '4 / 4', 'a press on the shared slider’s fourth dot did not show the fourth screenshot')
+      assert.equal(press.defaultPrevented, true, 'a press on the shared slider’s dot followed its anchor: with the script running the press is the script’s own move, exactly as it is on the console page')
+      assert.deepEqual(inner.marked(), [4], 'the shared slider is on its fourth slide and the mark on its dots says otherwise')
+    },
+    // The defect: two drivers on one block. The panel's slider is a `[data-slider]` of its own,
+    // and the block around it is the case the guard above reads — with the guard gone the block's
+    // own driver takes the inner block's four slides for panels, writes its own state on them and
+    // marks all four of its dots as the slide on screen, which is the collision D246 exists for.
+    plant: ['    if (own(block, SLIDER_TRACK).length > 0) return\n', ''],
+  },
+  {
+    name: 'the shared slider stands still while the panel it is in is not the one on screen',
+    // The page as it loads: the block opens on its first slide, so the "See it" panel — and with
+    // it the whole of the shared slider — is `display: none`. A track the page lays out nowhere
+    // reports no width and can be scrolled nowhere, and a reading that moved anyway would be a
+    // count and a mark on a slide the reader is never shown.
+    options: {},
+    check(page) {
+      const inner = page.inner
+      assert.ok(inner, 'the homepage renders one `[data-slider]` block and this case is about the second one')
+      assert.equal(page.active(), 'easy', 'the block did not open on its first slide, so the panel this case is about is the one on screen and there is nothing to hold still')
+      assert.equal(inner.reading(), '1 / 4', `the shared slider opens reading ${JSON.stringify(inner.reading())}, and the panel it is in shows nothing until a reader opens it`)
+      assert.deepEqual(inner.marked(), [1], 'the shared slider marked a dot other than its first as the slide on screen, and it is standing on its first')
+
+      // Three beats of its clock with the panel shut: nothing moves, because nothing can. The
+      // count and the mark are the track's, and the track has not gone anywhere.
+      inner.beat()
+      inner.beat()
+      inner.beat()
+      assert.equal(inner.reading(), '1 / 4', `the shared slider's clock advanced it inside a panel nobody has opened: the count reads ${JSON.stringify(inner.reading())} and the reader who opens the panel is shown the first screenshot`)
+      assert.deepEqual(inner.marked(), [1], 'the shared slider marked another dot as the slide on screen while the track it is read from had not moved')
+      assert.equal(inner.at(), 0, `the shared slider's track moved to ${inner.at()}px inside a panel the page is not laying out`)
+
+      // The reader opens the panel, and the slider is a slider again: the next beat moves it, and
+      // the reading it starts from is the one the track actually held.
+      page.click(page.dots[2])
+      assert.equal(page.active(), 'see', 'the block did not go to the "See it" panel when its dot was pressed')
+      inner.beat()
+      assert.equal(inner.reading(), '2 / 4', `the shared slider did not move once its panel was on screen: the count reads ${JSON.stringify(inner.reading())}, and a slider held still is a slider that stopped`)
+      assert.equal(inner.at(), BOX, `the shared slider's track is at ${inner.at()}px and its second slide is at ${BOX}`)
+      assert.deepEqual(inner.marked(), [2], 'the shared slider moved on once its panel was shown and the mark on its dots did not follow')
+    },
+    // The defect: a move count without a track that can make it. `clientWidth` is zero for a box
+    // inside a `display: none` subtree, so the reading is taken from a slide the reader is never
+    // shown, and the count and the dots disagree with the track from the first beat to the moment
+    // the panel is opened.
+    plant: ['      if (!(track.clientWidth || 0)) return\n', ''],
   },
 ]
 

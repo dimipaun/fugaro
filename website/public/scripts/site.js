@@ -589,11 +589,18 @@
     // Next button that goes to the slide it is already on.
     if (slides.length < 2) return
 
-    var bar = section.querySelector(SLIDER_BAR)
-    var count = section.querySelector(SLIDER_COUNT)
+    // Every hook this driver reads is read through `own()`, the single elements as much as the
+    // lists: the homepage's "See it" panel holds a slider of its own inside this page's block,
+    // and its bar, its count and its two arrows carry the same four names this one's do — a
+    // `section.querySelector` would answer with whichever came first in the document, which is
+    // this block's own today and the inner block's the day the two are written the other way
+    // round. The rule is the same one the slides and the dots are read with, and it needs no
+    // document order to be right.
+    var bar = own(section, SLIDER_BAR)[0]
+    var count = own(section, SLIDER_COUNT)[0]
     var dots = own(section, SLIDER_DOT)
-    var prev = section.querySelector(SLIDER_PREV)
-    var next = section.querySelector(SLIDER_NEXT)
+    var prev = own(section, SLIDER_PREV)[0]
+    var next = own(section, SLIDER_NEXT)[0]
     var index = 0
     var timer = null
     var over = false
@@ -639,7 +646,15 @@
     // reader's own motion gets anyway. That motion stays the stylesheet's — `scroll-behavior:
     // smooth` on the track, which the base layout's reduced-motion rule neutralises — and so is
     // a dot's anchor with no script.
+    // A track the page is not laying out cannot be moved, and a move it cannot make is not one
+    // to count: `clientWidth` is zero for a box inside a `display: none` subtree, and the case
+    // on this site is the homepage, where this slider renders inside the "See it" panel and that
+    // panel is drawn only while the reader is on it (D246). The clock keeps its beat there — six
+    // seconds of a panel nobody has opened is no work — and every beat is refused here, so the
+    // count and the mark on the dots stay on the slide the track is showing: the first one, which
+    // is what the reader who opens the panel sees, and where their next move starts from.
     function show(to) {
+      if (!(track.clientWidth || 0)) return
       index = (to + slides.length) % slides.length
       var left = index * (track.clientWidth || 0)
       if (typeof track.scrollTo === 'function') track.scrollTo({ left: left, behavior: 'instant' })
@@ -1082,8 +1097,11 @@
     if (slides.length < 2) return
 
     var dots = own(block, DOT)
-    var back = block.querySelector(SLIDER_PREV)
-    var on = block.querySelector(SLIDER_NEXT)
+    // `own()` here for the same reason the driver above reads its own two arrows with it: the
+    // block holds a slider of its own, whose arrows carry these two names, and document order is
+    // not a rule either of them should rest on.
+    var back = own(block, SLIDER_PREV)[0]
+    var on = own(block, SLIDER_NEXT)[0]
     var at = 0
     var timer = null
     // The two ways a reader is in the block, and they are two flags rather than one: a pointer
