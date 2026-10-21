@@ -965,10 +965,10 @@ func TestAnArtifactLaunchIsRefusedOnCloudBatchFromAnotherDirectory(t *testing.T)
 	testutil.IsolateGit(t)
 	t.Chdir(t.TempDir())
 	env := func(name backend.Codec) *cloudEnv { return &cloudEnv{be: backendNamed{codec: name}} }
-	inline := func(yaml string) *task.Spec {
+	inline := func(name, yaml string) *task.Spec {
 		return &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other", Ref: "main",
 			Workflow: "svc", Task: "Render the sizzle reel",
-			Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceProject),
+			Recipe: &task.Recipe{Name: name, Source: string(recipe.SourceProject),
 				SHA256: recipe.Sum([]byte(yaml)), YAML: yaml}}
 	}
 	for _, tc := range []struct {
@@ -977,11 +977,16 @@ func TestAnArtifactLaunchIsRefusedOnCloudBatchFromAnotherDirectory(t *testing.T)
 		be   backend.Codec
 		want string // the refusal the launch must carry, "" for none
 	}{
-		{"an artifact recipe's own text on cloud-batch", inline(projectSizzle), backend.BatchCodec(), artifactOnBatchMessage},
+		{"an artifact recipe's own text on cloud-batch", inline("sizzle", projectSizzle), backend.BatchCodec(), artifactOnBatchMessage},
 		{"a repository recipe on cloud-batch", &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other",
 			Workflow: "svc", Task: "Render the sizzle reel", Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}}, backend.BatchCodec(), artifactUnreadOnBatchRefusal("acme/other")},
-		{"an implement recipe's own text on cloud-batch", inline(implementRecipe), backend.BatchCodec(), artifactShadowedOnBatchRefusal("sizzle", "acme/other", "main")},
-		{"an artifact recipe's own text on cloud-run", inline(projectSizzle), backend.CloudRunCodec(), ""},
+		// The carried name matches the carried text (implementRecipe says
+		// name: impl), as a real launch's always does, so the refusal comes
+		// from the ref read having no checkout to ask -- not from the name
+		// check, which the next case pins on its own.
+		{"an implement recipe's own text on cloud-batch", inline("impl", implementRecipe), backend.BatchCodec(), artifactShadowedOnBatchRefusal("impl", "acme/other", "main")},
+		{"carried text whose name disagrees with the task's on cloud-batch", inline("sizzle", implementRecipe), backend.BatchCodec(), artifactShadowedOnBatchRefusal("sizzle", "acme/other", "main")},
+		{"an artifact recipe's own text on cloud-run", inline("sizzle", projectSizzle), backend.CloudRunCodec(), ""},
 		{"a repository recipe on cloud-run", &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other",
 			Workflow: "svc", Task: "Render the sizzle reel", Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}}, backend.CloudRunCodec(), ""},
 	} {
@@ -1089,18 +1094,23 @@ func TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch(t *testi
 // exactly that launch, and it is refused rather than passed to a runner that
 // would resolve the ref itself.
 //
-// Mutation (drop the ref read's error arm): the launch is passed, and the ref's
+// The carried name matches the carried text's own name, as a real launch's
+// always does, so the name check cannot refuse it first: what refuses it is
+// the ref read finding no checkout here.
+//
+// Mutation (drop the ref read's error arm, or have recipeAtRef answer "not
+// found" when there is no checkout root): the launch is passed, and the ref's
 // artifact recipe runs on a Batch VM.
 func TestACarriedRecipeTheRefCannotBeReadForIsRefusedOnCloudBatch(t *testing.T) {
 	testutil.IsolateGit(t)
 	t.Chdir(t.TempDir())
 	spec := &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other", Ref: "main",
 		Workflow: "svc", Task: "Render the sizzle reel",
-		Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceCatalog),
+		Recipe: &task.Recipe{Name: "impl", Source: string(recipe.SourceCatalog),
 			SHA256: recipe.Sum([]byte(implementRecipe)), YAML: implementRecipe}}
 
 	err := checkArtifactLaunch(context.Background(), &cloudEnv{be: backendNamed{codec: backend.BatchCodec()}}, spec)
-	if err == nil || !strings.Contains(err.Error(), artifactShadowedOnBatchRefusal("sizzle", "acme/other", "main")) {
+	if err == nil || !strings.Contains(err.Error(), artifactShadowedOnBatchRefusal("impl", "acme/other", "main")) {
 		t.Fatalf("a carried recipe whose ref cannot be read = %v, want the fail-closed refusal", err)
 	}
 	if ExitCode(err) != ExitUserError {
