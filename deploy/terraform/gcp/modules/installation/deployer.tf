@@ -20,8 +20,8 @@
 # condition on one binding cannot fence permissions an unconditioned binding of
 # the same role already grants project-wide.
 #
-# ONE BINDING PER SERVICE (0.10.0 redesign, docs/design/managed-deployer-fence.md).
-# Until 0.10.0 the conditioned half was ONE role, fugaroDeployerScoped, under one
+# ONE BINDING PER SERVICE (0.9.6 redesign, docs/design/managed-deployer-fence.md).
+# Until 0.9.6 the conditioned half was ONE role, fugaroDeployerScoped, under one
 # condition, and that condition could not be applied: it joined 9 clauses with
 # 17 logical operators where IAM allows 12, it called resource.name.contains(),
 # which is not a supported function (startsWith, endsWith, extract, == and !=
@@ -43,8 +43,11 @@
 # (a Cloud Run operation, for instance: a poll the provider makes may need one,
 # and it fails closed rather than being granted unfenced).
 #
-# GATED OFF (owner's ruling, 2026-10-18: "Gate it off by default; redesign for
-# 0.9.0"). The seven conditioned roles and their seven bindings exist only when
+# GATED OFF since 0.8.6 (owner's ruling, 2026-10-18: "Gate it off by default;
+# redesign for 0.9.0" — moved to 0.9.5 by the owner's ruling of 2026-10-19 and
+# to 0.9.6 by the owner's ruling of 2026-10-20, so 0.9.0 and 0.9.5 ship with the
+# scoped half still gated off, as 0.8.6 and 0.8.7 do). The seven conditioned
+# roles and their seven bindings exist only when
 # var.managed_deployer_scoped is true, and nothing sets it, because the
 # redesigned fence has not been measured live yet. Until it is (Check 68 of
 # docs/gcp-live-checklist.md, which is written and NOT RUN), the account, the

@@ -129,9 +129,10 @@ const catalogSince = "0.7.5"
 const catalogShipped = false
 
 // managedDeployerShipped is false until the release that ships a managed
-// deployer IAM can actually create: 0.10.0, by the owner's ruling of
-// 2026-10-19, which moved the redesign off 0.9.0 (the ruling of 2026-10-18,
-// "Gate it off by default; redesign for 0.9.0"), so 0.9.0 ships with the
+// deployer IAM can actually create: 0.9.6, by the owner's ruling of
+// 2026-10-20, which moved the redesign off 0.9.5 (the ruling of 2026-10-19 had
+// moved it off 0.9.0, where the ruling of 2026-10-18 put it: "Gate it off by
+// default; redesign for 0.9.0"). 0.9.0 and 0.9.5 therefore ship with the
 // scoped half still gated off, as 0.8.6 and 0.8.7 do. The deployer's
 // scoped half is now seven per-service custom roles, each bound exactly once
 // under its own condition, whose 0.8.6 shape GCP rejected as written (one

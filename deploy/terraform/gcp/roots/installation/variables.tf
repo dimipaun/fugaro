@@ -133,7 +133,7 @@ variable "enable_budget" {
 
 variable "managed_deployer_scoped" {
   # The managed deployer's seven scoped roles and their seven conditioned
-  # bindings — the 0.10.0 redesign of the fence. Before 0.10.0 this flag created
+  # bindings — the 0.9.6 redesign of the fence. Before 0.9.6 this flag created
   # one scoped role under one condition, and that condition could not be
   # expressed as a GCP IAM condition at all. Off by default, and fugaro init
   # never sets it: the gate has never been flipped. An installation that does

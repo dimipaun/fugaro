@@ -1250,7 +1250,7 @@ func TestDeployerExtractRuleIsRecordedAsUnverified(t *testing.T) {
 	// Every file that states the rule: each may state the reading, and none may
 	// promote it to a citation. The phrases are the ones the settled label was
 	// written in. docs/design/managed-projects.md is here because the round-5
-	// revert left its 0.10.0 note saying C7 was "settled by the documented
+	// revert left its 0.9.6 note saying C7 was "settled by the documented
 	// semantics" — a security-relevant reading the design of record holds
 	// UNVERIFIED — and a scan that stopped at the module and this package could
 	// not see it.
