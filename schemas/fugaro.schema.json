@@ -131,6 +131,20 @@
         "allow_public": { "type": "boolean", "description": "Allow follow-ups on a public repository, where anyone can comment." }
       }
     },
+    "rigor": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How much cost this repository's runs accept to reduce risk (docs/rigor-modes/spec.md). A default, not a floor: the project layer's defaults.rigor may set both keys too, and the narrowest layer that sets one wins.",
+      "properties": {
+        "default": { "$ref": "#/$defs/rigorMode", "description": "The mode a run of this repository resolves to when nothing narrower decides. Absent: the project layer's defaults.rigor.default, else Fugaro's own default (pro). Needs fugaro 0.11.0." },
+        "areas": {
+          "type": ["array", "null"],
+          "maxItems": 100,
+          "description": "Named path rules: the mode a run resolves to when the paths it touches match one. Both layers' lists are in effect (a union, not a replacement), the strictest matched rule decides, and a rule is matched with the same doublestar globs workflows.*.rebuild.paths uses. Needs fugaro 0.11.0.",
+          "items": { "$ref": "#/$defs/rigorArea" }
+        }
+      }
+    },
     "workflows": {
       "type": "object",
       "minProperties": 1,
@@ -139,6 +153,22 @@
     }
   },
   "$defs": {
+    "rigorMode": {
+      "type": "string",
+      "enum": ["poc", "startup", "pro", "critical", "hotfix"],
+      "description": "A rigor mode, spelled exactly as fugaro's own vocabulary spells it (internal/rigor): poc, startup, pro, critical, hotfix. A near miss (\"Poc\", \"PRO\") is refused where it is written, never read as an unknown mode."
+    },
+    "rigorArea": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "match", "mode"],
+      "description": "One rigor.areas rule: a name to print, a doublestar path glob relative to the repository root, and the mode it sets.",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$", "description": "The rule's name, which the run record, the pull request body and fugaro watch print when they say which rule decided. 1 to 40 characters of letters, digits, space, dash, underscore and dot, starting with a letter or a digit." },
+        "match": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^/\\s]", "not": { "pattern": "(^|/)\\.\\.(/|$)" }, "description": "A doublestar path glob relative to the repository root, matched against the paths the run changed. The same rule workflows.*.rebuild.paths follows: not empty, not absolute, no \"..\" component, and a pattern doublestar validates." },
+        "mode": { "$ref": "#/$defs/rigorMode", "description": "The mode this rule sets for the paths it matches." }
+      }
+    },
     "modelName": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" },
     "githubUserID": {
       "description": "A GitHub numeric user ID, which a rename doesn't change (gh api users/<login> --jq .id).",

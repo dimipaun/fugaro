@@ -24,19 +24,23 @@ import (
 // rule that silently never fires. The paths it is matched against are
 // repository-relative, which is what runstore.Record.ChangedFiles holds.
 type Area struct {
-	Name  string `yaml:"name"`
-	Match string `yaml:"match"`
-	Mode  Mode   `yaml:"mode"`
+	Name  string `yaml:"name" json:"name"`
+	Match string `yaml:"match" json:"match"`
+	Mode  Mode   `yaml:"mode" json:"mode"`
 }
 
-// Bounds on a rule's two pieces of text. Both reach the run record, and
-// Match also reaches the pull request body when a rule decides a run, so
-// neither is unbounded.
+// Bounds on a rule's two pieces of text and on how many rules a layer may
+// write. All three reach the run record, and Match also reaches the pull
+// request body when a rule decides a run, so none is unbounded.
 const (
 	// MaxAreaName bounds a rule's name.
 	MaxAreaName = 40
 	// MaxAreaPattern bounds a rule's glob.
 	MaxAreaPattern = 200
+	// MaxAreas bounds a layer's list of rules. The matched subset of it is
+	// what the run record, the pull request body and fugaro watch print, so
+	// the list a run can be made to carry is bounded where it is written.
+	MaxAreas = 100
 )
 
 // areaNameRE is what an area name may be: a short label of letters, digits,
@@ -73,14 +77,16 @@ func (a Area) Validate() string {
 	case !doublestar.ValidatePattern(a.Match):
 		return "is not a valid glob pattern"
 	case !Known(a.Mode):
-		return "mode must be one of " + modeList()
+		return "mode must be one of " + ModeList()
 	}
 	return ""
 }
 
-// modeList is the vocabulary as an error names it: "poc, startup, pro,
-// critical, hotfix".
-func modeList() string {
+// ModeList is the vocabulary as an error names it: "poc, startup, pro,
+// critical, hotfix". One spelling of the set, read by every refusal that has
+// to say what a value should have been — this package's and
+// internal/config's, which validates the two layers' rigor blocks.
+func ModeList() string {
 	names := make([]string, len(Modes))
 	for i, m := range Modes {
 		names[i] = string(m)

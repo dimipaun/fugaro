@@ -18,6 +18,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // The project layer (docs/design/layered-config.md): one object per project
@@ -70,10 +71,21 @@ type ProjectLayer struct {
 }
 
 // LayerDefaults are the project-wide values of the repository keys the
-// project layer may set (scope project).
+// project layer may set (scope project). Rigor is the third since 0.11.0:
+// default is the mode a repository that writes none takes, and areas are
+// rules that stay in effect beside the repository's own (D20c).
 type LayerDefaults struct {
 	Git   LayerGit   `yaml:"git"`
 	Agent LayerAgent `yaml:"agent"`
+	Rigor LayerRigor `yaml:"rigor"`
+}
+
+// LayerRigor is defaults.rigor: the same two keys the repository's own
+// rigor: block carries, because either layer may set either of them
+// (docs/project-layer.md §5).
+type LayerRigor struct {
+	Default rigor.Mode   `yaml:"default"`
+	Areas   []rigor.Area `yaml:"areas"`
 }
 
 // LayerGit is defaults.git.
@@ -556,6 +568,7 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	if badUSD(ag.MaxBudgetUSD) {
 		add("defaults.agent.max_budget_usd", "must be a finite number, not negative")
 	}
+	ps = append(ps, validateRigor("defaults.rigor", d.Rigor.Default, d.Rigor.Areas)...)
 	for _, p := range validateAgentModels(Agent{Model: ag.Model, Models: ag.Models}) {
 		p.Path = "defaults." + p.Path
 		ps = append(ps, p)
