@@ -1042,16 +1042,22 @@ test('the word reader counts what a reader reads, and nothing else', (t) => {
  * D188's own words-per-page ceiling, the number the raise above it is measured against: 250 as
  * D188 set it, 300 since the owner's feedback of 2026-10-19 asked the homepage for a fourth
  * required block (its benefits section — headed "Why Fugaro?" since the owner's ruling of
- * 2026-10-20 — 294 words with the three before it), and **500 since the bold redesign of
+ * 2026-10-20 — 294 words with the three before it), **500 since the bold redesign of
  * 2026-10-20**, which is the owner's approved board `website/design-ref/HomeV3.dc.html` built:
  * the homepage is the board's five blocks — the hero, the slider, the run band, the grid of
  * what a run leaves behind, and the closing call to action — and they measure 468 words, so
  * the smallest round ceiling above the page that carries every block its briefs and its boards
- * require is 500. D188's own rule is what moves it and not convenience: the number is the
+ * require is 500 — and **600 since the 2026-10-21 brief**, which asks the homepage's "See it"
+ * panel for a slider of four slides led by the console's own screenshots
+ * (`docs/website/zoom-diagrams/spec.md`, D251, D252): the three pictures that lead it are the
+ * console page's, so they carry the console page's own `alt` texts — one picture has one
+ * account of what it shows — and an image's `alt` is text a reader reads, which is the whole
+ * of what the four slides add to the page: 461 → 563 words, and the smallest round ceiling
+ * above it is 600. D188's own rule is what moves it and not convenience: the number is the
  * ceiling above the page that carries the required blocks, and a page that wants the room has
- * to carry one. website/README.md records both readings beside the words line.
+ * to carry one. website/README.md records every reading beside the words line.
  */
-export const D188_WORDS = 500
+export const D188_WORDS = 600
 
 /** The one page the words ceiling is derived from, by its built URL. */
 const WORDS_CEILING_PAGE = '/privacy/'
