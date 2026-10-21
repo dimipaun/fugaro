@@ -1727,6 +1727,14 @@ func (r *run) agentLoop(ctx context.Context) {
 		sessionID = req.SessionID
 	}
 	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.cfg.Git.BaseBranch)
+	// The diff under review, as text, built here rather than left to the
+	// reviewer's own git: a reviewer that reads a changed binary file puts
+	// its bytes in the next request, which the budget gateway refuses for a
+	// model with no image rate (reviewinput.go). Both the cheap loop and the
+	// senior loop get it, as they got the same prompt before.
+	if input := r.reviewInputBlock(ctx); strings.TrimSpace(input) != "" {
+		reviewPrompt += "\n\n" + input
+	}
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add

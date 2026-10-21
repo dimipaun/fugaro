@@ -290,7 +290,13 @@ func stripClaudeConfig(dir string) error {
 // asked to resolve /name from the reviewed checkout itself. Passing "" for
 // that argument is what makes ReviewPrompt/PickPrompt fall through to the
 // promptFile branch instead of the leading-slash one.
-func (r *run) reviewModePrompt() string {
+// input is the review stage's built input for the single-pull-request case
+// (reviewinput.go), appended last: it is the longest part of the prompt by
+// far. A pick run passes "" — its attempts are worktrees beside the main
+// checkout, which no head has been checked out into, so there is no range to
+// build a diff from (and PickPrompt carries the rule about binary files
+// instead).
+func (r *run) reviewModePrompt(input string) string {
 	var p string
 	if len(r.reviewHeads) == 1 {
 		p = ReviewPrompt("", r.reviewFile, r.cfg.Git.BaseBranch)
@@ -304,6 +310,9 @@ func (r *run) reviewModePrompt() string {
 	}
 	if task := strings.TrimSpace(r.spec.Task); task != "" {
 		p += "\n\nAdditional instructions from the launcher:\n\n" + task
+	}
+	if strings.TrimSpace(input) != "" {
+		p += "\n\n" + input
 	}
 	return p
 }
@@ -420,7 +429,13 @@ func (r *run) reviewMode(ctx context.Context) {
 		r.failReviewInfra(ctx, err)
 		return
 	}
-	req := agent.Request{Prompt: r.reviewModePrompt(), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+	// The built input is the reviewed pull request's own diff, read from the
+	// checkout reviewMode's line above put its head in (reviewinput.go).
+	input := ""
+	if len(r.reviewHeads) == 1 {
+		input = r.reviewInputBlock(ctx)
+	}
+	req := agent.Request{Prompt: r.reviewModePrompt(input), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 	res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
 	r.countTokens(res)
 	if !ok {
