@@ -552,14 +552,23 @@ func accountsClear(cmd *cobra.Command, o accountsClearOptions, name string) erro
 		// "Another state" includes the other clearable one. Broken and
 		// exhausted are two different holds — one ends by itself at the reset
 		// time the upstream gave, the other is a 401 only an operator ends —
-		// and the service writes either over either (creds.Exhaust takes a
-		// broken mark to exhausted, creds.Break takes an exhausted one to
-		// broken, and the cascade's record path calls both). Clearing "one of
-		// the two" here would let a clear the operator confirmed for an
-		// exhausted mark wipe a broken one recorded meanwhile, putting a
-		// refused token back in the cascade's rotation — which is the failure
-		// this re-decision exists to prevent, and the confirmation's own words
-		// ("clear the exhausted mark of …") are what it must be held to.
+		// and exactly one of the two flips is reachable under this write:
+		// creds.Break takes no previous mark, so the 401 path writes broken
+		// over whatever is there, and an exhausted mark the operator read can
+		// be broken by the time this callback runs. Clearing "one of the two"
+		// here would let a clear the operator confirmed for an exhausted mark
+		// wipe a broken one recorded meanwhile, putting a refused token back
+		// in the cascade's rotation — which is the failure this re-decision
+		// exists to prevent, and the confirmation's own words ("clear the
+		// exhausted mark of …") are what it must be held to.
+		//
+		// The other direction is not a transition this release makes and this
+		// guard does not depend on it: Exhaust returns a broken mark unchanged
+		// and so does ProbeFailed, and ProbeSucceeded applies only to a
+		// backed-off mark. That refusal is what keeps a 429, or a probe, from
+		// taking a 401 off (C1.21), and nothing here may be read as
+		// contradicting it — a broken mark that reaches this callback is
+		// refused below, whichever state the confirmation named.
 		switch {
 		case cur.State == prev.State:
 			return creds.Cleared(), nil

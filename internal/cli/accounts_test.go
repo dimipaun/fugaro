@@ -835,14 +835,18 @@ func TestAccountsClearReDecidesUnderTheWrite(t *testing.T) {
 // The state the write lands on must be the state the operator CONFIRMED, and
 // not merely one of the two an operator may clear. Exhausted and broken are
 // different holds — one ends at a reset time by itself, the other is a 401 only
-// an operator ends — and the service writes either over either (creds.Exhaust
-// takes a broken mark to exhausted, creds.Break takes an exhausted one to
-// broken, and the cascade's own record path calls both). A clear confirmed for
-// "exhausted until 14:00" that lands on a broken mark the service recorded
-// meanwhile would take off the newer hold and put a refused token back in the
-// cascade's rotation: the same failure the test above covers, one state over,
-// and the one the confirmation's own words ("clear the exhausted mark of …")
-// do not cover.
+// an operator ends — and the reachable flip is exhausted to broken: creds.Break
+// is what the 401 path writes and it takes no previous mark, so an exhausted
+// mark becomes broken at any moment, including between the read the
+// confirmation was worded from and the write. (Broken to exhausted is not a
+// transition this release makes — Exhaust and ProbeFailed return a broken mark
+// unchanged, ProbeSucceeded applies only to a backed-off one — and that refusal
+// is what keeps a 429 or a probe from taking a 401 off; the guard below is the
+// same direction, not its opposite.) A clear confirmed for "exhausted until
+// 14:00" that landed on a broken mark the service recorded meanwhile would take
+// off the newer hold and put a refused token back in the cascade's rotation:
+// the same failure the test above covers, one state over, and the one the
+// confirmation's own words ("clear the exhausted mark of …") do not cover.
 func TestAccountsClearRefusesTheOtherClearableState(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.appendConfig(t, claudeAccountsConfig)
