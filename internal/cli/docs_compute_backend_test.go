@@ -1,7 +1,12 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -532,7 +538,7 @@ func TestDocsComputeBackendNamesItsBase(t *testing.T) {
 	for _, want := range []string{
 		"**The base is named as that branch and the commit it was cut from rather than as a remote-tracking ref, because a default clone does not carry the ref**",
 		"git fetch origin integration-0.9.5",
-		"the owner moved this work, and the managed redesign with it, out of 0.9.0",
+		"the owner moved this work out of 0.9.0, and moved the managed redesign out of it too — but **to a different release, and this plan does not carry it**",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s no longer says %q: the first is the shape the base is named in, the second is how a clone that does not carry the ref resolves it, and the third is why the base is the 0.9.5 line and not 0.9.0", computeBackendPlan, want)
@@ -2063,5 +2069,206 @@ func TestDocsSharedConfigStatesTheImageChecksExactly(t *testing.T) {
 	// restores the phrasing restores the overclaim with it.
 	if strings.Contains(readDoc(t, doc), "What the check leaves is an image in one of this installation's own repositories") {
 		t.Errorf("%s §5 claims the fugaro-ghcr refusal leaves an image in one of this installation's own repositories, which the reader does not enforce: it refuses one repository ID and passes the project's others", doc)
+	}
+}
+
+// TestComputeBackendPlanPlacesTheManagedRedesignRight: the plan's Fact 1 said the
+// owner moved this work "and the managed redesign with it" out of 0.9.0, which
+// reads as one placement for the two. They are not the same: this work is 0.9.5,
+// and the redesign is placed elsewhere — the number `internal/cli/recipes_skew.go`'s
+// `managedDeployerShipped` comment names, and the one `docs_managed_label_test.go`
+// and `shipped_gates_test.go` pin in the managed documents. A plan that gives a
+// second answer for the redesign's release is read by whoever schedules the
+// fence's flip, so the number here is taken from the constant's own comment
+// rather than written into this test.
+//
+// Mutations (verified, run and restored): put "and the managed redesign with it"
+// back into Fact 1 — the first check fails naming it; change the release the plan
+// states to another number — the second check fails naming both.
+func TestComputeBackendPlanPlacesTheManagedRedesignRight(t *testing.T) {
+	gate, err := os.ReadFile("recipes_skew.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl := regexp.MustCompile(`(?s)managedDeployerShipped is false until the release[^.]*?(\d+\.\d+\.\d+)`).FindStringSubmatch(string(gate))
+	if decl == nil {
+		t.Fatal("recipes_skew.go's managedDeployerShipped comment no longer names the release the redesign ships in: this test reads the tree's own answer from there")
+	}
+	release := decl[1]
+	doc := readDoc(t, computeBackendPlan)
+	// The reading that made the two look like one placement: this work's release
+	// is 0.9.5 and the redesign's is not, so a sentence that moves them together
+	// is the defect this test exists for.
+	if strings.Contains(doc, "managed redesign with it") {
+		t.Errorf("%s says the owner moved this work \"and the managed redesign with it\" out of 0.9.0: the redesign is placed in %s (recipes_skew.go's managedDeployerShipped comment), not in this work's release, so the sentence gives a reader two answers for one release", computeBackendPlan, release)
+	}
+	// The placement itself, as a number rather than as a phrase this test would
+	// otherwise be pinning: the plan says where the redesign lands, and that
+	// number is the tree's.
+	placed := regexp.MustCompile(`redesign is placed in \*\*(\d+\.\d+\.\d+)\*\*`).FindStringSubmatch(doc)
+	if placed == nil {
+		t.Errorf("%s does not state the managed redesign's own placement: it mentions the redesign without saying which release it lands in, and the tree's answer is recipes_skew.go's managedDeployerShipped comment", computeBackendPlan)
+	} else if placed[1] != release {
+		t.Errorf("%s places the managed redesign in %s, and recipes_skew.go's managedDeployerShipped comment places it in %s: one release, one answer", computeBackendPlan, placed[1], release)
+	}
+}
+
+// TestDocsComputeBackendSaysWhichWatchShowsTheDerivation: the design and the
+// plan both used to say the derived `failed (preempted)` reading shows in
+// `runs ls`, `fugaro watch` and `fugaro diagnose RUN` — and of the two watches
+// only the **degraded** one can show it. `fugaro watch` with a budget backend
+// builds its rows from the Realtime Database plus the queued scanner, and that
+// scanner opens the runs bucket alone and never the compute backend
+// (watch_queued.go's `openQueueBucket`; design watch-queued.md §3, which is a
+// permission boundary and not an oversight: the scanner works for a launcher or
+// operator who holds no compute role), so it holds no job report and has no
+// preemption to read. The wording is what a later reader implements against, so
+// the overclaim is held absent and the true surfaces are held present.
+//
+// Mutation (restore the old sentence in either document, or drop the debt
+// sentence from the design): the matching assertion fails.
+//
+// The boundary the sentence rests on is the code's, so it is enforced by
+// TestTheQueuedScannerOpensNoComputeBackend rather than by a second
+// assertion here: the documents and the scanner's permission boundary have to
+// move together, and that test is what fails when only one of them does.
+func TestDocsComputeBackendSaysWhichWatchShowsTheDerivation(t *testing.T) {
+	// The overclaim, verbatim as the two documents carried it: all three
+	// surfaces in one list. It flattens across the design's line break.
+	const overclaim = "`runs ls`, `fugaro watch` and `fugaro diagnose RUN`"
+	for _, path := range []string{"docs/design/compute-backend.md", computeBackendPlan} {
+		doc := flattenDoc(readDoc(t, path))
+		if strings.Contains(doc, overclaim) {
+			t.Errorf("%s still says the derived status shows in %s: the live watch's queued scanner never opens the compute backend, so it cannot read a preemption — only the degraded mode (which reads runs as `runs ls` does) shows it", path, overclaim)
+		}
+		for _, want := range []string{"degraded mode", "never opens the compute backend"} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s no longer says %q of the preempted reading: the reader has to be told which watch shows it and why the other one cannot", path, want)
+			}
+		}
+	}
+	// And the debt the design owes the same reader: the history sweep writes its
+	// own word for the same run, so the two views disagree about the word and
+	// agree that the run did not finish.
+	design := flattenDoc(readDoc(t, "docs/design/compute-backend.md"))
+	if !strings.Contains(design, "`infra_error` outcome in the history database (`internal/budget/sweep.go`)") {
+		t.Errorf("docs/design/compute-backend.md no longer says a preempted run's history sweep records an `infra_error` outcome for the same run: `runs ls` reads `failed (preempted)` while the history view says infra_error, and a reader told only the first would think the two agree")
+	}
+}
+
+// queueBucketCalls returns the dotted name of every call in the body of
+// watch_queued.go's openQueueBucket: "blobx.Open" for blobx.Open(...), and so
+// on. The file is parsed rather than grepped, because the answer has to be the
+// code the scanner runs: a comment beside the function is not what opens a
+// bucket, and a grep for a comment passes with the comment left in place and
+// the compute backend opened under it.
+func queueBucketCalls(t *testing.T) []string {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "../../internal/cli/watch_queued.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body *ast.BlockStmt
+	ast.Inspect(f, func(n ast.Node) bool {
+		vs, ok := n.(*ast.ValueSpec)
+		if !ok || len(vs.Names) != 1 || vs.Names[0].Name != "openQueueBucket" || len(vs.Values) != 1 {
+			return true
+		}
+		lit, ok := vs.Values[0].(*ast.FuncLit)
+		if !ok {
+			return true
+		}
+		body = lit.Body
+		return false
+	})
+	if body == nil {
+		t.Fatalf("internal/cli/watch_queued.go no longer declares `var openQueueBucket = func(...)`: the queued scanner's one open was restructured, and this test reads the permission boundary off its body, so the test has to be moved to whatever replaced it")
+	}
+	var calls []string
+	ast.Inspect(body, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			if name := calleeName(call.Fun); name != "" {
+				calls = append(calls, name)
+			}
+		}
+		return true
+	})
+	return calls
+}
+
+// calleeName names the callee of a call expression: the identifier itself for
+// a plain call, the dotted name for one through a package or a receiver, and
+// "" for anything this test does not try to follow.
+func calleeName(e ast.Expr) string {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x.Name
+	case *ast.SelectorExpr:
+		if pre := calleeName(x.X); pre != "" {
+			return pre + "." + x.Sel.Name
+		}
+	}
+	return ""
+}
+
+// TestTheQueuedScannerOpensNoComputeBackend holds the permission boundary
+// docs/design/compute-backend.md §1.3's sentence about which watch shows a
+// preempted run is written against: the live watch's queued scanner reads the
+// runs bucket alone, so it holds no job report and has no preemption to derive
+// (design watch-queued.md §3, a boundary rather than an oversight: the scanner
+// works for a launcher or an operator who holds no compute role).
+//
+// Both facts are read off the code, not off a comment beside it, because the
+// comment is what a change would leave behind: the calls the one open the
+// scanner makes actually reach, and the env the production connect turns that
+// open into. A scanner that started opening the compute backend — inside
+// openQueueBucket, or by attaching the handle in connect — fails one of the two.
+//
+// Mutations (both verified, run and restored): add a call to the body of
+// openQueueBucket (say `if _, err := openCloudFor(ctx, lc); err != nil {...}`)
+// and the calls assertion fails naming it; attach a backend to the env connect
+// builds and the second assertion fails naming it.
+func TestTheQueuedScannerOpensNoComputeBackend(t *testing.T) {
+	const why = "the queued scanner opens the runs bucket alone (design watch-queued.md §3, the permission boundary the design's sentence about which watch shows a preempted run is written against)"
+	calls := queueBucketCalls(t)
+	for _, c := range calls {
+		if c != "blobx.Open" && c != "lc.BucketURL" {
+			t.Errorf("openQueueBucket calls %s, and %s: a call that can reach the compute backend makes the design's sentence wrong in the other direction, and makes the mode that works without the compute role pay for a role it does not have", c, why)
+		}
+	}
+	for _, want := range []string{"blobx.Open", "lc.BucketURL"} {
+		if !slices.Contains(calls, want) {
+			t.Errorf("openQueueBucket no longer calls %s: %s, and it has to open that bucket to read the queued rows at all", want, why)
+		}
+	}
+
+	// The other half: the env that open is turned into. connect is the
+	// production one (newQueuedScanner wires it to the production open), and
+	// the bucket is a file:// one — the shape watch's own child-process test
+	// runs against — so no credential and no cloud call is involved.
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	dir := t.TempDir()
+	marker := filepath.Join(dir, filepath.FromSlash(infra.ProjectMarkerObject))
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: "queuedscan", GCPProject: "proj-queued"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := newQueuedScanner(&localcfg.Config{Name: "queuedscan", GCPProject: "proj-queued", Bucket: "file://" + dir}, "acme/app")
+	defer s.Close()
+	env, err := s.connect(context.Background())
+	if err != nil {
+		t.Fatalf("the queued scanner could not open a local runs bucket whose marker names it: %v", err)
+	}
+	if env.bucket == nil {
+		t.Errorf("connect built an env with no runs bucket: %s, and the queued rows are read from that bucket", why)
+	}
+	if env.be != nil {
+		t.Errorf("connect built an env holding a compute backend (%T), and %s: deriving a role's data there is what the degraded watch does instead", env.be, why)
 	}
 }

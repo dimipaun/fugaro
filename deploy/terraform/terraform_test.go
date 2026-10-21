@@ -76,6 +76,41 @@ func TestProjectJobTftestTitlesAreTheOnesInternalInfraWrites(t *testing.T) {
 	}
 }
 
+// TestProjectJobTftestAppKeyNameIsTheOneInternalInfraWrites: the tftest run
+// shared_job_mounting_the_app_key_keeps_the_accessor asserts the module's
+// secretAccessor member by the App key's project-wide container name, exactly
+// like the job names and condition titles above — and a name spelled here that
+// internal/infra never writes would make that assertion consistent with itself
+// and with nothing else. The installation's secrets map is where that name
+// comes from (internal/infra/testdata/installation-accounts.tfvars.json's
+// "github-app-key" entry), and internal/infra builds it with
+// gcp.ProjectSecretID from the Fugaro project name.
+//
+// Mutation (run, restore): change one hex digit of the name in the tftest and
+// this fails; change internal/infra's naming and the tftest's run fails at
+// terraform test time, since the module would grant the name the map holds
+// while the run asserts the literal.
+func TestProjectJobTftestAppKeyNameIsTheOneInternalInfraWrites(t *testing.T) {
+	const path = "gcp/roots/installation/tests/project_job.tftest.hcl"
+	data, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	// The run's own secrets map, so this pairs the literal with the run that
+	// asserts it rather than with any other name in the file.
+	re := regexp.MustCompile(`github-app-key\s*=\s*"([^"]+)"`)
+	matches := re.FindAllStringSubmatch(string(data), -1)
+	if len(matches) == 0 {
+		t.Fatalf("%s spells no github-app-key container: the run this test checks is gone or reworded, and the review's [low] item — the shared job account's retention, pinned by a run and not only by a plan paragraph — would be unguarded again", path)
+	}
+	want := gcp.ProjectSecretID("aurora", config.GitHubAppKeySecret)
+	for _, m := range matches {
+		if m[1] != want {
+			t.Errorf("%s: the App key's project-wide container is %q, want %q (gcp.ProjectSecretID for the tftest's fugaro_project and config.GitHubAppKeySecret): the installation's secrets map holds the latter, so a member asserted by the former is a grant the plan would never create", path, m[1], want)
+		}
+	}
+}
+
 // The embedded tree is what fugaro init writes into its workdir, so every
 // root, module and lock file it needs must be in it. Each task that adds a
 // root or module adds its paths here.
@@ -1232,11 +1267,11 @@ var (
 	// A custom role of this project, spelled as the literal path
 	// "projects/${var.project}/roles/<id>" rather than read from the role
 	// resource's own name attribute. Task 1.5 step 5: the creating apply plans
-	// the deployer's two roles, and a project grant whose role is computed
-	// cannot be told from the scoped one, whose IAM condition is the whole
-	// fence around the account — so the five project grants planned by that
-	// same apply (the deployer's two, the launchers', the build submitters'
-	// and the history account's) name their role literally instead. var.project
+	// the deployer's eight roles, and a project grant whose role is computed
+	// cannot be told from a conditioned one, whose IAM condition is the whole
+	// fence around the account — so the project grants planned by that same
+	// apply (the deployer's eight, the launchers', the build submitters' and
+	// the history account's) name their role literally instead. var.project
 	// is known at plan time, and the ID must be one the modules create
 	// (tf.FugaroRoles), checked below.
 	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.project\}/roles/([A-Za-z0-9_.]+)"$`)
@@ -1529,18 +1564,19 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 				}
 				continue
 			}
-			// The deployer's two roles (installation/deployer.tf, D75) hold
+			// The deployer's roles (installation/deployer.tf, D75) hold
 			// permissions this ban exists to keep out of Fugaro's own custom
 			// roles: IAM, serviceusage and apikeys permissions, and a
 			// resource-level setIamPolicy. That is the owner's answer of
 			// 2026-10-16, and the bound on them is elsewhere and is exact:
-			// tf.RolePermissions pins both lists permission for permission
+			// tf.RolePermissions pins every list permission for permission
 			// (internal/infra/tf/cover_test.go) with a fixture that refuses a
-			// widening, and both are bound to one account, the scoped one only
-			// under the managed-prefix condition. The deployer is not an
-			// installation role: it holds nothing project-wide but creation
-			// and reads.
-			if blk.name == "google_project_iam_custom_role.fugaro_deployer" || blk.name == "google_project_iam_custom_role.fugaro_deployer_scoped" {
+			// widening, and each of the eight is bound to one account, the
+			// seven conditioned ones only under the managed-prefix fence of
+			// their own service (docs/design/managed-deployer-fence.md). The
+			// deployer is not an installation role: it holds nothing
+			// project-wide but creation and reads.
+			if strings.HasPrefix(blk.name, "google_project_iam_custom_role.fugaro_deployer") {
 				continue
 			}
 			if blk.name == "google_project_iam_custom_role.token_minter" {
@@ -3626,6 +3662,31 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 		t.Errorf("%s: a condition outside the account's precondition. Q6 replaced the name-prefix fence and the secretId filter with one unconditioned grant on one container:\n%s", path, rest)
 	}
 
+	// Every resource in the file is gated on the one boolean, which is what the
+	// header's "keeps the four resources of this file in step" means: a resource
+	// added without it is created in an installation that never opted in.
+	// TestCredentialsServiceResourcesAreCounted reads the same promise from the
+	// other end — the sentence's number against the file — and this sweep is
+	// kept beside it because it reads the gate itself, the exact expression and
+	// not the boolean's name, so a resource that mentions the boolean without
+	// counting on it is caught here and not there.
+	gated := 0
+	for _, m := range resourceHeader.FindAllStringSubmatchIndex(code, -1) {
+		end := matchBrace(code, m[1]-1)
+		if end < 0 {
+			t.Fatalf("%s: unbalanced braces in %s.%s", path, code[m[2]:m[3]], code[m[4]:m[5]])
+		}
+		body := squash(code[m[1]:end])
+		if !strings.Contains(body, "count = local.credentials_service_on ? 1 : 0") {
+			t.Errorf("%s: %s.%s is not gated on local.credentials_service_on, so it is created in an installation that never opted in:\n%s", path, code[m[2]:m[3]], code[m[4]:m[5]], body)
+			continue
+		}
+		gated++
+	}
+	if gated != len(resourceHeader.FindAllString(code, -1)) {
+		t.Fatalf("%s: %d of the file's resources were read as gated; the sweep above is not covering the file", path, gated)
+	}
+
 	if !strings.Contains(code, "service_account = google_service_account.credentials[0].email") {
 		t.Errorf("%s: the service must run as its own account", path)
 	}
@@ -3636,18 +3697,110 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 	}
 }
 
-// TestModelSecretEnvsMatchTheCredentialsService pins the three literals in
-// modules/workflow/sa.tf — the two variable names and the provider-key prefix
-// — to internal/config, and the drop they drive to the opt-in. Terraform
-// cannot ask Go, so the module spells the names out; this test is what keeps
-// the two spellings one rule (the TestLauncherConditionPreconditionMatchesGo
-// precedent).
+// TestCredentialsServiceResourcesAreCounted reads the sentence that counts
+// this file's own resources — locals' "a single boolean keeps the four
+// resources of this file in step" — against the file. It said five while the
+// file declared four, and nothing read it: a number a reader is meant to trust
+// is a claim, and this is where it is checked rather than believed.
 //
-// The mutation is either list: rename a reserved key in Go and the module's
-// literal keeps dropping the accessor of a variable no job has, while the
-// renamed one keeps it — the job's account then reads a model credential the
-// service was supposed to be the only holder of.
-func TestModelSecretEnvsMatchTheCredentialsService(t *testing.T) {
+// Both directions are the point. A resource added to the file without the
+// sentence is a resource the sentence no longer accounts for; a resource added
+// WITHOUT the opt-in's gate is worse — the file's first promise is that with
+// var.credentials_service null it creates nothing (D147) — so every resource in
+// it must be gated on the one boolean, and the count must be the whole file's.
+//
+// Mutation (run, restore): a fifth resource block in credentials.tf fails both
+// assertions ("declares 5 ... and says four", and the ungated one), and
+// reverting the word to "five" fails the count.
+func TestCredentialsServiceResourcesAreCounted(t *testing.T) {
+	const path = "gcp/modules/installation/credentials.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+
+	// The sentence, from the raw source: the number lives in a comment, which
+	// stripComments blanks out.
+	m := resourceCountSentence.FindStringSubmatch(string(b))
+	if m == nil {
+		t.Fatalf("%s no longer says how many resources the opt-in keeps in step; that sentence is what this test reads, so it stays:\n%s", path, code)
+	}
+	want, ok := numberWords[m[1]]
+	if !ok {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			want, ok = n, true
+		}
+	}
+	if !ok {
+		t.Fatalf("%s: the sentence counts the file's resources as %q, which this test cannot read as a number: spell it as a word (one..ten) or a decimal, and keep it true", path, m[1])
+	}
+
+	// Every resource the file declares, whatever its type: the sentence is
+	// about the file, not about one kind of thing in it.
+	all := resourceHeader.FindAllStringSubmatchIndex(code, -1)
+	if len(all) == 0 {
+		t.Fatalf("%s declares no resource at all, and this test's subject is gone:\n%s", path, code)
+	}
+	if len(all) != want {
+		t.Errorf("%s declares %d resources and its own sentence says %d (\"%s\"): the number a reader trusts is the file's count", path, len(all), want, m[0])
+	}
+	// And every one of them is behind the one boolean: "keeps the N resources
+	// of this file in step" is a statement about all N, and the file's first
+	// promise is that a null var.credentials_service creates nothing.
+	for _, r := range all {
+		name := code[r[2]:r[3]] + "." + code[r[4]:r[5]]
+		open := r[1] - 1
+		end := matchBrace(code, open)
+		if end < 0 {
+			t.Fatalf("%s: unbalanced braces in %s", path, name)
+		}
+		if body := code[open+1 : end]; !strings.Contains(body, "local.credentials_service_on") {
+			t.Errorf("%s: %s is not gated on local.credentials_service_on, so a null var.credentials_service does not leave the file creating nothing (D147):\n%s", path, name, squash(body))
+		}
+	}
+}
+
+// resourceCountSentence is the sentence in credentials.tf's locals block that
+// counts the file's own resources: the number is what the test above reads.
+var resourceCountSentence = regexp.MustCompile(`keeps\s+the\s+(\w+)\s+resources\s+of\s+this\s+file`)
+
+// numberWords are the spellings of a count this test reads in prose.
+var numberWords = map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+	"six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+
+// TestServiceHeldSecretsMatchTheCredentialsService pins the four literals in
+// modules/workflow/sa.tf — the two model-credential variable names, the
+// provider-key prefix and the service-held logical names (empty on this branch,
+// the App key alone once C2.2's release fills them) — to internal/config, and
+// the drop they drive to the opt-in. Terraform cannot ask Go, so the module
+// spells the names out; this test is what keeps the two spellings one rule (the
+// TestLauncherConditionPreconditionMatchesGo precedent).
+//
+// The mutation is any one of the lists: rename a reserved key in Go and the
+// module's literal keeps dropping the accessor of a variable no job has, while
+// the renamed one keeps it — the job's account then reads a credential the
+// service was supposed to be the only holder of. The App key's clause (C2.3)
+// is the one the model lists cannot cover: it is a reserved logical name, not
+// a variable, so dropping it needs its own list, and a module that spells it
+// wrong leaves the job's account with the private key of the installation's
+// GitHub App.
+//
+// The accessor and the mount are one rule and are pinned as one (C2.3, review
+// finding F1): job_secret_names drops what the account may not read, and
+// job_mounts — the container's own env — drops what it may not mount, which is
+// the App key and only the App key, because C1.20 is the task that takes the
+// model credentials' mounts away with the runner's switch to the service.
+//
+// Both of those rules are keyed on service_held_secret_names, and the list is
+// EMPTY on this branch (review finding F1): the App key joins it in the release
+// that also stops the runner reading the key (C2.2), and until then the job
+// keeps the accessor and the mount it needs to run. The pin below is what keeps
+// the module's literal and config.ServiceHeldSecretNames one value, so that
+// release fills both in one commit — with the module's list filled and Go's
+// empty, the plan drops a grant the spec still produces (and the tftest run
+// credentials_service_on_github_app_key_stays fails).
+func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	const path = "gcp/modules/workflow/sa.tf"
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -3655,41 +3808,59 @@ func TestModelSecretEnvsMatchTheCredentialsService(t *testing.T) {
 	}
 	code := stripComments(string(b))
 
-	m := regexp.MustCompile(`model_secret_env_names\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(code)
-	if m == nil {
-		t.Fatalf("%s declares no model_secret_env_names list", path)
+	// quotedList is the strings in the list literal the pattern captures.
+	quotedList := func(pattern, what string) []string {
+		t.Helper()
+		m := regexp.MustCompile(pattern).FindStringSubmatch(code)
+		if m == nil {
+			t.Fatalf("%s declares no %s list", path, what)
+		}
+		var got []string
+		for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+			got = append(got, q[1])
+		}
+		slices.Sort(got)
+		return got
 	}
-	var got []string
-	for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
-		got = append(got, q[1])
+	equal := func(what string, got, want []string, goName string) {
+		t.Helper()
+		w := slices.Clone(want)
+		slices.Sort(w)
+		if !slices.Equal(got, w) {
+			t.Errorf("%s: %s = %v, config.%s = %v", path, what, got, goName, want)
+		}
 	}
-	want := slices.Clone(config.ModelSecretEnvs)
-	slices.Sort(got)
-	slices.Sort(want)
-	if !slices.Equal(got, want) {
-		t.Errorf("%s: model_secret_env_names = %v, config.ModelSecretEnvs = %v", path, got, want)
-	}
+
+	equal("model_secret_env_names",
+		quotedList(`model_secret_env_names\s*=\s*\[([^\]]*)\]`, "model_secret_env_names"),
+		config.ModelSecretEnvs, "ModelSecretEnvs")
+	equal("service_held_secret_names",
+		quotedList(`service_held_secret_names\s*=\s*\[([^\]]*)\]`, "service_held_secret_names"),
+		config.ServiceHeldSecretNames, "ServiceHeldSecretNames")
 
 	p := regexp.MustCompile(`model_secret_env_prefix\s*=\s*"([^"]*)"`).FindStringSubmatch(code)
 	if p == nil || p[1] != config.ProviderKeyEnvPrefix {
 		t.Errorf("%s: model_secret_env_prefix = %v, config.ProviderKeyEnvPrefix = %q", path, p, config.ProviderKeyEnvPrefix)
 	}
 
-	// And the drop itself, clause by clause: an env is a model credential
-	// exactly when it is one of the names OR it carries the provider-key
-	// prefix. Pinning the whole expression is the point — the two halves are
-	// what the review's mutation m1 removed, and with the prefix clause gone
-	// every FUGARO_PROVIDER_KEY_* secret keeps its job accessor, which is the
-	// one thing the opt-in exists to take away.
-	if !strings.Contains(squash(code), "env => contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix)") {
-		t.Errorf("%s: is_model_secret_env must be `contains(model_secret_env_names, env) || startswith(env, model_secret_env_prefix)`; either clause alone leaves a model credential's accessor with the job (review m1):\n%s", path, code)
+	// And the drop itself, clause by clause: a mount is a credential the
+	// service holds exactly when its VARIABLE is one of the model names, OR
+	// carries the provider-key prefix, OR its LOGICAL NAME is one the service
+	// holds. Pinning the whole expression is the point — the two model halves
+	// are what the review's mutation m1 removed, and with the prefix clause
+	// gone every FUGARO_PROVIDER_KEY_* secret keeps its job accessor, which is
+	// the one thing the opt-in exists to take away; the name clause (C2.3) is
+	// the App key, whose variable is a reserved name the model lists must never
+	// grow to cover (D145 keeps Bitbucket's token with the job, F7).
+	if !strings.Contains(squash(code), "env => contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix) || contains(local.service_held_secret_names, logical)") {
+		t.Errorf("%s: is_service_held must be `contains(model_secret_env_names, env) || startswith(env, model_secret_env_prefix) || contains(service_held_secret_names, logical)`; a missing clause leaves that credential's accessor with the job (review m1, C2.3):\n%s", path, code)
 	}
 
 	// The drop is gated on the opt-in, in the same expression that reads the
 	// names: with credentials_service null the set is the workflow's own
 	// secret_env and nothing changes (D147).
-	if !strings.Contains(squash(code), "logical if var.credentials_service == null || !local.is_model_secret_env[env]") {
-		t.Errorf("%s: the job's secret set must be the workflow's own secret_env while the credentials service is off, and drop the model credentials only when it is on:\n%s", path, code)
+	if !strings.Contains(squash(code), "logical if var.credentials_service == null || !local.is_service_held[env]") {
+		t.Errorf("%s: the job's secret set must be the workflow's own secret_env while the credentials service is off, and drop the credentials it holds only when it is on:\n%s", path, code)
 	}
 
 	// And the grant the job gains: one invoker grant, on the one service the
@@ -3712,6 +3883,28 @@ func TestModelSecretEnvsMatchTheCredentialsService(t *testing.T) {
 	}
 	if strings.Contains(grant, "condition") {
 		t.Errorf("%s: the job's invoker grant carries a condition; the service's own ID-token check is what decides which of the accounts IAM admits are served (Q6):\n%s", path, grant)
+	}
+
+	// And the other half of the same rule (C2.3, review finding F1): the
+	// MOUNT goes with the accessor. A container that still declares a secret
+	// its account may not read is not a job with one credential too many, it
+	// is a job Cloud Run refuses to create -- every GitHub run of an
+	// installation that opted in would fail. The two are one expression's
+	// halves here, and the tftest run credentials_service_on_github_app_key_
+	// stays plans the state this branch ships them in: neither moves, because
+	// the list is empty and the job still reads the key.
+	if !strings.Contains(squash(code), "env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical)") {
+		t.Errorf("%s: job_mounts must keep every mount while the credentials service is off and drop the service-held ones (the App key) once it is on, by logical name:\n%s", path, code)
+	}
+	// The container is the consumer of that local, and it is what a missing
+	// pass-down would leave out: iterating var.workflow.secret_env instead
+	// plans the App key's mount back into a job whose account cannot read it.
+	jb, err := fs.ReadFile(FS, "gcp/modules/workflow/job.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(squash(stripComments(string(jb))), `dynamic "env" { for_each = local.job_mounts`) {
+		t.Errorf("gcp/modules/workflow/job.tf: the container's secret env must iterate local.job_mounts rather than var.workflow.secret_env, or the App key's mount outlives its accessor (C2.3, F1):\n%s", jb)
 	}
 }
 

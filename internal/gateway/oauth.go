@@ -3,6 +3,7 @@ package gateway
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -162,6 +163,16 @@ var oauthAllowLoopback = false
 // exception is the loopback test stand-in, and only while oauthAllowLoopback
 // is on. This is the D133 rule at its narrowest: the only host a
 // subscription token is ever sent to is Anthropic's own.
+//
+// host is the URL's Host and not its Hostname, so the port is part of what is
+// judged: url.Hostname() strips it, which would accept
+// https://api.anthropic.com:8443 -- a host this rule says yes to while the
+// token goes to a port that is not Anthropic's. The destination check
+// (checkOAuthDest) compares full Hosts, so with the port stripped here the
+// base and the destination would agree on "api.anthropic.com" and the
+// credential would be attached to whatever port the base named. The
+// real endpoint therefore carries no port at all, and the stand-in's port is
+// split off for the loopback branch alone, which is the one case that has one.
 func oauthHostOK(scheme, host string) bool {
 	if scheme == "https" && host == "api.anthropic.com" {
 		return true
@@ -169,7 +180,13 @@ func oauthHostOK(scheme, host string) bool {
 	if !oauthAllowLoopback {
 		return false
 	}
-	return host == "localhost" || isLoopback(host)
+	// A host with no port is not a SplitHostPort error worth reporting: it is
+	// simply the name, and no loopback stand-in is reachable without a port.
+	name := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		name = h
+	}
+	return name == "localhost" || isLoopback(name)
 }
 
 // checkOAuthBaseURL: an OAuth credential goes to Anthropic's own endpoint
@@ -188,7 +205,7 @@ func checkOAuthBaseURL(s string) error {
 	if err != nil || u.Hostname() == "" {
 		return fmt.Errorf("gateway: the OAuth upstream's base %q isn't a host", s)
 	}
-	if !oauthHostOK(u.Scheme, u.Hostname()) {
+	if !oauthHostOK(u.Scheme, u.Host) {
 		return fmt.Errorf("gateway: the OAuth upstream's base %q isn't Anthropic's own endpoint: an OAuth token is only ever sent there (D133)", s)
 	}
 	return nil
@@ -216,7 +233,7 @@ func checkOAuthDest(base, raw string) error {
 	if err != nil || ru.Hostname() == "" {
 		return fmt.Errorf("gateway: the OAuth call's destination %q isn't a URL", raw)
 	}
-	if !oauthHostOK(ru.Scheme, ru.Hostname()) || !oauthHostOK(bu.Scheme, bu.Hostname()) {
+	if !oauthHostOK(ru.Scheme, ru.Host) || !oauthHostOK(bu.Scheme, bu.Host) {
 		return fmt.Errorf("gateway: the OAuth call's destination %q isn't Anthropic's own endpoint: an OAuth token is only ever sent there (D133)", raw)
 	}
 	if ru.Scheme != bu.Scheme || ru.Host != bu.Host {

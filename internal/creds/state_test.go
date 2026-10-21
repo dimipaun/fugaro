@@ -56,7 +56,7 @@ type fakeDB struct {
 	onGet func(path string)
 
 	gets, puts, patches, deletes int
-	putErr, patchErr             error
+	putErr, patchErr, getErr     error
 }
 
 func newFakeDB() *fakeDB {
@@ -106,6 +106,9 @@ func (d *fakeDB) GetETag(_ context.Context, path string, out any) (string, bool,
 	d.gets++
 	if d.onGet != nil {
 		d.onGet(path)
+	}
+	if d.getErr != nil {
+		return "", false, d.getErr
 	}
 	if raw, ok := d.nodes[path]; ok {
 		if err := json.Unmarshal(raw, out); err != nil {
@@ -449,6 +452,47 @@ func TestStoreRefusesAMarkItCannotRead(t *testing.T) {
 	}
 }
 
+// A node keyed twice for one name is a subtree this release did not write, and
+// the read refuses it rather than merging the two.
+//
+// Key writes uppercase escapes and Unkey reads either case, so "a%2Fb" and
+// "a%2fb" both unkey to a/b: with the read assigning out[name] for each of them
+// in turn, which mark a selection saw was Go's map iteration order. A credential
+// the operator marked broken read as available on a random subset of
+// selections — the fail-open decodeStrict exists to prevent, and worse than a
+// fixed wrong answer because it flaps. Nothing in this package writes a
+// lowercase escape, so the trigger is a hand-written key, and a key that is not
+// the canonical spelling of its own name is one this release did not write.
+func TestStoreRefusesTwoKeysForOneName(t *testing.T) {
+	// The pair the reviewer measured: one broken, one available, one name.
+	db := newFakeDB()
+	db.nodes[pathMarks] = json.RawMessage(`{"a%2Fb":{"state":"broken","since":"2026-10-20T12:00:00Z"},"a%2fb":{"state":"available"}}`)
+	if marks, err := (&RTDBStore{DB: db}).Marks(ctx); err == nil {
+		t.Fatalf("a node keyed twice for one name read as %+v; want the read refused", marks)
+	}
+
+	// A lone non-canonical key is refused too, and this is the case that says
+	// which rule is in force: it collides with nothing, so only the key's own
+	// spelling can refuse it. It is still a key this package did not write.
+	db2 := newFakeDB()
+	db2.nodes[pathMarks] = json.RawMessage(`{"a%2fb":{"state":"broken","since":"2026-10-20T12:00:00Z"}}`)
+	if marks, err := (&RTDBStore{DB: db2}).Marks(ctx); err == nil {
+		t.Fatalf("a mark node keyed %q, which is not the canonical spelling of its own name, read as %+v", "a%2fb", marks)
+	}
+
+	// And the refusal is about the spelling, not about a % in the key: the
+	// canonical key of a name that needs escaping is read whole.
+	db3 := newFakeDB()
+	db3.put(PathMark("a/b"), Mark{State: StateBroken, Since: now})
+	marks, err := (&RTDBStore{DB: db3}).Marks(ctx)
+	if err != nil {
+		t.Fatalf("a mark of a name that needs escaping did not read back: %v", err)
+	}
+	if m := marks["a/b"]; !m.Broken() {
+		t.Fatalf("the mark of a/b read back as %+v", m)
+	}
+}
+
 // A node carrying a member this release does not model stops the read. The
 // alternative is the worst failure this package has: encoding/json drops a key
 // it does not know, so {"status":"broken"} — a mark a newer release wrote, or a
@@ -654,6 +698,32 @@ func TestAPlacementIsWrittenAsOneThing(t *testing.T) {
 	}
 }
 
+// A read that fails is not an empty state. Each of the three reads a selection
+// decides on answers with an error, and with the database's own error inside
+// it: an empty answer on a failed read is the fail-open direction — no marks
+// reads as no credential exhausted, no leases as a free slot for every run, no
+// current credential as the run holding none — and a caller that could not tell
+// a refusal from an empty answer would act on it.
+func TestAReadThatFailsIsNotAnEmptyState(t *testing.T) {
+	db := newFakeDB()
+	db.put(pathMarks, map[string]Mark{})
+	db.put(pathLeases, map[string]map[string]Lease{})
+	db.put(PathCurrent(run), a1.Name)
+	failure := errors.New("the database is unreachable")
+	db.getErr = failure
+	st := &RTDBStore{DB: db}
+
+	if marks, err := st.Marks(ctx); !errors.Is(err, failure) {
+		t.Errorf("Marks on a failed read = %v, %v; want the read's error", marks, err)
+	}
+	if leases, err := st.Leases(ctx, now); !errors.Is(err, failure) {
+		t.Errorf("Leases on a failed read = %v, %v; want the read's error", leases, err)
+	}
+	if name, found, err := st.Current(ctx, run); !errors.Is(err, failure) || found || name != "" {
+		t.Errorf("Current on a failed read = %q, found=%v, %v; want no name and the read's error", name, found, err)
+	}
+}
+
 // leaseDB is a database holding lapsed leases: n of them, one per minute from
 // two hours ago — so every one of them has lapsed, whatever n is — plus one live
 // hold, which is what a project that has been running for a while looks like.
@@ -677,6 +747,15 @@ func leaseDB(n int) (*fakeDB, Run) {
 func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
 	const gone = DefaultLeaseResidue + 6
 	db, live := leaseDB(gone)
+	// The runs are placed, not only leased: a run holds a placement node of its
+	// own (PathCurrent), and what the sweep does to it is part of what this read
+	// promises — it deletes the dead LEASE, and a run's placement is not its to
+	// delete. Review finding: the sweep's placement was asserted with Current on
+	// a run the fixture never placed, so the assertion could not fail whatever
+	// the code did.
+	for _, id := range []string{"gone-0", "gone-5", "gone-6", "live"} {
+		db.put(PathCurrent(Run{Slug: "acme", ID: id}), a1.Name)
+	}
 	st := &RTDBStore{DB: db}
 	// The fixture holds leases and no placements, so the oldest lapsed run is
 	// placed here first: the sweep deletes leases, not placements (a lapsed
@@ -698,6 +777,20 @@ func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
 	}
 	if want := gone - DefaultLeaseResidue; db.deletes != want {
 		t.Fatalf("the sweep deleted %d nodes; want %d — the lapsed ones above the residue of %d", db.deletes, want, DefaultLeaseResidue)
+	}
+	// And the runs are still placed where they were, the ones it took a lease
+	// from and the one it left alike: the sweep deletes a dead LEASE and not the
+	// placement beside it. A lapsed lease is not a finished run — a run between
+	// two selections holds one, and the lease it refreshed is the only thing the
+	// sweep re-checks — so a sweep that took the placement too would move a
+	// working run off the credential it is on. A run's placement is removed
+	// where the run ends and not on this read path (the plan's own C1.9 note
+	// N4: `creds/current/*` is not swept at all).
+	for _, id := range []string{"gone-0", "gone-5", "gone-6"} {
+		r := Run{Slug: "acme", ID: id}
+		if name, found, err := st.Current(ctx, r); err != nil || !found || name != a1.Name {
+			t.Fatalf("the run %+v is on %q, found=%v, %v; want the placement %q left where it was: the sweep deletes dead leases and not placements", r, name, found, err, a1.Name)
+		}
 	}
 	// The oldest went, the newest lapsed stayed, and the live hold was never a
 	// candidate. The swept run's placement is still there: the sweep's subtree
@@ -728,6 +821,29 @@ func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
 		t.Fatalf("a read inside the residue deleted %d more nodes; want none", db.deletes-before)
 	}
 
+	// Past residue+DefaultLeasePrune lapsed the sweep stops at DefaultLeasePrune:
+	// it deletes the excess over the residue, capped, and not "the oldest
+	// DefaultLeasePrune" — the two differ for every count in between, which is
+	// what the case above pins (6 deleted, not 8). This is the cap's own branch,
+	// and the doc sentence that states both halves is only true with it.
+	const deep = DefaultLeaseResidue + DefaultLeasePrune + 4
+	big, _ := leaseDB(deep)
+	if _, err := (&RTDBStore{DB: big}).Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if big.deletes != DefaultLeasePrune {
+		t.Fatalf("a read over %d lapsed leases deleted %d nodes; want the cap of %d", deep, big.deletes, DefaultLeasePrune)
+	}
+	// And it took the oldest, leaving the newest lapsed and the live hold.
+	for _, r := range []Run{{Slug: "acme", ID: "gone-0"}, {Slug: "acme", ID: "gone-" + strconv.Itoa(DefaultLeasePrune-1)}} {
+		if _, ok := big.nodes[PathLease(r)]; ok {
+			t.Fatalf("the capped sweep left %+v: it deletes the oldest first", r)
+		}
+	}
+	if _, ok := big.nodes[PathLease(Run{Slug: "acme", ID: "gone-" + strconv.Itoa(DefaultLeasePrune)})]; !ok {
+		t.Fatal("the capped sweep deleted a lease newer than its share of the oldest")
+	}
+
 	// A read that finds only live holds deletes nothing, whatever their number:
 	// the cap is about runs working, and the sweep is about runs gone.
 	busy := newFakeDB()
@@ -740,6 +856,98 @@ func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
 	}
 	if busy.deletes != 0 {
 		t.Fatalf("the sweep deleted %d live holds", busy.deletes)
+	}
+}
+
+// The sweep's prune is BOUNDED, and the bound is what keeps the read path from
+// turning into a delete of the whole subtree the first time a project comes back
+// from a long quiet spell: a read deletes the oldest DefaultLeasePrune lapsed
+// nodes — never more, whatever the residue above DefaultLeaseResidue is — and
+// the next read takes the next ones. Each one lands under the ETag it re-read,
+// so a read that deletes eight costs eight conditional writes and not one big
+// one.
+//
+// Review finding N3: every existing case had DefaultLeaseResidue+6 lapsed nodes
+// at most, which is a prune of six — the clamp at DefaultLeasePrune was never
+// reached, so removing it, or pruning all of the lapsed nodes, went unnoticed.
+func TestTheLeaseSweepPrunesAtMostItsBound(t *testing.T) {
+	const gone = DefaultLeaseResidue + 20
+	db, live := leaseDB(gone)
+	st := &RTDBStore{DB: db}
+
+	if _, err := st.Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if db.deletes != DefaultLeasePrune {
+		t.Fatalf("a read over %d lapsed leases pruned %d nodes; want the bound of %d", gone, db.deletes, DefaultLeasePrune)
+	}
+	// The oldest went, and the one just past the bound stayed: the prune is the
+	// oldest DefaultLeasePrune of the lapsed nodes and not an arbitrary eight.
+	for i := 0; i < DefaultLeasePrune; i++ {
+		r := Run{Slug: "acme", ID: "gone-" + strconv.Itoa(i)}
+		if _, ok := db.nodes[PathLease(r)]; ok {
+			t.Fatalf("the sweep left %+v: it prunes the oldest lapsed leases first", r)
+		}
+	}
+	if _, ok := db.nodes[PathLease(Run{Slug: "acme", ID: "gone-" + strconv.Itoa(DefaultLeasePrune)})]; !ok {
+		t.Fatalf("the sweep pruned past its bound of %d", DefaultLeasePrune)
+	}
+	if _, ok := db.nodes[PathLease(live)]; !ok {
+		t.Fatal("the sweep deleted a live hold")
+	}
+
+	// The next read prunes the next oldest eight: the subtree converges instead
+	// of being emptied in one read, which is the property the bound is for.
+	before := db.deletes
+	if _, err := st.Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if db.deletes-before != DefaultLeasePrune {
+		t.Fatalf("the second read pruned %d nodes; want the same bound of %d", db.deletes-before, DefaultLeasePrune)
+	}
+	if _, ok := db.nodes[PathLease(Run{Slug: "acme", ID: "gone-" + strconv.Itoa(DefaultLeasePrune)})]; ok {
+		t.Fatalf("the second read left gone-%d: the sweep is the oldest first, read after read", DefaultLeasePrune)
+	}
+
+	// And it stops at the residue rather than pruning to nothing: reads keep
+	// going until at most DefaultLeaseResidue lapsed nodes are left, and then
+	// the project pays no writes at all on the read path.
+	for i := 0; i < 20; i++ {
+		if _, err := st.Leases(ctx, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lapsed := 0
+	for p := range db.nodes {
+		if p == PathLease(live) {
+			continue
+		}
+		lapsed++
+	}
+	if lapsed > DefaultLeaseResidue {
+		t.Fatalf("%d lapsed leases were left after twenty reads; want at most the residue of %d", lapsed, DefaultLeaseResidue)
+	}
+	before = db.deletes
+	if _, err := st.Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if db.deletes != before {
+		t.Fatalf("a read at the residue pruned %d more nodes; want none", db.deletes-before)
+	}
+
+	// BELOW the residue the sweep does nothing at all — and it gets there
+	// without indexing a slice, which is the reason the guard is the residue
+	// rather than "anything lapsed": the prune count is lapsed-minus-residue, so
+	// it is negative for a handful of dead nodes, and a sweep that entered the
+	// loop anyway would panic the read path — every selection in the project
+	// failing closed on a project that has simply been quiet.
+	few, _ := leaseDB(DefaultLeaseResidue - 1)
+	fewst := &RTDBStore{DB: few}
+	if _, err := fewst.Leases(ctx, now); err != nil {
+		t.Fatalf("a read over %d lapsed leases failed: %v", DefaultLeaseResidue-1, err)
+	}
+	if few.deletes != 0 {
+		t.Fatalf("a read over %d lapsed leases, below the residue of %d, pruned %d nodes; want none", DefaultLeaseResidue-1, DefaultLeaseResidue, few.deletes)
 	}
 }
 

@@ -193,6 +193,29 @@ func (m Mark) holdInForce(now time.Time, set Settings) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// Known reports whether the mark carries a state this release reads: one of the
+// four, or the empty one the zero mark and a never-written node carry.
+//
+// A state that is none of them is a node written by a newer release, or by
+// hand, and it is a hold: Usable's one rule beyond the four states is that such
+// a node is not usable at all, because reading it as "no hold" is the fail-open
+// direction. The writers ask the same question before they write (Exhaust,
+// ProbeFailed), so a hold this release refuses to READ is not replaced by one
+// of its own that it would then release.
+//
+// Known is that question as an exported predicate, for a reader outside this
+// package that has to report such a node rather than act on it: `fugaro doctor`
+// names every mark whose state this release does not read, and the command that
+// clears marks refuses one for the same reason. Neither restates the state
+// table, and neither may: a second copy is a copy that can go stale.
+func (m Mark) Known() bool {
+	switch m.State {
+	case "", StateAvailable, StateExhausted, StateBackedOff, StateBroken:
+		return true
+	}
+	return false
+}
+
 // Exhaust is the mark a usage limit leaves.
 //
 // reset is the reset time the response reported, and the zero time means it
@@ -202,7 +225,32 @@ func (m Mark) holdInForce(now time.Time, set Settings) (time.Time, bool) {
 // same doubling as a failed probe — the credential has now failed twice without
 // saying when it comes back — but Since moves, because the credential *was*
 // exhausted again.
+//
+// A hold already in force may only be EXTENDED by a report, never shortened
+// (review finding N5), and that is a rule about both shapes of report rather
+// than about the no-reset one. A credential that holds is not selected, so every
+// 429 arriving while it holds comes from a call that was already in flight when
+// the hold was written; those calls are re-reporting the same exhaustion, and
+// one of them naming an EARLIER reset than the hold's must not be what hands the
+// credential back early. On tier B — where D142's window is off and the hold is
+// the reported reset alone — a racing 429 reporting a one-minute reset used to
+// rewrite a four-hour hold into a one-minute one, and the project's paid key was
+// spent again inside the window the upstream had just named. So the reset branch
+// below is guarded in the same place and by the same fact as the no-reset one: a
+// report that does not reach past the hold in force leaves the mark exactly as
+// it is, and a report that does reach past it extends it, which is the only
+// direction a hold may move.
 func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
+	if !prev.Known() {
+		// A state this release does not know is a hold it will not read
+		// (Usable), and this write must not be the way around that: replacing it
+		// would make the hold this release's own — a backoff, which the next
+		// successful probe clears outright wherever D142's window is off — and
+		// the credential a newer release parked would be back in rotation
+		// without anyone clearing it. Broken is refused just below for the same
+		// reason.
+		return prev
+	}
 	if prev.Broken() {
 		// A credential that answered 401 is out until the operator clears it
 		// (C1.21), and a usage limit is not a clear: two calls on one shared
@@ -210,6 +258,7 @@ func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 		// second must not put a refused token back in rotation.
 		return prev
 	}
+	set = set.withDefaults()
 	if at, held := prev.holdInForce(now, set); held {
 		// A hold is already in force on this credential, so a usage limit
 		// arriving now cannot be a fresh exhaustion of it: a credential that
@@ -263,6 +312,15 @@ func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 // one it was set for — so a credential that has been backed off for hours is
 // still "least recently exhausted" after the one exhausted a minute ago.
 func ProbeFailed(prev Mark, now time.Time, set Settings) Mark {
+	if !prev.Known() {
+		// The same refusal as Exhaust's, on the probe's side: a state this
+		// release does not read is a hold, and a failed probe is not the write
+		// that takes it off — it would leave a backoff of this release's making
+		// in its place, which a successful probe then clears. A probe is never
+		// run on such a mark either (NeedsProbe is false for it), so this is
+		// the racing case as well.
+		return prev
+	}
 	if prev.Broken() {
 		// For the same reason Exhaust refuses a broken mark: a probe is never
 		// run on a broken credential (NeedsProbe is false for one), so this is
@@ -358,8 +416,10 @@ func ProbeSucceeded(prev Mark, now time.Time, set Settings) Mark {
 // Cleared is the mark the operator's clear leaves (C1.21): available, with the
 // wait in force forgotten, so the next exhaustion starts at the initial backoff
 // again. It is the operator's transition and not a probe's — a probe leaves what
-// ProbeSucceeded answers — and it is the one transition that leaves a broken
-// mark.
+// ProbeSucceeded answers — and it is the only transition in this package that
+// takes a broken mark off: Exhaust and ProbeFailed return a broken mark
+// untouched, and ProbeSucceeded is a no-op on one, so nothing a busy token
+// reports and nothing a probe answers moves a 401 anywhere.
 func Cleared() Mark { return Mark{State: StateAvailable} }
 
 // Break is the mark a 401 leaves (D139). It carries the time it was noticed

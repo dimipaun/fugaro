@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/cache"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -85,6 +86,9 @@ func SetMarkLockReleasing(t *testing.T, f func(l *lock.Lock, ctx context.Context
 // RecordWriteTimeout exposes recordWriteTimeout.
 const RecordWriteTimeout = recordWriteTimeout
 
+// MaxCredentialResumes exposes maxCredentialResumes.
+const MaxCredentialResumes = maxCredentialResumes
+
 // RunHandle reaches a run's halt and cancel hooks from a test's agent.
 type RunHandle struct{ r *run }
 
@@ -107,6 +111,22 @@ func SetStrictHaltCheck(t *testing.T) {
 	prev := strictHaltCheck
 	strictHaltCheck = true
 	t.Cleanup(func() { strictHaltCheck = prev })
+}
+
+// SetCredsWait replaces the sleep a credential wait takes (C1.17) for the
+// rest of t: a real wait is the reset the service named, minutes or hours
+// away, so a test either returns at once or holds the wait itself.
+func SetCredsWait(t *testing.T, f func(ctx context.Context, d time.Duration) error) {
+	prev := credsWait
+	credsWait = f
+	t.Cleanup(func() { credsWait = prev })
+}
+
+// NoteExhausted is the credential service's typed `exhausted_until` answer
+// (C1.10) as C1.15's upstream delivers it: it ends the stage in flight, and
+// stage then waits for the reset and resumes the stage's session.
+func (h *RunHandle) NoteExhausted(reset time.Time) {
+	h.r.noteExhausted(credsvc.ExhaustedUntil{ResetAt: reset})
 }
 
 func (h *RunHandle) HaltNow(hl runstore.Halt) bool      { return h.r.haltNow(hl) }

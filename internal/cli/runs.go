@@ -662,10 +662,21 @@ func launcherCell(r runview.Row) string {
 	return cellOneLine(clipRunes(by, maxNameCellRunes))
 }
 
-// statusCell is a row's status; a halted run says which limit halted it.
+// statusCell is a row's status; a halted run says which limit halted it, and a
+// row whose status was derived at read time says what was derived.
+//
+// The decoration is display only, exactly as the halt reason is: the column
+// reads `failed (preempted)` while `status` stays `failed` and the fact that
+// identified the preemption sits beside it in `derived`, so a reader that
+// switches on status -- or a script that parses it -- sees the vocabulary it
+// always saw. A row is either halted or derived, never both: a record that
+// halted is a finalized record, and a finalized record is never derived.
 func statusCell(r runview.Row) string {
 	if r.Status == string(runstore.StatusHalted) && r.Halt != nil {
 		return r.Status + " (" + string(r.Halt.Reason) + ")"
+	}
+	if r.Derived != "" {
+		return r.Status + " (" + r.Derived + ")"
 	}
 	return r.Status
 }

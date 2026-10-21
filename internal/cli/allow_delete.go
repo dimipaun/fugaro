@@ -98,8 +98,17 @@ everything else this program's printers would touch — so an argument that stil
 holds one is refused rather than recorded as an entry that would match no
 removal. The two ends agree byte for byte because the identity is written in an
 escaped form — a space in a value as \x20, a backslash as \\, a parenthesis as
-\x28 and \x29, and any other byte with no printable form as \xHH — so that what
-a refusal prints is exactly what a plan shows. An identity longer than 8192
+\x28 and \x29, any other byte with no printable form as \xHH, and every byte a
+shell reads in a way of its own — a separator, a pipe, a redirection, a
+substitution, a quote, a glob, an expansion — as \xHH as well, so that what a
+refusal prints holds no byte that can begin, end or continue a command, and is
+exactly what a plan shows. Two bytes a shell rewrites are in it all the same,
+because the form needs them: the single space between two parts, and the
+backslash that introduces an escape. A paste that does not keep those two whole
+arrives here as several arguments and is refused rather than recorded — nothing
+is written, and no entry is made that would match no removal — but the identity
+has to reach this command as one argument, byte for byte as the plan shows it,
+for the loop to close. An identity longer than 8192
 characters is refused here and by the plan: no refusal prints one, and the plan
 refuses the removal rather than matching a printed part of it, so recording it
 would be an approval that deletes nothing.
@@ -129,9 +138,19 @@ Run it in your own terminal, as an operator, with your own credentials. Pass
 the entries to approve, and they replace the list: an invocation that leaves an
 entry out removes that approval, so the command names the entries it would drop
 and asks for the project's name before writing such a list. With no arguments
-the command prints the list — each entry in the same ADDRESS=IDENTITY form, so
-a line can be pasted back — and writes nothing; it never empties the list,
-because an empty list is what an absent one already means.
+the command prints the list — each entry in the same ADDRESS=IDENTITY form —
+and writes nothing; it never empties the list, because an empty list is what an
+absent one already means. A printed line is one you can paste back as far as its
+IDENTITY half goes: the command that recorded the entry escaped it, so the
+printers leave it alone and a line inside the listing's own bound carries it
+back byte for byte. The address half is the plan's own — not escaped here and
+not bounded here — so an address holding a tab, a run of spaces or a byte
+outside printable ASCII is printed as the printers rewrite it: that line is not
+the entry, and pasting it back records an entry about an address no plan has,
+which the plan refuses rather than deleting anything. A line longer than twice
+the identity's own bound is printed through the bounded sanitiser instead, cut
+and marked as cut: what you read there is visibly a text and not an entry. The
+entry itself is unchanged in the object either way.
 
 What the object is for: a run's own credentials cannot write it, and the
 deployer account a managed apply impersonates will not be able to (D75, Task
@@ -311,18 +330,38 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 // removal takes away (tf.RemoveIdentityText), which always begins with the
 // resource type — "type=google_storage_bucket project=… name=… id=…" — so the
 // half after the first "=" is required to begin with "type=". That is what
-// makes the form's one ambiguity fail closed rather than silently: a Terraform
-// address may itself contain an "=" (an index key with one in it, as in
-// google_x.y["a=b"]), and for such an argument the cut lands inside the
+// makes the form's one ambiguity fail closed in the case an owner meets: a
+// Terraform address may itself contain an "=" (an index key with one in it, as
+// in google_x.y["a=b"]), and for such an argument the cut lands inside the
 // address, the half after it does not begin with "type=", and the command
-// refuses to record an approval that matches nothing. The alternative — a
-// second argument order, or a flag per address — was not taken: the ambiguity
-// is refused, not guessed, and the operator is told which of the two they are
-// looking at.
+// refuses to record an approval that matches nothing. The cut leaves a second
+// trace, and it is the one that catches what the first does not: an address a
+// plan writes closes every bracket it opens, so an address still inside its
+// index key where the identity begins is one the cut landed in, and it is
+// refused for that too, whether the half after the cut reads as an identity or
+// not.
+//
+// What is left after both, stated rather than implied because no check here can
+// close it: an address whose own text, after its FIRST "=", spells out what an
+// identity looks like and closes its bracket before the separator — an index
+// key holding "=type=google_storage_bucket project=p name=n id=i", say — is an
+// argument this command cannot tell from ADDRESS=IDENTITY. The half after the
+// cut begins with "type=", the address it leaves is a closed one, and what is
+// recorded is an entry about the TRUNCATED address: no plan has it, so it
+// approves nothing and the owner's loop does not close — and the argument holds
+// nothing that says which of the two it is, only the plan could. That residual
+// is pinned as it stands by
+// TestAllowDeleteCommandRefusesAnAddressCutInsideItsIndexKey's second half, and
+// the doc and the test change together if it ever starts being refused. The
+// alternative — a second argument order, or a flag per address — was not taken:
+// the ambiguity is refused where the argument shows it, and the operator is
+// told which of the two they are looking at.
 //
 // The whole argument and each half are trimmed, and the halves are compared
 // with a plan's by exact equality: a stray space around either would be an
-// approval of nothing.
+// approval of nothing. Each strip of a paste's marks is followed by a trim of
+// its own for the same reason (pasteMarks.trim): what a strip exposes is
+// whitespace the strip was sitting behind.
 //
 // Trimming an identity cannot lose a character of one: an identity is escaped
 // so that the only whitespace in it is the single space between two of its
@@ -331,34 +370,61 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 // here is a shell's or a paste's own space and never the identity's.
 //
 // Two marks a paste can carry are stripped before that comparison, because both
-// are marks a sentence has and an identity cannot (trimPasteMarks): one MATCHED
-// pair of double quotes around the identity — this command prints the identity
-// bare (tf.RemoveIdentityText), and an owner who quotes the whole argument at
-// their shell, or who copies from a message in which someone else quoted it,
-// would otherwise record an approval whose identity carries two characters the
-// plan never shows — and the closing bracket of the refusal sentence's own
-// parenthetical, which every refusal that prints an identity ends with ("the
-// plan removes type=… id=…"). Only one of each, and each only as a mark: a
-// quote at one end alone is a character the identity has, an identity is
-// compared byte for byte, and stripping the ends independently, as this once
-// did, recorded an approval of an object the plan does not remove. An identity
-// holds no parenthesis at all (tf.identityValue escapes both), so a bracket
-// this trim does not account for is not an identity's and the argument is
-// refused rather than recorded. The stripped text is then required to begin
-// with "type=" like any other, so the fail-closed direction is unchanged: a
-// quoted or bracketed tail that is not an identity is still refused.
+// are marks a sentence has and a half cannot (pasteMarks): one MATCHED pair of
+// double quotes — around the whole argument, when a shell of the owner's own or
+// a message someone quoted it in added them, or around the identity alone,
+// which this command prints bare (tf.RemoveIdentityText) — and the closing
+// bracket of the refusal sentence's own parenthetical, which every refusal that
+// prints an identity ends with ("the plan removes type=…"). The pair is looked
+// for around the whole argument as well as around the identity, and that is the
+// part of it that matters: a pair around the whole argument has one end on each
+// half, so taking it off the half after the "=" alone — which is what this did
+// — left a quote on the address and recorded an entry about an address no plan
+// has, written silently. Only one of each, and each only as a mark: a quote at
+// one end alone is a character a half can hold, an entry is compared byte for
+// byte, and stripping the ends independently, as this once did, recorded an
+// approval of an object the plan does not remove. No one can tell which end of
+// a lost pair is the mark and which the character, so a quote left at either
+// end of the ADDRESS is refused rather than recorded: an address holds no quote
+// at its ends (a plan writes one inside an index key, where the bracket closes
+// it), while the identity half keeps the quote it has, because a value in an
+// identity may hold one. An identity holds no parenthesis at all
+// (tf.identityValue escapes both), so a bracket the trim does not account for
+// is not an identity's and the argument is refused rather than recorded. The
+// stripped text is then required to begin with "type=" like any other, and to
+// have the shape an identity has (identityShape), so the fail-closed direction
+// is unchanged: a quoted or bracketed tail that is not an identity is still
+// refused.
 func approveArgument(arg string) (tf.DeleteEntry, error) {
-	address, before, cut := strings.Cut(strings.TrimSpace(arg), "=")
-	address, before = strings.TrimSpace(address), trimPasteMarks(strings.TrimSpace(before))
-	switch {
+	marks := pasteMarks{pair: true, bracket: true}
+	address, before, cut := strings.Cut(marks.trim(arg), "=")
+	address, before = strings.TrimSpace(address), marks.trim(before)
+	switch shape := identityShape(before); {
 	case !cut || address == "":
 		return tf.DeleteEntry{}, userErr("an argument is an address and the identity of the object approved there, written ADDRESS=IDENTITY, as in 'module.web.google_storage_bucket.data=type=google_storage_bucket project=proj-1234 name=data id=data-bucket instance=2026-01-02T03:04:05.678Z': the identity is the one a refused apply printed for the object the address removes, and nothing was written")
+	case strings.HasPrefix(address, `"`) || strings.HasSuffix(address, `"`):
+		// The other half of the pair pasteMarks.trim strips, when it is not a
+		// pair: one quote is all that is left of it, and no address has one at
+		// its ends, so what is recorded with it is an entry about an address no
+		// plan shows — the fail-closed direction, taken loudly rather than
+		// written silently.
+		return tf.DeleteEntry{}, userErr("an address holds no quote at either end: a plan writes an address as the path of the resource itself, and a quote is in one only inside an index key (module.web.google_storage_bucket.data[\"key\"]), where the bracket closes it. What is on this argument's address is one end of a pair someone quoted the whole argument with, and this command strips such a pair only when both of its ends are there: copy the argument again with the address bare, or quote the identity alone — nothing was written")
+	case strings.LastIndex(address, "[") > strings.LastIndex(address, "]"):
+		// The same ambiguity, seen from the address instead of the tail — and
+		// the half the "type=" check below does not catch, because an index key
+		// can spell "=type=…" itself, which is why this case is asked first. An
+		// address a plan writes closes every bracket it opens, so an address
+		// whose last bracket is an opening one is one the cut landed inside:
+		// half an address, and recording it would write an entry about an
+		// address no plan has — the owner reads it as an approval and it clears
+		// nothing, silently.
+		return tf.DeleteEntry{}, userErr("an address is closed before the '=' that separates it from the identity, and this one is still inside an index key where the identity begins: an address may hold an '=' of its own inside such a key (module.web.google_storage_bucket.data[\"a=b\"]), and this command cuts the argument at its first '=', so the '=' it cut at is inside the address and not the one between the two halves. Copy the argument again with the address whole, or approve the removal from a plan whose address holds no '=' (nothing was written)")
 	case !strings.HasPrefix(before, "type="):
 		return tf.DeleteEntry{}, userErr("an identity begins with the resource type the plan showed, as in 'type=google_storage_bucket project=… name=… id=…', and the text after the first '=' in this argument does not: the argument is cut at its first '=', so an address whose own text holds an '=' cannot be approved this way (nothing was written; approve it from a plan whose address has none, or rename the resource)")
 	case strings.ContainsAny(before, "()"):
 		// A refusal prints the identity inside a sentence of its own, "…(the
 		// plan removes type=… id=…)", so the copy an owner makes can end with
-		// the sentence's own bracket — the one trimPasteMarks takes off. An
+		// the sentence's own bracket — the one pasteMarks.trim takes off. An
 		// identity holds no parenthesis of its own (tf.identityValue escapes
 		// both), so one that is left is a text this command cannot read as an
 		// identity, and recording it would write an entry the owner reads as an
@@ -372,33 +438,87 @@ func approveArgument(arg string) (tf.DeleteEntry, error) {
 		// one), so recording it would write an approval that clears nothing
 		// and read as an approval all the same.
 		return tf.DeleteEntry{}, userErr("an identity of %d characters is longer than the %d a plan can print and match (tf.RemovalIdentityPrintMax): no removal is identified by one, so approving it would record an entry that deletes nothing, and nothing was written", len(before), tf.RemovalIdentityPrintMax)
+	case shape != "":
+		// The other thing this command can tell without the plan: an identity
+		// is escaped text (tf.identityValue), so its characters are printable
+		// ASCII and its parts are separated by single spaces. A paste that was
+		// wrapped, re-indented or typed by hand can carry a character outside
+		// that set, and an entry holding one equals no identity a plan shows.
+		return tf.DeleteEntry{}, userErr("an identity is printable ASCII with a single space between two of its parts and no other whitespace at all (tf.identityValue writes every byte outside that as an escape, a space inside a value as \\x20), and the text after the first '=' in this argument is not that: %s. A paste that has been wrapped, re-indented or typed by hand can carry such a character, and an entry holding one equals no identity a plan shows — the owner would read it as an approval and it would clear nothing, so the loop the delete list works by would not close. Nothing was written: copy the identity again from the refusal, which prints it as that one line (tf.RemoveIdentityText)", shape)
 	}
 	return tf.DeleteEntry{Address: address, Before: before}, nil
 }
 
-// trimPasteMarks is s without the marks a paste of a refusal's text carries and
-// an identity cannot: the closing bracket of the sentence's own parenthetical,
-// which every refusal that prints an identity ends with, and one matched pair
-// of double quotes around the identity (trimOneQuotedPair).
+// identityShape is why s is not the shape an identity has, or "" when it is.
 //
-// At most one of each, in the order the copy can have them: the sentence's
-// bracket may sit outside a pair of quotes someone added around the whole text
-// (the pair first, then the bracket) or be the mark the pair was added inside
-// of ("…\"id\")" — the bracket first, then the pair). A second bracket is left
-// where it is, deliberately: no identity holds one (tf.identityValue escapes
-// both parentheses), so it is not a mark but a text this command refuses
-// (approveArgument), which is the same answer it gives a paste that is not an
-// identity at all — and the answer a silently recorded entry that clears
-// nothing could not give.
-func trimPasteMarks(s string) string {
-	s = trimOneQuotedPair(s)
-	if t := strings.TrimSuffix(s, ")"); t != s {
-		// The bracket is the sentence's, so a pair of quotes can still sit
-		// inside it: the pair around the identity somebody quoted for a message
-		// whose sentence then bracketed the quotation.
-		s = trimOneQuotedPair(t)
+// An identity is escaped text (tf.identityValue): every byte below a printable
+// one is written as an escape — a space inside a value as \x20, a newline, a
+// tab or an escape byte as its own — and so is every byte above them, so what
+// an identity is made of is printable ASCII, and the single space between two
+// of its parts is the only whitespace in it, with none at either end of the
+// text (the ends of an argument are trimmed before this is asked). A character
+// outside that set is one no printer of this program writes for an identity,
+// so an identity holding one was built by a paste, a wrapping or a hand, and
+// recording it would write an entry that no plan's identity equals.
+func identityShape(s string) string {
+	if strings.Contains(s, "  ") {
+		return "it holds two spaces in a row, and an identity's parts are separated by one single space (a space inside a value is written \\x20)"
 	}
-	return s
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c != ' ' && (c < 0x21 || c > 0x7e) {
+			return fmt.Sprintf("it holds \\x%02x at offset %d", c, i)
+		}
+	}
+	return ""
+}
+
+// pasteMarks are the marks a paste of a refusal's text can carry that an
+// argument does not: the closing bracket of the sentence's own parenthetical,
+// which every refusal that prints an identity ends with, and one matched pair
+// of double quotes around a value this command printed bare
+// (trimOneQuotedPair) — around the whole argument, when a shell of the owner's
+// own or a message someone quoted it in added them, or around the identity
+// alone, which a refusal prints bare (tf.RemoveIdentityText).
+//
+// At most one of each is taken off an argument, however many times trim is
+// asked: the whole argument and then the identity half. That is what makes a
+// second bracket a text this command refuses rather than a mark it strips
+// twice — "… id=data-bucket))" would otherwise come out as an identity, and so
+// would a pair around the whole argument AND another around the identity
+// inside it. No identity holds a parenthesis (tf.identityValue escapes both),
+// and an argument that needs two pair strips is an argument this command has
+// not read, so the answer to both is the same as to a paste that is not an
+// identity at all: refuse it and say so, rather than record an entry that
+// clears nothing.
+//
+// trim is applied to the whole argument as well as to the half after the "=",
+// which the pair is the reason for: around the whole argument the pair has one
+// end on each half, so a strip that saw only the half after the "=" left a
+// quote on the address, and the entry recorded was about an address no plan
+// has — written silently (approveArgument). Each strip is followed by a trim of
+// its own, because one mark can expose whitespace the next one sits behind: a
+// message a terminal wrapped puts a newline between the identity and the
+// sentence's bracket, and a trim that this once lacked recorded an identity
+// with a space on the end of it.
+type pasteMarks struct{ pair, bracket bool }
+
+// trim is s without the marks this value has left to take off, and with no
+// whitespace at either end of what it returns.
+func (m *pasteMarks) trim(s string) string {
+	for {
+		t := strings.TrimSpace(s)
+		if m.bracket && strings.HasSuffix(t, ")") {
+			m.bracket, s = false, t[:len(t)-1]
+			continue
+		}
+		if m.pair {
+			if q := trimOneQuotedPair(t); q != t {
+				m.pair, s = false, q
+				continue
+			}
+		}
+		return t
+	}
 }
 
 // trimOneQuotedPair is s without one pair of double quotes around it, and s
@@ -413,18 +533,56 @@ func trimOneQuotedPair(s string) string {
 	return s
 }
 
-// listingLineMax is the longest entry line this listing prints whole: an
-// address and the identity the delete rule admits. The rule bounds the
-// identity (tf.RemovalIdentityPrintMax, and a removal whose identity is longer
-// than that is refused rather than printed), and the address is the plan's
-// own, so a line past this bound is text no rule produced — the object's
-// writer put it there by hand — and it is printed through safetext.Field,
-// which cuts it and says with its own marker that it did.
+// listingLineMax is the longest entry line this listing prints whole: twice the
+// identity's own bound (tf.RemovalIdentityPrintMax), which is room for an
+// identity inside that bound and an address of the same order beside it. Every
+// entry this command WRITES has an identity inside the bound, because
+// approveArgument refuses a longer one.
+//
+// The address half it writes is unbounded, deliberately. The address is the
+// plan's own — this command cannot know what a plan will carry — and in a
+// managed project the owner's list is the only route to approve a delete at one
+// (GuardAllowList refuses a command-line address there), so refusing a long
+// address would lock that removal away with nothing left to act on. Nothing
+// else bounds it either: the identity half is bounded here (approveArgument)
+// and by the rule, the object is bounded as a whole (managed's 64 KiB read
+// bound) rather than per entry, and parseDeleteList refuses an entry only for a
+// blank half. The identity's bound is no precedent for one: a longer identity
+// is refused by the gate whatever the plan shows, so bounding it here only
+// repeats a rule that already holds, while an address has no such rule to fall
+// back on. A line past this bound is therefore one this command may have
+// written, or one another writer left in the object, and it is printed through
+// safetext.Field, which cuts it at FieldMax and ends it with its own marker:
+// what the owner reads there is visibly a cut text and not the entry.
 const listingLineMax = 2 * tf.RemovalIdentityPrintMax
 
 // printEntries is a listing of the entries an owner's object holds, one per
 // line, in the ADDRESS=IDENTITY form this command's arguments take — so a line
-// the owner reads is a line they can paste back.
+// the owner reads is a line they can paste back, while it is one of the lines
+// this listing prints whole. The half that promise holds for is the IDENTITY:
+// the command that recorded the entry escaped it (tf.RemovalIdentity.String
+// escapes every byte its printers would touch), so the rewrites FieldUncut
+// still makes are no-ops on it, and a line this listing prints whole carries
+// its identity back byte for byte. Past that bound (listingLineMax) the
+// identity does not come back at all: the line is Field's there, cut at
+// FieldMax and marked as cut (the paragraph below, on where the line becomes
+// Field's), so what the owner reads is a text and not the identity they
+// approved.
+//
+// The address half is not escaped — the address is the plan's own, and
+// listingLineMax says why it is not bounded either — so an address holding a
+// character the printers rewrite (a tab, a run of spaces, a byte outside
+// printable ASCII) is printed as they rewrite it, and a line whose address was
+// rewritten is not the entry it was written from. Pasting that line back
+// records an entry about an address the plan does not have, which is an
+// approval of nothing, refused (loudly and fail-closed) wherever the address is
+// matched byte for byte. Stating the cost is the honest end of it, because
+// paying it off here is not open to this listing: an address escaped the way an
+// identity is could not be read back into an entry at all (this command takes
+// its address half as written and never unescapes one), and no printed form of
+// such an address is one an owner can paste anyway — a refusal prints the
+// address through safetext.Field too. An address narrow enough to need one of
+// those characters is one an owner writes into the argument by hand.
 //
 // Each line is printed as the entry itself (safetext.FieldUncut at or below
 // the listing's own line bound, safetext.Field past it): Field is what keeps an
@@ -433,11 +591,14 @@ const listingLineMax = 2 * tf.RemovalIdentityPrintMax
 // escape sequence, a bidi control or a newline of its own, but it also cuts a
 // value at its own bound and rewrites the characters it does not expect, and a
 // line that is not the entry is a line that approves nothing when it is pasted
-// back. The entry's own characters are already escaped by the command that
-// wrote it (tf.RemovalIdentity.String escapes every byte its printers would
-// touch), so the rewrites FieldUncut still makes are no-ops on an entry this
-// command wrote, and a line it wrote reads exactly as it was written however
-// long it is.
+// back — which is the difference the halves above are about.
+//
+// Past the bound the line is Field's: cut at FieldMax, ended with Field's own
+// marker. An entry can be that long — listingLineMax says why the address half
+// is unbounded — and what this listing offers its reader at that length is a
+// visibly cut text rather than an entry, which is the honest answer where a
+// whole line cannot be printed; the entry itself is unchanged in the object,
+// where the command that wrote it put it.
 //
 // And the listing stops at safetext.FieldListMax entries with the rest counted
 // (FieldListNote): the object holds as many entries as it was written with,

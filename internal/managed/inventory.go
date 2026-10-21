@@ -72,8 +72,10 @@ const ServiceCloudAsset = "cloudasset.googleapis.com"
 // fugaro init refuse the installation's own plan.
 //
 // The impersonated deployer is NOT an identity that holds it, and nothing
-// here may assume one. The deployer is created with its two custom roles and
-// no other (D75, Task 1.5; deployer.tf), and the table above grants this
+// here may assume one. The deployer is created with its own deployer roles
+// and no other (D75, Task 1.5; deployer.tf; seven of them per-service and
+// fenced, only where the installation opts in), and the table above grants
+// this
 // role to people only, so a managed plan cannot grant it to an account either:
 // a read made under the deployer's credential answers CauseRoleMissing and
 // falls the run back to its confirmations, which is the fail-closed direction

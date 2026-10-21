@@ -37,14 +37,34 @@ var ErrInvalidSession = errors.New("session.json names no usable session")
 
 const (
 	sessionMetaName = "session/session.json"
-	sessionVersion  = 1
+	// reviewMetaName is where a review stage's session goes (C1.17, D138):
+	// beside the work session, never in its place. A review runs in a session
+	// of its own, and a follow-up resumes the work (session/session.json) —
+	// the conversation that holds what the run built, not the one that read
+	// it.
+	reviewMetaName = "session/review.json"
+	sessionVersion = 1
 )
 
 func sessionFileName(id string) string { return "session/" + id + ".jsonl" }
 
+func reviewSessionFileName(id string) string { return "session/review/" + id + ".jsonl" }
+
 // PutSession stores a session's file as session/<id>.jsonl, then its meta
 // as session/session.json.
 func (s *Store) PutSession(ctx context.Context, m SessionMeta, data []byte) error {
+	return s.putSessionAt(ctx, m, data, sessionFileName(m.ID), sessionMetaName)
+}
+
+// PutReviewSession stores a review stage's session as
+// session/review/<id>.jsonl, then its meta as session/review.json. It is the
+// review's session saved too, not instead (C1.17, D138): the work session
+// keeps its own objects, and both are redacted and capped the same way.
+func (s *Store) PutReviewSession(ctx context.Context, m SessionMeta, data []byte) error {
+	return s.putSessionAt(ctx, m, data, reviewSessionFileName(m.ID), reviewMetaName)
+}
+
+func (s *Store) putSessionAt(ctx context.Context, m SessionMeta, data []byte, file, metaName string) error {
 	if !agent.ValidSessionID(m.ID) {
 		return fmt.Errorf("%w: the session ID is not a lower-case UUID", ErrInvalidSession)
 	}
@@ -52,10 +72,10 @@ func (s *Store) PutSession(ctx context.Context, m SessionMeta, data []byte) erro
 	if err != nil {
 		return err
 	}
-	if err := s.PutFile(ctx, sessionFileName(m.ID), data, "application/x-ndjson"); err != nil {
+	if err := s.PutFile(ctx, file, data, "application/x-ndjson"); err != nil {
 		return err
 	}
-	return s.PutFile(ctx, sessionMetaName, meta, "application/json")
+	return s.PutFile(ctx, metaName, meta, "application/json")
 }
 
 // ReadSession reads the run's saved session: its meta (capped at
