@@ -322,12 +322,14 @@ func TestVerifyAcceptsLiveRun(t *testing.T) {
 	if id.Job != f.job || id.JobAccount != testJobSA {
 		t.Errorf("job = %q/%q, want %q/%q", id.Job, id.JobAccount, f.job, testJobSA)
 	}
-	// The liveness check asked about the run's launch day: no outcome is
-	// written for a run that has not ended.
+	// The liveness check asked about the run's days: no outcome is written for a
+	// run that has not ended. The first day is the one above today, because the
+	// day an outcome is written under is the database's clock, which may be
+	// ahead of this service's (review nit).
 	if asked := f.db.daysAsked(); len(asked) == 0 {
 		t.Fatal("the liveness check asked about no day at all")
-	} else if want := budget.Day(f.now); asked[0] != want {
-		t.Errorf("the first day asked about = %d, want today (%d)", asked[0], want)
+	} else if want := budget.Day(f.now) + 1; asked[0] != want {
+		t.Errorf("the first day asked about = %d, want the day above today (%d)", asked[0], want)
 	}
 }
 
@@ -359,10 +361,30 @@ func TestVerifyRefusesRunWithOutcome(t *testing.T) {
 		if !errors.Is(err, ErrUnverified) {
 			t.Fatalf("err = %v, want ErrUnverified", err)
 		}
-		// Both days were asked about: today first, then the launch day.
-		if want, asked := []int64{budget.Day(f.now), budget.Day(launch)}, f.db.daysAsked(); len(asked) != 2 ||
-			asked[0] != want[0] || asked[1] != want[1] {
+		// Every day of the window was asked about: the day above today, then
+		// today, then the launch day (where the outcome was found).
+		want := []int64{budget.Day(f.now) + 1, budget.Day(f.now), budget.Day(launch)}
+		if asked := f.db.daysAsked(); len(asked) != len(want) ||
+			asked[0] != want[0] || asked[1] != want[1] || asked[2] != want[2] {
 			t.Errorf("days asked = %v, want %v", asked, want)
+		}
+	})
+
+	// The day above this service's today, which is the one a scan clamped to
+	// today loses: the day an outcome is written under is the database's, whose
+	// clock may be ahead of this service's, so a run that ended moments before
+	// the database's midnight writes its outcome under a day this clock still
+	// calls tomorrow. A scan that stopped at today admits it (review nit).
+	t.Run("the outcome is dated the day above today", func(t *testing.T) {
+		f := newFixture(t)
+		tomorrow := budget.Day(f.now) + 1
+		f.db.set(budget.PathOutcome(tomorrow, f.slug, f.run))
+		_, err := f.verify(f.runToken(), f.jobToken(), f.job)
+		if !errors.Is(err, ErrUnverified) {
+			t.Fatalf("err = %v, want ErrUnverified: the run's outcome is dated the database's tomorrow", err)
+		}
+		if asked := f.db.daysAsked(); len(asked) == 0 || asked[0] != tomorrow {
+			t.Errorf("days asked = %v, want the day above today (%d) first", asked, tomorrow)
 		}
 	})
 }
@@ -1118,11 +1140,11 @@ func TestVerifyBoundsTheLaunchDayScan(t *testing.T) {
 		f.run = f.now.AddDate(0, 0, -maxRunDays).Format("20060102-150405") + "-ee55"
 		f.verifyOK()
 		days := f.db.daysAsked()
-		if len(days) != maxRunDays+1 {
-			t.Fatalf("days scanned = %v, want %d: the launch day and every day since", days, maxRunDays+1)
+		if len(days) != maxRunDays+2 {
+			t.Fatalf("days scanned = %v, want %d: the launch day and every day since, plus the day above today", days, maxRunDays+2)
 		}
-		if days[0] != today || days[len(days)-1] != today-maxRunDays {
-			t.Errorf("days scanned = %v, want %d down to %d", days, today, today-maxRunDays)
+		if days[0] != today+1 || days[len(days)-1] != today-maxRunDays {
+			t.Errorf("days scanned = %v, want %d down to %d", days, today+1, today-maxRunDays)
 		}
 	})
 
@@ -1141,10 +1163,10 @@ func TestVerifyBoundsTheLaunchDayScan(t *testing.T) {
 		if !errors.Is(err, ErrUnverified) {
 			t.Fatalf("err = %v, want a refusal: the run's outcome is written today", err)
 		}
-		// The scan starts at today and never in the future, where no outcome of
-		// a run that has already ended can be.
-		if days := f.db.daysAsked(); len(days) == 0 || days[0] != today {
-			t.Errorf("days scanned = %v, want today (%d) first", days, today)
+		// The scan starts at the day above today — the database's clock may be
+		// ahead of ours — and reaches the launch day below it.
+		if days := f.db.daysAsked(); len(days) == 0 || days[0] != today+1 {
+			t.Errorf("days scanned = %v, want the day above today (%d) first", days, today+1)
 		}
 	})
 
@@ -1161,8 +1183,8 @@ func TestVerifyBoundsTheLaunchDayScan(t *testing.T) {
 		if !errors.Is(err, ErrUnverified) {
 			t.Fatalf("err = %v, want a refusal: the run's outcome is written yesterday", err)
 		}
-		if days := f.db.daysAsked(); len(days) != 2 || days[0] != today || days[1] != today-1 {
-			t.Errorf("days scanned = %v, want today (%d) and yesterday (%d)", days, today, today-1)
+		if days := f.db.daysAsked(); len(days) != 3 || days[0] != today+1 || days[1] != today || days[2] != today-1 {
+			t.Errorf("days scanned = %v, want %d, %d and %d", days, today+1, today, today-1)
 		}
 	})
 }

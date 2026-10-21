@@ -252,8 +252,13 @@ func looseEntry(raw json.RawMessage) AgentEntry {
 	return e
 }
 
-// runIDTime is the time a run id (20060102-150405-xxxx) was made, the zero
-// time when it is not that shape: a zero time reads as stale.
+// runIDTime is the UTC time named by the head of a run id
+// (20060102-150405-xxxx), and the zero time when the id is shorter than that
+// head or the head is not such a timestamp. It reads the head only — the rest
+// of the id is not checked here, and callers compare the result against a day
+// they have, treating the zero time as "no launch day", which is the stale end
+// of that comparison. Review nit: the doc claimed to be "the time a run id was
+// made", which is more than this parses.
 func runIDTime(run string) time.Time {
 	if len(run) < 15 {
 		return time.Time{}
@@ -282,12 +287,12 @@ func (s *Sweeper) remove(ctx context.Context, slug, run string, e AgentEntry, no
 	// The launch day is the run id's, which no run token writes.
 	//
 	// A run id dated ahead of this clock is the one branch where the launch
-	// day cannot be the day: no scan reads a future day (the rules' DAYOK
-	// refuses one, and checkLive looks at today and yesterday), so the outcome
-	// goes on today rather than falling back to the older, run-written
-	// heartbeat day — otherwise a run id dated ahead of the clock and a
-	// heartbeat days old would put the outcome outside the window again, from
-	// the far side.
+	// day cannot be the day: the rules' DAYOK refuses a future day, and the
+	// liveness scan reads the database's window around today (today+1 down to
+	// today-1; checkLive) — so the outcome goes on today, which is inside it,
+	// rather than falling back to the older, run-written heartbeat day —
+	// otherwise a run id dated ahead of the clock and a heartbeat days old
+	// would put the outcome outside the window again, from the far side.
 	today := Day(now)
 	day := today
 	if hb := time.UnixMilli(e.UpdatedAt); e.UpdatedAt > 0 && hb.Before(now) && now.Sub(hb) < 8*24*time.Hour {
