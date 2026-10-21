@@ -18,11 +18,18 @@ import (
 // constructs no client — and it is hidden, because it is not a command this
 // CLI offers any more.
 
-// retirementText is the one sentence the retired `fugaro init` says, whatever
+// retirementSentence is the one sentence the retired `fugaro init` says, whatever
 // came after it on the command line. It is a constant because the tombstone
 // and its test both quote it, and because the plan's census (W0.2) exempts
 // the files that name the command only to retire it.
-const retirementText = "`fugaro init` is now `fugaro setup` (first run) and `fugaro update` (after a CLI upgrade)"
+//
+// It is called a *sentence* and not `retirementText` because that name is
+// already taken, one package over: docs_live_init_census_test.go declares
+// `retirementText` as W0.2's second exemption class, the list of paths that
+// may name the retired command. Two declarations of one identifier do not
+// compile, and the census's name is the one the plan writes down (W0.2, W2.6,
+// and the file-lane table), so this one yields to it.
+const retirementSentence = "`fugaro init` is now `fugaro setup` (first run) and `fugaro update` (after a CLI upgrade)"
 
 // newRetiredInitCmd is the hidden `init`: one message, two names, exit 1.
 //
@@ -38,12 +45,12 @@ func newRetiredInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "init",
 		Short:              "Retired: fugaro setup on a first run, fugaro update after a CLI upgrade",
-		Long:               retirementText + ".\n\nIt applies nothing: it names the two commands that replaced it and exits 1.",
+		Long:               retirementSentence + ".\n\nIt applies nothing: it names the two commands that replaced it and exits 1.",
 		Hidden:             true,
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return userErr("%s", retirementText)
+			return userErr("%s", retirementSentence)
 		},
 	}
 }
