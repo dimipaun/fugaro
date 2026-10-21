@@ -1,0 +1,7 @@
+{
+  "installations": [
+    { "id": "1f0a2b3c4d5e6f70", "project": "acme-platform" },
+    { "id": "2a1b3c4d5e6f7081", "project": "acme-web" },
+    { "id": "3b2c4d5e6f708192", "project": "acme-data" }
+  ]
+}

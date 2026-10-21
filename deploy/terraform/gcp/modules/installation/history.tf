@@ -1,7 +1,7 @@
 # The history job: a scheduled, admin-privileged Cloud Run job that sweeps
 # the run registry of crashed runs (fugaro budget history --sweep, D12). It
 # is the one exception to "no budget service". The account is created in the
-# first of init --firebase's applies, so the Firebase root can grant it
+# first of fugaro update's applies, so the Firebase root can grant it
 # roles on the FP; the job and its Scheduler job arrive in the third, when
 # the FP's outputs exist (history.deploy_job).
 

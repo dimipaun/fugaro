@@ -4,19 +4,22 @@ package cli
 //
 // docs/coordinator/ holds the owner's spec for a per-project coordinator agent
 // (spec.md, verbatim), the reconciliation of that spec against the code
-// (reconciliation.md), and the index (README.md). The work is reconciliation
-// only: no Go, no TypeScript, no Terraform, no rules change, and no plan until
-// the owner answers the reconciliation's questions.
+// (reconciliation.md), the index (README.md), and -- since 2026-10-21 -- the
+// plan that turns the owner's answers into ordered parts
+// (implementation-plan.md). No Go, no TypeScript, no Terraform, no rules change
+// and no live action follows from any of them.
 //
 // The reconciliation's whole value is that every claim in it is checkable, and
-// the four things a later edit can silently break are: the spec stops being
-// verbatim, a citation drifts to a path that no longer exists, a citation into a
-// document other works add to drifts off the sentence it meant, or the work
-// starts allocating decision numbers the owner never gave it. Each of the nine
-// tests below is one of those, plus the two structural facts (the questions are
-// numbered and optioned; the index states the status, the owner and the commit
-// checked against) and one that reads this file rather than the documents (the
-// mutation record's count against the list it heads).
+// the things a later edit can silently break are: the spec stops being verbatim,
+// a citation drifts to a path that no longer exists, a citation into a document
+// other works add to drifts off the sentence it meant, the work starts
+// allocating decision numbers the owner never gave it, or the plan's parts stop
+// being an order and become a list. Each of the eleven tests below is one of
+// those, plus the structural facts (the questions are numbered and optioned; the
+// index states the status, the owner and the commit checked against; the five
+// decisions planning found are numbered, contiguous and written recommendation
+// first) and one that reads this file rather than the documents (the mutation
+// record's count against the list it heads).
 //
 //  * TestDocsCoordinatorIsWritten -- the three files exist and carry the
 //    load-bearing sentences: the status line, the owner, the date, the commit
@@ -29,8 +32,27 @@ package cli
 //  * TestDocsCoordinatorSpecIsVerbatim -- spec.md carries the spec's own title,
 //    status and eleven sections, and carries none of the reconciliation's
 //    apparatus: the two documents have not been mixed.
-//  * TestDocsCoordinatorTakesNoDecisionNumber -- neither document allocates a
-//    decision number, and both say so.
+//  * TestDocsCoordinatorNewDecisionsAreNumbered -- the five decisions planning
+//    found are D193-D197, written in the reconciliation's §6 as `### D<n> — ...`
+//    headings in order and with no gap, each stating its recommendation before
+//    its alternatives, and the index says of them that they are written and not
+//    answered. The old test here asserted the opposite -- that this work
+//    allocated no decision number at all -- and it is replaced rather than
+//    deleted: an answer picks an option and allocates nothing, which is still
+//    true and is still pinned, but the planning that followed the answers found
+//    five things the answers do not settle, and those are decisions.
+//  * TestDocsCoordinatorPlanIsWritten -- the plan exists, is at the status the
+//    index gives it ("plan written; no code is implemented; approval gate
+//    open"), carries its parts P0..P8 contiguously and in order, carries the one
+//    section heading the brief asked for by name, names every decision D193-D197
+//    with the part it blocks, and marks the paths it cites that do not exist yet
+//    as new.
+//  * TestDocsCoordinatorPlanCitationsExist -- every repository path the plan
+//    cites resolves, measured against the same independent census the
+//    reconciliation's citation check uses, with the plan's own exception list for
+//    the paths it declares new -- which must NOT exist yet, so the day one of
+//    them lands the entry fails instead of silently excusing a citation that
+//    would otherwise be checked.
 //  * TestDocsCoordinatorCitationsExist -- every repository path reconciliation.md
 //    cites resolves on disk, in either the full form or the
 //    deploy/terraform/gcp/-relative form the Terraform modules are cited in, in
@@ -72,7 +94,7 @@ package cli
 //    twenty-four -- which is the same silent-overclaim the citation census
 //    exists to catch in the document.
 //
-// Mutation (verified, run and restored) -- 62, one per way these documents can
+// Mutation (verified, run and restored) -- 76, one per way these documents can
 // rot, each planted and reverted. The count is a digit and not a word, and
 // there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
 // reads it and counts the list under it: one arrow per mutation, so a number
@@ -102,9 +124,50 @@ package cli
 //	TestDocsCoordinatorSpecIsVerbatim
 //	  paste a `### Q1 — ` heading into spec.md -> fails;
 //	  delete `## 9. Long-running behaviour` -> fails.
-//	TestDocsCoordinatorTakesNoDecisionNumber
-//	  add a `| **D193** | ... |` row to reconciliation.md -> fails;
-//	  drop its "It allocates no decision number" sentence -> fails.
+//	TestDocsCoordinatorNewDecisionsAreNumbered
+//	  renumber the last of the five, D197 to D198 -> fails: the
+//	  headings are read in order and held to the block the index records;
+//	  delete one of the five -> fails, naming the missing number;
+//	  swap a decision's two paragraphs, so its alternative comes first -> fails:
+//	  recommendation-first is the whole of what "written to the recommendation"
+//	  means, and the file's own order is the only thing that makes it checkable;
+//	  write a decision's recommendation as option (B), leaving the alternative
+//	  labelled (B) too -> fails: the letter is checked, not only the word, so a
+//	  decision whose recommendation moved is not quietly still "recommended";
+//	  drop the README's "written, not answered" state -> fails.
+//	TestDocsCoordinatorPlanIsWritten
+//	  move P4 after P5 -> fails: the parts are an order, not a list;
+//	  delete the "## What the owner must answer before any part starts" heading ->
+//	  fails, naming it;
+//	  drop a decision's row from the gate table (D193's, or D196's) -> fails,
+//	  naming the decision: the table is read from its own section, so naming the
+//	  decision somewhere else in the plan does not stand in for its row;
+//	  restore the old status line ("reconciliation only; ... no plan is
+//	  approved") -> fails.
+//	TestDocsCoordinatorPlanCitationsExist
+//	  rename a cited path in the plan to `internal/coordinatorX/` -> fails,
+//	  naming it;
+//	  create the file the plan declares new (`internal/cli/coordinator.go`) ->
+//	  fails: an exception that has outlived the thing it excused is a citation
+//	  nobody checks;
+//	  rename the symbol a possessive pairing names (`GetETag` in
+//	  internal/rtdb/client.go, which the plan cites as `internal/rtdb/client.go`'s
+//	  `GetETag`) -> fails, naming the symbol and the file: the path still
+//	  resolves, which is the half a path check cannot see;
+//	  make the pairing regexp stop at the newline where it now allows any
+//	  whitespace (`'s\s+` -> `'s `) -> fails, against the possessive census: the
+//	  plan wraps one pairing across two lines, so the narrower regexp finds one
+//	  pairing fewer and the census is what says so. Wrapping the plan's pairing
+//	  itself is not a mutation -- the regexp reads across the wrap, which is why
+//	  it is written to;
+//	  reword the plan's one audited prose possessive so the phrase
+//	  coordinatorPlanProsePossessives excuses no longer appears (the plan's
+//	  `...`'s list` becomes "the list `...` carries") -> fails, naming the entry:
+//	  an exception that has
+//	  outlived its sentence is a pairing nobody is checking, the same rule the
+//	  citation exception maps follow;
+//	  delete the index's drift section -> fails: three other folders' readings of
+//	  this register are recorded nowhere else.
 //	TestDocsCoordinatorCitationsExist
 //	  rename a cited path to `internal/budget/modelX.go` -> fails, naming it;
 //	  put a line past the end of a cited file (`internal/budget/model.go:99999`,
@@ -354,7 +417,72 @@ const (
 	coordinatorReadme     = "docs/coordinator/README.md"
 	coordinatorSpec       = "docs/coordinator/spec.md"
 	coordinatorReconciled = "docs/coordinator/reconciliation.md"
+	coordinatorPlan       = "docs/coordinator/implementation-plan.md"
 )
+
+// coordinatorBase is the commit the plan was written against: the commit that
+// brought docs/central-orchestrator/ in, which is what the plan's §1 reads to
+// say what changed since the reconciliation's c6009b5f. Like
+// coordinatorCheckedAgainst it is a separate constant because the test asserts
+// the document NAMES it, not that HEAD is it.
+const coordinatorBase = "1e0953b7"
+
+// coordinatorReadmeStatus is the index's status line after the plan was
+// written. It replaces the reconciliation-only status this package pinned
+// before, and it is pinned whole: the two things a reader has to take from it
+// are that a plan now EXISTS and that it is not approved, and a rewrap that
+// keeps the first and drops the second is exactly the edit this catches.
+const coordinatorReadmeStatus = "plan written; no code is implemented; approval gate open"
+
+// coordinatorReadmePlanNewDecisions is the index's own sentence about the
+// decisions the planning found -- written, not answered -- pinned so that the
+// README cannot describe D193-D197 as taken or answered. The reconciliation's
+// §6 says the same thing in its own words, and both are pinned for the reason
+// the answered-rather-than-approved pair is: it is the claim a later edit
+// softens first.
+const coordinatorReadmePlanNewDecisions = "**written, not answered.**"
+
+// coordinatorReadmeDriftHeading is the index's section recording what writing
+// into the D193 block made stale elsewhere: three other works read this register
+// at their own base commits and concluded D193 onward was free, and their
+// documents were not edited from here.
+const coordinatorReadmeDriftHeading = "## What still reads this register the old way"
+
+// coordinatorPlanGateHeadingRE is the one section heading the brief for this
+// plan asked for by name, because that gate is what a reader has to find and a
+// heading reworded is a gate nobody looks for. It is matched as a whole `## `
+// heading rather than as a substring, and its section number is left free so
+// that inserting a section above it is not a failure -- what is pinned is the
+// gate's own words and that it is a section of its own.
+var coordinatorPlanGateHeadingRE = regexp.MustCompile(`(?m)^## [0-9]+\. What the owner must answer before any part starts$`)
+
+// coordinatorPlanGateColumns is the gate table's own header row: the brief
+// asked for a table of the decision, what it blocks and the recommendation the
+// plan is written to, and those three columns are what makes it answerable. A
+// table that lost its third column would leave the owner choosing between
+// options with no statement of which one the plan assumes.
+const coordinatorPlanGateColumns = "| Decision | What it blocks | The recommendation the plan is written to |"
+
+// coordinatorPlanStatus is the plan's own status line, the same statement the
+// index makes, held separately because the plan is the document a builder reads
+// first and it must not be able to say something else.
+const coordinatorPlanStatus = "**Status: plan written; no code is implemented; approval gate open.**"
+
+// coordinatorPlanParts are the plan's parts in order, as their headings are
+// written. Contiguity and order are the assertion: the plan's whole claim is
+// that its parts are an order with dependencies, and a P-number that moved or
+// disappeared while its heading stayed would leave the prose describing a
+// sequence the headings no longer carry.
+var coordinatorPlanParts = []string{
+	"### P0 — ", "### P1 — ", "### P2 — ", "### P3 — ", "### P4 — ",
+	"### P5 — ", "### P6 — ", "### P7 — ", "### P8 — ",
+}
+
+// coordinatorPlanDecisions are the five decisions the planning found, in the
+// order the plan's gate table lists them. They are numbered in the owner's
+// global block, not a folder-local one, and each is pinned by its heading in the
+// reconciliation and by its name in the plan's table.
+var coordinatorPlanDecisions = []string{"D193", "D194", "D195", "D196", "D197"}
 
 // coordinatorCheckedAgainst is the commit the reconciliation was run against:
 // the release commit of v0.8.6, which is `origin/main` when this package was
@@ -382,8 +510,13 @@ const coordinatorAnsweredMarker = "**Answered 2026-10-19: option (A)**"
 // pinned, because each is a place a later edit can soften the claim without
 // touching the other.
 const (
-	coordinatorReadmeAnswered     = "**All sixteen questions are answered, and none is approved.**"
-	coordinatorReadmeNotApproval  = "**An answer is not an approval**: nothing in this directory has been accepted, approved or given a decision number, no plan exists, and the plan that follows is a separate document with its own gate."
+	coordinatorReadmeAnswered = "**All sixteen questions are answered, and none is approved.**"
+	// Rewritten when the plan landed: the sentence used to say this directory
+	// held "no plan" and no decision number, and both halves stopped being true
+	// on 2026-10-21. What stays is the claim that matters and that no other test
+	// can see -- an answer is not an approval, the plan has its own gate, and no
+	// part of it starts before that gate passes.
+	coordinatorReadmeNotApproval  = "**An answer is not an approval**: nothing in this directory has been accepted or approved, the planning's own five decisions are numbered and written but **not answered** ([reconciliation.md](reconciliation.md) §6), the plan has its own gate, and no part of it starts before the owner passes that gate."
 	coordinatorReconciledAnswered = "**The owner answered all sixteen on 2026-10-19, each by taking option (A) — the recommendation — and an answer is not an approval.**"
 )
 
@@ -408,16 +541,18 @@ var coordinatorSections = []string{
 // nothing is implemented, who owns it, when it was written, and which commit it
 // was checked against.
 func TestDocsCoordinatorIsWritten(t *testing.T) {
-	for _, path := range []string{coordinatorReadme, coordinatorSpec, coordinatorReconciled} {
+	for _, path := range []string{coordinatorReadme, coordinatorSpec, coordinatorReconciled, coordinatorPlan} {
 		if _, err := os.Stat("../../" + path); err != nil {
 			t.Errorf("%s does not exist: %v", path, err)
 		}
 	}
 	readme := readDoc(t, coordinatorReadme)
 	for _, want := range []string{
-		"reconciliation only; nothing is implemented and no plan is approved",
+		coordinatorReadmeStatus,
+		coordinatorReadmePlanNewDecisions,
 		"**Owner: Dimi Paun. Date: 2026-10-19.**",
 		coordinatorCheckedAgainst,
+		coordinatorBase,
 		"**None.** The spec is copied byte for byte",
 		"its items were **Q1–Q16**",
 		// What the content anchors cover and what they do not, each pinned whole on the one
@@ -507,28 +642,124 @@ func TestDocsCoordinatorSpecIsVerbatim(t *testing.T) {
 // report the allocation, they do not take a number from it.
 var coordinatorAllocationRowRE = regexp.MustCompile(`(?m)^\|\s*\*{0,2}D[0-9]+[a-z]?\*{0,2}\s*\|`)
 
-// TestDocsCoordinatorTakesNoDecisionNumber: this work allocates no decision
-// number. Its open items are questions Q1-Q16, and the owner's answer to one is
-// what would turn it into a decision -- which is exactly what the spec's own
-// "the plan waits for the owner's answers" means. A D-number appearing here
-// would take a number out of the block the repository's allocation records
-// (D193 onward is the next free one) without the owner having given it.
-func TestDocsCoordinatorTakesNoDecisionNumber(t *testing.T) {
-	for _, path := range []string{coordinatorReadme, coordinatorReconciled} {
-		doc := readDoc(t, path)
-		if m := coordinatorAllocationRowRE.FindString(doc); m != "" {
-			t.Errorf("%s allocates a decision number: %q. This work's open items are Q1-Q16; the next free D block is D193 onward and is not this work's to take", path, strings.TrimSpace(m))
+// coordinatorDecisionHeadingRE matches one of §6's decision headings,
+// `### D193 — How far does one coordinator's GitHub credential reach?`, in the
+// numbered-then-em-dash shape the section uses for all five.
+var coordinatorDecisionHeadingRE = regexp.MustCompile(`(?m)^### (D[0-9]+) — `)
+
+// TestDocsCoordinatorNewDecisionsAreNumbered: the five things planning found are
+// decisions and they are numbered, from the block the register records as free.
+//
+// This test replaces TestDocsCoordinatorTakesNoDecisionNumber, which asserted
+// the opposite and was right to while the folder held a reconciliation and no
+// plan. What it protected has not gone away and is still asserted: an ANSWER
+// picks an option and allocates nothing -- the sixteen questions are still
+// Q-numbers with no D-number each, and the reconciliation still says so. What
+// changed is that the plan that followed the answers found five things the
+// answers do not settle, and a decision is what those are. Leaving them
+// unnumbered would have made the plan's gate table name a decision a reader
+// cannot cite, and D-numbers are how this repository cites one.
+//
+// Two failure modes are checked, and the second is the one that matters:
+// contiguity, so that a decision cannot be dropped and renumbered quietly; and
+// the recommendation coming first in each, because "the plan is written to the
+// recommendation" is only true if the recommendation is the one a reader meets
+// first -- the file's own order is the only thing that makes that claim
+// checkable.
+func TestDocsCoordinatorNewDecisionsAreNumbered(t *testing.T) {
+	reconciled := readDoc(t, coordinatorReconciled)
+	var got []string
+	for _, m := range coordinatorDecisionHeadingRE.FindAllStringSubmatch(reconciled, -1) {
+		got = append(got, m[1])
+	}
+	if len(got) != len(coordinatorPlanDecisions) {
+		t.Fatalf("%s carries %d decision headings (%v) and the plan names %d (%v): the five decisions planning found are the section's subject",
+			coordinatorReconciled, len(got), got, len(coordinatorPlanDecisions), coordinatorPlanDecisions)
+	}
+	for i, want := range coordinatorPlanDecisions {
+		if got[i] != want {
+			t.Errorf("%s writes the decision at position %d as %s, not %s: the numbers are contiguous from D193 and in the plan's order",
+				coordinatorReconciled, i+1, got[i], want)
 		}
 	}
-	// Both documents have to SAY it, not merely avoid it: a reader who finds
-	// Q-numbers and no D-numbers needs the reason in front of them.
-	for _, tc := range []struct{ path, want string }{
-		{coordinatorReadme, "This work takes **no D-number**"},
-		{coordinatorReconciled, "It allocates no decision number"},
-	} {
-		if !strings.Contains(readDoc(t, tc.path), tc.want) {
-			t.Errorf("%s does not say that this work allocates no decision number: it lacks %q", tc.path, tc.want)
+	// Each decision states its recommendation before any alternative, and both.
+	// The section is one paragraph per decision, so the check is positional
+	// within each decision's own text.
+	at := 0
+	for _, n := range coordinatorPlanDecisions {
+		head := "### " + n + " — "
+		i := strings.Index(reconciled[at:], head)
+		if i < 0 {
+			t.Fatalf("%s lost the %s heading after the loop found it", coordinatorReconciled, head)
 		}
+		start := at + i
+		at = start + len(head)
+		next := strings.Index(reconciled[at:], "\n### ")
+		end := len(reconciled)
+		if next >= 0 {
+			end = at + next
+		}
+		body := reconciled[start:end]
+		// The recommendation is option (A) in all five -- that is what "the plan
+		// is written to the recommendation" means concretely, and the letter is
+		// checked rather than only the word: a decision whose recommendation
+		// quietly became (B) while the alternative stayed labelled (B) is a
+		// decision the plan's own parts no longer match, and ordering alone
+		// cannot see it.
+		rec := strings.Index(body, "**Recommendation — (A):")
+		alt := strings.Index(body, "**Alternative — (B):")
+		if rec < 0 {
+			t.Errorf("%s's %s states no recommendation of option (A): the plan is written to the recommendation, and every one of these five recommends (A)", coordinatorReconciled, n)
+			continue
+		}
+		if alt < 0 {
+			t.Errorf("%s's %s states no alternative of option (B): a decision with one option is not a decision", coordinatorReconciled, n)
+			continue
+		}
+		if rec > alt {
+			t.Errorf("%s's %s writes its alternative before its recommendation: recommendation-first is what makes the plan's \"written to the recommendation\" checkable", coordinatorReconciled, n)
+		}
+		if !strings.Contains(body, "**Where it lands.**") {
+			t.Errorf("%s's %s does not name where it lands: a decision the plan's parts cannot point at is a decision the gate table cannot block on", coordinatorReconciled, n)
+		}
+	}
+	// The index has to say they are written and NOT answered, in its own words.
+	if !strings.Contains(readDoc(t, coordinatorReadme), coordinatorReadmePlanNewDecisions) {
+		t.Errorf("%s does not state that the planning's decisions are written and not answered: it lacks %q", coordinatorReadme, coordinatorReadmePlanNewDecisions)
+	}
+	// And the claim the old test protected, kept: an answer allocates nothing.
+	if !strings.Contains(reconciled, "**an answer picks an option; it allocates nothing.**") {
+		t.Errorf("%s no longer says that an answer picks an option and allocates nothing: the distinction between the owner's answers and a decision number is the reason D193 starts where it does", coordinatorReconciled)
+	}
+	// The README's numbers table still reports the block this work wrote into,
+	// and no longer reports D193 onward as free -- that sentence was true of the
+	// folder before the plan, and leaving it would say the block is unallocated.
+	if strings.Contains(readDoc(t, coordinatorReadme), "**D193 onward** | — | **free.**") {
+		t.Errorf("%s still reports **D193 onward** as free: this work wrote D193-D197 into it", coordinatorReadme)
+	}
+	// Writing into the block made three other folders' readings of this register
+	// stale, and those documents were deliberately not edited from here: the
+	// index records the drift site by site instead. That record is pinned,
+	// because it is the only place a reader of those documents is told what
+	// changed -- deleting it would leave three works offering "move this work to
+	// D193 onward" as a live alternative to a block this one has taken.
+	readmeDoc := readDoc(t, coordinatorReadme)
+	for _, want := range []string{
+		coordinatorReadmeDriftHeading,
+		"docs/central-orchestrator/README.md",
+		"docs/windows-cli/README.md",
+		"docs/mobile/voice-session/README.md",
+	} {
+		if !strings.Contains(readmeDoc, want) {
+			t.Errorf("%s no longer carries %q: the drift this block created in three other folders' readings has to be recorded somewhere, and this is the only place it is", coordinatorReadme, want)
+		}
+	}
+	// And the index still reports the block the way it reports every block: as a
+	// range row, not as one row per number. A `| **D193** | ... |` row in the
+	// index would be the folder-local allocation convention this work did not
+	// take, and it would say a number had been answered as well as written.
+	if m := coordinatorAllocationRowRE.FindString(readDoc(t, coordinatorReadme)); m != "" {
+		t.Errorf("%s allocates a decision number row by row: %q. This folder reports the block as a range; the five decisions are §6 headings", coordinatorReadme, strings.TrimSpace(m))
 	}
 }
 
@@ -1940,4 +2171,240 @@ func TestDocsCoordinatorMutationRecordIsCounted(t *testing.T) {
 	if declared == 0 {
 		t.Error("the mutation record claims no mutations at all: a record of zero planted mutations proves nothing about the checks above it")
 	}
+}
+
+// coordinatorPlanNewPaths are the paths the plan cites that are new -- marked
+// **new** in the document because they do not exist yet -- each with the part
+// that creates it. The check is the reverse of the citation exceptions above:
+// an entry here must NOT resolve on disk, so that the day one of them lands the
+// test fails and the citation starts being checked as the ordinary path it has
+// become. An exception map that only excuses is how a check rots; this one is
+// written to expire by itself.
+var coordinatorPlanNewPaths = map[string]string{
+	"internal/cli/coordinator.go": "P1's new read command; P0's plan is what names it before it exists",
+}
+
+// TestDocsCoordinatorPlanIsWritten: the plan exists, says what state the work is
+// in, and is an ORDER rather than a list.
+//
+// The status line is the same claim the index makes and it is pinned in both
+// documents, because they are read separately: a builder reads the plan and a
+// visitor reads the index, and the plan is the one that could quietly stop
+// saying that nothing is implemented. The parts are pinned in order for the
+// plan's own reason: its §2 spends five paragraphs on the dependencies that
+// force the order, and a P-number that moved while its heading stayed would
+// leave that prose describing a sequence the headings no longer carry.
+//
+// The gate heading is pinned by name because the brief for this plan asked for
+// that section by name, and a gate a reader cannot find is not a gate. Every one
+// of D193-D197 is pinned in the plan's body, not only in the reconciliation:
+// the gate table is where a reader learns which part waits on which decision,
+// and a decision named in one document and missing from the other is the
+// mismatch this pair of tests exists to catch.
+func TestDocsCoordinatorPlanIsWritten(t *testing.T) {
+	plan := readDoc(t, coordinatorPlan)
+	for _, want := range []string{
+		coordinatorPlanStatus,
+		coordinatorPlanGateColumns,
+		coordinatorBase,
+		coordinatorCheckedAgainst,
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s lacks %q", coordinatorPlan, want)
+		}
+	}
+	if !coordinatorPlanGateHeadingRE.MatchString(plan) {
+		t.Errorf("%s carries no section headed %q: the brief for this plan asked for that section by name", coordinatorPlan, "## <n>. What the owner must answer before any part starts")
+	}
+	// In order, not merely present: a part moved is a part reordered.
+	at := 0
+	for _, heading := range coordinatorPlanParts {
+		i := strings.Index(plan[at:], heading)
+		if i < 0 {
+			t.Errorf("%s lacks the part heading %q, or carries it out of order", coordinatorPlan, heading)
+			continue
+		}
+		at += i + len(heading)
+	}
+	// Every decision the planning found is a row of the gate table, which is
+	// where a reader learns which part waits on it. Read from the section rather
+	// than from the document: a decision named somewhere in a six-hundred-line
+	// plan is not a decision the owner will find when they open the gate, and
+	// naming it in the prose while dropping its row is exactly the edit that
+	// leaves the table claiming to be the whole list.
+	gate := ""
+	if loc := coordinatorPlanGateHeadingRE.FindStringIndex(plan); loc != nil {
+		rest := plan[loc[1]:]
+		if next := strings.Index(rest, "\n## "); next >= 0 {
+			gate = rest[:next]
+		} else {
+			gate = rest
+		}
+	}
+	if gate == "" {
+		t.Fatalf("%s' gate section is empty or unfindable, so its rows cannot be read", coordinatorPlan)
+	}
+	for _, n := range coordinatorPlanDecisions {
+		if !strings.Contains(gate, "**"+n+"**") {
+			t.Errorf("%s' gate table has no row naming %s: the table is the list of what the owner must answer before any part starts, and a decision missing from it is one nobody is told about", coordinatorPlan, n)
+		}
+	}
+	// The paths the plan declares new are named in it, and it says they are new.
+	// The citation test below is what holds them to not existing; this half is
+	// that a reader can tell which of the plan's citations are promises.
+	for path := range coordinatorPlanNewPaths {
+		if !strings.Contains(plan, path) {
+			t.Errorf("%s no longer names %q, which coordinatorPlanNewPaths still excuses: delete the entry, or a real citation of that path goes unchecked", coordinatorPlan, path)
+		}
+	}
+	if !strings.Contains(plan, "**new**") {
+		t.Errorf("%s never marks a path as **new**: the paths that do not exist yet have to be distinguishable from the ones that do", coordinatorPlan)
+	}
+	// The plan cites by path and symbol, never by line number -- the brief it
+	// was written under, and the reason its citations do not rot the way the
+	// reconciliation's would if it used them. The reconciliation pins the
+	// opposite for itself (its citations are anchored by content or checked by
+	// line); here there is nothing to check, so the absence IS the assertion.
+	if m := coordinatorLineCensusRE.FindAllString(plan, -1); len(m) > 0 {
+		t.Errorf("%s attaches a line number to a name (%v): this plan cites by path and symbol, never by line", coordinatorPlan, m)
+	}
+}
+
+// TestDocsCoordinatorPlanCitationsExist: every repository path the plan cites
+// resolves on disk, or is one the plan declares new and which therefore must not
+// resolve yet.
+//
+// It is the reconciliation's citation check, on the plan, with the same
+// independent census in front of it -- the census is what stops a regexp that
+// has stopped matching the document's shapes from passing vacuously, which is
+// the failure that hid the `path:line Symbol` gap next door. The exception list
+// here is small on purpose: the plan cites full paths, so there is nothing like
+// the reconciliation's shortened references and globs to excuse, and the one
+// entry is the file the plan itself says does not exist.
+func TestDocsCoordinatorPlanCitationsExist(t *testing.T) {
+	plan := readDoc(t, coordinatorPlan)
+	census := len(coordinatorPathCensusRE.FindAllString(plan, -1))
+	matches := coordinatorCitationRE.FindAllStringSubmatch(plan, -1)
+	if len(matches) < census {
+		t.Fatalf("%s holds %d path-looking tokens and the citation check matched %d of them: the plan cites a shape coordinatorCitationRE no longer knows, so those citations are unchecked",
+			coordinatorPlan, census, len(matches))
+	}
+	seen := map[string]bool{}
+	used := map[string]bool{}
+	for _, m := range matches {
+		path := m[1]
+		first := !seen[path]
+		seen[path] = true
+		if reason, ok := coordinatorPlanNewPaths[path]; ok {
+			if first {
+				used[path] = true
+				if _, err := os.Stat("../../" + path); err == nil {
+					t.Errorf("%s cites %q as new, but it exists now: the part that creates it has landed, so the entry in coordinatorPlanNewPaths must go and the path must start being checked like any other. It was excused for: %s",
+						coordinatorPlan, path, reason)
+				}
+			}
+			continue
+		}
+		if _, err := os.Stat("../../" + path); err != nil {
+			if first {
+				t.Errorf("%s cites %q, which does not exist: a plan whose citations have moved is a plan nobody can check (%v)", coordinatorPlan, path, err)
+			}
+		}
+	}
+	for path := range coordinatorPlanNewPaths {
+		if !used[path] {
+			t.Errorf("%s no longer cites %q, but coordinatorPlanNewPaths still excuses it: delete the entry, or the next citation of that name is unchecked", coordinatorPlan, path)
+		}
+	}
+	symbols := coordinatorCheckPlanSymbols(t, plan)
+	t.Logf("%s: %d citation occurrences over %d distinct paths, against a census of %d path-looking tokens in the document; %d `path`'s `symbol` pairings checked against a census of %d possessives after a path token",
+		coordinatorPlan, len(matches), len(seen), census, symbols, len(coordinatorPlanPossessiveCensusRE.FindAllString(plan, -1)))
+}
+
+// coordinatorPlanPossessiveCensusRE counts, independently of the pairing check
+// below, how many times the plan attaches a possessive to a backticked path --
+// `internal/rtdb/client.go`'s ... -- whatever follows it. It is deliberately
+// dumber than the pairing regexp, and it is the floor that check is measured
+// against, for the reason the path census exists: a regexp that has stopped
+// matching a shape the prose uses finds fewer citations and says nothing, and
+// the two shapes the plan uses for a symbol are one line apart -- `path`'s
+// `symbol` on one line, and the same pair wrapped between them.
+var coordinatorPlanPossessiveCensusRE = regexp.MustCompile("`[^`\n]*\\.(?:go|md|ts|json|js|tmpl|yaml|yml|tf)\\b[^`\n]*`'s")
+
+// coordinatorPlanSymbolRE finds the pairing the plan writes for almost every
+// symbol it names: a backticked path, a possessive, and the symbol in backticks.
+// The symbol is captured as "anything but a backtick", newlines included,
+// because one of the plan's pairings wraps inside the token
+// (`google_cloud_run_v2_job_iam_member` and `"launcher"`); the check collapses
+// the whitespace before looking for it.
+var coordinatorPlanSymbolRE = regexp.MustCompile("`([A-Za-z0-9_.][A-Za-z0-9_./*-]*\\.(?:go|md|ts|json|js|tmpl|yaml|yml|tf))`'s\\s+`([^`]+)`")
+
+// coordinatorPlanProsePossessives are the plan's possessive phrases that name no
+// symbol: a path followed by `'s` and ordinary prose. Each is an audited case
+// and the check fails if one goes unused, because an entry here that outlives
+// its sentence is a pairing nobody is checking -- the same rule the citation
+// exception maps follow.
+var coordinatorPlanProsePossessives = []string{
+	"`internal/initflow/stage.go`'s list",
+}
+
+// coordinatorCheckPlanSymbols holds every `path`'s `symbol` pairing in the plan
+// to the file it names, and returns how many it checked.
+//
+// This is the half of "cite by path and symbol" that a path check cannot see: a
+// path that still resolves while the symbol behind it has been renamed is a
+// citation that reads as checked and is not. It is deliberately narrow. Pairing
+// an identifier with a citation in general needs a notion of scope the prose
+// does not carry -- a sentence may name three files and one symbol, or a symbol
+// belonging to a different citation in the same paragraph -- which is why the
+// reconciliation's citation check records that hole rather than closing it with
+// something fuzzy. The possessive form is the one shape where the plan's own
+// grammar makes the pairing unambiguous, and it is the shape the plan uses for
+// nearly every symbol it names, so it is the shape that is checked.
+func coordinatorCheckPlanSymbols(t *testing.T, plan string) int {
+	t.Helper()
+	census := len(coordinatorPlanPossessiveCensusRE.FindAllString(plan, -1))
+	matches := coordinatorPlanSymbolRE.FindAllStringSubmatch(plan, -1)
+	prose := 0
+	for _, want := range coordinatorPlanProsePossessives {
+		if strings.Contains(plan, want) {
+			prose++
+			continue
+		}
+		t.Errorf("%s no longer writes %q, which coordinatorPlanProsePossessives excuses from the symbol check: delete the entry, or a pairing goes unchecked", coordinatorPlan, want)
+	}
+	if census != len(matches)+prose {
+		t.Errorf("%s attaches a possessive to a path %d times, and this check pairs %d of them with a symbol (%d are the audited prose ones): a possessive the pairing regexp no longer matches is a symbol nothing checks, which is the failure the two shapes being one line apart makes easy",
+			coordinatorPlan, census, len(matches), prose)
+	}
+	for _, m := range matches {
+		path, symbol := m[1], strings.Join(strings.Fields(m[2]), " ")
+		if _, ok := coordinatorPlanNewPaths[path]; ok {
+			continue
+		}
+		src, err := os.ReadFile("../../" + path)
+		if err != nil {
+			t.Errorf("%s pairs %q with %q and the file cannot be read: %v", coordinatorPlan, path, symbol, err)
+			continue
+		}
+		text := string(src)
+		if strings.Contains(text, symbol) {
+			continue
+		}
+		// A Terraform resource is written `resource "type" "name"`, and the plan
+		// spells the same resource two ways -- `type.name` and `type "name"` --
+		// neither of which is a literal the file carries. So a two-part pairing
+		// is checked as its two halves, and only when the literal form is absent.
+		if head, tail, ok := strings.Cut(symbol, "."); ok && !strings.ContainsAny(tail, " ") &&
+			strings.Contains(text, head) && strings.Contains(text, `"`+tail+`"`) {
+			continue
+		}
+		if head, tail, ok := strings.Cut(symbol, " "); ok &&
+			strings.Contains(text, head) && strings.Contains(text, tail) {
+			continue
+		}
+		t.Errorf("%s pairs %q with %q, and %s carries no such symbol: a path that still resolves while the symbol behind it has moved is a citation that reads as checked and is not",
+			coordinatorPlan, path, symbol, path)
+	}
+	return len(matches)
 }

@@ -50,9 +50,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CHILD_ENV_KEYS,
-  CHILD_PATH_PREFIXES,
+  DARWIN_LOCATIONS,
+  LINUX_LOCATIONS,
+  PLATFORM_LOCATIONS,
   SPAWN_COMMANDS,
-  WELL_KNOWN_BINARY_PREFIXES,
   argvFor,
   assertSpawnSurface,
   binDirectories,
@@ -61,6 +62,7 @@ import {
   cliSentence,
   decodeFeedLine,
   isSafeArgumentValue,
+  locationsFor,
   parseVersionLine,
   planFor,
   PRIVATE_DIR_LEAF,
@@ -692,14 +694,50 @@ describe('the child environment', () => {
       target: { project: PROJECT },
       binaryPath: '/opt/fugaro/bin/fugaro',
       appEnv: fullAppEnv,
+      platform: 'darwin',
     })
     const entries = (env['PATH'] ?? '').split(':')
-    expect(entries).toEqual(['/opt/fugaro/bin', ...CHILD_PATH_PREFIXES])
+    expect(entries).toEqual(['/opt/fugaro/bin', ...locationsFor('darwin').childPathPrefixes])
     expect(entries.length).toBeGreaterThan(1)
     expect(entries[0]).toBe('/opt/fugaro/bin')
     for (const prefix of ['/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin']) {
       expect(entries, prefix).toContain(prefix)
     }
+  })
+
+  it('builds the child’s PATH from the platform’s own prefixes, and only those', () => {
+    // The other half of rule 5's fixed environment: the child's `PATH` is the
+    // resolved binary's own directory followed by this platform's tool
+    // directories. On Linux the macOS Homebrew prefix is not in it -- a
+    // directory that does not exist on the machine the app is running on is not
+    // a place to send a child looking for `terraform`.
+    const env = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: '/usr/bin/fugaro',
+      appEnv: { PATH: '/opt/hostile/bin:/tmp/whatever' },
+      platform: 'linux',
+    })
+    const entries = (env['PATH'] ?? '').split(':')
+    expect(entries).toEqual([
+      '/usr/bin',
+      '/usr/local/bin',
+      '/bin',
+      '/usr/sbin',
+      '/sbin',
+      '/home/linuxbrew/.linuxbrew/bin',
+    ])
+    expect(entries).not.toContain('/opt/homebrew/bin')
+    expect(env['PATH']).not.toContain('/opt/hostile')
+    expect(env['PATH']).not.toContain('/tmp/whatever')
+    // and on macOS the same call gives the design's list, so the two are one
+    // choice made in one place rather than two lists that must agree
+    const mac = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: '/usr/bin/fugaro',
+      appEnv: {},
+      platform: 'darwin',
+    })
+    expect((mac['PATH'] ?? '').split(':')).toContain('/opt/homebrew/bin')
   })
 
   it('never lets the app’s own PATH reach the child', () => {
@@ -712,8 +750,13 @@ describe('the child environment', () => {
     expect(env['PATH']).not.toContain('/tmp/whatever')
     // `/usr/bin` is both the binary's directory and a well-known prefix, and it
     // appears once: a duplicated entry is a `PATH` that says nothing extra.
-    expect(childPath('/usr/bin/fugaro')).toBe(
+    expect(childPath('/usr/bin/fugaro', 'darwin')).toBe(
       ['/usr/bin', '/opt/homebrew/bin', '/usr/local/bin', '/bin', '/usr/sbin', '/sbin'].join(':'),
+    )
+    // The same deduplication on Linux, where the macOS tool prefix is not in the
+    // list at all.
+    expect(childPath('/usr/bin/fugaro', 'linux')).toBe(
+      ['/usr/bin', '/usr/local/bin', '/bin', '/usr/sbin', '/sbin', '/home/linuxbrew/.linuxbrew/bin'].join(':'),
     )
   })
 
@@ -752,7 +795,7 @@ describe('the child environment', () => {
     expect(report?.env['GOOGLE_APPLICATION_CREDENTIALS']).toBeUndefined()
     expect(report?.env['ANTHROPIC_API_KEY']).toBeUndefined()
     expect(report?.project).toBe(PROJECT)
-    expect(report?.path).toBe(childPath(stub.binary))
+    expect(report?.path).toBe(childPath(stub.binary, process.platform))
     expect(report?.path.startsWith(dirname(stub.binary))).toBe(true)
   })
 })
@@ -886,13 +929,110 @@ describe('the private working directory', () => {
 })
 
 describe('binary resolution', () => {
-  it('is the design’s order, and the order is the rule', () => {
-    expect([...WELL_KNOWN_BINARY_PREFIXES]).toEqual([
+  it('is the design’s order on macOS, and the order is the rule', () => {
+    // Design section 3.4 rule 4, verbatim, home directory last because it is the
+    // one entry that is not a constant. The design is a macOS document (it
+    // records the cask and the Developer ID as D4 and Check 59a); the Linux list
+    // below is the owner's ruling of 2026-10-20.
+    expect([...locationsFor('darwin').binaryPrefixes]).toEqual([
       '/opt/homebrew/bin',
       '/usr/local/bin',
       '~/.local/bin',
       '/usr/bin',
     ])
+  })
+
+  it('is the owner’s list on Linux, front to back, with no entry from the app’s PATH', () => {
+    // The brief's order for Linux, verbatim: `/usr/local/bin`, `/usr/bin`,
+    // `~/.local/bin`, `/home/linuxbrew/.linuxbrew/bin`, `~/.linuxbrew/bin`.
+    // `/opt/homebrew/bin` is the macOS Homebrew prefix and is not on Linux --
+    // it is not that Linuxbrew lives somewhere else, it is that a directory
+    // that does not exist must not be a place this app looks for a binary.
+    expect([...locationsFor('linux').binaryPrefixes]).toEqual([
+      '/usr/local/bin',
+      '/usr/bin',
+      '~/.local/bin',
+      '/home/linuxbrew/.linuxbrew/bin',
+      '~/.linuxbrew/bin',
+    ])
+    // "Never the inherited PATH": every entry of the well-known list is an
+    // absolute path or the one `~` form, and none of them is read out of the
+    // app's environment. The `PATH` step is *after* this list and is a separate
+    // thing -- see the test below, which is the same rule from the other side.
+    for (const platform of ['darwin', 'linux']) {
+      for (const prefix of locationsFor(platform).binaryPrefixes) {
+        expect(prefix, `${platform}: ${prefix}`).toMatch(/^(?:~\/|\/)/)
+      }
+    }
+    // and the two lists differ, so "chosen per platform" is a fact rather than a
+    // shared constant with two names
+    expect(locationsFor('linux').binaryPrefixes).not.toEqual(locationsFor('darwin').binaryPrefixes)
+  })
+
+  it('is chosen in one place, by process.platform, and only there', () => {
+    // The brief's rule: the per-platform choice lives in ONE place. This is that
+    // place -- the table below is the whole of the per-platform data, and every
+    // reader goes through `locationsFor`.
+    expect(Object.keys(PLATFORM_LOCATIONS).toSorted()).toEqual(['darwin', 'linux'])
+    expect(locationsFor('darwin')).toBe(DARWIN_LOCATIONS)
+    expect(locationsFor('linux')).toBe(LINUX_LOCATIONS)
+    expect(locationsFor()).toBe(PLATFORM_LOCATIONS[process.platform === 'darwin' ? 'darwin' : 'linux'])
+    // Both lists are frozen and total: every platform has both a resolution
+    // order and a child `PATH`, and neither can be extended afterwards.
+    for (const platform of ['darwin', 'linux']) {
+      const locations = locationsFor(platform)
+      expect(Object.isFrozen(locations)).toBe(true)
+      expect(Object.isFrozen(locations.binaryPrefixes)).toBe(true)
+      expect(Object.isFrozen(locations.childPathPrefixes)).toBe(true)
+      expect(locations.binaryPrefixes.length).toBeGreaterThan(0)
+      expect(locations.childPathPrefixes.length).toBeGreaterThan(0)
+      expect(locations.childPathPrefixes).toContain('/usr/bin')
+      // A `PATH` entry is not a place a `~` can appear: the child receives a
+      // literal string, and nothing expands a tilde in it.
+      for (const prefix of locations.childPathPrefixes) {
+        expect(prefix, `${platform} child PATH: ${prefix}`).toMatch(/^\//)
+      }
+    }
+  })
+
+  it('falls back to the POSIX list on a platform this build is not packaged for', () => {
+    // The console is packaged for darwin and linux and the fuse hook refuses
+    // anything else, so this branch is a developer running the sources on an
+    // unpackaged platform and nothing more. The POSIX list is the nearest
+    // layout, and every entry is an absolute directory that either exists or
+    // does not -- so the fallback cannot find a binary that is not there.
+    expect(locationsFor('win32')).toBe(LINUX_LOCATIONS)
+    expect(locationsFor('freebsd')).toBe(LINUX_LOCATIONS)
+    // and the darwin-only Homebrew prefix never leaks into it
+    for (const platform of ['win32', 'freebsd', 'sunos', 'aix']) {
+      expect([...locationsFor(platform).binaryPrefixes]).not.toContain('/opt/homebrew/bin')
+    }
+  })
+
+  it('resolves against the platform’s list, and the list is an argument rather than a global', () => {
+    // `binDirectories` walks the same table `locationsFor` returns, so the two
+    // cannot drift; `platform` is how a test drives it, because the runner this
+    // suite executes on is not the machine the app ships to.
+    const linux = binDirectories({ appEnv: {}, home: '/home/owner', platform: 'linux' })
+    expect([...linux]).toEqual([
+      '/usr/local/bin/fugaro',
+      '/usr/bin/fugaro',
+      '/home/owner/.local/bin/fugaro',
+      '/home/linuxbrew/.linuxbrew/bin/fugaro',
+      '/home/owner/.linuxbrew/bin/fugaro',
+    ])
+    const darwin = binDirectories({ appEnv: {}, home: '/Users/owner', platform: 'darwin' })
+    expect([...darwin]).toEqual([
+      '/opt/homebrew/bin/fugaro',
+      '/usr/local/bin/fugaro',
+      '/Users/owner/.local/bin/fugaro',
+      '/usr/bin/fugaro',
+    ])
+    // and `~` is the *given* home directory, never the process's own: the
+    // resolution is a pure function of its arguments.
+    expect([...binDirectories({ appEnv: {}, home: '/nowhere', platform: 'linux' })]).toContain(
+      '/nowhere/.local/bin/fugaro',
+    )
   })
 
   it('never takes a relative PATH entry as a place to find the binary', () => {

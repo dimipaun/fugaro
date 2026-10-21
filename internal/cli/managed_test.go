@@ -181,8 +181,8 @@ var confirmClasses = []struct {
 	name  string
 	class initflow.ConfirmClass
 }{
-	{"YesOrTyped", initflow.YesOrTyped},
 	{"Typed", initflow.Typed},
+	{"YesOrTyped", initflow.YesOrTyped},
 }
 
 // declaredConfirmClasses reads the ConfirmClass constants out of
@@ -203,7 +203,7 @@ func declaredConfirmClasses(t *testing.T) []string {
 			continue
 		}
 		// A const spec with neither a type nor a value repeats the one before
-		// it (`Typed` after `YesOrTyped ConfirmClass = iota`), so the block is
+		// it (`YesOrTyped` after `Typed ConfirmClass = iota`), so the block is
 		// tracked rather than each spec.
 		var class bool
 		for _, spec := range gd.Specs {

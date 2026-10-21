@@ -11,7 +11,7 @@ import (
 //go:embed example.yaml
 var Example []byte
 
-const exampleProjectLines = "# the Fugaro project; fugaro init --config-only writes your project config\nproject: example\n"
+const exampleProjectLines = "# the Fugaro project; fugaro update --config-only writes your project config\nproject: example\n"
 
 // ExampleFor is Example naming the given project. Anything that is not a
 // project name (ProjectNameRE) leaves the placeholder "example", so the

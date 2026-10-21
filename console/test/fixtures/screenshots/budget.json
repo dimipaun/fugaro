@@ -1,0 +1,48 @@
+{
+  "project": "acme-platform",
+  "day": "2026-10-20",
+  "mode": "enforce",
+  "max_reserve_usd": 60,
+  "global": {
+    "daily_cap_usd": 120,
+    "per_run_cap_usd": 25,
+    "counted_usd": 41.82,
+    "spent_usd": 12.4,
+    "notional_usd": 96.5,
+    "headroom_usd": 78.18,
+    "kill": null
+  },
+  "defaults": {
+    "repo_daily_cap_usd": 40,
+    "repo_per_run_cap_usd": 12
+  },
+  "repos": [
+    {
+      "slug": "acme-platform-core",
+      "repo": "acme/platform-core",
+      "counted_usd": 27.4,
+      "spent_usd": 8.9,
+      "notional_usd": 61.2,
+      "headroom_usd": 52.6,
+      "daily_cap_usd": 80,
+      "daily_cap_source": "repo",
+      "per_run_cap_usd": 12,
+      "per_run_cap_source": "default",
+      "kill": null
+    },
+    {
+      "slug": "acme-platform-cli",
+      "repo": "acme/platform-cli",
+      "counted_usd": 14.42,
+      "spent_usd": 3.5,
+      "notional_usd": 35.3,
+      "headroom_usd": 25.58,
+      "daily_cap_usd": 40,
+      "daily_cap_source": "default",
+      "per_run_cap_usd": 12,
+      "per_run_cap_source": "default",
+      "kill": null
+    }
+  ],
+  "warnings": []
+}

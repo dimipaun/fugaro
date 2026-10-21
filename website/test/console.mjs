@@ -6,7 +6,7 @@
 // release `console-v0.9.0` carries them, `site.yaml`'s `features.console_downloads` is true
 // and the data file's `available` is true with it. The page's Downloads section renders that
 // release, and the placeholder state it renders instead is a state a copy of the repository
-// is built into rather than the state this checkout ships (W3.1). Seven things are checked
+// is built into rather than the state this checkout ships (W3.1). Nine things are checked
 // here:
 //
 //   1. **The released section renders the release's own downloads.** One link per published
@@ -42,6 +42,19 @@
 //      `website/data/`), so a wrong value is a red build rather than a page printing a
 //      number no reader's download can match — and the case plants a well-formed wrong one,
 //      because the shape alone cannot tell the two apart.
+//   8. **A platform block renders only when the data file carries one, and its links are the
+//      file's own assets.** `downloads.json` may carry an optional `linux` block — the
+//      owner's ruling of 2026-10-20 put a Linux build in this repository, unsigned and
+//      unpublished (D10) — and while it is there the section renders its sentence and its
+//      assets *under* it, with nothing of it above; while it is not there, which is the state
+//      this checkout ships, no built page carries a word or a link of it. A block naming an
+//      asset the data file does not list fails the build, which is the gate the follow-up
+//      that publishes has to pass: a link can only appear for an asset the file names.
+//   9. **Every download link the built site carries is an asset the data file names.** The
+//      gate over the whole built site, and not only over this page: each `releases/download/`
+//      href any page carries has to name one of the assets the release's own documents list,
+//      held part by part (`assertReleaseURL`) — so a link added anywhere, for any platform,
+//      fails until the asset is in the data file and in the release's own sums file.
 //
 // How it builds: the negative cases mutate a file and build again, so the builds happen in
 // a copy of the repository in a temp directory rather than in this checkout (the shape
@@ -58,6 +71,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
+import { builtPages } from './lib/html.mjs'
 import {
   CONSOLE_README,
   DOWNLOADS_JSON,
@@ -65,12 +79,14 @@ import {
   SITE_YAML,
   SUMS_FILE,
   assertReleaseURL,
+  consoleTag,
   downloadNeedle,
   downloadsData,
   publishedAssets,
   publishedDownloads,
   releaseSums,
   repoFile,
+  repository,
   servedName,
   workflowAssetRule,
   workflowTagPrefix,
@@ -128,11 +144,15 @@ function build(root) {
     encoding: 'utf8',
     env: { ...process.env, ASTRO_TELEMETRY_DISABLED: '1' },
   })
-  const page = path.join(site, 'dist', 'console', 'index.html')
+  const dist = path.join(site, 'dist')
+  const page = path.join(dist, 'console', 'index.html')
   return {
     status: result.status,
     output: `${result.stdout ?? ''}${result.stderr ?? ''}`,
     page: existsSync(page) ? readFileSync(page, 'utf8') : null,
+    // The whole built artifact, because one gate below is about every page rather than about
+    // this one: a download link can be added anywhere, and only a scan of the site sees it.
+    dist,
   }
 }
 
@@ -156,6 +176,74 @@ function downloadsSection(page) {
   const m = /<section[^>]*id="downloads"[\s\S]*?<\/section>/.exec(page)
   assert.ok(m, 'the built page carries no downloads section')
   return m[0]
+}
+
+/**
+ * The section's per-platform block (`<div class="downloads-linux">`), or null: what is inside
+ * it, up to the list it ends with, and the element's own opening tag matched loosely because
+ * Astro's scoping attribute (`data-astro-cid-…`) may or may not be on it.
+ */
+function platformBlock(section) {
+  return /<div class="downloads-linux"[^>]*>([\s\S]*?)<\/ul>\s*<\/div>/.exec(section)?.[1] ?? null
+}
+
+/** The links one piece of markup carries, as `{ href, label }` in document order. */
+function linksIn(html) {
+  return [...html.matchAll(/<a[^>]*href="([^"]+)"[^>]*>([^<]*)<\/a>/g)].map((match) => ({
+    href: match[1],
+    label: match[2].trim(),
+  }))
+}
+
+/**
+ * Every href of a built page that names this repository's release-download path, with the page
+ * it is on: the raw material of the gate over the whole built site. `downloadNeedle` is the
+ * repository's own host and path, so a link to somebody else's release is not this gate's
+ * business.
+ */
+function downloadLinksIn(pages) {
+  const needle = downloadNeedle()
+  const out = []
+  for (const page of pages) {
+    for (const [, href] of page.html.matchAll(/href="([^"]+)"/g)) {
+      if (href.includes(needle)) out.push({ page: page.rel, href })
+    }
+  }
+  return out
+}
+
+/**
+ * Item 9's gate: **every** download link a built page carries names an asset the release's own
+ * documents list, held to the release part by part (`assertReleaseURL`). It is the site-wide half
+ * of the checks above, which each read one page or one section — a link added anywhere, on a page
+ * nobody thought of, is the one no per-page case sees. The asset is the href's last segment
+ * (percent-decoded, because a served name may carry a dot but an href is a URL), and it has to be
+ * one of the names `publishedDownloads` derives from the release's own account of what it ships;
+ * only then is the whole URL held to the repository, the release path, the tag and that name.
+ *
+ * Returns the links it checked, so the caller can assert the scan found something: a gate over an
+ * empty set of pages passes without checking anything.
+ */
+function assertEveryDownloadLinkIsAListedAsset(pages, data = downloadsData()) {
+  const known = publishedDownloads(data)
+  const found = downloadLinksIn(pages)
+  for (const link of found) {
+    const segment = link.href.slice(link.href.lastIndexOf('/') + 1)
+    let name = segment
+    try {
+      name = decodeURIComponent(segment)
+    } catch {
+      // Left as written: an undecodable segment is not a name the release serves, and the
+      // assertion below is where that is said.
+    }
+    const download = known.find((entry) => entry.name === name)
+    assert.ok(
+      download,
+      `${link.page} links ${link.href}, and ${DOWNLOADS_JSON} names no asset ${JSON.stringify(name)}: every download link the site carries is an asset the release publishes, and a link for one the data file does not carry is a button no check here can see`,
+    )
+    assertReleaseURL(link.href, download.name, data)
+  }
+  return found
 }
 
 /**
@@ -643,6 +731,37 @@ test("the build refuses a checksum that is not the release's own", async (t) => 
   )
 })
 
+test('the build refuses a published name the data file spells out in full', async (t) => {
+  // Every entry of `downloads` is the name the release publishes *for the version in the same
+  // file*, so the file carries the literal `{version}` and the reader substitutes the version
+  // it read from `release`. The defect the rule exists for is an entry frozen at one version:
+  // it passes every other check in the reader — the checksums in this mutation still agree
+  // with the release's own sums file, because the name below is the one that file records — so
+  // nothing but the placeholder check tells it from a correct entry, and a file that carries
+  // one renders last release's artifact under this release's tag at the next bump.
+  const entry = downloadsData().downloads[0]
+  const built = buildWith(t, (copy) => {
+    const file = path.join(copy.root, 'website', 'content', 'downloads.json')
+    const data = JSON.parse(readFileSync(file, 'utf8'))
+    data.downloads[0].file = entry.file.split('{version}').join(data.release.version)
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
+  })
+
+  assert.notEqual(
+    built.status,
+    0,
+    `the build accepted a published name written out in full rather than left as the file's placeholder:\n${built.output}`,
+  )
+  assert.match(built.output, /downloads\.json/, 'the failure does not name the data file the entry came from')
+  assert.match(built.output, /downloads\[0\]\.file/, 'the failure does not name the entry of the file it refused')
+  assert.match(
+    built.output,
+    /\{version\}/,
+    'the failure does not name the placeholder the entry has to carry: a name frozen at one version is the thing the rule refuses',
+  )
+  assert.equal(built.page, null, 'the build wrote a page from a data file that names its assets by a version rather than by the release')
+})
+
 test('the build refuses a tag prefix the release workflow does not compose', async (t) => {
   // The one thing between the data file's names and the artifact a reader downloads is the
   // release's tag: every URL is
@@ -711,6 +830,52 @@ test('with the console released, the section renders the downloads the release p
   assert.ok(
     !page.includes(downloadsData().not_released.text),
     'the section still renders the not-released sentence with the console released',
+  )
+
+  // And the same rule over the whole built site rather than over this section (item 9): every
+  // download link ANY built page carries is one of these assets, held to the release part by
+  // part. The copy above is already built in the one state that carries links at all, so the
+  // gate costs no second build — and the scan is asserted to have found them rather than
+  // trusted, because a gate that scanned nothing would pass for the wrong reason.
+  const siteLinks = assertEveryDownloadLinkIsAListedAsset(builtPages(built.dist))
+  assert.ok(
+    siteLinks.length >= expected.length,
+    `the built site carries ${siteLinks.length} download link(s) and the release publishes ${expected.length} asset(s): every published asset is offered somewhere a reader can reach it, and a gate over an empty scan is a gate that holds nothing`,
+  )
+})
+
+test('the site-wide download gate refuses a link the release does not carry', () => {
+  // The gate the case above runs is worth exactly the failure it can produce, and no build here
+  // can plant that failure: a link for an asset the data file does not name is not a state any
+  // file in this repository is in — it is a page that pasted a URL, which is the one thing a
+  // per-page case cannot see. So the gate is handed pages of its own, composed from the
+  // repository's own facts plus the one thing that is wrong, and each refusal is the assertion.
+  const data = downloadsData()
+  const base = `${repository().replace(/\/+$/, '')}/releases/download`
+  const page = (href) => [{ rel: 'planted/index.html', html: `<a href="${href}">Fugaro Console</a>` }]
+  const asset = encodeURIComponent(publishedDownloads(data)[0].name)
+
+  // An asset the release does not publish. The name is the only difference from a real link, so
+  // what fails is the name rather than the origin or the tag.
+  assert.throws(
+    () => assertEveryDownloadLinkIsAListedAsset(page(`${base}/${consoleTag(data)}/${asset}.not-published`), data),
+    /names no asset/,
+    'the gate accepted a download link for an asset the data file does not name',
+  )
+
+  // The release's own asset on another release: the gate holds the URL to the release, not only
+  // to the file name.
+  assert.throws(
+    () => assertEveryDownloadLinkIsAListedAsset(page(`${base}/${data.release.tag_prefix}9.9.9/${asset}`), data),
+    /not an asset of the console's own release/,
+    'the gate accepted a download link on a release the console has not cut',
+  )
+
+  // And it is not refusing everything: the release's own link — the state the case above hands
+  // it — passes.
+  assert.doesNotThrow(
+    () => assertEveryDownloadLinkIsAListedAsset(page(`${base}/${consoleTag(data)}/${asset}`), data),
+    "the gate refused a link to one of the release's own assets",
   )
 })
 
@@ -791,11 +956,311 @@ test('the page states nothing its data file does not carry', async (t) => {
     // Each asset's own checksum, which the section prints beside its link: a 64-character
     // line a reader reads, so it is a sentence this rule sees.
     ...data.downloads.map((download) => download.sha256),
+    // And the platform block's own sentence, for the day the data file carries one: it is the
+    // page's sentence as much as the released one is, and a page that paraphrased it would be
+    // restating a fact — the rule this case is. Absent, it adds nothing to the list.
+    ...(data.linux === undefined ? [] : [data.linux.text]),
   ]
   for (const sentence of rendered) {
     assert.ok(
       sources.includes(sentence),
       `the page renders ${JSON.stringify(sentence)}, which ${DOWNLOADS_JSON} does not carry: a page renders a fact; it never restates one`,
     )
+  }
+})
+
+// ---- The optional platform block (the owner's ruling of 2026-10-20; D10) ------------------
+//
+// The console is built for Linux now — unsigned, an AppImage and a `.deb` — and the sentence
+// both pages render about the console is still the macOS one, because no Linux asset exists to
+// link. So `downloads.json` may carry an optional `linux` block, the section renders it only
+// while it is there, and its links are held to the file's own `downloads` entries. The three
+// cases below are that in the three states a checkout can be in: the block absent (this one's),
+// the block naming something the file does not carry (refused), and the block with its assets
+// in the file (rendered).
+
+/** The Linux assets the fixture below puts in a copy's data file: the names the packaging
+ * step produces (`console/package.json`'s `build.linux.artifactName`), one distinct
+ * well-formed checksum each, and the literal `{version}` the data file's entries have to
+ * carry — the reader refuses one written out in full, because a name frozen at one version
+ * stops being the release's the next time the version moves. The release's own name for an
+ * entry is `linuxReleaseName` of it. */
+function linuxAssetsFor() {
+  return [
+    {
+      id: 'linux-appimage',
+      platform: 'Linux',
+      file: 'Fugaro.Console-{version}-linux-x64.AppImage',
+      sha256: 'a'.repeat(64),
+    },
+    {
+      id: 'linux-deb',
+      platform: 'Linux',
+      file: 'Fugaro.Console-{version}-linux-x64.deb',
+      sha256: 'b'.repeat(64),
+    },
+  ]
+}
+
+/** A data-file entry's own name as the release serves it: the placeholder the file must carry,
+ * with the version substituted — the spelling the sums file holds and the link's last segment
+ * comes from. */
+function linuxReleaseName(asset, version) {
+  return asset.file.replace('{version}', version)
+}
+
+/** The copy's data file, parsed, and written back by `write` — the fixture's way in. */
+function editData(copy, write) {
+  const file = path.join(copy.root, 'website', 'content', 'downloads.json')
+  const data = JSON.parse(readFileSync(file, 'utf8'))
+  write(data)
+  writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
+  return data
+}
+
+test('with no Linux block in the data file, no built page carries one', async (t) => {
+  // The state this checkout ships: the console is built for Linux (the packaging is in
+  // `console/`, and the release workflow's Linux leg is staged for the owner) and nothing
+  // about it is published, so the page says what the release it links says — macOS — and
+  // carries no other platform's word, sentence or link. That is "renders only when present",
+  // and the half of it a shipped checkout can be wrong about is this one: a page that grew a
+  // Linux sentence with nothing behind it.
+  const built = buildWith(t, () => {})
+  const page = decode(builtPage(built))
+  const data = downloadsData()
+
+  assert.equal(
+    data.linux,
+    undefined,
+    `${DOWNLOADS_JSON} carries a linux block, and this case is about the state it is absent from: the block arrives with the release that has a Linux asset to link`,
+  )
+  const section = downloadsSection(page)
+  assert.equal(
+    platformBlock(section),
+    null,
+    `the downloads section carries a Linux block while ${DOWNLOADS_JSON} carries none: it renders only while the data file has one (D10)`,
+  )
+  for (const word of ['Linux', 'AppImage', '.deb']) {
+    assert.ok(
+      !page.includes(word),
+      `the page carries ${JSON.stringify(word)} and ${DOWNLOADS_JSON} says nothing about it: the page's sentence about the platform the release carries is the only one it makes`,
+    )
+  }
+})
+
+test('a Linux block naming an asset the data file does not carry fails the build', async (t) => {
+  // **The gate.** A download link may only appear for an asset the data file names, and the
+  // only place a link can be introduced is this block: its `assets` are ids of the file's own
+  // `downloads` entries, each of which has already been held to the release's published name
+  // and to the checksum the release's own sums file records. So the block below — the shape
+  // the follow-up that publishes will write, naming the Linux artifacts before they exist —
+  // is refused by the build rather than rendered as two links that 404.
+  const built = buildWith(t, (copy) => {
+    editData(copy, (data) => {
+      data.linux = {
+        text: 'The console also builds for Linux: an AppImage and a .deb for x86-64, and neither is code-signed.',
+        assets: ['linux-appimage', 'linux-deb'],
+        source: 'docs/design/desktop-console.md D10',
+      }
+    })
+  })
+
+  assert.notEqual(built.status, 0, `the build accepted a Linux block naming assets the data file does not carry:\n${built.output}`)
+  assert.match(built.output, /downloads\.json/, 'the failure does not name the data file the block came from')
+  assert.match(built.output, /linux\.assets\[0\]/, 'the failure does not name the entry of the block it refused')
+  assert.match(built.output, /"linux-appimage"/, 'the failure does not name the id the block links')
+  assert.match(
+    built.output,
+    /downloads lists no entry/,
+    'the failure does not say where a block’s links have to come from: the ids of the assets the data file lists',
+  )
+  assert.equal(built.page, null, 'the build wrote a page linking an asset the data file does not carry')
+})
+
+test('with a Linux block in the data file, the section renders it and its own assets', async (t) => {
+  // The state the follow-up that publishes puts the file in: the Linux assets are entries of
+  // `downloads` (so their release names and checksums are in the file and in the release's own
+  // sums file) and the block names them. What the section must do then is what the case
+  // asserts: render the block's sentence, link the block's assets **under it**, print their
+  // checksums, and leave them out of the list above — one asset of a release is one row, and a
+  // Linux artifact under the macOS sentence is one link under a fact that does not describe it.
+  let fixture = null
+  const built = buildWith(t, (copy) => {
+    const data = (fixture = editData(copy, (next) => {
+      next.downloads.push(...linuxAssetsFor())
+      next.linux = {
+        text: 'The console also builds for Linux: an AppImage and a .deb for x86-64, and neither is code-signed.',
+        assets: ['linux-appimage', 'linux-deb'],
+        source: 'docs/design/desktop-console.md D10',
+      }
+    }))
+    // And the release's own sums file, which every entry is held to: the copy's gains the two
+    // lines the release would carry, each the entry's checksum and **the release's name for
+    // it** (`linuxReleaseName`), because a sums file records published names and the data file
+    // records the placeholder they are built from. Written from the same entries the data file
+    // got, because the two files are one fact — the release publishes both.
+    const sums = path.join(copy.root, 'website', 'data', 'console-sha256sums.txt')
+    const added = data.downloads
+      .filter((entry) => entry.id.startsWith('linux-'))
+      .map((entry) => `${entry.sha256}  ${linuxReleaseName(entry, data.release.version)}`)
+    writeFileSync(sums, `${readFileSync(sums, 'utf8')}${added.join('\n')}\n`)
+  })
+
+  const page = decode(builtPage(built))
+  // The data file the build above read: the copy's, with the two Linux assets and the block in
+  // it. It is what every assertion below is held to, rather than the checkout's file, because
+  // this case is about a state the checkout is not in.
+  const data = fixture
+  const linux = data.linux
+  assert.ok(linux, 'the fixture data file carries no linux block, so this case would check nothing')
+
+  // The block's own sentence, and the block itself.
+  const section = downloadsSection(page)
+  const block = platformBlock(section)
+  assert.ok(block, 'the section renders no Linux block while the data file carries one')
+  assert.ok(
+    block.includes(linux.text),
+    `the Linux block does not render the data file's own sentence ${JSON.stringify(linux.text)}`,
+  )
+
+  // One link per asset the block names, in the file's order, held to the release's own facts:
+  // the repository, the release path, the tag and the name the release serves — the same
+  // `assertReleaseURL` the macOS rows are held to, and the served name of a name the release
+  // publishes (`linuxReleaseName` for the version the data file's placeholder stands for, and
+  // `servedName` for the one rewrite GitHub applies).
+  const links = linksIn(block)
+  const expected = linuxAssetsFor().map((asset) => ({
+    ...asset,
+    releaseName: linuxReleaseName(asset, data.release.version),
+  }))
+  assert.equal(
+    links.length,
+    expected.length,
+    `the block renders ${links.length} link(s) for ${expected.length} asset(s) (${links.map((link) => link.href).join(', ')})`,
+  )
+  for (const [index, asset] of expected.entries()) {
+    const name = servedName(asset.releaseName)
+    assertReleaseURL(links[index].href, name, data)
+    assert.equal(
+      links[index].label,
+      `${asset.platform} ${name.slice(name.lastIndexOf('.'))}`,
+      `the block offers ${JSON.stringify(links[index].label)} for ${JSON.stringify(name)}, and a label is the platform and the asset's own extension`,
+    )
+    assert.ok(
+      block.includes(asset.sha256),
+      `the block does not print the checksum of ${name}: the value a reader checks their download against is the one fact the data file carries beside each link`,
+    )
+  }
+
+  // And the block's assets are not in the list above it: one asset, one row. The list above
+  // carries the release's own macOS assets, which the block does not name.
+  const blockStart = section.search(/<div class="downloads-linux"/)
+  assert.ok(blockStart >= 0, 'the section carries no per-platform block to split on')
+  const above = section.slice(0, blockStart)
+  const aboveLinks = linksIn(above)
+  assert.equal(
+    aboveLinks.length,
+    data.downloads.length - expected.length,
+    `the list above the block renders ${aboveLinks.length} link(s) and the data file carries ${data.downloads.length} asset(s), ${expected.length} of them the block's`,
+  )
+  for (const link of aboveLinks) {
+    assert.ok(
+      !expected.some((asset) => link.href.endsWith(`/${servedName(asset.releaseName)}`)),
+      `${link.href} is one of the block's assets and is rendered above the block as well: one asset of a release is one row, and a Linux link under the macOS sentence is under a fact that does not describe it`,
+    )
+  }
+  for (const asset of expected) {
+    const href = links.find((link) => link.href.endsWith(`/${servedName(asset.releaseName)}`)).href
+    assert.equal(
+      section.split(href).length - 1,
+      1,
+      `${href} appears more than once in the section: the block owns the assets it names`,
+    )
+  }
+
+  // **Getting Started renders the console's downloads too**, from the same facts, through
+  // `ConsoleOption.astro` — the card in the `#install` section. It is the consumer this case
+  // scanned nothing of until now, and it is the one a block can be added to and forgotten in:
+  // it rendered every entry it was handed, so a Linux asset reached its list under the macOS
+  // heading with no sentence behind it. So the assertion below is not about the section: it is
+  // about **every built page**, which is the only shape that holds a page the block's author
+  // did not think of. A block-owned asset may appear on a page only with the block's own
+  // sentence on it, only after that sentence, and only once.
+  const pages = builtPages(built.dist)
+  const gettingStarted = pages.find((page) => page.rel.startsWith('getting-started/'))
+  assert.ok(
+    gettingStarted,
+    `the build carries no Getting Started page, so the card that renders the console's downloads was not scanned (${pages.map((page) => page.rel).join(', ')})`,
+  )
+  assert.ok(
+    decode(gettingStarted.html).includes(linux.text),
+    `Getting Started does not render the block's own sentence while the data file carries one: the card is the second consumer of the same facts, and an asset of the block in its list is a link under a heading that does not describe it`,
+  )
+  for (const page of pages) {
+    const html = decode(page.html)
+    for (const asset of expected) {
+      const name = servedName(asset.releaseName)
+      const occurrences = html.split(`/${name}`).length - 1
+      if (occurrences === 0) continue
+      assert.equal(
+        occurrences,
+        1,
+        `${page.rel} links ${name} ${occurrences} times: a block's asset is one row on a page, under the block that names it`,
+      )
+      const at = html.indexOf(`/${name}`)
+      const sentence = html.indexOf(linux.text)
+      assert.ok(
+        sentence >= 0,
+        `${page.rel} links ${name} and carries none of the block's own sentence: an asset the block names is rendered with the sentence that says what it is, never under another platform's`,
+      )
+      assert.ok(
+        at > sentence,
+        `${page.rel} links ${name} above the block's own sentence: the block owns the assets it names, and a link before its sentence is one under the facts of whatever sentence is there`,
+      )
+    }
+  }
+})
+
+test('a Linux block that is not a claim naming the file’s own assets fails the build', async (t) => {
+  // The block's own shape, in the four states the review of it would look for: a key nothing
+  // renders, no assets at all, a sentence with no source, and one asset named twice. Each is a
+  // build of its own — the reader refuses the first thing it finds and no build can fail
+  // twice — and each is the same rule from a different side: the block is the sentence a page
+  // renders, the assets it links and where the sentence came from, and nothing else.
+  const plants = [
+    {
+      what: 'a key nothing renders',
+      block: { text: 'Linux, unsigned.', assets: ['macos-dmg'], source: 'docs/design/desktop-console.md D10', platform: 'Linux' },
+      names: [/linux carries the key "platform"/],
+    },
+    {
+      what: 'no assets',
+      block: { text: 'Linux, unsigned.', assets: [], source: 'docs/design/desktop-console.md D10' },
+      names: [/linux\.assets is not a non-empty list/],
+    },
+    {
+      what: 'a sentence with no source',
+      block: { text: 'Linux, unsigned.', assets: ['macos-dmg'] },
+      names: [/linux\.source is not written in the file/],
+    },
+    {
+      what: 'one asset named twice',
+      block: { text: 'Linux, unsigned.', assets: ['macos-dmg', 'macos-dmg'], source: 'docs/design/desktop-console.md D10' },
+      names: [/linux\.assets names one asset twice/],
+    },
+  ]
+
+  for (const plant of plants) {
+    const built = buildWith(t, (copy) => {
+      editData(copy, (data) => {
+        data.linux = plant.block
+      })
+    })
+    assert.notEqual(built.status, 0, `the build accepted a Linux block with ${plant.what}:\n${built.output}`)
+    assert.match(built.output, /downloads\.json/, `the failure for ${plant.what} does not name the data file`)
+    for (const name of plant.names) {
+      assert.match(built.output, name, `the failure for ${plant.what} does not say what it refused:\n${built.output}`)
+    }
+    assert.equal(built.page, null, `the build wrote a page from a Linux block with ${plant.what}`)
   }
 })

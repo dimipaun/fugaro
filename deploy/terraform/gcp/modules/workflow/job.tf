@@ -1,4 +1,4 @@
-# The workflow's Cloud Run job. fugaro init --repo leaves deploy_job off
+# The workflow's Cloud Run job. fugaro update leaves deploy_job off
 # until the job's image exists and every secret it mounts has a version
 # (or the job already exists), so a new job is never pointed at nothing.
 resource "google_cloud_run_v2_job" "this" {
@@ -78,11 +78,11 @@ resource "google_cloud_run_v2_job" "this" {
     # fails the plan; a check block would only warn.
     precondition {
       condition     = lookup(var.workflow.env, "FUGARO_PROJECT", "") == var.fugaro_project
-      error_message = "the job's FUGARO_PROJECT must be the Fugaro project ${var.fugaro_project}; run fugaro init --repo"
+      error_message = "the job's FUGARO_PROJECT must be the Fugaro project ${var.fugaro_project}; run fugaro update"
     }
     precondition {
       condition     = lookup(var.workflow.env, "FUGARO_GCP_PROJECT", "") == var.project
-      error_message = "the job's FUGARO_GCP_PROJECT must be the GCP project ${var.project}; run fugaro init --repo"
+      error_message = "the job's FUGARO_GCP_PROJECT must be the GCP project ${var.project}; run fugaro update"
     }
   }
 

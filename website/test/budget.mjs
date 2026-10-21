@@ -289,6 +289,24 @@ function within(node, ancestor) {
   return false
 }
 
+/**
+ * The hero's illustration — `figure.hero-shot`, the terminal card the bold redesign draws
+ * beside the copy (the owner's approved board, `website/design-ref/HomeV3.dc.html`) — or
+ * `null` on a page that draws none.
+ *
+ * It is taken out of the lead's word count, and `website/test/fold.mjs`'s rule 1 takes it out
+ * of the lead region in the same way, because it is a picture rather than prose: the request
+ * drawn in it, the three job rows and the caption that says it is an illustration are the
+ * contents of a card a reader looks at, and counting them as the page's opening paragraph
+ * would make the ceiling measure the artwork. The two gates read one lead between them, and a
+ * page whose card held the promise itself would be refused by the ceiling as soon as the card
+ * were gone — the words are still the page's own, and the illustration is drawn on every
+ * width.
+ */
+function heroIllustration(main) {
+  return flatten(main).find((node) => (node.attrs?.get('class') ?? '').split(/\s+/).includes('hero-shot')) ?? null
+}
+
 /** True when `node` comes after `other` in `main`'s document order. */
 function comesAfter(main, node, other) {
   const items = flatten(main)
@@ -306,9 +324,10 @@ function textBetween(main, from, to) {
   const start = items.indexOf(from)
   const end = items.indexOf(to)
   assert.ok(start !== -1 && end > start, 'the lead reader could not find the headings it reads between, which it checks for before this call: this is a defect in the reader, not in the page')
+  const picture = heroIllustration(main)
   return items
     .slice(start + 1, end)
-    .filter((item) => !within(item, from))
+    .filter((item) => !within(item, from) && (picture === null || !within(item, picture)))
     .map((item) => (item.text !== undefined ? item.text : item.name === 'img' ? item.attrs.get('alt') ?? '' : ''))
     .join(' ')
 }
@@ -326,20 +345,24 @@ function textBetween(main, from, to) {
  * from is two gates (P4's reviewer asked which one this is, and P5 answered it), so the
  * region is the reading and the container is not.
  *
- * **Where the homepage stands today** (2026-10-19): its `h1` is the headline, its first `h2`
- * is the slider's first panel title, "Easy to use" — the slider is the first block under the
- * promise (the owner's approved draft of 2026-10-19, "Home, draft 2 (slider)") and that
- * heading is inside its first panel — and the region between the two headings is the request
- * the hero renders under the headline (the owner's feedback of 2026-10-19), the promise, its
- * three calls to action and the slider's three tab labels: **30 words**, the number the built
- * page measures (29 before the owner's ruling of 2026-10-20 renamed the slider's middle tab
- * "Why Fugaro?", which is a word more than "Benefits"). Both readings agree here, because everything between the `h1` and that
- * heading is inside the hero's own section; they did not agree on the homepage of two rounds
- * ago, when the hero's section held the `h1`, the install blocks and the chat sat between it
- * and the flow's first step heading, and the container reading said 24 words where the region
- * said 134. The
- * region is what is enforced, on this page and on any page that grows a block between its
- * `h1` and its first `h2` later.
+ * **Where the homepage stands today** (2026-10-20, the bold redesign): its `h1` is the
+ * headline, "Lambdas for coding agents" — the two words the stylesheet paints with the
+ * gradient are a `span` inside it and not a second thing in the region — its first `h2` is
+ * the slider's own line over its control ("Say it. Get pull requests.", the bold redesign's
+ * heading for the block the owner's approved draft of 2026-10-19 put first under the
+ * promise), and the region between the two headings is the hero's lead paragraph and its row
+ * of links: **16 words**, the number the built page measures. The hero's illustration is
+ * drawn between them and is taken out of the count — see `heroIllustration` below — and so
+ * is the block the first `h2` belongs to, which `website/test/fold.mjs` takes out of the
+ * region in the same way, so the two gates read one lead between them. Before the redesign
+ * the same region held the request the hero printed under the headline, the promise, its
+ * three calls to action and the slider's three tab labels, and it measured 30 words; the
+ * request moved into the illustration card and the tab labels are no longer in the region
+ * because the slider's heading now comes before its control.
+ *
+ * The region is what is enforced, on this page and on any page that grows a block between its
+ * `h1` and its first `h2` later. An earlier homepage read 24 words from the `h1`'s container
+ * where the region said 134, which is why the region and not the container is the reading.
  *
  * A page with no `h2` at all has no such region, and its lead is the paragraph run under the
  * `h1` — the text D188's ceiling is about, read from the other end. A page whose first `h2`
@@ -949,12 +972,18 @@ test('the word reader counts what a reader reads, and nothing else', (t) => {
 
 /**
  * D188's own words-per-page ceiling, the number the raise above it is measured against: 250 as
- * D188 set it, and 300 since the owner's feedback of 2026-10-19 asked the homepage for a fourth
+ * D188 set it, 300 since the owner's feedback of 2026-10-19 asked the homepage for a fourth
  * required block (its benefits section — headed "Why Fugaro?" since the owner's ruling of
- * 2026-10-20 — 294 words with the three before it). website/README.md
- * records that reading beside the words line.
+ * 2026-10-20 — 294 words with the three before it), and **500 since the bold redesign of
+ * 2026-10-20**, which is the owner's approved board `website/design-ref/HomeV3.dc.html` built:
+ * the homepage is the board's five blocks — the hero, the slider, the run band, the grid of
+ * what a run leaves behind, and the closing call to action — and they measure 468 words, so
+ * the smallest round ceiling above the page that carries every block its briefs and its boards
+ * require is 500. D188's own rule is what moves it and not convenience: the number is the
+ * ceiling above the page that carries the required blocks, and a page that wants the room has
+ * to carry one. website/README.md records both readings beside the words line.
  */
-export const D188_WORDS = 300
+export const D188_WORDS = 500
 
 /** The one page the words ceiling is derived from, by its built URL. */
 const WORDS_CEILING_PAGE = '/privacy/'

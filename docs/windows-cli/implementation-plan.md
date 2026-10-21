@@ -1,16 +1,18 @@
 # The CLI on Windows — implementation plan
 
-**Status: plan only; nothing is implemented; decisions open.** This is the
+**Status: Slice 0 and Slice 1 approved (D16, 2026-10-20); Slice 0 is written; no code is implemented; D1–D6 are answered and D7–D15 are open.** This is the
 ordered plan that follows [reconciliation.md](reconciliation.md) and answers
 [spec.md](spec.md). Every task names the files it touches, the test it must
 turn red first, the command that proves it, what it depends on, and what kind
-of reviewer it needs. **Nothing here is approved, and no task may be started
-before the [OWNER APPROVAL GATE](#owner-approval-gate) at the end is passed.**
+of reviewer it needs. **Slice 0 and Slice 1 are approved (D16, 2026-10-20);
+nothing else here is approved, and no later task may be started without the
+owner's answer.**
 
 The findings below are cited by number (**F1**, **D4**, **C1**) and live in
 [reconciliation.md](reconciliation.md) — the whole set is **F1–F42**, the
-decisions are **D1–D16** (**D16 answered** on 2026-10-20, and D1–D15 open) and the owner-run checks the plan needs are
-**U1–U13** in that document's UNVERIFIED table; the ranges are stated here so a
+decisions are **D1–D16** (D1–D6 and D16 answered on 2026-10-20; D7–D15 open)
+and the owner-run checks the plan needs are **U1–U13** in that document's
+UNVERIFIED table; the ranges are stated here so a
 citation in this plan can be read without opening the other document. Where a
 task cites a decision, the task is written to the *recommended* option and
 states what changes if the owner answers differently.
@@ -842,9 +844,13 @@ another document:
 
 ## OWNER APPROVAL GATE
 
-**Nothing in this plan may be started until the owner answers, in writing,
-the decisions they consider load-bearing, and says which slice to begin.**
-The gate is passed when all four of the following are true:
+**Passed on 2026-10-20, for Slice 0 and Slice 1 and for nothing later.** The
+owner answered D1–D6 and D16 in writing and named the two slices; T0.3 records
+the ruling in this folder's index, and that record is why the status line no
+longer reads as it did when the gate below was written. Nothing beyond those
+two slices is approved, and Slices 2–6 wait for their own answer.
+
+The gate was passed when all four of the following were true:
 
 1. **D1 is answered** — native, WSL-only, or both. It decides whether Slices
    1–6 exist at all, so nothing else can be scheduled before it. (Slice 0 is
@@ -859,10 +865,12 @@ The gate is passed when all four of the following are true:
    content, and taking the second option changes the plan's central promise
    ("every slice merges alone and leaves `main` green") into something weaker,
    so it should be answered deliberately rather than by default.
-4. **The status line in [README.md](README.md) is still
-   `plan only; nothing is implemented; decisions open`.** It moves only in
-   T6.3, only as far as the evidence reaches, and only with the owner's
-   agreement.
+4. **The status line in [README.md](README.md) was still
+   `plan only; nothing is implemented; decisions open`.** As written it was to
+   move only in T6.3, only as far as the evidence reaches, and only with the
+   owner's agreement. T0.3 moved it, with the owner's written ruling of
+   2026-10-20 as that evidence; T6.3 remains the move that states the tier the
+   work reached, and this run changed neither T6.3 nor that promise.
 
 **Answering D7–D15 is helpful but does not gate the gate** (D16 is answered, and
 answering a decision does not approve a task): each of those

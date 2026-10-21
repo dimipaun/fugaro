@@ -13,8 +13,10 @@
     "test:e2e": "npm run build && playwright test --pass-with-no-tests",
     "typecheck": "tsc --noEmit",
     "record-fixture": "tsc -p tsconfig.record-fixture.json && node .record-fixture/tools/record-fixture/index.js",
+    "screenshots": "npm run build && tsc -p tsconfig.screenshots.json && node .screenshots/tools/screenshots/capture.js",
     "package": "npm run build && electron-builder --mac --universal --publish never",
-    "package:targets": "electron-builder --mac --universal --publish never"
+    "package:targets": "electron-builder --mac --universal --publish never",
+    "package:linux": "electron-builder --linux --publish never"
   },
   "build": {
     "appId": "io.github.dimipaun.fugaro-console",
@@ -44,7 +46,8 @@
     "electronDownload": {
       "checksums": {
         "electron-v44.7.2-darwin-arm64.zip": "07d73d3d6dd0b8679c2f1849e30df179ea50c1d6b17630fcc398ae05221f0bd2",
-        "electron-v44.7.2-darwin-x64.zip": "915cb638692e3595926fa64903ee0562c3c0c5a1febb84724175756ca2f0f3b7"
+        "electron-v44.7.2-darwin-x64.zip": "915cb638692e3595926fa64903ee0562c3c0c5a1febb84724175756ca2f0f3b7",
+        "electron-v44.7.2-linux-x64.zip": "777b26a64aee3d185acb9f93c04782bb51eae7c2c61c793963ef24374e5a1539"
       }
     },
     "mac": {
@@ -56,6 +59,29 @@
       "hardenedRuntime": true,
       "entitlements": "entitlements.mac.plist",
       "entitlementsInherit": "entitlements.mac.plist"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Fugaro.Console-${version}-linux-${arch}.${ext}",
+      "executableName": "fugaro-console",
+      "category": "Development;Monitor",
+      "synopsis": "A desktop console for fugaro: live run monitoring and spending graphs.",
+      "description": "A desktop application for watching fugaro runs: live run monitoring and spending graphs. It is strictly read-only, and the fugaro CLI is its data plane -- it has no backend, no service account and no credential of its own.",
+      "maintainer": "Fugaro Console <dimipaun@users.noreply.github.com>"
     }
   },
   "devDependencies": {

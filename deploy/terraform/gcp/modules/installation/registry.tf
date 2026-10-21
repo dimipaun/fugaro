@@ -1,5 +1,5 @@
 # The legacy registry holds the images the bootstrap built. It is declared
-# only when fugaro init adopts one, so a fresh project never gets an empty
+# only when fugaro update adopts one, so a fresh project never gets an empty
 # one. Nothing writes it after migration, and it has no cleanup policy: its
 # images are what a rollback runs.
 resource "google_artifact_registry_repository" "legacy" {

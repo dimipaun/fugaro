@@ -1,6 +1,6 @@
 # The Fugaro CLI on Windows — the documents
 
-**Status: plan only; nothing is implemented; decisions open.** The owner's
+**Status: Slice 0 and Slice 1 approved (D16, 2026-10-20); Slice 0 is written; no code is implemented; D1–D6 are answered and D7–D15 are open.** The owner's
 brief of 2026-10-20 asked for a design and a plan, not code: *"Let's work out a
 plan on how to make the CLI work on Windows."* The owner gave the context the
 same day — the desktop console ships for macOS (and Linux, unsigned, for
@@ -8,14 +8,16 @@ same day — the desktop console ships for macOS (and Linux, unsigned, for
 and Windows packaging for the console was deferred for that reason and for code
 signing (`docs/design/desktop-console.md`, **D10**).
 
-**D1–D15 in [reconciliation.md](reconciliation.md) §5 are open, and D16 is answered**:
-the owner took its recommendation on 2026-10-20 and approved Slice 0 and Slice 1
-as work, which is why Slice 1 is in the tree (below) — and answering D16 is not
-an answer to any of the other fifteen. Each decision carries a recommendation
-and its reason first, then the alternative and its cost; **none of D1–D15 is taken.** Approving a slice as work is not answering the decisions its tasks are
-written against, and nothing else follows from these documents: no code beyond
-Slice 1's, no config, workflow, Terraform, schema, skill or live action. The
-gate at the end of the implementation plan is **not passed**.
+**The owner answered D1–D6 and D16 on 2026-10-20 and approved Slice 0 and Slice 1 only** (**D16**): D1 **both** — WSL documented now, the native port
+behind it; D2 **amd64 only**; D3 **Scoop first**; D4 **unsigned first**; D5 a
+Windows CI job that is **advisory** at first; D6 **read-only first**. **D7–D15
+are still open**, each with its recommendation and its reason in
+[reconciliation.md](reconciliation.md) §5, whose decision texts still read as
+written: the ruling is recorded here and not there. Answering a decision is not
+approving a task, and no code beyond Slice 1's — which is in the tree, below —
+no config, workflow, Terraform, schema, skill and no live action follows from
+these documents. The gate at the end of the implementation plan was **passed on
+2026-10-20 for Slice 0 and Slice 1 and for nothing later**.
 
 **Owner:** the Fugaro owner (`dimipaun`). **Date:** 2026-10-20. **Base:**
 `main` at `54cb02a8` (`release 0.9.5`).
@@ -23,8 +25,9 @@ gate at the end of the implementation plan is **not passed**.
 | File | What it is |
 |---|---|
 | [spec.md](spec.md) | The owner's brief, **verbatim**, committed alone in its own first commit: the one sentence of 2026-10-20, then the context the owner gave with it the same day (the console's macOS-and-Linux-only state, and its deferral of Windows). Nothing in it was changed. |
-| [reconciliation.md](reconciliation.md) | What the tree says about the brief: corrections **C1–C3**, findings **F1–F42** against `main` (`54cb02a8`), each classified **Wrong / Exists / Gap / Rule / Open** with a path and a Go symbol and its consequence; the headline table; the census (every construct the brief named, each count with **the exact command** beside it, and F37's rule that the commands and not the figures are the durable part); **decisions D1–D16**, each with a recommendation, the alternative and its cost, **D16 answered and D1–D15 open**; items O1–O6; the **UNVERIFIED** table **U1–U13**. Where it disagrees with `spec.md`, it wins. |
-| [implementation-plan.md](implementation-plan.md) | The plan: Slice 0 (say what works today — the WSL route, which is worth doing under every answer), Slice 1 (compile, start, read the right files), Slice 2 (the read-only commands tell the truth), Slice 3 (the test suite's five Windows classes), Slice 4 (setup and launch), Slice 5 (release and distribution), Slice 6 (CI and the gate); the support tier per command group, the minimum viable first cut and what it does **not** do, each task with files, a red step, a verification command, dependencies, a reviewer tier and a commit message, the edges, the levels and the critical path, the effort in tasks, and the **OWNER APPROVAL GATE**. **No task beyond Slice 0 and Slice 1 is approved** — the owner approved those two on 2026-10-20 (D16), and Slice 1 is in the tree (below). |
+| [reconciliation.md](reconciliation.md) | What the tree says about the brief: corrections **C1–C3**, findings **F1–F42** against `main` (`54cb02a8`), each classified **Wrong / Exists / Gap / Rule / Open** with a path and a Go symbol and its consequence; the headline table; the census (every construct the brief named, each count with **the exact command** beside it, and F37's rule that the commands and not the figures are the durable part); **decisions D1–D16**, each with a recommendation, the alternative and its cost, **as written before the owner's answers of 2026-10-20**; items O1–O6; the **UNVERIFIED** table **U1–U13**. Where it disagrees with `spec.md`, it wins. |
+| [wsl.md](wsl.md) | The route that works today, and the one document here a Windows reader can act on: a Linux `fugaro` inside WSL is the Linux path exactly (**F39**), the three things that bite (a checkout under `/mnt/c`, gcloud's ADC as a *different file* inside the distribution, Claude Code needing to be inside WSL too), and what native Windows does not do yet (**F31**, **F3**, **F6**, **F20**, **F26**, **U3**, **F38**, **F40**). The plan's T0.1, written under **D16**'s approval of Slice 0 and Slice 1 (2026-10-20). |
+| [implementation-plan.md](implementation-plan.md) | The plan: Slice 0 (say what works today — the WSL route, which is worth doing under every answer), Slice 1 (compile, start, read the right files), Slice 2 (the read-only commands tell the truth), Slice 3 (the test suite's five Windows classes), Slice 4 (setup and launch), Slice 5 (release and distribution), Slice 6 (CI and the gate); the support tier per command group, the minimum viable first cut and what it does **not** do, each task with files, a red step, a verification command, dependencies, a reviewer tier and a commit message, the edges, the levels and the critical path, the effort in tasks, and the **OWNER APPROVAL GATE**. **Slice 0 and Slice 1 are the approved tasks (D16, 2026-10-20); no others are** — and both are in the tree (Slice 1 below). |
 
 ## The headline, in one paragraph
 
@@ -139,7 +142,7 @@ changed is recorded here.
 
 | Block | State |
 |---|---|
-| **D1–D16** | this work's decisions, all written: **D16 answered** by the owner's approval of Slice 0 and Slice 1 on 2026-10-20, and **D1–D15 open**. They are a *folder-local* namespace and they overlap [docs/setup-wizard/](../setup-wizard/)'s D1–D12 **numerically**; the register of every block is [docs/coordinator/README.md](../coordinator/README.md) §"The numbers this work holds", which records [docs/credentials-service/](../credentials-service/) holding a global block instead (D130–D159), [docs/in-job-review/](../in-job-review/) holding **no D-block at all** (its questions were Q1–Q17), and **D193 onward as free** — which is the block this work would take if the owner prefers one sequence. **Recommendation: keep D1–D16 local and distinct by folder, or move this work to D193 onward; renumbering is mechanical and changes nothing but the numbers** (O6 below) |
+| **D1–D16** | this work's decisions, all written: **D1–D6 and D16 answered by the owner on 2026-10-20, D7–D15 still open**. They are a *folder-local* namespace and they overlap [docs/setup-wizard/](../setup-wizard/)'s D1–D12 **numerically**; the register of every block is [docs/coordinator/README.md](../coordinator/README.md) §"The numbers this work holds", which records [docs/credentials-service/](../credentials-service/) holding a global block instead (D130–D159), [docs/in-job-review/](../in-job-review/) holding **no D-block at all** (its questions were Q1–Q17), and **D193 onward as free** — which is the block this work would take if the owner prefers one sequence. **Recommendation: keep D1–D16 local and distinct by folder, or move this work to D193 onward; renumbering is mechanical and changes nothing but the numbers** (O6 below) |
 | **Check 112** | **proposed** for the one part of this work that is genuinely a check in the register's sense — a first run on a real Windows machine, from a downloaded archive, by the owner, in three terminals (the U3, U5, U6, U8, U10 and U11 checks of [reconciliation.md](reconciliation.md)'s UNVERIFIED table, run as one sitting) — and **not claimed and not written** by this pull request. The six runner U-checks — U1, U2, U4, U7, U9 and U12 — are **not** register material: they run on a GitHub-hosted `windows-latest` runner, need no secret and no owner, and the register's subject is owner-run live checks (implementation-plan §6). The thirteenth, U13, belongs to the console's own design document (F40) |
 
 D-numbering and check numbers are allocated, never reused and never
@@ -181,8 +184,10 @@ them is a document-level question and is repeated here because it is about
 - [docs/pending-workflows/README.md](../pending-workflows/README.md) — the
   staging convention the Windows CI job must follow, because no Fugaro run may
   write under `.github/workflows/` (F38).
-- [docs/gcp-setup.md](../gcp-setup.md) — the guide a first-time user follows;
-  it has no Windows text at all today (O3, implementation-plan T0.2).
+- [docs/gcp-setup.md](../gcp-setup.md) — the guide a first-time user follows.
+  It carried no Windows text at all (**O3** was the finding that named the gap);
+  it now carries the Windows and WSL forms of the two commands it has a user
+  run, which is this work's **T0.2** (2026-10-20).
 - [docs/setup-wizard/](../setup-wizard/) and
   [docs/credentials-service/](../credentials-service/) — the shape this folder
   follows: README index with a status line, `spec.md` verbatim and committed

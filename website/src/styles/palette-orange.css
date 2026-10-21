@@ -16,6 +16,7 @@
 :root {
   /* The warm ground and the surface a card sits on. */
   --ground: #0D0B0A;
+  --panel: #141110;
   --surface: #1A1614;
 
   /* Body text and the quieter tone beside it. */
@@ -31,6 +32,10 @@
   /* A warm separator, and the attention tone, which in this palette is the accent's own
    * on-dark tone (see the header). */
   --border: #3A2C22;
+
+  /* The success tone, the same green in every palette: "this finished" is a status rather
+   * than a brand colour, so it does not move with the accent the owner chooses. */
+  --ok: #4CC38A;
   --warn: #FDBA74;
 
   /* The hero's gradient stops: an orange glow, deep enough that `--text`, `--text-muted`

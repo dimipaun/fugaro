@@ -675,6 +675,15 @@ added or removed without this sentence moving fails there:
     same round that added the gate's vertical half**, so the bytes and the check that reads them
     arrive in one commit: a picture that grows by the card that overran is a picture only a
     gate that measures the inset on both axes can hold.
+  - **The console's per-platform block** (2026-10-20, the owner's Linux ruling): Getting
+    Started's console card renders the data file's optional `linux` block as the console page's
+    Downloads section does — the block's own sentence, and the assets the block names drawn
+    under it rather than in the list above — so the card no longer lists a Linux artifact under
+    a sentence about the disk images. **The whole site figure above is re-derived only when asked (the owner's ruling), so no figure is claimed here:**
+    the two rules that give that block its spacing, which are scoped to the component one page
+    renders. Nothing else moved and no page gained a word — the block's markup is rendered only
+    while the data file carries a block, and the file this checkout ships carries none — so the
+    page weight and the script are where they were, and the count of files in `dist/` is 23.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -720,11 +729,17 @@ added or removed without this sentence moving fails there:
     are inside the `h1`'s own container — on the homepage as it was, with its install
     commands and its chat between the hero and the flow's first step heading, they were 24
     words from that container and 134 from the plan's region, and the stricter one is the
-    one enforced). On the homepage today the first `h2` is the slider's first panel title,
-    *Easy to use*, and the region is the request the hero renders under the headline, the
-    promise, its three calls to action and the slider's three tab labels — the tabs sit above
-    the panel heading the region stops at, so the labels a reader chooses between are part of
-    what they read before the first section: 30 words. A
+    one enforced). On the homepage today the first `h2` is the slider's own line over its
+    control, *Say it. Get pull requests.*, and the region is the hero's lead paragraph and
+    its row of links: **16 words**. Two things between the two headings are taken out of the
+    count, and both are named: the hero's illustration — `figure.hero-shot`, the terminal
+    card the bold redesign draws beside the copy, which is a picture with a caption rather
+    than the page's opening prose, and which `test/fold.mjs`'s rule 1 takes out of the lead
+    region in the same way — and the block the first `h2` belongs to, which is how the
+    slider's tab labels stayed out of the region when the block's heading moved above them.
+    Before the bold redesign the same region held the request the hero printed under the
+    headline, the promise, its three calls to action and the slider's three tab labels: 30
+    words. A
     page that carries blocks between its `h1` and
     its first `h2` is a page whose lead those blocks are part of, so the fix for a long lead
     is a shorter lead or an earlier first `h2`, never a reader that looks somewhere else. A page
@@ -769,15 +784,22 @@ added or removed without this sentence moving fails there:
     `docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
     getting-started 431, privacy 277, community 268, every one of them over it — and the
     redesign brought every one of those pages but the privacy statement inside it.)
-    **D188's number was 250, and the owner's feedback of 2026-10-19 is what moved it to
-    300.** That brief asks the homepage for a benefits section, which is a fourth required
+    **D188's number was 250, the owner's feedback of 2026-10-19 moved it to 300, and the
+    bold redesign of 2026-10-20 moved it to 500.** The 2026-10-19 brief asks the homepage for
+    a benefits section, which is a fourth required
     block on the one page that already carried the three the briefs before it require — the
     promise, the chat (changes spec item 3) and the flow (item 4) — and the four together
-    measure 294 words. D188's number is therefore the smallest round ceiling above the page
-    that carries every block its briefs require, and it is still a ceiling rather than a
-    target: the highest of the pages that gained nothing from that brief is Getting Started at
-    250 words, and a page that wants the extra 50 has to carry a brief's own block for them.
-    That raise is recorded as a reading in `docs/website/redesign/README.md`, the way every
+    measure 294 words. The bold redesign then builds the owner's approved board
+    (`design-ref/HomeV3.dc.html`), whose homepage is five blocks — the hero, the slider, the
+    run band, the grid of what a run leaves behind, and the closing call to action with the
+    install command — and the five together measure **468 words**. D188's number is therefore
+    the smallest round ceiling above the page that carries every block its briefs and its
+    boards require, and it is still a ceiling rather than a
+    target: the highest of the pages that gained nothing from those briefs or that board is How
+    It Works at
+    279 words (Getting Started is 257), and a page that wants the extra room has to carry a
+    brief's own block for it.
+    Both raises are recorded as readings in `docs/website/redesign/README.md`, the way every
     number the briefs do not spell out is.
 - `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
@@ -989,7 +1011,7 @@ added or removed without this sentence moving fails there:
   secret, an endpoint pointed elsewhere, a source naming the host, a third contact route, an
   address, a `/terms` link — and watches the named refusal come back. The word ceiling's own derivation — the
   privacy statement's own count plus 25 %, the number `website/README.md` states, and every
-  other page of the site still inside D188's 250 — is `budget.mjs`'s, beside the reader that
+  other page of the site still inside D188's 500 — is `budget.mjs`'s, beside the reader that
   measures it and the byte figures it is a sibling of.
 - `test/stacking.mjs` — the header paints above the page's blocks (the owner's reading of
   2026-10-19: "How it works: menu hidden by the blocks on mobile"). `tokens.css` names the
@@ -1188,7 +1210,8 @@ Started to it in **both** states: the shipped one, read off the built page, and 
 one, read off a build of a copy with the flag flipped. That second case also runs the budget gate over the flag-on build
 (`FUGARO_GATES_DIST`), because rendering the console's block costs words and Getting Started
 was at the ceiling D188 set when the console shipped — 250 words then, 300 since the owner's feedback
-of 2026-10-19 moved it (above) — and the owner's flip has to be the whole change and may not be the
+of 2026-10-19 moved it, 500 since the bold redesign of 2026-10-20 moved it again (above) — and the
+owner's flip has to be the whole change and may not be the
 change that breaks the ceiling. A data file that says the console has shipped while the flag says it
 has not stops the build, naming both files: they are one fact.
 
@@ -1467,9 +1490,19 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` now holds one pending workflow,
+change `.github/workflows/`. `docs/pending-workflows/` now holds four pending workflows,
 `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
-P4.3), which is not this site's: the website's two manual
+P4.3) — `docs/pending-workflows/console-linux.yml` — the desktop console's Linux build check
+(2026-10-20: it packs the AppImage and the `.deb` on `ubuntu-latest` and uploads them, and
+holds no secret) — `docs/pending-workflows/console-release-linux.yml` — the console's
+signing pipeline with the Linux legs added, which supersedes the staged `console-release.yml`
+and so is copied over it as well as into `.github/workflows/` — and
+`docs/pending-workflows/console-windows.yml` — the desktop console's Windows pack, and the one
+file of the four that is not a pull-request check (2026-10-20: it typechecks, runs the unit suite
+and packs the unsigned NSIS installer on `windows-latest`, and holds no secret, and it runs **at
+release time only** — the release tag or a manual dispatch before one, never on a pull request,
+not even path-filtered). None of the four is this
+site's: the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
 owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
 console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:

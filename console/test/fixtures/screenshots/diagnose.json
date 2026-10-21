@@ -1,0 +1,75 @@
+{
+  "project": "acme-platform",
+  "row": {
+    "run": "20261020-103045-aa01",
+    "run_id": "20261020-103045-aa01",
+    "repo": "acme/platform-core",
+    "workflow": "fugaro-default",
+    "recipe": "fugaro-default",
+    "oauth_account": "acme-bot",
+    "status": "running",
+    "stage": "review",
+    "reason": "",
+    "branch": "feat/scheduler-queue",
+    "outcome": "",
+    "requested_by": "dana",
+    "created": "2026-10-20T10:30:45Z",
+    "started_at": "2026-10-20T10:31:02Z",
+    "image_age_s": 3600,
+    "terminal": false,
+    "settled": false,
+    "follow_up": true,
+    "stale_draft": false,
+    "pr": 412,
+    "pr_url": "https://github.com/acme/platform-core/pull/412",
+    "cost": {
+      "model_usd": 6.42,
+      "model_basis": "subscription",
+      "compute_usd": 1.16,
+      "compute_estimated": true,
+      "total_usd": 7.58
+    }
+  },
+  "verify": [
+    { "kind": "build", "passed": true, "tests": 0, "failures": 0, "duration_s": 42 },
+    { "kind": "test", "passed": true, "tests": 214, "failures": 0, "duration_s": 186 },
+    { "kind": "lint", "passed": true, "tests": 0, "failures": 0, "duration_s": 18 }
+  ],
+  "failed": [],
+  "flaky": ["TestQueueDrainRetries"],
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "internal/queue/retry.go",
+      "summary": "the backoff ceiling is a constant here and a setting in the new path: the two differ by one retry when a job is requeued twice"
+    },
+    {
+      "severity": "nit",
+      "file": "internal/queue/retry_test.go",
+      "summary": "the table test does not cover the requeue-after-drain branch it was written for"
+    },
+    {
+      "severity": "minor",
+      "file": "docs/queue.md",
+      "summary": "the retry section still describes the legacy table this change retires"
+    }
+  ],
+  "agent_message": "I moved the scheduler onto the new queue and kept the legacy retry table behind a flag for one release. The integration suite covers both branches, and the draft pull request has the migration notes.",
+  "log_tail": [
+    "verify test: 214 tests, 0 failures (186s)",
+    "review: 3 findings, 1 flaky test recorded",
+    "draft pull request 412 opened"
+  ],
+  "report_path": "/Users/operator/checkouts/acme-platform/.fugaro/runs/20261020-103045-aa01/report.md",
+  "comments_path": "/Users/operator/checkouts/acme-platform/.fugaro/runs/20261020-103045-aa01/comments.md",
+  "draft_note": "the pull request is a draft until the flaky test is settled",
+  "route_by": { "agent": 4.11, "review": 1.62, "verify": 0.69 },
+  "model_by": { "claude-sonnet-4-5-20250929": 5.02, "claude-opus-4-1": 1.4 },
+  "reported_usd": 6.51,
+  "charge_usd": 6.42,
+  "reported_warning": "the providers reported $6.51 for these calls and the price table charged $6.42",
+  "pin_warnings": [],
+  "follow_up": { "pr": 412, "comments": 3, "session": "20261020-103045-aa01-followup" },
+  "halt": null,
+  "warnings": []
+}
