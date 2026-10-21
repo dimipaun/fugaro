@@ -853,7 +853,7 @@ func (s *imagesStage) confirmReplace(pl []planned) error {
 	if !reachable {
 		args := []string{r.o.doorName()}
 		if r.o.firebase != "" {
-			args = append(args, "--firebase-project", quoteWord(r.o.firebase))
+			args = append(args, "--firebase-project", quoteWord(r.o.firebaseProject()))
 		}
 		for _, k := range kinds {
 			if k != "history" {

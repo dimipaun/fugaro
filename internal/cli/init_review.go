@@ -111,7 +111,7 @@ func (r *initRun) runCovers() (bool, error) {
 func (r *initRun) declinedRun() error {
 	args := []string{r.o.doorName()}
 	if r.o.firebase != "" {
-		args = append(args, "--firebase-project", quoteWord(r.o.firebase))
+		args = append(args, "--firebase-project", quoteWord(r.o.firebaseProject()))
 	}
 	fmt.Fprintln(r.w, "not confirmed (the project's name was not typed at the review); nothing was applied")
 	return &initflow.NeedsYouError{Left: promptLeft(initflow.Installation, "type the project's name at the review to apply all of its steps", args...)}
@@ -321,8 +321,8 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	}
 	if todo[initflow.Firebase] {
 		_, fpWhy := e.firebaseVerified(ctx)
-		fmt.Fprintf(w, "  firebase:       Terraform applies of the installation root (GCP project %s) and of the Firebase root in %s, then the budget database's marks and rules and Identity Platform (planned when applied)\n", pluginwire.Printable(r.gcpProject), pluginwire.Printable(o.firebase))
-		fmt.Fprintf(w, "                  the Firebase project %s: %s\n", pluginwire.Printable(o.firebase), fpWhy)
+		fmt.Fprintf(w, "  firebase:       Terraform applies of the installation root (GCP project %s) and of the Firebase root in %s, then the budget database's marks and rules and Identity Platform (planned when applied)\n", pluginwire.Printable(r.gcpProject), pluginwire.Printable(o.firebaseProject()))
+		fmt.Fprintf(w, "                  the Firebase project %s: %s\n", pluginwire.Printable(o.firebaseProject()), fpWhy)
 	}
 	if todo[initflow.Images] {
 		fmt.Fprintln(w, "  "+e.images.reviewLine(ctx))

@@ -29,7 +29,7 @@ const printVarsUngatedFirebase = "--print-vars is ungated and makes no cloud cal
 // firebaseVars is the installation's and the Firebase root's tfvars as one
 // JSON object, for --print-vars.
 func (r *initRun) firebaseVars(inst []byte, spec infra.InstallationSpec, lc *localcfg.Config) ([]byte, error) {
-	fs, err := infra.Firebase(spec, infra.FirebaseInputs{FP: r.o.firebase, BudgetAdmins: r.budgetAdmins(lc)})
+	fs, err := infra.Firebase(spec, infra.FirebaseInputs{FP: r.o.firebaseProject(), BudgetAdmins: r.budgetAdmins(lc)})
 	if err != nil {
 		return nil, initErr(err)
 	}
@@ -136,7 +136,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 // Each apply has its own plan and confirmation, and so does the database
 // step. Nothing creates the Firebase project or links billing.
 func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, bin string, lc *localcfg.Config, spec infra.InstallationSpec, path string, old []byte) error {
-	fp := r.o.firebase
+	fp := r.o.firebaseProject()
 	mode := r.o.budgetMode
 	if mode == "enforce" && (lc.Budget == nil || lc.Budget.PerRunUSD <= 0) {
 		return userErr("--budget-mode enforce needs budget.per_run_usd in the project config (more than 0): it is the per-run cap the jobs enforce")
@@ -425,7 +425,7 @@ func (r *initRun) firebaseHistory(ctx context.Context, c *infra.Clients, t *tf.T
 	if err != nil || stop {
 		return err
 	}
-	fmt.Fprintf(r.w, "The budget backend of project %s is in Firebase project %s. Each repository needs fugaro update --repo to pick up the jobs' environment.\n", lc.Name, r.o.firebase)
+	fmt.Fprintf(r.w, "The budget backend of project %s is in Firebase project %s. Each repository needs fugaro update --repo to pick up the jobs' environment.\n", lc.Name, r.o.firebaseProject())
 	return nil
 }
 
@@ -529,7 +529,7 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 func (r *initRun) confirmLocation() error {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, infra.FirestoreLocation)
 	if !canConfirmTyped(initflow.Typed, r.conditions()) {
-		lf := promptLeft(initflow.Firebase, "type "+infra.FirestoreLocation+" to confirm the Firestore database's permanent location when asked, after running", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebase))
+		lf := promptLeft(initflow.Firebase, "type "+infra.FirestoreLocation+" to confirm the Firestore database's permanent location when asked, after running", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebaseProject()))
 		return &initflow.NeedsYouError{Left: lf}
 	}
 	fmt.Fprintf(r.w, "Type %s to create it there: ", infra.FirestoreLocation)
