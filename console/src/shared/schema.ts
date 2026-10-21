@@ -166,6 +166,14 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'state',
   'health',
   'status',
+  // `derived` is the read side's own derivation for a run whose record was
+  // never finalized (`runview.DerivedPreempted`, the CLI's 2026-10-21 ruling:
+  // a preempted Cloud Batch job is derived when the run is read and never
+  // written back). It sits beside `status` rather than replacing it -- the row
+  // reads `status: "failed"`, `derived: "preempted"` -- and it is an enum the
+  // CLI writes from its own one-entry table, the same kind of value `status`
+  // and `outcome` are. It is not drawn from free text and never sanitized.
+  'derived',
   'outcome',
   'auth',
   'deadline',
@@ -743,7 +751,7 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * `config_sha256`, `image_age_s`, `changed_files`, `artifact_count`, `artifact_bytes`,
  * `task_pr`, `record_pr`, `pr`, `pushed_head`, `started_at`, `draft_fallback`,
  * `pr_status_at`, `stale_draft`, `execution`, `batch`, `halt`, `previous_run`,
- * `base_branch`)
+ * `base_branch`, `derived`)
  * are the ones this screen has no use for yet; they are listed so that a
  * document carrying them is read rather than thrown away.
  *
@@ -762,6 +770,16 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * list without it would turn every 0.8.5 `runs ls --json` document into the
  * skew state. It is accepted and not read: the Runs screen's rows are this
  * document's records, and nothing here renders a record's title yet.
+ *
+ * **`derived` arrived with the read-side preemption derivation (2026-10-21)**,
+ * between `reason` and `halt` in the struct, and it is written only on a row
+ * whose status was derived while reading -- a run whose record was never
+ * finalized and whose Cloud Batch job the platform preempted. It is the same
+ * omission `title` and `launched_by` were: `closed()` refuses a key the shape
+ * does not list, so a `runs ls --json` document carrying one preempted run
+ * would be refused whole as `runs[0].derived` until this list had the key. It
+ * is accepted and not read yet -- the Runs screens draw `status` and `reason`,
+ * and no screen draws the derivation as its own marker.
  *
  * **`launched_by` arrived with 0.9.0**, between `requested_by` and `pr_url` in
  * the struct, and is written on every row whose `launch.json` recorded a
@@ -785,6 +803,7 @@ export const RECORD_KEYS = [
   'status',
   'stage',
   'reason',
+  'derived',
   'halt',
   'batch',
   'requested_by',

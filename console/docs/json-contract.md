@@ -380,6 +380,7 @@ reads:
 | `recipe`, `config_sha256` | string | **yes** | |
 | `project_layer` | `*runstore.ProjectLayerRecord` | **yes** | absent before 0.6.0 |
 | `status`, `stage`, `reason` | string | `status` no, other two yes | |
+| `derived` | string | **yes** | **what the read side derived, and not a status of its own** — the CLI's 2026-10-21 ruling. Written only on a row whose record was never finalized and whose Cloud Batch job the platform preempted: `status` stays `failed` (the vocabulary every reader already switches on) and `derived` carries the fact (`preempted`, `runview.DerivedPreempted`), with `reason` saying so in a sentence. Absent for every other row, which is what keeps the shape additive. See **the derived status** below |
 | `halt` | `*runstore.Halt` | **yes** | why a run halted |
 | `batch`, `requested_by` | string | **yes** | `requested_by` is a person's address |
 | `launched_by` | string | **yes** | who started the run, from its `launch.json` (**CLI 0.9.0**); absent when the record has none. The same value `JSONRun`/`JSONFinished` carry, and display text only — see `JSONRun`'s row |
@@ -401,6 +402,41 @@ reads:
 | `artifact_count` | int | **yes** | what an artifact run's record says it delivered; absent for every run that has none, and the count `runs ls`'s `ARTIFACTS` column shows — its total is `artifact_bytes` |
 | `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
 | `changed_files` | `*runstore.ChangedFiles` | **yes** | the paths the run changed, as the run itself recorded them (design D27, console v2 plan V2.1.2): `paths`, `total` and `truncated` below. **Absent for a run that recorded none** — every record written before the field existed, and every run that died before finalize — and absence means **"no record of what this run changed"**, never "it changed nothing" (the `-` cell of `runs ls`'s `FILES` column) |
+
+**The derived status (`derived`), and why it is not a status.** A Cloud Batch
+run on a Spot VM can be preempted: the platform reclaims the VM, the job ends
+`FAILED`, and no component ever finalizes the run's record — the budget lease
+expires by its own timeout and the history sweep settles the cost, so there is
+nothing that could write the outcome down. The owner's ruling of 2026-10-21 is
+that **nothing gains a new permission for this**: the read side derives it when
+the run is read (`runview.Join`), from the run's own objects plus the Batch
+job's own report (`statusEvents`, or the task state's reserved preemption exit
+code — `internal/backend/batch`'s `preemptExitCode`), and the derived status is
+**never written back** anywhere.
+
+So the row reads `status: "failed"`, `derived: "preempted"`, and `reason` is
+`runview.ReasonPreempted`. The three properties a reader needs:
+
+* **`status` is unchanged.** `failed` is what a reader switches on, what the
+  Runs screens draw and what `runs ls`'s table column carries; the derivation
+  is a second key beside it. A row is never *only* `derived`: an absent key
+  means nothing was derived, and `derived` is never `""`.
+* **`derived` is drawn beside the status, never instead of it.** `runs ls`'s
+  table and `fugaro diagnose` print the status and the derivation together
+  (`failed (preempted)`), the way a halt already prints its reason
+  (`halted (run_cap)`); the JSON keeps both keys separate so a script never has
+  to parse the decorated cell. The console reads `status` and `reason` today
+  and may render the marker from `derived` when it does.
+* **A finalized record always wins, and an unreadable job never derives.**
+  A run whose record exists is never derived, however its job reads; a job
+  whose state cannot be read, or whose state is not a terminal `FAILED`, stays
+  exactly as recorded — a live run is never made to look failed by a read the
+  reader could not complete.
+
+`derived` is one of the string keys the console does not sanitize: it is an
+enum the CLI writes from its own table, like `status`, `outcome` and `mode`
+(`NON_TEXT_STRING_KEYS`, `console/src/shared/schema.ts`), never text a job
+wrote.
 
 **`changed_files` is the run's own account, and it is bounded.** The runner
 reads the paths of the run's own commits (`origin/<base>...HEAD` for a first

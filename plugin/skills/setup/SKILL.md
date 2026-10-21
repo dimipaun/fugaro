@@ -35,7 +35,7 @@ fugaro init --project <name>
 
 Then continue here. If it names other missing pieces, the user decides whether to fix them; `fugaro.yaml` can be written once the installation exists. Its `fugaro_yaml` field says whether a `fugaro.yaml` exists and is valid, and its `secrets` field lists the stored secrets by name: use both to tell new setup from fixing, and in step 8.
 
-**A managed project's deletes.** A managed project records, in one object at the root of its runs bucket, the addresses whose deletes and replacements its owner approves. Its writer is the owner's command, run in their own terminal window, not through the agent; it refuses an agent's session. That is a speed bump, not a boundary: your session holds the owner's credentials, so never write that object yourself, by this command or any other:
+**A managed project's deletes.** A managed project records, in one object at its runs bucket's root, the addresses whose deletes and replacements its owner approves. Its writer is the owner's command, run in their own terminal, not through the agent; it refuses an agent's session. That is a speed bump, not a boundary: your session holds the owner's credentials, so never write that object yourself, by this command or any other:
 
 ```bash user-runs
 # one address, copied whole

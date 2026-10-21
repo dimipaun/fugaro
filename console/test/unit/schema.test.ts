@@ -263,9 +263,15 @@ const FULL_ROW: JSONDoc = Object.freeze({
   project_layer: { name: 'base', sha256: 'a'.repeat(64) },
   config_sha256: 'b'.repeat(64),
   run_id: '20261015-120000-aa01',
-  status: 'succeeded',
+  status: 'failed',
   stage: 'done',
-  reason: '',
+  reason: 'the Batch job was preempted: its Spot VM was reclaimed before the run finalized',
+  // The read side's derivation, written on a row whose status was derived while
+  // reading (`runview.DerivedPreempted`, the CLI's 2026-10-21 ruling): a Cloud
+  // Batch job the platform preempted, on a run whose record was never
+  // finalized. It sits beside `status` rather than replacing it, which is what
+  // keeps the status vocabulary a reader switches on intact.
+  derived: 'preempted',
   halt: { by: 'redacted@example.invalid', at: '2026-10-15T11:00:00Z', reason: 'budget kill <project>' },
   batch: '2026-10-15',
   requested_by: 'redacted@example.invalid',
@@ -469,12 +475,31 @@ describe('both document shapes decode', () => {
     const row = result.value.runs[0]
     expect(row?.run).toBe('20261015-120000-aa01')
     expect(row?.runId).toBe('20261015-120000-aa01')
-    expect(row?.status).toBe('succeeded')
+    expect(row?.status).toBe('failed')
     expect(row?.cost.modelUsd.value).toBe(12.5)
     expect(row?.cost.modelBasis).toBe('api-list')
     // The optional keys it does not read are accepted rather than refused.
     expect(row?.workflow).toBe('web')
     expect(row?.prUrl).toBe('https://example.invalid/r-4c25cf20/r-f1aa9214/pull/412')
+  })
+
+  it('accepts the read side\'s derived status, which is additive', () => {
+    // `derived` arrived with the read-side preemption derivation (2026-10-21):
+    // a row whose record was never finalized and whose Cloud Batch job the
+    // platform preempted reads `status: "failed"`, `derived: "preempted"`.
+    // `closed()` refuses a key the shape does not list, so a `RECORD_KEYS`
+    // without it turns every document carrying one preempted run into the skew
+    // state -- `title`'s omission and `launched_by`'s, a third time.
+    const result = decodeDocument(DEGRADED_REAL, 'a degraded document')
+    expect(result.ok, result.ok ? '' : result.skew.because).toBe(true)
+    // The key is optional, so the *shape* is unchanged for every row that is
+    // not derived; and it is a string the CLI writes from its own table, which
+    // is why it is exempt from the text classes rather than classified as one.
+    expect(wireTextClass('derived')).toBeUndefined()
+    expect(NON_TEXT_STRING_KEYS).toContain('derived')
+    // And it is not the status: the vocabulary a reader switches on is intact.
+    expect(RECORD_KEYS).toContain('status')
+    expect(RECORD_KEYS).toContain('derived')
   })
 
   it('decodes a live document carrying every key `JSONRun` and `JSONFinished` can write', () => {
