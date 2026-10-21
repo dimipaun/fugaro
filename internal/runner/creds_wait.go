@@ -145,8 +145,8 @@ func (r *run) waitForCredential(ctx context.Context, name string, until time.Tim
 	// the sleep nor the run's context hears a halt: a kill switch, a cap or
 	// the backend's grace recorded while the run idles must end the wait at
 	// once, not when the reset arrives.
-	done := make(chan error, 1)
-	go func() { done <- credsWait(ctx, d) }()
+	done, stopSleep := credsSleep(ctx, d)
+	defer stopSleep()
 	select {
 	case err := <-done:
 		return err
@@ -155,4 +155,17 @@ func (r *run) waitForCredential(ctx context.Context, name string, until time.Tim
 	case <-r.haltCh():
 		return &HaltError{*r.haltValue()}
 	}
+}
+
+// credsSleep starts the wait's sleep and returns its result and the function
+// that ends it. The sleep runs on a context of its own, derived from ctx, so
+// that it ends with the wait whichever way waitForCredential's select
+// returns: what it waits for is the reset the service named, minutes or hours
+// away, and a sleep left running behind a wait that ended on a halt would be
+// a goroutine and a timer left behind for the rest of the job.
+func credsSleep(ctx context.Context, d time.Duration) (<-chan error, func()) {
+	sleepCtx, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- credsWait(sleepCtx, d) }()
+	return done, stop
 }

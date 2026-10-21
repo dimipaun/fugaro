@@ -1932,12 +1932,28 @@ type stageOpts struct {
 // the session it had started, with --resume. The stage's own session, not
 // the run's: a review runs in a session of its own, and a wait during one
 // resumes that one.
+//
+// The loop is bounded (maxCredentialResumes): each wait is bounded by
+// waitForCredential's own check against the job's remaining time, but a
+// reset that has already passed resumes the stage at once, and a service
+// that kept answering that way would run the stage again and again with no
+// wait between. The bound ends the run named (HaltNoCredential) instead.
 func (r *run) stage(ctx context.Context, name string, req agent.Request, opts stageOpts) (agent.Result, bool, error) {
+	// resumes is how many times this stage has already been resumed on an
+	// exhausted answer, this one included.
+	resumes := 0
 	for {
 		res, ok, err := r.stageOnce(ctx, name, req, opts)
 		var ex *exhaustedError
 		if !errors.As(err, &ex) {
 			return res, ok, err
+		}
+		if resumes++; resumes > maxCredentialResumes {
+			h := runstore.Halt{Reason: runstore.HaltNoCredential, Scope: "run", At: r.d.Now().UTC(),
+				Detail: fmt.Sprintf("the credential service answered that no credential was usable %d times while stage %s ran, the last until %s; the run stopped rather than resume the stage again (see 'fugaro accounts ls' for the accounts' states)",
+					resumes, name, ex.Until.UTC().Format(time.RFC3339))}
+			r.haltNow(h)
+			return res, false, &HaltError{h}
 		}
 		// The session the ended stage ran in: what its result reported (the
 		// result event's ID, else its init event's, so a stage killed before
@@ -1951,15 +1967,24 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		if werr := r.waitForCredential(ctx, name, ex.Until); werr != nil {
 			return res, false, werr
 		}
-		r.d.Log.Info("the credential wait is over; resuming the stage", "stage", name, "session", session)
+		r.d.Log.Info("the credential wait is over; resuming the stage", "stage", name, "session", session, "resume", resumes)
 		// The resumed stage is the same stage, on the same session. A
-		// further exhausted answer during it waits again: each wait is
-		// bounded by waitForCredential's own check against the job's
-		// remaining time, and each attempt by the stage's own deadline, so
-		// this loop cannot outlive the job.
+		// further exhausted answer during it waits again, within the same
+		// bound.
 		req.SessionID, req.Resume = session, true
 	}
 }
+
+// maxCredentialResumes bounds one stage's resume loop (C1.17). The reset an
+// exhausted answer names is normally in the future, and the wait for it is
+// the whole of the runner's reaction; but an answer naming an instant that
+// has already passed resumes the stage at once, so a service that kept
+// answering that way — a stale mark, a reset that keeps moving back — would
+// run the stage again and again with no wait between, each attempt a whole
+// agent process. Three is more than the cascade needs: the service's answer
+// is already the wait-or-switch decision, and one wait covers every account
+// that is exhausted at that instant. A fourth answer ends the run named.
+const maxCredentialResumes = 3
 
 // stageOnce is one attempt at a stage: the whole of what stage did before
 // C1.17, including its own failure handling.

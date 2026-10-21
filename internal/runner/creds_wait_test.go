@@ -186,6 +186,49 @@ func TestLateExhaustedAnswerDoesNotRerunAFinishedStage(t *testing.T) {
 	}
 }
 
+// TestResumeLoopIsBounded: a reset the answer names that has already passed
+// resumes the stage at once, so a service that kept answering that way would
+// run the stage again and again with no wait between — each attempt a whole
+// agent process. The loop is bounded, and the answer past the bound ends the
+// run named rather than spinning.
+func TestResumeLoopIsBounded(t *testing.T) {
+	h := newHarness(t, "", nil)
+	handle := watchRun(t)
+	waits := 0
+	runner.SetCredsWait(t, func(ctx context.Context, d time.Duration) error {
+		waits++
+		if d > 0 {
+			t.Errorf("the runner waited %s; the answer named an instant already past", d)
+		}
+		return nil
+	})
+	past := time.Now().Add(-time.Minute)
+	steps := make([]step, 0, runner.MaxCredentialResumes+1)
+	for i := 0; i <= runner.MaxCredentialResumes; i++ {
+		// One step per attempt the bound allows; a further call is reported
+		// by the harness as an unexpected agent call.
+		steps = append(steps, exhaustedStage(t, handle, past))
+	}
+	rec, err := h.run(t, steps...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltNoCredential || rec.Halt.Scope != "run" {
+		t.Fatalf("rec = %+v, halt = %+v; want a halted run with reason %q", rec, rec.Halt, runstore.HaltNoCredential)
+	}
+	if n := len(h.agent.calls); n != runner.MaxCredentialResumes+1 {
+		t.Fatalf("%d agent calls; want the stage run once and resumed %d times, then the run halted", n, runner.MaxCredentialResumes)
+	}
+	if waits != runner.MaxCredentialResumes {
+		t.Fatalf("%d waits; want one for each resume the bound allows", waits)
+	}
+	for _, want := range []string{"implement", past.UTC().Format(time.RFC3339), "fugaro accounts ls"} {
+		if !strings.Contains(rec.Halt.Detail, want) {
+			t.Errorf("the halt's detail lacks %q: %q", want, rec.Halt.Detail)
+		}
+	}
+}
+
 // TestOAuthOnlyIgnoresThreshold: with no credentials block the project's
 // fallback is oauth-only, which ignores the wait-or-switch threshold (D152,
 // spec §"Paid fallback policy"): there is nothing to fail over to, so the

@@ -86,6 +86,9 @@ func SetMarkLockReleasing(t *testing.T, f func(l *lock.Lock, ctx context.Context
 // RecordWriteTimeout exposes recordWriteTimeout.
 const RecordWriteTimeout = recordWriteTimeout
 
+// MaxCredentialResumes exposes maxCredentialResumes.
+const MaxCredentialResumes = maxCredentialResumes
+
 // RunHandle reaches a run's halt and cancel hooks from a test's agent.
 type RunHandle struct{ r *run }
 
