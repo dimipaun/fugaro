@@ -950,7 +950,14 @@ func (o *initOptions) check() error {
 		}
 	}
 	if o.noBuild || o.allowJobDelete || o.retire {
-		return userErr("--no-build, --allow-job-delete and --retire are for fugaro update --repo")
+		// The door, not `update`: check() runs for both doors, and neither flag
+		// set is foreign to either of them -- setupDoor.foreign is --forget
+		// alone. What these three want is the --repo converge, which both doors
+		// take and which never reaches check() at all (RunE's `case o.repo`
+		// hands it to runInitRepo). A first-run user reading "fugaro update
+		// --repo" would be sent to the other door for a command their own would
+		// have run.
+		return userErr("--no-build, --allow-job-delete and --retire are for %s --repo", o.doorProgram())
 	}
 	if err := o.checkAppID(); err != nil {
 		return err
@@ -1042,7 +1049,11 @@ func (o *initOptions) check() error {
 		return err
 	}
 	if o.firebase == "" && (o.budgetMode != "" || o.budgetAdminsChanged) {
-		return userErr("--budget-mode and --budget-admin are for fugaro update --firebase <firebase-project-id>")
+		// Door-relative for the same reason as the --no-build refusal above:
+		// --firebase is both doors' flag (init_firebase.go's prompts already
+		// name the reader's door), so a setup user who passed --budget-mode is
+		// told to add it to the run they are in.
+		return userErr("--budget-mode and --budget-admin are for %s --firebase <firebase-project-id>", o.doorProgram())
 	}
 	if o.firebase != "" {
 		switch {

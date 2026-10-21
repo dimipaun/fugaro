@@ -245,6 +245,67 @@ func TestNoDoorsFlagHelpNamesTheOtherDoor(t *testing.T) {
 	}
 }
 
+// TestTheDoorIndependentRefusalsNameTheReadersDoor: two refusals in
+// initOptions.check live outside any door branch -- it runs for both doors, and
+// the flags they speak about are declared on both (setupDoor.foreign is
+// --forget alone). What those flags want is the --repo converge, or --firebase,
+// and both doors take those, so the sentence has to name the door the reader is
+// at: a first run told to type `fugaro update --repo` is sent to the other door
+// for a command its own would have run. This is the check() half of
+// TestNoDoorsFlagHelpNamesTheOtherDoor, on the strings rather than the help.
+//
+// check() is called directly, not through the command line: it is pure, it runs
+// before any input is gathered or any client built, so a regression here fails
+// as a wrong sentence rather than as a test that reaches for the cloud.
+func TestTheDoorIndependentRefusalsNameTheReadersDoor(t *testing.T) {
+	other := map[string]string{"setup": "update", "update": "setup"}
+	for _, tc := range []struct {
+		name string
+		flag string
+		o    *initOptions
+	}{{
+		name: "--no-build, --allow-job-delete and --retire",
+		flag: "--no-build",
+		o:    &initOptions{noBuild: true},
+	}, {
+		name: "--allow-job-delete",
+		flag: "--allow-job-delete",
+		o:    &initOptions{allowJobDelete: true},
+	}, {
+		name: "--retire",
+		flag: "--retire",
+		o:    &initOptions{retire: true},
+	}, {
+		name: "--budget-mode",
+		flag: "--budget-mode",
+		o:    &initOptions{budgetMode: "observe"},
+	}, {
+		name: "--budget-admin",
+		flag: "--budget-admin",
+		o:    &initOptions{budgetAdmins: []string{"user:someone@example.com"}, budgetAdminsChanged: true},
+	}} {
+		for door := range other {
+			o := *tc.o
+			o.door = door
+			err := o.check()
+			if err == nil {
+				t.Errorf("fugaro %s %s: check() accepted it, want a refusal naming the door", door, tc.flag)
+				continue
+			}
+			got := err.Error()
+			if !strings.Contains(got, tc.flag) {
+				t.Errorf("fugaro %s %s: the refusal does not name the flag:\n%s", door, tc.flag, got)
+			}
+			if !strings.Contains(got, "fugaro "+door+" ") {
+				t.Errorf("fugaro %s %s: the refusal does not name the reader's door:\n%s", door, tc.flag, got)
+			}
+			if strings.Contains(got, "fugaro "+other[door]+" ") {
+				t.Errorf("fugaro %s %s: the refusal names the other door:\n%s", door, tc.flag, got)
+			}
+		}
+	}
+}
+
 // TestSetupRefusesAnUpdateOnlyFlag: a flag that only makes sense once an
 // installation exists is `fugaro update`'s, and `fugaro setup` — the first
 // run — refuses it by name rather than ignoring it. `--forget` is that flag:
