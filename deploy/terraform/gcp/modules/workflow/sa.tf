@@ -58,34 +58,48 @@ resource "google_storage_bucket_iam_member" "job_tokens" {
 }
 
 locals {
-  # D145: the model credentials, by the variable each one is mounted as. The
-  # three names are internal/config's (ReservedSecrets' Claude OAuth token and
-  # Anthropic key, and ProviderKeyEnvPrefix), which is also where
-  # config.ReservedEnvPrefixes refuses a workflow secret any variable that
-  # could impersonate one — so a workflow's secret_env entry names a model
-  # credential exactly when its variable is one of these. The git credential
-  # is deliberately not here: D145 leaves Bitbucket alone and moves the
-  # GitHub App key in C2.3, so both keep the accessor they have today.
-  # TestModelSecretEnvsMatchTheCredentialsService pins these literals to Go.
-  model_secret_env_names  = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
-  model_secret_env_prefix = "FUGARO_PROVIDER_KEY_"
+  # D145: the credentials the credentials service holds once an installation
+  # opts in, and which the job's own account therefore keeps no accessor on.
+  # There are two families, and they are identified differently:
+  #
+  #   * the MODEL credentials, by the VARIABLE each one is mounted as. The
+  #     three names are internal/config's (ReservedSecrets' Claude OAuth token
+  #     and Anthropic key, and ProviderKeyEnvPrefix), which is also where
+  #     config.ReservedEnvPrefixes refuses a workflow secret any variable that
+  #     could impersonate one — so a workflow's secret_env entry names a model
+  #     credential exactly when its variable is one of these. A provider's key
+  #     has no fixed logical name (it is whatever the owner's local config
+  #     calls it), so the variable is the only thing that identifies it.
+  #   * the GITHUB APP'S PRIVATE KEY, by its LOGICAL NAME. It is a reserved
+  #     name with exactly one mount, so the name identifies it — and matching
+  #     the name is what leaves Bitbucket's token and every workflow's own
+  #     secret alone. D145 leaves Bitbucket untouched: a Bitbucket credential
+  #     is a repository access token, issued for one repository, which no
+  #     service can mint per job (F7).
+  #
+  # TestServiceHeldSecretsMatchTheCredentialsService pins these three literals
+  # and the drop below to Go.
+  model_secret_env_names    = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+  model_secret_env_prefix   = "FUGARO_PROVIDER_KEY_"
+  service_held_secret_names = ["github-app-key"]
 
   # One entry per mount, so the drop below is per mount and never per name.
-  is_model_secret_env = {
+  is_service_held = {
     for env, logical in var.workflow.secret_env :
-    env => contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix)
+    env => contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix) || contains(local.service_held_secret_names, logical)
   }
 
   # The secrets the job's own account may read, by logical name: every secret
   # the job mounts while the credentials service is off — D147's "with it off
   # nothing changes", and the same set (and the same instance keys) as before
   # this file knew about the service — and, once it is on, every mounted
-  # secret that is not a model credential (the service holds those, C1.11, and
-  # C1.20 drops the job's mount of each). One member per mounted secret, never
-  # the project's, never another workflow's.
+  # secret that is not one the service holds (C1.11's bundle holds the model
+  # credentials, C2.1 mints the App key's installation tokens, and C1.20/C2.2
+  # drop the job's mount of each). One member per mounted secret, never the
+  # project's, never another workflow's.
   job_secret_names = toset([
     for env, logical in var.workflow.secret_env :
-    logical if var.credentials_service == null || !local.is_model_secret_env[env]
+    logical if var.credentials_service == null || !local.is_service_held[env]
   ])
 }
 

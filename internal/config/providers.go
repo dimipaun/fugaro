@@ -483,22 +483,57 @@ func IsProviderKeyEnv(name string) bool {
 // IsProviderKeyEnv's namespace, which ReservedEnvPrefixes keeps out of every
 // workflow secret's reach — so IsModelSecretEnv is the whole predicate.
 //
-// The git credential's two variables are deliberately not here: D145 leaves
-// Bitbucket untouched and moves the GitHub App key only in C2.3, so both keep
-// the job accessor they have today.
+// The git credential's two variables are deliberately not here: neither is a
+// model credential, and which of the two the credentials service holds is a
+// different question (ServiceHeldSecretNames, IsServiceHeldSecretEnv).
 var ModelSecretEnvs = []string{ReservedSecrets[ClaudeOAuthToken], ReservedSecrets[AnthropicSecret]}
 
 // IsModelSecretEnv reports whether the job variable name carries a model
 // credential: one of ModelSecretEnvs, or a provider key's variable.
 //
-// The credentials service (D146) is what makes the question matter: once an
+// It is the model half of the credentials service's rule (D146): once an
 // installation opts in, a job's account keeps no secretAccessor on these
 // (modules/workflow/sa.tf) because the service holds them (C1.11), and C1.20
-// drops the mount. Terraform cannot ask Go, so the same three names are
-// literals in that module's locals, held to this function by
-// deploy/terraform's TestModelSecretEnvsMatchTheCredentialsService.
+// drops the mount. IsServiceHeldSecretEnv is the whole rule. Terraform cannot
+// ask Go, so the same three names are literals in that module's locals, held
+// to this function by deploy/terraform's
+// TestServiceHeldSecretsMatchTheCredentialsService.
 func IsModelSecretEnv(name string) bool {
 	return slices.Contains(ModelSecretEnvs, name) || IsProviderKeyEnv(name)
+}
+
+// GitHubAppKeySecret is the logical name of the GitHub App's private key: the
+// key ReservedSecrets maps to the mount variable, and the one git credential
+// D145 moves into the credentials service (C2.3).
+const GitHubAppKeySecret = "github-app-key"
+
+// ServiceHeldSecretNames are the logical secret names whose credential the
+// credentials service holds once an installation opts in (D145): the GitHub
+// App's private key, and nothing else. The model credentials are not here
+// because a provider's key has no fixed logical name — it is whatever the
+// owner's local config calls it — so they are identified by their variables
+// (ModelSecretEnvs, IsProviderKeyEnv) and the whole question needs both halves.
+//
+// The Bitbucket token is deliberately absent: D145 leaves it alone, because a
+// Bitbucket credential is a repository access token, issued for one repository
+// and usable for no other, which no service can mint per job (F7).
+var ServiceHeldSecretNames = []string{GitHubAppKeySecret}
+
+// IsServiceHeldSecretEnv reports whether a job mounting the logical secret
+// name under the variable env carries a credential the credentials service
+// holds once an installation opts in (D145, D146): a model credential, or the
+// GitHub App's private key. Bitbucket's token and every workflow's own secret
+// are false, whatever they are mounted as.
+//
+// This is the rule modules/workflow/sa.tf's job_secret_names is written from
+// and internal/infra's mountsServiceHeldSecret mirrors: a credential that is
+// true here loses the job's secretAccessor when the opt-in is on, because the
+// service holds it (C1.11's bundle, C2.1's mint) and the job's mount follows
+// (C1.20, C2.2). Terraform cannot ask Go, so the same names are literals in
+// that module's locals, held to this function by deploy/terraform's
+// TestServiceHeldSecretsMatchTheCredentialsService.
+func IsServiceHeldSecretEnv(env, name string) bool {
+	return IsModelSecretEnv(env) || slices.Contains(ServiceHeldSecretNames, name)
 }
 
 // ProviderBySecret is the provider whose key is the secret named secret.

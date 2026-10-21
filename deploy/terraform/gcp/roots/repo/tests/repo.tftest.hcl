@@ -1616,3 +1616,149 @@ run "credentials_service_off_job" {
     error_message = "with the credentials service off there is no service to invoke, so no invoker grant"
   }
 }
+
+# The GitHub App's private key, with the service ON (C2.3). It is the second
+# family of the drop and the one matched differently: by its LOGICAL NAME
+# rather than by the variable it is mounted as, because a git credential is
+# identified by its name (config.ReservedSecrets) and a provider's key is not.
+#
+# D145 moves the App key into the credentials service and leaves Bitbucket's
+# token alone, so this job's account keeps no accessor on github-app-key and
+# keeps the workflow's own npm-token — while the FUGARO_GITHUB_APP_PRIVATE_KEY
+# variable it is mounted as is left exactly where it is (C2.2 is the task that
+# removes the mount, and the opt-in must not be turned on between the two).
+run "credentials_service_on_github_app_key" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project             = var.github.project
+    fugaro_project      = var.github.fugaro_project
+    region              = var.github.region
+    name                = "web"
+    repo_label          = var.github.repo.label
+    workflow            = var.github.repo.workflows.web
+    secrets             = var.github.repo.secrets
+    runs_bucket         = var.github.installation.runs_bucket
+    job_runner_role     = var.github.installation.role_ids.job_runner
+    credentials_service = { name = "fugaro-credentials", region = "us-east5" }
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-webapp-we-76331eb3@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-webapp-we-76331eb3@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-webapp-we-76331eb3@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      npm-token = "fugaro-acme-webapp-npm-token-bacfa0e910c36bb9"
+    })
+    error_message = "with the credentials service on, the job account must hold no accessor on the GitHub App's private key — the service mints the run's tokens (D145) — and must keep the rest of its own secret_env"
+  }
+  assert {
+    condition = alltrue([for m in google_secret_manager_secret_iam_member.job :
+    m.secret_id != "fugaro-acme-webapp-github-app-key-35b331db19bcc682"])
+    error_message = "the App key's container is in the job's accessor set whatever key the map is indexed by: the drop is by the logical name, and the container must be gone"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 1
+    error_message = "the job account still gains its one invoker grant on the service in this shape too"
+  }
+}
+
+# The same github workflow with the opt-in OFF: the App key keeps its accessor,
+# so the drop above is gated on the installation's opt-in and not on the name
+# alone (D147: with the opt-in off, nothing changes).
+run "credentials_service_off_github_app_key" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.github.project
+    fugaro_project  = var.github.fugaro_project
+    region          = var.github.region
+    name            = "web"
+    repo_label      = var.github.repo.label
+    workflow        = var.github.repo.workflows.web
+    secrets         = var.github.repo.secrets
+    runs_bucket     = var.github.installation.runs_bucket
+    job_runner_role = var.github.installation.role_ids.job_runner
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-webapp-we-76331eb3@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-webapp-we-76331eb3@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-webapp-we-76331eb3@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      github-app-key = "fugaro-acme-webapp-github-app-key-35b331db19bcc682"
+      npm-token      = "fugaro-acme-webapp-npm-token-bacfa0e910c36bb9"
+    })
+    error_message = "with the credentials service off, the job account keeps accessor on the GitHub App's private key, exactly as it does today (D147)"
+  }
+}
+
+# The build account keeps the App key, opt-in or not (C2.3, F3): `fugaro image
+# build` and the daily check clone the repository with it, so the service is
+# the only FUGARO RUNTIME identity with the model credentials — never the only
+# identity with Secret Manager access, which is the wording D148 settled on.
+#
+# This run is the guard that C2.3 did not reach into modules/repo/build.tf:
+# with the service ON, the build account's grant set is byte for byte the
+# build_secrets it had with the service off.
+run "credentials_service_on_build_keeps_the_app_key" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.github.project
+    fugaro_project = var.github.fugaro_project
+    region         = var.github.region
+    installation   = merge(var.github.installation, { credentials_service = { name = "fugaro-credentials", region = "us-east5" } })
+    repo           = var.github.repo
+  }
+
+  override_resource {
+    target          = google_service_account.build
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.build : k => m.secret_id }) == tomap({
+      github-app-key = "fugaro-acme-webapp-github-app-key-35b331db19bcc682"
+      npm-token      = "fugaro-acme-webapp-npm-token-bacfa0e910c36bb9"
+    })
+    error_message = "with the credentials service on, the BUILD account must still read the GitHub App's private key: the build clones the repository with it, and F3 is why the service is the only Fugaro runtime identity with the MODEL credentials and not the only one with Secret Manager access (D148)"
+  }
+  assert {
+    condition = alltrue([for m in google_secret_manager_secret_iam_member.build :
+      m.role == "roles/secretmanager.secretAccessor" &&
+    m.member == "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"])
+    error_message = "the build account's grants stay secretAccessor to its own account, opt-in or not"
+  }
+}
