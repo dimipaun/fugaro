@@ -199,6 +199,14 @@ type Policy struct {
 	// CloneURLs' own business and not a reader's.
 	CloneURLs CloneURLs `json:"clone_urls,omitempty"`
 
+	// Orchestrators is the project's central orchestrators, keyed by name
+	// (central-orchestrator plan P2, D12): each entry the identities admitted
+	// to it and the ceiling on what one of its jobs may spend. It is the
+	// project's *administration* of central orchestrators and not their
+	// authorisation — that is the orchestrator access record, decided by the
+	// deployed rules per identity — and orchestrators.go says so at length.
+	Orchestrators map[string]Orchestrator `json:"orchestrators,omitempty"`
+
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
 	// the keys are tolerated so that a policy a newer Fugaro wrote does not
@@ -217,7 +225,7 @@ var knownTopLevelKeys = map[string]bool{
 	"version": true, "budget": true, "allow_repos": true,
 	"providers": true, "model_prices": true, "routing": true,
 	"profiles": true, "clone_urls": true, "accounts": true,
-	"credentials": true,
+	"credentials": true, "orchestrators": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -793,6 +801,17 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		if err := validProfiles(p.Profiles, p.Accounts); err != nil {
 			return nil, true, err
 		}
+	}
+	if oraw, ok := doc["orchestrators"]; ok && !IsNull(oraw) {
+		// decodeOrchestratorBlock's errors name their place themselves
+		// ("projectpolicy: orchestrators.<name>..."), so they are returned as
+		// they are. The block depends on nothing: a cap and an allow-list are
+		// properties of one entry alone.
+		os, err := decodeOrchestratorBlock(oraw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.Orchestrators = os
 	}
 	if craw, ok := doc["clone_urls"]; ok && !IsNull(craw) {
 		if err := json.Unmarshal(craw, &p.CloneURLs); err != nil {
