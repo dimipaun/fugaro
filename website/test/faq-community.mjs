@@ -276,14 +276,20 @@ function rewrite(file, replace) {
 /**
  * What is left of the FAQ's comparison section, as the failure lines a reader sees. The
  * section rendered `website/data/faq.yaml`'s `comparison:` list, the list never carried a row,
- * and the owner had the section removed on 2026-10-21 — so the four shapes below are what a
- * later edit would put back, and each one is refused by name:
+ * and the owner had the section removed on 2026-10-21 — so the shapes below are what a later
+ * edit would put back, and each one is refused by name:
  *
  *   1. the section itself — a band of the page heading nothing;
  *   2. its heading, "How Fugaro compares" — an empty promise even if the band is renamed;
- *   3. its own markup — the panel the block was drawn in, the empty state that stood in it,
- *      and the row count the page carried for the tests. The CSS is inlined into the page, so
- *      a leftover style is caught here too;
+ *   3. **the word `comparison` anywhere in the artifact**, which is what the section was
+ *      written in: its anchor and its class (`comparison`), its panel, its empty state and its
+ *      row count (`comparison-panel`, `comparison-empty`, `data-comparison-rows`) and the
+ *      seven stylesheet rule blocks that were inlined into the page (`.comparison`,
+ *      `.comparison-title`, `.comparison-panel`, `.comparison-empty`, `.comparison table`,
+ *      `.comparison caption`, `.comparison th, .comparison td`). The word is the rule rather
+ *      than that list: the list a first cut of this check carried named the three shapes a
+ *      reader sees and left five of the seven rule blocks free to come back unnoticed, which
+ *      is the way a "removed" section returns — one selector at a time;
  *   4. and the anchor a reader could link to, which `website/test/linkcheck.mjs` refuses when
  *      another page links it and nothing on this one carries it.
  *
@@ -299,9 +305,14 @@ function comparisonLeftovers(html) {
   if (/\bHow Fugaro compares\b/.test(pageText(html))) {
     out.push('the FAQ carries the heading "How Fugaro compares" again: the section it headed was removed on 2026-10-21, and a heading with nothing under it is an empty promise')
   }
-  const leftovers = ['comparison-panel', 'comparison-empty', 'data-comparison-rows'].filter((token) => html.includes(token))
-  if (leftovers.length > 0) {
-    out.push(`the FAQ still carries the removed section's own markup (${leftovers.join(', ')}): the panel, the empty state and the row count came out with the section`)
+  // The word, in whatever token carries it: the whole identifier around it is matched so that
+  // the failure line names the shape that came back (`comparison-panel`, `data-comparison-rows`)
+  // rather than only the word, and so that a selector the list above did not know about is
+  // still caught.
+  const word = [...html.matchAll(/[\w-]*comparison[\w-]*/gi)].map((m) => m[0])
+  if (word.length > 0) {
+    const shapes = [...new Set(word)].join(', ')
+    out.push(`the FAQ still carries the removed section's own word (${shapes}, ${word.length} time(s)): every shape of the section was written in it — its anchor and class, its panel, its empty state, its row count and all seven of its stylesheet rule blocks — so the word coming back is the section coming back`)
   }
   return out
 }
@@ -370,9 +381,17 @@ test('every leftover of the comparison section is refused by its own line', () =
       expected: /data-comparison-rows/,
     },
     {
+      // All seven of the rule blocks the section was drawn with, and not only the two the
+      // shapes above are caught by: `.comparison`, `.comparison-title`, `.comparison table`,
+      // `.comparison caption` and `.comparison th, .comparison td` are five a rule reading
+      // three class tokens let through, which is why this plant carries them and not
+      // `.comparison-panel` again.
       what: 'the section’s stylesheet left behind',
-      plant: page.replace('</style>', '.comparison-panel { padding: 0; }\n</style>'),
-      expected: /comparison-panel/,
+      plant: page.replace(
+        '</style>',
+        '.comparison { display: flex; }\n.comparison-title { margin: 0; }\n.comparison table { border-collapse: collapse; }\n.comparison caption { text-align: left; }\n.comparison th, .comparison td { text-align: left; }\n</style>',
+      ),
+      expected: /removed section's own word/,
     },
   ]
 

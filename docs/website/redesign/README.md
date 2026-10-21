@@ -1290,8 +1290,10 @@ the FAQ page and from the file that fed it; nothing else on the page moved.
   keep a place set for rows that may never come.
 - **What came out, and where.** `faq.astro`: the section and its panel, its empty state, the
   `data-comparison-rows` count and its heading; the validator that read the list (`rows`,
-  `ComparisonRow` and `comparison` in `TOP_LEVEL_KEYS`); and the five stylesheet rules the
-  section and its table were drawn with. `website/data/faq.yaml`: the `comparison: []` key and
+  `ComparisonRow` and `comparison` in `TOP_LEVEL_KEYS`); and the seven stylesheet rule blocks
+  the section and its table were drawn with — `.comparison`, `.comparison-title`,
+  `.comparison-panel`, `.comparison-empty`, `.comparison table`, `.comparison caption` and
+  `.comparison th, .comparison td`. `website/data/faq.yaml`: the `comparison: []` key and
   the comment block that documented the row format, both replaced by a note that records the
   removal and its date. **Nothing else in the page moved** — the headline, the lede, the six
   answers, their sources and the two `more_*` links are the strings and the files they were.
@@ -1302,9 +1304,13 @@ the FAQ page and from the file that fed it; nothing else on the page moved.
   what holds that either way, since a `#fragment` that resolves to no `id` on the target page
   is refused wherever it is written.
 - **The two gates that pin the removal.** `website/test/faq-community.mjs` reads the built
-  page for every leftover of the section — the band, the heading, the panel, the empty state,
-  the row count and the stylesheet's own selectors — with a plant per shape a later edit would
-  put back, and it carries a build case for the file half: a `comparison:` key written into
+  page for every leftover of the section — the band, the heading "How Fugaro compares", and the
+  word `comparison` itself, which is what every shape of the section was written in: its anchor
+  and class, its panel, its empty state, its row count and all seven of its rule blocks. The
+  word rather than a list of them, because a list is what a first cut of this check carried:
+  it named the three shapes a reader sees and left five of the seven rule blocks free to come
+  back unnoticed. Each shape has a plant a later edit would write, and the stylesheet's plant
+  is the five selectors that list missed. The file half is a build case: a `comparison:` key written into
   `faq.yaml` again stops the build naming the key, because the page reads `version` and
   `questions` and refuses every other one. That is what keeps the removed section's data from
   returning as a fact nothing renders (W1.10 step 2), and it is the rule D103's reader used to
