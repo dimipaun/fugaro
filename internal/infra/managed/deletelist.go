@@ -91,10 +91,13 @@ const (
 	//
 	// The same holds for the parts of the identity's encoding that changed
 	// after version 2 was written (a value's space escaped as \x20 rather than
-	// as a backslash and a space, and a value's parenthesis escaped as \x28 and
-	// \x29 though it has a printable form, tf.identityValue): an entry an
+	// as a backslash and a space, a value's parenthesis escaped as \x28 and
+	// \x29 though it has a printable form, and a value's shell metacharacter
+	// escaped as \xHH though it has one too — the identity is printed for its
+	// reader to paste, so the bytes a shell reads in a way of its own are
+	// escaped out of it, tf.identityValue): an entry an
 	// earlier build of this unshipped branch wrote for an address whose object
-	// holds either character matches no removal now, and is read as the
+	// holds one of those characters matches no removal now, and is read as the
 	// version-2 entry it is, so it costs its owner a delete refused once and
 	// re-approved from the refusal — not a version this package cannot read.
 	AllowDeleteVersion = 2

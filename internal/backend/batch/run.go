@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	batch "google.golang.org/api/batch/v1"
@@ -381,7 +382,67 @@ func (b *Backend) toExecution(j *batch.Job) (backend.Execution, error) {
 	}
 	x.LogURL = b.logURL(id, j.Uid, x.Created)
 	x.Run = runEnv(j)
+	x.Preempted = preempted(j)
 	return x, nil
+}
+
+// preemptExitCode is Cloud Batch's reserved exit code for a task whose VM the
+// platform reclaimed: a Spot VM preempted while the run was on it. The number
+// is the owner's, from the ruling this read exists for (2026-10-21) -- Batch
+// documents that a task which failed for one of its own reserved reasons
+// carries one of its reserved codes rather than the runnable's 50000, and
+// points at cloud.google.com/batch/docs/troubleshooting#reserved-exit-codes,
+// a list this build does not vendor (batch/v1's TaskExecution.ExitCode) --
+// and **Check 57a step 7 is what measures it**: it is the step the design left
+// unrun and Task 12 re-runs (design §7.2, plan Task 12), so this constant is a
+// ruling's number and not yet a measured one. The register is where it stops
+// being second-hand, and this comment is what a reader compares that
+// measurement against.
+//
+// It is written here, in code, and deliberately not in the design document:
+// that document's own text says no `50001` appears anywhere under `docs/`
+// outside the plan until the check is run, and a test in internal/cli
+// (`TestDocsComputeBackendSaysWhatTheTreeDisagreesWith`) asserts exactly that
+// over the whole directory. The number has one home until 57a-7 runs.
+const preemptExitCode = 50001
+
+// preempted reports whether the platform's own report of job j names a Spot
+// preemption, which is what makes a terminal failure a reclamation rather than
+// a fault of the run (backend.Execution.Preempted).
+//
+// Two conditions, and both are needed. The job must be **FAILED**: a state this
+// build cannot read, or any state that is not the terminal failure, is not a
+// preemption however its events read, because a *live* run must never be
+// derived as dead -- an unrecognised state is treated as pending elsewhere
+// (stateOf) and must not become evidence of anything here. And the job's own
+// report must name it, in one of the two shapes Batch leaves such a report in:
+// a task-level status event whose task execution ended with the reserved
+// preemption code, or a status event whose description says the VM was
+// preempted. The second is the platform's own prose and is matched loosely on
+// purpose -- the exact wording is Check 57a step 7's to record, and a reader
+// that only knew the exit code would find no preemption at all if this Batch
+// version reports the event and not the code -- while the first is the
+// documented machine-readable half.
+//
+// Nothing else is read: not the runnable's own exit code, not the job's
+// counts, and nothing that a *run* can write. The job body is the platform's,
+// so this is evidence a run cannot forge.
+func preempted(j *batch.Job) bool {
+	if j.Status == nil || j.Status.State != "FAILED" {
+		return false
+	}
+	for _, ev := range j.Status.StatusEvents {
+		if ev == nil {
+			continue
+		}
+		if ev.TaskExecution != nil && ev.TaskExecution.ExitCode == preemptExitCode {
+			return true
+		}
+		if strings.Contains(strings.ToLower(ev.Description), "preempt") {
+			return true
+		}
+	}
+	return false
 }
 
 // jobMachineType is the machine type a job's VMs are, from the job itself:

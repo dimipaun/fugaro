@@ -1266,12 +1266,13 @@ func (rs RepoSpec) Addresses() []string {
 		add(p + "google_storage_bucket_iam_member.job")
 		add(p + "google_storage_bucket_iam_member.job_tokens")
 		for _, logical := range uniqueSecrets(ws) {
-			// The model credentials are the credentials service's to hold once
-			// the installation has opted in (D145): modules/workflow/sa.tf
-			// drops the job's accessor on each, and C1.20 drops its mount, so
-			// the mirror must not name a grant the spec no longer produces —
-			// it would read as one that survives a retirement.
-			if rs.Installation.CredentialsService != nil && mountsModelSecret(ws, logical) {
+			// The credentials the service holds are its to hold once the
+			// installation has opted in (D145): modules/workflow/sa.tf drops
+			// the job's accessor on each — the model credentials by C1.18, the
+			// GitHub App's private key by C2.3 — and C1.20/C2.2 drop its
+			// mount, so the mirror must not name a grant the spec no longer
+			// produces — it would read as one that survives a retirement.
+			if rs.Installation.CredentialsService != nil && mountsServiceHeldSecret(ws, logical) {
 				continue
 			}
 			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
@@ -1294,32 +1295,33 @@ func (rs RepoSpec) Addresses() []string {
 	return slices.Compact(out)
 }
 
-// mountsModelSecret reports whether the logical secret name is a model
-// credential of ws: every secret_env entry naming it is a model credential's
-// variable (config.IsModelSecretEnv — the Claude OAuth token, the Anthropic
-// key, a provider's key), so it is one of the credentials the service holds
-// once an installation opts in (D145, D146) and the job's account keeps no
-// accessor on.
+// mountsServiceHeldSecret reports whether the logical secret name is one
+// whose credential the credentials service holds for ws: every secret_env
+// entry naming it carries such a credential (config.IsServiceHeldSecretEnv —
+// a model credential by its variable, the GitHub App's private key by its
+// name), so the service holds it once an installation opts in (D145, D146) and
+// the job's account keeps no accessor on it (C1.18, C2.3).
 //
 // It is the same question modules/workflow/sa.tf's job_secret_names asks, one
 // mount at a time, and it is written the same way — a name survives if ANY
-// entry that mounts it is not a model credential's — so the mirror
+// entry that mounts it is not one the service holds — so the mirror
 // (RepoSpec.Addresses) and the Terraform cannot disagree about which grants
 // the spec produces. One secret mounted under two variables, one of them a
-// model credential's, is a shape config already refuses (ReservedSecrets,
-// ProviderBySecret), and this answers the same way either way.
-func mountsModelSecret(ws WorkflowSpec, name string) bool {
-	model := false
+// credential the service holds, is a shape config already refuses
+// (ReservedSecrets, ProviderBySecret), and this answers the same way either
+// way.
+func mountsServiceHeldSecret(ws WorkflowSpec, name string) bool {
+	held := false
 	for env, logical := range ws.SecretEnv {
 		if logical != name {
 			continue
 		}
-		if !config.IsModelSecretEnv(env) {
+		if !config.IsServiceHeldSecretEnv(env, name) {
 			return false
 		}
-		model = true
+		held = true
 	}
-	return model
+	return held
 }
 
 // Schedule is the check's daily cron schedule: a minute between 05:00 and

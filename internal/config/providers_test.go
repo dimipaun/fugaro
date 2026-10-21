@@ -424,11 +424,13 @@ func TestModelSecretEnvsAreTheReservedOnes(t *testing.T) {
 	}
 }
 
-// TestIsModelSecretEnv is the predicate the credentials service's rule is
-// written from (C1.18): the two reserved model variables and every provider
-// key's namespace, and nothing else — the git credentials are deliberately
-// out (D145: Bitbucket is untouched, the GitHub App key moves only in C2.3),
-// so a job keeps their accessor.
+// TestIsModelSecretEnv is the MODEL half of the credentials service's rule
+// (C1.18): the two reserved model variables and every provider key's
+// namespace, and nothing else. Both git credentials are deliberately out —
+// this predicate is about model credentials, and it says nothing about which
+// of the two the service holds: Bitbucket's token stays with the job (D145),
+// the GitHub App key does not (C2.3), and IsServiceHeldSecretEnv is where that
+// difference lives.
 //
 // The mutation is IsProviderKeyEnv's prefix read case-sensitively, or a third
 // name added to ModelSecretEnvs: either one drops an accessor from a job that
@@ -443,14 +445,81 @@ func TestIsModelSecretEnv(t *testing.T) {
 		{ProviderKeyEnv("openrouter-api-key"), true},
 		{ProviderKeyEnvPrefix + "OPENROUTER_API_KEY", true},
 		{"FUGARO_PROVIDER_KEY", false},           // the prefix alone is not a key
-		{"FUGARO_BITBUCKET_TOKEN", false},        // D145: the git credential stays
-		{"FUGARO_GITHUB_APP_PRIVATE_KEY", false}, // ... and so does the App key
+		{"FUGARO_BITBUCKET_TOKEN", false},        // the git credentials are not model credentials
+		{"FUGARO_GITHUB_APP_PRIVATE_KEY", false}, // ... neither of them
 		{"FUGARO_BITBUCKET_TOKEN ", false},       // no trailing space is trimmed into a match
 		{"SANDBOX_PROBE", false},
 		{"", false},
 	} {
 		if got := IsModelSecretEnv(tc.env); got != tc.want {
 			t.Errorf("IsModelSecretEnv(%q) = %v, want %v", tc.env, got, tc.want)
+		}
+	}
+}
+
+// TestServiceHeldSecretNamesAreTheReservedOnes: the one logical name in
+// ServiceHeldSecretNames is the reserved name of the GitHub App's private key
+// (C2.3, D145) and not a second spelling of it. A rename of the reserved key
+// that left this list behind would drop the accessor of a name no job mounts,
+// while the renamed one kept it — the App key would stay with the job on the
+// installation that opted in precisely to take it away.
+//
+// The mutation is a literal in place of ReservedSecrets[GitHubAppKeySecret].
+func TestServiceHeldSecretNamesAreTheReservedOnes(t *testing.T) {
+	if len(ServiceHeldSecretNames) != 1 {
+		t.Fatalf("ServiceHeldSecretNames = %v, want the one GitHub App key: the model credentials are identified by their variables, and Bitbucket's token is D145's exception", ServiceHeldSecretNames)
+	}
+	if got := ServiceHeldSecretNames[0]; got != GitHubAppKeySecret {
+		t.Errorf("ServiceHeldSecretNames[0] = %q, want GitHubAppKeySecret (%q)", got, GitHubAppKeySecret)
+	}
+	env, ok := ReservedSecrets[GitHubAppKeySecret]
+	if !ok {
+		t.Fatalf("ReservedSecrets has no %q: the name this list drops the job's accessor for is not a reserved name at all", GitHubAppKeySecret)
+	}
+	if env != "FUGARO_GITHUB_APP_PRIVATE_KEY" {
+		t.Errorf("ReservedSecrets[%s] = %q, want the App key's mount variable", GitHubAppKeySecret, env)
+	}
+}
+
+// TestIsServiceHeldSecretEnv is the whole predicate the credentials service's
+// accessor rule is written from (C1.18, C2.3): a model credential by its
+// variable, the GitHub App's private key by its logical name, and nothing
+// else. It is the question modules/workflow/sa.tf's job_secret_names asks and
+// internal/infra's mirror repeats, so a clause lost here is an accessor a job
+// keeps on a credential the service was to hold.
+//
+// The mutations are the two clauses: dropping the name clause leaves
+// github-app-key with the job (C2.3's whole point), and dropping the model
+// clause leaves the model credentials with it (C1.18's). The Bitbucket token
+// and a workflow's own secret must stay false either way (D145).
+func TestIsServiceHeldSecretEnv(t *testing.T) {
+	for _, tc := range []struct {
+		env, name string
+		want      bool
+	}{
+		// The model credentials, by variable, whatever the name is.
+		{"CLAUDE_CODE_OAUTH_TOKEN", ClaudeOAuthToken, true},
+		{"ANTHROPIC_API_KEY", AnthropicSecret, true},
+		{ProviderKeyEnv("openrouter-api-key"), "openrouter-api-key", true},
+		{ProviderKeyEnvPrefix + "OPENROUTER_API_KEY", "some-provider-key", true},
+		// The GitHub App's private key, by name.
+		{"FUGARO_GITHUB_APP_PRIVATE_KEY", GitHubAppKeySecret, true},
+		// D145's exceptions: Bitbucket's token and a workflow's own secret
+		// keep the job's accessor, whatever they are mounted as.
+		{"FUGARO_BITBUCKET_TOKEN", BitbucketSecret, false},
+		{"NPM_TOKEN", "npm-token", false},
+		{"SANDBOX_PROBE", "sandbox-probe", false},
+		// The two halves are independent: the App key's NAME decides on its
+		// own, whatever variable the entry carries (no workflow can mount a
+		// reserved name under a variable of its own — config.ReservedEnv
+		// refuses every FUGARO_ variable — so the two always agree in a real
+		// spec, and the mirror's rule is the name's).
+		{"NPM_TOKEN", GitHubAppKeySecret, true},
+		// And neither half matches an unrelated pair.
+		{"", "", false},
+	} {
+		if got := IsServiceHeldSecretEnv(tc.env, tc.name); got != tc.want {
+			t.Errorf("IsServiceHeldSecretEnv(%q, %q) = %v, want %v", tc.env, tc.name, got, tc.want)
 		}
 	}
 }

@@ -2281,14 +2281,17 @@ func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
 	}
 }
 
-// TestRepoAddressesDropModelSecretsWhenTheServiceIsOn is the mirror's own
-// guard, and it needs no golden: it plans the same fixture twice, with the
+// TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn is the mirror's
+// own guard, and it needs no golden: it plans the same fixture twice, with the
 // opt-in off and on, and asserts the difference is exactly the two sets
-// modules/workflow/sa.tf moves — the job's accessors on the model credentials,
-// gone, and the job's invoker grant on the service, added — in both shapes the
-// modules distinguish: the oauth token (once per Claude account, the default
-// and the named one) and, for an api-key workflow, the Anthropic key and a
-// provider's key.
+// modules/workflow/sa.tf moves — the job's accessors on the credentials the
+// service holds, gone, and the job's invoker grant on the service, added — in
+// both shapes the modules distinguish: the oauth token (once per Claude
+// account, the default and the named one) and, for an api-key workflow, the
+// Anthropic key and a provider's key. The GitHub App's private key is a
+// credential of the second kind (C2.3): it is dropped by name, so it goes in
+// every shape, and the build account's own accessor on it is not the job's and
+// does not move (D148, F3).
 //
 // It then runs the same two address lists through Retirements, both
 // directions, because that is what the drop is FOR: the state an installation
@@ -2297,7 +2300,7 @@ func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
 // invoker grants — never a job, never a secret container. With the mirror's
 // branch disabled every test stayed green (independent security review of the
 // implementation, m2), which is what this pins.
-func TestRepoAddressesDropModelSecretsWhenTheServiceIsOn(t *testing.T) {
+func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
 	svc := &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
 	for _, tc := range []struct {
 		name     string
@@ -2310,7 +2313,9 @@ func TestRepoAddressesDropModelSecretsWhenTheServiceIsOn(t *testing.T) {
 			in:   repoRootInputs(t, repoRootOAuthAgent),
 			wantGone: []string{
 				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["claude-oauth-token"]`,
+				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["github-app-key"]`,
 				`module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.job["claude-oauth-token-bmb"]`,
+				`module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.job["github-app-key"]`,
 			},
 			wantAdd: []string{
 				`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`,
@@ -2322,6 +2327,7 @@ func TestRepoAddressesDropModelSecretsWhenTheServiceIsOn(t *testing.T) {
 			in:   repoRootCredentialsAPIKeyInputs(t),
 			wantGone: []string{
 				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["anthropic-api-key"]`,
+				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["github-app-key"]`,
 				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["openrouter-api-key"]`,
 			},
 			wantAdd: []string{
@@ -2365,7 +2371,7 @@ func TestRepoAddressesDropModelSecretsWhenTheServiceIsOn(t *testing.T) {
 			slices.Sort(tc.wantGone)
 			slices.Sort(tc.wantAdd)
 			if !slices.Equal(gone, tc.wantGone) {
-				t.Errorf("with the credentials service on, Addresses() drops %v, want exactly %v: the model credentials are the service's to hold (D145), and nothing else moves", gone, tc.wantGone)
+				t.Errorf("with the credentials service on, Addresses() drops %v, want exactly %v: the credentials the service holds are its to hold (D145, C2.3), and nothing else moves", gone, tc.wantGone)
 			}
 			if !slices.Equal(added, tc.wantAdd) {
 				t.Errorf("with the credentials service on, Addresses() adds %v, want exactly %v: the job's one invoker grant on the service (D135)", added, tc.wantAdd)
@@ -2380,7 +2386,7 @@ func TestRepoAddressesDropModelSecretsWhenTheServiceIsOn(t *testing.T) {
 			}
 			slices.Sort(retAddrs)
 			if !slices.Equal(retAddrs, tc.wantGone) {
-				t.Errorf("turning the service on retires %v, want exactly the model-secret accessors %v: a retirement the mirror invents is a delete the operator is asked to allow", retAddrs, tc.wantGone)
+				t.Errorf("turning the service on retires %v, want exactly the service-held accessors %v: a retirement the mirror invents is a delete the operator is asked to allow", retAddrs, tc.wantGone)
 			}
 			back := Retirements(onAddrs, offSpec)
 			retAddrs = retAddrs[:0]

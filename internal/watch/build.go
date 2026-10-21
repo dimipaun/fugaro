@@ -153,6 +153,25 @@ type RunRow struct {
 	// (LauncherShort). Nothing decides anything by it.
 	LaunchedBy string
 
+	// Credential is the name — never the value — of the credential the run's
+	// cascade is spending on, as the run itself reported it
+	// (budget.AgentEntry.Credential, written by the run under the rules of
+	// C1.3). "" when the run is not a cascade run or has not reported one:
+	// an absent name is "not recorded", never "no credential" — a run that
+	// has not written it is one this reader cannot account for, not one that
+	// is spending on nothing. A run wrote it, so it is sanitised (clean) like
+	// every other database-derived string here, and it is never an authority:
+	// nothing decides anything by it.
+	Credential string
+
+	// WaitingUntil is the instant, epoch milliseconds, a run waiting for a
+	// credential expects to resume at (budget.AgentEntry.WaitingUntil, D152's
+	// "waiting, expected resume time"); 0 when nothing is pending. Waiting is
+	// true only while now is still before it — a wait that has lapsed is not
+	// one this view claims, and a run that resumed clears the field.
+	WaitingUntil int64
+	Waiting      bool
+
 	// Finished marks a row built from the runs bucket's result.json, not
 	// RTDB: the run's registry entry is already gone (design generic-tool
 	// §10.1). Outcome is the record's outcome (ready, draft or none);
@@ -220,6 +239,11 @@ func dash(s string) string {
 	}
 	return s
 }
+
+// stampText is an instant the registry recorded in epoch milliseconds as the
+// text views spell one, in UTC: the form a stage deadline and a kill switch's
+// time already use.
+func stampText(ms int64) string { return time.UnixMilli(ms).UTC().Format("2006-01-02 15:04Z") }
 
 func nonneg(v budget.Micros) budget.Micros { return max(v, 0) }
 
@@ -421,6 +445,14 @@ func runRow(slug, run string, e budget.AgentEntry, now time.Time) RunRow {
 		StartedAt:  e.StartedAt,
 		PRURL:      cleanURL(e.PRURL),
 		DeadlineAt: e.StageDeadline,
+		Credential: clean(e.Credential),
+	}
+	// A wait the entry still carries is one only while its instant is ahead:
+	// the run clears waiting_until when it resumes, and a run that halted
+	// before it could would otherwise read as waiting for ever.
+	if e.WaitingUntil > 0 {
+		r.WaitingUntil = e.WaitingUntil
+		r.Waiting = now.Before(time.UnixMilli(e.WaitingUntil))
 	}
 	if e.Round > 0 {
 		r.Round = strconv.Itoa(e.Round)

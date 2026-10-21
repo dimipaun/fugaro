@@ -1581,15 +1581,18 @@ var runAccountGrants = setOf(
 	// The job account's (a run's own credential): the runs bucket under its
 	// condition, its secrets one by one, Vertex AI.
 	`google_project_iam_member | "roles/aiplatform.user" | project=var.project | google_service_account.job.member | for_each= | perms=`,
-	// Reviewed for C1.18 (the credentials service): the set is still exactly
-	// the workflow's own secret_env values, and on an installation that has
-	// opted in it is those values minus the model credentials — the two named
-	// env vars (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN) and every
-	// FUGARO_PROVIDER_KEY_* — which the job then reads from the service
-	// instead. Nothing else is dropped, the account is the same, and the
-	// target is still the secret-level container: with the opt-in off
-	// (credentials_service unset, the default) the set is unchanged.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.workflow.secret_env : logical if var.credentials_service == null || !local.is_model_secret_env[env] ])] | perms=`,
+	// Reviewed for C1.18 (the credentials service) and C2.3 (the App key's
+	// grant moves): the set is still exactly the workflow's own secret_env
+	// values, and on an installation that has opted in it is those values minus
+	// the credentials the service holds — the two named model env vars
+	// (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN), every FUGARO_PROVIDER_KEY_*
+	// and, by logical name, the installation's GitHub App private key — which
+	// the job then reads from the service instead. Nothing else is dropped
+	// (Bitbucket's token and a workflow's own secrets stay, D145/F7), the
+	// account is the same, and the target is still the secret-level container:
+	// with the opt-in off (credentials_service unset, the default) the set is
+	// unchanged.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.workflow.secret_env : logical if var.credentials_service == null || !local.is_service_held[env] ])] | perms=`,
 	// Reviewed for C1.18: the credentials service's own account, on the one
 	// bundle container C1.18 creates, and on nothing else. secretAccessor on
 	// a secret the installation creates is not a write path to the marker:

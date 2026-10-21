@@ -69,7 +69,72 @@ Flags:
 
 Subcommands:
 
+- `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
 - `fugaro accounts ls` -- List the named Claude accounts (claude_accounts in the local config) a repository may use with fugaro run --token
+
+## `fugaro accounts clear`
+
+Clear one account's broken or exhausted credential mark, after replacing its token
+
+Clear one Claude account's credential mark, so the cascade may route work to it
+again. This is an operator's command: it writes the project's own database,
+acting as you (ADC), and it is the only thing that ends a broken mark.
+
+Only the two states an operator's action is what ends may be cleared:
+
+  broken     the service saw a 401 (D139) and nothing clears it on its own.
+             Replace the token first, then clear the mark here.
+  exhausted  the account reported a usage limit and holds until its reset time.
+
+A backed-off mark is refused: a probe is what clears it (C1.12), and clearing it
+by hand would route real work to a credential that has not answered since it was
+held. A state this Fugaro does not know is refused too, because clearing it
+could take off a hold a newer release placed.
+
+The write is one node — creds/marks/NAME, in this installation's own database —
+and it is conditional on the value read (PutIfMatch), so a mark the service
+changed at the same moment is not lost: the write re-reads the mark and clears
+it only while its state is still the one the confirmation named, so a 401 the
+service recorded while you were reading is left for its own decision rather
+than taken off with the hold you confirmed.
+
+NAME is "default" (the repository's own unnamed claude-oauth-token secret), a
+claude_accounts name of the selected project config, or an account the database
+already carries a mark for — a mark is the account existing, and a name with
+none of the three is refused rather than written, so a typo cannot leave a mark
+node for a credential that does not exist. (A mark whose name this checkout's
+claude_accounts does not list is the ordinary case for a project several
+checkouts share: claude_accounts is per-checkout and never published, while the
+marks are the project's own. fugaro doctor names such marks, so its fix has
+to work here.) Nothing reads or prints a token value, a secret ID or a prefix
+of one: names and states only.
+
+This command is run by a person in the sense that it acts as you, with your own
+credentials, on your own installation's database — but it is not one of the
+commands that refuse a coding agent's session. It records no owner decision and
+approves nothing: it takes off a hold the service placed, on a credential you
+have already replaced the token for, and the service marks it broken again if
+the token is still refused. fugaro budget set and fugaro budget kill — the
+same kind of write to the same database, with the same credentials — refuse no
+agent either, and fugaro allow-delete and fugaro managed flag, which do, are
+commands whose own output is an approval of a later cloud change.
+
+Usage: `fugaro accounts clear NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for clear |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--yes` | bool | `false` | no | skip the typed confirmation (read what it does first) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro accounts ls`
 
@@ -81,10 +146,26 @@ claude-oauth-token secret, always allowed) first, then every claude_accounts
 name in the local config whose allow_data_to lists the repository, sorted
 (config.AllowedClaudeAccounts, the one place that decides the question).
 
-This is a local, read-only lookup, offline whenever a project config is
-already selected on this machine: it reads the local config file the CLI
-would otherwise select for a cloud command, and never calls Secret Manager,
-never reads or prints a token value, only names.
+The names are a local, read-only lookup, offline whenever a project config is
+already selected on this machine: it reads the local config file the CLI would
+otherwise select for a cloud command, and never calls Secret Manager, never
+reads or prints a token value, only names.
+
+The state column is not local. When the selected project has a Firebase budget
+backend (budget.rtdb_url, which fugaro init --firebase writes), each account's
+credential state is read from that database as you, with your Application
+Default Credentials — the creds/marks subtree the credentials service writes,
+which an admin's rules grant the read of — and printed beside the name as
+available, exhausted until T, backed off or broken. A project with no backend,
+and a machine where no project config could be selected, answer with the names
+alone and a note saying why: the command never turns "could not read" into
+"every account is available".
+
+That read is bounded: five seconds for the whole of it (the token source, the
+project check and the marks), one attempt per call, and no retry. A database
+that is unreachable rather than refusing — a laptop offline, a firewall that
+drops — therefore costs this command seconds, not the per-call timeout twice,
+and the names are printed with a note saying the states could not be read.
 
 --json's "complete" is false when no project config could be selected for a
 reason other than an explicit --config/--project/$FUGARO_CONFIG/$FUGARO_PROJECT
@@ -144,8 +225,17 @@ everything else this program's printers would touch — so an argument that stil
 holds one is refused rather than recorded as an entry that would match no
 removal. The two ends agree byte for byte because the identity is written in an
 escaped form — a space in a value as \x20, a backslash as \\, a parenthesis as
-\x28 and \x29, and any other byte with no printable form as \xHH — so that what
-a refusal prints is exactly what a plan shows. An identity longer than 8192
+\x28 and \x29, any other byte with no printable form as \xHH, and every byte a
+shell reads in a way of its own — a separator, a pipe, a redirection, a
+substitution, a quote, a glob, an expansion — as \xHH as well, so that what a
+refusal prints holds no byte that can begin, end or continue a command, and is
+exactly what a plan shows. Two bytes a shell rewrites are in it all the same,
+because the form needs them: the single space between two parts, and the
+backslash that introduces an escape. A paste that does not keep those two whole
+arrives here as several arguments and is refused rather than recorded — nothing
+is written, and no entry is made that would match no removal — but the identity
+has to reach this command as one argument, byte for byte as the plan shows it,
+for the loop to close. An identity longer than 8192
 characters is refused here and by the plan: no refusal prints one, and the plan
 refuses the removal rather than matching a printed part of it, so recording it
 would be an approval that deletes nothing.

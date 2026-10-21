@@ -496,6 +496,14 @@ function shiftIso(iso: string, path: string, shiftMs: number): string {
   return new Date(t + shiftMs).toISOString().slice(0, 19) + 'Z'
 }
 
+/** instant is `shiftIso` as a rule: a wire timestamp, moved by this run's
+ * offset. `waiting_until` is the second field it applies to (a kill's `at` is
+ * the first), and in Go it is a plain string with `omitempty` rather than a
+ * pointer -- absence is the "not waiting" state -- so a null here is a document
+ * the writer cannot produce and is refused rather than copied through. */
+const instant = (shiftMs: number): Rule => (v, path) =>
+  typeof v === 'string' ? shiftIso(v, path, shiftMs) : refuse(path, 'not a timestamp')
+
 function runStamp(now: string, ageSeconds: number): string {
   const t = new Date(Date.parse(now) - Math.round(ageSeconds) * 1000)
   const iso = t.toISOString() // 2026-10-19T01:19:30.000Z
@@ -563,12 +571,14 @@ export function scrubDocument(raw: unknown, shiftMs: number = randomTimeShiftMs(
       }
       case 'runs': {
         if (!Array.isArray(value)) refuse(path, 'runs is not an array')
-        out[key] = value.map((run, i) => scrubRun(run, `${path}[${i}]`, i, now, repoIndex, inventedRepo, inventedSlug))
+        out[key] = value.map((run, i) =>
+          scrubRun(run, `${path}[${i}]`, i, now, repoIndex, inventedRepo, inventedSlug, shiftMs))
         break
       }
       case 'finished': case 'ready': {
         if (!Array.isArray(value)) refuse(path, `${key} is not an array`)
-        out[key] = value.map((run, i) => scrubFinished(run, `${path}[${i}]`, i, now, repoIndex, inventedRepo, inventedSlug))
+        out[key] = value.map((run, i) =>
+          scrubFinished(run, `${path}[${i}]`, i, now, repoIndex, inventedRepo, inventedSlug))
         break
       }
     }
@@ -610,9 +620,33 @@ function scrubTotalOrRepo(value: unknown, path: string, repoN: number | undefine
   })
 }
 
+/**
+ * JOB_RULES is the five keys 0.9.0 added to **both** live run shapes: the Cloud
+ * Run job a run is in, the (profile, provider, account) its name was computed
+ * from, and who launched it (`internal/watch/json.go`, JSONRun and
+ * JSONFinished). One table, because both shapes carry them and both must be
+ * scrubbed the same way -- `applyRules` copies a key only through its own rule,
+ * so until this table existed the scrub refused every 0.9.0 recording **whole**,
+ * as `an unknown key at $.runs[0].job`, and the committed fixture predates the
+ * fields and could not have caught it.
+ *
+ * `account` and `launched_by` are people: the account a run used and who
+ * started it, the same kind of value as a kill's `by` and `runview.Row`'s
+ * `oauth_account`, and replaced with the same invented address. `job`, `profile`
+ * and `provider` are identifiers a policy wrote -- a label, the class
+ * `workflow` carries -- and are replaced like `workflow`.
+ */
+const JOB_RULES: Readonly<Record<string, Rule>> = {
+  job: invent('example-job'),
+  profile: invent('example-profile'),
+  provider: invent('example-provider'),
+  account: invent('redacted@example.invalid'),
+  launched_by: invent('redacted@example.invalid'),
+}
+
 function scrubRun(
   run: unknown, path: string, i: number, now: string, repoIndex: (r: unknown, p: string) => number,
-  inventedRepo: (n: number) => string, inventedSlug: (n: number) => string,
+  inventedRepo: (n: number) => string, inventedSlug: (n: number) => string, shiftMs: number,
 ): Obj {
   if (!isObj(run)) return refuse(path, 'a run that is not an object')
   const n = repoIndex(run['repo'], `${path}.repo`)
@@ -640,6 +674,9 @@ function scrubRun(
     stuck: bool,
     workflow: invent('example-workflow'),
     requested_by: invent('redacted@example.invalid'),
+    ...JOB_RULES,
+    credential: invent('example-credential'),
+    waiting_until: instant(shiftMs),
   })
 }
 
@@ -661,6 +698,7 @@ function scrubFinished(
     pr_url: invent(`https://example.invalid/example-owner/example-repo/pull/${100 + i}`),
     pr_number: () => 100 + i,
     age_seconds: num,
+    ...JOB_RULES,
   })
 }
 
