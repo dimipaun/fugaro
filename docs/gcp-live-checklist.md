@@ -5641,8 +5641,8 @@ echo "Check 89 ready: $TAG at $SHA — $APP"
 ## Check 90: the OAuth header swap — one script you run (your own machine; no cloud, no installation, never `belong`; run by you; **RUN 2026-10-21: PASSED — TIER A VIABLE**, one informational FAIL, `stream`)
 
 **RUN 2026-10-21, exit 0 — TIER A IS VIABLE.** The owner ran Check 90 at head
-`77ff754f` — the head Task C0.3's own text stood at, its script being
-`scripts/live-checks/check90.sh`, which is that work's and not this file's —
+`77ff754f` — the commit Task C0.3's own text stood at, its script being
+`scripts/live-checks/check90.sh`, which is that work's and is not in this tree —
 on the owner's own machine, with the owner's own `claude setup-token` token.
 **No cloud project was touched, no installation was touched (`belong` least of
 all), no `fugaro` command ran, and no agent ran any step of it** — not the
