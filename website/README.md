@@ -697,10 +697,23 @@ added or removed without this sentence moving fails there:
     markup, the script and the icons it fetches), which is why the page weight moves with the
     site figure here: the page the ceiling is derived from is the console page now, and the docs
     hub — the page every earlier derivation in this list measured — is 292,469 bytes. The site
-    figure moves 988,260 → **1,387,679**
-    (the four pictures' 306,982 bytes, the manifest's 2,176, and the slider's markup and its
-    captions on the console page). The script is untouched — the slider ships no JavaScript and
-    needs none — and the count of files in `dist/` goes 23 → **28**. The page's own words go
+    figure moves 988,260 → **1,387,679**, which is **399,419 bytes**, and **309,378** of them are
+    this round's: the four pictures' **306,982** bytes, the manifest's **2,176**, and **220** onto
+    the console page's own markup (30,091 → 30,311 bytes — four `img`, `figure` and `figcaption`
+    elements in place of the placeholder frame's slide, which the per-file comparison of the two
+    builds shows is the whole of the rest: no other file in `dist/` moved a byte). **The other
+    90,041 bytes are what earlier rounds left un-derived**, and this round pays them by
+    re-deriving rather than adding them to a figure that had already stopped describing its
+    build: the gate's own build of the branch this round starts from is **1,078,301 bytes across
+    23 files**, while this list still said 988,260 — D192's exact derivation runs only under
+    `FUGARO_DERIVE_BUDGETS=1`, which CI does not set, and the owner's ruling of 2026-10-20 is
+    that these figures are re-derived when they ask rather than on every round, so a figure here
+    can lag the build it names (the redesign's README records that ruling, and the drift it
+    allows was 1,035,806 against the stated site figure in the round that wrote it down). Those
+    90,041 bytes are bytes the site grew before this round and are absorbed here, the way the
+    `--repo` round's 1,126 bytes were paid in the logo round above. The script is untouched — the
+    slider ships no JavaScript and needs none — and the count of files in `dist/` goes 23 →
+    **28**. The page's own words go
     211 → **303**, well inside D188's 500 and the derived ceiling: a row's `alt` is text a reader
     gets when the picture does not arrive, and the four of them are the whole of the move.
     `test/console-screens.mjs` holds the four rows to the files' own headers and to the
@@ -1336,11 +1349,37 @@ nothing else, so adding, replacing or removing a screenshot is a data-file edit 
 
 1. **The file**, under `public/screenshots/`. The name is letters, digits, dots, dashes and
    underscores; the extension is one the slider serves — `png`, `jpg`, `jpeg`, `webp` or `avif`.
-   A capture from macOS's own `screencapture` is a PNG and is served as it comes; a WebP or an
-   AVIF of the same picture is fewer bytes for the same pixels, which is the whole of the
-   choice. An SVG is refused: it is a document that can carry script and references, and the
-   site renders pictures.
-2. **The row**, in `data/console-screens.yaml`, in the order the slider shows them:
+   An SVG is refused: it is a document that can carry script and references, and the site renders
+   pictures. **The four files here are WebP, and the PNG the capture run wrote is not what is
+   served**: see the conversion step below, which is a step of the round and not something the
+   capture does.
+2. **The conversion, which no run in this repository performs.** `npm run screenshots` — or
+   `scripts/console-screenshots.sh` from the root — writes one PNG per screen into
+   `console/screenshots/` at **2560 x 1600** (the capture window is 1280 x 800 CSS pixels at a
+   device scale factor of 2; `console/README.md`, "What comes back"), and that directory is
+   git-ignored and never committed. The four files this site serves are those captures at
+   **1920 x 1200** in WebP: the same picture at the same 16:10, at half the linear size and a
+   fraction of the bytes. Convert the capture before committing anything —
+   `cwebp -resize 1920 0 -q 80 console/screenshots/console-live.png -o
+   website/public/screenshots/console-live.webp` is one command that does it, and the quality is
+   the round's call, since the bytes it lands on are the round's budget line — and commit **only
+   the converted file**. The served file keeps the capture's own name with its own format's
+   extension (`console-live.png` → `console-live.webp`), which is the link the gate holds: the
+   row is matched to the manifest's capture **by that name**, so a picture served under a name no
+   capture has is refused. Which tool produced the four files shipped here is recorded nowhere;
+   that is half the reason this step is written down.
+3. **The manifest, copied in with the file.** `public/screenshots/MANIFEST.json` is the capture
+   run's own record of the **PNGs** — `tools/screenshots/manifest.ts` writes it beside the
+   captures as one entry per picture with its pixel size, its SHA-256 and its `alt` text, plus
+   what the run omitted — and it was copied into `public/` because the site's `alt` texts are its
+   texts and not a second drafting of them. **None of the files its hashes describe is served by
+   this site**: the WebP beside it is the converted form, and the manifest's names, sizes and
+   hashes are the captures'. Nothing in a website round regenerates the manifest, so a round that
+   adds, replaces or re-runs a capture copies the run's manifest in **in the same commit as the
+   file and the row**, so that the record beside the pictures still describes the run that took
+   them — a published manifest whose entries match nothing the site serves is the drift this step
+   exists to prevent.
+4. **The row**, in `data/console-screens.yaml`, in the order the slider shows them:
 
    ```yaml
    screens:
