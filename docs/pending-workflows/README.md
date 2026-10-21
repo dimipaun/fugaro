@@ -783,10 +783,14 @@ tree, in both directions** — the way
 kept saying "pending" after the file was copied in would be red.
 
 The mobile app's release. `mobile/` is its own artifact outside the Go module
-(D125) with its own release path, and this is that path: **on every `v*` release
-tag, and on a manual dispatch**, one iOS job builds the app on EAS and submits
-the finished build to TestFlight's internal testers. **The Android job is
-written in the same file and disabled.**
+(D125) with its own release path, and this is that path: **on every release tag
+(`v[0-9]+.[0-9]+.[0-9]+`, the pattern the sibling release workflows use), and on
+a manual dispatch**, one job per platform builds the app on EAS and submits the
+finished build to TestFlight's internal testers and to Google Play's
+internal-testing track. **Both jobs are enabled** — the owner's ruling of
+2026-10-20 is that iOS and Android both ship from here — and one repository
+variable can turn either platform off (`MOBILE_RELEASE_DISABLED_PLATFORMS`,
+below).
 
 **A new file**, so nothing is replaced: it stages `.github/workflows/mobile-release.yml`
 entire. It is a separate file from `ci.yml` for the reason `console-release.yml`
@@ -796,18 +800,33 @@ never sit in a file that runs on every pull request. This one does not even run
 on a pull request: its triggers are a tag push and a manual dispatch, and nothing
 else.
 
-**What the job is.** One job, `ios`, on the pinned `ubuntu-24.04` — the build
-itself runs on EAS's own workers, so the runner is only the client that uploads
-it — with `contents: read` and nothing else. It checks the repository out with
+**What the jobs are.** Two jobs, `ios` and `android`, each on the pinned
+`ubuntu-24.04` — the build itself runs on EAS's own workers, so the runner is
+only the client that uploads it — with `contents: read` and nothing else, and
+**neither job needs the other**, so a platform that fails never blocks the
+other's release. Each job checks the repository out with
 `persist-credentials: false`, takes the Node line from `mobile/package.json`'s
 `engines.node` (the same way `console-linux.yml` takes the console's), installs
-`eas-cli`, runs `eas build --platform ios --profile internal --non-interactive
---wait`, writes the build's id and artifact URL into `$GITHUB_STEP_SUMMARY`, and
-then runs `eas submit --profile internal --platform ios --latest
---non-interactive`. Every action is pinned by full commit SHA with its `# vX.Y.Z`
-beside it. The `concurrency` group is the workflow's own name and not the ref, so
-two releases queue rather than submit at once, and a release that is mid-submission
-is never cancelled.
+`eas-cli` **at one exact version**, masks the store identity, runs `eas build
+--platform <platform> --profile internal --non-interactive --wait --json` under
+`eas env:exec production`, writes the build's **id** into
+`$GITHUB_STEP_SUMMARY`, and then runs `eas submit --profile internal --platform
+<platform> --id <that build> --non-interactive`. Every action is pinned by full
+commit SHA with its `# vX.Y.Z` beside it. The `concurrency` group is the
+workflow's own name and not the ref, so two releases queue rather than submit at
+once, and a release that is mid-submission is never cancelled.
+
+**The submission submits the build the run made, and the summary carries no
+artifact link.** The build step captures `eas build --json` into
+`$RUNNER_TEMP/mobile-build.json`, and the submission reads that build's id out of
+it and passes it to `eas submit --id`. `--latest` is not used anywhere: it takes
+the latest build of the profile, whoever made it, which is a different claim —
+and one a second run of the workflow would silently change. The summary prints
+the build's **page id** and nothing else. It deliberately does **not** print
+`artifacts.buildUrl`: that link downloads a signed binary whose Info.plist
+carries the bundle identifier, and a run summary in a public repository is
+public. The id names a page on expo.dev that needs an Expo login, which is what
+a reviewer needs and what a stranger cannot use.
 
 **The store identity is not in this file, and cannot be.** The iOS bundle
 identifier and the Android package name live in the **EAS project's own
@@ -821,6 +840,33 @@ first local submission stopped in, with `Specify ios.bundleIdentifier`. So there
 is nothing to add to the repository for the identity: no secret, no variable, no
 edit to `mobile/app.json` or `mobile/eas.json`.
 
+**The identity is masked before any `eas` command runs.** `eas build` and
+`eas submit` resolve the app's config locally, and a resolved config, a
+credential prompt or a submit report can carry the bundle identifier into a job
+log — and this repository is public. So the first step of each job that touches
+`eas` reads the two values out of the EAS project's `production` environment and
+hands each one to **`::add-mask::`**, the only mechanism that hides a value from
+a log it would otherwise reach. The values are never echoed: each one lives in a
+shell variable for the length of one loop and nowhere else, and the step prints
+nothing but the mask commands. **This is the one place in the whole workflow
+where the two variable names appear**, and it has to be: a mask cannot hide a
+value it is not given. `TestDocsMobileReleaseWorkflowIsStagedAndPinned` holds
+each name to exactly one occurrence per job and requires that occurrence to be
+the argument of a `mask` call in that job's mask step. A read that fails masks
+nothing and does not fail the run — the build step right after it is what fails,
+loudly, when the token or the environment is wrong.
+
+**The one thing the owner has to check by eye, on the first dry run.** No test
+can prove that a job log carries no identifier, because no test can run the job
+and no `eas` command has ever been run from this repository. On the **first dry
+run** — a manual dispatch with `dry_run` left checked, which submits nothing —
+the owner reads the run's log and confirms that **no bundle identifier or package
+name appears anywhere in it**. It is written as an item in the owner's list
+below rather than as a number: it is a thing to look at, not a check that has
+been made. If an identifier does appear, the mask step is the thing to look at
+first, and the fix is in this file, which an agent cannot deliver — so it is
+worth doing before the first release rather than after.
+
 **`dry_run` stops before the submission.** The manual dispatch carries one
 boolean input, `dry_run`, defaulting to **true**: a person trying the workflow
 gets a build, a summary and no store upload, and dispatches again with it
@@ -829,29 +875,49 @@ what a release means. The step conditions read `github.event.inputs.dry_run` and
 not the `inputs` context, because that context is documented for a manual
 dispatch and a reusable workflow while this file also runs on a tag push.
 
-**The Android job is disabled.** It runs only when the repository variable
-`MOBILE_ANDROID_ENABLED` is exactly `true` — an unset variable is not `true`, so
-the job is skipped rather than run by accident. It is written out in the shape of
-the iOS job so that turning it on is **one repository setting rather than a
-workflow edit**: an edit an agent cannot make (GitHub refuses the push) and the
-owner would have to. Setting the variable is not the only thing the Android side
-needs — a brand-new Play app's **first** release has to be uploaded once through
-the Play Console's own UI, because neither the Play API nor `eas submit` can
-create it, and the Play service-account credential has to be on the EAS project
-(`mobile/README.md`, "Building for internal testing"). Nothing has to be done to
-it to leave Android off, which is why it is not in the list below; to turn it on,
-**[per repo]**:
+**One switch turns either platform off, and both are on by default.** Each job
+runs unless the repository variable **`MOBILE_RELEASE_DISABLED_PLATFORMS`** names
+its platform:
 
-```sh
-# Not a secret, and it carries no value of anyone's: it is a switch.
-gh variable set MOBILE_ANDROID_ENABLED --repo "$REPO" --body true
+```
+ios      if: ${{ !contains(vars.MOBILE_RELEASE_DISABLED_PLATFORMS, 'ios') }}
+android  if: ${{ !contains(vars.MOBILE_RELEASE_DISABLED_PLATFORMS, 'android') }}
 ```
 
-### Before it can run: the two things the owner creates
+An **unset** variable names neither platform, so both jobs run — that is what
+"both platforms release by design" means, and it is why the switch is a skip list
+rather than an enable list. It is one variable rather than two so that the owner
+reads one setting instead of a pair that can disagree, and it is a repository
+variable rather than a workflow edit because an agent cannot make a workflow edit
+at all (GitHub refuses the push). To stop Android releasing while the Play side is
+not ready — the state the checklist below describes — **[per repo]**:
 
-Neither is in the file, and neither can be: a staging file cannot create a GitHub
-environment or a secret. **Each step below is labelled with where it is done** —
-the repository, the owner's Expo account, or the owner's Apple account.
+```sh
+# Not a secret, and it carries no value of anyone's: it names the platforms to
+# skip. `ios,android` turns both off.
+gh variable set MOBILE_RELEASE_DISABLED_PLATFORMS --repo "$REPO" --body android
+```
+
+`TestDocsMobileReleaseWorkflowIsStagedAndPinned` compares each job's `if:` **whole**
+against exactly the line above for its platform, so a condition with a second
+disjunct — a tag push, say, which would start a submission the owner turned off —
+is not green here.
+
+### Before it can run: the three things the owner does first
+
+None is in the file, and none can be: a staging file cannot create a GitHub
+environment or a secret, and it cannot read a run's log. **Each step below is
+labelled with where it is done** — the repository, the owner's Expo account, or
+the owner's Apple account.
+
+**The first two have to be done *before* the file is copied in, not after it.**
+GitHub creates a missing environment the first time a job names it, and the
+environment it creates that way has **no required reviewer at all** — so the
+first run of a copied-in workflow against a missing `mobile-release` would go
+straight through, holding the Expo token, with nobody's click in between. The
+copy-in is deliberately the last thing in this section: an environment that
+already exists is not re-created, and the secret on it is unreadable until the
+reviewer approves.
 
 **1. [per repo] The `mobile-release` environment, with the owner as its only
 required reviewer.** This is the gate: GitHub holds the job until that reviewer
@@ -881,6 +947,12 @@ gh api --method POST "repos/$REPO/environments/mobile-release/deployment-branch-
   -f name='v*' -f type=tag
 ```
 
+The policy's `v*` is deliberately **wider** than the workflow's own tag filter
+(`v[0-9]+.[0-9]+.[0-9]+`): the workflow is what decides which tags start a
+release, and the environment's policy is a gate that has to let them through.
+Tightening this line is the one edit here that can block every release rather
+than admit a wrong one, so leave it as it is.
+
 **Leave "Prevent self-review" off.** The owner is both the actor and the only
 reviewer, and GitHub would otherwise refuse the owner's own approval of the
 owner's own run — the environment would hold every release forever. (The same
@@ -902,6 +974,19 @@ secrets → Add secret**, or:
 gh secret set EXPO_TOKEN --repo "$REPO" --env mobile-release
 ```
 
+**3. [per repo, after the first dry run] Read the first dry run's log and
+confirm it carries no identifier.** Dispatch the workflow once with `dry_run`
+left checked — it builds, writes its summary and submits nothing — and then read
+that run's log for the bundle identifier and the package name. **No test can make
+this check for you**: nothing here runs GitHub Actions, and no `eas` command has
+ever been run from this repository, so whether `eas build` or `eas submit` prints
+an identity into a job log is the kind of thing that can only be known by
+looking. It is an item to do rather than a numbered check, because a number would
+claim a check that has not been made. If an identifier does appear, the mask step
+is what to look at first — and its fix is an edit to this workflow, which an
+agent cannot deliver (GitHub refuses the push), so it is worth doing before the
+first release rather than after it.
+
 **That is the whole list.** `EXPO_TOKEN` is the only secret this workflow needs,
 and it is the only `secrets.` reference in the file: the App Store Connect API
 key and the signing certificate are EAS's (server-side, under the owner's
@@ -913,9 +998,12 @@ exactly that one secret and carries no literal that could be one.
 identity is not here: `FUGARO_IOS_BUNDLE_ID` and `FUGARO_ANDROID_PACKAGE` stay in
 the EAS project's `production` environment, where the owner set them
 (`mobile/README.md`, "Building for internal testing"), and the file reads them
-only through `eas env:exec production`. Neither name appears in the workflow, and
-the test above refuses the file if either one — or a reverse-DNS-shaped value —
-ever does.
+only through `eas env:exec production` and the mask step above. **The two names
+appear in the workflow exactly once per job — as the mask step's arguments — and
+nowhere else**: a value can only be masked by naming the variable it is read
+from, and that is the whole of the exception. The test above holds each name to
+that count, refuses a name bound in any step's `env:` or `with:`, and refuses the
+file outright if a reverse-DNS-shaped value appears anywhere in it.
 
 ### To copy it in
 
@@ -1006,6 +1094,73 @@ made first — the directory is left holding the three files the block above nam
 file is still here: `readme.mjs` reads the directory, not the file's own
 history.
 
+### Android first release
+
+**The Android job is enabled; the Play side is what is not ready.** Nothing below
+is a workflow change, and nothing below is a secret in this repository. **Each
+step is labelled with the account or the machine it is done on, and no agent runs
+any of it** — the rule every store step in this document is under (mobile plan
+D120, Global Constraint 9). The order is the order: the account and the app record
+come first, because the first upload cannot be made by CI at all.
+
+**1. [per Google account] A Google Play Console developer account, and the app
+created in it.** The developer account is registered by the owner in the Play
+Console, and the app record is created there too — **by hand, in the console, not
+by a workflow and not by `eas`**. That is the prerequisite the whole platform
+hangs on: `eas submit` publishes an app's *later* releases, and a brand-new Play
+app's **first** upload has to be made once through the Play Console's own UI,
+because neither the Play API nor `eas submit` can create an app's first release
+(`mobile/README.md`, "Building for internal testing" — the sentence that also
+records how much of the Play side is unverified).
+
+**2. [per Play Console] The forms the internal-testing track needs, by name.** A
+new Play app cannot publish to the internal-testing track until the console has
+what it asks for. The forms are: **Store listing** (the app name, the short and
+full description, the app icon and the feature graphic, and at least two
+screenshots), the **Data safety** form, the **Content rating** questionnaire, the
+**Target audience and content** declarations, and — on the internal-testing track
+itself — the **"any other information required for access"** field. Names only:
+the answers are the owner's to give, and the one already recorded in this
+repository is in `docs/mobile/play-review-access.md`, which holds the access
+paragraph to paste into that last field (what "Try the demo" does, with no account
+and nothing to set up first). What the other forms ask for is Google's to say and
+the owner's to answer, and **nothing here has verified any of it**.
+
+**3. [per Google Cloud, then per Play Console] A service account for `eas submit`,
+with its key stored only in EAS.** In Google Cloud: create a service account,
+enable the **Google Play Android Developer API**, and create a **JSON key** for
+it. In the Play Console: **Users and permissions → API access**, invite that
+service account's address, and give it the **Release to testing tracks**
+permission. The JSON key is then stored **by the owner in the EAS project's
+credentials for the Android submission and nowhere else** — not in this
+repository, not in a GitHub secret, not in a file under `mobile/`, and **never
+given to an agent**: `eas submit` reads it from EAS, which is why this workflow
+carries no Play credential of its own. (`mobile/README.md`, "Building for internal
+testing", is where the Play credential's home is recorded.)
+
+**4. [per owner's machine] The quickest path to something installable, before any
+of that.** An APK from the `preview` profile needs no Play account, no track, no
+form and no service account: `preview` is an internal-distribution build that
+reaches no store (`mobile/README.md`, "Building for internal testing"), and it
+installs straight onto a device. The build is `eas build --platform android
+--profile preview`, wrapped in `eas env:exec preview` so that the profile's own
+EAS environment — where the package name lives — is loaded into that one command:
+
+```sh
+# --- as the owner, at your own terminal, in mobile/ ---
+eas env:exec preview 'eas build --platform android --profile preview'
+```
+
+That command is the owner's, like every other `eas` command here: no agent has run
+it and none may. It is worth doing **first**, because it answers the question the
+rest of this list cannot — whether the app builds and installs on a device at all
+— without touching the Play side, and it is the fastest way to have something in
+hand while the console work is still outstanding.
+
+**Until those are done, leave Android off.** The switch above is
+`MOBILE_RELEASE_DISABLED_PLATFORMS=android`, and with it set the Android job is
+skipped and the iOS release is unaffected — which is what the switch is for.
+
 ### Not verified
 
 **The workflow has never run, and no `eas` command in it has ever been run from
@@ -1016,32 +1171,49 @@ Global Constraint 9, D120). Check 89 (`docs/gcp-live-checklist.md`) is the
 owner-run check for the store path, and it is **NOT RUN**.
 
 What *is* asserted offline, by `TestDocsMobileReleaseWorkflowIsStagedAndPinned`,
-is the file's text: its two triggers and the absence of any third; `contents:
-read` as the whole permission and no job-level widening; the `mobile-release`
-environment on both jobs; the single `secrets.EXPO_TOKEN` reference and no
-secret-shaped literal; every `uses:` a full 40-hex SHA with its `# vX.Y.Z`; the
+is the file's text: its two triggers and the absence of any third, on the tag
+pattern `v[0-9]+.[0-9]+.[0-9]+`; `contents: read` as the whole permission and no
+job-level widening; the `mobile-release` environment on both jobs; the single
+`secrets.EXPO_TOKEN` reference — bound in the `env:` of the steps that run an
+`eas` command and on no other step, with no job-level `env:` at all — and no
+secret-shaped literal; every `uses:` a full 40-hex SHA with its `# vX.Y.Z`, and
+the one install, `eas-cli@25.3.0`, pinned by version rather than floating; the
 `concurrency` group and `cancel-in-progress: false`; the `dry_run` input and the
 two step conditions that read it, **each compared whole** (`${{ github.event.inputs.dry_run != 'true' }}`
 on both submissions and its exact complement on the notice), so a condition with
 a second disjunct — a tag push, say, which would submit on a dispatch that asked
-for a dry run — is not green here; both `eas` commands under
-`eas env:exec production` and carrying `--non-interactive`; the summary step
-writing to `$GITHUB_STEP_SUMMARY`; the Android job's `if:` compared whole
-against `${{ vars.MOBILE_ANDROID_ENABLED == 'true' }}` — the switch by name and
-nothing else, so no second disjunct can start an Android submission the owner
-never turned on; and that neither the two identity variable names nor a
+for a dry run — is not green here; each job's `if:` compared whole against
+`${{ !contains(vars.MOBILE_RELEASE_DISABLED_PLATFORMS, '<platform>') }}`, so the
+switch is that one variable by name and no second disjunct can start a submission
+the owner turned off; both platforms' `eas` commands under `eas env:exec
+production` and carrying `--non-interactive`; the build step's `--wait` and
+`--json`; the summary step writing to `$GITHUB_STEP_SUMMARY` and carrying the
+build's **id**; that no step runs `--latest` or `eas build:list` or reads
+`artifacts.buildUrl`; the mask step in each job, before the first `eas` command
+that resolves the app's config, naming both identity variables — each of which
+appears **exactly once per job and nowhere else** in the file; and that no
 reverse-DNS-shaped value appears anywhere in it.
 
-**The one thing in this file that is not pinned to a version is `eas-cli`.** The
-workflow installs it with `npm install --global eas-cli` — unpinned — and that is
-deliberate but not ideal: it is not a dependency of the app (`mobile/package.json`
-declares none, and this change may not edit the app), and
-`docs/gcp-live-checklist.md`'s Check 89 installs it the same way on the owner's
-machine. **Pinning it belongs with a lockfile entry in `mobile/package.json`**,
-which is a change to the app rather than to this staged file; until then, the
-version that runs is whatever `latest` was at the moment of the run. The action
-pins above are exact; this one is not, and it is named here so nobody reads the
-file's other pins as covering it.
+**What none of that can tell the owner is what a log looks like.** The mask step
+is asserted to exist, to run before the first `eas` command and to name both
+variables; that `::add-mask::` actually keeps an identity out of `eas`'s output
+is a fact about `eas-cli` and GitHub Actions, and the only instrument for it is a
+person reading the first dry run's log (item 3 above). That gap is what item 3 is
+for, and it is why the item is on the owner's list rather than in this paragraph.
+
+**`eas-cli` is pinned to one exact version, and it is the only install in the
+file.** `npm install --global eas-cli@25.3.0` — **25.3.0** was the version the
+npm registry's `latest` tag pointed at on 2026-10-21, checked with
+`npm view eas-cli version` against the registry itself rather than a page that
+quotes it. The earlier version of this file installed it unpinned, and the reason
+written here for that was wrong: `eas-cli` is not a dependency of the app and
+does not have to become one (`mobile/package.json` declares none, and this is a
+global install on the runner), so a lockfile entry was never the price of the
+pin. The price is that a pin is a version someone has to raise — raising it is a
+deliberate edit to this file, checked the same way (read the registry's `latest`,
+write the version, and the test names both if they disagree). Every other pin in
+the file is a commit SHA with its version beside it; this one is a version, and
+it is the only pin that is not a commit.
 
 ## `website-preview.yml` and `website-promote.yml`
 

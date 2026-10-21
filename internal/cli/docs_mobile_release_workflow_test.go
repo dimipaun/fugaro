@@ -3,13 +3,14 @@ package cli
 // The staged release workflow for the mobile app (docs/pending-workflows/mobile-release.yml).
 //
 // The mobile app is its own artifact outside the Go module (mobile plan D125)
-// with its own release path, and this is that path: on every `v*` release tag,
-// and on a manual dispatch, it builds the iOS app on EAS and submits it to
-// TestFlight's internal testers. The owner's rulings of 2026-10-19/20 fix the
-// shape: the build runs from GitHub Actions on each tag and by hand; it waits at
-// a `mobile-release` GitHub environment with the owner as its required reviewer
-// (the same click `console-release` and `website-live` wait for); iOS only for
-// now, with the Android job written and disabled until the owner turns it on.
+// with its own release path, and this is that path: on every release tag, and on
+// a manual dispatch, it builds the app on EAS and submits the finished build to
+// TestFlight's internal testers and to Google Play's internal-testing track. The
+// owner's rulings of 2026-10-19/20 fix the shape: the build runs from GitHub
+// Actions on each tag and by hand; it waits at a `mobile-release` GitHub
+// environment with the owner as its required reviewer (the same click
+// `console-release` and `website-live` wait for); both platforms release, each
+// in its own job, with one repository variable that can turn either off.
 //
 // No agent may write or edit `.github/workflows/**` -- GitHub refuses Fugaro's
 // push of a workflow change -- so the file is staged under
@@ -22,21 +23,29 @@ package cli
 // a store credential in reach:
 //
 //   - TestDocsMobileReleaseWorkflowIsStagedAndPinned: the triggers are a
-//     `v*` tag push and a manual dispatch and nothing else; the permissions are
+//     release-tag push and a manual dispatch and nothing else, on the tag
+//     pattern the sibling release workflows use; the permissions are
 //     `contents: read` and no more; both jobs wait at the `mobile-release`
-//     environment; the file names exactly one secret (`EXPO_TOKEN`) and carries
-//     no literal that could be one; every `uses:` is a full 40-hex commit with
-//     its `# vX.Y.Z` beside it; the `concurrency` group makes two releases queue
-//     instead of submitting at once; the `dry_run` input stops the run before
-//     the submission; both `eas` commands run under `eas env:exec production`
-//     with `--non-interactive`; the build's URL reaches the job summary; the
-//     Android job is disabled behind the repository variable; and **neither the
-//     store identity's variable names nor a reverse-DNS-shaped value appears
+//     environment; the file names exactly one secret (`EXPO_TOKEN`), carries no
+//     literal that could be one, and binds the token in the `env:` of the steps
+//     that talk to EAS rather than at job level; every `uses:` is a full 40-hex
+//     commit with its `# vX.Y.Z` beside it; `eas-cli` is installed at one exact
+//     version; the `concurrency` group makes two releases queue instead of
+//     submitting at once; the `dry_run` input stops the run before the
+//     submission; both platforms' `eas` commands run under
+//     `eas env:exec production` with `--non-interactive`; the build's id and
+//     **not** its artifact download URL reaches the job summary, and the
+//     submission submits the build the run made (`--id`, never `--latest`); the
+//     store identity is masked before any `eas` command runs, and its two
+//     variable names appear nowhere but in that mask step; the two job gates
+//     are one switch, compared whole; and **no reverse-DNS-shaped value appears
 //     anywhere in the file**.
 //   - TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn: the
 //     section beside the staged file has to carry what a human cannot guess --
 //     the environment's name and its required reviewer, the secret's name, the
-//     copy-in command, and the two follow-up edits a copy-in needs.
+//     order those two have to be created in, the copy-in command, the switch
+//     that turns a platform off, the Android first-release checklist, and the
+//     follow-up edits a copy-in needs.
 //
 // What this test cannot do is run the job. Nothing here executes GitHub
 // Actions, and no `eas` command has ever been run from this repository: the
@@ -82,22 +91,47 @@ const (
 	// access token the owner creates in their own account. Only the name is
 	// written down anywhere in this repository.
 	mobileReleaseSecretName = "EXPO_TOKEN"
-	// mobileReleaseAndroidSwitch is the repository variable that turns the
-	// Android job on. It is a variable and not a workflow edit on purpose: an
-	// agent cannot edit a workflow, so an owner-facing switch has to be a
-	// setting.
-	mobileReleaseAndroidSwitch = "MOBILE_ANDROID_ENABLED"
-	// mobileReleaseAndroidGate is the whole condition the Android job runs on,
-	// and mobileReleaseSubmitGate and mobileReleaseNoticeGate are the whole
-	// conditions on the dry run -- the submission's and the notice's. They are
+	// mobileReleaseDisabledPlatforms is the one repository variable that can turn
+	// either platform off: its value names the platforms to skip (`ios`,
+	// `android`, or both), and an unset variable names neither, so both jobs run.
+	// It is a variable and not a workflow edit on purpose -- an agent cannot edit
+	// a workflow, so an owner-facing switch has to be a setting -- and it is one
+	// variable rather than two so that the owner reads one switch instead of a
+	// pair that can disagree (the owner's ruling of 2026-10-20).
+	mobileReleaseDisabledPlatforms = "MOBILE_RELEASE_DISABLED_PLATFORMS"
+	// mobileReleaseIOSGate and mobileReleaseAndroidGate are the whole conditions
+	// the two jobs run on -- one switch, read for one platform each -- and
+	// mobileReleaseSubmitGate and mobileReleaseNoticeGate are the whole
+	// conditions on the dry run, the submission's and the notice's. They are
 	// compared by equality and not by substring because each one is a gate: a
 	// condition that also fired on something else (a tag push, say) would run
 	// what the gate exists to hold back, and `strings.Contains(got, "'true'")`
 	// is green on `== 'true' }} || github.ref_type == 'tag'` exactly as it is on
 	// the gate alone.
-	mobileReleaseAndroidGate = "${{ vars." + mobileReleaseAndroidSwitch + " == 'true' }}"
+	mobileReleaseIOSGate     = "${{ !contains(vars." + mobileReleaseDisabledPlatforms + ", 'ios') }}"
+	mobileReleaseAndroidGate = "${{ !contains(vars." + mobileReleaseDisabledPlatforms + ", 'android') }}"
 	mobileReleaseSubmitGate  = "${{ github.event.inputs.dry_run != 'true' }}"
 	mobileReleaseNoticeGate  = "${{ github.event.inputs.dry_run == 'true' }}"
+	// mobileReleaseTagPattern is the tag filter, spelled the way the sibling
+	// release workflows spell it (`.github/workflows/release.yml`, `images.yml`,
+	// `console-release.yml`). A bare `v*` also starts a release on `vtest` and
+	// on a `v1.2.3-rc1` tag, and neither of those is a release of anything.
+	mobileReleaseTagPattern = "v[0-9]+.[0-9]+.[0-9]+"
+	// mobileReleaseEasCLIVersion is the exact `eas-cli` the job installs. The
+	// pin matters because the job holds a store credential: a global install of
+	// whatever `latest` was at the moment of the run is a dependency nobody
+	// reviewed. **25.3.0** was the version the npm registry's `latest` tag
+	// pointed at on 2026-10-21.
+	mobileReleaseEasCLIVersion = "25.3.0"
+	// mobileReleaseBuildJSONPath is the file the build step captures `eas build
+	// --json` into. The summary and the submission read the build's id out of it
+	// rather than asking EAS for the latest build of the profile, which is a
+	// different build the moment anything else has run.
+	mobileReleaseBuildJSONPath = "mobile-build.json"
+	// mobileReleaseMaskCommand is how the mask step reads one identity value out
+	// of the EAS project's environment, so that `::add-mask::` can hide it:
+	// `mask <NAME>` is the only shape the two names below may take in the file.
+	mobileReleaseMaskCommand = "mask "
 	// mobileReleasePinTestName and mobileReleaseReadmeTestName are the two
 	// checks this file adds. The document beside the staged file has to name
 	// both, so the paragraph that tells a reader what is verified cannot outlive
@@ -105,6 +139,13 @@ const (
 	mobileReleasePinTestName    = "TestDocsMobileReleaseWorkflowIsStagedAndPinned"
 	mobileReleaseReadmeTestName = "TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn"
 )
+
+// mobileReleaseIdentityNames are the two EAS environment variables that hold the
+// store identity. They are the exception that proves the rule below: the
+// identity's *value* is nowhere in this repository, but the mask step cannot
+// hide a value it cannot name, so each of these appears exactly once per job --
+// as the argument of a `mask` call -- and nowhere else.
+var mobileReleaseIdentityNames = []string{"FUGARO_IOS_BUNDLE_ID", "FUGARO_ANDROID_PACKAGE"}
 
 // mobileReleaseWorkflow is docs/pending-workflows/mobile-release.yml, decoded
 // with unknown fields refused: a key nobody reads is a key nobody pins. `on` is
@@ -153,12 +194,13 @@ type mobileReleaseJob struct {
 }
 
 type mobileReleaseStep struct {
-	Name             string         `yaml:"name"`
-	If               string         `yaml:"if"`
-	Uses             string         `yaml:"uses"`
-	Run              string         `yaml:"run"`
-	WorkingDirectory string         `yaml:"working-directory"`
-	With             map[string]any `yaml:"with"`
+	Name             string            `yaml:"name"`
+	If               string            `yaml:"if"`
+	Uses             string            `yaml:"uses"`
+	Run              string            `yaml:"run"`
+	WorkingDirectory string            `yaml:"working-directory"`
+	With             map[string]any    `yaml:"with"`
+	Env              map[string]string `yaml:"env"`
 }
 
 // readMobileReleaseWorkflow returns the workflow's bytes and the path they came
@@ -245,6 +287,11 @@ var (
 	// requiring the LAST label to start with a letter, and the file names the
 	// workflow is allowed to mention are excluded by suffix below.
 	mobileReleaseDottedRE = regexp.MustCompile(`\b[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)+\b`)
+	// mobileReleaseEasCLIRE finds the CLI install and captures whatever version,
+	// if any, is pinned to it. Go's regexp has no lookahead, so a bare
+	// `eas-cli` is caught by requiring the capture to be exactly `@<version>`
+	// rather than by refusing an install without one.
+	mobileReleaseEasCLIRE = regexp.MustCompile(`npm install --global eas-cli([^\s]*)`)
 )
 
 // mobileReleaseKnownSuffixes are the file extensions a dotted token may end in
@@ -281,14 +328,14 @@ func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	}
 
 	// --- The trigger surface ------------------------------------------------
-	// A `v*` tag push and a manual dispatch, and nothing else. The decode above
+	// A release tag push and a manual dispatch, and nothing else. The decode above
 	// refuses a third trigger; these assertions refuse a weakened tag filter,
 	// which is the half that decides whether the release runs at all.
 	if wf.On.Push == nil || wf.On.WorkflowDispatch == nil {
-		t.Fatalf("%s must trigger on both a `v*` tag push and a manual dispatch (push %v, workflow_dispatch %v)", path, wf.On.Push != nil, wf.On.WorkflowDispatch != nil)
+		t.Fatalf("%s must trigger on both a release tag push and a manual dispatch (push %v, workflow_dispatch %v)", path, wf.On.Push != nil, wf.On.WorkflowDispatch != nil)
 	}
-	if !slices.Equal(wf.On.Push.Tags, []string{"v*"}) {
-		t.Errorf("the push trigger is for tags %q, not [v*]: this is the mobile app's release, and the CLI's tag is what a release is", wf.On.Push.Tags)
+	if !slices.Equal(wf.On.Push.Tags, []string{mobileReleaseTagPattern}) {
+		t.Errorf("the push trigger is for tags %q, not [%s]: this is the mobile app's release, and `v*` -- the pattern this file used to carry -- also starts one on `vtest` and on a `v1.2.3-rc1` tag", wf.On.Push.Tags, mobileReleaseTagPattern)
 	}
 	// The brief's own named refusals, scanned in the bytes as well as decoded:
 	// `pull_request_target` and `workflow_run` run with a read/write token and
@@ -343,15 +390,13 @@ func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	// Exactly one, named, and no literal that could be one. The token is the
 	// only credential this workflow holds: the Apple signing material and the
 	// App Store Connect key are EAS's, which is why the submission needs no
-	// second secret here.
+	// second secret here. Where it is bound is a claim about steps, so it is
+	// checked with the jobs below.
 	refs := mobileReleaseSecretRE.FindAllStringSubmatch(text, -1)
 	for _, ref := range refs {
 		if ref[1] != mobileReleaseSecretName {
 			t.Errorf("%s reads `secrets.%s`: the Expo access token is the only credential this job needs, and every extra reference is a credential reachable from a public repository", path, ref[1])
 		}
-	}
-	if len(refs) != len(wf.Jobs) {
-		t.Errorf("%s reads `secrets.%s` %d times for %d jobs (%v): each job binds the one secret once at job level, and a reference in a step is a second place it can be reached from", path, mobileReleaseSecretName, len(refs), len(wf.Jobs), keys(wf.Jobs))
 	}
 	for _, lit := range []string{"-----BEGIN", "PRIVATE KEY", "private_key", "password:", "ascAppId"} {
 		if strings.Contains(text, lit) {
@@ -359,15 +404,23 @@ func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		}
 	}
 
-	// --- The identity is not here -------------------------------------------
+	// --- The identity's names, and the one place they may appear ------------
 	// The iOS bundle identifier and the Android package name live in the EAS
-	// project's own environment, and the two commands that need them load that
-	// environment with `eas env:exec production`. Neither the variables' names
-	// nor a reverse-DNS-shaped value may appear: the identity is the owner's and
-	// this repository carries it nowhere (mobile plan D125, mobile/README.md).
-	for _, name := range []string{"FUGARO_IOS_BUNDLE_ID", "FUGARO_ANDROID_PACKAGE", "bundleIdentifier", "android.package"} {
+	// project's own environment, and neither value is in this repository (mobile
+	// plan D125, mobile/README.md). Their **names** are the one exception, and
+	// the mask step is why: a value can only be hidden from a log by
+	// `::add-mask::`, which has to be given the value, which means naming the
+	// variable it is read from. So each name appears exactly once per job -- as
+	// the argument of a `mask` call, which the job walk below checks -- and
+	// nowhere else in the file.
+	for _, name := range mobileReleaseIdentityNames {
+		if got := strings.Count(text, name); got != len(wf.Jobs) {
+			t.Errorf("%s names %s %d times, and there are %d jobs: the name is the argument of the mask step's `mask` call, once per job, and the identity itself is read from the EAS project's environment and appears nowhere in this repository", path, name, got, len(wf.Jobs))
+		}
+	}
+	for _, name := range []string{"bundleIdentifier", "android.package"} {
 		if strings.Contains(text, name) {
-			t.Errorf("%s names %q: the store identity is read from the EAS project's environment and appears nowhere in this repository, so the file cannot name it either", path, name)
+			t.Errorf("%s names %q: the store identity is read from the EAS project's environment, and the file has no reason to name the config key it is set through either", path, name)
 		}
 	}
 	for _, token := range mobileReleaseIdentityShapedTokens(text) {
@@ -378,151 +431,40 @@ func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if got := keys(wf.Jobs); !slices.Equal(got, []string{"android", "ios"}) {
 		t.Fatalf("%s carries the jobs %v, not [android ios]: one platform's release is one job", path, got)
 	}
-
-	ios, ok := wf.Jobs["ios"]
-	if !ok {
-		t.Fatalf("%s carries no `ios` job: %v", path, keys(wf.Jobs))
-	}
-	// The environment is the gate: GitHub holds the job until its only required
-	// reviewer approves it, however the run was started.
-	if ios.Environment != mobileReleaseEnvironment {
-		t.Errorf("the ios job's environment is %q, not %q: the environment's required reviewer is the whole of what stops a store submission, and a job without it starts as soon as its trigger fires", ios.Environment, mobileReleaseEnvironment)
-	}
-	if ios.TimeoutMinutes <= 0 {
-		t.Errorf("the ios job has timeout-minutes %d: a run that waits on a remote build without a bound is a job nobody can tell from a hung one", ios.TimeoutMinutes)
-	}
-	if !strings.HasPrefix(ios.RunsOn, "ubuntu-") {
-		t.Errorf("the ios job runs on %q: the build itself runs on EAS's workers, so the runner is only the client that uploads it", ios.RunsOn)
-	}
-	// The one secret is bound once, at job level, and read from the
-	// environment's own secret store rather than the repository's.
-	if got := ios.Env[mobileReleaseSecretName]; !strings.Contains(got, "secrets."+mobileReleaseSecretName) {
-		t.Errorf("the ios job's %s is %q, not `${{ secrets.%s }}`: the token is bound once at job level and never written down", mobileReleaseSecretName, got, mobileReleaseSecretName)
-	}
-	for _, name := range []string{"FUGARO_IOS_BUNDLE_ID", "FUGARO_ANDROID_PACKAGE"} {
-		if _, ok := ios.Env[name]; ok {
-			t.Errorf("the ios job binds %s in its env: the identity comes from the EAS project's environment through `eas env:exec production`, not from a GitHub secret or variable", name)
-		}
+	// Both jobs, by the same rules: the two platforms release from here (the
+	// owner's ruling of 2026-10-20), so Android is not a copy that may lag.
+	ios := mobileReleaseCheckJob(t, path, "ios", wf.Jobs["ios"], mobileReleaseIOSGate)
+	android := mobileReleaseCheckJob(t, path, "android", wf.Jobs["android"], mobileReleaseAndroidGate)
+	if got := ios.bound + android.bound; got != len(refs) {
+		t.Errorf("%s reads `secrets.%s` %d times and %d steps bind it: every reference belongs in the `env:` of a step that talks to EAS, because a job-level binding hands the token to every step in the job -- the checkout, the node, the CLI install and the summary included", path, mobileReleaseSecretName, len(refs), got)
 	}
 
-	// The iOS steps, in order: checkout, setup-node, install eas-cli, build,
-	// summary, submit, and the dry-run notice. The order matters -- the summary
-	// has to describe the build the step before it waited for, and the
-	// submission has to follow both. Every predicate below reads the step's
-	// commands rather than its whole `run:` block: the file's comments name
-	// `eas env:exec production`, `--wait` and the rest of what is checked here,
-	// and a comment must not be able to satisfy a check on a command.
-	var installs, builds, summaries, submits, dryRuns int
-	for i, step := range ios.Steps {
-		cmd := workflowRunCommands(step.Run)
-		switch {
-		case strings.HasPrefix(step.Uses, "actions/checkout@"):
-			if !strings.Contains(fmt.Sprintf("%v", step.With["persist-credentials"]), "false") {
-				t.Error("the checkout keeps the persisted credentials: this job only reads the repository")
-			}
-		case strings.HasPrefix(step.Uses, "actions/setup-node@"):
-			// The Node line comes from the app's own manifest, the way
-			// console-linux.yml takes the console's: a second copy written here
-			// is a pin that can disagree with the app's.
-			if got := fmt.Sprintf("%v", step.With["node-version-file"]); got != "mobile/package.json" {
-				t.Errorf("setup-node's node-version-file is %q, not mobile/package.json: the app's own engines.node is the pin", got)
-			}
-		case strings.Contains(cmd, "npm install --global eas-cli"):
-			installs++
-		case strings.Contains(cmd, "eas build --platform ios"):
-			builds++
-			if !strings.Contains(cmd, "eas env:exec production") {
-				t.Errorf("ios step %d builds without `eas env:exec production`: `eas-cli` resolves mobile/app.config.js locally before it uploads anything, and the bundle identifier comes from the EAS project's environment", i)
-			}
-			if !strings.Contains(cmd, "--non-interactive") {
-				t.Errorf("ios step %d builds without `--non-interactive`: a build that can wait for a prompt in CI is a build that hangs", i)
-			}
-			if !strings.Contains(cmd, "--wait") {
-				t.Errorf("ios step %d builds without `--wait`: the CLI would queue the build and return, and the `--latest` submission below would submit whatever was finished before it", i)
-			}
-		case mobileReleaseSummaryRE.MatchString(cmd) && strings.Contains(cmd, "jq"):
-			summaries++
-			if !strings.Contains(cmd, "artifacts.buildUrl") {
-				t.Errorf("ios step %d writes a summary without the build's URL: the summary is the one place a run can carry the link a reviewer clicks", i)
-			}
-			if !strings.Contains(cmd, "eas build:list") {
-				t.Errorf("ios step %d writes a summary without reading the build back: `eas build:list --json` is the shape docs/gcp-live-checklist.md's Check 89 reads a build with", i)
-			}
-		case strings.Contains(cmd, "eas submit ") && strings.Contains(cmd, "--platform ios"):
-			submits++
-			if !strings.Contains(cmd, "eas env:exec production") {
-				t.Errorf("ios step %d submits without `eas env:exec production`: the local `eas-cli` process needs the bundle identifier the environment carries, or it stops before it uploads anything", i)
-			}
-			if !strings.Contains(cmd, "--non-interactive") {
-				t.Errorf("ios step %d submits without `--non-interactive`", i)
-			}
-			if got := step.If; got != mobileReleaseSubmitGate {
-				t.Errorf("ios step %d submits with `if: %s`, not `if: %s`: the submission is what `dry_run` stops before, and a condition with anything else in it (a tag push, say) submits on a dispatch that asked for a dry run", i, got, mobileReleaseSubmitGate)
-			}
-		case mobileReleaseSummaryRE.MatchString(cmd) && strings.Contains(cmd, "Dry run"):
-			dryRuns++
-			if got := step.If; got != mobileReleaseNoticeGate {
-				t.Errorf("ios step %d is the dry-run notice with `if: %s`, not `if: %s`: the notice says a run submitted nothing, so it has to be the exact complement of the submission's gate", i, got, mobileReleaseNoticeGate)
+	// --- What the file must never run ---------------------------------------
+	// Checked over the steps' commands rather than the whole text: the header and
+	// the steps' own comments name all three of these to say why they are not
+	// used, and a comment is not a command.
+	//
+	//   - `artifacts.buildUrl` is a download link for a signed binary whose
+	//     Info.plist carries the bundle identifier, and a run summary in a public
+	//     repository is public. The summary carries the build's page id instead.
+	//   - `eas build:list` asks EAS for a build instead of reading back the one
+	//     this run made, which is the same mistake `--latest` makes.
+	//   - `--latest` submits the latest build of the profile, whoever made it.
+	for name, job := range wf.Jobs {
+		for i, step := range job.Steps {
+			for _, banned := range []string{"artifacts.buildUrl", "eas build:list", "--latest"} {
+				if strings.Contains(workflowRunCommands(step.Run), banned) {
+					t.Errorf("%s's %s job runs %q in step %d: the submission names the build this run made (`--id`), and the summary carries its page id rather than a link that downloads the binary", path, name, banned, i)
+				}
 			}
 		}
-	}
-	for _, c := range []struct {
-		what string
-		got  int
-	}{
-		{"a step installing eas-cli", installs},
-		{"a step building on EAS", builds},
-		{"a step writing the summary", summaries},
-		{"a step submitting", submits},
-		{"a step saying it was dry", dryRuns},
-	} {
-		if c.got != 1 {
-			t.Errorf("the ios job carries %d of %s, not one", c.got, c.what)
-		}
-	}
-	if uses := workflowJobUses(ios); len(uses) != 2 {
-		t.Errorf("the ios job uses %d actions (%q); it needs a checkout and a node", len(uses), uses)
-	}
-
-	// --- The Android job, written and disabled ------------------------------
-	android, ok := wf.Jobs["android"]
-	if !ok {
-		t.Fatalf("%s carries no `android` job: it is written and disabled, so that turning it on is one repository setting rather than a workflow edit", path)
-	}
-	if got := android.If; got != mobileReleaseAndroidGate {
-		t.Errorf("the android job's `if` is %q, not exactly %q: the job runs only when the repository variable %s is exactly true, so an unset variable skips it and no second disjunct (a tag push, say) can start a store submission the owner never turned on", got, mobileReleaseAndroidGate, mobileReleaseAndroidSwitch)
-	}
-	if android.Environment != mobileReleaseEnvironment {
-		t.Errorf("the android job's environment is %q, not %q: when the owner turns it on, the store submission it makes needs the same approval the iOS one waits for", android.Environment, mobileReleaseEnvironment)
-	}
-	if got := android.Env[mobileReleaseSecretName]; !strings.Contains(got, "secrets."+mobileReleaseSecretName) {
-		t.Errorf("the android job's %s is %q, not `${{ secrets.%s }}`", mobileReleaseSecretName, got, mobileReleaseSecretName)
-	}
-	var androidBuilds, androidSubmits int
-	for _, step := range android.Steps {
-		cmd := workflowRunCommands(step.Run)
-		switch {
-		case strings.Contains(cmd, "eas build --platform android"):
-			androidBuilds++
-			if !strings.Contains(cmd, "eas env:exec production") || !strings.Contains(cmd, "--non-interactive") {
-				t.Error("the android job's build does not run under `eas env:exec production` with `--non-interactive`")
-			}
-		case strings.Contains(cmd, "eas submit ") && strings.Contains(cmd, "--platform android"):
-			androidSubmits++
-			if got := step.If; got != mobileReleaseSubmitGate {
-				t.Errorf("the android job submits with `if: %s`, not `if: %s`: the dry-run gate has to cover it too, and to be the same gate, or turning it on makes `dry_run` mean one platform", got, mobileReleaseSubmitGate)
-			}
-		}
-	}
-	if androidBuilds != 1 || androidSubmits != 1 {
-		t.Errorf("the android job carries %d builds and %d submissions, not one of each", androidBuilds, androidSubmits)
 	}
 
 	// --- The pins -----------------------------------------------------------
 	// Every action by full commit SHA with its version beside it: a floating ref
 	// (`@v7`) is a mutable tag on someone else's repository, and this job holds
 	// a store credential.
-	allUses := append(workflowJobUses(ios), workflowJobUses(android)...)
+	allUses := append(workflowJobUses(wf.Jobs["ios"]), workflowJobUses(wf.Jobs["android"])...)
 	pins := mobileReleaseUsesRE.FindAllStringSubmatch(text, -1)
 	if len(pins) != len(allUses) {
 		t.Errorf("%s has %d `uses:` steps (%q) but %d match the pinned form `uses: <action>@<sha> # v<version>`: an unpinned or oddly written one is listed here rather than judged", path, len(allUses), allUses, len(pins))
@@ -546,6 +488,182 @@ func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			t.Errorf("%s never uses %s: the job cannot check the app out or select a node line without it", path, want)
 		}
 	}
+
+	// The one install in the file, and it is pinned to a version rather than
+	// floating: `eas-cli` is not an action, so there is no SHA to pin it by, and
+	// a global install of whatever `latest` was at the moment of the run is a
+	// dependency nobody reviewed in a job that holds a store credential.
+	installs := mobileReleaseEasCLIRE.FindAllStringSubmatch(text, -1)
+	if len(installs) != len(wf.Jobs) {
+		t.Fatalf("%s installs eas-cli %d times for %d jobs: each job runs on its own runner, so each one installs its own CLI", path, len(installs), len(wf.Jobs))
+	}
+	for _, m := range installs {
+		if m[1] != "@"+mobileReleaseEasCLIVersion {
+			t.Errorf("%s installs `eas-cli%s`, not `eas-cli@%s`: the job holds a store credential, and an unpinned global install is a dependency nobody reviewed", path, m[1], mobileReleaseEasCLIVersion)
+		}
+	}
+}
+
+// mobileReleaseJobShape is one platform's job, counted: what the walk below
+// found in it and what each step did. The two jobs are the same shape with one
+// platform's name in it -- both platforms release from here -- so every rule is
+// written once and applied to both, rather than an iOS rule that Android
+// quietly lacks.
+type mobileReleaseJobShape struct {
+	platform  string
+	installs  int
+	masks     int
+	builds    int
+	summaries int
+	submits   int
+	dryRuns   int
+	// bound is how many of the job's steps bind the Expo token, which the caller
+	// holds against the number of `secrets.EXPO_TOKEN` references in the file.
+	bound int
+	uses  []string
+}
+
+// mobileReleaseCheckJob checks one platform's job against the rules that hold
+// for both, and returns what it found for the counts the caller asserts. `gate`
+// is the whole `if:` the job has to carry: the caller passes that platform's,
+// and equality is the whole check, because a condition with a second disjunct
+// would run what the switch exists to hold back.
+//
+// Every predicate reads the step's *commands* rather than its whole `run:`
+// block (workflowRunCommands): the file's comments name `eas env:exec
+// production`, `--wait`, `artifacts.buildUrl` and the rest of what is checked
+// here, and a comment must not be able to satisfy a check on a command.
+func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleaseJob, gate string) mobileReleaseJobShape {
+	t.Helper()
+	shape := mobileReleaseJobShape{platform: platform, uses: workflowJobUses(job)}
+
+	// The switch: one repository variable naming the platforms to skip, read for
+	// this platform. An unset variable names neither, which is what "both
+	// platforms release by design" means, and nothing else may appear in the
+	// condition -- a second disjunct (a tag push, say) would start a store
+	// submission the owner never turned on.
+	if got := job.If; got != gate {
+		t.Errorf("the %s job's `if` is %q, not exactly %q: `%s` names the platforms to skip, so this job runs unless the variable names %s -- and an unset variable names neither, so both platforms release", platform, got, gate, mobileReleaseDisabledPlatforms, platform)
+	}
+	// The environment is the gate: GitHub holds the job until its only required
+	// reviewer approves it, however the run was started.
+	if job.Environment != mobileReleaseEnvironment {
+		t.Errorf("the %s job's environment is %q, not %q: the environment's required reviewer is the whole of what stops a store submission, and a job without it starts as soon as its trigger fires", platform, job.Environment, mobileReleaseEnvironment)
+	}
+	if job.TimeoutMinutes <= 0 {
+		t.Errorf("the %s job has timeout-minutes %d: a run that waits on a remote build without a bound is a job nobody can tell from a hung one", platform, job.TimeoutMinutes)
+	}
+	if !strings.HasPrefix(job.RunsOn, "ubuntu-") {
+		t.Errorf("the %s job runs on %q: the build itself runs on EAS's workers, so the runner is only the client that uploads it", platform, job.RunsOn)
+	}
+	// No job-level `env:` at all. The token belongs on the steps that talk to
+	// EAS, so that the checkout, the node line and the CLI install never hold it.
+	if len(job.Env) != 0 {
+		t.Errorf("the %s job binds %v at job level: the Expo token belongs in the `env:` of the steps that talk to EAS, and a job-level binding hands it to every step in the job", platform, job.Env)
+	}
+
+	var maskAt, buildAt, summaryAt, submitAt = -1, -1, -1, -1
+	for i, step := range job.Steps {
+		cmd := workflowRunCommands(step.Run)
+		switch {
+		case strings.HasPrefix(step.Uses, "actions/checkout@"):
+			if !strings.Contains(fmt.Sprintf("%v", step.With["persist-credentials"]), "false") {
+				t.Errorf("the %s job's checkout keeps the persisted credentials: this job only reads the repository", platform)
+			}
+		case strings.HasPrefix(step.Uses, "actions/setup-node@"):
+			// The Node line comes from the app's own manifest, the way
+			// console-linux.yml takes the console's: a second copy written here
+			// is a pin that can disagree with the app's.
+			if got := fmt.Sprintf("%v", step.With["node-version-file"]); got != "mobile/package.json" {
+				t.Errorf("the %s job's setup-node takes node-version-file %q, not mobile/package.json: the app's own engines.node is the pin", platform, got)
+			}
+		case strings.Contains(cmd, "npm install --global eas-cli"):
+			shape.installs++
+		case strings.Contains(cmd, "::add-mask::"):
+			shape.masks++
+			maskAt = i
+			for _, name := range mobileReleaseIdentityNames {
+				if !strings.Contains(cmd, mobileReleaseMaskCommand+name) {
+					t.Errorf("the %s job's mask step does not mask %s: `eas build` and `eas submit` resolve mobile/app.config.js locally, and this repository is public, so an identity value that reaches the log is public with it", platform, name)
+				}
+			}
+		case strings.Contains(cmd, "eas build --platform "+platform):
+			shape.builds++
+			buildAt = i
+			if !strings.Contains(cmd, "eas env:exec production") {
+				t.Errorf("the %s job's build step does not run under `eas env:exec production`: `eas-cli` resolves mobile/app.config.js locally before it uploads anything, and the identity comes from the EAS project's environment", platform)
+			}
+			for _, flag := range []string{"--non-interactive", "--wait", "--json"} {
+				if !strings.Contains(cmd, flag) {
+					t.Errorf("the %s job's build step is missing %s: `--non-interactive` keeps a prompt from hanging the job, `--wait` makes the build it reports the one it made, and `--json` is what carries that build's id to the submission", platform, flag)
+				}
+			}
+			if !strings.Contains(cmd, mobileReleaseBuildJSONPath) {
+				t.Errorf("the %s job's build step does not capture its output into %s: the steps after it read the build's id from there, and without it the submission has nothing to name", platform, mobileReleaseBuildJSONPath)
+			}
+		case mobileReleaseSummaryRE.MatchString(cmd) && strings.Contains(cmd, mobileReleaseBuildJSONPath):
+			shape.summaries++
+			summaryAt = i
+			if !strings.Contains(cmd, "build id") {
+				t.Errorf("the %s job's summary step does not print the build's id: the id is what names the build's page, and the artifact download link is deliberately not printed", platform)
+			}
+		case strings.Contains(cmd, "eas submit ") && strings.Contains(cmd, "--platform "+platform):
+			shape.submits++
+			submitAt = i
+			if !strings.Contains(cmd, "eas env:exec production") {
+				t.Errorf("the %s job's submission does not run under `eas env:exec production`: the local `eas-cli` process needs the identity the environment carries, or it stops before it uploads anything", platform)
+			}
+			if !strings.Contains(cmd, "--non-interactive") {
+				t.Errorf("the %s job's submission is missing --non-interactive", platform)
+			}
+			if !strings.Contains(cmd, "--id") || !strings.Contains(cmd, mobileReleaseBuildJSONPath) {
+				t.Errorf("the %s job's submission does not name the build this run made: it has to read the id out of %s and pass it to `--id`, because `--latest` submits the latest build of the profile whoever made it", platform, mobileReleaseBuildJSONPath)
+			}
+			if got := step.If; got != mobileReleaseSubmitGate {
+				t.Errorf("the %s job submits with `if: %s`, not `if: %s`: the submission is what `dry_run` stops before, and a condition with anything else in it (a tag push, say) submits on a dispatch that asked for a dry run", platform, got, mobileReleaseSubmitGate)
+			}
+		case mobileReleaseSummaryRE.MatchString(cmd) && strings.Contains(cmd, "Dry run"):
+			shape.dryRuns++
+			if got := step.If; got != mobileReleaseNoticeGate {
+				t.Errorf("the %s job's dry-run notice carries `if: %s`, not `if: %s`: the notice says a run submitted nothing, so it has to be the exact complement of the submission's gate", platform, got, mobileReleaseNoticeGate)
+			}
+		}
+	}
+
+	// The token is bound on the steps that talk to EAS and on no other: the CLI
+	// install needs no credential, and a step that runs no `eas` command has no
+	// reason to hold one.
+	for i, step := range job.Steps {
+		got, binds := step.Env[mobileReleaseSecretName]
+		runsEas := strings.Contains(workflowRunCommands(step.Run), "eas env:exec production")
+		switch {
+		case binds && !runsEas:
+			t.Errorf("the %s job's step %d binds %s and runs no `eas` command: a step that does not use the token has no reason to hold it", platform, i, mobileReleaseSecretName)
+		case runsEas && !binds:
+			t.Errorf("the %s job's step %d runs `eas env:exec production` without binding %s: the token is what lets it load the project's environment at all", platform, i, mobileReleaseSecretName)
+		}
+		if !binds {
+			continue
+		}
+		shape.bound++
+		if want := "${{ secrets." + mobileReleaseSecretName + " }}"; got != want {
+			t.Errorf("the %s job's step %d binds %s to %q, not %q: the token is read from the environment's secret store and never written down", platform, i, mobileReleaseSecretName, got, want)
+		}
+	}
+
+	// The counts and the order. One of each step, and the order is load-bearing:
+	// the mask has to be in place before the first command that resolves the
+	// app's config, the summary describes the build the step before it made, and
+	// the submission submits that same build.
+	if shape.installs != 1 || shape.masks != 1 || shape.builds != 1 || shape.summaries != 1 || shape.submits != 1 || shape.dryRuns != 1 {
+		t.Errorf("the %s job carries %d install(s), %d mask step(s), %d build(s), %d summary step(s), %d submission(s) and %d dry-run notice(s), not one of each: the job is this platform's whole release", platform, shape.installs, shape.masks, shape.builds, shape.summaries, shape.submits, shape.dryRuns)
+	} else if !(maskAt < buildAt && buildAt < summaryAt && summaryAt < submitAt) {
+		t.Errorf("the %s job's steps are out of order (mask %d, build %d, summary %d, submission %d): the mask has to run before the first `eas` command that resolves mobile/app.config.js, the summary has to describe the build that was made, and the submission has to follow both", platform, maskAt, buildAt, summaryAt, submitAt)
+	}
+	if len(shape.uses) != 2 {
+		t.Errorf("the %s job uses %d actions (%q); it needs a checkout and a node", platform, len(shape.uses), shape.uses)
+	}
+	return shape
 }
 
 // workflowRunCommands returns a step's `run:` script with its comment lines
@@ -659,10 +777,13 @@ func mobileReleaseReadmeSection(t *testing.T) string {
 // file cannot create a GitHub environment or a secret, so the section beside it
 // is where the owner reads what to make and what to run. Everything a human
 // cannot guess from the file is asserted here: the environment's name and its
-// required reviewer, the secret's name, the copy-in command, the switch that
-// turns the Android job on, the two follow-up edits a copy-in needs, and the
-// name of the check that pins the file -- so a rename cannot leave the document
-// pointing at a test that is gone.
+// required reviewer, the secret's name, **the order the two have to be created
+// in** (before the copy-in, or GitHub creates the environment with no reviewer),
+// the copy-in command, the one switch that can turn either platform off, the
+// Android first-release checklist and the accounts each of its steps belongs to,
+// the two follow-up edits a copy-in needs, and the name of the check that pins
+// the file -- so a rename cannot leave the document pointing at a test that is
+// gone.
 func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 	section := mobileReleaseReadmeSection(t)
 
@@ -670,6 +791,8 @@ func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 		{"`" + mobileReleaseEnvironment + "`", "the protected environment both jobs wait at, by name"},
 		{"required reviewer", "the reviewer whose click is the gate, and that there is one"},
 		{"Prevent self-review", "the setting that has to stay off, or the owner's own run can never be approved"},
+		{"the file is copied in, not after it", "the order: the environment and the secret exist before the copy-in"},
+		{"no required reviewer at all", "what an environment GitHub creates on first use has, which is why that order matters"},
 		{"`" + mobileReleaseSecretName + "`", "the one secret the workflow reads, by name and never by value"},
 		{"gh secret set " + mobileReleaseSecretName, "the command that creates the secret, with the environment it belongs on"},
 		{"gh api --method PUT \"repos/$REPO/environments/" + mobileReleaseEnvironment + "\"", "the command that creates the environment"},
@@ -677,18 +800,48 @@ func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 		{"git rm docs/pending-workflows/mobile-release.yml", "the removal of the staged copy, which is load-bearing rather than tidy"},
 		{"website/README.md", "the first of the two follow-up edits a copy-in needs"},
 		{"opening line", "the second: this document's own opening line counts and names the pending files"},
-		{"`" + mobileReleaseAndroidSwitch + "`", "the repository variable that turns the Android job on, by name"},
-		{"gh variable set " + mobileReleaseAndroidSwitch, "the command that turns the Android job on, which is the whole of what \"one repository setting\" means"},
+		{mobileReleaseTagPattern, "the tag filter the workflow triggers on, stated rather than left as the `v*` this file used to carry"},
+		{"`" + mobileReleaseDisabledPlatforms + "`", "the repository variable that can turn either platform off, by name"},
+		{"gh variable set " + mobileReleaseDisabledPlatforms, "the command that turns a platform off, which is the whole of what \"one repository setting\" means"},
+		{"::add-mask::", "the mechanism that keeps the identity out of the log, by name"},
+		{"first dry run", "the run whose log the owner reads for an identifier, since no test can"},
+		{"eas-cli@" + mobileReleaseEasCLIVersion, "the CLI's exact pinned version"},
+		{"npm view eas-cli version", "where that version was checked, so the next reader can check it again"},
+		{"--latest", "the flag the submission deliberately does not use, named rather than left to be discovered"},
+		{"Android first release", "the Play checklist's own heading"},
+		{"Google Play Console", "the console the Android app record is created in, by hand"},
+		{"Data safety", "one of the Play forms the internal track needs, by name"},
+		{"Content rating", "another of those forms, by name"},
+		{"Release to testing tracks", "the Play permission the service account is given"},
+		{"service account", "the Google Cloud account `eas submit` authenticates as"},
+		{"given to an agent", "the rule that keeps the service account's key out of every agent's reach"},
+		{"eas build --platform android", "the quickest path to an installable APK, stated as the command it is"},
+		{"eas env:exec preview", "the environment that command is run with, which is where the package name is"},
 		{"[per repo]", "a label saying where a step is done"},
 		{"[per Expo account]", "the label for the step done in the owner's own Expo account"},
+		{"[per Google account]", "the label for the step done in the owner's Google account"},
+		{"[per Play Console]", "the label for the steps done in the Play Console"},
+		{"[per Google Cloud, then per Play Console]", "the label for the service account, which is made in one console and linked in the other"},
+		{"[per owner's machine]", "the label for the one step that is a command on the owner's own machine"},
 		{mobileReleasePinTestName, "the check that pins the staged file"},
 		{mobileReleaseReadmeTestName, "the check that reads this section"},
-		{"eas-cli", "the one unpinned thing in the file, named rather than left to be discovered"},
 		{"NOT RUN", "the store path's own state: Check 89 has never been run"},
 	} {
 		if !strings.Contains(section, want.needle) {
 			t.Errorf("%s's `%s` section lacks %q (%s): the owner is the one who copies this file in, and this section is where they read it", pendingWorkflowsReadmePath, mobileReleaseReadmeHeading, want.needle, want.why)
 		}
+	}
+
+	// The order the section prescribes is load-bearing, so it is checked as an
+	// order and not only as two sentences that exist: the warning about an
+	// environment GitHub creates with no reviewer has to come **before** the
+	// copy-in command, because the whole point is that the environment exists
+	// first. A section that mentioned both, in the other order, would tell the
+	// owner to copy the file in and then protect it.
+	warn := strings.Index(section, "no required reviewer at all")
+	copyIn := strings.Index(section, "cp docs/pending-workflows/mobile-release.yml")
+	if warn < 0 || copyIn < 0 || warn > copyIn {
+		t.Errorf("%s's `%s` section warns about an environment with no required reviewer at %d and gives the copy-in command at %d: the warning has to come first, because the copy-in is what creates the unprotected environment when it is made before the environment exists", pendingWorkflowsReadmePath, mobileReleaseReadmeHeading, warn, copyIn)
 	}
 
 	// The section has to name the identity's home rather than leave a reader
