@@ -673,9 +673,10 @@ type Agent struct {
 // module walks Object.keys, which is insertion order for a JS object (with
 // integer-like keys first); a Go map has no insertion order to walk, so this
 // side walks byte order instead, because a deterministic answer beats one that
-// changes between runs. TestTwoUnknownFieldsAreNamedInByteOrder pins that, and
-// the four shared vectors with an unknown field all carry exactly one, which is
-// why the difference is invisible in the replay.
+// changes between runs. TestTwoUnknownFieldsAreNamedInByteOrder pins that rule.
+// The shared vectors do not pin it: two of them carry an unknown field, and
+// where one carries two (U+FFFF and U+1F600) insertion order and byte order
+// reach the SAME key first, so the replay is green either way.
 func ValidateMessage(r Record) (*Message, *Refusal) {
 	if r == nil {
 		return nil, refuse(CodeNotAnObject, "")
