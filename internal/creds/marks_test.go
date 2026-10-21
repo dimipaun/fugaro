@@ -272,16 +272,52 @@ func TestAUsageLimitDoesNotDiscardAnExhaustedHold(t *testing.T) {
 		t.Fatalf("the held mark's wait = %s, %v; want the reset %s", at, ok, reset)
 	}
 
-	// A reset that IS reported still replaces the hold: the upstream named a
-	// time, and this guard is about the no-reset case only.
-	if m := Exhaust(held, now.Add(time.Minute), now.Add(time.Hour), set); !m.Until.Equal(now.Add(time.Hour)) {
-		t.Fatalf("a 429 reporting a shorter reset left %+v; want the reported reset", m)
+	// A reset that is reported WHILE THE HOLD STANDS does not shorten it: the
+	// call that reported it was in flight when the four-hour reset landed, and
+	// its one-minute answer is stale (review finding N5). On this tier the
+	// window is off, so Until is the whole hold.
+	if m := Exhaust(held, now.Add(time.Minute), now.Add(time.Hour), set); m != held {
+		t.Fatalf("a 429 reporting a shorter reset left %+v; want the four-hour hold, %+v", m, held)
+	}
+	// A reset that lands *after* the hold is a different matter: it is the later
+	// of the two answers, and the upstream's newer word replaces the older.
+	if m := Exhaust(held, now.Add(time.Minute), now.Add(6*time.Hour), set); !m.Until.Equal(now.Add(6 * time.Hour)) {
+		t.Fatalf("a 429 reporting a reset beyond the hold left %+v; want the later reset", m)
 	}
 
 	// Once the reset has passed the credential is in rotation again, and the
 	// next no-reset 429 is a fresh exhaustion rather than a racing one.
 	if m := Exhaust(held, reset.Add(time.Minute), time.Time{}, set); m.State != StateBackedOff {
 		t.Fatalf("a no-reset 429 after the reset left %+v; want the first backoff", m)
+	}
+}
+
+// A usage limit with no reset time reported after the hold has LAPSED is a fresh
+// exhaustion — the credential is in rotation again, so the 429 is this call's own
+// and not one from before the hold — and a fresh exhaustion is dated now. The
+// date is what "least recently exhausted" orders by (D154) and what D142's
+// window is measured from, so a fresh exhaustion that kept the previous
+// exhaustion's date would put the credential at the front of the queue for the
+// window it had already served. Review finding N1: this is the one line of
+// Exhaust's no-reset path a mutation could delete with every other test green.
+func TestAFreshUsageLimitDatesTheExhaustionNow(t *testing.T) {
+	set := noWindow()
+	old := now.Add(-6 * time.Hour)
+	lapsed := Mark{State: StateExhausted, Until: now.Add(-time.Hour), Since: old}
+
+	m := Exhaust(lapsed, now, time.Time{}, set)
+	if m.State != StateBackedOff || m.Backoff != DefaultBackoffInitial {
+		t.Fatalf("a no-reset 429 after the hold left %+v; want the first backoff of %s", m, DefaultBackoffInitial)
+	}
+	if !m.Since.Equal(now) {
+		t.Fatalf("the fresh exhaustion is dated %s; want %s — the credential was exhausted again, it is not the old exhaustion still being held", m.Since, now)
+	}
+
+	// The held case, for contrast: a no-reset 429 inside a standing hold leaves
+	// the date alone, because it is the same exhaustion seen again.
+	held := Mark{State: StateExhausted, Until: now.Add(4 * time.Hour), Since: old}
+	if got := Exhaust(held, now.Add(time.Minute), time.Time{}, set); !got.Since.Equal(old) {
+		t.Fatalf("a no-reset 429 inside the hold dated the exhaustion %s; want it to stay %s", got.Since, old)
 	}
 }
 

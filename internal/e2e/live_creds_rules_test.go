@@ -27,8 +27,10 @@
 // without FUGARO_LIVE_CREDS_RULES_OK=1 is refused.
 //
 // It is pinned to the sandbox. crTargetFrom (creds_rules_guard_test.go, no
-// build tag, covered by ordinary tests) refuses, before a single request: a
-// coding agent's session (F33); any installation but `fugaro`; any database
+// build tag, covered by ordinary tests) refuses, before a single request: an
+// aimed run from a coding agent's session (F33 — an unaimed one skips like any
+// other unaimed run, so `-run TestLive` at an agent's or an IDE's terminal is
+// a skip, not a failure); any installation but `fugaro`; any database
 // host but the sandbox project's, checked with rtdb.ValidateURL as well, so
 // the owner's credential can never be sent to `evil.example.com` or to a
 // `.firebaseio.co` look-alike; any signer that is not a service account of the
