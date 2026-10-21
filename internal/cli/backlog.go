@@ -145,8 +145,9 @@ func runBacklogList(cmd *cobra.Command, o *backlogOptions) error {
 	return enc.Encode(backlogDocument(items, o.dir))
 }
 
-// backlogListDoc is `fugaro backlog list --json` (console/docs/json-contract.md
-// §6.11): the index's rows as data, in the index's order.
+// backlogListDoc is `fugaro backlog list --json`: the index's rows as data,
+// in the index's order. The console's JSON contract describes it in its
+// backlog section, and reads this file's symbols rather than a line number.
 type backlogListDoc struct {
 	Dir     string       `json:"dir"`
 	Items   []backlogRow `json:"items"`

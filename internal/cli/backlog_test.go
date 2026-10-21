@@ -101,7 +101,7 @@ func TestBacklogListPrintsTheIndexAndWritesNothing(t *testing.T) {
 
 // TestBacklogListJSONCarriesTheIndexRows: the document is the index's rows as
 // data, in the index's order, with the count line's three figures (D28,
-// console/docs/json-contract.md §6.11). The rows are what a screen shows, so
+// the console's JSON contract's backlog section). The rows are what a screen shows, so
 // the fields are read off the wire rather than from the struct.
 //
 // Mutation (verified, run and restored): report the counts of the whole
