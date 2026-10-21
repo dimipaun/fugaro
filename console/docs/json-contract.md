@@ -572,7 +572,10 @@ variable (`Version`, `var Version = "dev"`), i.e. the release tag of a
 built binary. **The subcommand has no `--json` and no flag of any kind**, which
 is why the handshake is the one spawn that carries no `--project` (§8). The
 root command does answer `--version` and `-v` now, printing the same line
-through the same template (`internal/cli/root.go`'s `versionTemplate`), but
+through the same template (`internal/cli/root.go`'s `versionTemplate`), and a
+leading one of those is the whole command — the argv boundary reduces it to the
+flag before cobra resolves anything, so `fugaro --version run` prints the
+version and runs nothing — but
 **the handshake stays `fugaro version`**: the console's argv is pinned to the
 subcommand every CLI version in its supported range has, while the root flag is
 newer than some of them. The console parses the human line, pinned by a test

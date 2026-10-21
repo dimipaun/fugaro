@@ -2623,7 +2623,7 @@ the selected config's own `gcp_project` (`internal/cli/cloud.go:54`), so the
 pair pins the command to this installation and refuses a foreign checkout with
 `this checkout belongs to project <x>; --project says fugaro`
 (`internal/localcfg/select.go:163`). `fugaro version` is the one exception: it
-takes no flags (`internal/cli/root.go:82-88`).
+takes no flags (`internal/cli/root.go`'s `newVersionCmd`).
 
 **Paste the block into a file, not straight into an interactive zsh.** As in
 Check 43: an interactive zsh does not honour `#` comments without
