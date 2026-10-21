@@ -97,11 +97,15 @@ const centralOrchAnsweredMarker = "**Answered 2026-10-20 — the recommendation,
 
 // centralOrchReadmeStatus is the index's status sentence, and it is the one place the two
 // halves of P0's premise meet: the plan's P0 says the README carries "plan only; no code is
-// implemented", and a part landing is the one thing that would make that sentence false. The
-// sentence keeps the phrase and names, part by part, what has landed and what has not, so
-// neither half can be dropped silently — P0's guard test first, then P1's admission of the
-// service type and P3's lease, which landed after it.
-const centralOrchReadmeStatus = "**Status: plan only; three parts have landed — P0's guard test (`internal/cli/docs_central_orchestrator_test.go`, the one file that owns this folder), P1's admission of the Cloud Run service type (`internal/infra/tf/cover.go`) and P3's lease (`internal/lease`) — and P2 and P4–P9 are unbuilt.**"
+// implemented", and a part landing is what makes that sentence false. The sentence keeps the
+// phrase and states its own exception, so neither half can be dropped silently -- and it was
+// moved twice: once by the leftovers pull request after P3 landed, when the exception it named
+// (P0's guard test, and nothing else) stopped being the whole of what is in the tree, and once
+// by P1, whose admission of the Cloud Run service type is the third part. The exception it names
+// now is the guard test, P1's admission and P3's lease; a part that lands without moving this
+// sentence leaves the index saying no feature code exists while the part sits beside it, which
+// is the state this pin exists to prevent.
+const centralOrchReadmeStatus = "**Status: plan only; no part but P0 is approved, and the code in the tree is P0's guard test (`internal/cli/docs_central_orchestrator_test.go`, the one file that owns this folder), P1's admission of the Cloud Run service type (`internal/infra/tf/cover.go`, where every service is refused by name until P4 writes the checks one owes) and P3's lease (the `internal/lease` package and the rules' `orchestrators` family, landed by #782, whose model is written out at the end of P3 in `implementation-plan.md`) — every other part is unbuilt.**"
 
 // centralOrchReadmeStaleStatus are the status sentences the index has carried and must not
 // carry again: the pre-P0 one, which said no code existed at all, and P0's own, which said the
@@ -128,7 +132,7 @@ const (
 	centralOrchReconciledRegister    = "**The register, read by name against `main`.**"
 	centralOrchReconciledNextFree    = "**The next free block is D221 onward, not D193 onward.**"
 	centralOrchReadmeOwner           = "**Owner: Dimi Paun. Date: 2026-10-20. Base: `main` at `2f8b4dca`**"
-	centralOrchPlanStatus            = "P0 — the guard test that pins this folder and its citations, `internal/cli/docs_central_orchestrator_test.go` — has landed, and so have P1 (the Cloud Run service type admitted to the Terraform cover, `internal/infra/tf/cover.go` and `internal/infra/tf/managed_cover.go`) and P3 (the lease, `internal/lease`)"
+	centralOrchPlanStatus            = "P0 — the guard test that pins this folder and its citations, `internal/cli/docs_central_orchestrator_test.go` — has landed, and so have **P1** (the Cloud Run service type admitted to the Terraform cover, `internal/infra/tf/cover.go` and `internal/infra/tf/managed_cover.go`, where every service is refused by name until P4 writes the checks one owes) and **P3** (`internal/lease`, the rules' `orchestrators` family and `RulesVersion` 4, landed by #782"
 	centralOrchReadmeNoCheck         = "**not claimed and not written.**"
 	centralOrchReadmeRegisterReading = "**the highest D-number written anywhere under `docs/` is D220 and the next free block is D221 onward**"
 	// The three sentences that say P0 has landed, one per document. Each was stale until the

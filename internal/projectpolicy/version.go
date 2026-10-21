@@ -225,11 +225,13 @@ const PolicyRulesVersion = 1
 // its published policy for nothing. The lease is a **subtree that did not
 // exist**, and what matters is the write that must not be allowed before the
 // document is deployed. A takeover is a compare-and-set the database enforces
-// (internal/budget/rules' LEASEWRITE, whose `take` clause admits one only when
-// the seat is free or its holder has not renewed for the grace), and the seat
-// the *holder* relies on is only a seat because the rules say so: under a
-// generation-3 document every lease call is refused — no grant reaches the
-// path and the root is `.write: false` — so there is no state in which two
+// (internal/budget/rules' LEASEWRITE: the four transitions that may change the
+// record — create, renew, take over, release — and nothing else; a seat is
+// taken over only when it is free or its holder has not renewed for the grace,
+// and a write that leaves a held seat carries a stamp the database made), and
+// the seat the *holder* relies on is only a seat because the rules say so:
+// under a generation-3 document every lease call is refused — no grant reaches
+// the path and the root is `.write: false` — so there is no state in which two
 // orchestrators both believe they hold one. The generation is what makes that
 // refusal the documented one rather than a permission error an operator has to
 // interpret.

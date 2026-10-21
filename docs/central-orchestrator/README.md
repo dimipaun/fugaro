@@ -1,21 +1,23 @@
 # Central orchestrators — the documents
 
-**Status: plan only; three parts have landed — P0's guard test
+**Status: plan only; no part but P0 is approved, and the code in the tree is P0's guard test
 (`internal/cli/docs_central_orchestrator_test.go`, the one file that owns this folder), P1's
-admission of the Cloud Run service type (`internal/infra/tf/cover.go`) and P3's lease
-(`internal/lease`) — and P2 and P4–P9 are unbuilt.** This directory holds the owner's spec
-for **central orchestrators** — Fugaro orchestrators that run permanently in the cloud instead
-of on a developer's machine (`spec.md`, verbatim) — the reconciliation of that spec against the
-code at `origin/main` **`2f8b4dca`**, the decisions the reconciliation could not answer on its
-own (**D1–D26**), and the plan that follows from them (`implementation-plan.md`). **Six of the
+admission of the Cloud Run service type (`internal/infra/tf/cover.go`, where every service is
+refused by name until P4 writes the checks one owes) and P3's lease (the `internal/lease` package
+and the rules' `orchestrators` family, landed by #782, whose model is written out at the end of
+P3 in `implementation-plan.md`) — every other part is unbuilt.** This directory holds the
+owner's spec for **central orchestrators** — Fugaro orchestrators that run permanently in the
+cloud instead of on a developer's machine (`spec.md`, verbatim) — the reconciliation of that
+spec against the code at `origin/main` **`2f8b4dca`**, the decisions the reconciliation could
+not answer on its own (**D1–D26**), and the plan that follows from them
+(`implementation-plan.md`). **Six of the
 twenty-six decisions are answered — D1, D2, D3, D6, D12 and D19, each as its recommendation,
 by the owner on 2026-10-20 — and D4–D5, D7–D11, D13–D18 and D20–D26 are still open**
 (reconciliation §6). Nothing else follows from these documents yet: no TypeScript, no
-Terraform, no `.github/workflows` change and no live action. The Go and the rules they have
-produced are the guard test P0 adds, `internal/cli/docs_central_orchestrator_test.go`; P1's one
-type in `internal/infra/tf/cover.go` and `internal/infra/tf/managed_cover.go`; and P3's lease —
-`internal/lease` and the generation-4 rules change in `internal/budget/rules` — and nothing
-beyond them. **Owner: Dimi Paun. Date: 2026-10-20. Base: `main` at `2f8b4dca`** — the commit
+Terraform, no `.github/workflows` change and no live action — the Go and the one rules change
+they have produced are P0's guard test, P1's one type in `internal/infra/tf/cover.go` and
+`internal/infra/tf/managed_cover.go`, and P3's lease and its `orchestrators` family, all named
+above. **Owner: Dimi Paun. Date: 2026-10-20. Base: `main` at `2f8b4dca`** — the commit
 every path and symbol below was read at, and this branch's own merge base.
 
 **Nothing here is approved.** The owner wrote the spec; the reconciliation and the plan are

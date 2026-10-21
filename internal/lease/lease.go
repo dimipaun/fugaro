@@ -99,6 +99,30 @@ const (
 	// mode and the PR on the other — and neither is written without the other
 	// having run.
 	MaxString = 200
+
+	// ServerClockSlack is how far behind the database's true clock a reading of
+	// DB.ServerNow can be, and therefore how much earlier than a lease's expiry
+	// a holder has to stop acting on it.
+	//
+	// The database's clock is not read directly: a reading is the Date header of
+	// a response with the time this process has measured since that response
+	// arrived (rtdb.Client.ServerNow). An HTTP Date carries whole seconds, so
+	// the reading is the database's own second, truncated, and it can be as much
+	// as that second behind the instant the database would stamp a write with
+	// (rtdb/client.go states the resolution). A holder that acted until the
+	// un-adjusted expiry would therefore be acting for up to a second after the
+	// database had already let another orchestrator take the seat over — the one
+	// window in which the two would be acting on the same job, which is what
+	// this package exists to prevent. The stop-acting deadline a failed
+	// heartbeat carries is the expiry less this slack for that reason
+	// (UnsureError.Until), and the margin is a constant rather than a number in
+	// the comparison so that the reading's resolution is the only thing that
+	// sets it (TestAFailedHeartbeatSaysHowLongTheHolderMayAct pins it).
+	//
+	// It is deliberately not subtracted anywhere else: Record.Fresh's boundary
+	// is the deployed rules' own, to the instant, and a client that moved *that*
+	// would either refuse a takeover the database allows or send one it refuses.
+	ServerClockSlack = time.Second
 )
 
 // ErrHeld is the sentinel of a refused takeover: another orchestrator holds a
@@ -378,9 +402,9 @@ func (e *LostError) Unwrap() error { return ErrLost }
 // database could not be asked, or the write failed in a way that says nothing
 // about who holds the seat. It is what a holder sees when its renewals keep
 // failing, and it carries the one thing that lets it decide what to do — Until,
-// the instant past which the seat is certainly not its own any more
-// (held.RenewedAt + grace, on the database's clock). A caller that gets one
-// keeps acting until then and stops after it.
+// the instant past which this holder must stop acting on the job
+// (held.RenewedAt + grace less ServerClockSlack, on the database's clock). A
+// caller that gets one keeps acting until then and stops after it.
 //
 // It is deliberately not a *LostError. Losing the seat is a fact and a caller
 // stops on it at once; this is the absence of a fact, and a caller that
@@ -395,7 +419,12 @@ type UnsureError struct {
 	Path string
 	Held Record // the seat this caller believed it held
 	// Until is the last instant this caller may act on the job: the held
-	// lease's expiry, renewed_at + grace, on the database's clock.
+	// lease's expiry (renewed_at + grace, on the database's clock) less
+	// ServerClockSlack. The held record's own expiry is Held.Expires, and the
+	// slack is what keeps a holder from acting in the window between the moment
+	// the database lets another orchestrator take the seat over and the moment
+	// this process's reading of the database's clock reaches it: see
+	// ServerClockSlack.
 	Until time.Time
 	// Err is why the heartbeat failed: an outage, a refusal, a decode.
 	Err error
@@ -411,9 +440,12 @@ func (e *UnsureError) Error() string {
 func (e *UnsureError) Unwrap() []error { return []error{ErrUnsure, e.Err} }
 
 // MayAct reports whether this caller may still act on the job: true while the
-// database's clock has not reached Until. A database that has never told its
-// clock answers false — without the database's clock a lease cannot be judged
-// (D3), and the safe reading of "I cannot tell" is "stop".
+// database's clock has not reached Until, which is the lease's expiry less
+// ServerClockSlack — so the answer is false for the last second of the seat's
+// life as well as after it, and a caller judging by this method is out of the
+// seat before the database lets anyone else into it. A database that has never
+// told its clock answers false — without the database's clock a lease cannot be
+// judged (D3), and the safe reading of "I cannot tell" is "stop".
 func (e *UnsureError) MayAct(db DB) bool {
 	now, ok := db.ServerNow()
 	return ok && now.Before(e.Until)
@@ -470,10 +502,14 @@ func put(ctx context.Context, db DB, path, etag string, r Record) (Record, error
 }
 
 // unsure is the typed result of a heartbeat that did not land: the caller may
-// still hold the seat, and Until is the instant past which it certainly does
-// not (see UnsureError).
+// still hold the seat, and Until is the instant past which it must stop acting
+// on the job — the held lease's expiry less ServerClockSlack, because a reading
+// of the database's clock can lag the instant the database stamps a write with,
+// and the margin is what keeps this holder out of the window that opens when
+// the database already lets another orchestrator take the seat over
+// (see ServerClockSlack).
 func unsure(path string, held Record, err error) error {
-	return &UnsureError{Path: path, Held: held, Until: held.Expires(DefaultGrace), Err: err}
+	return &UnsureError{Path: path, Held: held, Until: held.Expires(DefaultGrace).Add(-ServerClockSlack), Err: err}
 }
 
 // Read is the lease as the database holds it. found is false for an absent
