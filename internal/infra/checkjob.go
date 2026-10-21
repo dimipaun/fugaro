@@ -23,7 +23,7 @@ import (
 // The daily image check job's base, set directly (design image-refresh.md,
 // "The check job and Terraform"). fugaro image refresh moves the job's
 // container image and FUGARO_CHECK_SPEC's base_images together, to exactly
-// what Repo renders from the same local config, so the next init --repo
+// what Repo renders from the same local config, so the next fugaro update
 // plans no change. Terraform's module is unchanged: it cannot ignore one env
 // entry, and the bytes it would write are these.
 //
@@ -35,9 +35,9 @@ import (
 // So the job goes back exactly as read, every field and number kept as its
 // JSON text, except the container's image and FUGARO_CHECK_SPEC's value.
 
-// ErrCheckJobShape marks a check job that is not as fugaro init --repo made
-// it: a user error whose fix is init --repo.
-var ErrCheckJobShape = errors.New("the check job is not as fugaro init --repo made it")
+// ErrCheckJobShape marks a check job that is not as fugaro update made
+// it: a user error whose fix is fugaro update.
+var ErrCheckJobShape = errors.New("the check job is not as fugaro update made it")
 
 // checkJobPoll is the wait between reads of a job update's operation; tests
 // set it to 0.
@@ -61,12 +61,12 @@ const maxJobJSON = 4 << 20
 // through CheckJobSpec changes base_images and nothing else. A spec with a
 // key CheckJobSpec lacks (written by another fugaro version) or in another
 // form (edited by hand) is refused with ErrCheckJobShape, telling the
-// operator to run init --repo first, rather than silently dropping or
+// operator to run fugaro update first, rather than silently dropping or
 // rewriting what this binary does not understand.
 func RewriteCheckSpec(raw, image string, bases map[string]string) (spec, newImage string, err error) {
 	var s CheckJobSpec
 	if err := json.Unmarshal([]byte(raw), &s); err != nil {
-		return "", "", fmt.Errorf("%w: its %s is not a check spec (%v); run fugaro init --repo in the checkout", ErrCheckJobShape, CheckSpecEnv, err)
+		return "", "", fmt.Errorf("%w: its %s is not a check spec (%v); run fugaro update in the checkout", ErrCheckJobShape, CheckSpecEnv, err)
 	}
 	kind := ""
 	for _, k := range slices.Sorted(maps.Keys(s.BaseImages)) {
@@ -76,7 +76,7 @@ func RewriteCheckSpec(raw, image string, bases map[string]string) (spec, newImag
 		}
 	}
 	if kind == "" {
-		return "", "", fmt.Errorf("%w: its image %s is none of its spec's base images (%s); run fugaro init --repo in the checkout", ErrCheckJobShape, image, strings.Join(slices.Sorted(maps.Values(s.BaseImages)), ", "))
+		return "", "", fmt.Errorf("%w: its image %s is none of its spec's base images (%s); run fugaro update in the checkout", ErrCheckJobShape, image, strings.Join(slices.Sorted(maps.Values(s.BaseImages)), ", "))
 	}
 	legacy := false
 	for k := range s.BaseImages {
@@ -136,10 +136,10 @@ func checkStrictAndCanonical(raw string, s CheckJobSpec) error {
 	strict := json.NewDecoder(strings.NewReader(raw))
 	strict.DisallowUnknownFields()
 	if err := strict.Decode(&CheckJobSpec{}); err != nil {
-		return fmt.Errorf("%w: its %s has keys this fugaro does not know (%v), so rewriting it would drop them; run fugaro init --repo in the checkout with this fugaro first", ErrCheckJobShape, CheckSpecEnv, err)
+		return fmt.Errorf("%w: its %s has keys this fugaro does not know (%v), so rewriting it would drop them; run fugaro update in the checkout with this fugaro first", ErrCheckJobShape, CheckSpecEnv, err)
 	}
 	if canon, err := json.Marshal(s); err != nil || string(canon) != raw {
-		return fmt.Errorf("%w: its %s is not in the form fugaro init --repo writes, so it cannot be rewritten as Terraform would render it; run fugaro init --repo in the checkout first", ErrCheckJobShape, CheckSpecEnv)
+		return fmt.Errorf("%w: its %s is not in the form fugaro update writes, so it cannot be rewritten as Terraform would render it; run fugaro update in the checkout first", ErrCheckJobShape, CheckSpecEnv)
 	}
 	return nil
 }
@@ -180,7 +180,7 @@ func (u *CheckJobUpdate) Changes() bool {
 
 // PlanCheckJob reads the check job and plans moving it to bases
 // (RewriteCheckSpec). It is read-only; nil, nil when there is no such job.
-// The job must be owner's check job as init --repo made it: labelled
+// The job must be owner's check job as fugaro update made it: labelled
 // fugaro=managed, fugaro_role=check and fugaro_repo=owner.Label, with
 // exactly one container, one plain FUGARO_CHECK_SPEC whose repo is
 // owner.Repo, and an etag; anything else is ErrCheckJobShape.
@@ -201,7 +201,7 @@ func PlanCheckJob(ctx context.Context, c *Clients, gcpProject, region, job strin
 		return nil, fmt.Errorf("reading Cloud Run job %s: %w", job, err)
 	}
 	shape := func(format string, a ...any) error {
-		return fmt.Errorf("%w: job %s %s; run fugaro init --repo in the checkout", ErrCheckJobShape, job, fmt.Sprintf(format, a...))
+		return fmt.Errorf("%w: job %s %s; run fugaro update in the checkout", ErrCheckJobShape, job, fmt.Sprintf(format, a...))
 	}
 	labels := map[string]string{}
 	if m, ok := j["labels"].(map[string]any); ok {
@@ -363,11 +363,11 @@ func (u *WorkflowJobUpdate) Changes() bool { return u != nil && u.oldImage != u.
 // PlanWorkflowJob reads a checkout: clone workflow's job and plans moving
 // its container's image to newImage (the local config's base_images.base).
 // It is read-only; nil, nil when there is no such job. The job must be
-// owner's workflow job as init --repo made it: labelled fugaro=managed,
+// owner's workflow job as fugaro update made it: labelled fugaro=managed,
 // fugaro_repo=owner.Label and fugaro_workflow=workflow, with
 // FUGARO_CHECKOUT=clone in its container's environment; anything else is
 // ErrCheckJobShape (the same shape error the check job's own plan uses:
-// both name the same fix, fugaro init --repo). The environment is checked
+// both name the same fix, fugaro update). The environment is checked
 // as well as the labels because a baked job's image must never be moved to
 // the base image: it still expects the checkout baked into its own image.
 func PlanWorkflowJob(ctx context.Context, c *Clients, gcpProject, region, job, workflow, newImage string, owner CheckJobOwner) (*WorkflowJobUpdate, error) {
@@ -387,7 +387,7 @@ func PlanWorkflowJob(ctx context.Context, c *Clients, gcpProject, region, job, w
 		return nil, fmt.Errorf("reading Cloud Run job %s: %w", job, err)
 	}
 	shape := func(format string, a ...any) error {
-		return fmt.Errorf("%w: job %s %s; run fugaro init --repo in the checkout", ErrCheckJobShape, job, fmt.Sprintf(format, a...))
+		return fmt.Errorf("%w: job %s %s; run fugaro update in the checkout", ErrCheckJobShape, job, fmt.Sprintf(format, a...))
 	}
 	labels := map[string]string{}
 	if m, ok := j["labels"].(map[string]any); ok {
@@ -435,7 +435,7 @@ func PlanWorkflowJob(ctx context.Context, c *Clients, gcpProject, region, job, w
 }
 
 // cloneJobEnv reports whether ct's environment sets FUGARO_CHECKOUT=clone
-// as a plain value: the mark init --repo writes on a checkout: clone
+// as a plain value: the mark fugaro update writes on a checkout: clone
 // workflow's job (workflow() in spec.go sets it from config.CheckoutClone).
 // A variable set from a secret reference is not the mark, and a job that
 // names it twice is not one Fugaro wrote either way, so only the first

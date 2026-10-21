@@ -44,10 +44,16 @@ package cli
 // Mentions are matched over flattened text -- line-comment markers dropped,
 // whitespace collapsed, the normalisation docs_base_test.go's flattenDoc
 // already uses -- so a mention wrapped across a line break or across a `//`
-// counts, and the four files in this tree that name the command only in a
-// wrapped spelling are on the list. W2.6's claim that the live tree names the
-// retired command nowhere is only worth making if the scan can see the
-// wrapped spellings it is claiming about.
+// counts, and the two files on the list that name the command nowhere else --
+// internal/cli/managed_apply.go and internal/cli/project_job.go -- are there
+// for that reason. W2.6's claim that the live tree names the retired command
+// nowhere is only worth making if the scan can see the wrapped spellings it is
+// claiming about, and W2.2's sweep is where that was cashed: the plan gives
+// that task's file list from a line-based `grep`, so two of the files it
+// renamed -- internal/gcpfake/firebasemgmt.go and
+// internal/infra/managed/untrusted_test.go -- are on the list without being on
+// that command's output, exactly as the two internal/cli files above are on it
+// without being on the 48-file list the plan gives W2.1.
 //
 // W2.6 -- the task that empties the census -- flips this file's terminal
 // assertion from "the walk found something" to "`pendingRename` is empty", and
@@ -100,20 +106,35 @@ var datedRecords = []string{
 // retirementText is the second exemption class, and it is not a judgement
 // call: each of these paths names `fugaro init` *as the retired verb*, which
 // is its whole job and which no rename can remove. It is a list of paths that
-// MAY name the command, so a path that does not exist yet contributes nothing
-// -- W1.2 adds the first two, and the third is this file, whose scan pattern
-// is the string. W2.6 asserts that the files naming the command are exactly
-// `datedRecords` plus these three.
+// MAY name the command, so a path that does not exist yet contributes nothing.
+// W2.6 asserts that the files naming the command are exactly `datedRecords`
+// plus these four.
 //
-// internal/cli/testdata/init_retire.golden is deliberately NOT here. As W0.2
-// read it, it named the command four times -- the deprecation warning's prose
-// and the three command lines the retirement transcript prints -- and it is a
-// transcript, not a retirement statement: every one of the four was a string
-// the rename reaches, so W2.1 regenerated it with
+// The entries are named here rather than counted, because the list is appended
+// to and an ordinal goes stale the moment it is: a sentence like "the third is
+// this file" is true only for as long as nothing is inserted above it. In the
+// order the slice holds them: internal/cli/retired.go and
+// internal/cli/retired_test.go, W1.2's tombstone and the test that asserts its
+// message; internal/cli/docs_live_init_census_test.go, this file, whose scan
+// pattern is the string; and internal/agent/relay_test.go, which is here for
+// the tombstone's reason -- it carries one case whose whole subject is that the
+// retired word is no longer a subcommand the run summary reports
+// (`TestRelayOnToolNeverRepeatsTheRawCommand`, "the retired init word is not a
+// subcommand any more"), and its input has to be the retired command line, so
+// no rename can take the mention out and renaming it would delete the
+// assertion. The plan counts this class as three because it was written before
+// W1.2 existed and before that case was added; the class's rule, not its old
+// count, is what decides, and this file fits the rule.
+//
+// internal/cli/testdata/init_retire.golden is deliberately NOT here, although
+// it named the command four times before W2.2: it is a transcript, not a
+// retirement statement, and the three it names today are internal/cli's own
+// strings -- W2.1's -- so W1.2/W2.1 regenerate it with
 // TestInitRepoRetireTranscriptGolden -update-retire exactly like the other two
-// goldens and took it off `pendingRename` in that commit. An exemption for a
-// file the rename empties is the "wrong in one direction" case Global
-// Constraint 7 forbids.
+// goldens. The fourth was internal/localcfg's build.service_account warning,
+// which W2.2 renamed in the commit that renamed the string it quotes. An
+// exemption for a file the rename empties is the "wrong in one direction" case
+// Global Constraint 7 forbids.
 var retirementText = []string{
 	// W1.2's tombstone: one message, two names, non-zero exit.
 	"internal/cli/retired.go",
@@ -122,6 +143,9 @@ var retirementText = []string{
 	// This file: `pendingRename` is a list of paths, but the pattern below is
 	// the string itself.
 	"internal/cli/docs_live_init_census_test.go",
+	// W1.2's relay case, whose input is the retired command line because the
+	// assertion is that the word is retired.
+	"internal/agent/relay_test.go",
 }
 
 // liveRoots is what the census walks. Every top-level entry that names the
@@ -141,10 +165,6 @@ var liveRoots = []string{
 	"website",
 	"schemas",
 	"scripts",
-	// The desktop console is a live root from W2.1 on: its README and one of
-	// its unit tests name the command, and the second test below refuses a
-	// root that names it and is not walked.
-	"console",
 	"internal",
 	"images",
 	"deploy",
@@ -168,23 +188,36 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 175 files -- 64 non-test Go files, 69 test files,
-// 36 markdown files, and the six that fall in none of those groups: the
-// website's four (its install data, its two pages and its test script), the
-// getting-started design board the redesign was approved from,
-// website/design-ref/GettingStartedV4.dc.html, and console/test/unit/ipc.test.ts
-// (console/README.md is markdown and counted with the 36). No golden is on it
-// any more: W2.1's rename emptied all three, and the walk refuses a listed file
-// that stopped naming the command -- website/content/cli-reference.md left the
-// same way, regenerated from the command tree by `go run ./internal/clidoc`,
-// which is the only way that page can be written. Read on main at
-// `1d325928`, this
+// command, sorted. It is 59 files -- 19 test files, 35 markdown files, and the
+// five that fall in none of those groups: the website's install data
+// (website/data/install.yaml), its two files that print the command
+// (website/src/pages/getting-started.astro and
+// website/src/components/Changelog.astro), its test script
+// (website/test/caps-and-costs.mjs), and the getting-started design board the
+// redesign was approved from, website/design-ref/GettingStartedV4.dc.html.
+// No non-test Go file and no golden is on it any more: W2.1's rename emptied
+// internal/cli and the retirement transcript, and the generated page left it
+// when its generator ran.
+// Read on main at `1d325928`, this
 // branch's base, it was **312** files -- 118 non-test Go files, 117 test files,
 // 34 markdown files, 29 Terraform files, the four `.tftest.hcl` fixtures beside
 // them, the two goldens, and eight in none of those groups: the website's four,
 // the two under images/ (a Dockerfile and a shell script), the published
 // schema, and internal/config/example.yaml, the sample config
 // internal/config/example.go embeds.
+//
+// **W2.1 moved the list 107 files down, and it is the last L2 sweep.** 104
+// were internal/cli's own -- the engine's lines, the refusals, the left-for-you
+// commands and the tests that assert them, renamed together in one task -- and
+// one was the generated website/content/cli-reference.md, which
+// `go run ./internal/clidoc` renders from the command tree and so left the
+// list by being regenerated, not edited. Two more emptied as that commit's
+// own consequences: internal/cli/testdata/init_retire.golden, rewritten by
+// TestInitRepoRetireTranscriptGolden -update-retire (the golden the two L2
+// tasks were split by), and internal/e2e/init_test.go, whose assertions read
+// internal/cli's own output -- the file W2.2 deliberately left on this list
+// because the strings it quotes did not exist yet, and which W5.2 renames to
+// update_test.go with the assertions it now holds.
 //
 // **The list moves in both directions, and each move is a merge a reader can
 // find.** Forty-four files left it because the rename reached them: #766 (W2.5)
@@ -199,8 +232,9 @@ const censusRoot = "../.."
 // its rename would fail the walk in the direction that costs the most: it would
 // read as a promise still owed.
 //
-// Eleven files joined it, every one a mention the rename still owes, and eight
-// merges put them there. #775 (the central-orchestrator folder's spec,
+// Eleven files joined it, every one a mention the rename owes or has since
+// paid, and eight merges put them there. #775 (the central-orchestrator folder's
+// spec,
 // reconciliation and plan) added docs/central-orchestrator/{README,
 // implementation-plan}.md and #793 (the coordinator's plan) added
 // docs/coordinator/implementation-plan.md -- both another artifact's dated
@@ -213,10 +247,11 @@ const censusRoot = "../.."
 // pattern rather than text a user reads -- the guard that Check 27's Restore
 // does not name the retired command, the same job this file's own pattern does
 // -- so W2.1 has to re-point it rather than rename it; #765 (W1.1) added
-// internal/cli/loop_program_test.go, whose loopProgramWant is the front door
-// the stage engine is driven with and which W2.1 renames when the front door is
-// `fugaro setup`; and #770 (W0.1) added internal/cli/setup_refusals_test.go, a
-// comment naming the bare `init --repo` form. The eleventh, #778's
+// internal/cli/loop_program_test.go, whose loopProgramWant was the front door
+// the stage engine is driven with and which #789 renamed to `fugaro setup`,
+// taking that file off this list; and #770 (W0.1) added
+// internal/cli/setup_refusals_test.go, a comment naming the bare `init --repo`
+// form. The eleventh, #778's
 // website/design-ref/GettingStartedV4.dc.html, is the one whose remedy is not
 // the rename's to make alone: it is the owner-approved board for the
 // getting-started page printing the command in its own copy, and the folder's
@@ -225,45 +260,40 @@ const censusRoot = "../.."
 // leaving it on the list is what keeps that choice visible instead of settled
 // by a walk that stopped looking.
 //
-// **W2.1 moved it furthest, and its branch also paid a debt W1.2 left.** The
-// internal/cli rename took 109 files off the list: every non-test and test file
-// of that package whose mention was text a reader acts on (the flag help, the
-// left-for-you lines, the refusals, the goldens' transcripts and the comments
-// that named the command), which is the bulk of it. Five of the 109 had already
-// stopped naming the command in the commit that renamed the front door -- W1.2's
-// b3cd14cd, which renamed plugin/skills/setup/SKILL.md and its two reference
-// pages, plugin/skills/working/reference/status.md and plugin/skills_lint_test.go
-// and left all five listed, and took the mention out of
-// internal/cli/loop_program_test.go without touching its row. The census failed
-// in both directions on that commit's tip, so W2.1's branch takes the five off
-// and adds the four the walk found unlisted: internal/cli/docs_checkout_test.go
-// and internal/agent/relay_test.go, whose mentions another task owns (the docs
-// rename and the agent package's), and console/README.md with
-// console/test/unit/ipc.test.ts, which is why the second test below now finds
-// console/ a live root -- it names the command, so the walk covers it.
+// **#789 (W1.2), the merge that retired the word, moved the list six files down
+// and one up, and this file is where that is paid for.** It emptied six listed
+// files by renaming their mentions -- internal/cli/loop_program_test.go, the
+// setup skill's plugin/skills/setup/SKILL.md and its reference/decisions.md and
+// reference/transitions.md, plugin/skills/working/reference/status.md and
+// plugin/skills_lint_test.go -- and left them on the list, where the walk then
+// read them as six promises still owed; the paragraph below asks the opposite
+// of every rename task, so they come off here. The one it added is
+// internal/cli/docs_checkout_test.go, a comment explaining that the doc it
+// checks still spells the command the retired way, which is W2.1's mention to
+// rename along with the doc itself; it goes on the list for the same reason.
 //
-// The package's own test run then handed ten files back, and that is the honest
-// shape of a rename this size: those ten are not files whose prose the rename
-// missed. Each one asserts a string some OTHER package still prints -- the five
-// docs_*_test.go here read the pages W2.2/W2.3 rename (docs_clone_workflows,
-// docs_compute_backend, docs_managed_label, docs_mobile_checks, docs_providers),
-// internal/cli/init_test.go quotes internal/infra/readiness.go's own refusal,
-// managed_apply_test.go internal/managed/budget.go's, project_test.go and
-// project_shared_test.go internal/localcfg/select.go's, run_oauth_test.go
-// internal/backend/gcp/run.go's, and doctor_bucket_test.go the four cures
-// internal/infra/hardening.go writes -- so renaming an expectation there would leave
-// a test asserting a line its package no longer prints. They came off this list
-// in W2.1's first pass and the walk put them back the moment the expectations
-// were restored to the strings the tree actually emits: an assertion that pins
-// another package's text is a mention the other package's task takes off, not
-// this one's. Two came off it in the same pass, because their only mention
-// was this package's own prose: internal/cli/init_firebase_test.go's note about
-// what a plain run keeps, and internal/cli/image_layer_test.go's about the
-// first builds being billable. One file went the other way in the same pass:
-// internal/cli/sharedcfg_validate_test.go asserted the refusal sharedcfg.go
-// writes, which IS this package's own line, so its expectation moved with the
-// rename and it left the list -- the swap it makes with doctor_bucket_test.go
-// is the two directions this list is meant to move in, in one commit.
+// **W2.2 moved the list 108 files down, and that is the widest move it takes.**
+// Every file on it outside internal/cli that named the command is renamed
+// there: 64 non-test Go files (the 60 the census command names, the bare
+// `init --repo` of internal/backend/backend.go,
+// internal/config/project_secrets.go and internal/runner/policy.go, and the one
+// wrapped-only file above, internal/gcpfake/firebasemgmt.go) and 43 test files
+// (the 37 the command names, the 5
+// the `init --repo` pattern adds, and
+// internal/infra/managed/untrusted_test.go, which only the walk sees). A
+// forty-fourth is internal/cli's own -- managed_apply_test.go asserts a
+// sentence internal/managed writes, so it leaves the list in this commit
+// although the file is W2.1's -- and the rename reaches seven more files in
+// that package that stay: a test in internal/cli that reads a string W2.2
+// renamed has to move with it, wherever it lives, which is the rule the two
+// L2 tasks are split by.
+//
+// One file it touches stays, and it is the exception to that rule:
+// internal/e2e/init_test.go, whose nine assertions read internal/cli's own
+// output -- W2.1's strings, which do not exist yet -- so they stay as they are
+// until W2.1 lands, and the file stays here with them. A test cannot be moved
+// to a string no task has written; that file is the one place the order of the
+// two L2 tasks is visible.
 //
 // Each task that renames a string takes the file off this list in the same
 // commit, and W2.6 empties it.
@@ -272,8 +302,6 @@ var pendingRename = []string{
 	"CONTRIBUTING.md",
 	"README.md",
 	"SECURITY.md",
-	"console/README.md",
-	"console/test/unit/ipc.test.ts",
 	"docs/backends.md",
 	"docs/base-image-migration.md",
 	"docs/base-image.md",
@@ -303,24 +331,6 @@ var pendingRename = []string{
 	"docs/rigor-modes/implementation-plan.md",
 	"docs/rigor-modes/reconciliation.md",
 	"docs/windows-cli/reconciliation.md",
-	"internal/agent/agent_test.go",
-	"internal/agent/relay_test.go",
-	"internal/backend/backend.go",
-	"internal/backend/backendtest/backendtest.go",
-	"internal/backend/gcp/live_test.go",
-	"internal/backend/gcp/names.go",
-	"internal/backend/gcp/run.go",
-	"internal/backend/gcp/run_test.go",
-	"internal/basepin/basepin.go",
-	"internal/budget/fixture_test.go",
-	"internal/budget/registry.go",
-	"internal/budget/registry_test.go",
-	"internal/budget/rollover.go",
-	"internal/budget/rules/creds_emulator_test.go",
-	"internal/budget/rules/harness_test.go",
-	"internal/budget/rules/marker.go",
-	"internal/budget/session.go",
-	"internal/budget/session_test.go",
 	"internal/cli/docs_base_test.go",
 	"internal/cli/docs_checkout_test.go",
 	"internal/cli/docs_clone_workflows_test.go",
@@ -337,103 +347,7 @@ var pendingRename = []string{
 	"internal/cli/docs_release_notes_test.go",
 	"internal/cli/docs_setup_wizard_checks_test.go",
 	"internal/cli/doctor_bucket_test.go",
-	"internal/cli/image_refresh_steps_test.go",
-	"internal/cli/init_test.go",
-	"internal/cli/managed_apply_test.go",
-	"internal/cli/project_shared_test.go",
-	"internal/cli/project_test.go",
-	"internal/cli/run_oauth_test.go",
-	"internal/config/config.go",
-	"internal/config/project_secrets.go",
-	"internal/config/providers.go",
-	"internal/config/routing.go",
-	"internal/e2e/init_test.go",
-	"internal/e2e/live_budget_test.go",
-	"internal/gateway/route.go",
-	"internal/gcpfake/firebasemgmt.go",
-	"internal/gcpfake/logging.go",
-	"internal/gcpfake/rtdb.go",
-	"internal/gcpfake/serviceusage.go",
-	"internal/imagecheck/check.go",
-	"internal/infra/apis.go",
-	"internal/infra/checkjob.go",
-	"internal/infra/checkjob_test.go",
-	"internal/infra/discover.go",
-	"internal/infra/discover_firebase.go",
-	"internal/infra/discover_firebase_test.go",
-	"internal/infra/discover_test.go",
-	"internal/infra/firebase.go",
-	"internal/infra/firebase_test.go",
-	"internal/infra/firebasedb.go",
-	"internal/infra/hardening.go",
-	"internal/infra/hardening_test.go",
-	"internal/infra/installation.go",
-	"internal/infra/installation_terraform_test.go",
-	"internal/infra/installation_test.go",
-	"internal/infra/managed/deletelist.go",
-	"internal/infra/managed/deletelist_test.go",
-	"internal/infra/managed/marker.go",
-	"internal/infra/managed/untrusted_test.go",
-	"internal/infra/project.go",
-	"internal/infra/projectcreate.go",
-	"internal/infra/projectjobs.go",
-	"internal/infra/projectjobs_test.go",
-	"internal/infra/readiness.go",
-	"internal/infra/readiness_optional_test.go",
-	"internal/infra/readiness_policy_test.go",
-	"internal/infra/repo.go",
-	"internal/infra/retire.go",
-	"internal/infra/spec.go",
-	"internal/infra/spec_test.go",
-	"internal/infra/statebucket.go",
-	"internal/infra/statebucket_test.go",
-	"internal/infra/tf/env.go",
-	"internal/infra/tf/managed_cover.go",
-	"internal/infra/tf/project_golden_test.go",
-	"internal/infra/tf/tf.go",
-	"internal/infra/tfvars.go",
-	"internal/infra/workdir.go",
-	"internal/infra/workdir_test.go",
-	"internal/localcfg/localcfg.go",
-	"internal/localcfg/localcfg_test.go",
-	"internal/localcfg/select.go",
-	"internal/localcfg/select_shared_test.go",
-	"internal/localcfg/select_test.go",
-	"internal/managed/apply.go",
-	"internal/managed/budget.go",
-	"internal/managed/budget_test.go",
-	"internal/managed/inventory.go",
-	"internal/managed/inventory_test.go",
-	"internal/mirror/ref.go",
-	"internal/preflight/google.go",
-	"internal/preflight/preflight.go",
-	"internal/projectpolicy/accounts.go",
-	"internal/projectpolicy/policy.go",
-	"internal/projectpolicy/profiles.go",
-	"internal/projectpolicy/profiles_test.go",
-	"internal/projectpolicy/read.go",
-	"internal/projectpolicy/read_test.go",
-	"internal/projectpolicy/version.go",
-	"internal/projectpolicy/version_test.go",
-	"internal/runner/backend_run_test.go",
-	"internal/runner/backend_test.go",
-	"internal/runner/budget_session.go",
-	"internal/runner/gateway.go",
-	"internal/runner/halt.go",
-	"internal/runner/halt_test.go",
-	"internal/runner/layer_claim_test.go",
-	"internal/runner/policy.go",
-	"internal/runner/policy_test.go",
-	"internal/runner/project.go",
-	"internal/runner/project_test.go",
-	"internal/runner/projectjob.go",
-	"internal/runner/projectjob_internal_test.go",
-	"internal/runner/projectpolicy.go",
-	"internal/runner/projectpolicy_test.go",
-	"internal/runner/provider_policy_test.go",
-	"internal/runner/providers.go",
-	"internal/runner/providers_test.go",
-	"internal/runner/spend.go",
+	"internal/cli/restore_test.go",
 	"plugin/readme_test.go",
 	"plugin/setup_skill_test.go",
 	"website/README.md",
@@ -848,7 +762,10 @@ func TestCensusOutputAndExemptArePinned(t *testing.T) {
 		path string
 		want bool
 	}{
-		// Every dated root, and the three retirement statements.
+		// Every dated root, and every path in retirementText -- named rather
+		// than counted, for the reason that list's own comment gives: it is
+		// appended to. The tombstone and its test, this file, and the relay
+		// case whose input is the retired command line.
 		{"docs/plans/setup-wizard/implementation-plan.md", true},
 		{"docs/releases/v0.9.0.md", true},
 		{"docs/design/x.md", true},
@@ -858,6 +775,7 @@ func TestCensusOutputAndExemptArePinned(t *testing.T) {
 		{"internal/cli/retired.go", true},
 		{"internal/cli/retired_test.go", true},
 		{"internal/cli/docs_live_init_census_test.go", true},
+		{"internal/agent/relay_test.go", true},
 		// The releases index beside the records stays live, and a prefix that
 		// stops at a slash is not a prefix that stops mid-word.
 		{"docs/releases/README.md", false},
@@ -1051,9 +969,9 @@ func duplicatePaths(paths []string) []string {
 // test.
 //
 // Mutation (run, restore): add a mention of the command to a live file that is
-// not listed -- internal/cli/docs_checkout_test.go is one -- and it fails on
-// the set having grown; rename every mention out of a listed file
-// (internal/cli/config_list.go has one) and it fails on the set having shrunk.
+// not listed -- internal/cli/watch.go is one -- and it fails on the set having
+// grown; rename every mention out of a listed file (internal/cli/config_list.go
+// has one) and it fails on the set having shrunk.
 func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
 	found := liveInitCensus(t, censusRoot)
 
@@ -1079,19 +997,22 @@ func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
 		}
 	}
 
-	// The generated pages leave the list when the generator runs, not when a
-	// hand edit does, and the census is where that is visible. security.md is
-	// still on it: nothing has renamed the text internal/clidoc/secdoc.go
-	// writes. cli-reference.md left it in W2.1, which ran the generator -- the
-	// reference is rendered from THIS package's own help text, the doors' flag
-	// help and their Long strings, and the rename reached every one of them. An
-	// edit could not have done it: TestCliReferenceIsCurrent regenerates the
-	// page in memory and compares, so a hand-edited page fails there.
-	if !slices.Contains(pendingRename, "website/content/security.md") {
-		t.Error("pendingRename does not list the generated website/content/security.md: it names the command today, and W2.4 takes it off the list by regenerating it, not by editing it")
-	}
-	if slices.Contains(pendingRename, "website/content/cli-reference.md") {
-		t.Error("pendingRename lists the generated website/content/cli-reference.md, which the generator no longer renders the retired command into: W2.1 regenerated it in the commit that renamed this package's help text")
+	// W2.4 regenerates these two rather than editing them, and the census is
+	// where that is visible: a page leaves the list when its generator runs,
+	// not when a hand edit removes a mention. cli-reference.md is rendered
+	// from the command tree (`go run ./internal/clidoc`), so W2.1's rename
+	// reached it and it has left; security.md is prose a person writes, so it
+	// stays until W2.4 regenerates it.
+	for _, tc := range []struct {
+		page   string
+		listed bool
+	}{
+		{"website/content/cli-reference.md", false},
+		{"website/content/security.md", true},
+	} {
+		if got := slices.Contains(pendingRename, tc.page); got != tc.listed {
+			t.Errorf("pendingRename lists the generated %s = %v, want %v: it is written by its generator, so it leaves the list by being regenerated, not edited", tc.page, got, tc.listed)
+		}
 	}
 
 	var grown, shrunk []string

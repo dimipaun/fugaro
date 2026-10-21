@@ -496,7 +496,7 @@ func testRefreshCheckJobForeignJob(t *testing.T, yes bool) {
 		atTerminal(t, e, initProjectName+"\n")
 	}
 	err = e.r.refreshCheckJob(t.Context(), tg)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not as fugaro init --repo made it") || len(r.run.Patches()) != 0 {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not as fugaro update made it") || len(r.run.Patches()) != 0 {
 		t.Fatalf("yes=%v: exit %d, err %v, %d patches", yes, ExitCode(err), err, len(r.run.Patches()))
 	}
 }

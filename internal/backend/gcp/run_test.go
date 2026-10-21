@@ -162,7 +162,7 @@ func TestLaunchMissingJob(t *testing.T) {
 	b, _, _ := newTestBackend(t)
 	_, err := b.Launch(context.Background(), backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
 	if !errors.Is(err, backend.ErrNotFound) || !errors.Is(err, backend.ErrRejected) || !strings.Contains(err.Error(), webJob) ||
-		!strings.Contains(err.Error(), "fugaro init --repo") || strings.Contains(err.Error(), "bootstrap") {
+		!strings.Contains(err.Error(), "fugaro update") || strings.Contains(err.Error(), "bootstrap") {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -128,7 +128,7 @@ type RolloverReport struct {
 // Summary is the one-line total.
 func (r RolloverReport) Summary() string {
 	if r.NoFirestore {
-		return "rollover: no Firestore database (run fugaro init --firebase); nothing moved"
+		return "rollover: no Firestore database (run fugaro update --firebase); nothing moved"
 	}
 	var w, u, p, f int
 	for _, d := range r.Days {
@@ -233,7 +233,7 @@ func (r *Roller) Rollover(ctx context.Context, opt RolloverOptions) (RolloverRep
 		rep.NoFirestore = true
 		return rep, nil
 	case errors.Is(err, firestore.ErrNotFound):
-		return rep, refusef("the Firestore database has no %s/%s mark document; run fugaro init --firebase. Nothing was moved", MetaCollection, MarkDocument)
+		return rep, refusef("the Firestore database has no %s/%s mark document; run fugaro update --firebase. Nothing was moved", MetaCollection, MarkDocument)
 	case err != nil:
 		return rep, err
 	}

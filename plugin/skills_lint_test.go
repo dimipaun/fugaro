@@ -578,7 +578,9 @@ var userLeadRE = regexp.MustCompile(`(?i)\b(user|owner|admin|they|their)\b[^.\n]
 
 // lintForbidden is design §9's list: what a skill must never tell an agent to
 // do. The owner's commands (budget set, kill and resume, secrets set, the
-// project policy publish, an applying init) are named only in a block marked
+// project policy publish, and an applying `fugaro setup` or `fugaro update` --
+// the converge's two doors, which W1.2 split the retired verb into) are named
+// only in a block marked
 // user-runs, never anywhere else, not even in a "never" sentence, and wherever they sit (a span, a
 // block, a link text, a wrapped paragraph, behind a prefix or a global flag).
 // Other forbidden commands may be named by a sentence in an inline span that
@@ -1293,13 +1295,23 @@ func TestLintRejectsYesNearSetup(t *testing.T) {
 	expectClean(t, demoTree(t, "Never run `fugaro setup --plan-only --yes`.\n"))
 }
 
-// TestLintInitAppliesOnlyInUserRuns: init beyond its plan modes creates
-// billable resources and needs the user's terminal.
-func TestLintSetupAppliesOnlyInUserRuns(t *testing.T) {
+// TestLintSetupAndUpdateApplyOnlyInUserRuns: both doors of the converge —
+// `setup`, which stands an installation up, and `update`, which re-converges it
+// — apply Terraform beyond their plan modes, so neither may appear outside a
+// user-runs block. The two are one rule in ownerViolation, so both are driven
+// here: a case for one door alone would leave the other's half of that
+// condition untested, and deleting it would go unnoticed.
+func TestLintSetupAndUpdateApplyOnlyInUserRuns(t *testing.T) {
 	expectViolation(t, demoTree(t, "Then run `fugaro setup`.\n"), "applying fugaro setup")
 	expectViolation(t, demoTree(t, "Never run `fugaro setup`.\n"), "applying fugaro setup")
 	expectClean(t, demoTree(t, "Run `fugaro setup --repo --plan-only` and `fugaro setup --print-vars`.\n"))
 	expectClean(t, demoTree(t, "The user runs this once in their own terminal, not through the agent:\n\n```bash user-runs\nfugaro setup\n```\n"))
+
+	expectViolation(t, demoTree(t, "Then run `fugaro update`.\n"), "applying fugaro update")
+	expectViolation(t, demoTree(t, "Never run `fugaro update`.\n"), "applying fugaro update")
+	expectViolation(t, demoTree(t, "```bash\nfugaro update\n```\n"), "applying fugaro update")
+	expectClean(t, demoTree(t, "Run `fugaro update --repo --plan-only` and `fugaro update --print-vars`.\n"))
+	expectClean(t, demoTree(t, "The user runs this in their own terminal after an upgrade, not through the agent:\n\n```bash user-runs\nfugaro update\n```\n"))
 }
 
 func TestLintRejectsSecretShaped(t *testing.T) {

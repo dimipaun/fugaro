@@ -1,4 +1,4 @@
-warning: build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; the converge drops it
+warning: build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; fugaro update drops it
 warning: couldn't check origin/main's fugaro.yaml for project: aurora: <the fetch did not reach it>; runs read it from there
 ⚠ This change retires 3 addresses (project aurora, GCP project proj-1234, repository acme/sandbox).
   2 go away; fugaro deletes no secret.

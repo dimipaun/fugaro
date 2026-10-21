@@ -46,7 +46,7 @@ const (
 	// program, not a wall against one that goes around it.
 	//
 	// It is a second object rather than a field of the marker because of how
-	// fugaro init works: it rewrites the installation's terraform.tfvars.json
+	// fugaro update works: it rewrites the installation's terraform.tfvars.json
 	// from its own flags on every run, so a Terraform-managed object would be
 	// planned to destroy on the next ordinary init — silently, leaving the
 	// apply that follows with an empty list and refusing every delete the
@@ -419,7 +419,7 @@ func strictFields(data []byte) error {
 // which is the shape the refusal exists to stop.
 //
 // It is exported now because it is where the plan's "an address the applying
-// command passes is refused" is testable; the applying commands (fugaro init
+// command passes is refused" is testable; the applying commands (fugaro update
 // and its --firebase branch) still feed their own flag to tf.Guard today, and
 // routing them through this call — with the wording of the refusal, which
 // D74 leaves to the managed mode's own message — is Tasks 3.1 and 3.2.

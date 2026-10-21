@@ -1409,6 +1409,53 @@ func TestRestoreEndsInTheSharedManagedApply(t *testing.T) {
 	})
 }
 
+// TestRestorePrintsTheChildCommandLine pins the line the creating path prints
+// before it delegates. The review of W1.2 found it unpinned: that commit
+// reworded it — the child used to be named by the retired word — and no test
+// read it, so nothing would have noticed either the old wording coming back or
+// the line going away.
+//
+// Both halves are held, because both are the operator's: the sentence names
+// the door that carries the creating flags, and the argv printed after it is
+// the argv the child is handed — the config this run just wrote, the new
+// project, the billing account, and the managed and budget flags the child's
+// own confirmations hang off. The line alone is read, not the run's whole
+// transcript: D66's list quotes the retired word elsewhere in it, and that
+// string is W2.1's.
+//
+// Mutations (run, restore): naming the child with the retired word fails on
+// the sentence; deleting the Fprintf fails on it too.
+func TestRestorePrintsTheChildCommandLine(t *testing.T) {
+	r, _ := newRestoreRig(t)
+	restoreManagedOld(r)
+	recordRestoreApply(t, r)
+	_, root := restoreCheckout(t)
+	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	if err != nil {
+		t.Fatalf("the restore: %v\n%s", err, out)
+	}
+	const sentence = "fugaro: creating the project through the same path fugaro setup --create-project --managed uses: fugaro setup --create-project"
+	i := strings.Index(out, sentence)
+	if i < 0 {
+		t.Fatalf("the creating path does not print the child command line:\nwant %q in:\n%s", sentence, out)
+	}
+	line := out[i:]
+	if j := strings.IndexByte(line, '\n'); j >= 0 {
+		line = line[:j]
+	}
+	for _, want := range []string{
+		"--config ", "--gcp-project " + newProj, "--link-billing " + billingAcc,
+		"--managed", "--budget ", "--budget-currency", "--billing-account " + billingAcc,
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the printed child command line does not carry %q:\n%s", want, line)
+		}
+	}
+	if strings.Contains(line, "fugaro init") {
+		t.Errorf("the printed child command line names the retired command:\n%s", line)
+	}
+}
+
 // TestRestoreNeverAdoptsAnExistingProject is MEDIUM 1: a NEW_PROJECT_ID that
 // already exists is refused before the confirmation, with nothing changed —
 // init's creating path would adopt it and write no creation fact.

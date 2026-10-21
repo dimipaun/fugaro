@@ -90,7 +90,7 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 	p.done = true
 	if !r.d.Backend.On() && !r.d.Backend.MalformedEnv && !r.d.Backend.TokenMarked {
 		// No database in the job's environment: no client, no marker, no node.
-		// This is the absence the readiness gate refuses (init --repo) once
+		// This is the absence the readiness gate refuses (fugaro update) once
 		// the project has published a policy; a run cannot invent the
 		// credential it would need to notice one. An environment that named a
 		// backend it could not parse is not that absence (L-b), and neither is
@@ -208,7 +208,7 @@ func (r *run) unreadablePolicy(err error) error {
 		// the rules from before the policy nodes while leaving the marker in
 		// place, so a policy that was published becomes unreadable and every
 		// budget-on run of the project stops here (R2-8(b)).
-		return fmt.Errorf("the project's policy at %s could not be read: the deployed rules are older than the marker %s and refuse this run's token for a node that exists, which is what an older fugaro's 'fugaro init --firebase' leaves behind when it redeploys rules that predate that marker and leaves it in place. Run 'fugaro init --firebase' again with an up-to-date fugaro, which deploys the rules generation this runner reads (%d). The run does not start on a ceiling the policy did not set: %s",
+		return fmt.Errorf("the project's policy at %s could not be read: the deployed rules are older than the marker %s and refuse this run's token for a node that exists, which is what an older fugaro's 'fugaro update --firebase' leaves behind when it redeploys rules that predate that marker and leaves it in place. Run 'fugaro update --firebase' again with an up-to-date fugaro, which deploys the rules generation this runner reads (%d). The run does not start on a ceiling the policy did not set: %s",
 			projectpolicy.PathShared(), marker, projectpolicy.RulesVersion, r.redact(err.Error()))
 	}
 	var me *projectpolicy.MarkerError
@@ -346,7 +346,7 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		// likely cause after an upgrade is the grant — a job not re-applied
 		// since the token moved to tokens/ has none — so the refusal names it
 		// and its cure first. It names no object, and no key.
-		const grant = "this job's service account lacks its read grant on the repository's token objects under tokens/ (a job not re-applied since the upgrade that moved the budget token there: an operator runs fugaro init --repo for this repository in its checkout)"
+		const grant = "this job's service account lacks its read grant on the repository's token objects under tokens/ (a job not re-applied since the upgrade that moved the budget token there: an operator runs fugaro update for this repository in its checkout)"
 		if r.d.Backend.TokenMarked {
 			c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket, though the launcher minted one for this run (FUGARO_BUDGET_TOKEN is set in the job's environment); the run cannot tell a refused read from a missing object. Either %s — then start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it — or the object is gone (a launch that failed and was cleaned up, or the bucket's day-long lifecycle rule): launch the run again", grant)
 			return nil, c.err

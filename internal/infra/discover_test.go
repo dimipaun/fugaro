@@ -463,7 +463,7 @@ func TestDiscoverInstallationAdoptsTheGhcrRegistry(t *testing.T) {
 }
 
 // After a rollback (state rm), every installation resource is still
-// there; a retried fugaro init imports the custom roles, the scheduler
+// there; a retried fugaro update imports the custom roles, the scheduler
 // account and the log bucket too, since a create of any of them fails.
 func TestDiscoverInstallationAfterForget(t *testing.T) {
 	f := newCloud(t)
@@ -573,7 +573,7 @@ func TestDiscoverRefusesForeignSingletons(t *testing.T) {
 	}
 }
 
-// After init --repo --forget, the repository's Scheduler job is still
+// After fugaro update --forget, the repository's Scheduler job is still
 // there, in the scheduler region, and is imported by its name and target.
 func TestDiscoverImportsSchedulerJob(t *testing.T) {
 	ctx := context.Background()
@@ -1057,7 +1057,7 @@ func TestReadinessGatesCheckJob(t *testing.T) {
 		return got, check
 	}
 
-	// A fresh repository: init --repo has just made the secrets, empty.
+	// A fresh repository: fugaro update has just made the secrets, empty.
 	f := newCloud(t)
 	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
 	f.seedVersions(spec)

@@ -39,7 +39,7 @@ const (
 
 // Clients are the Google API clients discovery and the readiness gates
 // read through. They only ever read, except ServiceUsage, which enables
-// Cloud Resource Manager when fugaro init is confirmed to, and Run and
+// Cloud Resource Manager when fugaro setup is confirmed to, and Run and
 // RunHTTP, which update the check job when fugaro image refresh is
 // confirmed to (checkjob.go).
 type Clients struct {
@@ -75,11 +75,11 @@ type Clients struct {
 // so fakes can stand in. Empty means Google's own endpoint.
 type Endpoints struct {
 	IAM, ArtifactRegistry, Storage, ResourceManager, Scheduler string
-	// ServiceUsage is the Service Usage API's, through which fugaro init
+	// ServiceUsage is the Service Usage API's, through which fugaro update
 	// enables Cloud Resource Manager. Without credentials and without it,
 	// there is no Service Usage client.
 	ServiceUsage string
-	// Billing is the Cloud Billing API's, which fugaro init --firebase
+	// Billing is the Cloud Billing API's, which fugaro update --firebase
 	// reads the Firebase project's billing through. Without credentials and
 	// without it, there is no Billing client.
 	Billing string
@@ -599,12 +599,12 @@ func (d *discovery) installationSingletons(spec InstallationSpec) error {
 	// without it is someone else's: the plan would cut its retention, and a
 	// rollback would delete it. It is never undeleted on our behalf either.
 	if b.Description != spec.LogBucketDescription {
-		d.refuse(fmt.Errorf("log bucket %s exists but is not this installation's: its description is %s, not %s. fugaro refuses to adopt it, since the plan would set its retention and a rollback would delete it. If it is Fugaro's, mark it (gcloud logging buckets update %s --location=global --project %s --description=%s) and rerun fugaro init; if it isn't, a log bucket can't be renamed, so leave it and run fugaro init --no-log-isolation, which keeps Fugaro's job logs in _Default",
+		d.refuse(fmt.Errorf("log bucket %s exists but is not this installation's: its description is %s, not %s. fugaro refuses to adopt it, since the plan would set its retention and a rollback would delete it. If it is Fugaro's, mark it (gcloud logging buckets update %s --location=global --project %s --description=%s) and rerun fugaro update; if it isn't, a log bucket can't be renamed, so leave it and run fugaro update --no-log-isolation, which keeps Fugaro's job logs in _Default",
 			name, strconv.Quote(b.Description), strconv.Quote(spec.LogBucketDescription), spec.Names.Log.Bucket, d.project, shellQuote(spec.LogBucketDescription)))
 		return nil
 	}
 	if b.LifecycleState != "ACTIVE" {
-		d.refuse(fmt.Errorf("log bucket %s is %s (a rollback deletes it, and it stays pending deletion for 7 days), so it can be neither imported nor created: restore it first with %s, then rerun fugaro init",
+		d.refuse(fmt.Errorf("log bucket %s is %s (a rollback deletes it, and it stays pending deletion for 7 days), so it can be neither imported nor created: restore it first with %s, then rerun fugaro update",
 			name, b.LifecycleState, LogBucketUndelete(d.project)))
 		return nil
 	}

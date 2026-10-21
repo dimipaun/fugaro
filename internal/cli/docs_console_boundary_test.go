@@ -116,16 +116,6 @@ const consoleBoundarySelf = "internal/cli/docs_console_boundary_test.go"
 // from one.
 var consoleBoundaryAllowList = []string{
 	"internal/cli/docs_desktop_console_test.go",
-	// The second entry, added by W2.1 and argued for here, as the test below
-	// asks. The census of every file that still names the retired `init` walks
-	// the live roots, and console/ is one of them (its README and one unit test
-	// name the command as the retired verb, which is retirement text and not a
-	// rename): the walk's list of those files is a list of PATHS, so
-	// docs_live_init_census_test.go has to write two console/ paths down. It
-	// imports nothing from console/, reads no console/ file, embeds nothing and
-	// is a census of the Go tree's own rename -- a mention of a path, which is
-	// what this boundary is about only when it is a way in.
-	"internal/cli/docs_live_init_census_test.go",
 }
 
 // consoleGoModRequireBaseline is go.mod's require block as recorded when Task
@@ -712,9 +702,9 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 		}
 	})
 
-	t.Run("the_allow_list_has_exactly_two_entries", func(t *testing.T) {
-		if len(consoleBoundaryAllowList) != 2 {
-			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it is a TWO-entry exception -- the console contract's docs test, which reads console/docs/json-contract.md as bytes, and the live-init census, which writes two console/ paths down as the files its walk found naming the retired `init` (W2.1, argued at the entry). A third entry is a deliberate widening of the boundary and must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
+	t.Run("the_allow_list_has_exactly_one_entry", func(t *testing.T) {
+		if len(consoleBoundaryAllowList) != 1 {
+			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it is the ONE-entry exception the console contract's own docs test is, and a second entry is a deliberate widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
 		}
 	})
 

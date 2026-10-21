@@ -18,7 +18,7 @@ import (
 )
 
 // Logging is a stateful fake of Cloud Logging's entries.list, and of a log
-// bucket's get (for fugaro init's discovery). entries.list takes the two
+// bucket's get (for fugaro update's discovery). entries.list takes the two
 // filter shapes Fugaro sends -- a Cloud Run job execution's entries, and a
 // Batch job's task logs by the job's UID (design compute-backend.md §2.3) --
 // each optionally from a timestamp on. Any other filter fails the test.

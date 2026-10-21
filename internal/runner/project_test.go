@@ -137,7 +137,7 @@ func TestProjectCheckMissingEnvInCloud(t *testing.T) {
 	// places it (a cloud process with no execution at all is refused there,
 	// before this check: TestAdmissionRefusesAnUnclaimedProcessWithNoExecution).
 	h.deps.Execution = cloudRunExecution(gcp.JobName(repoSlug, gcp.WorkflowVariant("app", "")))
-	refused(t, h, "job environment lacks FUGARO_PROJECT", "fugaro init --repo")
+	refused(t, h, "job environment lacks FUGARO_PROJECT", "fugaro update")
 }
 
 func TestProjectCheckSkippedLocally(t *testing.T) {
