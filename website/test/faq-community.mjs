@@ -482,7 +482,8 @@ function bands(html) {
  *      they are all about what the page says;
  *   2. every section headline is the display scale's middle step;
  *   3. every community surface — an entry of the documents or the templates grid — is drawn as
- *      `base.css`'s `.card`, which is the one shape the redesign draws an entry in;
+ *      `base.css`'s `.card` in a `community-grid` list, and both grids are still there, which
+ *      is the one shape the redesign draws an entry in;
  *   4. the page's four bands are still its four bands, each opening with a heading, so a
  *      reader's link into one of them (`/community/#issues`) still lands on something.
  *
@@ -498,6 +499,9 @@ function boldLookFailures(html) {
    *  that read it as one would pass on an entry that lost `base.css`'s class (the case below
    *  plants exactly that). */
   const classes = (tag) => (/class="([^"]*)"/.exec(tag)?.[1] ?? '').split(/\s+/).filter(Boolean)
+
+  /** The opening tags of every list inside a piece of markup. */
+  const listsIn = (body) => [...body.matchAll(/<ul[^>]*>/g)].map(([tag]) => tag)
 
   // 1. The headline.
   const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(html)
@@ -519,21 +523,40 @@ function boldLookFailures(html) {
     if (!classes(tag).includes('display-lg')) out.push(`a section headline is not on the display scale (${tag}): the bold redesign sets a section's heading at \`display-lg\``)
   }
 
-  // 3. The surfaces.
-  const grids = [...html.matchAll(/(<ul[^>]*>)([\s\S]*?)<\/ul>/g)]
-    .filter(([, open]) => classes(open).includes('community-grid'))
-    .map(([, , body]) => body)
-  if (grids.length === 0) out.push('the page draws no community-grid list: the community surfaces are cards in a grid')
-  for (const grid of grids) {
-    const items = [...grid.matchAll(/<li[^>]*>/g)].map(([tag]) => tag)
-    if (items.length === 0) out.push('a community-grid list carries no entry')
+  // 3. The surfaces. A community surface is a link to a file in this repository — the three
+  // documents, the licence and the issue templates are exactly that — and the page draws them
+  // in two lists. The lists are found by those links and not by the `community-grid` class,
+  // because a list that lost the class is one of the defects this rule refuses: selecting the
+  // lists by the class first would skip it, and its entries would never be inspected for
+  // `.card` either (the cases below plant exactly that, on one list and on both).
+  const pageBands = bands(html)
+  const surfaceLists = [...html.matchAll(/(<ul[^>]*>)([\s\S]*?)<\/ul>/g)]
+    .map(([, open, body]) => ({ open, body }))
+    .filter(({ body }) => /href="[^"]*\/blob\//.test(body))
+  if (surfaceLists.length === 0) {
+    out.push('the page draws no list of community surfaces: the documents, the licence and the issue templates are `.card` entries in a grid')
+  }
+  for (const { open, body } of surfaceLists) {
+    if (!classes(open).includes('community-grid')) {
+      out.push(`a list of community surfaces is not a community-grid (${open}): the bold redesign draws the community surfaces as cards in a grid`)
+    }
+    const items = [...body.matchAll(/<li[^>]*>/g)].map(([tag]) => tag)
+    if (items.length === 0) out.push(`a list of community surfaces carries no entry (${open})`)
     for (const tag of items) {
       if (!classes(tag).includes('card')) out.push(`a community entry is not a card (${tag}): the bold redesign draws every community surface as \`base.css\`'s \`.card\``)
     }
   }
+  // And each band that draws surfaces still draws one: a grid deleted outright leaves no list
+  // behind for the rule above to read, so the band would be empty rather than wrong — the
+  // entries and their links gone, with every gate here still green.
+  for (const id of ['repository', 'issues']) {
+    const band = pageBands.find((one) => one.id === id)
+    if (band !== undefined && !listsIn(band.body).some((tag) => classes(tag).includes('community-grid'))) {
+      out.push(`the ${id} band draws no community-grid list: its entries are cards in a grid, and a band that lost the grid lost the cards with it`)
+    }
+  }
 
   // 4. The bands, and the ids a reader's link may name.
-  const pageBands = bands(html)
   const ids = pageBands.map((band) => band.id)
   if (ids.join(' ') !== 'repository issues ci licence') {
     out.push(`the page's bands are ${ids.join(', ') || '(none)'}: they are the repository, the issues, the CI description and the licence, in that order`)
@@ -580,6 +603,23 @@ test('every look refusal fires on the defect it names', () => {
       what: 'a community entry that is not a card',
       plant: page.replace('<li class="card community-card"', '<li class="community-card"'),
       expected: /community entry is not a card/,
+    },
+    {
+      // One list, not both, and one case per list: the rule reads the surfaces by their links,
+      // so a single grid that lost `community-grid` is refused rather than skipped over.
+      what: 'the documents list leaving the grid',
+      plant: page.replace('<ul class="community-grid documents"', '<ul class="documents"'),
+      expected: /list of community surfaces is not a community-grid/,
+    },
+    {
+      what: 'the templates list leaving the grid',
+      plant: page.replace('<ul class="community-grid templates"', '<ul class="templates"'),
+      expected: /list of community surfaces is not a community-grid/,
+    },
+    {
+      what: 'a band whose grid was deleted outright',
+      plant: page.replace(/<ul class="community-grid templates"[\s\S]*?<\/ul>/, ''),
+      expected: /issues band draws no community-grid list/,
     },
     {
       what: 'a band that lost its heading',
