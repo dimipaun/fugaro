@@ -1936,9 +1936,15 @@ func TestDocsComputeBackendTask10CarriesTheArtifactGatesRefResidual(t *testing.T
 // and the tree carries the mechanism and the cases the entry names — so the
 // enable's commit cannot claim the closure while the code it claims is absent.
 //
+// The closure itself is pinned too: the entry requires the runner's own
+// refusal of `mode: artifact` on cloud-batch, with the launcher's ref read as
+// defence in depth only, because that read uses this checkout's local
+// remote-tracking ref and never fetches.
+//
 // Mutation (drop `internal/cli/run.go` with `internal/cli/run_test.go` from
 // Task 10's Files, or drop the "before the name is selectable" sentence, or
-// rename `carriedRecipeAtRef`): the named assertion fails.
+// rename `carriedRecipeAtRef`, or make the gate's ref read an alternative to
+// the runner's refusal again): the named assertion fails.
 func TestDocsComputeBackendTask10EnableIsTiedToTheArtifactGatesRefResidual(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
 	task := section(t, doc, "### Task 10: The enable", "## Phase C")
@@ -1949,6 +1955,14 @@ func TestDocsComputeBackendTask10EnableIsTiedToTheArtifactGatesRefResidual(t *te
 		"**This task closes it before the name is selectable**",
 		// And where the closure lands, per the task's own Files line.
 		"`internal/cli/run.go` with `internal/cli/run_test.go` for step 5's sixth entry",
+		// The closure the entry requires is the runner's refusal: the gate
+		// reads a local remote-tracking ref and never fetches, so a push after
+		// the launcher's last fetch passes it, and a gate-only closure would
+		// leave that window open on the day the name becomes selectable.
+		"`internal/runner/recipe.go` and `internal/runner/recipe_test.go` for that entry's required closure",
+		"**the runner itself refuses a `mode: artifact` recipe when the platform it runs on is cloud-batch**",
+		"**A launcher-side read is defence in depth and never the closure on its own:**",
+		"**the runner refuses `mode: artifact` on cloud-batch, as its own runner case**",
 	} {
 		if !strings.Contains(task, want) {
 			t.Errorf("%s's Task 10 no longer says %q: the enable is the commit that makes backend: cloud-batch selectable, so the closure of the launch gate's residual has to be tied to it here rather than left as a nearby requirement", computeBackendPlan, want)
