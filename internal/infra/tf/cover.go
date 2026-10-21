@@ -1759,6 +1759,12 @@ func (c Cover) baseImageOK(ref, proj string) bool {
 // of this file, which found the gap; baseImageOK is unchanged for jobs,
 // whose image is the run's own build). An empty repository ID, owner or
 // registry refuses every reference.
+//
+// The residual, stated rather than implied: a deployment that mirrors the
+// released image into its own repository is refused here rather than
+// covered, and init asks for its own typed confirmation instead. That is the
+// fail-closed direction, and it is the only shape the module produces — C1.20
+// fills this variable with the released image read back through the proxy.
 func (c Cover) credentialsImageOK(ref, proj string) bool {
 	if c.Ghcr == "" || !c.refOK(ref, proj) || !strings.HasPrefix(ref, c.registryPrefix(proj)+c.Ghcr+"/") {
 		return false
