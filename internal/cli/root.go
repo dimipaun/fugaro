@@ -4,6 +4,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
+	"text/template"
 
 	"github.com/spf13/cobra"
 )
@@ -49,6 +51,27 @@ func ExitCode(err error) int {
 	return ExitUserError
 }
 
+// versionTemplate renders the version line: the Version variable and a
+// newline, which is exactly what `fugaro version` prints. It is the one
+// definition of that line. Cobra renders it for the root's `--version` and
+// `-v` flags (its own Version-field machinery), and newVersionCmd renders the
+// same template through writeVersion, so the spellings cannot drift apart.
+//
+// Cobra reads this through text/template rather than through a Go function,
+// which is why the line is a template here and not a format string.
+const versionTemplate = "{{.Version}}\n"
+
+// writeVersion prints the version line to w, by rendering root's own version
+// template with the root command as its data -- the same two steps cobra takes
+// for `fugaro --version` (cobra.go's tmpl: template.Must(Parse(text)) then
+// Execute(w, cmd)), so `fugaro version` and `fugaro --version` are one
+// implementation rather than two copies of one line.
+func writeVersion(root *cobra.Command, w io.Writer) error {
+	t := template.New("version")
+	template.Must(t.Parse(root.VersionTemplate()))
+	return t.Execute(w, root)
+}
+
 // NewRootCmd builds the fugaro command tree.
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
@@ -56,6 +79,18 @@ func NewRootCmd() *cobra.Command {
 		Short:         "Fleeting cloud workers for coding agents",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// Version is what makes cobra add the root's `-v, --version` flag and
+		// answer it, with the template below. Cobra answers it inside execute,
+		// before it resolves a subcommand and before PersistentPreRun, so
+		// `fugaro --version` prints the version and exits 0 without running
+		// anything: no checkout read, no local config, no cloud call, no update
+		// check (`fugaro --version run` prints the version and does not run
+		// `run`). It is a flag of the root alone, like the built-in `-h`.
+		//
+		// The shorthand `-v` is free: cobra only takes it when the root's own
+		// flag set does not already, and no command in this tree defines a `v`
+		// shorthand (the only shorthand anywhere is `-f` on `logs --follow`).
+		Version: Version,
 		// The plugin staleness line (design 4.5) and the update-check kickoff
 		// (docs/gcp-setup.md "Staying up to date"). No command defines its own
 		// PersistentPreRun, which would replace this one. The update-available
@@ -72,6 +107,7 @@ func NewRootCmd() *cobra.Command {
 			startUpdateCheck(cmd, disabled)
 		},
 	}
+	root.SetVersionTemplate(versionTemplate)
 	root.AddCommand(
 		newVersionCmd(), newValidateCmd(), newConfigCmd(), newVerifyCmd(), newExecCmd(), newImageCmd(),
 		newRunCmd(), newRecipesCmd(), newRunsCmd(), newStatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newAccountsCmd(), newBackendsCmd(), newInitCmd(), newBudgetCmd(), newWatchCmd(), newReportCmd(), newUpdateSkillsCmd(), newUpgradeCmd(), newDoctorCmd(), newProjectCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(),
@@ -85,8 +121,7 @@ func newVersionCmd() *cobra.Command {
 		Short: "Print the fugaro version",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), Version)
-			return err
+			return writeVersion(cmd.Root(), cmd.OutOrStdout())
 		},
 	}
 }
