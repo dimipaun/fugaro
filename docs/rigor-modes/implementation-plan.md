@@ -23,7 +23,7 @@ merging alone.
 
 - **It does not implement anything.** No slice is started and no line of this
   plan is written. The [OWNER APPROVAL GATE](#owner-approval-gate) **is passed**
-  — the owner answered §5's decisions (**D1–D25**) on 2026-10-20 — so the slices are approved to build
+  — the owner answered §5's decisions (**D1–D32**) on 2026-10-20 — so the slices are approved to build
   on the branch `rigor-modes`, and approved is not started.
 - **It does change the readiness rule's meaning for an unconfigured repository,
   on purpose.** D19's answer makes the default **Pro**, so a repository with no
@@ -373,10 +373,16 @@ product code.
   `TestDocsRigorModesEveryBlockRangeIsCurrent` (every block range a document
   states ends where the block does — counted from the reconciliation — or is a
   part of one cited beside its section, or a register this folder quotes by name;
-  and no document cites a number the block does not have); and
+  and no document cites a number the block does not have);
   `TestDocsRigorModesSpecIsTheOwners` (the spec's own sentences survive, and no
-  document in the folder puts a decision in the owner's mouth).
-- **Red step.** The test file does not exist; written first, each of the seven
+  document in the folder puts a decision in the owner's mouth); and
+  `TestDocsRigorModesAnswersSayWhatTheyChange` (the sentences the answers of
+  2026-10-20 displaced are the ones the documents carry: the one-line pin D19's
+  answer owes a repository, every unchanged-behaviour claim scoped to Critical
+  mode, no phrasing that puts a person in the ready path, D9's same-pull-request
+  rule with T3.1 waiting for T4.5, T5.3's project-configured inputs, and D29's
+  value still the owner's).
+- **Red step.** The test file does not exist; written first, each of the eight
   fails on a folder that is missing the sentence it names. The task is not done
   until each is red once and green after, and what each one names becomes T0.1's fix.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'DocsRigorModes' -count=1 -timeout 40m`
@@ -689,7 +695,8 @@ not change for anyone who has not configured a mode.
 - **Commit.** `runner: the mode decides which findings block, inside Decide`
 
 **T3.2 — the mode's round ceiling**
-- **Files.** `internal/runner/runner.go` (`planOf`'s precedence),
+- **Files.** `internal/runner/plan.go` (`planOf`, whose precedence the ceiling
+  drops into) and its call site in `internal/runner/runner.go`,
   `internal/config/defaults.go` if the mode contributes a default.
 - **Tests.** The mode's ceiling lowers the rounds and never raises them above
   what `Overrides.ReviewRounds`, `agent.review_rounds` and the recipe's
@@ -1199,7 +1206,7 @@ from `Recipe` as the thing to watch for on an installation whose rules are older
 
 ## OWNER APPROVAL GATE
 
-**This gate is passed: the owner answered §5's decisions (D1–D25) on 2026-10-20, and the plan is approved to build on the branch `rigor-modes`.**
+**This gate is passed: the owner answered §5's decisions (D1–D32) on 2026-10-20, and the plan is approved to build on the branch `rigor-modes`.**
 
 1. **The decisions are answered.** D1–D32 carry the owner's answers, each in place
    of the recommendation it displaces, with the displaced recommendation kept

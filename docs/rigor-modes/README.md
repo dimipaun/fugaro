@@ -12,7 +12,7 @@
 | --- | --- |
 | [spec.md](spec.md) | the owner's spec, **verbatim**, in its own commit. Nothing is added to it, and its open questions stay open here. |
 | [reconciliation.md](reconciliation.md) | what the tree says back: five corrections to the premises, **F1–F48** findings each classified Wrong / Exists / Gap / Rule / Open, the census with its commands, **D1–D32** decisions **answered by the owner on 2026-10-20** (each answer in place of the recommendation it displaces, the recommendation kept beneath it), **O1–O7** items, and the **U1–U12** UNVERIFIED table. |
-| [implementation-plan.md](implementation-plan.md) | nine slices that each merge alone and leave `main` green, each task with its files, tests, red step, verification, dependency and reviewer — and an **OWNER APPROVAL GATE** that **is passed**: the owner answered §5's decisions — **D1–D25** — on 2026-10-20 and the plan is approved to build on the branch `rigor-modes`. |
+| [implementation-plan.md](implementation-plan.md) | nine slices that each merge alone and leave `main` green, each task with its files, tests, red step, verification, dependency and reviewer — and an **OWNER APPROVAL GATE** that **is passed**: the owner answered §5's decisions — **D1–D32** — on 2026-10-20 and the plan is approved to build on the branch `rigor-modes`. |
 | this file | the index, and the numbers this work holds. |
 
 ## What the work is, in one paragraph

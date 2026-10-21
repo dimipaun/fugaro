@@ -20,9 +20,11 @@ import (
 // docs_in_job_review_test.go for docs/in-job-review/.
 //
 // The folder is a plan whose owner approval gate is passed: the owner answered
-// D1–D25 on 2026-10-20 and the backlog ruling settles the rest, so nothing in it
-// is implemented yet and every decision in it carries an answer rather than a
-// recommendation alone. So what a guard can usefully hold is the plan's own shape
+// every decision on 2026-10-20 — D1–D25 as answers to questions asked
+// independently, and D26–D32 in the backlog ruling he gave the same day, whose
+// one unnamed value is D29's designated repository. Nothing in it is implemented
+// yet, and every decision in it carries an answer rather than a recommendation
+// alone. So what a guard can usefully hold is the plan's own shape
 // and the plan's own claims about itself — the status line, the gate, the
 // numbered findings, decisions, items and unverified rows with no gap, an answer
 // on every decision, the census stating the command beside every count, every
@@ -47,7 +49,7 @@ const (
 	// once the owner has answered it. The two move together: a gate that is
 	// passed while a decision still reads as a recommendation is the one
 	// inconsistency this folder exists to avoid.
-	rigorModesGatePassed = "**This gate is passed: the owner answered §5's decisions (D1–D25) on 2026-10-20, and the plan is approved to build on the branch `rigor-modes`.**"
+	rigorModesGatePassed = "**This gate is passed: the owner answered §5's decisions (D1–D32) on 2026-10-20, and the plan is approved to build on the branch `rigor-modes`.**"
 	rigorModesAnswered   = "**Answered 2026-10-20"
 	// rigorModesAnsweredIntro is the reconciliation's own statement that the
 	// block carries answers, which is the sentence the "not taken" one became.
@@ -516,7 +518,7 @@ func TestDocsRigorModesEveryCitedTaskExists(t *testing.T) {
 
 // rigorModesBlockRangeRE matches a document stating a whole block's range as
 // this folder writes one: the prefix, a 1, the dash, and the last number, with
-// the prefix repeated or not — "F1–F41" and "D1–D25". A range is a summary
+// the prefix repeated or not — "F1–F41" and "D1–D32". A range is a summary
 // claim, and it is the one number in these documents a reader takes without
 // counting, so a range left behind by an edit ("D1–D19" after D20 landed) is a
 // claim the folder no longer has.
@@ -724,12 +726,16 @@ const rigorModesCriticalPin = "`rigor.default: critical`"
 // unconfigured repository was said not to change at all. D19's answer makes Pro
 // the default, so each of these is true of *Critical mode* only — of a run whose
 // resolved mode is Critical — and the guard holds each occurrence to a nearby
-// "Critical" rather than to a reader's memory of which decision said what.
+// "Critical mode" rather than to a reader's memory of which decision said what.
+//
+// The phrases are the ones that say a *run* is unchanged. A sentence about a
+// golden or a transcript being unchanged ("an unscored finding rendering exactly
+// as it does today", plan T4.1) is a claim about a test fixture, not about a
+// mode, and is not one of these.
 var rigorModesUnchangedClaims = []string{
 	"relaxes nothing",
 	"byte-identical to today",
-	"exactly as it does today",
-	"exactly as it does now",
+	"behaves exactly as it does today",
 }
 
 // rigorModesScopeWindow is how far from such a claim the word "Critical" may sit
@@ -743,14 +749,31 @@ const rigorModesScopeWindow = 600
 // `runner.Decide`'s answer (D11's correction), so any sentence that puts a
 // person in that path is a description of a practice this repository does not
 // have.
+// They are compared against a lower-cased document, so they are lower-case
+// themselves, and against the flattened text, so a re-wrapped sentence does not
+// slip past.
 var rigorModesMarksReadyAbsences = []string{
 	"a person marks ready",
 	"a person marks it ready",
 	"a person marks the pull request ready",
+	"a person marks a pull request ready",
 	"a human marks it ready",
 	"the owner marks it ready",
 	"an operator marks it ready",
 }
+
+// rigorModesCheckpointSource and rigorModesRunstoreSource are two files this
+// folder's findings make claims about, and the guard reads them rather than
+// trusting the document: F44 says what a checkpoint does and does not do, and
+// F40 says a halt reason is planned rather than built.
+const (
+	rigorModesCheckpointSource = "internal/runner/checkpoint.go"
+	rigorModesRunstoreSource   = "internal/runstore/runstore.go"
+)
+
+// rigorModesGuardTestRE matches a test function this guard file ships, so the
+// plan's list of what the guard holds can be held to the file itself.
+var rigorModesGuardTestRE = regexp.MustCompile(`(?m)^func (Test[A-Za-z0-9_]+)\(t \*testing\.T\) \{`)
 
 // rigorModesBlock returns the chunk of a numbered block a document starts at id
 // and ends where the next one starts — a task of the plan or a decision of the
@@ -786,13 +809,28 @@ func TestDocsRigorModesAnswersSayWhatTheyChange(t *testing.T) {
 	recon := readDoc(t, rigorModesRecon)
 	plan := readDoc(t, rigorModesPlan)
 
+	// Every check below is on the flattened text: the documents are hard-wrapped
+	// prose, and a phrase a guard matches only in its unwrapped spelling stops
+	// being checked the moment someone re-wraps the sentence. flattenDoc is this
+	// package's helper for exactly that (docs_base_test.go), and the absence
+	// checks fold case as well, so "A person marks it ready" is caught too.
+	flat := map[string]string{
+		rigorModesReadme: flattenDoc(readme),
+		rigorModesRecon:  flattenDoc(recon),
+		rigorModesPlan:   flattenDoc(plan),
+	}
+	flatLower := map[string]string{}
+	for path, text := range flat {
+		flatLower[path] = strings.ToLower(text)
+	}
+
 	// D19's answer, and the pin it owes a repository: the default is Pro, so
 	// "nothing changes" is not the claim any more, and every one of the three
 	// documents has to name the way back.
 	for _, doc := range []struct{ path, text string }{
-		{rigorModesReadme, readme},
-		{rigorModesRecon, recon},
-		{rigorModesPlan, plan},
+		{rigorModesReadme, flat[rigorModesReadme]},
+		{rigorModesRecon, flat[rigorModesRecon]},
+		{rigorModesPlan, flat[rigorModesPlan]},
 	} {
 		if !strings.Contains(doc.text, rigorModesCriticalPin) {
 			t.Errorf("%s does not state %q: D19's answer makes Pro the default, and the one-line pin is what a repository keeps today's behaviour with", doc.path, rigorModesCriticalPin)
@@ -803,7 +841,7 @@ func TestDocsRigorModesAnswersSayWhatTheyChange(t *testing.T) {
 	// the sentence around the claim, not the document: a claim a reader meets
 	// twenty lines away from its scope is the shape this catches.
 	for _, path := range []string{rigorModesReadme, rigorModesRecon, rigorModesPlan} {
-		doc := readDoc(t, path)
+		doc := flat[path]
 		for _, claim := range rigorModesUnchangedClaims {
 			for at := strings.Index(doc, claim); at >= 0; {
 				lo, hi := at-rigorModesScopeWindow, at+len(claim)+rigorModesScopeWindow
@@ -829,16 +867,15 @@ func TestDocsRigorModesAnswersSayWhatTheyChange(t *testing.T) {
 	// D11's correction: the runner marks a run's pull request ready, and no
 	// person is in that path in any mode. Both halves are pinned, because the
 	// sentence the correction displaced said the opposite and read as practice.
-	if !strings.Contains(recon, "no person is in that path") {
+	if !strings.Contains(flat[rigorModesRecon], "no person is in that path") {
 		t.Errorf("%s does not state that no person is in the ready path: D11's answer corrects the folder's earlier reading of the practice", rigorModesRecon)
 	}
-	if !strings.Contains(plan, "the runner is what marks it ready") {
+	if !strings.Contains(flat[rigorModesPlan], "the runner is what marks it ready") {
 		t.Errorf("%s does not state that the runner marks it ready: it is D11's answer as the task that changes the ready state has to hold it", rigorModesPlan)
 	}
 	for _, path := range []string{rigorModesReadme, rigorModesRecon, rigorModesPlan} {
-		doc := readDoc(t, path)
 		for _, phrase := range rigorModesMarksReadyAbsences {
-			if strings.Contains(doc, phrase) {
+			if strings.Contains(flatLower[path], phrase) {
 				t.Errorf("%s states %q: no person marks a run's pull request ready in any mode (D11)", path, phrase)
 			}
 		}
@@ -848,23 +885,23 @@ func TestDocsRigorModesAnswersSayWhatTheyChange(t *testing.T) {
 	// item is filed on the run's own branch and in the pull request the run is
 	// already about, and the run loop that first tolerates a finding waits for
 	// the task that files one.
-	if !strings.Contains(recon, "**same** run branch and the **same** pull request") {
+	if !strings.Contains(flat[rigorModesRecon], "**same** run branch and the **same** pull request") {
 		t.Errorf("%s does not settle where the item is filed: D9's answer puts it on the run's own branch and in its own pull request", rigorModesRecon)
 	}
-	t31 := rigorModesBlock(t, rigorModesPlan, plan, "T3.1", rigorModesTaskRE)
+	t31 := flattenDoc(rigorModesBlock(t, rigorModesPlan, plan, "T3.1", rigorModesTaskRE))
 	for _, want := range []string{"T4.5", "D9"} {
 		if !strings.Contains(t31, want) {
 			t.Errorf("%s: T3.1 does not name %s: Slice 3 may not tolerate a finding before T4.5 can file one (D9)", rigorModesPlan, want)
 		}
 	}
-	if !strings.Contains(plan, "the backlog comes first") {
+	if !strings.Contains(flat[rigorModesPlan], "the backlog comes first") {
 		t.Errorf("%s does not state D9's order: the backlog's tasks are picked up before the run loop applies the mode", rigorModesPlan)
 	}
 
 	// D14's answer: the Hotfix gate is built from what the project configured,
 	// never from this repository's own paths, and the agent's number is recorded
 	// rather than trusted. The task that builds it has to say all three.
-	t53 := rigorModesBlock(t, rigorModesPlan, plan, "T5.3", rigorModesTaskRE)
+	t53 := flattenDoc(rigorModesBlock(t, rigorModesPlan, plan, "T5.3", rigorModesTaskRE))
 	for _, want := range []string{"the project", "`rigor:`", "confidence", "never read"} {
 		if !strings.Contains(t53, want) {
 			t.Errorf("%s: T5.3 does not state %q: D14's gate reads what the project configured and records the agent's confidence without reading it", rigorModesPlan, want)
@@ -874,11 +911,67 @@ func TestDocsRigorModesAnswersSayWhatTheyChange(t *testing.T) {
 	// D29's value is the one the owner still owes, and the task that needs it
 	// says so: a decision answered "in shape" is a decision a task cannot
 	// silently fill in for itself.
-	d29 := rigorModesBlock(t, rigorModesRecon, recon, "29", rigorModesDecisionRE)
+	d29 := flattenDoc(rigorModesBlock(t, rigorModesRecon, recon, "29", rigorModesDecisionRE))
 	if !strings.Contains(d29, "still the owner's") {
 		t.Errorf("%s: D29 does not record that its value is still the owner's: the ruling settles the shape, not the repository", rigorModesRecon)
 	}
-	if t45 := rigorModesBlock(t, rigorModesPlan, plan, "T4.5", rigorModesTaskRE); !strings.Contains(t45, "D29") {
+	if t45 := flattenDoc(rigorModesBlock(t, rigorModesPlan, plan, "T4.5", rigorModesTaskRE)); !strings.Contains(t45, "D29") {
 		t.Errorf("%s: T4.5 does not name D29 in its body: the value it assumes is the owner's to name", rigorModesPlan)
+	}
+
+	// Every guard test this file ships is named in the plan's own list of what
+	// the folder's pin test holds. A test the plan does not list is a claim
+	// nobody read before it was written, which is how the eighth one arrived.
+	testSource := readDoc(t, "internal/cli/docs_rigor_modes_test.go")
+	t02 := flattenDoc(rigorModesBlock(t, rigorModesPlan, plan, "T0.2", rigorModesTaskRE))
+	for _, m := range rigorModesGuardTestRE.FindAllStringSubmatch(testSource, -1) {
+		if !strings.Contains(t02, m[1]) {
+			t.Errorf("%s: T0.2 does not name %s: every test this file ships is one the plan says the folder's guard holds", rigorModesPlan, m[1])
+		}
+	}
+
+	// Two claims about the tree that the backlog ruling leans on are held to the
+	// tree itself rather than to a reader's memory, because a finding that
+	// overstates what exists is the one kind of error a later task inherits.
+	//
+	// F44: a checkpoint never commits. The claim is checkpoint.go's own, so the
+	// document has to repeat it and must not say the checkpoints commit — which
+	// is what the finding said before it was corrected, and what README's
+	// "a run files into its own branch" rests on.
+	checkpoint := flattenDoc(readDoc(t, rigorModesCheckpointSource))
+	const checkpointFact = "never commits and never touches the working tree or the index"
+	if !strings.Contains(checkpoint, checkpointFact) {
+		t.Errorf("%s no longer states %q: this guard's F44 sentence quotes it, and the sentence has to move with it", rigorModesCheckpointSource, checkpointFact)
+	}
+	if !strings.Contains(flat[rigorModesRecon], checkpointFact) {
+		t.Errorf("%s does not repeat %s's own claim that a checkpoint %q: F44 is what the ruling's same-branch rule is read from", rigorModesRecon, rigorModesCheckpointSource, checkpointFact)
+	}
+	if strings.Contains(flatLower[rigorModesRecon], "checkpoints commit") {
+		t.Errorf("%s states that checkpoints commit: they push commits the run already made (%s)", rigorModesRecon, rigorModesCheckpointSource)
+	}
+	//
+	// F40: HaltCredsRulesDenied is planned, not built. The vocabulary that would
+	// carry it is runstore's, so the guard reads that file: a document that
+	// names the halt has to say it is planned while the reason is not there.
+	runstore := readDoc(t, rigorModesRunstoreSource)
+	if strings.Contains(runstore, "HaltCredsRulesDenied") {
+		t.Errorf("%s now carries HaltCredsRulesDenied: F40 marks it planned, and the sentence that says so has to move with this file", rigorModesRunstoreSource)
+	}
+	for at := strings.Index(flat[rigorModesRecon], "HaltCredsRulesDenied"); at >= 0; {
+		lo, hi := at-rigorModesScopeWindow, at+len("HaltCredsRulesDenied")+rigorModesScopeWindow
+		if lo < 0 {
+			lo = 0
+		}
+		if hi > len(flat[rigorModesRecon]) {
+			hi = len(flat[rigorModesRecon])
+		}
+		if !strings.Contains(strings.ToLower(flat[rigorModesRecon][lo:hi]), "planned") {
+			t.Errorf("%s names HaltCredsRulesDenied with no \"planned\" beside it: %s has no such halt reason, so F40 may not read it as one the tree has", rigorModesRecon, rigorModesRunstoreSource)
+		}
+		next := strings.Index(flat[rigorModesRecon][at+1:], "HaltCredsRulesDenied")
+		if next < 0 {
+			break
+		}
+		at += 1 + next
 	}
 }

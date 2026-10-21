@@ -72,10 +72,10 @@ The owner ruled that where the rigor modes have to save or file tickets for the
 backlog, the backlog is maintained as **Markdown files in the repository under
 `docs/`**: one file per item, plus a generated index that a small tool regenerates
 and a test pins as current, so that parallel pull requests filing tickets never
-conflict on one file. This is §1.1's eleventh row. The ruling is settled; the design
-it needs is not, and the seven decisions below (D26–D32) are recommendations with
-their alternatives and their costs, exactly like the whole block. The parts, and
-where each lands:
+conflict on one file. This is §1.1's eleventh row. The ruling is settled and the seven decisions below
+(D26–D32) are **answered** by it, each with the recommendation it displaced kept
+beneath the answer as the alternative; **D29**'s designated repository is the one
+value in the block still the owner's to name. The parts, and where each lands:
 
 | The ruling's part | Where it lands |
 | --- | --- |
@@ -616,8 +616,13 @@ field. The tree records two ways of adding one: `Recipe`'s, where
 `ErrPermissionDenied`, warns that the database's rules predate it and tells the
 operator to run `fugaro init --firebase`, and remembers for the session
 (`noRecipe`); and the creds family's, where `internal/budget/rules/marker.go`
-records a marker and the run halts on a downgrade
-(`HaltCredsRulesDenied`). Consequence: showing the mode in `fugaro watch` costs a
+records a marker and the run is to halt on a downgrade — **planned, not built**:
+`HaltCredsRulesDenied` is named in that file's comment, in
+`internal/budget/model.go` and in `internal/projectpolicy/version.go`, and as plan
+task C1.17 of `docs/credentials-service/implementation-plan.md`, and
+`internal/runstore`'s `HaltReason` vocabulary has no such entry, so the second
+precedent is a shape this work may follow rather than one it can read back
+today. Consequence: showing the mode in `fugaro watch` costs a
 rules regeneration (and its golden file), a deploy the owner runs, and one of
 those two paths. The other surfaces are free by comparison: `fugaro runs ls`,
 `fugaro diagnose` and the console read the record through `internal/runview`'s
@@ -645,7 +650,7 @@ read to answer it).
 
 **F43 — A run cannot write into a repository other than its own.** Class: **Gap**. The installation token is narrowed to exactly one repository: `internal/gitprov/github/apptoken.go`'s `tokenSource.Token` mints with `{"repositories": []string{s.repo}, "permissions": perms}`, and `MintInstallationToken` refuses without an owner and a repository. The provider contract names no repository either: `internal/gitprov/gitprov.go`'s `PRSpec` carries `Number`, `Branch`, `Base`, `Title`, `Body`, `Draft`, `Labels` and `Reviewers`, so a pull request is always opened in the client's own repository. A run works in one checkout (`internal/runner/runner.go`'s `openCheckout`, `r.d.WorkDir`), pushes one branch and opens one pull request. The narrowing is a mint parameter rather than a permission — `internal/gitprov/github/apprepos.go` mints an installation token with a permissions map and **no** `repositories` list, which is how the App lists an installation's repositories — so it is liftable, at the price of a second token, a second checkout, a second push and a second pull request. Consequence: D29 cannot recommend that a run anywhere files into the designated repository; the designated repository holds the items filed **in** it, and a cross-repo filing is a task of its own rather than a line in the filing command.
 
-**F44 — Filing during a run writes into the branch under review.** Class: **Exists**. A run's writes are its branch's: `internal/runner/runner.go`'s `openCheckout` opens or clones the repository, `CheckoutNewBranch` then puts the task's ref's tree in that work directory, `internal/runner/checkpoint.go`'s checkpoints commit as the run goes, and the push at the end carries all of it into the pull request. One path is refused outright, whatever the mode: `internal/runner/refused.go`'s `workflowGuard` (F12). Consequence: the item a run files arrives as a commit in the pull request it is about, which is the honest reading of the ruling rather than a problem. The pull request is where a reader meets the deferred leftover, `filed-in:` is a number the record already holds (`runstore.Record.PR`), and the write passes the same refusal every other write does — which is free, because the backlog lives under `docs/` and `.github/workflows/` is the only refused path.
+**F44 — Filing during a run writes into the branch under review.** Class: **Exists**. A run's writes are its branch's: `internal/runner/runner.go`'s `openCheckout` opens or clones the repository, `CheckoutNewBranch` then puts the task's ref's tree in that work directory, the commits the agent's stages and `finalize` make, and `internal/runner/checkpoint.go` pushes them as the run goes — a checkpoint never commits and never touches the working tree or the index, by its own doc comment — so the push at the end carries all of it into the pull request. One path is refused outright, whatever the mode: `internal/runner/refused.go`'s `workflowGuard` (F12). Consequence: the item a run files arrives as a commit in the pull request it is about, which is the honest reading of the ruling rather than a problem. The pull request is where a reader meets the deferred leftover, `filed-in:` is a number the record already holds (`runstore.Record.PR`), and the write passes the same refusal every other write does — which is free, because the backlog lives under `docs/` and `.github/workflows/` is the only refused path.
 
 **F45 — The generated-document pattern exists, and its one trap is already written down.** Class: **Exists**. `internal/clidoc` renders `website/content/cli-reference.md` from the command tree and is invoked by `go run ./internal/clidoc`: exactly the "a small tool regenerates it" shape the ruling asks for, with the header line that tells a reader not to edit it. `internal/pricing/catalog/gencatalog` (through `scripts/gen-price-catalog.sh`) shows the other half of the discipline — a required date, sorted rows and a determinism re-run — so the generator reads no wall clock. Two guards of different kinds hold the CLI reference: `internal/clidoc/cliref_test.go`'s `TestCliReferenceIsCurrent` regenerates and compares, and `internal/cli/docs_website_cliref_test.go` derives the same claim from the command tree instead of from the generator. The trap is named in `internal/cli/docs_website_security_test.go`'s own comment: a test written against the generator agrees with whatever the generator does, which is the one thing a drift test must not do. Consequence: the backlog's index needs both kinds of guard (D28), and its generator must take every date from the item rather than from the clock.
 
@@ -661,8 +666,11 @@ Every count below is stated with the command that produces it, because a count
 without its command is a figure a later reader cannot re-derive. All commands are
 run from the repository root against the working tree of this folder's own commit,
 which differs from the base `1d325928` by this folder's four documents and its pin
-test and nothing else — so one row is the folder's own: the 48 pins are 47 other
-folders' plus `internal/cli/docs_rigor_modes_test.go`.
+test and nothing else — so one row is the folder's own: the 48 pins are the 47
+that already exist plus `internal/cli/docs_rigor_modes_test.go`, and they are
+files rather than folders — 13 of them pin one of `docs/`'s folders and the rest
+pin a standalone document, which is why the row above counts the pins and not the
+folders they sit beside.
 
 | Construct | Count | Command |
 | --- | --- | --- |
@@ -731,9 +739,9 @@ the one row in this table that the folder's own commit moves.
 
 ## 5. Decisions for the owner
 
-**Every decision here is answered**, because the owner answered §5's decisions (D1–D25)
-on 2026-10-20, each asked independently, and **D26–D32** record the
-backlog ruling he gave the same day; §1.3 is the index of that ruling. Each decision states the answer first,
+**Every decision here is answered**, because the owner answered §5's decisions (D1–D32)
+on 2026-10-20 — the first twenty-five each asked independently, and D26–D32 in the
+backlog ruling he gave the same day, which §1.3 indexes. Each decision states the answer first,
 then the recommendation as this folder weighed it with its reason, then the
 alternative and what it cost — the alternatives stay because they are the record
 of what was considered and priced rather than missed. **Where the answer differs
