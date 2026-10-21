@@ -321,6 +321,32 @@
         "total": { "type": "integer", "minimum": 0, "description": "How many paths the run really changed, so a truncated record still says how big the set it is part of was." },
         "truncated": { "type": "boolean", "description": "Set only when paths is shorter than total, which happens at 200 paths or 16 KiB of path (runstore.MaxChangedPathBytes), whichever comes first: the stored set is then not the whole set." }
       }
+    },
+    "rigor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "from", "at"],
+      "description": "The mode the run resolved, the layer that decided it, the areas that matched and the moment of the run each was known at (docs/rigor-modes/implementation-plan.md T1.2, D22, D24, D25). The mode's configuration is read from the base branch (D25), so revision names where it came from. Absent for a run that resolved none — a record from before this field existed, or a run that died before bootstrap — and absent means 'no record of this run's rigor', never 'it resolved nothing'.",
+      "properties": {
+        "mode": { "enum": ["poc", "startup", "pro", "critical", "hotfix"], "description": "The resolved mode (internal/rigor's vocabulary; pro is Fugaro's built-in default, D19)." },
+        "from": { "enum": ["area", "repo", "project", "default", "request", "reached"], "description": "The layer that decided the mode: an area rule the run's paths matched, the repository's rigor.default, the project layer's defaults.rigor.default, Fugaro's built-in default, the run's own request (fugaro run --mode, which may raise and never lower), or reached — the mode an earlier moment set that a later one did not lower (D22)." },
+        "areas": {
+          "type": "array",
+          "maxItems": 100,
+          "description": "Every area rule that matched, strictest first (D23). Absent when none matched: a reader must not see 'there were rules' where the answer is 'there were none'.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "at"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$", "description": "The rule's name, as its layer wrote it (internal/rigor's Area.Validate)." },
+              "at": { "enum": ["bootstrap", "round", "finalize"], "description": "The moment of the run this rule was first applied at: the run's own moment it matched." }
+            }
+          }
+        },
+        "at": { "enum": ["bootstrap", "round", "finalize"], "description": "The moment of the resolution this block records: the last one that changed it, so a moment that resolved the same answer leaves it as it was." },
+        "revision": { "type": "string", "maxLength": 120, "description": "The revision of the configuration the mode was read from, origin/<base branch> (D25), so a run whose other keys came from the checked-out ref can be told apart from the mode it ran under (F35's 'two answers' made visible). Absent when the run could not name it." }
+      }
     }
   }
 }

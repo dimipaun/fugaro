@@ -1,5 +1,7 @@
 package rigor
 
+import "slices"
+
 // Layer names where a resolved mode came from: D24's `from`, the second of
 // the three parts the one resolved value carries (the mode, the layer that
 // won, and the areas that matched).
@@ -31,6 +33,17 @@ const (
 	// gave, and that resolution's own layer is what named the mode.
 	FromReached Layer = "reached"
 )
+
+// Layers is every value From may take: the three layers from the narrowest,
+// then the two that are not layers. It is the closed set one place names,
+// and every reader of a resolution checks against it — a run record is an
+// object the job can write, so internal/runstore bounds a `from` read back
+// by KnownLayer rather than by a list of its own that would drift from this
+// one the day a layer is added.
+var Layers = []Layer{FromArea, FromRepo, FromProject, FromDefault, FromRequest, FromReached}
+
+// KnownLayer reports whether l is a layer a resolution may name.
+func KnownLayer(l Layer) bool { return slices.Contains(Layers, l) }
 
 // Config is the rigor configuration of one run: the two layers that may set
 // a mode (D20), each with its own area list.

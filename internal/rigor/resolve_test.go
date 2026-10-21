@@ -237,3 +237,52 @@ func TestResolvePrecedenceHoldsOverEveryPairOfModes(t *testing.T) {
 		}
 	}
 }
+
+// TestLayersIsTheSetResolveNames pins the closed set of `from` values (D24):
+// every layer a resolution can name is in Layers, and every resolution names
+// one of them. The second half is what makes the set complete rather than
+// hand-kept: internal/runstore bounds a record's `from` with KnownLayer, so a
+// layer a resolution can return and Layers does not carry would be a record
+// field a reader silently drops.
+func TestLayersIsTheSetResolveNames(t *testing.T) {
+	onAxis, offAxis := Modes[:len(Modes)-1], Hotfix
+	for _, m := range append([]Mode{""}, Modes...) {
+		// Every path through Resolve, over every value that changes its
+		// answer: a mode in each layer, an area rule, a request, a reached
+		// value, and nothing at all.
+		for _, cfg := range []Config{
+			{},
+			{Project: m},
+			{Repo: m},
+			{Project: onAxis[0], Repo: m},
+			{Repo: m, RepoAreas: []Area{{Name: "x", Match: "x/**", Mode: onAxis[1]}}},
+			{ProjectAreas: []Area{{Name: "y", Match: "y/**", Mode: offAxis}}, Repo: m},
+		} {
+			for _, req := range []Request{
+				{},
+				{Paths: []string{"x/y"}},
+				{Mode: m},
+				{Reached: m},
+				{Mode: m, Paths: []string{"x/y"}, Reached: onAxis[2]},
+			} {
+				got := Resolve(cfg, req)
+				if !Known(got.Mode) {
+					t.Errorf("Resolve(%+v, %+v).Mode = %q, which is not in the vocabulary", cfg, req, got.Mode)
+				}
+				if !KnownLayer(got.From) {
+					t.Errorf("Resolve(%+v, %+v).From = %q, which Layers does not name", cfg, req, got.From)
+				}
+			}
+		}
+	}
+	// And the set is exactly the six: a value no resolution names is refused,
+	// so KnownLayer cannot pass a typo of a real layer.
+	for _, bad := range []Layer{"", "floors", "Area", "request ", "area\n"} {
+		if KnownLayer(bad) {
+			t.Errorf("KnownLayer(%q) = true; nothing resolves to it", bad)
+		}
+	}
+	if len(Layers) != 6 {
+		t.Errorf("Layers has %d entries; the vocabulary is the six D24/D6 name", len(Layers))
+	}
+}
