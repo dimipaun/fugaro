@@ -26,12 +26,16 @@ import (
 // copy (design finding 22, D61).
 //
 // Two directions decide an entry, and leaving one out is the safe one: a
-// refused plan falls back to a confirmation, which is a working program, while
-// a permitted plan that should not have been is the failure this gate exists
-// to avoid. So the list is smaller than init's — the twelve entries in
-// managedDropped are Fugaro's own plumbing, the project-level IAM authority
-// the deployer must not hold, or a type whose resources GCP names on the
-// server's side, where no prefix condition can tell the agent's from Fugaro's.
+// refused plan is refused — a managed apply's verdict is final, and nothing
+// here falls back to a confirmation (internal/managed/apply.go's gateAndApply
+// returns the refusal before any confirmation is asked, and internal/cli
+// renders it as "nothing was applied ... a resource outside the managed
+// project's allowlist") — while a permitted plan that should not have been is
+// the failure this gate exists to avoid. So the list is smaller than init's —
+// the twelve entries in managedDropped are Fugaro's own plumbing, the
+// project-level IAM authority the deployer must not hold, or a type whose
+// resources GCP names on the server's side, where no prefix condition can tell
+// the agent's from Fugaro's.
 
 // ManagedPrefix is the name prefix every resource a managed plan creates must
 // carry: the deployer's scoped role is bound under an IAM condition admitting
@@ -53,15 +57,18 @@ const ManagedPrefix = "fmgd-"
 
 // managedTypes are the resource types a plan in a managed project may contain
 // — Task 1.1's decision, one entry of managedTypeReasons per line. Every entry
-// is also an entry of allowedTypes: a type no module declares has no place on
-// either list, and adding one here without deciding it there fails
-// TestManagedAllowedTypesIsDecided.
+// is also an entry of allowedTypes: adding one here without deciding it there
+// fails TestManagedAllowedTypesIsDecided. allowedTypes carries one entry no
+// module declares yet (admittedAheadOfTheirModule, cover.go), the central
+// orchestrator's service; it is on this list for the same reason and one more,
+// stated in its reason below.
 var managedTypes = map[string]bool{
 	"google_apikeys_key":                             true,
 	"google_artifact_registry_repository":            true,
 	"google_artifact_registry_repository_iam_member": true,
 	"google_cloud_run_v2_job":                        true,
 	"google_cloud_run_v2_job_iam_member":             true,
+	"google_cloud_run_v2_service":                    true,
 	"google_cloud_scheduler_job":                     true,
 	"google_project_service":                         true,
 	"google_secret_manager_secret":                   true,
@@ -82,6 +89,7 @@ var managedTypeReasons = map[string]string{
 	"google_artifact_registry_repository_iam_member": "inherited: a grant on a repository the plan itself created; the deployer's artifactregistry.repositories.setIamPolicy is conditioned on the prefix",
 	"google_cloud_run_v2_job":                        "inherited: the workload a managed project runs. Its name must carry the prefix and its service account must be set and be one of the managed project's own — a job with no account runs as the project's default compute account, which holds Editor by default",
 	"google_cloud_run_v2_job_iam_member":             "inherited: invoker grants on the plan's own jobs; the deployer's run.jobs.setIamPolicy is conditioned on the prefix",
+	"google_cloud_run_v2_service":                    "admitted ahead of its module, with allowedTypes (central-orchestrator P1, D19): the central orchestrator's resident service is one per installation, not one per managed project, so no managed plan is expected to hold one today. It is decided on this list as D19's answer names it — the type is admitted to both cover lists deliberately — and so that a managed plan holding one is judged by the conditions that bound a job rather than refused for its type. Those conditions are the job's, one block shallower: the name must carry the prefix, and the template's service account must be set and be one of the managed project's own — a service with no account runs as the project's default compute account, which holds Editor by default — and the prefix keeps Fugaro's own orchestrator (fugaro-orchestrator) out of reach. Accepted exposure, and it is why this entry is a decision rather than a formality: the deployer's two roles hold run.jobs.* and no run.services.* (D75), so a managed plan holding a service could not be applied by the deployer as the roles stand — the entry admits a type the deployer cannot yet create, and giving it run.services.* is a widening of D75's role lists that is the owner's decision and not this part's. A type left off this list is not sent to a confirmation: this gate's refusal is final for that plan (internal/managed/apply.go's gateAndApply returns it before anything is asked), so leaving the type out would be a hard refusal rather than the safe direction",
 	"google_cloud_scheduler_job":                     "inherited: the schedule a managed project runs; its name and the OIDC or OAuth account it calls as must both carry the prefix, so it can neither reach Fugaro's own jobs nor run as an account the plan did not create",
 	"google_project_service":                         "inherited: a managed plan may enable an API. The deployer holds serviceusage.services.enable, get and list only, never disable, so a plan that disables a service by deleting its google_project_service cannot be applied — and the delete needs the owner's own list whatever the type is. Accepted exposure: enabling an API can make Google itself add project-level IAM grants for that API's default service accounts (the Compute Engine default account's Editor, a service agent's role), grants no plan shows; not usable today, because no type the list admits can run as those accounts — a job or a scheduler must run as a prefixed account of the plan's own, and a grant on an account is conditioned on the prefix",
 	"google_secret_manager_secret":                   "inherited: the container, never a version. The deployer holds no secretmanager.versions.access, so a managed plan can create a secret and cannot read one, and update or delete only a prefixed one",
@@ -141,14 +149,15 @@ func managedDroppedTypes() []string {
 // is unknown at plan time, references a created bucket, and applies as the
 // runs bucket. init's own Cover may trust such a value (cover.go:255-263)
 // because its plans are Fugaro's own modules; a managed plan is the agent's.
-// The refusal falls back to the confirmation path, and the agent can always
-// write the name literally — every name here is one the plan chooses.
+// The refusal is final for that plan, and the agent can always write the name
+// literally — every name here is one the plan chooses.
 var managedNames = map[string]string{
 	"google_apikeys_key":                             "name",
 	"google_artifact_registry_repository":            "repository_id",
 	"google_artifact_registry_repository_iam_member": "repository",
 	"google_cloud_run_v2_job":                        "name",
 	"google_cloud_run_v2_job_iam_member":             "name",
+	"google_cloud_run_v2_service":                    "name",
 	"google_cloud_scheduler_job":                     "name",
 	"google_secret_manager_secret":                   "secret_id",
 	"google_secret_manager_secret_iam_member":        "secret_id",
@@ -184,11 +193,12 @@ var managedGrantRules = map[string]bool{
 //     list, and only when the resource it removes or creates is one the rules
 //     below admit — the list alone never admits one (NotCovered);
 //   - the type: managedTypes rather than allowedTypes, so the twelve entries
-//     of managedDropped ask for a confirmation instead;
+//     of managedDropped are refused outright rather than admitted — a managed
+//     apply's refusal is final, not a prompt;
 //   - the resource: every name a managed resource carries must carry
-//     ManagedPrefix, and the accounts a job or a scheduler runs as must be the
-//     managed project's own, so a plan cannot reach Fugaro's resources, the
-//     runs bucket or the default compute account;
+//     ManagedPrefix, and the accounts a job, a service or a scheduler runs as
+//     must be the managed project's own, so a plan cannot reach Fugaro's
+//     resources, the runs bucket or the default compute account;
 //   - the grant: a role is granted only on such a resource, only to a member
 //     the review listed or a managed account, and only with the role spelled
 //     out — a managed plan creates no custom role, so a computed role could be
@@ -211,7 +221,7 @@ var managedGrantRules = map[string]bool{
 // the delete rule would later allow (managedBucketLock, managedObjectLock).
 //
 // And one rule under all six: every value the cover reads — a name, the
-// account a job, a scheduler or a grant is on, a member, a role — must be
+// account a job, a service, a scheduler or a grant is on, a member, a role — must be
 // known at plan time. A computed one is refused, never trusted for what it
 // references (managedNames says why).
 //
@@ -290,8 +300,8 @@ func (c ManagedCover) WithDeleteList(allowDelete []string) Deletable {
 // never be undone and holds the resource, its bucket and the project, so a
 // resource in that state is not one the allowlist admits, and reading the chain
 // in full is the fail-closed direction. A narrower reading would be a rule
-// loosened for deletes, which is what this task must not do. The refusal falls
-// back to the confirmation, as every refusal does.
+// loosened for deletes, which is what this task must not do. The refusal is
+// final for that plan, as every refusal of this gate is.
 func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	if p == nil {
 		return []string{"no plan"}
@@ -410,7 +420,7 @@ var managedRemovalReasons = map[string]bool{
 // exactly the kind of change none of the rules here can judge — every one of
 // them reads a resource's type, name, project and attributes, and none says
 // what leaving the state means. Refused, fail closed like the rest: a plan
-// that needs it is refused and falls back to the confirmation.
+// that needs it is refused, and the agent writes one that does not.
 func managedActions(acts []string) bool {
 	return allOf(acts, "create", "update", "no-op", "read") ||
 		slices.Equal(acts, []string{"delete"}) ||
@@ -895,6 +905,44 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 		case !c.managedAccount("serviceAccount:" + email):
 			return "runs as " + email + ", which is not a service account of the managed project carrying the prefix " + ManagedPrefix
 		}
+	case "google_cloud_run_v2_service":
+		// The same rule as the job's, one level shallower: a service's
+		// template is the revision's own, where a job's carries the task's
+		// template inside it. A service with no service account runs as the
+		// project's default compute account, which holds Editor by default:
+		// unset is refused, not read as "no account to check".
+		if unknownAt(rc.Change.AfterUnknown, "template", 0, "service_account") {
+			return "a service whose service account is not known"
+		}
+		email := str(at(a["template"], "service_account"))
+		switch {
+		case email == "":
+			return "a service with no service account, which would run as the project's default compute account"
+		case !c.managedAccount("serviceAccount:" + email):
+			return "runs as " + email + ", which is not a service account of the managed project carrying the prefix " + ManagedPrefix
+		}
+		// The service's reach, which the job has no equivalent of: a managed
+		// service answers only from inside the managed project. Both settings
+		// are refused when they are not the ones that keep it there — an
+		// ingress of INGRESS_TRAFFIC_ALL is reachable from the internet, and
+		// invoker_iam_disabled = true turns the invoker check off, so anyone
+		// who can reach the service may call it, which is the allUsers refusal
+		// by another name (managedGrantRules). Unstated is refused with them
+		// rather than read as the safe default: the provider's own default
+		// ingress is INGRESS_TRAFFIC_ALL, and a value the plan does not state
+		// is not one this gate read.
+		if unknown(rc.Change, "invoker_iam_disabled") || a["invoker_iam_disabled"] == nil {
+			return "a service that does not state invoker_iam_disabled: write it out as false, the setting that keeps the invoker check on"
+		}
+		if a["invoker_iam_disabled"] != false {
+			return "a service with the invoker check off (invoker_iam_disabled), which answers anyone who can reach it"
+		}
+		switch ing := str(a["ingress"]); {
+		case unknown(rc.Change, "ingress") || ing == "":
+			return "a service with no ingress stated, which the provider defaults to INGRESS_TRAFFIC_ALL: state INGRESS_TRAFFIC_INTERNAL_ONLY or INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+		case ing != "INGRESS_TRAFFIC_INTERNAL_ONLY" && ing != "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER":
+			return fmt.Sprintf("a service with ingress %s, which is reachable from the internet: state INGRESS_TRAFFIC_INTERNAL_ONLY or INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER", safetext.Field(ing))
+		}
 	case "google_cloud_scheduler_job":
 		ht := at(a["http_target"])
 		if unknown(rc.Change, "http_target") ||
@@ -1131,10 +1179,9 @@ func (c ManagedCover) managedBilling(rc ResourceChange) string {
 // revision that followed var.project through module calls to its value
 // admitted a block landing its resources in proj-2. A module call's argument
 // is not read for the same reason: it feeds a provider block only through a
-// reference, which is already refused. A refused block falls back to the
-// typed confirmation, and the agent can always write the project out — a
-// constant_value is the value terraform evaluated, templates over literals
-// included.
+// reference, which is already refused. A refused block is refused, and the
+// agent can always write the project out — a constant_value is the value
+// terraform evaluated, templates over literals included.
 //
 // And a configuration with no project at all is refused, the one terraform
 // configures by itself when the plan declares no provider block included: its
@@ -1154,7 +1201,7 @@ func (c ManagedCover) managedProviderProject(p *Plan) []string {
 			// Terraform's JSON gives a provider config of a module nested two
 			// or more deep (module.m.module.n:google) no expressions at all, so
 			// it lands here too: a known conservative refusal that fails closed
-			// (the run asks for the typed confirmation), never a pass.
+			// (a refusal, never a pass).
 			out = append(out, "provider_config."+key+" (sets no project, so it lands resources in whatever project the environment of whoever applies names, which the plan does not show: it is not proven to be this run's — write the project out)")
 			continue
 		}
@@ -1255,8 +1302,8 @@ func (c ManagedCover) managedName(rc ResourceChange, attr string) string {
 // secret its path names — Fugaro's own, the runs bucket, a job or a
 // repository. A name of these characters alone is the resource's own ID: no
 // '/', no ':', no capital (a bucket, an account, a job or a repository takes
-// none, and a secret or a scheduler written in capitals asks for a
-// confirmation rather than being read).
+// none, and a secret or a scheduler written in capitals is refused rather
+// than read).
 var managedNameChars = regexp.MustCompile(`^[a-z0-9._-]+$`)
 
 // managedGrant says why a role a managed plan grants is not one it may grant:

@@ -89,11 +89,15 @@ const (
 	// field for that reason.
 	DefaultGrace = 10 * time.Minute
 
-	// MaxString bounds a holder's name, its uid and the recorded mode. It is
-	// internal/budget/rules's MaxString, the bound the deployed rules apply
-	// to every registry string (TestTheRulesCarryTheLeaseAndTheGraceWeApply
-	// holds the two together): a longer one is a record the database refuses,
-	// and refusing it here says so before the write is sent.
+	// MaxString bounds every registry string this package writes: a holder's
+	// name, its uid and the recorded mode. It is internal/budget/rules's
+	// MaxString, the bound the deployed rules apply to every registry string
+	// (TestTheRulesCarryTheLeaseAndTheGraceWeApply holds the two together): a
+	// longer one is a record the database refuses, and refusing it here says
+	// so before the write is sent. Holder.validate and Options.validate are
+	// the two halves of that promise — the name and the uid on one side, the
+	// mode and the PR on the other — and neither is written without the other
+	// having run.
 	MaxString = 200
 
 	// ServerClockSlack is how far behind the database's true clock a reading of
@@ -313,6 +317,32 @@ type Options struct {
 	PR int64
 }
 
+// validate refuses options the deployed rules would refuse, before the write
+// is sent: `mode` is a registry string the rules cap at MaxString and require
+// to be text (rules.json.tmpl's `STR`), and `pr` is an `AMOUNT` the rules
+// require to be 1 or more when it is written at all (the zero value records
+// no PR — the field is `omitempty` — which is why zero is accepted here and a
+// negative number is not).
+//
+// Both are attribution rather than the seat (Record's comment), and that is
+// exactly why they are checked here: nothing reads them to make a decision, so
+// a mode the rules refuse would come back as a bare rtdb.ErrPermission on
+// every heartbeat — an error that says nothing about the seat and that a
+// caller would have to read as *UnsureError and retry for as long as the job
+// runs. The bound is the same MaxString the name and the uid are held to.
+func (o Options) validate() error {
+	if len(o.Mode) > MaxString {
+		return fmt.Errorf("lease: the recorded mode is %d characters, longer than the %d the database's rules accept", len(o.Mode), MaxString)
+	}
+	if strings.ContainsFunc(o.Mode, func(r rune) bool { return r < 0x20 || r == 0x7f || unicode.Is(unicode.Cf, r) }) {
+		return fmt.Errorf("lease: the recorded mode %q carries control or format characters: it is a mode name a person reads", oneLine(o.Mode))
+	}
+	if o.PR < 0 {
+		return fmt.Errorf("lease: the recorded pr is %d, and the database's rules require 1 or more: record no PR rather than a number that is not one", o.PR)
+	}
+	return nil
+}
+
 // HeldError is the typed refusal of a takeover: another orchestrator holds
 // the seat. It is returned by Take when the lease is fresh, and by Take when
 // a racing orchestrator wrote first.
@@ -421,10 +451,21 @@ func (e *UnsureError) MayAct(db DB) bool {
 	return ok && now.Before(e.Until)
 }
 
-// oneLine is s as one line: a holder's name and uid are read in a message a
-// person sees, and the rules bound them but do not stop a newline.
+// oneLine is s as one line: a holder's name, its uid and the recorded mode are
+// read in a message a person sees, and the rules bound them but do not stop a
+// newline.
+//
+// It strips the same characters Holder.validate and Options.validate refuse —
+// the C0 and DEL controls, and unicode.Cf, which is where a bidirectional
+// override and a zero-width joiner live. The three agree on purpose: a string
+// carrying one of them never reaches a lease this package wrote, so the only
+// way one arrives in a message is a node somebody else wrote, and a message
+// that a reader cannot trust the order of is worse than a message with the
+// characters taken out of it.
 func oneLine(s string) string {
-	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f }), " ")
+	return strings.Join(strings.FieldsFunc(s, func(r rune) bool {
+		return r < 0x20 || r == 0x7f || unicode.Is(unicode.Cf, r)
+	}), " ")
 }
 
 // wire is a Record as it goes to the database: the same fields, with
@@ -506,6 +547,9 @@ func Take(ctx context.Context, db DB, path string, h Holder, o Options) (Record,
 	if err := h.validate(); err != nil {
 		return Record{}, err
 	}
+	if err := o.validate(); err != nil {
+		return Record{}, err
+	}
 	cur, etag, found, now, err := read(ctx, db, path)
 	if err != nil {
 		return Record{}, err
@@ -564,7 +608,10 @@ func Take(ctx context.Context, db DB, path string, h Holder, o Options) (Record,
 // database could not be reached, or refused the write for a reason that says
 // nothing about who holds the seat — the answer is a *UnsureError carrying the
 // instant after which the caller must stop acting, never a bare error and
-// never a silent continue (D15).
+// never a silent continue (D15). The one exception is the node itself: a lease
+// the rules would have refused (Record.valid) is not one to renew, and this
+// refuses it exactly as Read and Take do rather than writing a heartbeat into
+// a record no reader can trust.
 func Renew(ctx context.Context, db DB, path string, held Record) (Record, error) {
 	cur, etag, found, _, err := read(ctx, db, path)
 	if err != nil {
@@ -572,6 +619,9 @@ func Renew(ctx context.Context, db DB, path string, held Record) (Record, error)
 	}
 	if !found {
 		return Record{}, &LostError{Path: path, Held: held}
+	}
+	if err := cur.valid(); err != nil {
+		return Record{}, err
 	}
 	if cur.Generation != held.Generation || cur.HolderUID != held.HolderUID {
 		return Record{}, &LostError{Path: path, Held: held, Found: &cur}
@@ -581,7 +631,7 @@ func Renew(ctx context.Context, db DB, path string, held Record) (Record, error)
 	rec, err := put(ctx, db, path, etag, next)
 	if err != nil {
 		if errors.Is(err, rtdb.ErrPrecondition) {
-			return Record{}, lostAfterRace(ctx, db, path, held)
+			return Record{}, lostAfterRace(ctx, db, path, held, err)
 		}
 		return Record{}, unsure(path, held, err)
 	}
@@ -596,7 +646,10 @@ func Renew(ctx context.Context, db DB, path string, held Record) (Record, error)
 //
 // A release does not delete the node: the generation is the fencing token and
 // it must not restart (D15's "the generation stays monotonic"), so the record
-// stays and says nobody is sitting in it.
+// stays and says nobody is sitting in it. That is also why a node the rules
+// would have refused (Record.valid) is refused here rather than released:
+// `generation + 1` on a node the rules never wrote is this package inventing
+// the next value of a fencing token whose own history it cannot read.
 func Release(ctx context.Context, db DB, path string, held Record) error {
 	cur, etag, found, _, err := read(ctx, db, path)
 	if err != nil {
@@ -605,12 +658,15 @@ func Release(ctx context.Context, db DB, path string, held Record) error {
 	if !found {
 		return &LostError{Path: path, Held: held}
 	}
+	if err := cur.valid(); err != nil {
+		return err
+	}
 	if cur.Generation != held.Generation || cur.HolderUID != held.HolderUID {
 		return &LostError{Path: path, Held: held, Found: &cur}
 	}
 	if _, err := put(ctx, db, path, etag, Record{Generation: cur.Generation + 1}); err != nil {
 		if errors.Is(err, rtdb.ErrPrecondition) {
-			return lostAfterRace(ctx, db, path, held)
+			return lostAfterRace(ctx, db, path, held, err)
 		}
 		return unsure(path, held, err)
 	}
@@ -648,15 +704,45 @@ func heldFirst(ctx context.Context, db DB, path string, now time.Time) error {
 	return &HeldError{Path: path, Found: &cur, Now: now, Until: cur.Expires(DefaultGrace)}
 }
 
-// lostAfterRace is the refusal of a Renew or a Release that lost the
-// compare-and-set: someone wrote between the read and the write. The re-read
-// names them when it can; a re-read that fails still means this caller's seat
-// is not its own.
-func lostAfterRace(ctx context.Context, db DB, path string, held Record) error {
+// lostAfterRace is the answer to a Renew or a Release that lost the
+// compare-and-set: someone wrote between the read and the write. Losing the
+// compare-and-set is not by itself evidence that the seat is gone, and the
+// re-read is what tells the two cases apart. The writer can be this same
+// holder on this same seat — a second process of one identity, or a retry
+// whose first attempt landed after its answer was lost — and then the record
+// that comes back carries the generation and the holder_uid this caller
+// holds, which is its own seat and not somebody else's. Answering *LostError
+// there would tell a holder to stop acting on a job it still owns, which is
+// the "job with no shepherd at all" half of the invariant, so that case gets
+// the answer every other failed write gets: *UnsureError, carrying the
+// instant past which the caller must stop acting and claiming nothing about
+// the seat.
+//
+// A seat genuinely taken over cannot be mistaken for it: the deployed rules
+// allow a takeover only once `now - renewed_at >= LeaseGraceMs`, so a takeover
+// that beat this call's write moved the generation (Record.Fresh and the
+// rules' own comparison agree at every instant, TestTakeoverIsRefusedWhileTheLeaseIsFresh),
+// and one that has not moved it cannot have happened yet.
+//
+// The re-read's own failures get the same answer for the same reason: a
+// re-read that could not be made says nothing about who holds the seat, and
+// neither does a node that has been deleted — nothing this package writes
+// deletes one, and a seat that is not there is not one this caller holds
+// either. Only a record that contradicts the held one is a lost seat, and
+// that is what Found carries.
+func lostAfterRace(ctx context.Context, db DB, path string, held Record, cause error) error {
 	var cur Record
 	_, found, err := db.GetETag(ctx, path, &cur)
-	if err != nil || !found {
+	if err != nil {
+		return unsure(path, held, err)
+	}
+	if !found {
 		return &LostError{Path: path, Held: held}
+	}
+	if cur.Generation == held.Generation && cur.HolderUID == held.HolderUID {
+		// The re-read contradicts nothing: this is the seat this caller
+		// holds, written by a writer carrying its own generation and uid.
+		return unsure(path, held, cause)
 	}
 	return &LostError{Path: path, Held: held, Found: &cur}
 }

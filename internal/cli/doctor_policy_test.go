@@ -146,6 +146,13 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 // template that renames or moves one fails here rather than leaving the
 // sentence pointing at a node that no longer exists. A release that adds a
 // location to the document adds it to this list and to rulesMarkerOlderText.
+//
+// And each one is held to the *generation it arrived in*: the sentence is read
+// by an operator on the generation before the deploy, so it must name an
+// addition only to a marker that does not have it yet. The generation-4 review
+// finding was the other half of that — one hard-coded sentence listing all three
+// to a marker of 3, which already has the mailbox and the device node, so the
+// redeploy it described would have been one that takes them away.
 func TestRulesMarkerOlderTextNamesWhatTheDocumentAdds(t *testing.T) {
 	gen, err := rules.Generate()
 	if err != nil {
@@ -157,17 +164,32 @@ func TestRulesMarkerOlderTextNamesWhatTheDocumentAdds(t *testing.T) {
 	}
 	for _, c := range []struct {
 		docKey, named string // the JSON key the template renders, and what the sentence calls it
+		arrivedIn     int    // the generation the document grew it in
 	}{
-		{`"mailbox"`, "mailbox subtree"},
-		{`"devices"`, rules.PathDevices},
-		{`"orchestrators"`, "orchestrators/<slug>/<job>/lease"},
+		{`"mailbox"`, "mailbox subtree", projectpolicy.MailboxRulesVersion},
+		{`"devices"`, rules.PathDevices, projectpolicy.DeviceRulesVersion},
+		{`"orchestrators"`, "orchestrators/<slug>/<job>/lease", projectpolicy.RulesVersion},
 	} {
 		if !strings.Contains(string(gen), c.docKey) {
 			t.Errorf("the generated rules carry no %s: rulesMarkerOlderText names it as something a redeploy adds, so either the template lost it or this list is stale", c.docKey)
 		}
-		if !strings.Contains(text, c.named) {
-			t.Errorf("rulesMarkerOlderText does not name %q, which the generated document carries (%s): an operator on an older generation is told what the redeploy adds, and a location left out of the sentence is one they deploy blind", c.named, c.docKey)
+		below := rulesMarkerOlderText(c.arrivedIn - 1)
+		if !strings.Contains(below, c.named) {
+			t.Errorf("rulesMarkerOlderText(%d) does not name %q, which the generated document carries (%s) and which generation %d is the one that adds: an operator on the generation before it is told what the redeploy adds, and a location left out of the sentence is one they deploy blind — %q", c.arrivedIn-1, c.named, c.docKey, c.arrivedIn, below)
 		}
+		// At the generation that already carries it the clause has to be gone.
+		// Doctor prints this sentence only below RulesVersion, so the
+		// generation-4 call is never a report an operator sees; the assertion is
+		// on the clause the sentence is built from, which is what the bug was.
+		at := rulesMarkerOlderText(c.arrivedIn)
+		if strings.Contains(at, c.named) {
+			t.Errorf("rulesMarkerOlderText(%d) names %q as something the redeploy adds, and generation %d already carries it (%s): the operator is being told the deploy takes away what they have — %q", c.arrivedIn, c.named, c.arrivedIn, c.docKey, at)
+		}
+	}
+	// A marker of 3 is the state the review finding named, and the sentence for
+	// it is the one that must not list the two additions generation 3 has.
+	if got := rulesMarkerOlderText(projectpolicy.DeviceRulesVersion); !strings.Contains(got, "orchestrators/<slug>/<job>/lease") || strings.Contains(got, "mailbox subtree") || strings.Contains(got, rules.PathDevices) {
+		t.Errorf("rulesMarkerOlderText(%d) = %q, want the orchestrators lease alone: a marker of %d has the mailbox and the device node, and naming them as additions describes a redeploy that removes them", projectpolicy.DeviceRulesVersion, got, projectpolicy.DeviceRulesVersion)
 	}
 }
 

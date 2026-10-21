@@ -778,6 +778,17 @@ version bumped. Why: `internal/rtdb` has no transaction (#8), the RTDB is where 
 identity and the rules that could fence a lease already live, and a lease in the runs bucket
 would inherit every launcher's reach (SECURITY.md).
 
+**Corrected 2026-10-21, by P3 — the shape the record ships with, and why it is not the one
+above.** The record is `{holder, holder_uid, generation, renewed_at, mode, pr}`, and the
+difference is two fields. It carries **no `expires_at`**, because D3's own answered
+recommendation has the writer store no absolute deadline it computes itself: the grace is
+applied by each reader to `renewed_at`, on the database's clock, so a stored deadline would be
+a second source of truth for the same question — and the one the writer's clock produced,
+which is the input D3 removes. It carries **`pr`**, which the shape above omits and D2's answered
+sub-question asks for: the lease is per job *with the PR recorded on the lease*. The
+generation, the renewed-at stamp and the mode are the fields written above, and the ETag
+compare-and-put is the one written above, never a whole-node put.
+
 ### D2 — One job, one shepherd: the invariant, the fencing token and the grace period
 **Recommendation: the lease is the invariant; a takeover is a compare-and-set on
 (`generation`, `expires_at`), the winner increments `generation`, and every later action the
@@ -803,6 +814,11 @@ the lease is **per job, with the PR recorded on the lease**; expiry is judged on
 both per project; and the **branch lock stays where it is**. Why: fencing is the generation
 field and not a clock (#10), `ServerNow` is the one clock this tree can trust (#9), and the
 stale-heartbeat sweeper that was the alternative hands work to nobody (#11).
+
+**Corrected 2026-10-21, by P3.** The compare-and-set the lease ships with is on the
+**generation** and the node's **ETag**, not on a stored `expires_at`: there is no such field
+(D1's correction above), the grace is read as `renewed_at + grace` on the database's clock, and
+the fencing token is the generation either way — which is the decision as answered.
 
 ### D3 — Clock skew, and who may hold a lease
 **Recommendation: the lease's expiry is judged on the database's clock; the writer's lease
@@ -1039,6 +1055,20 @@ its own cost row**. Why: the installation is the tree's unit (a Fugaro project, 
 service per named orchestrator buys N grants, N secrets and N cost rows for sessions that are
 idle almost always.
 
+**P1 landed the admission on 2026-10-21; the confirmation the answer names lands with P4.**
+The type is on both lists, so a plan holding a service is judged rather than refused for a
+type nobody had decided on — and no service is covered by the run's one typed confirmation
+yet: the checks on what a service may say (its image, its ingress, whether its invoker check
+is on, the account it runs as, its scaling) are the module's, and the module is P4, so until
+it lands `attributes` refuses every service by name. A step that applies such a plan therefore
+asks **its own** typed confirmation, which is the wording above and what
+`internal/cli/init_review.go`'s review path shows ("this step is not covered by the run
+confirmation: …; it asks for its own"). P4 is where those checks are written, and where what a
+service plan asks once they exist is decided. The managed list is a separate question with the
+opposite answer: a type **off** it is refused outright rather than sent to a confirmation —
+that gate's refusal is final, and `internal/managed` returns it before anything is typed —
+which is why the type is decided on both lists rather than on one.
+
 ### D20 — Where the agent runs
 **Recommendation: the agent runs in a **job**, and the resident service is a consumer plus a
 launcher** — PR #632's split (§4.2), which is also mobile D115's condition (#53) and the only
@@ -1246,7 +1276,7 @@ this work's to make.
 
 | # | What is unverified | Why | What would settle it |
 | --- | --- | --- | --- |
-| U1 | That a Cloud Run **service** can be admitted to the installation's Terraform without breaking `fugaro setup`'s confirmation model | `internal/infra/tf/cover.go`'s `allowedTypes` is a code constant; no service exists to try | adding the type behind its own typed confirmation, and an owner-run plan |
+| U1 | That a Cloud Run **service** can be admitted to the installation's Terraform without breaking `fugaro setup`'s confirmation model | `internal/infra/tf/cover.go`'s `allowedTypes` is a code constant; no service exists to try | adding the type to `allowedTypes` (P1, 2026-10-21): a plan holding a service is refused by the checks the type owes, and by name, rather than as a type nobody had decided on, and until P4 writes those checks no service is covered — so the plan asks its own typed confirmation, as the answer above says — and an owner-run plan — the second half is still unverified |
 | U2 | WebSocket support through the Cloud Run front end (upgrade headers, idle timeout, maximum connection duration) | the credentials service's plan records the same class as unverified for streaming (`docs/credentials-service/reconciliation.md` U5, its Check 91) | an owner-run live check on a deployed service |
 | U3 | RTDB `If-Match`/ETag behaviour under concurrent writers at the rate a lease implies (one heartbeat a minute per job, plus takeovers) | `internal/rtdb/client.go`'s `PutIfMatch` is used for admin writes (*"ETags work on one location: this is for single-node admin writes"*), not for a hot path | an emulator test plus a live check |
 | U4 | Whether the RTDB rules can express the lease's generation check without a `RulesVersion` bump colliding with another work's | the rules template is generated and versioned (`internal/budget/rules/rules.go`'s template, `internal/projectpolicy/version.go`'s `RulesVersion`) | writing the rule and regenerating the golden |

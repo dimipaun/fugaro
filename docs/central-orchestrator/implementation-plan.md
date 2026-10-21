@@ -1,12 +1,14 @@
 # Central orchestrators — the implementation plan
 
-**Status: plan only; no part but P0 is approved, and the only feature code in the tree is P3's
-lease.** P0 — the guard test that pins this folder and its citations,
-`internal/cli/docs_central_orchestrator_test.go` — has landed, and **P3 has landed since**
-(`internal/lease`, the rules' `orchestrators` family and `RulesVersion` 4, landed by #782; the
-model the rules implement is written out at the end of P3 below, because the pull request that
-landed it describes the model as it stood before its review); **P1, P2 and P4–P9 implement
-nothing.** This plan follows from
+**Status: plan only; no part but P0 is approved, and the code in the tree is P0's guard test,
+P1's admission of the service type and P3's lease.** P0 — the guard test that pins this folder
+and its citations, `internal/cli/docs_central_orchestrator_test.go` — has landed, and so have
+**P1** (the Cloud Run service type admitted to the Terraform cover, `internal/infra/tf/cover.go`
+and `internal/infra/tf/managed_cover.go`, where every service is refused by name until P4 writes
+the checks one owes) and **P3** (`internal/lease`, the rules' `orchestrators` family and
+`RulesVersion` 4, landed by #782; the model the rules implement is written out at the end of P3
+below, because the pull request that landed it describes the model as it stood before its
+review); **P2 and P4–P9 implement nothing.** This plan follows from
 [reconciliation.md](reconciliation.md), which wins wherever it disagrees with
 [spec.md](spec.md). Every part below is **independently mergeable**: it lands, it is verified,
 and the repository works with it and without the parts after it. Every part cites **paths and
@@ -81,8 +83,11 @@ the reconciliation) — so the models it follows are
 
 **Files.** New `internal/cli/docs_central_orchestrator_test.go`, whose tests hold: (a)
 `docs/central-orchestrator/spec.md` byte-for-byte against the owner's text, the way the
-coordinator's guard holds its own spec; (b) the README's status line carrying *"plan only; no
-code is implemented"*; (c) the README's numbers table carrying the D-block it claims and the
+coordinator's guard holds its own spec; (b) the README's status line, pinned whole as the one
+sentence that names **part by part** what has landed and what has not, plus a refusal of the
+two stale wordings it has carried and must not carry again — the pre-P0 *"plan only; no code is
+implemented."* and P0's own *"…except the guard test P0 adds"*, which P1's and P3's arrivals
+made false; (c) the README's numbers table carrying the D-block it claims and the
 statement that no check number is claimed; (d) every citation in `reconciliation.md` that
 names a file in this repository anchored by **content** — the phrase the citation turns on,
 the convention `internal/cli/docs_coordinator_test.go`'s own comment describes — with the
@@ -677,8 +682,11 @@ material.
   [reconciliation.md](reconciliation.md) §5/§6 rather than by rewriting them.
 - **Check numbers: none claimed** (**D24**), for the reason in §7 above and reconciliation §7.
 - **No Go test was added by the pull request that wrote this plan** (reconciliation C1): it is
-  docs-only, and P0 — the guard — is the first part that adds one. P0 has since landed, and it
-  is the only Go any of this work has written: `internal/cli/docs_central_orchestrator_test.go`.
+  docs-only, and P0 — the guard — is the first part that adds one. P0 has since landed, and
+  the Go this work has written since is P0's guard test
+  (`internal/cli/docs_central_orchestrator_test.go`), P1's admission of one type
+  (`internal/infra/tf/cover.go`, `internal/infra/tf/managed_cover.go`) and P3's lease
+  (`internal/lease`).
 
 ## 9. The owner approval gate
 

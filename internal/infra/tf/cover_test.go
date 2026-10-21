@@ -58,6 +58,71 @@ func sched(uri, email string) ResourceChange {
 	return rc("google_cloud_scheduler_job", map[string]any{"http_target": []any{map[string]any{"uri": uri, "oauth_token": []any{map[string]any{"service_account_email": email}}}}}, map[string]any{}, "create")
 }
 
+// service is a Cloud Run service as the central orchestrator's own module will
+// write it (docs/central-orchestrator/implementation-plan.md, P4): the type
+// P1 admits to allowedTypes, a name and the revision template's account. What
+// P1 decides is the type; the checks a service owes are P4's, whose module
+// literals they pin, and until that module lands attributes refuses every
+// service (serviceUntilP4), this fixture included.
+func service(name string) ResourceChange {
+	return rc("google_cloud_run_v2_service", map[string]any{"name": name,
+		"template": []any{map[string]any{"service_account": "fugaro-orchestrator@proj-1.iam.gserviceaccount.com"}}},
+		map[string]any{}, "create")
+}
+
+// serviceUntilP4 is the refusal every Cloud Run service gets until P4 lands.
+// P1 puts the type on allowedTypes, so a plan holding one reaches the checks
+// the type owes instead of being refused as an unknown type; those checks are
+// the module's, and the module is P4's. The message names the type and the
+// part and carries no value out of the plan.
+const serviceUntilP4 = "a Cloud Run service, whose checks arrive with the module that writes one (central-orchestrator part P4)"
+
+// TestCoverRefusesEveryServiceUntilP4 is the fail-closed half of P1's
+// admission, and what makes admitting the type before its module safe: until
+// the module that writes a service lands, attributes refuses every service, so
+// no service is covered by the run's one confirmation. Each fixture below is a
+// service an unchecked admission would have covered — the exposure the
+// admission would otherwise open, one attribute at a time: ingress, the
+// invoker check, the image, the account it runs as, its scaling, and a
+// template the plan does not state. Every one of them gets the same refusal,
+// so the refusal is a function of the type alone.
+func TestCoverRefusesEveryServiceUntilP4(t *testing.T) {
+	const acct = "fugaro-orchestrator@proj-1.iam.gserviceaccount.com"
+	svc := func(m map[string]any) ResourceChange {
+		return rc("google_cloud_run_v2_service", map[string]any{"name": "fugaro-orchestrator", "template": []any{m}}, map[string]any{}, "create")
+	}
+	for name, c := range map[string]ResourceChange{
+		"a plain service": service("fugaro-orchestrator"),
+		"a service open to the world": svc(map[string]any{"service_account": acct,
+			"ingress": "INGRESS_TRAFFIC_ALL"}),
+		"a service with the invoker check off": svc(map[string]any{"service_account": acct,
+			"invoker_iam_disabled": true}),
+		"a service on an image outside the run's registry": svc(map[string]any{"service_account": acct,
+			"containers": []any{map[string]any{"image": "docker.io/library/nginx:latest"}}}),
+		"a service as the project's default compute account": svc(map[string]any{
+			"service_account": "123456789-compute@developer.gserviceaccount.com"}),
+		"a service scaled up": svc(map[string]any{"service_account": acct,
+			"scaling": []any{map[string]any{"min_instance_count": 50}}}),
+		"a service whose template is computed": rc("google_cloud_run_v2_service",
+			map[string]any{"name": "fugaro-orchestrator"}, map[string]any{"template": true}, "create"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{c}}, nil)
+			if want := c.Address + " (" + serviceUntilP4 + ")"; len(got) != 1 || got[0] != want {
+				t.Fatalf("NotCovered = %q, want exactly %q", got, want)
+			}
+		})
+	}
+}
+
+// serviceGrant is a grant on a service, through the *_iam_member type beside
+// it. That type is NOT admitted (P1 admits the service alone): a plan holding
+// one is refused for its type, which is what keeps an invoker grant a decision
+// of its own, taken with the module and the role table that justify it.
+func serviceGrant(member, role string) ResourceChange {
+	return rc("google_cloud_run_v2_service_iam_member", map[string]any{"name": "fugaro-orchestrator", "member": member, "role": role}, map[string]any{}, "create")
+}
+
 func customRole(id, project string, perms []any) ResourceChange {
 	a := map[string]any{"role_id": id, "permissions": perms}
 	if project != "" {
@@ -158,15 +223,25 @@ func TestCoverNotCovered(t *testing.T) {
 		"computed role from another module's custom role": {[]ResourceChange{
 			{Address: "module.a.google_project_iam_custom_role.r", Type: "google_project_iam_custom_role", Change: Change{Actions: []string{"create"}, After: map[string]any{}, AfterUnknown: map[string]any{}}},
 			{Address: "module.b.google_project_iam_member.m", Type: "google_project_iam_member", Change: Change{Actions: []string{"create"}, After: map[string]any{"member": "user:me@example.com"}, AfterUnknown: map[string]any{"role": true}}}}, false},
-		"delete":                    {[]ResourceChange{rc("google_storage_bucket", nil, nil, "delete")}, false},
-		"replace":                   {[]ResourceChange{rc("google_storage_bucket", nil, nil, "delete", "create")}, false},
-		"forget":                    {[]ResourceChange{rc("google_storage_bucket", nil, nil, "forget")}, false},
-		"no actions":                {[]ResourceChange{rc("google_storage_bucket", nil, nil)}, false},
-		"iam_binding create":        {[]ResourceChange{rc("google_project_iam_binding", map[string]any{"role": "roles/storage.objectUser", "members": []any{"user:me@example.com"}}, nil, "create")}, false},
-		"iam_policy":                {[]ResourceChange{rc("google_project_iam_policy", nil, nil, "create")}, false},
-		"audit config":              {[]ResourceChange{rc("google_project_iam_audit_config", nil, nil, "create")}, false},
-		"service account key":       {[]ResourceChange{rc("google_service_account_key", nil, nil, "create")}, false},
-		"unknown resource type":     {[]ResourceChange{rc("google_compute_instance", nil, nil, "create")}, false},
+		"delete":                {[]ResourceChange{rc("google_storage_bucket", nil, nil, "delete")}, false},
+		"replace":               {[]ResourceChange{rc("google_storage_bucket", nil, nil, "delete", "create")}, false},
+		"forget":                {[]ResourceChange{rc("google_storage_bucket", nil, nil, "forget")}, false},
+		"no actions":            {[]ResourceChange{rc("google_storage_bucket", nil, nil)}, false},
+		"iam_binding create":    {[]ResourceChange{rc("google_project_iam_binding", map[string]any{"role": "roles/storage.objectUser", "members": []any{"user:me@example.com"}}, nil, "create")}, false},
+		"iam_policy":            {[]ResourceChange{rc("google_project_iam_policy", nil, nil, "create")}, false},
+		"audit config":          {[]ResourceChange{rc("google_project_iam_audit_config", nil, nil, "create")}, false},
+		"service account key":   {[]ResourceChange{rc("google_service_account_key", nil, nil, "create")}, false},
+		"unknown resource type": {[]ResourceChange{rc("google_compute_instance", nil, nil, "create")}, false},
+		// The central orchestrator's service type is admitted deliberately
+		// (central-orchestrator P1, D19), and the type is all that is decided
+		// yet: the checks a service owes are P4's, so every service is refused
+		// by attributes until they land, with a refusal of its own rather
+		// than the unknown type's (TestCoverRefusesEveryServiceUntilP4). The
+		// type beside it — the invoker grant, which no module declares and
+		// whose roles no table decides — stays refused, and so does every type
+		// nobody has decided on (the row above).
+		"a Cloud Run service":                     {[]ResourceChange{service("fugaro-orchestrator")}, false},
+		"an invoker grant on a Cloud Run service": {[]ResourceChange{serviceGrant("user:me@example.com", "roles/run.invoker")}, false},
 		"allUsers":                  {[]ResourceChange{grant("google_storage_bucket_iam_member", "allUsers", "roles/storage.objectViewer")}, false},
 		"allAuthenticatedUsers":     {[]ResourceChange{grant("google_storage_bucket_iam_member", "allAuthenticatedUsers", "roles/storage.objectViewer")}, false},
 		"domain member":             {[]ResourceChange{grant("google_project_iam_member", "domain:example.com", "roles/datastore.viewer")}, false},
@@ -372,10 +447,24 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 	if err != nil || n < 20 {
 		t.Fatalf("read %d module files: %v", n, err)
 	}
-	// The reverse: nothing is allowed that no module uses.
+	// The reverse: nothing is allowed that no module uses — except the entries
+	// admitted ahead of their module, each of which must say why and must stop
+	// being one the day a module declares the type (admittedAheadOfTheirModule).
 	for t := range allowedTypes {
-		if !usedTypes[t] {
+		why, admitted := admittedAheadOfTheirModule[t]
+		switch {
+		case usedTypes[t] && admitted:
+			tt.Errorf("type %s is admitted ahead of its module (%s), and a module declares it now: the exception has done its work and comes out", t, why)
+		case usedTypes[t]:
+		case admitted && why == "":
+			tt.Errorf("type %s is admitted ahead of its module with no reason: an admission is a decision", t)
+		case !admitted:
 			tt.Errorf("type %s is allowed but no module declares it", t)
+		}
+	}
+	for t := range admittedAheadOfTheirModule {
+		if !allowedTypes[t] {
+			tt.Errorf("type %s is admitted ahead of its module but is not an allowed type", t)
 		}
 	}
 	for r := range allowedRoles {

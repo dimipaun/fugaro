@@ -227,6 +227,15 @@ func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
 		"unlisted user": mk("google_project_iam_member", map[string]any{"member": "user:eve@example.com", "role": "roles/storage.objectUser"}, "create"),
 		"owner":         mk("google_project_iam_member", map[string]any{"member": "user:me@example.com", "role": "roles/owner"}, "create"),
 		"nil":           nil,
+		"an invoker grant on a service": mk("google_cloud_run_v2_service_iam_member",
+			map[string]any{"name": "fugaro-orchestrator", "member": "user:me@example.com", "role": "roles/run.invoker"}, "create"),
+		// The central orchestrator's service type is admitted deliberately
+		// (central-orchestrator P1, D19) — so a plan holding one is judged
+		// rather than refused for a type nobody decided on — and the checks a
+		// service owes are P4's, so until they land every service is refused
+		// by the cover's own attribute check. A plan holding one therefore
+		// asks its own typed confirmation, which is D19's own wording.
+		"a Cloud Run service": mk("google_cloud_run_v2_service", map[string]any{"name": "fugaro-orchestrator"}, "create"),
 		"an import discovery did not write": {ResourceChanges: []tf.ResourceChange{{Address: "module.x.google_storage_bucket.z", Type: "google_storage_bucket",
 			Change: tf.Change{Actions: []string{"no-op"}, Importing: &tf.Importing{ID: initProject + "/elsewhere"}, After: map[string]any{"public_access_prevention": "enforced", "uniform_bucket_level_access": true}, AfterUnknown: map[string]any{}}}}},
 	} {

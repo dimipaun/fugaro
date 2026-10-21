@@ -388,17 +388,51 @@ func rulesMarkerPrePolicyText(gen int) string {
 // requirePolicyRules publishes beside it — so this text has one printer,
 // doctor's policy-rules-skew, and it is worded as what is *absent* rather than
 // what is broken: these rules do carry the policy nodes, and what they predate
-// is this release's own document — the mailbox the mobile app has no grant for
-// until the owner deploys it (mobile plan P2.3), the device node D166 binds the
-// user claim to, and the orchestrators lease central-orchestrator P3 adds.
+// is this release's own document.
+//
+// What the document adds is built from the marker's own generation, because the
+// operator reads this *before* the deploy and the generation is what says which
+// of the additions they do not have yet: a marker of 1 lacks the mailbox
+// (generation 2), the device node (generation 3) and the lease (generation 4); a
+// marker of 2 lacks the device node and the lease; a marker of 3 lacks only the
+// lease. Listing all three to a marker of 3 — which is what a single hard-coded
+// sentence did — tells an operator that the redeploy takes away what they
+// already have (the review finding on P3).
 //
 // The list is what the document adds, so a release that adds a subtree to
-// rules.json.tmpl adds it here too: TestRulesMarkerOlderTextNamesWhatTheDocumentAdds
-// holds the three to the generated document, so the sentence cannot fall behind
-// the template the way it did when the lease was added.
+// rules.json.tmpl adds it here too:
+// TestRulesMarkerOlderTextNamesWhatTheDocumentAdds holds each one to the
+// generated document and to the generation it arrived in, so the sentence
+// cannot fall behind the template the way it did when the lease was added.
 func rulesMarkerOlderText(gen int) string {
-	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4), binds that user claim to a device node (mobile plan P6.4, D166): a phone account with no %s/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one — nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand — and carries the orchestrators lease (central-orchestrator P3: orchestrators/<slug>/<job>/lease, the seat a shepherd holds while it acts on a job; an installation that has not redeployed has no central orchestrators at all, which is that feature's own default); re-run 'fugaro init --firebase' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
-		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.PolicyRulesVersion, rules.PathDevices, projectpolicy.RulesVersion)
+	var adds []string
+	if gen < projectpolicy.MailboxRulesVersion {
+		adds = append(adds, "the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4)")
+	}
+	if gen < projectpolicy.DeviceRulesVersion {
+		adds = append(adds, fmt.Sprintf("the device node that binds a user claim to a phone account (mobile plan P6.4, D166) — a phone account with no %s/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one, and nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand", rules.PathDevices))
+	}
+	if gen < projectpolicy.RulesVersion {
+		adds = append(adds, "the orchestrators lease (central-orchestrator P3: orchestrators/<slug>/<job>/lease, the seat a shepherd holds while it acts on a job; an installation that has not redeployed has no central orchestrators at all, which is that feature's own default)")
+	}
+	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds %s; re-run 'fugaro init --firebase' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.PolicyRulesVersion, addsClause(adds), projectpolicy.RulesVersion)
+}
+
+// addsClause joins the additions a redeploy makes into one clause. The
+// separator is a semicolon, not a comma: these clauses are long and carry
+// parentheticals full of commas, and a comma-joined list of them reads as one
+// clause — the device node's own clause ends in a verb phrase, so a comma before
+// the next addition made "adding it by hand, and the orchestrators lease" read
+// as two objects of "adding".
+func addsClause(adds []string) string {
+	switch len(adds) {
+	case 0:
+		return "nothing: this marker records the generation this Fugaro deploys"
+	case 1:
+		return adds[0]
+	}
+	return strings.Join(adds[:len(adds)-1], "; ") + "; and " + adds[len(adds)-1]
 }
 
 // readPolicyNode reads the shared node with its ETag, the precondition the

@@ -51,21 +51,26 @@ import (
 // gets switched off. An entry has to be a property a plan is above or below.
 //
 // What this list can reach today is worth stating plainly rather than leaving
-// to be discovered. Three of the four entries read a type Task 1.1's managed
-// allowlist does not admit — a Cloud Run service, a compute instance, a Cloud
-// SQL instance — so a plan of one of those is refused for its type before this
-// list is asked anything, and those entries are the second line rather than the
-// first: they become load-bearing the moment the allowlist admits a service, a
-// VM or a SQL instance, which is a decision for the owner rather than for this
-// file. An entry is a decision about a property rather than about a type (D61),
-// and the four are the spec's own examples, so that is a statement about the
-// allowlist and not a defect here.
+// to be discovered. Two of the four entries read a type Task 1.1's managed
+// allowlist does not admit — a compute instance and a Cloud SQL instance — so a
+// plan of one of those is refused for its type before this list is asked
+// anything, and those two entries are the second line rather than the first:
+// they become load-bearing the moment the allowlist admits a VM or a SQL
+// instance, which is a decision for the owner rather than for this file. The
+// third type the entries read is google_cloud_run_v2_service, and central-
+// orchestrator P1 admitted it to both cover lists (D19), so the min-instances
+// entry is a first-line entry now: a managed plan holding a service is judged
+// by it rather than refused for its type. An entry is a decision about a
+// property rather than about a type (D61), and the four are the spec's own
+// examples, so that is a statement about the allowlist and not a defect here.
 //
-// The one type the two lists share is google_cloud_run_v2_job, and it is the
-// type this task's own wording gets wrong: a job states no minimum instance
-// count at all (the min-instances entry below says why), while a job's node
-// selector is where a GPU is attached to it — so the GPU entry is the one entry
-// with reach on a plan the managed cover would admit.
+// The two types the two lists share are google_cloud_run_v2_job and, since P1,
+// google_cloud_run_v2_service. The job is the type this task's own wording gets
+// wrong: a job states no minimum instance count at all (the min-instances entry
+// below says why), while a job's node selector is where a GPU is attached to it
+// — so the GPU entry is the entry with reach on a job plan the managed cover
+// would admit, and the min-instances entry is the one with reach on a service
+// plan.
 
 // The entries of the list. A key is what a recorded finding and a refusal name
 // the entry by, so it is stable: it is the entry's identity in a verdict, in a

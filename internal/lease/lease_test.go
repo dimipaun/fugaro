@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -743,6 +744,51 @@ type spyDB struct {
 
 type spyWrite struct{ read, etag, body string }
 
+// raceDB performs one competing write inside the first compare-and-set it is
+// asked for, which is the race Renew and Release are written to survive: the
+// caller read the node and its ETag, somebody wrote the node in between, and
+// the caller's write is refused because the ETag it carries is no longer the
+// node's. A test hands it the write to perform — a record carrying the
+// caller's own generation and uid, or one carrying a takeover's — and the
+// client's answer is read from there.
+type raceDB struct {
+	DB
+	race func(ctx context.Context) error
+
+	mu       sync.Mutex
+	didRace  bool
+	raceErrs []error
+}
+
+func (r *raceDB) PutIfMatchInto(ctx context.Context, path, etag string, v, out any) error {
+	r.mu.Lock()
+	first := !r.didRace
+	r.didRace = true
+	r.mu.Unlock()
+	if first {
+		err := r.race(ctx)
+		r.mu.Lock()
+		r.raceErrs = append(r.raceErrs, err)
+		r.mu.Unlock()
+	}
+	return r.DB.PutIfMatchInto(ctx, path, etag, v, out)
+}
+
+// raced reports whether the competing write ran, and whether it landed.
+func (r *raceDB) raced(t *testing.T) {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.didRace {
+		t.Fatal("the competing write never ran: this test is not driving the race it is written for")
+	}
+	for _, err := range r.raceErrs {
+		if err != nil {
+			t.Fatalf("the competing write failed: %v", err)
+		}
+	}
+}
+
 func (s *spyDB) GetETag(ctx context.Context, path string, out any) (string, bool, error) {
 	etag, found, err := s.DB.GetETag(ctx, path, out)
 	s.mu.Lock()
@@ -986,6 +1032,301 @@ func TestReadRefusesAHandWrittenNode(t *testing.T) {
 	}
 }
 
+// ownSeatRace is the competing write of a holder renewing its own seat: the
+// record read back, written again. Same generation, same uid, a fresh stamp —
+// the shape a second process of one identity, or a retry whose first attempt
+// landed after its answer was lost, leaves behind.
+//
+// The clock is bumped first because the fake's ETag is a hash of the node, as
+// a real database's precondition is a token for a version of it: a
+// byte-identical write leaves the ETag where it was, and the caller's write
+// would then match and land. A heartbeat a second later is the same identity
+// on the same seat with a different stamp, which is what the race is.
+func ownSeatRace(db DB, path string, bump func()) func(context.Context) error {
+	return func(ctx context.Context) error {
+		var cur Record
+		etag, found, err := db.GetETag(ctx, path, &cur)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("the lease at %s is gone, so there is nothing to race with", path)
+		}
+		bump()
+		_, err = put(ctx, db, path, etag, cur)
+		return err
+	}
+}
+
+// takeoverRace is the competing write of a takeover: another identity, and the
+// generation moved on, which is the record the winner leaves.
+func takeoverRace(db DB, path, name, uid string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		var cur Record
+		etag, found, err := db.GetETag(ctx, path, &cur)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("the lease at %s is gone, so there is nothing to race with", path)
+		}
+		next := cur
+		next.Holder, next.HolderUID, next.Generation = name, uid, cur.Generation+1
+		_, err = put(ctx, db, path, etag, next)
+		return err
+	}
+}
+
+// TestARenewThatLosesTheRaceToItsOwnIdentityIsNotALostSeat: the compare-and-set
+// can be lost to a writer carrying the same generation and the same holder_uid
+// — this holder's own seat, written again. That record contradicts nothing, so
+// the seat is not gone, and the answer has to be the one every failed write
+// gets: a *UnsureError carrying the instant past which the caller must stop
+// acting. A *LostError here tells a holder to stop acting on a job it still
+// owns, which is the "job with no shepherd at all" half of the invariant, and
+// the whole reason UnsureError is deliberately not a LostError.
+//
+// Hand mutation this fails on: returning the re-read record as Found without
+// comparing it to the held one (lostAfterRace's first version), which reports
+// every race with a writer of one's own identity as a lost seat.
+func TestARenewThatLosesTheRaceToItsOwnIdentityIsNotALostSeat(t *testing.T) {
+	base := at(time.Now())
+	now := base
+	f := gcpfake.NewRTDB(t)
+	f.SetClock(func() time.Time { return now })
+	db := newClient(t, f)
+	path := Path("aurora", "r1")
+	held := mustTake(t, db, path, holder("dimi (laptop)", "uid-local"), Options{Mode: "enforce"})
+
+	racer := &raceDB{DB: db, race: ownSeatRace(db, path, func() { now = now.Add(time.Second) })}
+	_, err := Renew(ctx(t), racer, path, held)
+	racer.raced(t)
+	if errors.Is(err, ErrLost) {
+		t.Fatalf("Renew = %v, want not a *LostError: the record that won the race carries this holder's own generation (%d) and uid (%s), so the seat is still its own",
+			err, held.Generation, held.HolderUID)
+	}
+	var ue *UnsureError
+	if !errors.As(err, &ue) {
+		t.Fatalf("Renew = %v, want a *UnsureError: the write did not land and nothing says the seat is gone", err)
+	}
+	if !errors.Is(err, ErrUnsure) || !errors.Is(err, rtdb.ErrPrecondition) {
+		t.Errorf("Renew = %v, want it to unwrap to ErrUnsure and to the refusal the write got (rtdb.ErrPrecondition)", err)
+	}
+	if !ue.MayAct(db) {
+		t.Errorf("MayAct = false, want true: the seat is this holder's until %s, and the database's clock has not reached it", ue.Until)
+	}
+	if want := held.Expires(DefaultGrace).Add(-ServerClockSlack); !ue.Until.Equal(want) {
+		t.Errorf("Until = %s, want the held lease's expiry less ServerClockSlack, %s", ue.Until, want)
+	}
+	if ue.Held != held {
+		t.Errorf("the refusal carries %+v, want the seat the caller held (%+v)", ue.Held, held)
+	}
+	// And the lease is still this holder's, at the generation it holds.
+	cur, found, err := Read(ctx(t), db, path)
+	if err != nil || !found || cur.HolderUID != held.HolderUID || cur.Generation != held.Generation {
+		t.Errorf("after the lost race the lease is (%+v, %v, %v), want %s at generation %d", cur, found, err, held.HolderUID, held.Generation)
+	}
+}
+
+// TestARenewThatLosesTheRaceToATakeoverIsALostSeat is the other half of the
+// same answer, so the fix above is not "never report a lost seat": a record
+// carrying another identity at another generation does contradict the held
+// one, and the refusal names the winner.
+//
+// Hand mutation this fails on: dropping the Found record from the re-read
+// (the refusal cannot name who took the seat).
+func TestARenewThatLosesTheRaceToATakeoverIsALostSeat(t *testing.T) {
+	base := at(time.Now())
+	f := gcpfake.NewRTDB(t)
+	f.SetClock(func() time.Time { return base })
+	db := newClient(t, f)
+	path := Path("aurora", "r1")
+	held := mustTake(t, db, path, holder("dimi (laptop)", "uid-local"), Options{})
+
+	racer := &raceDB{DB: db, race: takeoverRace(db, path, "resident orchestrator", "uid-central")}
+	_, err := Renew(ctx(t), racer, path, held)
+	racer.raced(t)
+	var le *LostError
+	if !errors.As(err, &le) || !errors.Is(err, ErrLost) {
+		t.Fatalf("Renew = %v, want a *LostError: the record that won the race carries another identity at another generation", err)
+	}
+	if le.Found == nil || le.Found.HolderUID != "uid-central" || le.Found.Generation != held.Generation+1 {
+		t.Fatalf("the refusal does not name the winner: %+v", le.Found)
+	}
+	if !strings.Contains(le.Error(), "resident orchestrator") {
+		t.Errorf("the refusal does not say who holds the seat now: %q", le.Error())
+	}
+}
+
+// TestAReleaseThatLosesTheRaceToItsOwnIdentityIsNotALostSeat is the same
+// answer on Release's path: it loses the compare-and-set the same way, and a
+// seat written again by its own holder is not a seat to report as gone.
+//
+// Hand mutation this fails on: returning the re-read record as Found without
+// comparing it to the held one (the release reports its own holder's retry as
+// a lost seat, and a caller that trusts it stops acting on a job it holds).
+func TestAReleaseThatLosesTheRaceToItsOwnIdentityIsNotALostSeat(t *testing.T) {
+	base := at(time.Now())
+	now := base
+	f := gcpfake.NewRTDB(t)
+	f.SetClock(func() time.Time { return now })
+	db := newClient(t, f)
+	path := Path("aurora", "r1")
+	held := mustTake(t, db, path, holder("dimi (laptop)", "uid-local"), Options{})
+
+	racer := &raceDB{DB: db, race: ownSeatRace(db, path, func() { now = now.Add(time.Second) })}
+	err := Release(ctx(t), racer, path, held)
+	racer.raced(t)
+	if errors.Is(err, ErrLost) {
+		t.Fatalf("Release = %v, want not a *LostError: the record that won the race is this holder's own seat", err)
+	}
+	var ue *UnsureError
+	if !errors.As(err, &ue) {
+		t.Fatalf("Release = %v, want a *UnsureError: the release did not land and nothing says the seat is gone", err)
+	}
+	if !ue.MayAct(db) {
+		t.Errorf("MayAct = false, want true: the seat is still this holder's until %s", ue.Until)
+	}
+	cur, found, err := Read(ctx(t), db, path)
+	if err != nil || !found || cur.HolderUID != held.HolderUID || cur.Generation != held.Generation {
+		t.Errorf("after the lost race the lease is (%+v, %v, %v), want %s at generation %d still held", cur, found, err, held.HolderUID, held.Generation)
+	}
+}
+
+// TestAHandWrittenNodeIsNotOneToRenewOrRelease: Renew and Release start at the
+// same read as Take and Read, and answer the same thing about a node the rules
+// would have refused — an error, not a heartbeat written into it or a fencing
+// token advanced past it. `generation + 1` on a node no rule wrote is this
+// package inventing the next value of a token whose history it cannot read.
+//
+// Hand mutation this fails on: dropping the Record.valid check from Renew and
+// Release (a generation 0 node is renewed, and a released one is written at
+// generation 1 — the token restarting at a number no rule allows).
+func TestAHandWrittenNodeIsNotOneToRenewOrRelease(t *testing.T) {
+	base := at(time.Now())
+	f := gcpfake.NewRTDB(t)
+	f.SetClock(func() time.Time { return base })
+	db := newClient(t, f)
+	path := Path("aurora", "r1")
+	held := Record{Holder: "dimi (laptop)", HolderUID: "uid-local", Generation: 1, RenewedAt: base.UnixMilli()}
+
+	for _, c := range []struct {
+		name string
+		node map[string]any
+	}{
+		{"a generation below 1", map[string]any{"holder": "someone", "holder_uid": "uid-someone", "generation": 0, "renewed_at": base.UnixMilli()}},
+		{"a stamp before the epoch", map[string]any{"holder": "someone", "holder_uid": "uid-someone", "generation": 1, "renewed_at": 0}},
+	} {
+		f.Set(path, c.node)
+		for _, call := range []struct {
+			name string
+			run  func(db DB) error
+		}{
+			{"Renew", func(db DB) error { _, err := Renew(ctx(t), db, path, held); return err }},
+			{"Release", func(db DB) error { return Release(ctx(t), db, path, held) }},
+		} {
+			spy := &spyDB{DB: db}
+			err := call.run(spy)
+			if err == nil {
+				t.Errorf("%s on %s = nil, want a refusal: it is not a record this code wrote", call.name, c.name)
+				continue
+			}
+			if errors.Is(err, ErrLost) || errors.Is(err, ErrUnsure) {
+				t.Errorf("%s on %s = %v, want the node's own refusal and not a seat verdict: the seat is not what is wrong with it", call.name, c.name, err)
+			}
+			spy.mu.Lock()
+			writes := len(spy.writes)
+			spy.mu.Unlock()
+			if writes != 0 {
+				t.Errorf("%s on %s wrote the lease %d times, want none: a hand-written node is not one to write through", call.name, c.name, writes)
+			}
+		}
+		if got := f.Value(path); got == nil {
+			t.Errorf("the hand-written node (%s) was overwritten by a refused call", c.name)
+		}
+	}
+}
+
+// TestTakeRefusesAModeOrPRTheRulesWouldRefuse: the mode and the PR are
+// attribution rather than the seat, which is exactly why they are checked
+// before the write is sent — nothing reads them to make a decision, so a value
+// the rules refuse would come back as a bare rtdb.ErrPermission on every
+// heartbeat, an error that says nothing about the seat and that the caller
+// would have to read as *UnsureError and retry for as long as the job runs.
+//
+// Hand mutation this fails on: dropping Options.validate from Take (a mode the
+// rules refuse is sent, and a job whose shepherd carries one never renews).
+func TestTakeRefusesAModeOrPRTheRulesWouldRefuse(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	db := newClient(t, f)
+	path := Path("aurora", "r1")
+	h := holder("dimi (laptop)", "uid-local")
+	for _, c := range []struct {
+		name string
+		o    Options
+	}{
+		{"a mode longer than the rules allow", Options{Mode: strings.Repeat("x", MaxString+1)}},
+		{"a mode carrying a control character", Options{Mode: "enforce\x1b[31m"}},
+		{"a mode carrying a bidirectional override", Options{Mode: "enfo\u202erce"}},
+		{"a mode carrying a zero-width joiner", Options{Mode: "enforce\u200d"}},
+		{"a negative pr", Options{PR: -1}},
+	} {
+		if _, err := Take(ctx(t), db, path, h, c.o); err == nil {
+			t.Errorf("Take with %s = nil, want a refusal: the deployed rules refuse it", c.name)
+		}
+	}
+	if v := f.Value(path); v != nil {
+		t.Errorf("a refused option wrote the lease: %v", v)
+	}
+	// The values the rules do accept are taken, so this is not Take refusing
+	// every option: a mode of exactly MaxString, and the smallest PR the rules
+	// allow.
+	rec, err := Take(ctx(t), db, path, h, Options{Mode: strings.Repeat("x", MaxString), PR: 1})
+	if err != nil {
+		t.Fatalf("Take with a mode of exactly MaxString and pr 1 = %v, want the seat", err)
+	}
+	if len(rec.Mode) != MaxString || rec.PR != 1 {
+		t.Errorf("the taken record is %+v, want the mode and the PR it was taken with", rec)
+	}
+}
+
+// TestOneLineStripsWhatAHolderMayNotCarry: oneLine is what a person reads a
+// refusal through, and the record it prints can be a node written through IAM
+// — which may carry what Holder.validate refuses. A bidirectional override
+// left in place reorders the rest of the line, so the name and the uid in the
+// message are not the ones the record holds, and a reader cannot tell.
+//
+// Hand mutation this fails on: dropping the unicode.Cf test from oneLine's
+// predicate (a holder name carrying U+202E reaches the message, and the line
+// after it reads backwards).
+func TestOneLineStripsWhatAHolderMayNotCarry(t *testing.T) {
+	for _, c := range []struct{ name, in, want string }{
+		{"a bidirectional override", "dimi\u202e(laptop)", "dimi (laptop)"},
+		{"a zero-width joiner", "dimi\u200d(laptop)", "dimi (laptop)"},
+		{"a newline and a tab", "dimi\n\t(laptop)", "dimi (laptop)"},
+		{"DEL", "dimi\x7f(laptop)", "dimi (laptop)"},
+	} {
+		if got := oneLine(c.in); got != c.want {
+			t.Errorf("oneLine(%q) = %q, want %q (%s)", c.in, got, c.want, c.name)
+		}
+	}
+	// And the messages this package builds are the reason: every rune a
+	// holder's name may not carry is gone from them.
+	msgs := []string{
+		(&LostError{Path: Path("aurora", "r1"), Held: Record{Generation: 1}, Found: &Record{Holder: "resident\u202eorchestrator", HolderUID: "uid\u200bcentral", Generation: 2}}).Error(),
+		(&HeldError{Path: Path("aurora", "r1"), Found: &Record{Holder: "dimi\u202e (laptop)", HolderUID: "uid\u200blocal", Generation: 1}, Now: time.Now(), Until: time.Now().Add(time.Minute)}).Error(),
+		(&UnsureError{Path: Path("aurora", "r1"), Held: Record{Holder: "dimi\u202e", Generation: 1}, Until: time.Now(), Err: errors.New("an outage")}).Error(),
+	}
+	for _, msg := range msgs {
+		for _, r := range msg {
+			if r < 0x20 || r == 0x7f || unicode.Is(unicode.Cf, r) {
+				t.Errorf("the message %q carries %U, which a reader cannot trust the order of: oneLine is what every one of these goes through", msg, r)
+				break
+			}
+		}
+	}
+}
+
 // TestPathIsEscapedLikeEveryOtherPath: a slug or a job id carrying the
 // characters RTDB forbids in a key must not reach the path unescaped, and an
 // empty one must not collapse the path onto another node.
@@ -1098,8 +1439,24 @@ func TestTheRulesCarryTheLeaseAndTheGraceWeApply(t *testing.T) {
 			t.Errorf("renewed_at's .validate is %q, want it to require the database's own clock (newData.val() == now): a writer-supplied stamp is a time the database has no reason to believe", v)
 		}
 	}
-	if !strings.Contains(text, fmt.Sprint(MaxString)) {
-		t.Errorf("the generated rules do not carry MaxString (%d), the bound this package applies to a holder's name", MaxString)
+	// MaxString is the bound this package applies to a holder's name, its uid
+	// and the recorded mode, and the deployed rules have to apply it to the
+	// same three fields. The assertion used to be a `strings.Contains` over the
+	// whole document, which any of the document's other bounds satisfies — a
+	// whole-file search for the digits is a check that they exist somewhere,
+	// not that the lease's strings are bounded — so it is read at the three
+	// nodes themselves now, the way the grace and the transition above are.
+	for _, field := range []string{"holder", "holder_uid", "mode"} {
+		node, _ := leaseRule[field].(map[string]any)
+		if node == nil {
+			t.Errorf("the lease has no %s node", field)
+			continue
+		}
+		validate, _ := node[".validate"].(string)
+		if want := fmt.Sprintf("length <= %d", MaxString); !strings.Contains(validate, want) {
+			t.Errorf("the lease's %s validates as %q, which does not carry %q: this package refuses a %s longer than MaxString (%d) before it writes, and the rules have to refuse the same one — otherwise a value this package accepts is a write the database denies, reported as a bare rtdb.ErrPermission that says nothing about the seat",
+				field, validate, want, field, MaxString)
+		}
 	}
 	// The record's fields are the rules' fields: a field this package writes
 	// that the rules refuse would make every write fail, and a field the rules
