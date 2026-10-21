@@ -1,9 +1,9 @@
 // website/test/faq-community.mjs — the FAQ and the community page (website plan, W1.10).
 //
 // The two pages this file checks are the site's document pages, and the rules they answer to
-// are about what a page may *say*. Five of them are checked here, and each one reads its
-// source rather than the page's own copy of it (Review Focus: "the test must read the
-// source, not the generator's own output"):
+// are about what a page may *say* — and, for the community page, how it is *set*. Six of them
+// are checked here, and each one reads its source rather than the page's own copy of it
+// (Review Focus: "the test must read the source, not the generator's own output"):
 //
 //   1. **The FAQ's comparison section has provenance or it does not exist** (D103, F51–F52).
 //      A row about another tool is a claim the repository cannot verify, so a row carries a
@@ -32,6 +32,17 @@
 //      tag and the next line's text, so a sentence written as a link followed by a newline
 //      builds as `LICENSEis the whole of it`: the page reads wrong while every fact on it is
 //      still true, which is why this one is checked over the built HTML of both pages.
+//   6. **The community page is set in the bold redesign's look** (redesign P1, `base.css` §2c;
+//      the owner's brief of 2026-10-21). The page has no board of its own, so what it is held
+//      to is the look the boards did fix and the home page ships: the headline on the display
+//      scale's largest step with the accent's gradient on it, the section headlines on the
+//      display scale's middle step, the community surfaces drawn as cards in a grid, and the
+//      page's four bands still its four bands. This is a rule about the artifact's classes and
+//      structure rather than about a pixel — the pixels are the owner's check at the preview
+//      (RU1: the model that runs this gate cannot view a picture) — and it is what a later
+//      edit drops by accident: a page whose title falls back to the element default still
+//      passes every other gate in this repository, because every one of them is about what
+//      the page says. Each rule below has a case that plants the defect it refuses.
 //
 // How it reads a page: `npm run check` builds the site before it runs anything here, so the
 // real pages are read from `website/dist/` — the artifact a reader gets, not a rendering of
@@ -448,6 +459,150 @@ test("the community page links the repository's own community files, and each on
     !links.some(([, , , linked]) => linked === '.github/ISSUE_TEMPLATE/config.yml'),
     'the community page links the template chooser\'s config.yml as an issue template',
   )
+})
+
+// ---- the community page's look (redesign P1; the owner's brief of 2026-10-21) -------------
+
+/** The bands of the page, in the order the document writes them: every `<section>` with an
+ *  `id`, as the id and the markup up to its own closing tag. Sections are not nested here —
+ *  one band of the page holds cards and panels, never another band — so the first `</section>`
+ *  after an opening tag is that section's. */
+function bands(html) {
+  return [...html.matchAll(/<section[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/section>/g)].map(([, id, body]) => ({ id, body }))
+}
+
+/**
+ * The bold redesign's look on the community page, as the failure lines a reader sees (redesign
+ * P1, `base.css` §2c; the owner's brief of 2026-10-21). The page has no board of its own, so
+ * what it is held to is the look the boards did fix and the home page ships, in the four
+ * shapes a later edit can drop without any other gate noticing:
+ *
+ *   1. the page's headline is the display scale's largest step, with the accent's gradient on
+ *      it — a title that fell back to the element default passes every other gate here, because
+ *      they are all about what the page says;
+ *   2. every section headline is the display scale's middle step;
+ *   3. every community surface — an entry of the documents or the templates grid — is drawn as
+ *      `base.css`'s `.card`, which is the one shape the redesign draws an entry in;
+ *   4. the page's four bands are still its four bands, each opening with a heading, so a
+ *      reader's link into one of them (`/community/#issues`) still lands on something.
+ *
+ * It reads the built artifact, like every other case in this file, and it is a rule about
+ * classes and structure rather than about a pixel: the pixels are the owner's check at the
+ * preview (RU1).
+ */
+function boldLookFailures(html) {
+  const out = []
+
+  /** The classes of an element's opening tag, as the tokens the `class` attribute holds — the
+   *  tokens and not a substring, because `community-card` contains the word `card` and a rule
+   *  that read it as one would pass on an entry that lost `base.css`'s class (the case below
+   *  plants exactly that). */
+  const classes = (tag) => (/class="([^"]*)"/.exec(tag)?.[1] ?? '').split(/\s+/).filter(Boolean)
+
+  // 1. The headline.
+  const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(html)
+  if (h1 === null) out.push('the page has no h1 to set its headline on')
+  else {
+    if (!classes(h1[0]).includes('display-xl')) {
+      out.push(`the headline is not the display scale's largest step (${h1[0].slice(0, 90)}): the bold redesign sets a page's title at \`display-xl\``)
+    }
+    const gradient = [...h1[1].matchAll(/<span[^>]*>/g)].some(([tag]) => classes(tag).includes('gradient-text'))
+    if (!gradient) {
+      out.push(`the headline carries no gradient-text (${h1[1].slice(0, 90)}): the bold redesign puts the accent's gradient on the page's title`)
+    }
+  }
+
+  // 2. The section headlines.
+  const h2s = [...html.matchAll(/<h2[^>]*>/g)].map(([tag]) => tag)
+  if (h2s.length === 0) out.push('the page has no h2, so it has no section headline to set')
+  for (const tag of h2s) {
+    if (!classes(tag).includes('display-lg')) out.push(`a section headline is not on the display scale (${tag}): the bold redesign sets a section's heading at \`display-lg\``)
+  }
+
+  // 3. The surfaces.
+  const grids = [...html.matchAll(/(<ul[^>]*>)([\s\S]*?)<\/ul>/g)]
+    .filter(([, open]) => classes(open).includes('community-grid'))
+    .map(([, , body]) => body)
+  if (grids.length === 0) out.push('the page draws no community-grid list: the community surfaces are cards in a grid')
+  for (const grid of grids) {
+    const items = [...grid.matchAll(/<li[^>]*>/g)].map(([tag]) => tag)
+    if (items.length === 0) out.push('a community-grid list carries no entry')
+    for (const tag of items) {
+      if (!classes(tag).includes('card')) out.push(`a community entry is not a card (${tag}): the bold redesign draws every community surface as \`base.css\`'s \`.card\``)
+    }
+  }
+
+  // 4. The bands, and the ids a reader's link may name.
+  const pageBands = bands(html)
+  const ids = pageBands.map((band) => band.id)
+  if (ids.join(' ') !== 'repository issues ci licence') {
+    out.push(`the page's bands are ${ids.join(', ') || '(none)'}: they are the repository, the issues, the CI description and the licence, in that order`)
+  }
+  for (const band of pageBands) {
+    if (!/<h2[\s>]/.test(band.body)) out.push(`the ${band.id} band has no heading: every band of the page is a heading and what it holds`)
+  }
+
+  return out
+}
+
+test('the community page is set in the bold redesign’s look', () => {
+  assert.deepEqual(
+    boldLookFailures(builtPage('community')),
+    [],
+    `the community page is not set in the look the redesign fixed (redesign P1):\n  ${boldLookFailures(builtPage('community')).join('\n  ')}`,
+  )
+})
+
+test('every look refusal fires on the defect it names', () => {
+  const page = builtPage('community')
+  assert.deepEqual(boldLookFailures(page), [], 'the look rule fails on the built page, so the cases below are not proving what they name')
+
+  // Each case is one edit to the built page — the defect as a later edit would write it — and
+  // the refusal it names. The plants are strings the page really carries, so a page whose
+  // markup moved fails here loudly rather than leaving a case passing over nothing.
+  const cases = [
+    {
+      what: 'the headline off the display scale',
+      plant: page.replace('class="community-title display-xl"', 'class="community-title"'),
+      expected: /headline is not the display scale's largest step/,
+    },
+    {
+      what: 'the headline with no gradient on it',
+      plant: page.replace('<span class="gradient-text"', '<span'),
+      expected: /headline carries no gradient-text/,
+    },
+    {
+      what: 'a section headline off the display scale',
+      plant: page.replace('<h2 class="community-heading display-lg"', '<h2 class="community-heading"'),
+      expected: /section headline is not on the display scale/,
+    },
+    {
+      what: 'a community entry that is not a card',
+      plant: page.replace('<li class="card community-card"', '<li class="community-card"'),
+      expected: /community entry is not a card/,
+    },
+    {
+      what: 'a band that lost its heading',
+      // Astro's scoping attribute sits between the class and the `>` of every tag it renders,
+      // so the plant reaches the heading by what it says rather than by the whole tag.
+      plant: page.replace(/<h2[^>]*>Licence<\/h2>/, ''),
+      expected: /licence band has no heading/,
+    },
+    {
+      what: 'a band that is no longer one of the page’s four',
+      plant: page.replace('<section id="issues" class="community-section"', '<section id="questions" class="community-section"'),
+      expected: /bands are repository, questions, ci, licence/,
+    },
+  ]
+
+  for (const { what, plant, expected } of cases) {
+    assert.notEqual(plant, page, `${what}: the plant changed nothing, so the case below would prove nothing`)
+    const failures = boldLookFailures(plant)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what} was not refused (${expected}); the rule said:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
 })
 
 test('no link on either page runs into the word that follows it', () => {
