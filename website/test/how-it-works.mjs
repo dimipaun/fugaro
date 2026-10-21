@@ -1057,10 +1057,20 @@ function drawnText(el) {
  * every other label — the card the box is drawn on. The pill is read by the drawing's own
  * geometry, the way `stagePills` reads which stage a word belongs to, so a label's ground is a
  * fact about where the drawing put it rather than about the class it carries.
+ *
+ * `{ colour, why }`: the surface's colour when this reading can state one, and otherwise `why`,
+ * the line the failure carries. A label whose ground cannot be found is refused rather than
+ * passed over — a ratio nothing can compute is a contrast check that is not running — while a
+ * ground whose own paint is refused is left to the refusal above, where the rect is read.
  */
 function labelGround(text, css, palette, values) {
   const box = ancestorsOf(text).find((el) => el.name === 'g' && (has(el, 'run-box') || has(el, 'run-band-box')))
-  if (box === undefined) return null
+  if (box === undefined) {
+    return {
+      colour: null,
+      why: 'it is drawn outside any box of the drawing (a `g.run-box` or `g.run-band-box`), so this reading cannot say what surface it sits on: the ground is read from the box the drawing puts the label in, and a label whose ground no check can state is a label the contrast reading passes over without a word',
+    }
+  }
   const rects = [...walk(box)].filter((el) => el.name === 'rect')
   const card = rects.find((el) => has(el, 'run-card') || has(el, 'run-band'))
   const drawn = drawnText(text)
@@ -1073,7 +1083,13 @@ function labelGround(text, css, palette, values) {
         { x0: Number(el.attrs.get('x')), x1: Number(el.attrs.get('x')) + Number(el.attrs.get('width')), y0: Number(el.attrs.get('y')), y1: Number(el.attrs.get('y')) + Number(el.attrs.get('height')) },
       ),
     )
-  return painted(paintInForce(css, pill ?? card, 'fill'), palette, values)
+  if (pill === undefined && card === undefined) {
+    return {
+      colour: null,
+      why: 'the box it is drawn in carries neither a card (`run-card`/`run-band`) nor a stage pill it sits in, so there is no surface under it and no pair to compute a ratio from: every label of this drawing is drawn on the card of its box or in a pill, and one that is drawn on neither is a label nothing holds',
+    }
+  }
+  return { colour: painted(paintInForce(css, pill ?? card, 'fill'), palette, values), why: null }
 }
 
 /** How a label's colour is named in a failure: its token when it has one, its literal when it
@@ -1175,8 +1191,16 @@ export function runPaintFailures(html, css, palette = paletteTokensInForce()) {
             shape,
             `no rule of the page's stylesheet can reach it and it declares no \`fill\` or \`stroke\` of its own: SVG's initial values are a black fill and no stroke at all, so the shape is painted black — the drawing's cards and its labels are rectangles of black — or, where it is stroke alone, not drawn at all. The shapes of this drawing arrive through \`set:html\`, which Astro's scope attribute never reaches: a scoped \`.run-…[data-astro-cid-…]\` rule cannot match them, and the paint rules need \`:global()\` around the shape's own compound (the owner's reading of the preview, 2026-10-21)`,
           )
-        } else if (!painted) {
-          note(shape, `it declares ${declared.map((reading) => `\`${reading.property}: ${reading.value}\``).join(' and ')} and no colour at all, so it is drawn as nothing (the owner's reading of the preview, 2026-10-21)`)
+        } else if (!isPainted && declared.every((reading) => reading.value === 'none')) {
+          // Every paint the shape declares is `none`, so it is drawn as nothing — the other half
+          // of the defect, and the half a reader sees as an absent arrow rather than a black card.
+          // `none` is the one declared value no refusal above speaks for, so this is where it is
+          // said; a shape whose paint is a colour this reading refuses has that line already, and
+          // this one would only repeat it.
+          note(
+            shape,
+            `it declares ${declared.map((reading) => `\`${reading.property}: ${reading.value}\``).join(' and ')} and no colour at all, so it is drawn as nothing: a stroke-only shape is not drawn without a stroke and a card is not drawn without a fill, which is the same defect as the black rectangles read the other way round — a rule that paints the shape is what has to declare the colour (the owner's reading of the preview, 2026-10-21)`,
+          )
         }
       }
 
@@ -1185,12 +1209,17 @@ export function runPaintFailures(html, css, palette = paletteTokensInForce()) {
         const fill = painted(paintInForce(css, text, 'fill'), palette, values)
         if (fill === null) continue // its paint is refused above, where every shape is read
         const ground = labelGround(text, css, palette, values)
-        if (ground === null) continue // the surface under it is refused above, with the rect
-        const ratio = contrastRatio(fill.rgb, ground.rgb)
+        if (ground.colour === null) {
+          // The surface's own paint is refused above, with the rect, and the label's line would
+          // repeat it; a ground this reading cannot find at all is its own refusal.
+          if (ground.why !== null) note(text, ground.why)
+          continue
+        }
+        const ratio = contrastRatio(fill.rgb, ground.colour.rgb)
         if (ratio >= LABEL_CONTRAST) continue
         note(
           text,
-          `it is drawn in ${named(fill)} on ${named(ground)}, which is ${ratio.toFixed(1)}:1 — under the ${LABEL_CONTRAST}:1 the site's own text is held to (WCAG 2.1 AA, \`website/test/a11y.mjs\`), and a label a reader cannot read is a label the drawing does not say`,
+          `it is drawn in ${named(fill)} on ${named(ground.colour)}, which is ${ratio.toFixed(1)}:1 — under the ${LABEL_CONTRAST}:1 the site's own text is held to (WCAG 2.1 AA, \`website/test/a11y.mjs\`), and a label a reader cannot read is a label the drawing does not say`,
         )
       }
 
@@ -1382,7 +1411,7 @@ test('How It Works is one diagram of the run, named for a screen reader and quot
   const diagrammed = pages.filter((page) => page.html.includes('run-diagram'))
   assert.deepEqual(
     diagrammed.map((page) => page.rel),
-    [path.join('how-it-works', 'index.html')],
+    ['how-it-works/index.html'],
     'the run diagram is not on How It Works and only there: the owner\'s draft of 2026-10-19 puts it on that page, and the owner\'s ruling of 2026-10-20 retires the homepage\'s own four-step flow, so the site\'s one picture of a run is this one (website/test/home.mjs reads the homepage\'s slider, the block in the flow\'s place)',
   )
   for (const page of diagrammed) {
@@ -1395,7 +1424,7 @@ test('every shape of the run drawing is painted from the palette, and every labe
   // The reading the owner's own finding of 2026-10-21 asks for: the drawing was a series of
   // black rectangles, and every gate in this file passed over it, because they read the drawing
   // and none of them read the paint.
-  const page = builtPages().find((entry) => entry.rel === path.join('how-it-works', 'index.html'))
+  const page = builtPages().find((entry) => entry.rel === 'how-it-works/index.html')
   assert.ok(page, 'the built site has no How It Works page, and the run\'s drawing is on it')
   const failures = runPaintFailures(page.html, pageCss(page.html))
   assert.deepEqual(failures, [], `${page.rel}: the run drawing is not painted the way the site paints:\n  ${failures.join('\n  ')}`)
@@ -1442,13 +1471,27 @@ test('every paint refusal fires on the defect it names', (t) => {
   // holds — which is how the drawing shipped unpainted in the first place.
   const unknownShape = page.replace(/<line /, '<polygon points="0,0 4,0 2,4" ')
   assert.notEqual(unknownShape, page, 'the drawing no longer holds a `<line>` this fixture can rebuild as a shape the reading does not know')
+  // And the other half of the same defect: a shape whose every declared paint is `none` is drawn
+  // as nothing, and the arrows are stroke alone — `stroke: none` over them is an arrow no reader
+  // sees while every rule that paints it still reads in the stylesheet as one that is there.
+  const nothing = repaint('run-arrow-line', 'none')
+  // And a label whose ground this reading cannot find: the box the drawing puts it in, and the
+  // card inside that box. A contrast check with nothing to compute against is not a check, so
+  // both are refused rather than passed over.
+  const unboxed = page.replace('<g class="run-box" data-box="1">', '<g data-box="1">')
+  assert.notEqual(unboxed, page, 'the drawing no longer opens with a box this fixture can take the class off')
+  const uncarded = page.replace(/<rect class="run-card" data-pad="18" x="16\.0"/, '<rect class="run-plate" data-pad="18" x="16.0"')
+  assert.notEqual(uncarded, page, 'the drawing no longer draws a card in its first box, and this fixture takes the class off one')
 
   const cases = [
     ['the scoped paint rules the drawing shipped with (2026-10-21)', { html: page, css: rescoped }, /no rule of the page's stylesheet can reach it/],
     ['a card painted with a literal the palette does not hold', { html: page, css: repaint('run-card', '#000000') }, /which is not one of the palette's own colours/],
     ['a card painted through a var() in its presentation attribute', { html: attributeVar, css: noFillRule }, /`var\(\)` is not a colour in an SVG presentation attribute/],
+    ['a shape whose every declared paint is none', { html: page, css: nothing }, /and no colour at all, so it is drawn as nothing/],
     ['a label painted on the surface it is drawn on', { html: page, css: repaint('run-small', 'var(--border)') }, /under the 4\.5:1 the site's own text is held to/],
     ['a label drawn in a colour no contrast check can compute', { html: page, css: repaint('run-name', 'currentColor') }, /this reading cannot turn into a colour/],
+    ['a label the drawing puts in no box at all', { html: unboxed, css }, /drawn outside any box of the drawing/],
+    ['a label in a box that carries no surface', { html: uncarded, css }, /carries neither a card .* nor a stage pill/],
     ['a shape of a kind the reading has not been taught', { html: unknownShape, css }, /knows how a drawing's .* are painted and nothing else/],
   ]
   for (const [what, fixture, wanted] of cases) {
