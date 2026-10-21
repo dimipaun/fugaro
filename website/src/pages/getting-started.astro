@@ -572,18 +572,30 @@ const doc = (path: string, fragment: string): string =>
 
     /* The band the headline and the paths sit in: the glow needs a box of its own to be
        drawn against, and it is the section rather than the page because the pattern is the
-       first screen's. */
+       first screen's. The room above the headline is one step: this is the page a reader
+       arrives on with one question, and the board's taller opening is the desktop's. */
     #install {
       position: relative;
       overflow: hidden;
-      padding-block: var(--space-2xl) var(--space-xl);
+      padding-block: var(--space-xl);
     }
 
+    /* The headline block, and the room under it. One step on a phone and the board's two on
+       a wide screen: the first command of the band is inside a 390 × 844 first screen
+       (D187's claim, the owner's Check 70b at the preview), and the space between the lead
+       and the grid is what the fold gives back — the board draws the wide-screen gap, and a
+       phone that carried it would push the command below the fold it exists to be in. */
     .gs-hero {
       display: flex;
       flex-direction: column;
       gap: var(--space-sm);
-      margin-bottom: var(--space-2xl);
+      margin-bottom: var(--space-lg);
+    }
+
+    @media (min-width: 48rem) {
+      .gs-hero {
+        margin-bottom: var(--space-2xl);
+      }
     }
 
     /* The board's eyebrow pill: the page's own name, above the headline. `base.css`'s
