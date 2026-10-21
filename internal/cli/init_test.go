@@ -383,7 +383,7 @@ func TestInitAppliesSavedPlan(t *testing.T) {
 	for _, c := range r.calls(t) {
 		subs = append(subs, c[0])
 	}
-	if want := []string{"version", "setup", "output", "plan", "show", "apply", "output"}; !slices.Equal(subs, want) {
+	if want := []string{"version", "init", "output", "plan", "show", "apply", "output"}; !slices.Equal(subs, want) {
 		t.Fatalf("terraform calls = %q, want %q", subs, want)
 	}
 	plan := r.ran(t, "plan")[0]

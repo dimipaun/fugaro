@@ -461,7 +461,14 @@ func TestInitAnchorExcludesTheOtherModes(t *testing.T) {
 	for _, other := range [][]string{{"--plan-only"}, {"--print-vars"}, {"--config-only"}, {"--forget"}, {"--publish-config"}, {"--repo"},
 		{"--firebase", "fugaro-fb-1234"}, {"--base", "go"}, {"--image-source", "ghcr.io/acme"}, {"--runs-bucket", "x-runs"},
 		{"--onboard-repo", "acme/app"}, {"--github-app-id", "123"}, {"--budget", "5", "--budget-currency", "USD", "--billing-account", "0123AB-4567CD-89EF01"}} {
-		_, _, err := anchorExec(t, "", append([]string{"setup", "--anchor"}, other...)...)
+		// --forget is the update door's flag (W1.2): setup refuses it before
+		// the run's own mode checks, so the row that pairs it with --anchor
+		// runs the door that takes it.
+		door := "setup"
+		if other[0] == "--forget" {
+			door = "update"
+		}
+		_, _, err := anchorExec(t, "", append([]string{door, "--anchor"}, other...)...)
 		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--anchor") || !strings.Contains(err.Error(), other[0]) {
 			t.Errorf("%s: exit %d, err %v", other, ExitCode(err), err)
 		}

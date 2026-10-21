@@ -174,7 +174,14 @@ func TestInitPublishConfigNeedsALocalConfig(t *testing.T) {
 func TestInitPublishConfigExcludesTheOtherModes(t *testing.T) {
 	newInitRig(t)
 	for _, other := range []string{"--config-only", "--plan-only", "--print-vars", "--forget"} {
-		_, _, err := executeStdin(t, "", "setup", "--publish-config", other)
+		// --forget is the update door's flag (W1.2): setup refuses it before
+		// the run's own mode checks, so the row that pairs it with a mode
+		// runs the door that takes it.
+		door := "setup"
+		if other == "--forget" {
+			door = "update"
+		}
+		_, _, err := executeStdin(t, "", door, "--publish-config", other)
 		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--publish-config") || !strings.Contains(err.Error(), "exclude one another") {
 			t.Errorf("%s: exit %d, err %v", other, ExitCode(err), err)
 		}
