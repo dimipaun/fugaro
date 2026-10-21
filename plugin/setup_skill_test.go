@@ -73,12 +73,13 @@ func TestSetupSkillMentionsDoctorFirst(t *testing.T) {
 // first half must learn it here, in one sentence: the cloud side is already
 // done, and this skill writes `fugaro.yaml` and opens the pull request.
 //
-// The line names the door as "the `setup` door" and not as a command line, and
-// the last assertion is why: the plugin lint (skills_lint_test.go,
-// ownerViolation) rejects an applying `fugaro setup` or `fugaro update`
-// anywhere outside a user-runs block, prose and "never" sentences included, so
-// the command itself appears in exactly one place in this file — step 1's
-// user-runs block — and the introduction points at the door by name.
+// The line says "the wizard did it" and writes the word the user typed as a
+// bare `setup` span, never as a command line, and the last assertion is why:
+// the plugin lint (skills_lint_test.go, ownerViolation) rejects an applying
+// `fugaro setup` or `fugaro update` anywhere outside a user-runs block, prose
+// and "never" sentences included, so the command appears in the introduction
+// only as `fugaro doctor --json` (step 1's read-only check) and the door the
+// user already ran is named rather than quoted.
 //
 // Mutation (run, restore): delete the opening sentence -- "which command it
 // is" fails; change "the wizard did it" to name the command line instead --
