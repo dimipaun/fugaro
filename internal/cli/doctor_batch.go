@@ -107,6 +107,17 @@ func batchUnchecked(id, what, fix string, err error) doctorCheck {
 		Fix:     fix}
 }
 
+// batchSkipped is a check this configuration does not make: a test
+// configuration (endpoints.no_auth) with no endpoint for the API in question,
+// so no real project is read from it. It says so as an informational line and
+// is never OK -- a pass for a read nobody made is the shape batchUnchecked
+// exists to refuse, and info keeps a test configuration's doctor --strict
+// green without claiming anything was checked.
+func batchSkipped(id, what, endpoint string) doctorCheck {
+	return doctorCheck{ID: id, Severity: "info",
+		Problem: "not checked: " + what + " is not read in a test configuration (endpoints.no_auth with no endpoints." + endpoint + ")"}
+}
+
 // batchReadFix is what to do about a read that failed: the operator's own
 // credentials and the project are the two things that decide it.
 const batchReadFix = "rerun fugaro doctor with access to the project, or as an operator"
@@ -188,7 +199,7 @@ func doctorBatchImageFamily(ctx context.Context, lc *localcfg.Config) doctorChec
 		return doctorCheck{ID: id, OK: true}
 	}
 	if lc.Endpoints.NoAuth && lc.Endpoints.Compute == "" {
-		return doctorCheck{ID: id, OK: true}
+		return batchSkipped(id, "the preload image family", "compute")
 	}
 	family := pathTail(lc.Batch.BootImage)
 	project := resourceProject(lc.Batch.BootImage, lc.GCPProject)
@@ -291,7 +302,7 @@ func resourceProject(name, fallback string) string {
 func doctorBatchLogSink(ctx context.Context, lc *localcfg.Config) doctorCheck {
 	const id = "batch-log-sink"
 	if lc.Endpoints.NoAuth && lc.Endpoints.Logging == "" {
-		return doctorCheck{ID: id, OK: true}
+		return batchSkipped(id, "the log sink "+infra.LogSink, "logging")
 	}
 	svc, err := logging.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.Logging)...)
 	if err != nil {

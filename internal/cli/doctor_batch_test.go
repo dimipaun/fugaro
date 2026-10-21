@@ -498,6 +498,33 @@ func TestDoctorBatchNeverPassesAReadItCouldNotMake(t *testing.T) {
 	}
 }
 
+// TestDoctorBatchSkipsAreNeverPasses: a test configuration (endpoints.no_auth
+// with no endpoint for an API) skips that API's read, so no real project is
+// read from it -- and a skipped read is reported as not checked, never as ok.
+// The image family and the log sink are single checks that always print, so
+// their skip is the line that has to say it; the API and network checks print
+// nothing when skipped.
+//
+// Mutation (return doctorCheck{ID: id, OK: true} from either skip, as these
+// did): the check reads ok and the assertion fails.
+func TestDoctorBatchSkipsAreNeverPasses(t *testing.T) {
+	r := newDoctorRig(t)
+	if err := os.WriteFile(r.cfgPath, []byte(r.cfg+batchBlock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	o := r.runDoctorJSON(t)
+	for _, id := range []string{"batch-image-family", "batch-log-sink"} {
+		c, ok := doctorCheckByID(o.Checks, id)
+		if !ok {
+			t.Errorf("doctor reports no %s check", id)
+			continue
+		}
+		if c.OK || c.Severity != "info" || !strings.Contains(c.Problem, "not checked") {
+			t.Errorf("%s = %+v, want an info line that says it was not checked: nothing was read", id, c)
+		}
+	}
+}
+
 // TestDoctorBatchNamesTheArtifactBoundary: Global Constraint 13 asks doctor to
 // name the boundary an artifact-producing run meets on this backend, and this
 // is the check that does it. Informational, never a warning: it describes the
