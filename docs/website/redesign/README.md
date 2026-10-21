@@ -76,7 +76,7 @@ deliberately, with their tests, as the owner's ruling of 2026-10-18 requires.
 The owner accepted every recommendation of D180 to D192, as written in `reconciliation.md`:
 
 - **D180** the accent is the logo's hue, `#17A8E6`, as a fourth palette file; **D181** the warning colour moves to amber `#F5A524`.
-- **D182** the menu is three groups of three (Product, Reference, Project), a drawer on mobile — **amended on 2026-10-19 by the owner's brief (item 1): the three group labels ARE the menu on a phone, and the drawer and its one toggle are retired** (see "The 2026-10-19 brief" below). What D182 decided about the *groups* stands: three groups of three, Home as the wordmark, Privacy in the footer.
+- **D182** the menu is three groups of three (Product, Reference, Project), a drawer on mobile — **amended on 2026-10-19 by the owner's brief (item 1): the three group labels ARE the menu on a phone, and the drawer and its one toggle are retired** (see "The 2026-10-19 brief" below). What D182 decided about the *groups* stood until **2026-10-21, when the owner changed them: the Reference group comes out, Console moves under Product and the rest — Docs and Changelog — under Project, so the menu is two groups** (see "The 2026-10-21 feedback: the Reference group comes out of the menu" below; the Home item of the same day's earlier feedback stays, and Privacy stays in the footer).
 - **D183** the JavaScript is one first-party file, `website/public/scripts/site.js`; no inline script, no CSP edit.
 - **D184** the homepage animation shows the README's documented sequence, held to the file at build time, captioned as the documented sequence.
 - **D185** How It Works uses the brief's four steps, each captioned by a quoted line.
@@ -677,7 +677,10 @@ goes stale the way the byte budgets did before D192.
   group closes its siblings, which is the one-menu-at-a-time behaviour the toggle used to
   provide by hand. **D182's group decision is untouched** — three groups of three, Home as
   the wordmark, Privacy in the footer — and what changed is only what a phone *does* with
-  them. `site.js` loses the branch it kept for the panel (`holds()` no longer looks for a
+  them. **Amended 2026-10-21: the groups themselves changed later that day — the Reference
+  group came out, so the menu is two groups** (the day's own feedback section below); what
+  this bullet records of the phone's menu stands, and its "three labels" are the two the menu
+  now draws. `site.js` loses the branch it kept for the panel (`holds()` no longer looks for a
   sibling), and with it the only reason the script had to know where the panel was.
 - **The wordmark's text leaves the header row below 390 px, and the mark stays (item 1).**
   The owner's ruling is "hide the wordmark TEXT below about 380px (keep the logo mark)", and
@@ -1371,7 +1374,9 @@ later reader does not have to guess them from the markup.
   reads the built homepage fails naming the corner; with the fix in place it passes.
 - **Home is the menu's first item (item 2: "I think we need a 'Home' as the first menu").**
   D182 took Home out of the menu and left the wordmark as the one link to `/`; the item is back
-  as a plain `<li class="site-nav-home"><a href="/">Home</a></li>` in front of the three groups,
+  as a plain `<li class="site-nav-home"><a href="/">Home</a></li>` in front of the groups — three
+  of them that morning, **two since the later feedback of 2026-10-21 dropped the Reference
+  group** (the section at the end of this file) —
   in the same list, at every width — the "first menu" is the first item of the one menu the site
   has, and the phone shows that menu rather than a collapsed version of it (the 2026-10-19
   amendment). **The wordmark stays the way home it has always been**, so `/` is listed twice and
@@ -1685,3 +1690,71 @@ under the run's picture are a real list.
   1440 × 800 first screen, are the owner's checks at the preview** (70a–70c, P9, D187) — and no
   word of `SECURITY.md` changed in this round, so the page's claims are the owner's text
   verbatim, exactly as before.
+||||||| 15dd3f20
+
+## The 2026-10-21 feedback: the Reference group comes out of the menu
+
+The owner's feedback of **2026-10-21** (a message of its own, after items 1 to 3 above) is one
+reading of the live site's menu: "**Okay, let's drop the top reference menu. We'll move the
+submenu console under product, and the rest go under Project.**" As every round here, the
+readings the feedback does not spell out are recorded, so a later reader does not have to guess
+them from the markup. **D182's group decision is amended by it, and the amendment is dated
+rather than written over the decision**: the 2026-10-18 ruling, the 2026-10-19 brief and the
+2026-10-21 readings above stand as what was decided and read then.
+
+- **The menu is two groups, and `NAV_GROUPS` is the one place that says so.** The Reference
+  group — its `<li>`, its `<details>`, its `<summary>` and its list — is gone from
+  `website/src/layouts/Base.astro`, and the three links it held were **moved rather than
+  rewritten**: Console's item into *Product*'s list, after Caps and costs, and Docs's and
+  Changelog's into *Project*'s, Docs first and Changelog last — the order the feedback's own
+  sentence gives them. *Product* holds How it works, Getting started, Caps and costs and
+  Console (four), *Project* holds Docs, Security, FAQ, Community and Changelog (five), every
+  label and every route unchanged. The division is the feedback's rather than a symmetry:
+  *Product* is the four pages about running the thing the visitor came for, *Project* the five
+  about the project itself.
+- **What did not change.** The menu's first item is still **Home** (the same day's earlier
+  feedback), drawn in front of the groups and carrying the page's one `aria-current="page"`
+  where it is the page being read; Privacy is still a footer link and not a menu item; the
+  groups still share one `name`, so opening one closes the other *with two groups as much as
+  with three* — which is the whole of the exclusivity the browser provides, and the script
+  writes nothing to keep it; both levels are still `<details>`, so the menu still opens and
+  closes with JavaScript off; and the group's list is still the `<details>`'s own child.
+  **"Why GCP" is not added here**: a later part of this line of work adds a fourth *Product*
+  item, and this round adds none — the group counts above are what the menu draws today.
+- **The gates moved with it.** `website/test/base-styles.mjs`'s `navFailures` holds **two**
+  groups, names them (*Product* and *Project*) and holds the routes each group lists, rather
+  than counting to three — the count alone was all it held until the review of this round
+  found that a renamed group left every gate green — its fixture is
+  the real two-group shape the layout writes, and the refusal case that plants a fourth menu
+  item expects the four items the two-group menu plus one makes. `website/test/nav-hover.mjs`
+  reads the two lists the menu draws — its `.site-nav-group ul` count, its phone case's opening
+  sentence, and the case where a sibling closes a group under the reader's focus all follow —
+  and `website/test/checklist.mjs` and `internal/cli/docs_website_redesign_test.go` hold check
+  70a's names to the site as before (the check itself is corrected with this round: its labels
+  are two, and its "Products, Reference, Project" is "Product, Project").
+- **The phone row is one item narrower, and its cut is left where it was measured.** The
+  2026-10-21 round above moved the wordmark's breakpoint to **432 px (27 rem)** because the row
+  carried four items (Home and three labels); with the Reference group gone it carries three
+  again, about 45 px narrower. The cut and the phone block's two spacing rules are **left as
+  measured** rather than re-tightened against a row no browser has seen: the cost is the
+  wordmark's text leaving the row a width earlier than a three-item row would need, which is
+  the safe direction of the two, and whether the row fits is the owner's check 70a either way.
+  `base.css` and `website/test/base-styles.mjs` say so beside the rules.
+- **The bytes.** The move is uniform, because the menu is inlined into every page: **110 bytes
+  off each of the 11 pages' HTML** (the removed block's own elements and their attributes; the
+  three links themselves are moved, not rewritten), **8 bytes off the script** (the two
+  comments in it
+  that counted three groups — the second one found by the review of this round, which is why
+  the figure is eight and not six), so **118 off the page weight** and **1,218 off the site
+  figure**.
+  No file was added or removed (`dist/` stays 28 files and 11 pages) and no page's words move —
+  a menu label is chrome, and D188's ceilings count `main`. **The three budget figures are left
+  where they are**, per the owner's ruling of 2026-10-20 that they are re-derived when the owner
+  asks rather than on every round; `website/README.md`'s running list records this round's move
+  the same way.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round and this run cannot see a picture. What was read is the built
+  artifact, the stylesheet, the script and the two hermetic menu gates, with `(cd website && npm
+  run check)` green. **Whether the two-group menu reads right — the labels' row at every width,
+  the two groups' lengths, whether four and five is the split the owner wants — is the owner's
+  check** (70a, P9, D190); `Base.astro`'s `NAV_GROUPS` is the one place a label would move.
