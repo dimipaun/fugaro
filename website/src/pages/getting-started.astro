@@ -242,10 +242,20 @@ const GLYPH_SHAPES = /<(?:path|circle|ellipse|rect|line|polyline|polygon)\b/
   }
 }
 
-// The system the console is offered with: the platform its own data file names on every asset
-// it publishes — the console ships for macOS, so its downloads sit in macOS's card. Both ways
-// of failing to make the join are build errors naming the files.
-const consolePlatformNames = [...new Set(consoleFacts.downloads.map((download) => download.platform))]
+// The system the console is offered with: the platform its own data file names on the downloads
+// the card itself lists — the console ships for macOS, so its block sits in macOS's card. **The
+// assets an optional per-platform block names are not part of that join**, and they are filtered
+// out here exactly as `ConsoleOption` filters them out of the list it renders: a block is a
+// second system's facts, rendered under its own sentence inside this same card (D10, the owner's
+// ruling of 2026-10-20), so a data file that gains a Linux AppImage is a Linux sentence in the
+// console's block and still one card for the console to sit in. Reading the whole list instead
+// would make every Linux asset turn the join into "two platforms, and the page would have to
+// decide which" — a build that stops the day the console is published for a second system.
+const consoleBlockIds = new Set((consoleFacts.linux?.downloads ?? []).map((download) => download.id))
+const consoleReleases = consoleFacts.downloads.filter((download) => !consoleBlockIds.has(download.id))
+
+// Both ways of failing to make the join are build errors naming the files.
+const consolePlatformNames = [...new Set(consoleReleases.map((download) => download.platform))]
 if (consolePlatformNames.length !== 1) {
   throw new Error(
     `website/content/downloads.json names ${consolePlatformNames.length} platform(s) on its downloads (${consolePlatformNames.join(', ') || 'none'}), and Getting Started offers the console in the card of the one system it ships for: with no platform named there is no card to put the download in, and with two the page would have to decide which`,
