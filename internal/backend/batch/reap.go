@@ -269,6 +269,42 @@ func actionVerb(k ActionKind, dryRun bool) string {
 	return past
 }
 
+// outOfBoundsProjects are the GCP projects no pass of this reaper may touch,
+// whatever path named them. The first is the installation the plan puts out of
+// bounds -- no agent and no automated run touches it, which is why the
+// console's fixture recorder refuses it by name too
+// (console/tools/record-fixture/index.ts's BELONG_PROJECT) -- and the second is
+// the same installation under the project id it answers to now.
+//
+// A deletion the reaper makes is a deletion of someone's billing or someone's
+// data, and this list is the one place where "the installation's own project"
+// is not enough of a reason: a reaper pointed at one of these is pointed at a
+// live installation that is not the one being swept, so it reads nothing and
+// deletes nothing. The list is matched EXACTLY (a project whose id merely
+// begins with one of these is another project, and refusing it would refuse a
+// project nobody named) and case-insensitively (Google's own API does not treat
+// project ids as case-sensitive, so `Edge-Devel-Dimi` is the same project) --
+// see outOfBounds.
+var outOfBoundsProjects = []string{"edge-devel-dimi", "fugaro-belong"}
+
+// outOfBounds reports whether project is one of outOfBoundsProjects. The value
+// is trimmed first because one of the two paths that reach NewReaper hands it
+// over unvalidated: a project config's gcp_project is checked against
+// localcfg's GCPProjectRE, but the reaper job's own environment
+// (internal/cli's reaperEnvOptions) is read straight out of FUGARO_GCP_PROJECT
+// -- so " edge-devel-dimi " is a spelling of the same project and must not be a
+// way around the list. Nothing else is folded and nothing is matched by prefix:
+// the list is exact, and this function is the whole of the rule.
+func outOfBounds(project string) bool {
+	p := strings.TrimSpace(project)
+	for _, bad := range outOfBoundsProjects {
+		if strings.EqualFold(p, bad) {
+			return true
+		}
+	}
+	return false
+}
+
 // ReaperOptions configure a Reaper.
 type ReaperOptions struct {
 	GCPProject, Region string
@@ -362,6 +398,8 @@ func NewReaper(ctx context.Context, o ReaperOptions) (*Reaper, error) {
 	switch {
 	case o.GCPProject == "" || o.Region == "":
 		return nil, errors.New("the reaper needs a GCP project and a region")
+	case outOfBounds(o.GCPProject):
+		return nil, fmt.Errorf("GCP project %s is out of bounds: it is one of the projects this reaper never touches (%s), and it is refused here so that neither source of a project can reach it -- a project config's gcp_project and the reaper job's own environment alike. Nothing has been read and nothing deleted", o.GCPProject, strings.Join(outOfBoundsProjects, ", "))
 	case o.Timeouts == nil:
 		return nil, errors.New("the reaper needs a source for the workflow timeouts: both of its deadlines are derived from the longest one")
 	}
