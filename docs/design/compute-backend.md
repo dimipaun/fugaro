@@ -355,12 +355,25 @@ for estimates:
   saying so, or the reserved exit code Batch reports for a task whose VM was
   reclaimed, which `internal/backend/batch` reads in the same `jobs.get` that
   produces the execution (`preempted`) — **reads as `failed (preempted)`** in
-  `runs ls`, `fugaro watch` and `fugaro diagnose RUN`, in their `--json` forms
-  and in the desktop console's contract, rather than as a run still going.
+  `runs ls` and `fugaro diagnose RUN`, in their `--json` forms and in the
+  desktop console's contract, rather than as a run still going. `fugaro watch`
+  shows it in its **degraded mode** — the run-records-only view a project with
+  no budget backend falls into, which reads runs the way `runs ls` does — and
+  **nowhere else**: the live watch's queued scanner reads the runs bucket and
+  **never opens the compute backend** (watch-queued.md §3, a permission
+  boundary rather than an oversight: that scanner works for a launcher or
+  operator who holds no compute role), so it holds no job report to read a
+  preemption out of and decorates nothing.
   **The derived status is never written back anywhere**: no component gains a
   storage permission for this, the reaper stays deletion-only (§3.4), the
   budget lease expires by its own timeout, and the history sweep settles the
-  cost. A finalized record always wins over the derivation, and a job whose
+  cost. **The history sweep still records its own word for the same run**: a
+  preempted run whose registry entry outlives its execution is swept like any
+  other run that vanished and gets an `infra_error` outcome in the history
+  database (`internal/budget/sweep.go`), so the history view says `infra_error`
+  where `runs ls` says `failed (preempted)` — the two disagree about the word
+  and agree that the run did not finish, and the derivation, being a reading of
+  the runs bucket, changes nothing about what the sweep writes. A finalized record always wins over the derivation, and a job whose
   state cannot be read — or whose state is not a terminal `FAILED` — leaves the
   run exactly as recorded, with a note: **an unreadable job never makes a live
   run look failed.** Recommendation: **spot off by default**, opt-in per

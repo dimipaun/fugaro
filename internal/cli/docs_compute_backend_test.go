@@ -2065,3 +2065,49 @@ func TestDocsSharedConfigStatesTheImageChecksExactly(t *testing.T) {
 		t.Errorf("%s §5 claims the fugaro-ghcr refusal leaves an image in one of this installation's own repositories, which the reader does not enforce: it refuses one repository ID and passes the project's others", doc)
 	}
 }
+
+// TestDocsComputeBackendSaysWhichWatchShowsTheDerivation: the design and the
+// plan both used to say the derived `failed (preempted)` reading shows in
+// `runs ls`, `fugaro watch` and `fugaro diagnose RUN` — and of the two watches
+// only the **degraded** one can show it. `fugaro watch` with a budget backend
+// builds its rows from the Realtime Database plus the queued scanner, and that
+// scanner opens the runs bucket alone and never the compute backend
+// (watch_queued.go's `openQueueBucket`; design watch-queued.md §3, which is a
+// permission boundary and not an oversight: the scanner works for a launcher or
+// operator who holds no compute role), so it holds no job report and has no
+// preemption to read. The wording is what a later reader implements against, so
+// the overclaim is held absent and the true surfaces are held present.
+//
+// Mutation (restore the old sentence in either document, or drop the debt
+// sentence from the design): the matching assertion fails.
+func TestDocsComputeBackendSaysWhichWatchShowsTheDerivation(t *testing.T) {
+	// The boundary the claim rests on is the code's, and a scanner that started
+	// opening the compute backend would make the design's sentence wrong in the
+	// other direction: the test reads it off the scanner rather than asserting
+	// it about a document alone.
+	scanner := flattenDoc(readDoc(t, "internal/cli/watch_queued.go"))
+	if !strings.Contains(scanner, "openQueueBucket opens just the runs bucket, never the compute backend") {
+		t.Fatalf("internal/cli/watch_queued.go's openQueueBucket no longer opens the runs bucket alone: §1.3's sentence about which watch shows the derivation is written against this boundary, so it has to move with it")
+	}
+	// The overclaim, verbatim as the two documents carried it: all three
+	// surfaces in one list. It flattens across the design's line break.
+	const overclaim = "`runs ls`, `fugaro watch` and `fugaro diagnose RUN`"
+	for _, path := range []string{"docs/design/compute-backend.md", computeBackendPlan} {
+		doc := flattenDoc(readDoc(t, path))
+		if strings.Contains(doc, overclaim) {
+			t.Errorf("%s still says the derived status shows in %s: the live watch's queued scanner never opens the compute backend, so it cannot read a preemption — only the degraded mode (which reads runs as `runs ls` does) shows it", path, overclaim)
+		}
+		for _, want := range []string{"degraded mode", "never opens the compute backend"} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s no longer says %q of the preempted reading: the reader has to be told which watch shows it and why the other one cannot", path, want)
+			}
+		}
+	}
+	// And the debt the design owes the same reader: the history sweep writes its
+	// own word for the same run, so the two views disagree about the word and
+	// agree that the run did not finish.
+	design := flattenDoc(readDoc(t, "docs/design/compute-backend.md"))
+	if !strings.Contains(design, "`infra_error` outcome in the history database (`internal/budget/sweep.go`)") {
+		t.Errorf("docs/design/compute-backend.md no longer says a preempted run's history sweep records an `infra_error` outcome for the same run: `runs ls` reads `failed (preempted)` while the history view says infra_error, and a reader told only the first would think the two agree")
+	}
+}
