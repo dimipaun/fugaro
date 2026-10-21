@@ -440,7 +440,7 @@ func TestReportNoAuthNeverReachesRealFirestore(t *testing.T) {
 }
 
 func TestInitHelpMentionsFirestoreStep(t *testing.T) {
-	out, _, err := execute(t, "init", "--help")
+	out, _, err := execute(t, "setup", "--help")
 	if err != nil {
 		t.Fatal(err)
 	}

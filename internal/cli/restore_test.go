@@ -1746,7 +1746,7 @@ func TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget(t *testing.T) {
 			calls := recordRestoreApply(t, r)
 			old := restoreInitCmd
 			restoreInitCmd = func(o *initOptions) *cobra.Command {
-				c := newInitCmdWith(o)
+				c := newSetupCmdWith(o)
 				inner := c.RunE
 				c.RunE = func(cmd *cobra.Command, args []string) error {
 					err := inner(cmd, args)
@@ -2026,7 +2026,7 @@ func TestRestorePutBackThatFailsSaysSo(t *testing.T) {
 func TestRestoreSeamsAreProductionsFunctions(t *testing.T) {
 	for name, pair := range map[string][2]any{
 		"restoreManagedApply": {restoreManagedApply, managedApply},
-		"restoreInitCmd":      {restoreInitCmd, newInitCmdWith},
+		"restoreInitCmd":      {restoreInitCmd, newSetupCmdWith},
 	} {
 		if reflect.ValueOf(pair[0]).Pointer() != reflect.ValueOf(pair[1]).Pointer() {
 			t.Errorf("%s is not its production function", name)

@@ -279,7 +279,7 @@ func TestInitRepoUnchanged(t *testing.T) {
 	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), checkoutYAML("github", "api-key", "aurora", ""))
 	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
 	t.Chdir(t.TempDir())
-	out, errOut, err := execute(t, "init", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
+	out, errOut, err := execute(t, "setup", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
 	if err != nil || !strings.HasPrefix(strings.TrimSpace(out), "{") || strings.Contains(out, `"stages"`) || strings.Contains(out, "left_for_you") || !strings.Contains(errOut, "ungated") {
 		t.Fatalf("print-vars: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 	}
@@ -293,10 +293,10 @@ func TestInitRepoUnchanged(t *testing.T) {
 	// The installation's flags are still refused for --repo, and the
 	// repository's still refused without it.
 	for _, tc := range [][]string{
-		{"init", "--repo", "--firebase", "fb-proj-1234", root},
-		{"init", "--repo", "--launcher", "user:a@b.c", root},
-		{"init", "--no-build"},
-		{"init", "--allow-job-delete"},
+		{"setup", "--repo", "--firebase", "fb-proj-1234", root},
+		{"setup", "--repo", "--launcher", "user:a@b.c", root},
+		{"setup", "--no-build"},
+		{"setup", "--allow-job-delete"},
 	} {
 		if _, _, err := execute(t, tc...); ExitCode(err) != ExitUserError || err == nil {
 			t.Errorf("%v: exit %d, err %v", tc, ExitCode(err), err)
@@ -306,11 +306,11 @@ func TestInitRepoUnchanged(t *testing.T) {
 	// with the modes that never reach the repository; a bad value is refused
 	// where it is given.
 	for _, tc := range [][]string{
-		{"init", "--github-app-id", "42", "--print-vars", "--project", "aurora"},
-		{"init", "--github-app-id", "42", "--config-only"},
-		{"init", "--github-app-id", "42", "--forget"},
-		{"init", "--github-app-id", "forty-two", "--plan-only"},
-		{"init", "--repo", "--github-app-id", "4 2", root},
+		{"setup", "--github-app-id", "42", "--print-vars", "--project", "aurora"},
+		{"setup", "--github-app-id", "42", "--config-only"},
+		{"update", "--github-app-id", "42", "--forget"},
+		{"setup", "--github-app-id", "forty-two", "--plan-only"},
+		{"setup", "--repo", "--github-app-id", "4 2", root},
 	} {
 		if _, _, err := execute(t, tc...); ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "github-app-id") {
 			t.Errorf("%v: exit %d, err %v", tc, ExitCode(err), err)
@@ -754,7 +754,7 @@ func TestNonInteractiveNamesAppIDFromTheStage(t *testing.T) {
 	r.stateBucket()
 	root := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(root)
-	_, _, err := executeStdin(t, "", "init", "--non-interactive", "--yes", "--onboard-repo", "acme/app")
+	_, _, err := executeStdin(t, "", "setup", "--non-interactive", "--yes", "--onboard-repo", "acme/app")
 	if err == nil || !strings.Contains(err.Error(), "--non-interactive: missing") || !strings.Contains(err.Error(), "--github-app-id") {
 		t.Fatalf("%v", err)
 	}

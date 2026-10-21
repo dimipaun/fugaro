@@ -62,7 +62,7 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 	for _, want := range []struct {
 		path []string
 		flag string
-	}{{[]string{"run"}, "recipe"}, {[]string{"run"}, "pr"}, {[]string{"recipes", "ls"}, "json"}, {[]string{"recipes", "show"}, "json"}, {[]string{"recipes", "validate"}, "json"}, {[]string{"init"}, "base"}, {[]string{"init"}, "repo"}} {
+	}{{[]string{"run"}, "recipe"}, {[]string{"run"}, "pr"}, {[]string{"recipes", "ls"}, "json"}, {[]string{"recipes", "show"}, "json"}, {[]string{"recipes", "validate"}, "json"}, {[]string{"setup"}, "base"}, {[]string{"setup"}, "repo"}} {
 		c, _, err := root.Find(want.path)
 		if err != nil || c == nil || c.Name() != want.path[len(want.path)-1] {
 			t.Errorf("no command %v", want.path)

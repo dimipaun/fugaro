@@ -295,10 +295,10 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 	for _, c := range []struct{ path, flag string }{
 		{"upgrade", "local"},
 		{"upgrade", ""},
-		{"init", "firebase"},
-		{"init", "repo"},
-		{"init", "create-project"},
-		{"init", "managed"},
+		{"setup", "firebase"},
+		{"setup", "repo"},
+		{"setup", "create-project"},
+		{"setup", "managed"},
 		{"doctor", ""},
 		{"watch", ""},
 		{"runs ls", ""},
@@ -365,7 +365,7 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		if !names("`fugaro init --provision-batch` refuses") {
 			t.Errorf("%s does not say `fugaro init --provision-batch` refuses, and batchProvisionShipped is false", releaseNotesV090)
 		}
-		if cmd := commandAt(t, "init"); cmd.Flags().Lookup("provision-batch") == nil {
+		if cmd := commandAt(t, "setup"); cmd.Flags().Lookup("provision-batch") == nil {
 			t.Errorf("fugaro init has no --provision-batch flag, and %s describes what it does when it refuses (batchProvisionShipped is false: the flag stays, the provisioning refuses)", releaseNotesV090)
 		}
 	}
@@ -442,8 +442,8 @@ func TestReleaseNotesV090ManagedWordingMatchesTheGates(t *testing.T) {
 		notes string
 		args  []string
 	}{
-		{"`fugaro init --create-project --managed`", []string{"init", "--create-project", "--gcp-project", "fugaro-newproj-1234", "--managed", "--budget", "50", "--budget-currency", "USD", "--billing-account", "000000-000000-000000"}},
-		{"`fugaro init --managed`", []string{"init", "--managed"}},
+		{"`fugaro init --create-project --managed`", []string{"setup", "--create-project", "--gcp-project", "fugaro-newproj-1234", "--managed", "--budget", "50", "--budget-currency", "USD", "--billing-account", "000000-000000-000000"}},
+		{"`fugaro init --managed`", []string{"setup", "--managed"}},
 		{"`fugaro managed flag`", []string{"managed", "flag", "fugaro-newproj-1234", "--budget", "50", "--budget-currency", "USD"}},
 		{"`fugaro managed apply`", []string{"managed", "apply", "infra"}},
 		{"`fugaro restore`", []string{"restore", "fugaro-newproj-1234", "infra"}},

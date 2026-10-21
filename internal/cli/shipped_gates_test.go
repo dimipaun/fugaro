@@ -48,8 +48,8 @@ func runGated(t *testing.T, args ...string) (string, error) {
 // cover from the command tree, so a managed command added later without an
 // entry here fails rather than shipping ungated.
 var managedGateCases = map[string][]string{
-	"init --create-project --managed": {"init", "--create-project", "--gcp-project", "fugaro-newproj-1234", "--managed", "--budget", "50", "--budget-currency", "USD", "--billing-account", "000000-000000-000000"},
-	"init --managed":                  {"init", "--managed"},
+	"init --create-project --managed": {"setup", "--create-project", "--gcp-project", "fugaro-newproj-1234", "--managed", "--budget", "50", "--budget-currency", "USD", "--billing-account", "000000-000000-000000"},
+	"init --managed":                  {"setup", "--managed"},
 	"managed apply":                   {"managed", "apply", "infra"},
 	"managed flag":                    {"managed", "flag", "fugaro-newproj-1234", "--budget", "50", "--budget-currency", "USD"},
 	"restore":                         {"restore", "fugaro-newproj-1234", "infra"},

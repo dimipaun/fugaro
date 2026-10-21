@@ -99,8 +99,17 @@ func docFlagToken(f string) string {
 // trackedDocCommands maps the exact doc phrase of a fugaro command the scanned
 // docs quote flags of to the cobra command it names, for
 // TestBaseImageDocCommandFlagsAreReal.
+//
+// The first two entries are the same command under two names: `fugaro setup`
+// is the front door that carries the flags the docs quote (W1.2 split the
+// retired `fugaro init` into setup and update), and the docs these tests scan
+// still spell it the old way — the rename of the prose is the rename tasks'
+// (W2.3, W2.4), and until they land both phrases have to be tracked, or the
+// flags beside the old spelling would go unchecked in the meantime.
 var trackedDocCommands = map[string]func() *cobra.Command{
-	"fugaro init":          newInitCmd,
+	"fugaro init":          newSetupCmd,
+	"fugaro setup":         newSetupCmd,
+	"fugaro update":        newUpdateCmd,
 	"fugaro image build":   newImageBuildCmd,
 	"fugaro image render":  newImageRenderCmd,
 	"fugaro image refresh": newImageRefreshCmd,
@@ -128,8 +137,15 @@ var mustBeAbsentFlags = map[string]map[string]bool{
 // "fugaro init" in the same sentence would be wrongly checked against init.
 // "runs" must precede "run" in the alternation: Go's regexp alternation is
 // leftmost-first, not longest-match, so the shorter alternative would win
-// and leave a dangling "s" otherwise.
-var commandBoundaryRE = regexp.MustCompile(`fugaro (artifacts (?:ls|get)|image (?:build|render|refresh|check|gate|record|status|selftest|git-credential)|version|validate|config|verify|exec|image|runs|run|ls|logs|diagnose|cancel|secrets|init|budget|watch|report|update-skills|upgrade|doctor)\b`)
+// and leave a dangling "s" otherwise. "update-skills" must precede "update"
+// for the same reason.
+//
+// `init` is in the list although it is not a command any more: it is the
+// spelling these docs still use for `fugaro setup` (the rename of the prose is
+// W2.3's and W2.4's), and a boundary that stopped matching it would let the
+// flags the docs quote beside it be attributed to whatever command precedes
+// them on the line.
+var commandBoundaryRE = regexp.MustCompile(`fugaro (artifacts (?:ls|get)|image (?:build|render|refresh|check|gate|record|status|selftest|git-credential)|version|validate|config|verify|exec|image|runs|run|ls|logs|diagnose|cancel|secrets|init|setup|budget|watch|report|update-skills|update|upgrade|doctor)\b`)
 
 // otherToolBoundaryRE closes a tracked command's flag window at the next
 // mention of another real CLI this repo's docs quote flags of (gcloud,

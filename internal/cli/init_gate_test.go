@@ -124,7 +124,7 @@ func TestOnboardRepoFlag(t *testing.T) {
 		}
 	}
 	// Its form is checked where it is given (init --repo takes it too).
-	for _, args := range [][]string{{"init", "--onboard-repo", "nope"}, {"init", "--onboard-repo", "a/b", "--config-only"}} {
+	for _, args := range [][]string{{"setup", "--onboard-repo", "nope"}, {"setup", "--onboard-repo", "a/b", "--config-only"}} {
 		if _, _, err := execute(t, args...); ExitCode(err) != ExitUserError || err == nil {
 			t.Errorf("%v: %v", args, err)
 		}
