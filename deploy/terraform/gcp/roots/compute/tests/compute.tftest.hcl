@@ -750,6 +750,15 @@ run "TestTheReaperRunsAsTheReaperAccountOnASchedule" {
     condition     = google_cloud_run_v2_job.reaper.template[0].template[0].max_retries == 0
     error_message = "the reaper's task must not be retried: a failed pass logs its failure, and the next tick a margin later is the retry"
   }
+  # The runtime this job shares with every other Cloud Run job in the tree
+  # (installation/history.tf, project/job.tf, repo/check.tf, workflow/job.tf,
+  # which the repo root's own test pins): left unset it is the first generation
+  # sandbox, and the reaper -- the one job that runs unattended with delete
+  # permissions -- would be the only job in the installation on a different one.
+  assert {
+    condition     = google_cloud_run_v2_job.reaper.template[0].template[0].execution_environment == "EXECUTION_ENVIRONMENT_GEN2"
+    error_message = "the reaper's task must run on the second generation execution environment, as every other Cloud Run job in this installation does"
+  }
   assert {
     condition     = google_cloud_scheduler_job.reaper_sweep.retry_config[0].retry_count == 0
     error_message = "the schedule must not retry the POST: a failed pass is reported once, and the next tick a margin later is the retry"

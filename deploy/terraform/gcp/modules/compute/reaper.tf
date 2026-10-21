@@ -147,6 +147,17 @@ resource "google_cloud_run_v2_job" "reaper" {
       # any installation's size, and the deletes are answered in seconds).
       timeout         = "600s"
       service_account = google_service_account.reaper.email
+      # The second generation execution environment, which every other Cloud Run
+      # job in the tree sets (installation/history.tf, project/job.tf,
+      # repo/check.tf, workflow/job.tf) and the repo root's own test pins as the
+      # intended shape. It is written out here rather than left to the provider's
+      # default because the default is the FIRST generation sandbox: this job
+      # would then be the only one in the installation running a different
+      # runtime from every other job, and the one job that does that is the one
+      # that runs unattended, on a schedule, holding delete permissions. An
+      # operator's policies and tooling are built around the shape the other
+      # jobs have.
+      execution_environment = "EXECUTION_ENVIRONMENT_GEN2"
 
       containers {
         image   = var.base_image
