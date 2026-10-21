@@ -81,12 +81,12 @@ func TestBaseImageDocNamesEveryTool(t *testing.T) {
 	}
 }
 
+var flagTokenRE = regexp.MustCompile("--([a-z][a-z-]*)")
+
 // docFlagToken is a --flag (or --flag=) token found in a doc, with the
 // --no-value suffix and surrounding punctuation stripped, or "" when f
 // holds no such token (including a markdown table rule like |---|---|,
 // which also contains "--" but never a letter right after it).
-var flagTokenRE = regexp.MustCompile("--([a-z][a-z-]*)")
-
 func docFlagToken(f string) string {
 	m := flagTokenRE.FindStringSubmatch(f)
 	if m == nil {

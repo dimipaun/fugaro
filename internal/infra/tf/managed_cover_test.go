@@ -1586,16 +1586,6 @@ func TestManagedCoverDropsInitAttributeChecks(t *testing.T) {
 // create is. The address alone never admits one, and the list alone neither:
 // the two are separate rules and a fixture fails each on its own.
 
-// destroyed is the change terraform writes for a resource it destroys: the
-// resource in before, null in after, and no after_unknown. It is what the
-// removed half of a delete or a replace is read from.
-//
-// The view carries an id, because terraform's state does: every resource of
-// Google's provider has one, and it is what the owner's delete list binds an
-// approval to (Task 6.3). The fixtures above are written without one — no
-// other rule reads it — so it is added here, on a copy, and never on the
-// fixture's own map, which every test in this file shares.
-
 // withInstance is rc with the per-instance attribute its type carries filled
 // into its before view when the fixture did not write one
 // (removalInstanceAttributes, read here as the rule reads it). A state
@@ -1631,6 +1621,15 @@ func withInstance(rc ResourceChange) ResourceChange {
 	return rc
 }
 
+// destroyed is the change terraform writes for a resource it destroys: the
+// resource in before, null in after, and no after_unknown. It is what the
+// removed half of a delete or a replace is read from.
+//
+// The view carries an id, because terraform's state does: every resource of
+// Google's provider has one, and it is what the owner's delete list binds an
+// approval to (Task 6.3). The fixtures above are written without one — no
+// other rule reads it — so it is added here, on a copy, and never on the
+// fixture's own map, which every test in this file shares.
 func destroyed(rc ResourceChange) ResourceChange {
 	before := make(map[string]any, len(rc.Change.After)+1)
 	for k, v := range rc.Change.After {

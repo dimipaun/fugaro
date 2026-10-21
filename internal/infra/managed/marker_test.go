@@ -2291,7 +2291,7 @@ func peopleSetDepth(expr string, locals map[string]string, depth int) bool {
 // local, a resource.
 var tfRefRE = regexp.MustCompile(`\b(?:var|local|data|google_[a-z0-9_]+|each)\.[a-z0-9_.\[\]-]+`)
 
-// classifyRole is what a role can do to the runs bucket: write it, read it,
+// roleKind is what a role can do to the runs bucket: write it, read it,
 // or nothing this test is about.
 type roleKind int
 

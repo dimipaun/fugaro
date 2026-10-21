@@ -1269,10 +1269,6 @@ func voiceModulePhase3Rows(t *testing.T, recon string) []voiceModulePhase3Row {
 	return rows
 }
 
-// voiceModuleFinding returns finding #n's block: its heading up to the next
-// finding or section heading. Findings are addressed by number, so a retitled
-// finding does not move the pin.
-
 // TestDocsVoiceModuleReconciliationReadsTheDesignAtItsMergeCommit: a cloud
 // review found two things wrong with how this document reads
 // docs/mobile/design/voice-evaluation-switch.md at the commit it cites
@@ -1789,6 +1785,9 @@ func TestDocsVoiceModuleReconciliationAttributesTheSynthesisedFixturesRule(t *te
 	}
 }
 
+// voiceModuleFinding returns finding #n's block: its heading up to the next
+// finding or section heading. Findings are addressed by number, so a retitled
+// finding does not move the pin.
 func voiceModuleFinding(t *testing.T, recon string, n int) string {
 	t.Helper()
 	i := strings.Index(recon, "**#"+strconv.Itoa(n)+" — ")
