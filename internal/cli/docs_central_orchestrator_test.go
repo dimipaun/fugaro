@@ -94,10 +94,14 @@ const centralOrchAnsweredMarker = "**Answered 2026-10-20 — the recommendation,
 
 // centralOrchReadmeStatus is the index's status sentence, and it is the one place the two
 // halves of P0's premise meet: the plan's P0 says the README carries "plan only; no code is
-// implemented", and P0 landing is the one thing that would make that sentence false. The
-// sentence keeps the phrase and states its own exception, so neither half can be dropped
-// silently.
-const centralOrchReadmeStatus = "**Status: plan only; no code is implemented, except the guard test P0 adds (`internal/cli/docs_central_orchestrator_test.go`, the one file that owns this folder) — every part after P0 is unbuilt, and no feature code exists.**"
+// implemented", and a part landing is what makes that sentence false. The sentence keeps the
+// phrase and states its own exception, so neither half can be dropped silently -- and it was
+// moved once, by the leftovers pull request after P3 landed, when the exception it named (P0's
+// guard test, and nothing else) stopped being the whole of what is in the tree. The exception
+// it names now is the guard test and P3's lease; a part that lands without moving this sentence
+// leaves the index saying no feature code exists while the part sits beside it, which is the
+// state this pin exists to prevent.
+const centralOrchReadmeStatus = "**Status: plan only; no part but P0 is approved, and the code in the tree is P0's guard test (`internal/cli/docs_central_orchestrator_test.go`, the one file that owns this folder) and P3's lease (the `internal/lease` package and the rules' `orchestrators` family, landed by #782, whose model is written out at the end of P3 in `implementation-plan.md`) — every other part is unbuilt.**"
 
 // centralOrchReadmeAnswered, centralOrchReadmeApproval, centralOrchReconciledAnswered and
 // centralOrchReconciledRegister are the sentences the owner's answers of 2026-10-20 put into
