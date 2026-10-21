@@ -146,8 +146,11 @@ D251 (the owner's slides exist), D252 (the Watch slide stays).
 `website/data/faq.yaml`; `website/src/layouts/Base.astro`; `website/test/wording.mjs`;
 `website/test/faq-community.mjs`; `website/test/linkcheck.mjs` (only if a new allowed host is
 needed — it should not be); `website/README.md` (the route count and the whole-site figure);
-`docs/website/README.md` and `docs/website/implementation-plan.md` (the "eleven routes"
-prose, ZF57).
+`docs/website/README.md`, `docs/website/reconciliation.md` and
+`docs/website/implementation-plan.md` (the "eleven routes" prose on each one's line 3 — the
+dated clauses stay, the present-tense ones move; ZF57). **This line of work's own three
+documents are not edited by any part**: each is dated and anchored to the tree at `3021f4b3`,
+so "eleven routes" in them is a fact about that commit and stays true of it.
 
 **Tests.** Hermetic, mutation-proven:
 

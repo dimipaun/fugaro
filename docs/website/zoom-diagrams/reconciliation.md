@@ -671,8 +671,10 @@ links `/privacy/`) and `base-styles.mjs` all iterate the built pages, so a twelf
 held to all of them on its first build. There is **no** sitemap (`astro.config.mjs`'s
 `integrations: []`; `website/test/layout.mjs:458` refuses a `rel="sitemap"`), and **no test
 asserts the route count** — "eleven routes" is prose in `docs/website/README.md:3`,
-`docs/website/implementation-plan.md:3` and `website/README.md:248,254,433,436`, and it goes
-stale the moment a page lands.
+`docs/website/reconciliation.md:3`, `docs/website/implementation-plan.md:3` and
+`website/README.md:248,254,433,436`, and it goes stale the moment a page lands. Three of the
+four name 2026-10-17, the day the site landed, and a twelfth route does not falsify a sentence
+about that day; `website/README.md`'s four are present tense and move with the page.
 
 ### ZF58 — **Rule** — a competitor claim needs a source and a date
 
