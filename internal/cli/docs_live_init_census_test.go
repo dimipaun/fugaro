@@ -103,7 +103,13 @@ var datedRecords = []string{
 // MAY name the command, so a path that does not exist yet contributes nothing
 // -- W1.2 adds the first two, and the third is this file, whose scan pattern
 // is the string. W2.6 asserts that the files naming the command are exactly
-// `datedRecords` plus these three.
+// `datedRecords` plus these four.
+//
+// The fourth, internal/agent/relay_test.go, joined with #789: its table has a
+// case whose subject *is* the retirement -- given `fugaro init --repo`, the
+// relay's summary must keep only `fugaro`, because `init` is not a subcommand
+// any more. Renaming the argv would delete the case's meaning, so no W2.x task
+// can owe it.
 //
 // internal/cli/testdata/init_retire.golden is deliberately NOT here, although
 // it names the command four times today: it is a transcript, not a retirement
@@ -112,6 +118,8 @@ var datedRecords = []string{
 // two goldens. An exemption for a file the rename empties is the "wrong in one
 // direction" case Global Constraint 7 forbids.
 var retirementText = []string{
+	// #789's relay test: a case whose argv is the retired word on purpose.
+	"internal/agent/relay_test.go",
 	// W1.2's tombstone: one message, two names, non-zero exit.
 	"internal/cli/retired.go",
 	// W1.2's test, which asserts that message.
@@ -126,12 +134,20 @@ var retirementText = []string{
 // second test below asserts that rather than trusting it. `scripts/` is the
 // one entry that is walked and names the command zero times today; it stays
 // because the plan walks it, and a root that finds nothing costs one stat.
+//
+// `console/` joined with #789, which re-read the console's converge rows after
+// W1.2 and left the old word in two of its files: console/README.md's paragraph
+// on the never-reachable table and console/test/unit/ipc.test.ts's `retired`
+// class. The plan's list of roots predates the console's own plan work, so the
+// folder named the command and was walked by nobody -- which is exactly the
+// hole the roots test exists to find.
 var liveRoots = []string{
 	"README.md",
 	"CONTRIBUTING.md",
 	// A root file rather than a directory, and on the walk because it names
 	// the command: W2.3 renames it in place.
 	"SECURITY.md",
+	"console",
 	"docs",
 	"plugin",
 	".claude",
@@ -161,11 +177,12 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 279 files -- 114 non-test Go files, 118 test files,
-// 40 markdown files, the two goldens, and the five that fall in none of those
+// command, sorted. It is 276 files -- 114 non-test Go files, 117 test files,
+// 37 markdown files, the two goldens, and the six that fall in none of those
 // groups: the website's four (its install data, its two pages and its test
-// script) and the getting-started design board the redesign was approved from,
-// website/design-ref/GettingStartedV4.dc.html. Read on main at `1d325928`, this
+// script), the getting-started design board the redesign was approved from,
+// website/design-ref/GettingStartedV4.dc.html, and the console's
+// TypeScript test, console/test/unit/ipc.test.ts. Read on main at `1d325928`, this
 // branch's base, it was **312** files -- 118 non-test Go files, 117 test files,
 // 34 markdown files, 29 Terraform files, the four `.tftest.hcl` fixtures beside
 // them, the two goldens, and eight in none of those groups: the website's four,
@@ -201,8 +218,10 @@ const censusRoot = "../.."
 // does not name the retired command, the same job this file's own pattern does
 // -- so W2.1 has to re-point it rather than rename it; #765 (W1.1) added
 // internal/cli/loop_program_test.go, whose loopProgramWant is the front door
-// the stage engine is driven with and which W2.1 renames when the front door is
-// `fugaro setup`; and #770 (W0.1) added internal/cli/setup_refusals_test.go, a
+// the stage engine is driven with -- #789 renamed that front door to `fugaro
+// setup`, so the file left the list in the commit that renamed it, which is
+// the rule below working as intended; and #770 (W0.1) added
+// internal/cli/setup_refusals_test.go, a
 // comment naming the bare `init --repo` form. The eleventh, #778's
 // website/design-ref/GettingStartedV4.dc.html, is the one whose remedy is not
 // the rename's to make alone: it is the owner-approved board for the
@@ -212,6 +231,20 @@ const censusRoot = "../.."
 // leaving it on the list is what keeps that choice visible instead of settled
 // by a walk that stopped looking.
 //
+// **#789 (W1.2) moved the list again, and this is that move.** Six files left
+// it because the rename reached them: the plugin's four -- the setup skill,
+// its decisions and transitions references and the working skill's status
+// reference -- and, with them, plugin/skills_lint_test.go and
+// internal/cli/loop_program_test.go. Three joined it. Two are the console's,
+// and they joined because the same commit left the old word in console/README.md's
+// paragraph on the never-reachable table and in console/test/unit/ipc.test.ts's
+// `retired` class, which is also why `console/` became a live root; the
+// console's own plan work postdates the roots list, so the folder named the
+// command and no walk opened it. The third is internal/cli/docs_checkout_test.go,
+// whose comment explains that docs/checkout.md still spells the retired word
+// and that the door carrying the flags today is `fugaro setup`: W2.3 renames
+// the document, and the comment goes with it.
+//
 // Each task that renames a string takes the file off this list in the same
 // commit, and W2.6 empties it.
 var pendingRename = []string{
@@ -219,6 +252,8 @@ var pendingRename = []string{
 	"CONTRIBUTING.md",
 	"README.md",
 	"SECURITY.md",
+	"console/README.md",
+	"console/test/unit/ipc.test.ts",
 	"docs/backends.md",
 	"docs/base-image-migration.md",
 	"docs/base-image.md",
@@ -273,6 +308,7 @@ var pendingRename = []string{
 	"internal/cli/config_list_test.go",
 	"internal/cli/config_publish.go",
 	"internal/cli/docs_base_test.go",
+	"internal/cli/docs_checkout_test.go",
 	"internal/cli/docs_clone_workflows_test.go",
 	"internal/cli/docs_compute_backend_test.go",
 	"internal/cli/docs_managed_label_test.go",
@@ -345,7 +381,6 @@ var pendingRename = []string{
 	"internal/cli/launch_budget_test.go",
 	"internal/cli/layer_routes_overlap_test.go",
 	"internal/cli/layer_sites_test.go",
-	"internal/cli/loop_program_test.go",
 	"internal/cli/lswarn.go",
 	"internal/cli/managed_apply.go",
 	"internal/cli/managed_apply_test.go",
@@ -481,11 +516,6 @@ var pendingRename = []string{
 	"internal/runner/spend.go",
 	"plugin/readme_test.go",
 	"plugin/setup_skill_test.go",
-	"plugin/skills/setup/SKILL.md",
-	"plugin/skills/setup/reference/decisions.md",
-	"plugin/skills/setup/reference/transitions.md",
-	"plugin/skills/working/reference/status.md",
-	"plugin/skills_lint_test.go",
 	"website/README.md",
 	"website/content/cli-reference.md",
 	"website/content/security.md",
@@ -899,13 +929,14 @@ func TestCensusOutputAndExemptArePinned(t *testing.T) {
 		path string
 		want bool
 	}{
-		// Every dated root, and the three retirement statements.
+		// Every dated root, and the four retirement statements.
 		{"docs/plans/setup-wizard/implementation-plan.md", true},
 		{"docs/releases/v0.9.0.md", true},
 		{"docs/design/x.md", true},
 		{"docs/credentials-service/x.md", true},
 		{"docs/website/x.md", true},
 		{"docs/setup-wizard/implementation-plan.md", true},
+		{"internal/agent/relay_test.go", true},
 		{"internal/cli/retired.go", true},
 		{"internal/cli/retired_test.go", true},
 		{"internal/cli/docs_live_init_census_test.go", true},
@@ -1102,7 +1133,7 @@ func duplicatePaths(paths []string) []string {
 // test.
 //
 // Mutation (run, restore): add a mention of the command to a live file that is
-// not listed -- internal/cli/docs_checkout_test.go is one -- and it fails on
+// not listed -- internal/cli/docs_gcp_setup_test.go is one -- and it fails on
 // the set having grown; rename every mention out of a listed file
 // (internal/cli/config_list.go has one) and it fails on the set having shrunk.
 func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
@@ -1172,10 +1203,12 @@ func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
 // not this test's business either. Without the exemption check the two
 // remedies it offers would both be impossible for such a file -- adding it to
 // liveRoots would make the first test demand it in `pendingRename`, which is
-// to demand renaming a dated record. No dated root or retirement path sits
-// outside docs/ or internal/cli/ today, so the hole is latent; it is closed
-// because it is the one place where the file's own rule was applied to one
-// half of the line and not the other.
+// to demand renaming a dated record. No dated root sits outside docs/ today;
+// one retirement path, internal/agent/relay_test.go, sits outside docs/ and
+// internal/cli/, and it is skipped here for the same reason the other three
+// are. The hole this closes is latent rather than empty; it is closed because
+// it is the one place where the file's own rule was applied to one half of the
+// line and not the other.
 //
 // Mutation (run, restore): add a line naming the command to a file under a
 // directory that is not a root -- mobile/README.md is one -- and this fails.
