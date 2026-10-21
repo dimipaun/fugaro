@@ -573,13 +573,17 @@ func Workflow(in Inputs, name string) (WorkflowSpec, error) {
 // Bitbucket's is the per-repository one of the two: a repository access token
 // is issued for one repository and works for no other, so it is never stored
 // project-wide (config.PerRepositorySecret, the owner's ruling of 2026-10-15).
-// GitHub's App key is a project's, mounted by every repository the App serves.
+// GitHub's App key is a project's, mounted by every repository the App serves,
+// and its logical name is config.GitHubAppKeySecret — the same constant
+// config.IsServiceHeldSecretEnv and the workflow module's
+// service_held_secret_names answer "is this the App key?" with, so this file
+// spells no git credential as a literal (review finding F3).
 func GitSecret(provider string) (string, bool) {
 	switch provider {
 	case gitprov.KindBitbucket:
 		return "bitbucket-token", true
 	case gitprov.KindGitHub:
-		return "github-app-key", true
+		return config.GitHubAppKeySecret, true
 	}
 	return "", false
 }
