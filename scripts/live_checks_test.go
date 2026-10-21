@@ -33,14 +33,14 @@ var liveCheckScripts = []struct {
 // message would name the package and not the script that hung. Each script's
 // test takes about five minutes (check91) and about eight and a half (check90,
 // measured 503s on a Mac, 86s of it setup) alone, and the two run side by side;
-// fifteen minutes leaves room for that on a loaded machine and still fires
-// well inside CI's -timeout 20m, so a hang is reported by name rather than as
+// side by side the package took 854s on that Mac; eighteen minutes leaves room
+// for that on a loaded machine and still fires inside CI's -timeout 20m, so a hang is reported by name rather than as
 // a package-wide panic. Run `go test ./scripts` with -timeout 30m or more
 // locally: Go's default 10-minute package timeout is shorter than this.
 //
 // The deadline is only worth having if it actually ends the run, and that is
 // what procgroup.Run below is for: see the comment there.
-const liveCheckTimeout = 15 * time.Minute
+const liveCheckTimeout = 18 * time.Minute
 
 // syncBuffer collects a command's output and can be read while a copy
 // goroutine may still be writing to it. procgroup.Run gives up on its drain
