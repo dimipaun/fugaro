@@ -2133,20 +2133,34 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.save(ctx)
 		return res, false, &HaltError{*h}
 	}
-	// The credential service's typed answer (C1.17) ended this stage: it did
-	// not fail, and nothing is recorded about it — stage waits for the reset
-	// it names and resumes it. It comes after the halt check, so a halt
-	// recorded first still decides, and before the violations below, because
-	// a stage that is about to run again reports its own violations then.
-	var exhausted *exhaustedError
-	if errors.As(context.Cause(stageCtx), &exhausted) {
-		r.save(ctx)
-		return res, false, exhausted
-	}
+	// What the gateway saw a moment ago decides the stage before the
+	// credential service's answer does: a call the gateway refused as a
+	// violation — a model that is not pinned, a tool the policy forbids, a
+	// request shape it will not forward — is a fact about what the agent
+	// asked for, and a stage that is about to run again must not swallow it.
+	// The stage fails, named, and the resume never happens (C1.17): the
+	// refused call would simply be made again, and the record would lose the
+	// reason the run is not to continue.
 	if len(violations) > 0 {
 		r.fail("stage " + name + ": " + violations[0])
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
 		return res, false, fmt.Errorf("stage %s: %s", name, violations[0])
+	}
+	// The credential service's typed answer (C1.17) ended this stage: it did
+	// not fail, and nothing is recorded about it — stage waits for the reset
+	// it names and resumes it. It comes after the halt check (a halt recorded
+	// first still decides) and after the violations above.
+	//
+	// A stage whose work was already done when the answer arrived is not
+	// resumed: the answer ends a stage that the exhaustion stopped, and an
+	// agent that exited with a result event and no error finished its work,
+	// so throwing that away to run the same prompt again would spend a stage
+	// on nothing. The answer changes nothing for it; the next stage gets its
+	// own.
+	var exhausted *exhaustedError
+	if errors.As(context.Cause(stageCtx), &exhausted) && (err != nil || res.IsError) {
+		r.save(ctx)
+		return res, false, exhausted
 	}
 
 	switch {

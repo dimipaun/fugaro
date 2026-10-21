@@ -106,6 +106,86 @@ func TestStageWaitsAndResumes(t *testing.T) {
 	}
 }
 
+// TestViolationWinsOverTheExhaustedAnswer: what the gateway saw decides the
+// stage before the credentials service's answer does. A stage in which a call
+// was refused as a violation — a model that is not pinned for the stage, a
+// tool the policy forbids, a request shape the gateway will not forward — is a
+// stage that must not run again, and a resume would both lose the violation
+// from the record and make the same refused call a second time. So the
+// violation fails the stage, named, whatever else arrived during it (C1.17).
+func TestViolationWinsOverTheExhaustedAnswer(t *testing.T) {
+	const violation = "model claude-x is not pinned for stage implement"
+	var mu sync.Mutex
+	var handle *runner.RunHandle
+	runner.OnRun(t, func(rh *runner.RunHandle) {
+		mu.Lock()
+		handle = rh
+		mu.Unlock()
+		rh.SetStageExtra(func(stage string) ([]string, int64) {
+			if stage == "implement" {
+				return []string{violation, "and another"}, 0
+			}
+			return nil, 0
+		})
+	})
+	h := newHarness(t, "", nil)
+	runner.SetCredsWait(t, func(ctx context.Context, d time.Duration) error {
+		t.Errorf("the runner waited %s for a credential after a violation; the violation decides the stage", d)
+		return nil
+	})
+	stage := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		mu.Lock()
+		rh := handle
+		mu.Unlock()
+		if rh == nil {
+			t.Error("the run has not started")
+			return agent.Result{}, nil
+		}
+		rh.NoteExhausted(time.Now().Add(3 * time.Minute))
+		<-ctx.Done() // the answer ends the stage
+		return initOnly(t, req.SessionID), ctx.Err()
+	}
+	rec, err := h.run(t, stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Reason != "stage implement: "+violation {
+		t.Fatalf("rec = %+v; want the stage failed by the violation", rec)
+	}
+	if n := len(h.agent.calls); n != 1 {
+		t.Fatalf("%d agent calls; a stage with a violation must not run again", n)
+	}
+}
+
+// TestLateExhaustedAnswerDoesNotRerunAFinishedStage: the answer ends a stage
+// the exhaustion stopped, and nothing else. A stage whose agent exited with a
+// result event and no error had already done its work when the answer landed,
+// and running the same prompt again would spend a whole stage re-doing it
+// (C1.17) — so the answer is left to the stage that meets the exhaustion
+// itself, and this one is over.
+func TestLateExhaustedAnswerDoesNotRerunAFinishedStage(t *testing.T) {
+	h := newHarness(t, "", nil)
+	handle := watchRun(t)
+	runner.SetCredsWait(t, func(ctx context.Context, d time.Duration) error {
+		t.Errorf("the runner waited %s for a credential after a stage that finished", d)
+		return nil
+	})
+	late := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		// The agent's own work is done — it commits and writes its session —
+		// and only then does the answer land, before the process exits.
+		res, err := withSession(implement("feature"), "", "implemented\n")(t, ctx, req)
+		handle().NoteExhausted(time.Now().Add(3 * time.Minute))
+		return res, err
+	}
+	rec, err := h.run(t, late, review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if n := len(h.agent.calls); n != 2 {
+		t.Fatalf("%d agent calls; want the implement and the review, with no second implement", n)
+	}
+}
+
 // TestOAuthOnlyIgnoresThreshold: with no credentials block the project's
 // fallback is oauth-only, which ignores the wait-or-switch threshold (D152,
 // spec §"Paid fallback policy"): there is nothing to fail over to, so the
