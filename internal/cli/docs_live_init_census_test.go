@@ -168,14 +168,16 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 180 files -- 68 non-test Go files, 69 test files,
-// 37 markdown files, and the six that fall in none of those groups: the
+// command, sorted. It is 178 files -- 67 non-test Go files, 69 test files,
+// 36 markdown files, and the six that fall in none of those groups: the
 // website's four (its install data, its two pages and its test script), the
 // getting-started design board the redesign was approved from,
 // website/design-ref/GettingStartedV4.dc.html, and console/test/unit/ipc.test.ts
-// (console/README.md is markdown and counted with the 37). No golden is on it
+// (console/README.md is markdown and counted with the 36). No golden is on it
 // any more: W2.1's rename emptied all three, and the walk refuses a listed file
-// that stopped naming the command. Read on main at
+// that stopped naming the command -- website/content/cli-reference.md left the
+// same way, regenerated from the command tree by `go run ./internal/clidoc`,
+// which is the only way that page can be written. Read on main at
 // `1d325928`, this
 // branch's base, it was **312** files -- 118 non-test Go files, 117 test files,
 // 34 markdown files, 29 Terraform files, the four `.tftest.hcl` fixtures beside
@@ -339,7 +341,6 @@ var pendingRename = []string{
 	"internal/cli/image_refresh_steps_test.go",
 	"internal/cli/init.go",
 	"internal/cli/init_test.go",
-	"internal/cli/managed_apply.go",
 	"internal/cli/managed_apply_test.go",
 	"internal/cli/project_job.go",
 	"internal/cli/project_shared_test.go",
@@ -439,7 +440,6 @@ var pendingRename = []string{
 	"plugin/readme_test.go",
 	"plugin/setup_skill_test.go",
 	"website/README.md",
-	"website/content/cli-reference.md",
 	"website/content/security.md",
 	"website/data/install.yaml",
 	"website/design-ref/GettingStartedV4.dc.html",
@@ -1082,13 +1082,19 @@ func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
 		}
 	}
 
-	// W2.4 regenerates these two rather than editing them, and the census is
-	// where that is visible: they are on the list today, and they leave it when
-	// the generator runs, not when a hand edit does.
-	for _, generated := range []string{"website/content/cli-reference.md", "website/content/security.md"} {
-		if !slices.Contains(pendingRename, generated) {
-			t.Errorf("pendingRename does not list the generated %s: it names the command today, and W2.4 takes it off the list by regenerating it, not by editing it", generated)
-		}
+	// The generated pages leave the list when the generator runs, not when a
+	// hand edit does, and the census is where that is visible. security.md is
+	// still on it: nothing has renamed the text internal/clidoc/secdoc.go
+	// writes. cli-reference.md left it in W2.1, which ran the generator -- the
+	// reference is rendered from THIS package's own help text, the doors' flag
+	// help and their Long strings, and the rename reached every one of them. An
+	// edit could not have done it: TestCliReferenceIsCurrent regenerates the
+	// page in memory and compares, so a hand-edited page fails there.
+	if !slices.Contains(pendingRename, "website/content/security.md") {
+		t.Error("pendingRename does not list the generated website/content/security.md: it names the command today, and W2.4 takes it off the list by regenerating it, not by editing it")
+	}
+	if slices.Contains(pendingRename, "website/content/cli-reference.md") {
+		t.Error("pendingRename lists the generated website/content/cli-reference.md, which the generator no longer renders the retired command into: W2.1 regenerated it in the commit that renamed this package's help text")
 	}
 
 	var grown, shrunk []string
