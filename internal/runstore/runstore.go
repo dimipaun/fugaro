@@ -253,6 +253,13 @@ type Record struct {
 	// that delivered none, so a record written before this field existed
 	// is byte-for-byte the record an old reader saw.
 	Artifacts []ArtifactFile `json:"artifacts,omitempty"`
+	// Rigor is the mode the run resolved, the layer that decided it, the
+	// areas that matched and the moment of the run each was known at
+	// (docs/rigor-modes/implementation-plan.md T1.2, D22, D24, D25). Absent
+	// for a run that resolved none — every record written before this field
+	// existed, and a run that died before bootstrap — so an old reader sees
+	// the record it always saw.
+	Rigor *RigorRecord `json:"rigor,omitempty"`
 }
 
 // ReviewedPR is one pull request a mode: review run reviewed (design

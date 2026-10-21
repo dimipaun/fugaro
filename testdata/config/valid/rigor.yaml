@@ -1,0 +1,10 @@
+version: 1
+project: aurora
+git: { provider: github }
+rigor:
+  default: critical
+  areas:
+    - { name: payments, match: "internal/payments/**", mode: critical }
+    - { name: docs, match: "docs/**", mode: poc }
+workflows:
+  server: { commands: { build: make, test: make test } }

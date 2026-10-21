@@ -101,6 +101,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		if ps := Validate(repo); len(ps) > 0 {
 			return nil, nil, noLayerHint(repo, ps)
 		}
+		repo.RepoRigor = repo.Rigor
 		res := &Resolution{Sources: map[string]string{}}
 		markLeaves(tree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = repo.SHA256()
@@ -139,6 +140,11 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		return nil, nil, ps
 	}
 	c.Layer = l
+	// The repository's own rigor: block, kept beside the merged one: the
+	// project layer's area rules stay in effect next to the repository's
+	// rather than being replaced by them (D20c), so a consumer that resolves
+	// a mode needs both (Config.RigorConfig).
+	c.RepoRigor = repo.Rigor
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)

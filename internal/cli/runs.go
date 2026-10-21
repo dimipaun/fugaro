@@ -571,6 +571,11 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	// never reached finalize, has none and does not widen every other run's
 	// columns for it.
 	showFiles := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ChangedFiles != nil })
+	// The mode column appears only when some listed run's record carries a
+	// rigor block (docs/rigor-modes D24): a run from before the field, or one
+	// that died before bootstrap, has none and does not widen every other
+	// run's columns for it.
+	showMode := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Rigor != nil })
 	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR\tBY"
 	if showRecipe {
 		header += "\tRECIPE"
@@ -586,6 +591,9 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	}
 	if showFiles {
 		header += "\tFILES"
+	}
+	if showMode {
+		header += "\tMODE"
 	}
 	fmt.Fprintln(tw, header)
 	for _, r := range rows {
@@ -619,6 +627,9 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 		}
 		if showFiles {
 			line += "\t" + changedFilesCell(r)
+		}
+		if showMode {
+			line += "\t" + modeCell(r)
 		}
 		fmt.Fprintln(tw, line)
 	}
@@ -716,6 +727,32 @@ func shortSHA(s string) string {
 // publisher only ever increments from 0, so negative means the record
 // wasn't written by one (same untrusted-record concern as validSHA256).
 func validGeneration(g int64) bool { return g >= 0 }
+
+// modeCell is a row's rigor mode and where it came from (docs/rigor-modes
+// D24): the mode, the layer that decided it, and the strictest area rule that
+// matched when one did, with a "+N" for the rest D23 also recorded. "-" for a
+// run whose record carries no block this reader can show: it resolved none,
+// which is not the same fact as resolving the built-in default.
+//
+// runs ls is a table, so the cell is one short line; `fugaro diagnose` prints
+// the whole block (`rigorLine`). Both are built from the record's own block,
+// which is job-writable: the block reaches the row through
+// runstore.RigorRecord.Bounded, the name through the same clip every other
+// name cell uses, and the finished cell through cellOneLine.
+func modeCell(r runview.Row) string {
+	rg := r.Rigor
+	if rg == nil {
+		return "-"
+	}
+	cell := string(rg.Mode) + " (" + string(rg.From)
+	if len(rg.Areas) > 0 {
+		cell += " " + clipRunes(rg.Areas[0].Name, maxNameCellRunes)
+		if n := len(rg.Areas) - 1; n > 0 {
+			cell += fmt.Sprintf(" +%d", n)
+		}
+	}
+	return cellOneLine(cell + ")")
+}
 
 // layerCell is a run's project layer in ls: its generation, "-" for none
 // or for a record whose generation isn't trustworthy.

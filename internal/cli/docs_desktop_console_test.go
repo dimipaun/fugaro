@@ -374,6 +374,9 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.Edge{}),
 		reflect.TypeOf(plan.Footprint{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
+		// The rigor block and the rule inside it (docs/rigor-modes D24).
+		reflect.TypeOf(runstore.RigorRecord{}),
+		reflect.TypeOf(runstore.RigorArea{}),
 		// §6.11, the backlog index's rows (CLI 0.11.0).
 		reflect.TypeOf(backlogListDoc{}),
 		reflect.TypeOf(backlogRow{}),
@@ -473,6 +476,8 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
+		// The rigor block and the rule inside it (docs/rigor-modes D24).
+		reflect.TypeOf(runstore.RigorRecord{}), reflect.TypeOf(runstore.RigorArea{}),
 		// §6.10, the same three shapes as the test above (CLI 0.9.0).
 		reflect.TypeOf(userStatsDoc{}),
 		reflect.TypeOf(userstats.Row{}),

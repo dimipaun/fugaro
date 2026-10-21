@@ -37,6 +37,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -273,6 +274,15 @@ type run struct {
 	// values (checkpoint.go). They differ when the run starts from another
 	// ref than its base branch (--ref develop with base_branch main).
 	baseSHA, startSHA string
+	// rigorCfg is the run's rigor configuration *as the base branch has it*
+	// (docs/rigor-modes D25), read once at bootstrap and reused at every
+	// later moment (rigor.go); rigorRev is the revision it was read from, ""
+	// when the read could not be made, which the record leaves `revision`
+	// absent for. It is deliberately not r.cfg's own rigor: for a first run
+	// r.cfg comes from the checked-out ref, which is the artifact under
+	// review, and the mode must not come from there.
+	rigorCfg rigor.Config
+	rigorRev string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
 	// skipPR is set when the check gate already ended the run (clean, or an
@@ -1238,6 +1248,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 			}
 		}
 	}
+	// The mode this run resolved, read from the base branch and recorded at
+	// D22's first moment (rigor.go). Here, and not earlier: a first run has
+	// just fetched its base above, and a follow-up's or a review run's
+	// configuration already *is* the base's. It never fails the run — the
+	// mode acts on nothing yet.
+	r.bootstrapRigor(ctx)
 	if err := r.checkProject(ctx, cfg); err != nil {
 		return err
 	}
@@ -2245,6 +2261,11 @@ func (r *run) finalize(ctx context.Context) error {
 	// this run's too. A failed read keeps the set read at the top of
 	// finalize, which is still this run's work.
 	r.recordChangedFiles(ctx)
+	// The run's own diff is now measured, which is D22's third moment: the
+	// mode is resolved from it before Decide reads the run's gates, so the
+	// value a later slice's rules act on is the one the run's whole diff
+	// answered (rigor.go).
+	r.finalizeRigor()
 	records, err := verify.Records(r.d.StateDir)
 	if err != nil {
 		return fmt.Errorf("reading verify records: %w", err)
