@@ -56,7 +56,7 @@ func TestInitRepoAloneIsBehindTheHostileGate(t *testing.T) {
 			if tc.env != "" {
 				t.Setenv(tc.env, "1")
 			}
-			out, errOut, err := executeStdin(t, tc.stdin, append([]string{"init", "--repo", "--github-app-id", "42"}, append(tc.args, dir)...)...)
+			out, errOut, err := executeStdin(t, tc.stdin, append([]string{"setup", "--repo", "--github-app-id", "42"}, append(tc.args, dir)...)...)
 			if err == nil {
 				t.Fatalf("an unlisted repository was onboarded:\n%s", out)
 			}
@@ -89,13 +89,13 @@ func TestInitRepoAloneOptIns(t *testing.T) {
 	gate := "is not one of project"
 	_, dir := hostileRepoRig(t, "https://github.com/acme/hostile.git")
 	fakeTerminal(t)
-	_, _, err := executeStdin(t, "acme/hostile\n", "init", "--repo", "--github-app-id", "42", dir)
+	_, _, err := executeStdin(t, "acme/hostile\n", "setup", "--repo", "--github-app-id", "42", dir)
 	if err != nil && strings.Contains(err.Error(), gate) {
 		t.Errorf("the typed opt-in did not pass the gate: %v", err)
 	}
 	pastGate(t, err)
 	_, dir = hostileRepoRig(t, "https://github.com/acme/hostile.git")
-	_, _, err = executeStdin(t, "", "init", "--repo", "--yes", "--github-app-id", "42", "--onboard-repo", "acme/hostile", dir)
+	_, _, err = executeStdin(t, "", "setup", "--repo", "--yes", "--github-app-id", "42", "--onboard-repo", "acme/hostile", dir)
 	if err != nil && strings.Contains(err.Error(), gate) {
 		t.Errorf("--onboard-repo did not pass the gate: %v", err)
 	}
@@ -105,14 +105,14 @@ func TestInitRepoAloneOptIns(t *testing.T) {
 	r.stateBucket()
 	dir = repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", strings.Replace(checkoutYAML("bitbucket", "api-key", "aurora", ""), "app:", "web:", 1))
 	t.Chdir(t.TempDir())
-	_, _, err = executeStdin(t, "", "init", "--repo", "--yes", dir)
+	_, _, err = executeStdin(t, "", "setup", "--repo", "--yes", dir)
 	if err != nil && strings.Contains(err.Error(), gate) {
 		t.Errorf("a listed repository was gated: %v", err)
 	}
 	pastGate(t, err)
 	// --plan-only changes nothing and is not gated.
 	_, dir = hostileRepoRig(t, "https://github.com/acme/hostile.git")
-	_, _, err = executeStdin(t, "", "init", "--repo", "--plan-only", "--github-app-id", "42", dir)
+	_, _, err = executeStdin(t, "", "setup", "--repo", "--plan-only", "--github-app-id", "42", dir)
 	if err != nil && strings.Contains(err.Error(), gate) {
 		t.Errorf("--plan-only was gated: %v", err)
 	}
@@ -123,8 +123,8 @@ func TestInitRepoAloneOptIns(t *testing.T) {
 // prints it.
 func TestOnboardRepoRefusedInAnAgentSession(t *testing.T) {
 	for _, args := range [][]string{
-		{"init", "--onboard-repo", "acme/app", "--yes"},
-		{"init", "--repo", "--onboard-repo", "acme/app", "--yes"},
+		{"setup", "--onboard-repo", "acme/app", "--yes"},
+		{"setup", "--repo", "--onboard-repo", "acme/app", "--yes"},
 	} {
 		t.Setenv("CLAUDECODE", "1")
 		_, _, err := execute(t, args...)
@@ -173,7 +173,7 @@ func TestInitRepoRefusesCatalogSwitches(t *testing.T) {
 		dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", strings.Replace(checkoutYAML("bitbucket", "api-key", "aurora", ""), "app:", "web:", 1))
 		r.appendConfig(t, validateProviderBlock+extra)
 		t.Chdir(t.TempDir())
-		out, errOut, err := executeStdin(t, "", "init", "--repo", "--yes", dir)
+		out, errOut, err := executeStdin(t, "", "setup", "--repo", "--yes", dir)
 		return r, err, out, errOut
 	}
 	r, err, out, errOut := init(t, "    require_zdr: false\n")

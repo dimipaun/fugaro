@@ -217,10 +217,12 @@ func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) err
 // root.
 var restoreManagedApply = managedApply
 
-// restoreInitCmd builds the creating path's command: newInitCmdWith, the
-// constructor `fugaro init` itself uses. A variable only so a test can make
-// the creating path panic and see the config put back.
-var restoreInitCmd = newInitCmdWith
+// restoreInitCmd builds the creating path's command: newSetupCmdWith, the
+// constructor `fugaro setup` itself uses (the door that creates — a restore
+// makes a project, so the update door, which refuses every creating flag, is
+// not the one it runs). A variable only so a test can make the creating path
+// panic and see the config put back.
+var restoreInitCmd = newSetupCmdWith
 
 // restorePreflight is every check a restore makes before it changes anything:
 // no file is written, no project created, nothing applied, and the one cloud
@@ -1032,7 +1034,7 @@ func (rr *restoreRun) createArgs() []string {
 func (rr *restoreRun) create(ctx context.Context, made *initCreation) error {
 	cmd := rr.cmd
 	args := rr.createArgs()
-	fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: creating the project through the same path fugaro init --create-project --managed uses: fugaro init %s\n", strings.Join(args, " "))
+	fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: creating the project through the same path fugaro setup --create-project --managed uses: fugaro setup %s\n", strings.Join(args, " "))
 	// strictCreate: the child refuses a project that is already there rather
 	// than adopting it; made: the child's own account of what it did, which
 	// verifyCreated checks.

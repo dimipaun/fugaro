@@ -223,7 +223,7 @@ func TestManagedCreationRecordsTheAmount(t *testing.T) {
 // fallback like 50 has nowhere to be written from). A constant such as
 // `defaultManagedBudget = 50`, wired into either, fails here.
 func TestManagedBudgetHasNoDefault(t *testing.T) {
-	f := newInitCmd().Flags().Lookup("budget")
+	f := newSetupCmd().Flags().Lookup("budget")
 	if f == nil {
 		t.Fatal("fugaro init has no --budget flag")
 	}
