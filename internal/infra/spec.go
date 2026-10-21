@@ -579,10 +579,13 @@ func Workflow(in Inputs, name string) (WorkflowSpec, error) {
 // service_held_secret_names answer "is this the App key?" with. Review finding
 // F3: this function wrote both the App key's name and Bitbucket's out as
 // literals, so a rename in config would have left it returning a secret no job
-// mounts; the four internal/cli readers of the App key that spelled it out
-// (doctor.go's check, secrets.go's multilineSecret, githubapp.go's project-wide
-// note, init.go's App pre-check) now name the constant too, and the tests that
-// still spell it out do so on purpose — they pin the name as the wire value.
+// mounts; the internal/cli code that spelled the App key out — doctor.go's
+// check, secrets.go's multilineSecret, githubapp.go's project-wide note,
+// init.go's App pre-check and project_enroll.go's --github-app-key read — now
+// names the constant too. What still spells the literal does so on purpose: the
+// flag's own name, the sentences a user reads ("fugaro secrets set
+// github-app-key …"), the tests that pin the name as the wire value, and
+// gcp/build.go's example of the ID this builds.
 func GitSecret(provider string) (string, bool) {
 	switch provider {
 	case gitprov.KindBitbucket:
