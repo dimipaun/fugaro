@@ -14,6 +14,15 @@ reconciliation is written to the decisions in §4.
 **Owner: Dimi Paun. Date: 2026-10-21.** The spec is the owner's own text of 2026-10-20, copied
 byte for byte into [spec.md](spec.md); it needed no typo fix (see [README.md](README.md)).
 
+**Revised 2026-10-21, before any review, and the revision is visible rather than folded in.** A
+second reading of the rules found that the device node's new fields **need no rules generation**
+(§F29, which is written at the end of §2 for that reason), and it corrected **F27**'s count of the
+pins that read `docs/mobile/`. The glossary's rules-generation entry, D235 and D236 read accordingly,
+and [implementation-plan.md](implementation-plan.md)'s **P2** is written against §F29 rather than
+against a generation bump. **No decision number moved**: D221–D236 are the same sixteen questions,
+and the correction is about what one part of the plan costs — a deploy the owner would otherwise
+have had to run on every installation.
+
 **One thing this document is not.** It is not a second opinion about the mobile work. The app's
 pairing, its device node and its allowlist are **already answered by the owner** — D165, D166 and
 the whole of `docs/mobile/`'s D110–D129, plus the mobile functional spec's D160–D173 — and the
@@ -308,9 +317,14 @@ for the managed deployer, 0.10.0 for the console's Linux packaging, and
 **Consequence:** this work cannot be 0.11.0 unless P6.6 and P6.8 land there; §4's D236 recommends
 where it goes.
 
-**F27 — Rule. This folder has no pin, and the folders it reconciles mostly do not either.** Five
-tests read `docs/mobile/`; none reads `docs/central-orchestrator/`; the register is pinned by
-`internal/cli/docs_coordinator_test.go` and `internal/cli/docs_voice_switch_test.go`.
+**F27 — Rule. This folder has no pin, and the folders it reconciles mostly do not either.** Eight
+pins in `internal/cli`'s `docs_*_test.go` family name `docs/mobile/` — **four are named for it**
+(`docs_mobile_plan_test.go`, `docs_mobile_checks_review_test.go`, `docs_mobile_push_test.go`,
+`docs_mobile_mailbox_plan_test.go`) and four more quote it beside their own folder's claims
+(`docs_in_job_review_test.go`, `docs_coordinator_test.go`, `docs_voice_switch_test.go`,
+`docs_voice_module_test.go`) — **no test reads `docs/central-orchestrator/` at all**, and the
+register is pinned by `internal/cli/docs_coordinator_test.go` and
+`internal/cli/docs_voice_switch_test.go`.
 **Consequence:** P0 of the plan gives this folder a guard, and the guard's own comment states what
 it does **not** hold.
 
@@ -318,6 +332,32 @@ it does **not** hold.
 the app's installations, *"added by the owner by hand"*, and that *"no agent ever touches it"*.
 **Consequence:** nothing in this work reads, writes or names it beyond this sentence; no part of
 the plan goes near it.
+
+### Found on a second reading, and it corrects the first
+
+**F29 — Rule. The node's new fields need no rules generation.** `internal/budget/rules/rules.json.tmpl`
+declares the device node as `config/admin/devices/$uid` with `.read: false, .write: false` — **no
+`.validate` on the node and no `$other` refusal beneath it** — and `userClaim`
+(`internal/budget/rules/rules.go`, the `USER` macro) turns on the node's **existence**,
+`root.child('config/admin/devices').child(auth.uid).exists()`. Nothing in the deployed document names
+a child of that node. **Consequence:** an `email` and a `role` written beside it change **nothing the
+document does** — a client's read of the node and a client's write to it are refused exactly as
+before, the `USER` predicate is untouched, and a node carrying the two fields is admitted exactly as
+a bare node is — so the fields take **no rules generation**, an installation that never redeploys
+its rules is unaffected, and nothing in the plan owes the owner a deploy. The tree's own precedent
+says the same thing in `internal/projectpolicy/version.go`'s generation-3 note: the credentials
+children "deliberately did not make a generation 4", because they are "optional, validated children
+of nodes a run already writes … so an installation that has not opted in behaves identically", where
+a bump "would make `projectpolicy.Read` answer 'not found' and drop every published policy … on any
+installation whose owner has not redeployed the rules yet". **What would force a generation later:**
+the first rule that **reads** one of these fields — a role predicate, the later half of §4's D225 —
+or a `validate` that constrains the node's shape. Both are decisions this work does not take, and
+§4's D225 recommends not taking the first in v1. **Where this changes the plan:** P2 of
+[implementation-plan.md](implementation-plan.md) is written against this finding rather than against
+a generation bump, the glossary's rules-generation entry below is corrected with it, and D235 and
+D236 read accordingly. **The finding is placed last on purpose**: it was not in this document's
+first reading, and a reader who wants to see what a correction looks like in this folder should find
+it where it was found rather than renumbered into the sequence.
 
 ---
 
@@ -571,7 +611,8 @@ has to be re-taken first, because it decides how much of the device the model oc
 **Recommendation.** **v1** is the allowlist as the tree already plans it plus the two fields the
 owner's 2026-10-20 answer adds: the administered **email**, the **role**, the **unverified-email
 refusal at pairing**, and the CLI that writes them — `fugaro pair` extended (D229), the node's new
-fields in a rules generation (the plan's P2), and the app's first screen unchanged except for the
+fields **beside the existing one and in no rules generation** (F29; the plan's P2), and the app's
+first screen unchanged except for the
 "ask your admin" state. **Later**, and only by a separate decision: provider sign-in at all (D221),
 the email link (D228), the per-project app instance (D234), and the console's allowlist screen —
 the spec's *"later from the console"*, which needs the console's operator page, itself unbuilt
@@ -588,8 +629,9 @@ the release after Phase 6 is called — and not 0.11.0.** 0.11.0 is where
 modes work (open PR #773) puts itself (F26); this work extends `internal/cli/pair.go` and
 `mobile/src/pairing/` (Task P6.6 and P6.8, approved 2026-10-18 and unbuilt), and no part of it can
 be merged before they are. **Alternative:** 0.11.0. **Cost:** it makes an unbuilt, approved task a
-prerequisite of a release whose contents are already decided, and it puts a rules generation and a
-new `fugaro pair` flag set in a release that has to ship two other works' security surfaces. **No
+prerequisite of a release whose contents are already decided, and it puts a new `fugaro pair` flag
+set and a second writer of the authorisation record in a release that has to ship two other works'
+security surfaces. **No
 part of the plan assumes a release that has not shipped**, so a later release costs nothing but
 time.
 
@@ -644,8 +686,11 @@ check.
   configuration with a public sign-up path enabled, and the program that would have to change for
   the provider path to exist.
 - **Rules generation** — `internal/projectpolicy/version.go`'s `RulesVersion`, currently **3**; the
-  device node and the pairing nodes arrived with it (#601). A change to the node's fields is
-  generation 4 and is not this work's to take before it is planned as one.
+  device node and the pairing nodes arrived with it (#601). **The node's new fields are not a
+  generation** (F29): the deployed document names no child of the device node, nothing in it reads
+  one, and the template's `.read: false, .write: false` on `config/admin/devices` is what a client
+  meets either way. A generation would be the first rule that **reads** one of the fields (D225's
+  later half), or a `validate` over the node's shape — neither of which this work takes.
 
 ---
 
