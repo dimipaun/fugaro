@@ -944,8 +944,6 @@ added or removed without this sentence moving fails there:
     `display: none` — and holds every hook read in the file to `own()`, which is what keeps a
     block from being handed a nested slider's elements by document order.
 
-  - **JavaScript per page:** 262,560 bytes. Three times 87,520: the one script the site ships,
-    `public/scripts/site.js` (70,016 bytes), plus 25 %. What the file carries is the copy
   - **The menu lost its third group** (the owner's feedback of 2026-10-21: "let's drop the top
     reference menu. We'll move the submenu console under product, and the rest go under
     Project"). The Reference group's `<li>`, `<details>`, `<summary>` and its list wrapper are
