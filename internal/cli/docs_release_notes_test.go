@@ -117,8 +117,13 @@ func TestReleaseNotesV090FollowsTheFormat(t *testing.T) {
 	// it a shared job keeps a runner that refuses the policy just published
 	// (the review of PR #660).
 	last := steps[len(steps)-1]
-	if !strings.Contains(last, "**Per installation") || !strings.Contains(last, "`fugaro init --firebase-project <gcp-project>`") {
-		t.Errorf("the operators' last step is %q: it must be the per-installation `fugaro init --firebase-project <gcp-project>` that moves the shared jobs onto the base image the image step pinned, since no image command touches them", last)
+	// The notes' own spelling, which is frozen with them (docs/releases is a
+	// dated root, conversation D9): W3.3 renames the flag in the live tree, and
+	// this step quotes the released document, whose reader ran --firebase. The
+	// step's *flag* is held to the tree below, where the operator steps are
+	// resolved through the rename.
+	if !strings.Contains(last, "**Per installation") || !strings.Contains(last, "`fugaro init --firebase <gcp-project>`") {
+		t.Errorf("the operators' last step is %q: it must be the per-installation `fugaro init --firebase <gcp-project>` that moves the shared jobs onto the base image the image step pinned, since no image command touches them", last)
 	}
 	refresh := -1
 	for i, step := range steps {
@@ -315,8 +320,8 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		cmd := notesCommand(t, c.path)
 		if c.flag != "" {
 			words += " --" + c.flag
-			if cmd.Flags().Lookup(c.flag) == nil {
-				t.Errorf("fugaro %s has no --%s flag, and %s tells an operator to run it", c.path, c.flag, releaseNotesV090)
+			if cmd.Flags().Lookup(notesFlag(c.flag)) == nil {
+				t.Errorf("fugaro %s has no --%s flag (the step says `--%s`), and %s tells an operator to run it", c.path, notesFlag(c.flag), c.flag, releaseNotesV090)
 			}
 		}
 		// The command must end where the notes' span or its argument does: a
@@ -473,6 +478,19 @@ func notesCommand(t *testing.T, path string) *cobra.Command {
 		path = "setup"
 	}
 	return commandAt(t, strings.Split(path, " ")...)
+}
+
+// notesFlag is the flag a step of the release notes names, under the name the
+// tree carries it today: `--firebase` is --firebase-project since W3.3 (D7),
+// and these notes are a dated record that keeps its own spelling (D9) — the
+// same translation notesCommand makes for the command word, for the same
+// reason. A step is still held to a flag the CLI has, or a reader who follows
+// it types a name nothing answers.
+func notesFlag(flag string) string {
+	if flag == "firebase" {
+		return "firebase-project"
+	}
+	return flag
 }
 
 func commandAt(t *testing.T, path ...string) *cobra.Command {
