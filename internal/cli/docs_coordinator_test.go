@@ -94,7 +94,7 @@ package cli
 //    twenty-four -- which is the same silent-overclaim the citation census
 //    exists to catch in the document.
 //
-// Mutation (verified, run and restored) -- 70, one per way these documents can
+// Mutation (verified, run and restored) -- 71, one per way these documents can
 // rot, each planted and reverted. The count is a digit and not a word, and
 // there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
 // reads it and counts the list under it: one arrow per mutation, so a number
@@ -128,16 +128,20 @@ package cli
 //	  renumber the last of the five, D197 to D198 -> fails: the
 //	  headings are read in order and held to the block the index records;
 //	  delete one of the five -> fails, naming the missing number;
-//	  swap a decision's recommendation and its alternative -> fails: the
-//	  recommendation has to come first, and that is the whole of what "written to
-//	  the recommendation" means;
+//	  swap a decision's two paragraphs, so its alternative comes first -> fails:
+//	  recommendation-first is the whole of what "written to the recommendation"
+//	  means, and the file's own order is the only thing that makes it checkable;
+//	  write a decision's recommendation as option (B), leaving the alternative
+//	  labelled (B) too -> fails: the letter is checked, not only the word, so a
+//	  decision whose recommendation moved is not quietly still "recommended";
 //	  drop the README's "written, not answered" state -> fails.
 //	TestDocsCoordinatorPlanIsWritten
 //	  move P4 after P5 -> fails: the parts are an order, not a list;
 //	  delete the "## What the owner must answer before any part starts" heading ->
 //	  fails, naming it;
-//	  drop D196 from the table -> fails: the one decision that allocates work
-//	  between two documents is the one a reader has to see;
+//	  drop a decision's row from the gate table (D193's, or D196's) -> fails,
+//	  naming the decision: the table is read from its own section, so naming the
+//	  decision somewhere else in the plan does not stand in for its row;
 //	  restore the old status line ("reconciliation only; ... no plan is
 //	  approved") -> fails.
 //	TestDocsCoordinatorPlanCitationsExist
@@ -672,14 +676,20 @@ func TestDocsCoordinatorNewDecisionsAreNumbered(t *testing.T) {
 			end = at + next
 		}
 		body := reconciled[start:end]
-		rec := strings.Index(body, "**Recommendation — (")
-		alt := strings.Index(body, "**Alternative — (")
+		// The recommendation is option (A) in all five -- that is what "the plan
+		// is written to the recommendation" means concretely, and the letter is
+		// checked rather than only the word: a decision whose recommendation
+		// quietly became (B) while the alternative stayed labelled (B) is a
+		// decision the plan's own parts no longer match, and ordering alone
+		// cannot see it.
+		rec := strings.Index(body, "**Recommendation — (A):")
+		alt := strings.Index(body, "**Alternative — (B):")
 		if rec < 0 {
-			t.Errorf("%s's %s states no recommendation: the plan is written to the recommendation and a reader has to be able to find it", coordinatorReconciled, n)
+			t.Errorf("%s's %s states no recommendation of option (A): the plan is written to the recommendation, and every one of these five recommends (A)", coordinatorReconciled, n)
 			continue
 		}
 		if alt < 0 {
-			t.Errorf("%s's %s states no alternative: a decision with one option is not a decision", coordinatorReconciled, n)
+			t.Errorf("%s's %s states no alternative of option (B): a decision with one option is not a decision", coordinatorReconciled, n)
 			continue
 		}
 		if rec > alt {
@@ -2175,11 +2185,27 @@ func TestDocsCoordinatorPlanIsWritten(t *testing.T) {
 		}
 		at += i + len(heading)
 	}
-	// Every decision the planning found is named in the plan, which is where the
-	// parts' dependencies are stated.
+	// Every decision the planning found is a row of the gate table, which is
+	// where a reader learns which part waits on it. Read from the section rather
+	// than from the document: a decision named somewhere in a six-hundred-line
+	// plan is not a decision the owner will find when they open the gate, and
+	// naming it in the prose while dropping its row is exactly the edit that
+	// leaves the table claiming to be the whole list.
+	gate := ""
+	if loc := coordinatorPlanGateHeadingRE.FindStringIndex(plan); loc != nil {
+		rest := plan[loc[1]:]
+		if next := strings.Index(rest, "\n## "); next >= 0 {
+			gate = rest[:next]
+		} else {
+			gate = rest
+		}
+	}
+	if gate == "" {
+		t.Fatalf("%s' gate section is empty or unfindable, so its rows cannot be read", coordinatorPlan)
+	}
 	for _, n := range coordinatorPlanDecisions {
-		if !strings.Contains(plan, "**"+n+"**") {
-			t.Errorf("%s never names %s: the gate table is where a reader learns which part waits on it", coordinatorPlan, n)
+		if !strings.Contains(gate, "**"+n+"**") {
+			t.Errorf("%s' gate table has no row naming %s: the table is the list of what the owner must answer before any part starts, and a decision missing from it is one nobody is told about", coordinatorPlan, n)
 		}
 	}
 	// The paths the plan declares new are named in it, and it says they are new.
