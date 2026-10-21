@@ -161,67 +161,77 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted, taken on main at 1d325928 -- this branch's base, and the
-// tree every count below was read from. It is 312 files -- 118 non-test Go
-// files, 117 test files, 34 markdown files, 29 Terraform files, the four
-// `.tftest.hcl` fixtures beside them, the two goldens, and the eight that fall
-// in none of those groups: the website's four (its install data, its two pages
-// and its test script), the two under images/ (a Dockerfile and a shell
-// script), the published schema, and internal/config/example.yaml, the sample
-// config internal/config/example.go embeds. Each task that renames a string
-// takes the file off this list in the same commit, and W2.6 empties it.
+// command, sorted. It is 279 files -- 114 non-test Go files, 118 test files,
+// 40 markdown files, the two goldens, and the five that fall in none of those
+// groups: the website's four (its install data, its two pages and its test
+// script) and the getting-started design board the redesign was approved from,
+// website/design-ref/GettingStartedV4.dc.html. Read on main at `1d325928`, this
+// branch's base, it was **312** files -- 118 non-test Go files, 117 test files,
+// 34 markdown files, 29 Terraform files, the four `.tftest.hcl` fixtures beside
+// them, the two goldens, and eight in none of those groups: the website's four,
+// the two under images/ (a Dockerfile and a shell script), the published
+// schema, and internal/config/example.yaml, the sample config
+// internal/config/example.go embeds.
+//
+// **The list moves in both directions, and each move is a merge a reader can
+// find.** Forty-four files left it because the rename reached them: #766 (W2.5)
+// renamed the 29 Terraform files, the four `.tftest.hcl` fixtures beside them,
+// the published schema, internal/config/example.{go,yaml}, the two files under
+// images/ and deploy/terraform/terraform.go with its test; #765 (W1.1) renamed
+// internal/initflow's loop.go, loop_test.go and stage.go. Leaving the list in
+// the commit that renamed them is what the paragraph below asks of every rename
+// task, and a file that stayed on it after its rename would fail the walk in
+// the direction that costs the most: it would read as a promise still owed.
+//
+// Eleven files joined it, every one a mention the rename still owes, and six
+// merges put them there. #775 (the central-orchestrator folder's spec,
+// reconciliation and plan) added docs/central-orchestrator/{README,
+// implementation-plan}.md and #793 (the coordinator's plan) added
+// docs/coordinator/implementation-plan.md -- both another artifact's dated
+// record, which is the class docs/coordinator/**, docs/mobile/** and
+// docs/windows-cli/** are already in; #798 (the mobile sign-in folder) added
+// docs/mobile-auth/{implementation-plan,reconciliation}.md and #773 (the
+// rigor-modes folder) docs/rigor-modes/{implementation-plan,reconciliation}.md.
+// Three are code: #771 (W0.3, the register's Check 27 rewrite) added
+// internal/cli/docs_setup_wizard_checks_test.go, whose mention is a scan
+// pattern rather than text a user reads -- the guard that Check 27's Restore
+// does not name the retired command, the same job this file's own pattern does
+// -- so W2.1 has to re-point it rather than rename it; #765 (W1.1) added
+// internal/cli/loop_program_test.go, whose loopProgramWant is the front door
+// the stage engine is driven with and which W2.1 renames when the front door is
+// `fugaro setup`; and #770 (W0.1) added internal/cli/setup_refusals_test.go, a
+// comment naming the bare `init --repo` form. The eleventh, #778's
+// website/design-ref/GettingStartedV4.dc.html, is the one whose remedy is not
+// the rename's to make alone: it is the owner-approved board for the
+// getting-started page printing the command in its own copy, and the folder's
+// README says the boards are not built, not shipped and not served -- so W2.4
+// either renames the board or the owner rules the folder a dated record, and
+// leaving it on the list is what keeps that choice visible instead of settled
+// by a walk that stopped looking.
+//
+// Each task that renames a string takes the file off this list in the same
+// commit, and W2.6 empties it.
 var pendingRename = []string{
 	".claude/skills/new-release/SKILL.md",
 	"CONTRIBUTING.md",
 	"README.md",
 	"SECURITY.md",
-	"deploy/terraform/gcp/modules/compute/outputs.tf",
-	"deploy/terraform/gcp/modules/compute/variables.tf",
-	"deploy/terraform/gcp/modules/firebase/apis.tf",
-	"deploy/terraform/gcp/modules/firebase/firebase.tf",
-	"deploy/terraform/gcp/modules/firebase/outputs.tf",
-	"deploy/terraform/gcp/modules/firebase/variables.tf",
-	"deploy/terraform/gcp/modules/installation/bucket.tf",
-	"deploy/terraform/gcp/modules/installation/deployer.tf",
-	"deploy/terraform/gcp/modules/installation/iam.tf",
-	"deploy/terraform/gcp/modules/installation/outputs.tf",
-	"deploy/terraform/gcp/modules/installation/registry.tf",
-	"deploy/terraform/gcp/modules/installation/secrets.tf",
-	"deploy/terraform/gcp/modules/installation/variables.tf",
-	"deploy/terraform/gcp/modules/project/job.tf",
-	"deploy/terraform/gcp/modules/repo/check.tf",
-	"deploy/terraform/gcp/modules/repo/variables.tf",
-	"deploy/terraform/gcp/modules/workflow/job.tf",
-	"deploy/terraform/gcp/modules/workflow/variables.tf",
-	"deploy/terraform/gcp/roots/compute/main.tf",
-	"deploy/terraform/gcp/roots/compute/outputs.tf",
-	"deploy/terraform/gcp/roots/compute/tests/compute.tftest.hcl",
-	"deploy/terraform/gcp/roots/firebase/main.tf",
-	"deploy/terraform/gcp/roots/firebase/outputs.tf",
-	"deploy/terraform/gcp/roots/firebase/tests/firebase.tftest.hcl",
-	"deploy/terraform/gcp/roots/firebase/variables.tf",
-	"deploy/terraform/gcp/roots/installation/main.tf",
-	"deploy/terraform/gcp/roots/installation/outputs.tf",
-	"deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl",
-	"deploy/terraform/gcp/roots/installation/variables.tf",
-	"deploy/terraform/gcp/roots/repo/main.tf",
-	"deploy/terraform/gcp/roots/repo/outputs.tf",
-	"deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl",
-	"deploy/terraform/gcp/roots/repo/tests/testdata/README.md",
-	"deploy/terraform/gcp/roots/repo/variables.tf",
-	"deploy/terraform/terraform.go",
-	"deploy/terraform/terraform_test.go",
 	"docs/backends.md",
 	"docs/base-image-migration.md",
 	"docs/base-image.md",
+	"docs/central-orchestrator/README.md",
+	"docs/central-orchestrator/implementation-plan.md",
 	"docs/checkout.md",
 	"docs/coordinator/README.md",
+	"docs/coordinator/implementation-plan.md",
 	"docs/coordinator/reconciliation.md",
 	"docs/dogfooding.md",
 	"docs/gcp-live-checklist.md",
 	"docs/gcp-setup.md",
 	"docs/git-providers.md",
 	"docs/in-job-review/reconciliation.md",
+	"docs/mobile-auth/implementation-plan.md",
+	"docs/mobile-auth/reconciliation.md",
 	"docs/mobile/design/push-notifications.md",
 	"docs/mobile/functional-spec-reconciliation.md",
 	"docs/mobile/implementation-plan.md",
@@ -232,9 +242,9 @@ var pendingRename = []string{
 	"docs/recipes.md",
 	"docs/release.md",
 	"docs/releases/README.md",
+	"docs/rigor-modes/implementation-plan.md",
+	"docs/rigor-modes/reconciliation.md",
 	"docs/windows-cli/reconciliation.md",
-	"images/history/Dockerfile",
-	"images/verify-public.sh",
 	"internal/agent/agent_test.go",
 	"internal/backend/backend.go",
 	"internal/backend/backendtest/backendtest.go",
@@ -272,6 +282,7 @@ var pendingRename = []string{
 	"internal/cli/docs_providers_test.go",
 	"internal/cli/docs_recipes_test.go",
 	"internal/cli/docs_release_notes_test.go",
+	"internal/cli/docs_setup_wizard_checks_test.go",
 	"internal/cli/doctor.go",
 	"internal/cli/doctor_bucket.go",
 	"internal/cli/doctor_bucket_test.go",
@@ -331,6 +342,7 @@ var pendingRename = []string{
 	"internal/cli/launch_budget_test.go",
 	"internal/cli/layer_routes_overlap_test.go",
 	"internal/cli/layer_sites_test.go",
+	"internal/cli/loop_program_test.go",
 	"internal/cli/lswarn.go",
 	"internal/cli/managed_apply.go",
 	"internal/cli/managed_apply_test.go",
@@ -360,6 +372,7 @@ var pendingRename = []string{
 	"internal/cli/runs_test.go",
 	"internal/cli/secrets.go",
 	"internal/cli/secrets_test.go",
+	"internal/cli/setup_refusals_test.go",
 	"internal/cli/sharedcfg.go",
 	"internal/cli/sharedcfg_fetch_test.go",
 	"internal/cli/sharedcfg_test.go",
@@ -373,8 +386,6 @@ var pendingRename = []string{
 	"internal/cli/validate.go",
 	"internal/cli/validate_test.go",
 	"internal/config/config.go",
-	"internal/config/example.go",
-	"internal/config/example.yaml",
 	"internal/config/project_secrets.go",
 	"internal/config/providers.go",
 	"internal/config/routing.go",
@@ -425,9 +436,6 @@ var pendingRename = []string{
 	"internal/infra/tfvars.go",
 	"internal/infra/workdir.go",
 	"internal/infra/workdir_test.go",
-	"internal/initflow/loop.go",
-	"internal/initflow/loop_test.go",
-	"internal/initflow/stage.go",
 	"internal/localcfg/localcfg.go",
 	"internal/localcfg/localcfg_test.go",
 	"internal/localcfg/select.go",
@@ -475,11 +483,11 @@ var pendingRename = []string{
 	"plugin/skills/setup/reference/transitions.md",
 	"plugin/skills/working/reference/status.md",
 	"plugin/skills_lint_test.go",
-	"schemas/fugaro.schema.json",
 	"website/README.md",
 	"website/content/cli-reference.md",
 	"website/content/security.md",
 	"website/data/install.yaml",
+	"website/design-ref/GettingStartedV4.dc.html",
 	"website/src/components/Changelog.astro",
 	"website/src/pages/getting-started.astro",
 	"website/test/caps-and-costs.mjs",
@@ -532,10 +540,11 @@ func censusExempt(rel string) bool {
 //     it can carry a mention the census must not read as repository text.
 //
 // One class of ignored path is deliberately not here. The binaries a build
-// leaves at the root -- /fugaro, /clidoc -- are files, and censusNamesInit's
-// binary sniff is what steps over them, which keeps the rule in one place:
-// these lists are about what a build or a local run *writes*, that sniff is
-// about what a compiler *links*.
+// leaves in the tree -- /fugaro, /clidoc, and the `*.exe` a
+// `GOOS=windows go build` writes into the directory it ran in -- are files, and
+// censusNamesInit's binary sniff is what steps over them, which keeps the rule
+// in one place: these lists are about what a build or a local run *writes*,
+// that sniff is about what a compiler *links*.
 var censusOutputDirs = []string{
 	// website/.gitignore
 	websiteBuildDir,
@@ -552,6 +561,16 @@ var censusOutputDirs = []string{
 	consoleDirName + "/playwright-report",
 	consoleDirName + "/.record-fixture",
 	consoleDirName + "/.bundle-renderer",
+	// The screenshot tool's two trees, which the console's .gitignore declares
+	// beside the ones above: `.screenshots/` is the compiled tool `npm run
+	// screenshots` runs (`tsconfig.screenshots.json`), and `/screenshots/` is
+	// what that tool leaves -- the PNGs the website's Console page is
+	// illustrated from, and the MANIFEST.json beside them. Both are a machine's
+	// and a day's output; the fixtures the tool *reads* are test/fixtures/
+	// screenshots/, which the pattern is anchored away from and which stays
+	// repository text.
+	consoleDirName + "/.screenshots",
+	consoleDirName + "/screenshots",
 	// mobile/.gitignore
 	"mobile/dist",
 	"mobile/web-build",
@@ -944,6 +963,7 @@ var censusIgnored = []struct {
 	{".gitignore", "/dist/", "dist/fugaro", false},
 	{".gitignore", "/fugaro", "fugaro", true},
 	{".gitignore", "/clidoc", "clidoc", true},
+	{".gitignore", "*.exe", "fugaro.exe", true},
 	{".gitignore", "/deploy/terraform/**/.terraform/", "deploy/terraform/prod/.terraform/providers/registry.terraform.io/hashicorp/google/6.0.0/linux_amd64/terraform-provider-google", false},
 	{".gitignore", "/deploy/terraform/**/*.tfstate", "deploy/terraform/prod/terraform.tfstate", false},
 	{".gitignore", "/deploy/terraform/**/*.tfstate.*", "deploy/terraform/prod/terraform.tfstate.backup", false},
@@ -962,6 +982,8 @@ var censusIgnored = []struct {
 	{consoleDirName + "/.gitignore", "playwright-report/", consoleDirName + "/playwright-report/index.html", false},
 	{consoleDirName + "/.gitignore", ".record-fixture/", consoleDirName + "/.record-fixture/fixture.json", false},
 	{consoleDirName + "/.gitignore", ".bundle-renderer/", consoleDirName + "/.bundle-renderer/bundle.js", false},
+	{consoleDirName + "/.gitignore", ".screenshots/", consoleDirName + "/.screenshots/screenshots.mjs", false},
+	{consoleDirName + "/.gitignore", "/screenshots/", consoleDirName + "/screenshots/MANIFEST.json", false},
 	{"mobile/.gitignore", "node_modules/", "mobile/node_modules/expo/index.js", false},
 	{"mobile/.gitignore", ".expo/", "mobile/.expo/cache/state.json", false},
 	{"mobile/.gitignore", ".metro-health-check*", "mobile/.metro-health-check.json", false},
