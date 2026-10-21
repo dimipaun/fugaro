@@ -448,6 +448,7 @@ const CONSOLE_CONTROLS = [
   ['console-cta-quiet', "the hero's quiet link"],
   ['download-link', 'a download link'],
   ['screen-dot', 'a dot in the screenshot slider'],
+  ['screen-arrow', "an arrow in the screenshot slider's bar"],
 ]
 
 /** The console page's own stylesheet, as the 44 px reading takes it: every `<style>` it ships. */
@@ -503,6 +504,192 @@ test('a console control under the target is refused, wherever its minimum is mis
   for (const [what, planted, expected] of cases) {
     assert.notEqual(planted, css, `${what} left the stylesheet as it is, so the plant is not a plant`)
     const failures = controlTargetFailures(planted, CONSOLE_CONTROLS)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what} was not refused by the sentence that names it:\n  ${failures.join('\n  ') || '(nothing refused)'}`,
+    )
+  }
+})
+
+// ---- the cards the owner read on 2026-10-21 --------------------------------------------
+//
+// Three things the owner asked of the downloads section, all of them about the stylesheet the
+// cards are laid out by and none of them about the facts the section renders (those are held
+// above):
+//
+//   1. the platform cards "should fit in ONE row on desktop (wrap only on narrow screens)";
+//   2. "the cards should also keep equal heights";
+//   3. and they should "not show the long checksum text breaking awkwardly (keep the
+//      checksum, wrap it cleanly with word-break and a monospace smaller size)".
+//
+// None of the three is visible in the markup: a grid that wrapped because its columns ran out
+// of room, a row of cards of three different heights and a 64-character hash breaking wherever
+// the line happens to end are all the same HTML. So the reading is the built page's own
+// stylesheet — the rules that decide the layout — and each case below is one of the three,
+// with the plants that prove the reading refuses the state it names. **What the cards look like
+// is still the owner's check** (70a-70c, P9): this is the rule, not the picture.
+
+/**
+ * The console page's stylesheet as scopes: the top level under `''`, and one entry per
+ * `@media` block with the condition it is under. Brace-matched rather than regexed, because a
+ * declaration's own text may hold braces (a `var()` fallback, a `minmax()`) and a media block
+ * is where the one-row rule lives.
+ */
+function cssScopes(css) {
+  const scopes = []
+  let rest = ''
+  let at = css.indexOf('@media')
+  while (at !== -1) {
+    rest += css.slice(0, at)
+    const open = css.indexOf('{', at)
+    let depth = 1
+    let i = open + 1
+    while (i < css.length && depth > 0) {
+      if (css[i] === '{') depth++
+      else if (css[i] === '}') depth--
+      i++
+    }
+    scopes.push({ condition: css.slice(at + '@media'.length, open).trim(), body: css.slice(open + 1, i - 1) })
+    css = css.slice(i)
+    at = css.indexOf('@media')
+  }
+  scopes.push({ condition: '', body: rest + css })
+  return scopes
+}
+
+/** A CSS text with every space taken out: the built stylesheet is minified, and the two
+ * readings below look for declarations rather than for spacing. */
+function tight(text) {
+  return text.replace(/\s+/g, '')
+}
+
+/** Whether `klass`'s own rule in `scope` declares `declaration` (`grid-auto-flow:column`). */
+function declares(scope, klass, declaration) {
+  return new RegExp(`\\.${klass}(?![\\w-])[^{}]*\\{[^}]*${declaration}[^}]*\\}`).test(tight(scope))
+}
+
+/** Every way the cards' layout is not what the owner asked for on 2026-10-21. */
+function cardLayoutFailures(css) {
+  const out = []
+  const scopes = cssScopes(css)
+  const top = scopes.find((scope) => scope.condition === '').body
+  // A minimum-width block, as the build's minifier writes it: `@media (min-width: 60rem)`
+  // in the source, `@media (width>=60rem)` in the artifact. Both spellings are the same
+  // query, and the reading takes either rather than holding the artifact to the source's.
+  const wide = scopes.filter((scope) => /min-width\s*:|width\s*>=/.test(scope.condition))
+
+  // 1. The base rule wraps, and the wide block is one row.
+  if (!declares(top, 'download-cards', 'grid-template-columns:repeat\\(auto-fit,minmax\\(')) {
+    out.push(
+      "the download cards' rule declares no `repeat(auto-fit, minmax(…, 1fr))` grid, so a narrow viewport has no shape to wrap the cards in: the owner's feedback of 2026-10-21 is that they wrap on a narrow screen and stand in one row on a desktop",
+    )
+  }
+  const oneRow = wide.filter(
+    (scope) => declares(scope.body, 'download-cards', 'grid-auto-flow:column') && declares(scope.body, 'download-cards', 'grid-auto-columns:minmax\\(0,1fr\\)'),
+  )
+  if (oneRow.length === 0) {
+    out.push(
+      'no minimum-width block lays the download cards out as one row of equal columns (`grid-auto-flow: column` with `grid-auto-columns: minmax(0, 1fr)`): the owner\'s feedback of 2026-10-21 is that the platform cards "should fit in ONE row on desktop (wrap only on narrow screens)", and the base rule above is the wrap',
+    )
+  }
+  if (wide.some((scope) => declares(scope.body, 'download-cards', 'grid-template-columns:repeat\\(auto-fit'))) {
+    out.push(
+      "a minimum-width block keeps the auto-fit grid the base rule declares, so a desktop wide enough for the cards' minimum columns is what decides whether they are one row: the one-row rule is this block's to make, not the window's",
+    )
+  }
+
+  // 2. Equal heights: the grid stretches its items, so a row of cards is one height.
+  if (!declares(top, 'download-cards', 'align-items:stretch')) {
+    out.push(
+      'the download cards\' grid does not stretch its items (`align-items: stretch`), so a row of cards is as tall as each card\'s own text: the owner\'s feedback of 2026-10-21 is that the cards "keep equal heights"',
+    )
+  }
+
+  // 3. The checksum: kept, monospace, one step smaller than the running text, and broken
+  //    anywhere rather than left to widen its card.
+  const tokens = new Map([...css.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;}]+)/g)].map((m) => [m[1], m[2].trim()]))
+  const px = (value) => {
+    const named = /^var\((--[a-z0-9-]+)\)$/.exec((value ?? '').trim())
+    const resolved = named ? (tokens.get(named[1]) ?? '') : (value ?? '')
+    const m = /^([\d.]+)(rem|px)$/.exec(resolved.trim())
+    return m ? Number(m[1]) * (m[2] === 'rem' ? 16 : 1) : null
+  }
+  const shaRule = /\.download-sha256(?![\w-])[^{}]*\{([^}]*)\}/.exec(tight(top))
+  if (!shaRule) {
+    out.push('the stylesheet carries no rule for a download\'s checksum (`.download-sha256`), so a 64-character hash is laid out by whatever rule it inherits')
+    return out
+  }
+  const sha = shaRule[1]
+  if (!/word-break:(break-all|anywhere)/.test(sha)) {
+    out.push(
+      "a download's checksum declares no `word-break`, so a 64-character hash with no space in it widens its card or runs out of it: the owner's feedback of 2026-10-21 is to keep the checksum and wrap it cleanly",
+    )
+  }
+  if (!/font-family:var\(--font-mono\)/.test(sha)) {
+    out.push("a download's checksum is not drawn in the monospace stack, and it is the one run of text on the page a reader compares character by character")
+  }
+  const size = px(/font-size:([^;}]+)/.exec(sha)?.[1])
+  const body = px(tokens.get('--font-size-base'))
+  if (size === null || body === null) {
+    out.push("a download's checksum declares no readable font size, so its size is whatever it inherits")
+  } else if (size >= body) {
+    out.push(
+      `a download's checksum is ${size} px against the ${body} px of the page's running text, and the owner's feedback of 2026-10-21 asks for a smaller monospace size: a hash at the running text's size is the awkward block of characters the cards were read for`,
+    )
+  }
+  return out
+}
+
+test('the download cards are one row on a desktop, equal in height, and their checksums wrap', async (t) => {
+  const failures = cardLayoutFailures(builtStylesheet(buildWith(t, () => {})))
+  assert.deepEqual(
+    failures,
+    [],
+    `the download cards are not laid out the way the owner read them on 2026-10-21:\n  ${failures.join('\n  ')}`,
+  )
+})
+
+test('a card layout the owner did not ask for is refused, rule by rule', async (t) => {
+  // The case above proves what the page is, not what the reading refuses. Each plant below is
+  // one of the three things the owner asked for, taken back out of the stylesheet the way a
+  // later round would take it out.
+  const css = builtStylesheet(buildWith(t, () => {}))
+  assert.match(css, /grid-auto-flow/, 'the built stylesheet declares no one-row rule at all, so the plants below would prove nothing')
+  const cases = [
+    [
+      'the one-row block deleted, leaving the cards to wrap wherever the columns run out',
+      css.replace(/@media[^{]*\{\s*\.download-cards[^{}]*\{[^}]*\}\s*\}/, ''),
+      /no minimum-width block lays the download cards out as one row/,
+    ],
+    [
+      'the one-row block keeping the base rule\'s auto-fit grid',
+      css.replace('grid-auto-flow:column', 'grid-template-columns:repeat(auto-fit,minmax(17rem,1fr))'),
+      /a minimum-width block keeps the auto-fit grid/,
+    ],
+    [
+      'the cards allowed to be as tall as their own text',
+      css.replace(/align-items:\s*stretch/, 'align-items: start'),
+      /does not stretch its items/,
+    ],
+    [
+      'a checksum that stops breaking inside itself',
+      css.replace(/word-break:\s*(break-all|anywhere)/, 'overflow-wrap: normal'),
+      /declares no `word-break`/,
+    ],
+    [
+      'a checksum drawn in the running text\'s own size',
+      css.replace(/\.download-sha256([^{}]*)\{([^}]*)\}/, (rule) => rule.replace(/font-size:[^;}]+/, 'font-size:var(--font-size-base)')),
+      /against the \d+ px of the page's running text/,
+    ],
+    [
+      'a checksum in the page\'s sans rather than in the monospace stack',
+      css.replace(/\.download-sha256([^{}]*)\{([^}]*)\}/, (rule) => rule.replace(/font-family:[^;}]+/, 'font-family:var(--font-sans)')),
+      /not drawn in the monospace stack/,
+    ],
+  ]
+  for (const [what, planted, expected] of cases) {
+    assert.notEqual(planted, css, `${what} left the stylesheet as it is, so the plant is not a plant`)
+    const failures = cardLayoutFailures(planted)
     assert.ok(
       failures.some((line) => expected.test(line)),
       `${what} was not refused by the sentence that names it:\n  ${failures.join('\n  ') || '(nothing refused)'}`,
@@ -1118,7 +1305,6 @@ test('the page states nothing its data file does not carry', async (t) => {
     data.name,
     data.what.text,
     data.released.text,
-    data.released.verify,
     data.not_released.text,
     ...data.properties.map((property) => property.text),
     // Each asset's own checksum, which the section prints beside its link: a 64-character
