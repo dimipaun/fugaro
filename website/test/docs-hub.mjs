@@ -20,6 +20,13 @@
 //      it — a command that lands in the tree appears on this page the day the file is
 //      regenerated, and the page's command sections have to equal the file's, one for
 //      one, or the build's own check fails.
+//   4. **The look is the site's, and not this page's** (the bold redesign of 2026-10-21,
+//      the owner's approved home page in PR #779). The page is drawn in the shapes
+//      `base.css` writes once for the whole site — the display scale, the accent's
+//      gradient, the card — and the last case here reads the built markup and the page's
+//      own stylesheet to hold it there: a headline with a size of its own or a card this
+//      page painted itself is the page that stops looking like the site, which is the one
+//      thing a redesign of one page can get wrong.
 //
 // How it reads the page: `npm run check` builds the site and then runs every file in this
 // directory, so the built HTML is in `website/dist/` by the time these cases run. Nothing
