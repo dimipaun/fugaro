@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -84,6 +85,59 @@ func TestRTDBGetPutETag(t *testing.T) {
 	var n int
 	if found, err := c.Get(ctx(t), "runs/a%2Eb/r1", &n); err != nil || !found || n != 7 {
 		t.Fatalf("get escaped = %d %v %v", n, found, err)
+	}
+}
+
+// TestRTDBServerTimestampIsTheDatabases is the client's half of D3's "the
+// database's clock decides": a write can ask the database for the time instead
+// of asserting one. The value goes on the wire as the Realtime Database's own
+// server value, and the resolved instant comes back in the write's answer —
+// the only place it can come from, since the request carried no number.
+//
+// Hand mutation this fails on: marshalling ServerTimestamp as anything but
+// {".sv":"timestamp"} (the database would store an object, or refuse the
+// write), or dropping the answer from PutIfMatchInto (a caller that asked for
+// the database's stamp would have to invent one).
+func TestRTDBServerTimestampIsTheDatabases(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	f.SetClock(func() time.Time { return now })
+	c := newClient(t, f)
+
+	type stamped struct {
+		At   rtdb.ServerTimestamp `json:"at"`
+		Note string               `json:"note,omitempty"`
+	}
+	var out struct {
+		At json.Number `json:"at"`
+	}
+	if err := c.PutIfMatchInto(ctx(t), "srv/t", "null_etag", stamped{At: rtdb.ServerTimestamp{}, Note: "n"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.At.String() != strconv.FormatInt(now.UnixMilli(), 10) {
+		t.Errorf("the database's answer carries at=%s, want its own clock %d: the writer sent no time and the stamp is the database's", out.At, now.UnixMilli())
+	}
+	// The same value on the wire, read as it was stored.
+	var raw json.RawMessage
+	if _, err := c.Get(ctx(t), "srv/t", &raw); err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"at":` + strconv.FormatInt(now.UnixMilli(), 10) + `,"note":"n"}`; string(raw) != want {
+		t.Errorf("stored %s, want %s: the server value must reach the database as the database's own", raw, want)
+	}
+
+	// Without out, nothing is decoded and the call behaves as before.
+	if err := c.PutIfMatch(ctx(t), "srv/u", "null_etag", 1); err != nil {
+		t.Fatal(err)
+	}
+	// A write that lost its compare-and-set decodes nothing either.
+	err := c.PutIfMatchInto(ctx(t), "srv/u", "null_etag", 2, &out)
+	if !errors.Is(err, rtdb.ErrPrecondition) {
+		t.Fatalf("a stale PutIfMatchInto = %v, want ErrPrecondition", err)
+	}
+	// And a nil out on a call that has an answer is fine too.
+	if err := c.PutIfMatchInto(ctx(t), "srv/v", "null_etag", 3, nil); err != nil {
+		t.Fatal(err)
 	}
 }
 

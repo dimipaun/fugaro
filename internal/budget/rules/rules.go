@@ -155,6 +155,52 @@ const (
 	MaxPublicKey = 4096
 	// MaxBootLength bounds a heartbeat's boot id: the schema's BOOT_MAX.
 	MaxBootLength = 64
+	// LeaseGraceMs is how long a lease keeps its seat without a renewal, in
+	// epoch milliseconds: internal/lease's DefaultGrace (10 minutes, D2), the
+	// same number runstore.ClaimTTL and shared/lease's CLAIM_TTL use. It is
+	// baked into the rules because the *database* is what decides whether a
+	// takeover may land: a client whose grace disagreed with this one would
+	// either take a seat the database still considers held (and be refused) or
+	// refuse a takeover the database would have allowed. The two numbers are
+	// held together by internal/lease's
+	// TestTheRulesCarryTheLeaseAndTheGraceWeApply, which reads the generated
+	// document rather than this constant — what has to agree is the deployed
+	// rules, not a second copy of the number.
+	LeaseGraceMs int64 = 600_000
+	// MaxGeneration bounds a lease's fencing token (internal/lease's
+	// Record.Generation): the largest integer a double represents exactly
+	// (2^53-1), the line MaxTimestamp is held to and for the same reason — the
+	// rules compare the new value with the old one plus one, and past that line
+	// the database's arithmetic rounds. The token moves by one per takeover, so
+	// a bound no lease reaches is not a limitation.
+	MaxGeneration int64 = 1<<53 - 1
+	// MaxEmailLength bounds the email an administrator writes into the
+	// orchestrator access record (D6, central-orchestrator P2). It is RFC
+	// 5321's maximum forward-path length — the longest an address can be and
+	// still be one — so the orchestrator conjunct refuses a field that is not
+	// an address at all without pretending to validate the address itself. The
+	// rules cannot decide whether an address is verified or belongs to a
+	// project's domain: D6 puts both checks at *administration* time, where
+	// the command that reads this field can also read the operator's answer.
+	MaxEmailLength = 254
+)
+
+// The two roles the orchestrator access record may carry (D6, central
+// orchestrator P2). Nothing else in the tree names a role yet, so these two are
+// the whole vocabulary, and the rules spell them out in the predicate: the
+// record's role is what the *service* reads to decide whether a connection may
+// override a consequential action on a job (the spec's "the job's owner, or an
+// explicit override by an authorised person"), and a role the record cannot
+// hold is a permission nobody granted.
+const (
+	// RoleOrchestratorMember may connect, submit and shepherd — the spec's
+	// "everyone allowed in" of the shared session.
+	RoleOrchestratorMember = "member"
+	// RoleOrchestratorAdmin may do everything a member may, and is the
+	// "authorised person" of the spec's action locks: the identity a
+	// consequential action on a job (a merge, a cancel, a raised cap) may be
+	// overridden by when the job's owner is not the one asking.
+	RoleOrchestratorAdmin = "admin"
 )
 
 // The character patterns the rules apply, each the shared schema's own regex
@@ -206,6 +252,8 @@ func Generate() ([]byte, error) {
 		"MaxTimestamp":       MaxTimestamp,
 		"MaxAgentNameLength": MaxAgentNameLength,
 		"MaxOptionLength":    MaxOptionLength,
+		"LeaseGraceMs":       LeaseGraceMs,
+		"MaxGeneration":      MaxGeneration,
 	}); err != nil {
 		return nil, fmt.Errorf("rules: template: %w", err)
 	}
@@ -489,6 +537,61 @@ const PathDevices = "config/admin/devices"
 // property kept: no grant admits a signed-in user on its own.
 const userClaim = "(auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())"
 
+// orchestratorAccess is ORCH: the orchestrator access record (D6, D12,
+// central-orchestrator plan P2), which is the pairing record above *extended*
+// — deliberately the same node and not a second email list.
+//
+// The shape, conjunct by conjunct:
+//
+//   - userClaim — the pairing record D166 already requires, unchanged: an
+//     mu claim that agrees with auth.uid, and a device node that exists.
+//   - the administered email (D6): present, a string, non-empty, at most
+//     MaxEmailLength. It is *administered*, never self-asserted: the node
+//     carries `.write: false` for every client, so only the operator's own
+//     credentials (IAM, which bypasses the rules) can write it — the same
+//     principal that mints the tokens.
+//   - the role: one of exactly the two values in the const block above. A
+//     record with an email and no role is not an identity the orchestrator can
+//     place, and the safe reading of a field a reader cannot place is "no".
+//
+// What a uid with **no device node** gets is unchanged and total: USER's own
+// conjunct fails, so it reaches nothing in this document at all — not the
+// mailbox, not the dashboard, not the orchestrator. What is new here is the
+// narrower refusal: a *paired* device whose node carries no email or no role
+// keeps every family it had (they are all on userClaim, asserted by
+// TestTheAdministeredEmailGatesTheOrchestratorAndNothingElse) and reaches no
+// orchestrator lease. Administration and pairing are therefore two different
+// revocations with two different blast radii, which is what makes the record
+// usable: an operator can take the orchestrator away from an identity without
+// taking the phone's dashboard away, and take the phone away entirely by
+// deleting the node.
+//
+// What the rules deliberately do not decide. D6 puts the domain rule and the
+// verified-email rule at *administration*, and this predicate carries only
+// their outcome (an email someone wrote). Nor does it decide *which*
+// orchestrator an identity may use: that is the project policy's per-
+// orchestrator allow-list, which the service reads on every connection and
+// every submission, and which no rule here can consult per `$slug` without
+// making a published policy a second authorisation document inside the rules.
+// Stated plainly, because it is a limit and not an oversight: the rules admit
+// any administered identity to any orchestrator's lease, and the per-slug
+// narrowing is the service's — which is not deployed (D19), so today the rules
+// are the whole of what guards a lease, and they guard it by identity alone.
+// `d` is the same node userClaim's own line names, spelled again rather than
+// shared through a constant: the line above is a citation anchor in
+// docs/central-orchestrator/reconciliation.md (internal/cli's
+// TestDocsCentralOrchestratorCitationsAreAnchoredByContent reads the phrase out
+// of this file), so it stays one literal line, and the rules that guard the
+// access record are about *that* path.
+func orchestratorAccess() string {
+	d := "root.child('config/admin/devices').child(auth.uid)"
+	email := d + ".child('email')"
+	role := d + ".child('role')"
+	return "(" + userClaim +
+		" && " + email + ".isString() && " + email + ".val().length > 0 && " + email + ".val().length <= " + strconv.Itoa(MaxEmailLength) +
+		" && (" + role + ".val() == '" + RoleOrchestratorMember + "' || " + role + ".val() == '" + RoleOrchestratorAdmin + "'))"
+}
+
 // pairingClaim is the pairing session's claim (D165, plan task P6.6): a
 // custom claim pu that names the one-shot pairing uid whose two nodes its
 // holder may use. It is read, never minted, like mu and mc, and it is the
@@ -639,6 +742,16 @@ func wordMacro(m string, depth int) (string, error) {
 		return "$i.matches(" + indexPattern(MaxAgents) + ")", nil
 	case "PERRUNOK":
 		return perRunOK(depth)
+	case "ORCH":
+		// The orchestrator access record (D6, D12): the pairing record plus
+		// the administered email and the role. It takes no path — it is the
+		// identity, not a location — and it is deliberately *not* userClaim
+		// with an extra term bolted on at the call site: one macro keeps every
+		// orchestrator grant on the same predicate, so a later surface cannot
+		// be granted the weaker one by accident.
+		return orchestratorAccess(), nil
+	case "LEASEWRITE":
+		return leaseWrite(), nil
 	case "GLOBALDAILY":
 		return "root.child('config/caps/global/dailyMicros').val()", nil
 	case "RUNDELTA":
@@ -668,6 +781,72 @@ func wordMacro(m string, depth int) (string, error) {
 // them in the pattern's set.
 func boundedMatch(max int, pattern string) string {
 	return fmt.Sprintf("(newData.isString() && newData.val().length > 0 && newData.val().length <= %d && newData.val().matches(%s))", max, pattern)
+}
+
+// leaseWrite is the lease's whole `.write`: the four transitions that may
+// change `orchestrators/$slug/$job/lease`, and nothing else (central
+// orchestrator P3, decisions D1, D2, D3).
+//
+// It is on the lease node's `.write` and not on a child's `.validate` because
+// of how the engine evaluates a write. The three statements below were
+// measured on the emulator with this document (they are what
+// TestLeaseDeletingARequiredFieldIsRefused and its neighbours pin), and the
+// first two are easy to get backwards:
+//
+//   - A `.write` is consulted at the location written *and at every ancestor*,
+//     with `data` and `newData` read at the ancestor. So this one rule sees
+//     every write to any part of the lease as the whole record it makes, and
+//     the four transitions below are the only ones it accepts.
+//   - A `.validate` is consulted at the location written, at its ancestors and
+//     at the children of the location written — but not at a node that is none
+//     of those. The lease node's own `.validate` is therefore *not* inert: it
+//     is read for a write to `lease/holder_uid` (the lease node is an ancestor
+//     of the written location), which is what makes its hasChildren clause the
+//     thing that refuses a write deleting a required field — the `.write`
+//     predicate alone allows the holder's `renewed_at`-only write, that being
+//     the heartbeat. The transition used to live on the `generation` child,
+//     and that is exactly why it was bypassable: a write to `lease/holder_uid`
+//     never reaches a sibling, so the seat was stolen field by field. Deleting
+//     the hasChildren clause, or moving it onto a child, reopens that class of
+//     write rather than tidying anything.
+//   - A child `.write: false` would not help: a grant cascades down and cannot
+//     be withdrawn by a deeper node (measured: 200).
+//
+// The four transitions, each reading `data` (the record now), `newData` (the
+// record after this write) and `auth.uid` (the writer):
+//
+//  1. **Create** on an absent node, at generation 1, by the writer itself.
+//  2. **Renew**: the seat is the writer's already and stays its own, at the
+//     same generation. This is the heartbeat, and it is the generation that
+//     makes it a heartbeat rather than a takeover: the fencing token does not
+//     move for a holder, so a stale process that lost the seat to a takeover
+//     writes a generation that is no longer the recorded one and is refused.
+//  3. **Takeover** of a seat that is nobody's (a released lease keeps its
+//     node, with an empty holder_uid) or stale — its holder has not renewed
+//     for the grace — moving the generation on by one. The staleness test is
+//     `now - renewed_at >= LeaseGraceMs`, the database's own `now` and never a
+//     clock the writer brought with it; internal/lease's Record.Fresh applies
+//     the same comparison at the same boundary (`now < renewed_at + grace`),
+//     so the two never disagree about the instant a seat becomes takeable.
+//  4. **Release**: the holder gives the seat up, moving the generation on and
+//     emptying the holder. Only the recorded holder may, for renew's reason.
+//
+// Every transition fixes the generation or moves it by exactly one, and every
+// one of them requires the writer to be the holder the record ends with — so a
+// write that changes no generation (a child write, a multi-path update that
+// rewrites `holder` alone) satisfies none of them unless the writer already
+// holds the seat. The stamp is required to be the database's own by the
+// renewed_at field's `.validate` (`NEW == now`), which is what a write can only
+// satisfy with rtdb.ServerTimestamp.
+func leaseWrite() string {
+	uid, gen := "newData.child('holder_uid').val()", "newData.child('generation').val()"
+	oldUid, oldGen := "data.child('holder_uid').val()", "data.child('generation').val()"
+	create := "(!data.exists() && " + uid + " == auth.uid && " + gen + " == 1)"
+	renew := "(data.exists() && " + oldUid + " == auth.uid && " + uid + " == auth.uid && " + gen + " == " + oldGen + ")"
+	take := fmt.Sprintf("(data.exists() && %s == auth.uid && %s == %s + 1 && (%s == '' || now - data.child('renewed_at').val() >= %d))",
+		uid, gen, oldGen, oldUid, LeaseGraceMs)
+	release := "(data.exists() && " + oldUid + " == auth.uid && " + uid + " == '' && " + gen + " == " + oldGen + " + 1)"
+	return "(" + create + " || " + renew + " || " + take + " || " + release + ")"
 }
 
 // kindOf is the kind of the message at the snapshot, as the rules read it: the

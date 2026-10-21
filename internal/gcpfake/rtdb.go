@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -343,6 +344,14 @@ func (f *RTDB) write(w http.ResponseWriter, r *http.Request, path []string, body
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Invalid data; couldn't parse JSON object, array, or value."})
 		return
 	}
+	// The server values, resolved as the real database resolves them and
+	// before anything else looks at the body: a write carrying
+	// {".sv":"timestamp"} stores the database's own clock, and the value it
+	// stores comes back in the response body like any other (rtdb's
+	// ServerTimestamp). One reading for the whole write, so two server values
+	// in one request are the same instant. It runs before firstBadKey because
+	// ".sv" is a key the database's own key rule refuses.
+	in = resolveServerValues(in, f.clockNow())
 	// A PATCH keeps its nulls: each key is a path and null deletes it, as in
 	// the real database; the value is normalised per path below.
 	var patch map[string]any
@@ -617,6 +626,52 @@ func setAt(n any, p []string, v any) any {
 		return nil
 	}
 	return m
+}
+
+// clockNow is the fake's clock, under the lock SetClock takes.
+func (f *RTDB) clockNow() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.clock()
+}
+
+// resolveServerValues replaces every {".sv":"timestamp"} in a decoded write
+// with the database's clock in epoch milliseconds, which is what the real
+// database does with the server value rtdb.ServerTimestamp marshals to.
+//
+// `timestamp` is the only server value this fake resolves, and that is a
+// deliberate limit rather than a claim about the database: measured against
+// the emulator, the real one also resolves `increment` — a PUT of
+// {".sv":{"increment":3}} over a stored 5 stores 8, over an absent node 3 —
+// while the string form {".sv":"increment"} is a 400 ("couldn't parse JSON
+// object, array, or value"), as is any other name, string or object. So a
+// value this fake leaves alone is refused here as a bad key (the ".sv" key
+// carries a dot) rather than resolved: a caller that needs `increment` has to
+// teach the fake it first, and no test should read a refusal here as the
+// database's answer.
+func resolveServerValues(v any, now time.Time) any {
+	switch x := v.(type) {
+	case map[string]any:
+		if len(x) == 1 {
+			if sv, ok := x[".sv"]; ok {
+				if s, isStr := sv.(string); isStr && s == "timestamp" {
+					return json.Number(strconv.FormatInt(now.UnixMilli(), 10))
+				}
+			}
+		}
+		out := make(map[string]any, len(x))
+		for k, c := range x {
+			out[k] = resolveServerValues(c, now)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, c := range x {
+			out[i] = resolveServerValues(c, now)
+		}
+		return out
+	}
+	return v
 }
 
 // normalise converts test-supplied Go values (ints, structs) to the JSON

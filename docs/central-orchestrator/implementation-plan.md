@@ -1,16 +1,20 @@
 # Central orchestrators — the implementation plan
 
-**Status: plan only; no part is approved and no code is implemented.** This plan follows from
+**Status: plan only; no part but P0 is approved and no feature code is implemented.** P0 — the
+guard test that pins this folder and its citations, `internal/cli/docs_central_orchestrator_test.go`
+— has landed; **P1–P9 implement nothing.** This plan follows from
 [reconciliation.md](reconciliation.md), which wins wherever it disagrees with
 [spec.md](spec.md). Every part below is **independently mergeable**: it lands, it is verified,
 and the repository works with it and without the parts after it. Every part cites **paths and
 symbols**, never line numbers. **Owner: Dimi Paun. Date: 2026-10-20. Base: `main` at
 `2f8b4dca`.**
 
-**The plan is written against decisions D1–D26, and every one of them is open.** The parts are
-therefore written to the **recommendation** in each decision, and each part names the decision
-it would have to be rewritten for. **No part starts before its decisions are answered** — the
-gate is at the end of this document.
+**The plan is written against decisions D1–D26. Six of them are answered — D1, D2, D3, D6, D12
+and D19, each as the recommendation below, by the owner on 2026-10-20 — and D4–D5, D7–D11,
+D13–D18 and D20–D26 remain open** (reconciliation §5, §6). The parts are therefore written to
+the **recommendation** in each decision, and each part names the decision it would have to be
+rewritten for. **No part starts before its own decisions are answered** — the gate is at the
+end of this document, and P0 is the one part that needs no decision but its own.
 
 Reading the register for this plan: the D-numbers are folder-local (**D23**), and the
 owner-run live checks are **proposed by name and not numbered** (**D24**) — the reasoning, with
@@ -61,11 +65,13 @@ and what was not).
 
 **Scope.** Every other plan folder in this tree pins itself with a guard — 49 of them live in
 `internal/cli/` at `2f8b4dca`, from `internal/cli/docs_artifact_runs_test.go` to
-`internal/cli/docs_windows_cli_test.go`. This folder has none, because the pull request that
-wrote it was docs-only (reconciliation C1). P0 is that guard. **Note for whoever writes it:**
+`internal/cli/docs_windows_cli_test.go`. This folder had none when this plan was written,
+because the pull request that wrote it was docs-only (reconciliation C1); P0 is that guard, and
+it has since landed — `internal/cli/docs_central_orchestrator_test.go` is in the tree, and the
+five tests below are what it holds. **Note for whoever reads it:**
 the rigor modes work's guard (`internal/cli/docs_rigor_modes_test.go`) is *not* in this tree
 to copy — that work is in open PR #773, as the folder's own documents say (README, and C6 of
-the reconciliation) — so the models to follow are
+the reconciliation) — so the models it follows are
 `internal/cli/docs_coordinator_test.go` and `internal/cli/docs_windows_cli_test.go`, both on
 `main`.
 
@@ -523,23 +529,26 @@ reviewed and what was not.
 ## 6. What the owner must answer before any part starts
 
 The plan is written to the recommendations; each part names the decision it would be rewritten
-for. The decisions that **block** parts outright, and the part each blocks:
+for. **Six of the decisions below are answered** — D1, D2, D3, D6, D12 and D19, each as the
+recommendation, by the owner on 2026-10-20 — and the other twenty are open; an answer is not an
+approval of the part it unblocks. The decisions that **block** parts outright, and the part
+each blocks:
 
-| Decision | Blocks | The recommendation the plan is written to |
-| --- | --- | --- |
-| **D19** | P1, P4 | per installation, one service in v1; add the type deliberately |
-| **D6** | P2, P5 | device node + administered email; domain rule at administration |
-| **D12** | P2, P5 | `fugaro orchestrator add|rm|ls` project-level; `attach` after D5 |
-| **D1, D2, D3** | P3, P4 | RTDB, generation CAS, `ServerNow`, 60 s / 10 min |
-| **D13, D20** | P4 | `min-instances = 0`; the agent in a job, no model credential in the service |
-| **D5** | P5, P9 | one protocol; ID token at connect and per submission; console through the CLI |
-| **D7, D11, D26** | P6 | one session; Firestore, service-account only; presence from the connection |
-| **D8, D9** | P7 | routing by submitter; the mode table lives here; HMAC over the mailbox's canonical bytes |
-| **D10, D4** | P8 | fingerprint + attach; new automated caps; stored breaker; a dedicated profile |
-| **D14** | half of P9 | the orchestrator reports; takes nothing back |
-| **D15** | P3's watch half | seen in `watch`; an explicit return through the same CAS |
-| **D16, D17, D18** | the plan's shape | the credential-free half is v1; 0.11.0 or later; no merge |
-| **D21, D22, D23, D24, D25** | scope, wording and numbers | per the recommendations in reconciliation §5 |
+| Decision | Blocks | The recommendation the plan is written to | Answer, 2026-10-20 |
+| --- | --- | --- | --- |
+| **D19** | P1, P4 | per installation, one service in v1; add the type deliberately | **ANSWERED — the recommendation** |
+| **D6** | P2, P5 | device node + administered email; domain rule at administration | **ANSWERED — the recommendation** |
+| **D12** | P2, P5 | `fugaro orchestrator add|rm|ls` project-level; `attach` after D5 | **ANSWERED — the recommendation** |
+| **D1, D2, D3** | P3, P4 | RTDB, generation CAS, `ServerNow`, 60 s / 10 min | **ANSWERED — the recommendation** |
+| **D13, D20** | P4 | `min-instances = 0`; the agent in a job, no model credential in the service | **open** |
+| **D5** | P5, P9 | one protocol; ID token at connect and per submission; console through the CLI | **open** |
+| **D7, D11, D26** | P6 | one session; Firestore, service-account only; presence from the connection | **open** |
+| **D8, D9** | P7 | routing by submitter; the mode table lives here; HMAC over the mailbox's canonical bytes | **open** |
+| **D10, D4** | P8 | fingerprint + attach; new automated caps; stored breaker; a dedicated profile | **open** |
+| **D14** | half of P9 | the orchestrator reports; takes nothing back | **open** |
+| **D15** | P3's watch half | seen in `watch`; an explicit return through the same CAS | **open** |
+| **D16, D17, D18** | the plan's shape | the credential-free half is v1; 0.11.0 or later; no merge | **open** |
+| **D21, D22, D23, D24, D25** | scope, wording and numbers | per the recommendations in reconciliation §5 | **open** |
 
 ## 7. The owner-run live checks, proposed by name and not numbered
 
@@ -576,8 +585,9 @@ material.
   this work: the decisions are the owner's to answer, and the answers are recorded in
   [reconciliation.md](reconciliation.md) §5/§6 rather than by rewriting them.
 - **Check numbers: none claimed** (**D24**), for the reason in §7 above and reconciliation §7.
-- **No Go test is added by this work** (reconciliation C1): the plan is docs-only, and P0 —
-  the guard — is the first part that adds one.
+- **No Go test was added by the pull request that wrote this plan** (reconciliation C1): it is
+  docs-only, and P0 — the guard — is the first part that adds one. P0 has since landed, and it
+  is the only Go any of this work has written: `internal/cli/docs_central_orchestrator_test.go`.
 
 ## 9. The owner approval gate
 
@@ -586,6 +596,9 @@ minimum:
 
 1. **Answering D1–D26**, or explicitly deferring the parts they block. The plan is written to
    the recommendations, and every part names the decision it would be rewritten for (§6).
+   **Six are answered — D1, D2, D3, D6, D12 and D19, each as the recommendation — and twenty
+   are open**, so this clause of the gate is passed only for the parts those six unblock, and
+   P0 alone is unblocked outright.
 2. **Ruling on the sibling collision (§3 #52, D20)** — this spec's agent-in-the-service versus
    the always-on orchestrator design's agent-in-a-job (PR #632, its §6 rule 4, and mobile
    D115's conditions). The two cannot both be built, and shipping either silently decides the

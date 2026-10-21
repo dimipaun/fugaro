@@ -133,6 +133,45 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 // doctorPolicyChecks — "a policy node with a key this Fugaro does not know"
 // fails, doctor reporting the node as published and saying nothing about the
 // key.
+// TestRulesMarkerOlderTextNamesWhatTheDocumentAdds: the sentence doctor prints
+// for a marker between the two generations is the one place an operator on an
+// older generation is told what a redeploy *adds*, and it is read on the
+// generation before the deploy. A location the template grows and the sentence
+// does not name is a subtree the operator deploys without being told. The
+// orchestrators lease was exactly that: RulesVersion moved to 4 and the
+// sentence still listed only the mailbox and the device node (the review
+// finding on P3).
+//
+// Each named location is checked against the generated document as well, so a
+// template that renames or moves one fails here rather than leaving the
+// sentence pointing at a node that no longer exists. A release that adds a
+// location to the document adds it to this list and to rulesMarkerOlderText.
+func TestRulesMarkerOlderTextNamesWhatTheDocumentAdds(t *testing.T) {
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := rulesMarkerOlderText(projectpolicy.PolicyRulesVersion)
+	if !strings.Contains(text, fmt.Sprintf("generation %d", projectpolicy.RulesVersion)) {
+		t.Errorf("rulesMarkerOlderText does not name the generation this binary deploys (%d): %q", projectpolicy.RulesVersion, text)
+	}
+	for _, c := range []struct {
+		docKey, named string // the JSON key the template renders, and what the sentence calls it
+	}{
+		{`"mailbox"`, "mailbox subtree"},
+		{`"devices"`, rules.PathDevices},
+		{`"orchestrators"`, "orchestrators/<slug>/<job>/lease"},
+		{`child('email')`, "administered email"},
+	} {
+		if !strings.Contains(string(gen), c.docKey) {
+			t.Errorf("the generated rules carry no %s: rulesMarkerOlderText names it as something a redeploy adds, so either the template lost it or this list is stale", c.docKey)
+		}
+		if !strings.Contains(text, c.named) {
+			t.Errorf("rulesMarkerOlderText does not name %q, which the generated document carries (%s): an operator on an older generation is told what the redeploy adds, and a location left out of the sentence is one they deploy blind", c.named, c.docKey)
+		}
+	}
+}
+
 func TestDoctorPolicyChecks(t *testing.T) {
 	t.Run("an installation with no budget backend publishes no policy", func(t *testing.T) {
 		newDoctorRig(t)
@@ -575,6 +614,27 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		for _, want := range []string{rules.PathDevices, "fugaro pair", "by hand"} {
 			if !strings.Contains(c.Problem, want) {
 				t.Errorf("the between-generations body does not say the deploy binds the user claim to a device node (%q absent from %q): an operator who deploys generation 3 without reading this locks out every phone account that has no node, and nothing mints one yet", want, c.Problem)
+			}
+		}
+		// Generation 4's addition gets the same treatment for the same reason:
+		// the sentence is read by an operator on the generation *before* the
+		// deploy that creates the lease, and the redeploy is what makes
+		// `fugaro orchestrator` able to hold a seat at all.
+		for _, want := range []string{"orchestrators/<slug>/<job>/lease", "central orchestrators"} {
+			if !strings.Contains(c.Problem, want) {
+				t.Errorf("the between-generations body does not name the orchestrators lease (%q absent from %q): an operator who deploys generation 4 without reading this does not know the redeploy is what gives the central orchestrators a seat to hold", want, c.Problem)
+			}
+		}
+		// Generation 5 narrows that grant, which is the *opposite* direction
+		// from the three additions above and is the one an operator is most
+		// likely to read as a lockout: the sentence has to say that an
+		// installation on generation 4 redeploys into a document where a
+		// device node no administrator has given an email and a role to holds
+		// no lease. The three halves: the administered email, the role, and
+		// what such a node keeps (everything else it had).
+		for _, want := range []string{"administered email", "role", "loses the lease"} {
+			if !strings.Contains(c.Problem, want) {
+				t.Errorf("the between-generations body does not say the redeploy narrows the lease's grant to the orchestrator access record (%q absent from %q): an operator who deploys generation 5 without reading this finds an identity that held leases refused and cannot tell that from a broken deploy", want, c.Problem)
 			}
 		}
 		// And it is this state's one text: doctor is its only printer, and the

@@ -1,18 +1,26 @@
 # Central orchestrators — the documents
 
-**Status: plan only; no code is implemented.** This directory holds the owner's spec for
-**central orchestrators** — Fugaro orchestrators that run permanently in the cloud instead of
-on a developer's machine (`spec.md`, verbatim) — the reconciliation of that spec against the
+**Status: plan only; no code is implemented, except the guard test P0 adds
+(`internal/cli/docs_central_orchestrator_test.go`, the one file that owns this folder) — every
+part after P0 is unbuilt, and no feature code exists.** This directory holds the owner's spec
+for **central orchestrators** — Fugaro orchestrators that run permanently in the cloud instead
+of on a developer's machine (`spec.md`, verbatim) — the reconciliation of that spec against the
 code at `origin/main` **`2f8b4dca`**, the decisions the reconciliation could not answer on its
-own (**D1–D26**, all open), and the plan that follows from them
-(`implementation-plan.md`). No Go, no TypeScript, no Terraform, no rules change, no
-`.github/workflows` change and no live action follows from these documents. **Owner: Dimi
-Paun. Date: 2026-10-20. Base: `main` at `2f8b4dca`** — the commit every path and symbol below
-was read at, and this branch's own merge base.
+own (**D1–D26**), and the plan that follows from them (`implementation-plan.md`). **Six of the
+twenty-six decisions are answered — D1, D2, D3, D6, D12 and D19, each as its recommendation,
+by the owner on 2026-10-20 — and D4–D5, D7–D11, D13–D18 and D20–D26 are still open**
+(reconciliation §6). Nothing else follows from these documents yet: no feature Go, no
+TypeScript, no Terraform, no rules change, no `.github/workflows` change and no live action —
+the only Go they have produced is `internal/cli/docs_central_orchestrator_test.go`, the guard
+test P0 adds. **Owner: Dimi Paun. Date: 2026-10-20. Base: `main` at `2f8b4dca`** — the commit
+every path and symbol below was read at, and this branch's own merge base.
 
 **Nothing here is approved.** The owner wrote the spec; the reconciliation and the plan are
-this work's. No decision has been answered, no part of the plan has been accepted, and the
-plan's owner gate at the end is unpassed. The two siblings this work depends on are also
+this work's. **Six decisions — D1, D2, D3, D6, D12 and D19 — were answered by the owner on
+2026-10-20, each as the recommendation the plan was written to, and an answer is not an
+approval of anything**: no part of the plan has been accepted except P0 (the guard test), the
+gate in `implementation-plan.md` §9 is passed for nothing, and the parts the twenty open
+decisions block do not start. The two siblings this work depends on are also
 unbuilt: the always-on orchestrator design is in **open PR #632** (with the rigor modes work
 in **open PR #773**), and `docs/credentials-service/` and `docs/coordinator/` are each
 *"plan only; nothing is implemented"* in their own words.
@@ -20,7 +28,7 @@ in **open PR #773**), and `docs/credentials-service/` and `docs/coordinator/` ar
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | **The owner's spec, verbatim** — *"Fugaro Central Orchestrator Spec"*, Oct 20 2026 · @Dimi, from Purpose through Resolved questions. Committed alone, in its own first commit, before anything else in this directory. Nothing was reworded, reordered, re-headed or re-numbered. |
-| [reconciliation.md](reconciliation.md) | Corrections to the brief this work was written from (**C1–C7**); the spec's concepts against what the repository has (§1); the spec's own open item — *"check how much state the orchestrator persists today"* — **answered from the code** (§2: the shepherding state that exists today, in a table, with what a second orchestrator could and could not pick up); findings **#1–#57**, each classified **Wrong / Exists / Gap / Rule / Open**, each citing a path and a symbol, each stating its consequence (§3); the exact edits the mobile functional spec still needs, **listed and not made** (§4); decisions **D1–D26**, each with its recommendation first, the alternative and its cost (§5); the same decisions tabled as **Open for the owner** (§6); the numbers this work would hold, with the check register read **name by name** (§7); items **O1–O4**, found while planning and kept so they are not lost (§8); the **UNVERIFIED** table U1–U13 (§9); the glossary the spec's words need (§10). Where it disagrees with `spec.md`, it wins. |
+| [reconciliation.md](reconciliation.md) | Corrections to the brief this work was written from (**C1–C7**); the spec's concepts against what the repository has (§1); the spec's own open item — *"check how much state the orchestrator persists today"* — **answered from the code** (§2: the shepherding state that exists today, in a table, with what a second orchestrator could and could not pick up); findings **#1–#57**, each classified **Wrong / Exists / Gap / Rule / Open**, each citing a path and a symbol, each stating its consequence (§3); the exact edits the mobile functional spec still needs, **listed and not made** (§4); decisions **D1–D26**, each with its recommendation first, the alternative and its cost (§5); the same decisions tabled **for the owner — the answered six, and the open twenty** — with an answer column carrying each answer and the recommendation it took (§6); the numbers this work would hold, with the check register read **name by name** (§7); items **O1–O4**, found while planning and kept so they are not lost (§8); the **UNVERIFIED** table U1–U13 (§9); the glossary the spec's words need (§10). Where it disagrees with `spec.md`, it wins. |
 | [implementation-plan.md](implementation-plan.md) | The plan: ordered **parts P0–P9**, each independently mergeable, each with its files, its red step, its verification, its dependencies, its reviewer tier and its commit message; which parts are **SECURITY-SENSITIVE** and need an independent review; the edges and the critical path; what is deliberately **not** in it; the owner-run live checks **proposed by name and not numbered**; and the **OWNER APPROVAL GATE**, unpassed. |
 
 ## Typos fixed in `spec.md`
@@ -59,7 +67,7 @@ have to become.
 
 | Numbers | Whose | State |
 | --- | --- | --- |
-| **D1–D26** | **this work's decisions**, folder-local and distinct by folder, as `docs/windows-cli/` (its D1–D16) and `docs/rigor-modes/` (its D1–D19) each chose and each recorded. Every one is **open**: the owner has answered none, and the reconciliation's §6 tables them with the recommendation first. Answering a decision is not approving a task | **open.** The register is [docs/coordinator/README.md](../coordinator/README.md) §"The numbers this work holds": **D1–D192 are taken** (the highest written anywhere in `docs/` is **D192**), **D79–D89 is deliberately unused** — *"an unused number is not a free number"* — and **D193 onward is free**, which is the block this work would take if the owner prefers one sequence. **Recommendation: keep D1–D26 local and distinct by folder** (D23) |
+| **D1–D26** | **this work's decisions**, folder-local and distinct by folder, as `docs/windows-cli/` (its D1–D16) and `docs/rigor-modes/` (its D1–D19) each chose and each recorded. **Six are answered** — **D1, D2, D3, D6, D12 and D19**, each as its recommendation, by the owner on 2026-10-20 — and **twenty are open**: D4–D5, D7–D11, D13–D18 and D20–D26. The reconciliation's §6 tables all twenty-six with the recommendation first and the answer beside it. **Answering a decision is not approving a task**, and answering allocates no D-number either | **six answered, twenty open.** The register is [docs/coordinator/README.md](../coordinator/README.md) §"The numbers this work holds", and **its own table is stale as read against `main`**: it records **D1–D192 are taken** (the highest it names, written at its base `c6009b5f`), **D79–D89 as deliberately unused** — *"an unused number is not a free number"* — and **D193 onward as free**, but `docs/mobile/voice-session/` (merged in `1d325928`) has since written **D201–D220** and left **D193–D200** unused, so **the highest D-number written anywhere under `docs/` is D220 and the next free block is D221 onward**, which is the block this work would take if the owner prefers one sequence (reconciliation §7, O1). **Recommendation: keep D1–D26 local and distinct by folder** (D23) |
 | **No check number** | this work proposes **none** | **not claimed and not written.** The register's own state is unsettled where this work would sit: **Check 110** is claimed **twice** — by `docs/mobile/design/voice-evaluation-switch.md` (P5.3) and by the always-on orchestrator design in **PR #632** (§7) — and written by neither, so the register's rule *"whichever of two open claims merges second renumbers itself"* applies; **111** is written by [docs/setup-wizard/](../setup-wizard/); **112** is proposed by [docs/windows-cli/](../windows-cli/); **113–118** are taken by [docs/mobile/voice-session/](../mobile/voice-session/); **119** is taken by `docs/rigor-modes/` in open PR #773. The owner-run checks this work needs are therefore **named and not numbered** (implementation-plan §7), and the part that writes one takes the next free number at merge time (D24) |
 
 Check numbers are allocated, never reused and never renumbered once taken — the live

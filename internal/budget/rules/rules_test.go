@@ -827,6 +827,129 @@ func TestUserClaimRequiresTheDeviceNode(t *testing.T) {
 	}
 }
 
+// TestOrchestratorLeaseCarriesTheAccessRecord: the orchestrator access record
+// (central-orchestrator plan P2, decisions D6 and D12) in the one orchestrator
+// surface that exists, the lease (P3). The record is D166's device node
+// *extended* with the email an administrator writes and the role that node
+// carries (D6's answer: "the allowlist is the phone's device node plus an
+// administered email field", the domain rule enforced at administration), so
+// the rules' predicate is the pairing predicate plus those conjuncts and
+// nothing else.
+//
+// What this pins is the *narrower* refusal: an account with no device node
+// reaches nothing at all (USER's own conjunct, asserted above), and a paired
+// device whose node carries no email, no role, or a role that is not one of the
+// two documented values reaches no orchestrator lease — while the mailbox and
+// dashboard families it already had stay exactly as they were (the sweep
+// below). The emulator case that writes such a node and watches the database
+// refuse is orchestrator_access_emulator_test.go.
+//
+// Hand mutation this fails on: dropping the email conjunct from ORCH (a paired
+// phone reaches the lease with no administrator behind it), dropping the length
+// bound (an unbounded administered field), adding or renaming a role value, or
+// putting USER back on the lease's two grants.
+func TestOrchestratorLeaseCarriesTheAccessRecord(t *testing.T) {
+	paths := generatedPaths(t)
+	lease := "orchestrators/" + slugForPath + "/$job/lease"
+	attrs, ok := paths[lease]
+	if !ok {
+		t.Fatalf("the template does not generate /%s", lease)
+	}
+	record := "root.child('config/admin/devices').child(auth.uid)"
+	want := []string{
+		// The pairing record D166 already requires: the child existing IS
+		// "this account is paired to a phone that has not been revoked".
+		record + ".exists()",
+		// D6's administered email: present, a string, non-empty and bounded.
+		record + ".child('email').isString()",
+		record + ".child('email').val().length > 0",
+		record + ".child('email').val().length <= " + strconv.Itoa(MaxEmailLength),
+		// And the role, one of exactly the two documented values.
+		record + ".child('role').val() == '" + RoleOrchestratorMember + "'",
+		record + ".child('role').val() == '" + RoleOrchestratorAdmin + "'",
+	}
+	for _, a := range []string{".read", ".write"} {
+		expr, _ := attrs[a].(string)
+		if expr == "" {
+			t.Fatalf("/%s %s = %v, want the access record", lease, a, attrs[a])
+		}
+		for _, f := range want {
+			if !strings.Contains(expr, f) {
+				t.Errorf("/%s %s = %q, want it to carry %q: the access record is D166's device node plus the administered email and role",
+					lease, a, expr, f)
+			}
+		}
+	}
+	// Exactly two role comparisons, so a third role value cannot be added to
+	// the predicate without this test saying so. The count is on the rendered
+	// document, which is what deploys.
+	if n := strings.Count(attrs[".read"].(string), ".child('role').val() =="); n != 2 {
+		t.Errorf("/%s .read carries %d role comparisons, want exactly 2 (member and admin)", lease, n)
+	}
+}
+
+// TestTheAdministeredEmailGatesTheOrchestratorAndNothingElse pins the blast
+// radius of D6's new conjunct, in both directions, without an emulator.
+//
+// Inwards: every grant inside the orchestrators family carries the administered
+// email and the role, so no child of it is left on the pairing record alone —
+// which is exactly what a `USER` left behind on a child would be, and a grant
+// is what a later edit regrows quietly. There are exactly two such grants (the
+// lease's `.read` and `.write`); a third is a grant nobody argued for.
+//
+// Outwards: no grant outside the orchestrators family mentions the email at
+// all. That is the property an operator relies on when they administer an
+// orchestrator identity or take one away: the phone's mailbox, its dashboard
+// and its caps move only with the device node (D166), so administering the
+// orchestrator field can never lock a phone out of the app it already had.
+func TestTheAdministeredEmailGatesTheOrchestratorAndNothingElse(t *testing.T) {
+	const email = "child('email')"
+	var inside, outside int
+	for p, attrs := range generatedPaths(t) {
+		for _, a := range []string{".read", ".write"} {
+			expr, ok := attrs[a].(string)
+			if !ok {
+				continue
+			}
+			if p == "orchestrators" || strings.HasPrefix(p, "orchestrators/") {
+				inside++
+				if !strings.Contains(expr, email) || !strings.Contains(expr, "child('role')") {
+					t.Errorf("/%s %s = %q, want the access record: a grant inside the orchestrators family that is on the pairing record alone admits an account nobody administered", p, a, expr)
+				}
+				continue
+			}
+			if strings.Contains(expr, email) {
+				outside++
+				t.Errorf("/%s %s = %q mentions the orchestrator access record's email: D6's field authorises the orchestrator and must not move any other family", p, a, expr)
+			}
+		}
+	}
+	if inside != 2 {
+		t.Errorf("the orchestrators family carries %d grants, want exactly 2 (the lease's .read and .write): a third is a grant nobody argued for", inside)
+	}
+	if outside != 0 {
+		t.Errorf("%d grants outside the orchestrators family mention the administered email", outside)
+	}
+}
+
+// TestAccessRecordBounds pins the numbers and the values the predicate above is
+// made of, so that moving one has to come here and say so. 254 is RFC 5321's
+// maximum forward-path length: the administered field is an email address, and
+// a bound that admitted more would be a bound on nothing.
+//
+// Hand mutation this fails on: raising MaxEmailLength, or renaming a role.
+func TestAccessRecordBounds(t *testing.T) {
+	if MaxEmailLength != 254 {
+		t.Errorf("MaxEmailLength = %d, want 254 (RFC 5321's maximum forward-path length)", MaxEmailLength)
+	}
+	if RoleOrchestratorMember != "member" {
+		t.Errorf("RoleOrchestratorMember = %q, want %q", RoleOrchestratorMember, "member")
+	}
+	if RoleOrchestratorAdmin != "admin" {
+		t.Errorf("RoleOrchestratorAdmin = %q, want %q", RoleOrchestratorAdmin, "admin")
+	}
+}
+
 // TestMailboxWritesAreExactlyTheFour pins the mailbox's grant list without an
 // emulator: D113's two phone writes (its own inbox message, the ack on a
 // message it spoke), D113b's two consumer writes (the outbox message, the
@@ -1167,31 +1290,39 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 
 // TestUserReadGrantsAreExactlyTheNamedFamilies: the read grants D112's answer
 // adds, and nothing else. The user claim reads the eight expressions a run
-// token already carried (each now `… || USER`) and the two nodes of its own
-// mailbox — and a grant anywhere else, on a family tension (b1) struck or on a
-// parent that would cascade to one, fails here as well as in the golden.
+// token already carried (each now `… || USER`), the two nodes of its own
+// mailbox, and the lease of one job (central-orchestrator D15: the seat is
+// what the local orchestrator and the app both have to be able to see, and the
+// `fugaro watch` half of P3 renders it) — and a grant anywhere else, on a
+// family tension (b1) struck or on a parent that would cascade to one, fails
+// here as well as in the golden.
 //
 // F11's property is the half this pins from the other side: the eight are the
 // only families a signed-in user reaches, so an account with no mu claim reads
 // nothing (admitted nowhere), and no family of the run's own slices — agents
 // and outcomes above all — was widened by this change.
+//
+// Hand mutation this fails on: granting the orchestrators subtree a read above
+// the lease (the whole `orchestrators` family, or a `$job`'s other nodes), or
+// granting the lease to anything but the device-allowlisted user claim.
 func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 	paths := generatedPaths(t)
-	// The eight, and the two mailbox nodes, which are scoped to the mailbox
-	// the claim owns.
+	// The eight, the two mailbox nodes, which are scoped to the mailbox the
+	// claim owns, and the lease of one job, which is scoped to the job.
 	// generatedPaths spells $slug as slugForPath (it is the one wildcard the
 	// tests substitute), so the keys below do too.
 	want := map[string]bool{
-		"config/caps/global":                       true,
-		"config/caps/defaults":                     true,
-		"config/caps/repos/" + slugForPath:         true,
-		"config/kill/global":                       true,
-		"config/kill/repos/" + slugForPath:         true,
-		"spend/$day/global":                        true,
-		"spend/$day/repos/" + slugForPath:          true,
-		"spend/$day/runs/" + slugForPath + "/$run": true,
-		"mailbox/$mb/outbox":                       true,
-		"mailbox/$mb/heartbeat":                    true,
+		"config/caps/global":                           true,
+		"config/caps/defaults":                         true,
+		"config/caps/repos/" + slugForPath:             true,
+		"config/kill/global":                           true,
+		"config/kill/repos/" + slugForPath:             true,
+		"spend/$day/global":                            true,
+		"spend/$day/repos/" + slugForPath:              true,
+		"spend/$day/runs/" + slugForPath + "/$run":     true,
+		"mailbox/$mb/outbox":                           true,
+		"mailbox/$mb/heartbeat":                        true,
+		"orchestrators/" + slugForPath + "/$job/lease": true,
 	}
 	got := map[string]string{}
 	for p, attrs := range paths {
@@ -1672,17 +1803,45 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 			t.Errorf("/%s changed:\n  was %v\n  now %v", p, want, got)
 		}
 	}
-	// And the addition is the one this task makes: the new paths are exactly
-	// the credentials family. Anything else that appears here is a rules change
-	// nobody asked for.
+	// And the additions are the two this document has made since generation 3:
+	// the credentials family (C1.3) and the orchestrators lease (central
+	// orchestrator P3, which is generation 4). Anything else that appears here
+	// is a rules change nobody asked for.
 	for p := range after {
 		if _, ok := before[p]; ok {
 			continue
 		}
-		if !isNewCredsPath(p) {
+		if !isNewCredsPath(p) && !isNewLeasePath(p) {
 			t.Errorf("/%s is new and is not one of this task's additions", p)
 		}
 	}
+}
+
+// isNewLeasePath reports whether p is one of the nodes the lease family adds:
+// the three wildcard levels, the record, and the fields the rules name. An
+// explicit set rather than a prefix match, for isNewCredsPath's reason — a path
+// *under* the family is a change to what the family contains, and a grant
+// hidden under /orchestrators is exactly what a prefix match would wave
+// through.
+func isNewLeasePath(p string) bool {
+	base := "orchestrators/" + slugForPath + "/$job"
+	for _, q := range []string{
+		"orchestrators",
+		"orchestrators/" + slugForPath,
+		base,
+		base + "/$other",
+		base + "/lease",
+	} {
+		if p == q {
+			return true
+		}
+	}
+	for _, f := range []string{"holder", "holder_uid", "generation", "renewed_at", "mode", "pr", "$other"} {
+		if p == base+"/lease/"+f {
+			return true
+		}
+	}
+	return false
 }
 
 // isNewCredsPath reports whether p is one of the three things C1.3 adds: the
@@ -1709,29 +1868,34 @@ func isNewCredsPath(p string) bool {
 	return p == entry+"credential" || p == entry+"waiting_until"
 }
 
-// TestRulesVersionUnchanged: this task does not move the rules generation. The
-// deployed document changes, but the generations an installation compares are
-// left where they are, and the credentials children get a marker of their own
-// instead (C1.3's "no RulesVersion bump", marker.go):
+// TestRulesVersionUnchanged: the document generation moves for the lease, and
+// nothing else does.
 //
 //   - projectpolicy.RulesVersion is the generation of the whole document, read
-//     by the deploy's downgrade refusal, the runner's policy gate and doctor's
-//     policy-rules-skew. Moving it would tell every installation whose owner has
-//     not redeployed yet that its rules are older than the binary's, for a
-//     change that adds optional children of nodes runs already write.
-//   - projectpolicy.PolicyRulesVersion gates the policy nodes, which this change
-//     does not touch. It stays 1.
+//     by the deploy's downgrade refusal, the runner's policy messages and
+//     doctor's policy-rules-skew. The lease is a subtree that did not exist,
+//     and the seat a holder relies on is only a seat because the deployed rules
+//     say so — under a generation-3 document every lease call is refused — so
+//     this one moves. It moved again to 5 for the orchestrator access record
+//     (central-orchestrator P2): the *grant* on that subtree changed, so a
+//     generation-4 document admits a paired device that no administrator has
+//     given an email and a role to. It is 5.
+//   - projectpolicy.PolicyRulesVersion gates the policy nodes, which this
+//     change does not touch: no published policy is dropped by the bump and
+//     publishing keeps working. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
 //     which a cascade launch, the init stage and doctor read (C1.19-C1.21).
+//     The credentials children did *not* move the document generation (C1.3's
+//     "no RulesVersion bump", marker.go) and this change does not move theirs.
 //
 // The numbers are asserted rather than referenced so that a bump has to come
 // here and say so.
 //
-// Hand mutation this fails on: bumping any of the three (or lowering
+// Hand mutation this fails on: bumping any of the four (or lowering
 // CredsRulesVersion), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 3 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 3: this change does not move the document generation", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 5 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 5: the orchestrator access record is a generation of its own", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)
