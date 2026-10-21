@@ -20,19 +20,30 @@ import (
 // service (docs/credentials-service, D146, D147; plan task C1.20). It is the
 // owner's step and it is behind --provision-credentials.
 //
-// What it turns on is the single identity that reads EVERY model credential
-// the installation holds: the Cloud Run service the run's job accounts are
-// meant to call for a credential instead of mounting one (D145, the OAuth
-// token's keep-out invariant).
+// What it turns on is the Cloud Run service the installation's REPOSITORY
+// jobs' model credentials move to (D145, the OAuth token's keep-out
+// invariant): every workflow job of a repository root re-applied after the
+// opt-in stops mounting its model credential — in every agent.auth mode, for
+// the Claude OAuth token and a provider's key alike — and its job account
+// loses the accessor on it and gains an invoker grant on the service instead
+// (internal/infra/spec.go's dropModelMounts, modules/workflow/sa.tf).
+//
+// The scope of "the model credentials the service holds" is exactly that, and
+// the confirmation and the flag's help say so: the SHARED project jobs
+// (modules/project, which this same root installs) keep mounting their
+// provider keys and CLAUDE_CODE_OAUTH_TOKEN and keep their secretAccessor
+// grants, because credentials_service does not reach that module at all —
+// moving the shared jobs over is C3.9, and it is not in this release. An
+// owner consenting to this step is consenting to what it really covers.
 //
 // What it does NOT yet do — and what its confirmation and the flag's help say
-// in as many words — is hand a run that credential: the repository roots'
-// half (this release's: every job stops mounting its model credential, in
-// every auth mode) is in, the runner's half (C1.19, the wiring that fetches
-// one from the service at call time) is not. So on an installation whose
-// roots have been re-applied since the opt-in, no run has a model credential
-// at all until C1.19 lands. Turning it on early costs exactly that, and the
-// owner is told so before they type the project's name.
+// in as many words — is hand a run that credential either: the repository
+// roots' half (this release's: those jobs stop mounting their model
+// credential) is in, the runner's half (C1.19, the wiring that fetches one
+// from the service at call time) is not. So on an installation whose roots
+// have been re-applied since the opt-in, no re-applied repository job has a
+// model credential at all until C1.19 lands. Turning it on early costs
+// exactly that, and the owner is told so before they type the project's name.
 //
 // That is why, exactly as the compute backend's provisioning is,
 // it is registered noYes, its confirmation is the project's name typed at a
@@ -65,14 +76,23 @@ import (
 // image to pin otherwise).
 type credentialsStage struct {
 	e *initEngine
-	// changes and applied mirror computeStage's, so the plan view and the
-	// JSON result read the same either way.
+	// changes and keepKey mirror computeStage's changes and applied, so the
+	// plan view and the JSON result read the same either way.
 	changes *infra.PlanCounts
-	// attempted is whether this stage reached the APPLY: from that moment the
-	// installation's state may hold part of the service, so the TFVARS KEEP
-	// the key whatever the apply answered (see putBack). It is not "the apply
-	// succeeded" — that fact is r.res.Applied, set after the apply returned.
-	attempted bool
+	// keepKey is whether the installation's tfvars KEEP the key whatever this
+	// stage answers (see putBack). It says "removing the key would describe a
+	// service the state holds as one that should not exist", which is true
+	// the moment either of these happens:
+	//
+	//   - the plan found nothing to do, so the state already holds the
+	//     service the key describes (Apply's empty-plan branch), or
+	//   - the APPLY started, so the state may hold part of it.
+	//
+	// It is not "the apply succeeded" — that fact is r.res.Applied, set after
+	// the apply returned — and it is not "the owner confirmed": a declined
+	// confirmation applied nothing, and a run that never wrote the key has
+	// nothing to keep either way.
+	keepKey bool
 	// image is the digest-pinned reference the stage wrote into the tfvars:
 	// what it reports, and what its result records.
 	image string
@@ -160,9 +180,18 @@ func (s *credentialsStage) Plan(ctx context.Context, _ initflow.Env) (initflow.P
 // Apply plans, guards, confirms and applies the installation root with the
 // service on, then reads the outputs back (Verify's subject).
 //
-// Anything short of an apply — the owner declining, no terminal to ask at, a
-// failure before the apply ran — puts the tfvars back as the stage found them
-// (putBack), and a failure to put them back is an error of the run rather
+// A run that CHANGES nothing keeps the key as well, and that is the same rule
+// read again rather than an exception to it: a plan that found
+// nothing to do found it with the key in the tfvars, so the state holds
+// exactly the service the key describes, and a document without it would plan
+// that service's destruction (see keepKey) — unless the Verify that follows
+// refuses, which says the root does not read the key at all and the state
+// holds nothing of the service. That is the one case of "nothing was applied"
+// inside this branch, and the key goes back.
+//
+// Everything else short of an apply — the owner declining, no terminal to ask
+// at, a failure before the apply ran — puts the tfvars back as the stage found
+// them (putBack), and a failure to put them back is an error of the run rather
 // than a warning: the key it failed to remove IS the opt-in, and the next
 // ordinary init would carry it forward and apply the service with none of
 // this stage's typed confirmation.
@@ -177,8 +206,23 @@ func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (out initf
 		s.changes = &infra.PlanCounts{}
 		fmt.Fprintln(r.w, "No changes: the installation's credentials service matches the plan.")
 		if err := s.Verify(ctx); err != nil {
+			// The one way out of this branch that does NOT keep the key, and
+			// it is the same rule read once more: Verify refusing means the
+			// installation's outputs carry no service, and that output is a
+			// function of the tfvars key (modules/installation/outputs.tf) —
+			// so the root does not read the key and the state holds nothing
+			// of the service. Restoring is then safe, and it is what keeps a
+			// key this run could not deliver from sitting in the tfvars for a
+			// later fugaro to apply with none of this stage's confirmation.
 			return initflow.Outcome{}, err
 		}
+		// The key STAYS: the plan that found nothing to do was made WITH the
+		// key in the tfvars, so the installation's state already holds the
+		// service it describes. Putting the key back would leave a document
+		// that plans that service's destruction — which the bundle
+		// container's prevent_destroy refuses — while this stage reported
+		// itself done.
+		s.keepKey = true
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
 	fmt.Fprint(r.w, tf.Summary(plan))
@@ -190,7 +234,7 @@ func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (out initf
 
 	// The confirmation, typed at a real terminal: --yes never covers this
 	// stage, and a run that cannot ask leaves it for the owner.
-	what := fmt.Sprintf("turns ON the credentials service in GCP project %s, as the one identity that reads every model credential the installation holds: a Cloud Run service (%s) running the image %s, its own service account, and one Secret Manager bundle secret whose accessor grant is the service's alone. Every repository root re-applied after this drops EVERY job's model credential — in every agent.auth mode, oauth and api-key as much as cascade — and the part that would give a run a credential from this service instead is NOT in this release yet, so until it lands every run of this installation has no model credential at all (%s)",
+	what := fmt.Sprintf("turns ON the credentials service in GCP project %s: a Cloud Run service (%s) running the image %s, its own service account, and one Secret Manager bundle secret whose accessor grant is the service's alone. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And the part that would give a run a credential from this service instead is NOT in this release yet, so until it lands no re-applied repository job has a model credential at all (%s)",
 		e.lc.GCPProject, infra.CredentialsServiceName, s.image, counts.String())
 	confirmed, reachable, err := r.askTyped(what)
 	if err != nil {
@@ -208,7 +252,7 @@ func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (out initf
 	// prevent_destroy refuses, which leaves the installation holding a
 	// half-built service that no run can put right. A run that never reached
 	// the apply is the only one that puts the key back.
-	s.attempted = true
+	s.keepKey = true
 	if err := e.t.Apply(ctx, infra.PlanFile); err != nil {
 		return initflow.Outcome{}, remote(err)
 	}
@@ -363,9 +407,9 @@ func (s *credentialsStage) prepare(ctx context.Context) error {
 }
 
 // putBack is Apply's deferred return: the tfvars go back as the stage found
-// them when the run never reached the apply, and a restore that fails is an
-// ERROR — joined with whatever the stage was already returning, so neither
-// failure is lost.
+// them when the run has no reason to keep the key (keepKey), and a restore
+// that fails is an ERROR — joined with whatever the stage was already
+// returning, so neither failure is lost.
 //
 // Why an error and not a warning: restore is the only thing that stands
 // between a declined or interrupted run and a leftover key, and a leftover key
@@ -373,7 +417,7 @@ func (s *credentialsStage) prepare(ctx context.Context) error {
 // infra.CarriedCredentialsService). A warning is a run that reports success
 // while leaving exactly that behind.
 func (s *credentialsStage) putBack(out initflow.Outcome, err error) (initflow.Outcome, error) {
-	if s.attempted {
+	if s.keepKey {
 		return out, err
 	}
 	rerr := s.restore()

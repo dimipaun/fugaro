@@ -429,7 +429,7 @@ secrets stage is behind the same gate.`,
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.provisionBatch, "provision-batch", false, "after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so --yes never covers it and it is typed at a real terminal; nothing runs it by default, and no run can use the backend until the enable task. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
-	f.BoolVar(&o.provisionCredentials, "provision-credentials", false, "after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service that is the one identity reading the model credentials (its own account, one Secret Manager bundle secret), running this release's image pinned by digest through the installation's remote repository. Every repository root re-applied after this drops EVERY job's model credential — in every agent.auth mode, oauth and api-key as much as cascade — and the part that gives a run a credential from the service instead is not in this release yet, so until it lands no run of the installation has a model credential to use: this is the owner's step of a service that is not finished. It needs the installation's Firebase rules (fugaro init --firebase) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both")
+	f.BoolVar(&o.provisionCredentials, "provision-credentials", false, "after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And the part that gives a run a credential from the service instead is not in this release yet, so until it lands no re-applied repository job has a model credential to use: this is the owner's step of a service that is not finished. It needs the installation's Firebase rules (fugaro init --firebase) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both")
 	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). Never covers creating a project, billing, a secret, an unlisted repository, the Firestore location, a billable first image build or replacing an image tag (typed at a real terminal). Under a coding agent's environment variable (CLAUDECODE and the like) init applies nothing, --yes included (except init --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one non-interactive opt-in to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes never covers it, and a coding agent's environment refuses it; any other origin takes the typed confirmation)")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
@@ -1644,12 +1644,32 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (
 		// fugaro init after the opt-in would fail instead of applying. The key
 		// is carried forward exactly as the workdir had it, present or absent.
 		//
-		// From wd.PrevVars and never from wd.Root: PrepareWorkdir has already
-		// rebuilt the tree by now, so the file it names does not exist, and a
-		// read of it would answer "nothing to carry" for exactly the
-		// installation that opted in.
-		if vars, err = infra.CarriedCredentialsService(vars, wd.PrevVars); err != nil {
+		// The key is carried from BOTH documents that can hold it, the older
+		// first:
+		//
+		//   - wd.PrevVars, the snapshot PrepareWorkdir took BEFORE it rebuilt
+		//     the tree. It is all an ordinary run has: the tree is fresh, so
+		//     no tfvars file is there yet. Never a read of wd.Root at this
+		//     point — PrepareWorkdir has already deleted the file it names,
+		//     and the read would answer "nothing to carry" for exactly the
+		//     installation that opted in.
+		//   - wd.Vars, the tfvars the workdir holds NOW. A LATER stage of the
+		//     same run reaches prepare again — the compute stage's read of the
+		//     installation's outputs, on the same workdir — and the keys the
+		//     run's own stages wrote into that document are not in the
+		//     snapshot: the credentials stage's opt-in is the one that matters.
+		//     Without it, naming --provision-batch beside --provision-credentials
+		//     would drop the opt-in at the compute stage's first line, before
+		//     its own typed confirmation and therefore for an owner who
+		//     declines it as much as for one who accepts.
+		now, err := wd.Vars()
+		if err != nil {
 			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+		for _, prev := range [][]byte{wd.PrevVars, now} {
+			if vars, err = infra.CarriedCredentialsService(vars, prev); err != nil {
+				return nil, userErr("reading the installation's tfvars: %v", err)
+			}
 		}
 	}
 	if err := wd.WriteVars(vars); err != nil {

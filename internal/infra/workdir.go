@@ -148,7 +148,29 @@ func WorkdirVarsPath(dir, root string) string {
 // holds none, and an error when one is there and cannot be read — a tfvars
 // this program cannot read is not permission to carry nothing forward.
 func ReadWorkdirVars(dir, root string) ([]byte, error) {
-	b, err := os.ReadFile(WorkdirVarsPath(dir, root))
+	return readVarsFile(WorkdirVarsPath(dir, root))
+}
+
+// Vars reads the tfvars this workdir holds for its own root RIGHT NOW, or nil
+// when it holds none: the document as some stage of the run has left it, which
+// is not the same as Workdir.PrevVars — the snapshot PrepareWorkdir took
+// before it rebuilt the tree.
+//
+// The difference is the whole reason this exists: the credentials stage writes
+// its opt-in into these tfvars in the middle of a run, and a LATER stage that
+// rebuilds the document from its spec (prepare, called by the compute stage's
+// read of the installation's outputs) has to carry that key forward from the
+// document as it stands, not from the run's opening snapshot.
+func (w *Workdir) Vars() ([]byte, error) {
+	return readVarsFile(filepath.Join(w.Root, VarsFile))
+}
+
+// readVarsFile is the one read both of the above are: a missing file is
+// "nothing there" (nil, no error), and any other failure is returned, because
+// a tfvars this program cannot read is not permission to carry nothing
+// forward.
+func readVarsFile(path string) ([]byte, error) {
+	b, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil, nil

@@ -122,7 +122,7 @@ func credentialsOutputs(t *testing.T, r *imagesRig) {
 // credentials stage never applies here, so a stage that ran would make it two.
 func TestInitCredentialsStageNotCoveredByYes(t *testing.T) {
 	if initflow.YesCovers(initflow.Credentials) || initflow.RunCovers(initflow.Credentials) {
-		t.Fatal("--yes covers the credentials stage: it is the one identity that reads every model credential, and the opt-in is the owner's own step")
+		t.Fatal("--yes covers the credentials stage: it is the identity the repository jobs' model credentials move to, and the opt-in is the owner's own step")
 	}
 
 	// --yes, no terminal: left for the owner.
@@ -393,8 +393,8 @@ func TestUpgradeNoteNamesTheStage(t *testing.T) {
 			t.Errorf("the note lacks %q:\n%s", want, out)
 		}
 	}
-	// The service is the one identity that reads every model credential, so
-	// the note must not read as something an upgrade does on its own.
+	// The service is the identity the repository jobs' model credentials move
+	// to, so the note must not read as something an upgrade does on its own.
 	if strings.Contains(out, "agent.auth: oauth") {
 		t.Errorf("the note reports the wrong auth mode:\n%s", out)
 	}
@@ -638,25 +638,34 @@ func TestProvisionCredentialsAndBatchAreIndependentApplies(t *testing.T) {
 }
 
 // The confirmation AND the flag's help tell the owner what this release's
-// opt-in actually does (C1.20's review finding F1). They used to say a job
-// that mounts a model credential today would "ask this service instead" —
-// which is not what happens here at all:
+// opt-in actually does (C1.20's review findings F1 and, in the second round,
+// the scope of the promise). They used to say a job that mounts a model
+// credential today would "ask this service instead" — which is not what
+// happens here at all:
 //
-//   - what the opt-in removes is EVERY job's model credential, in EVERY
-//     agent.auth mode (internal/infra/spec.go's dropModelMounts, which the
-//     repository roots run for oauth and api-key as much as for cascade), and
+//   - what the opt-in removes is every REPOSITORY job's model credential, in
+//     EVERY agent.auth mode (internal/infra/spec.go's dropModelMounts, which
+//     the repository roots run for oauth and api-key as much as for cascade),
 //   - the runner half that would fetch one from the service at call time
-//     (C1.19) is not in this release, so until it lands no run of the
-//     installation has a model credential at all.
+//     (C1.19) is not in this release, so until it lands no re-applied
+//     repository job has a model credential at all, and
+//   - the SHARED project jobs are outside it: credentials_service reaches the
+//     installation and workflow modules only, so modules/project keeps
+//     mounting its provider keys and CLAUDE_CODE_OAUTH_TOKEN with their
+//     secretAccessor grants (C3.9 is the task that moves them). Both texts
+//     said "every model credential the installation holds", which is the
+//     whole installation and is not what this step does.
 //
 // An owner typing their project's name at this prompt is deciding something
 // money-and-permanent with that in front of them, so both texts are pinned
-// here — the words that must be there, and the claim that must not come back.
+// here — the words that must be there, the scope that must be named, and the
+// claims that must not come back.
 //
 // Mutation (verified, run and restored): restore either old sentence ("stops
 // mounting one and asks this service instead" in the confirmation, "stops
 // mounting each job's model credential and asks the service instead" in the
-// flag's help): this test fails.
+// flag's help), or drop the shared-jobs sentence from either text: this test
+// fails.
 func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 	r := credentialsStageRig(t)
 	r.setPlanAt(t, "installation")
@@ -670,18 +679,26 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 		t.Fatalf("the stage never showed its confirmation, so this test read the wrong text:\n%s", s)
 	}
 	for _, want := range []string{
-		"EVERY job's model credential",
+		"the REPOSITORY jobs' model credentials move to",
+		"drops its model credential",
 		"in every agent.auth mode",
 		"oauth and api-key as much as cascade",
+		"does NOT reach the shared project jobs",
+		"CLAUDE_CODE_OAUTH_TOKEN",
 		"in this release yet",
-		"no model credential",
+		"no re-applied repository job has a model credential at all",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("the confirmation does not say %q:\n%s", want, s)
 		}
 	}
-	if strings.Contains(s, "asks this service instead") {
-		t.Errorf("the confirmation still promises that a job asks the service instead:\n%s", s)
+	for _, unwanted := range []string{
+		"asks this service instead",
+		"every model credential the installation holds",
+	} {
+		if strings.Contains(s, unwanted) {
+			t.Errorf("the confirmation still says %q:\n%s", unwanted, s)
+		}
 	}
 
 	// The flag's help, which is what an owner reads BEFORE they run it.
@@ -695,11 +712,14 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 		t.Fatal("fugaro init has no --provision-credentials flag")
 	}
 	for _, want := range []string{
-		"EVERY job's model credential",
+		"the REPOSITORY jobs' model credentials move to",
+		"drops its model credential",
 		"in every agent.auth mode",
 		"oauth and api-key as much as cascade",
+		"does NOT reach the shared project jobs",
+		"CLAUDE_CODE_OAUTH_TOKEN",
 		"in this release yet",
-		"no run of the installation has a model credential to use",
+		"no re-applied repository job has a model credential to use",
 	} {
 		if !strings.Contains(f.Usage, want) {
 			t.Errorf("the flag's help does not say %q:\n%s", want, f.Usage)
@@ -790,5 +810,129 @@ func TestPrintVarsCarriesTheOptedInKey(t *testing.T) {
 	}
 	if svc["image"] != r.credentialsRef() {
 		t.Errorf("printed credentials_service.image = %v, want %q", svc["image"], r.credentialsRef())
+	}
+}
+
+// credentialsBatchRig is the credentials rig plus what the compute stage's
+// provisioning needs to reach its own apply: the installation's pin, the
+// run-class account a repository root created, the rebuild job, and the
+// compute root's own outputs.
+func credentialsBatchRig(t *testing.T) *imagesRig {
+	t.Helper()
+	r := credentialsStageRig(t)
+	r.appendConfig(t, "base_images:\n  "+config.BaseKind+": "+computePin+"\n")
+	r.iam.AddServiceAccount(initProject, "fugaro-acme-web@proj-1234.iam.gserviceaccount.com", "Fugaro job acme/sandbox web")
+	r.sched.SetJob(initProject, "us-east5", infra.PreloadSchedulerJob,
+		"https://cloudbuild.googleapis.com/v1/projects/proj-1234/builds", "fugaro-preload@proj-1234.iam.gserviceaccount.com")
+	r.script["output@compute"] = map[string]any{"stdout": computeOutputsJSON(t)}
+	r.save(t)
+	return r
+}
+
+// A run that names BOTH owner-run applies keeps the opt-in (C1.20's third
+// review round, finding 1). The compute stage begins by reading the
+// installation's outputs, and that read runs init.go's prepare on the
+// installation's OWN workdir: the tfvars are rewritten from the spec — which
+// never carries credentials_service — so the key the credentials stage wrote
+// a few stages earlier is gone unless the carry reads the document the workdir
+// holds NOW and not only the snapshot PrepareWorkdir took before the run
+// started.
+//
+// What losing it costs, and why this is not a cosmetic loss: the next
+// fugaro init carries nothing forward, plans the service, its account, its
+// grant and its bundle secret away, and the bundle container's
+// prevent_destroy refuses that plan — at the INSTALLATION stage, before any
+// later stage runs, so the --provision-credentials run that would put the key
+// back cannot reach its own apply either. The plan is made before the compute
+// stage's typed confirmation, so even an owner who declines the Batch
+// provisioning is left in it.
+//
+// The two typed confirmations are answered in the order the stages run:
+// credentials first (it is registered before the repository stage), Batch
+// second.
+//
+// Mutation (verified, run and restored): carry only from wd.PrevVars in
+// prepare (drop the current-document carry): this test fails, the
+// installation's tfvars holding no credentials_service after the run.
+func TestCredentialsAndBatchInOneRunKeepTheOptIn(t *testing.T) {
+	r := credentialsBatchRig(t)
+	r.setPlanAt(t, "installation")
+	credentialsOutputs(t, r)
+	typedThroughYes(t)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, initProjectName+"\n"+initProjectName+"\n", "init", "--yes", "--provision-credentials", "--provision-batch")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("the run naming both applies failed: %v\n%s", err, s)
+	}
+	if applies := r.ran(t, "apply"); len(applies) < 2 {
+		t.Fatalf("applies = %v, want the installation's and the compute root's at least: the run did not reach the Batch provisioning\n%s", applies, s)
+	}
+	if _, ok := r.tfvars(t)["credentials_service"]; !ok {
+		t.Errorf("the run's later compute stage rewrote the installation's tfvars and dropped the opt-in: the next fugaro init plans the service's destruction, which the bundle container's prevent_destroy refuses at the installation stage, before the credentials stage can put the key back:\n%s", s)
+	}
+}
+
+// Apply's empty-plan branch keeps the key (C1.20's third review round, finding
+// 2). "No changes" is not "nothing happened": the plan that found nothing to
+// do found it WITH the key in the tfvars, so the installation's state already
+// holds exactly the service the key describes. Putting the key back there
+// leaves a document that plans that service's destruction — a plan the bundle
+// container's prevent_destroy refuses — and this stage reports itself done
+// while doing it, the same trap the apply path is guarded against.
+//
+// Mutation (verified, run and restored): drop the keepKey assignment from the
+// empty-plan branch: this test fails, the tfvars losing credentials_service
+// while the stage reports "No changes".
+func TestInitCredentialsStageKeepsTheKeyWhenThePlanFindsNothing(t *testing.T) {
+	r := credentialsStageRig(t)
+	credentialsOutputs(t, r)
+	// The installation root's plan finds nothing to do, which is this branch:
+	// terraform's detailed exit code 0, not 2.
+	r.script["plan@installation"] = map[string]any{"exit": 0}
+	r.save(t)
+	typedThroughYes(t)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("a run whose plan found nothing to do failed: %v\n%s", err, s)
+	}
+	if !strings.Contains(s, "No changes: the installation's credentials service matches the plan.") {
+		t.Fatalf("the credentials stage did not reach its empty-plan branch, so this test read the wrong path:\n%s", s)
+	}
+	if _, ok := r.tfvars(t)["credentials_service"]; !ok {
+		t.Errorf("the stage reported \"No changes\" and took the opt-in out of the tfvars: the installation's state holds the service, so the next plan is that service's destruction, which the bundle container's prevent_destroy refuses:\n%s", s)
+	}
+}
+
+// ...and the one way out of that branch which does NOT keep the key: a Verify
+// that refuses says the installation's outputs carry no service, and that
+// output is a function of the tfvars key (modules/installation/outputs.tf), so
+// the root does not read it and the state holds nothing of the service. The
+// key goes back — a key this run could not deliver must not sit in the tfvars
+// for a later fugaro to apply with none of this stage's typed confirmation.
+//
+// Mutation (verified, run and restored): set keepKey before the Verify in the
+// empty-plan branch (keep the key whatever the outputs say): this test fails,
+// the tfvars keeping credentials_service.
+func TestInitCredentialsStageTakesTheKeyBackWhenTheNoChangeRunVerifiesNothing(t *testing.T) {
+	r := credentialsStageRig(t)
+	// The plan finds nothing to do, and the outputs carry no credentials
+	// service: the key is in the tfvars and the installation does not read it.
+	r.script["plan@installation"] = map[string]any{"exit": 0}
+	r.save(t)
+	typedThroughYes(t)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials")
+	s := out + errOut
+	if err == nil {
+		t.Fatalf("a run whose outputs carry no credentials service reported success:\n%s", s)
+	}
+	if !strings.Contains(err.Error(), "carry no credentials service") {
+		t.Errorf("the run's error is not Verify's refusal: %v\n%s", err, s)
+	}
+	if _, ok := r.tfvars(t)["credentials_service"]; ok {
+		t.Errorf("a run that applied nothing and enabled nothing left the opt-in in the tfvars: the next ordinary init carries it forward and applies the service with none of this stage's typed confirmation:\n%s", s)
 	}
 }

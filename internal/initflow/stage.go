@@ -90,9 +90,9 @@ var order = []slot{
 	{name: Secrets, needs: []string{Installation2}, noYes: true},
 	{name: Plugin, needs: []string{Preflight}},
 	// The credentials service is the owner's step (money, permanent, and the
-	// one identity that reads every model credential), so --yes never covers
-	// it; it is applied before the repository roots, which read its output
-	// and grant each job's account an invoker on it.
+	// identity the repository jobs' model credentials move to), so --yes never
+	// covers it; it is applied before the repository roots, which read its
+	// output and grant each job's account an invoker on it.
 	{name: Credentials, needs: []string{Installation2}, noYes: true},
 	{name: Repository, needs: []string{Installation2, Secrets}},
 	// The compute backend's provisioning is money, permanent and owner-run,
