@@ -1177,8 +1177,10 @@ func TestChecklistCheck68NegativeDirectionNamesAgree(t *testing.T) {
 // something, a state bucket that is not the one the installation lives under —
 // was applied unread, in a live project, twice. The check now reads the shape
 // before each apply: fourteen to add and nothing to change or destroy when the
-// gate opens, and on the restore a plan that destroys those fourteen addresses
-// and nothing else.
+// gate opens, and on the restore a plan that destroys the gate's own addresses
+// and nothing else — between one and fourteen of them, because step 2 may have
+// stopped the opening apply after some, and a restore that demanded all
+// fourteen refused there with the gate still open and no way forward.
 //
 // Mutations (verified, run and restored): step 2's shape assertion removed →
 // FAIL; the restore's plan-then-apply reverted to `-auto-approve` → FAIL; the
@@ -1246,7 +1248,8 @@ func TestChecklistCheck68AssertsThePlanShape(t *testing.T) {
 		`terraform plan -input=false -out="$CHK68_TMP/restore.tfplan"`,
 		`terraform show -json "$CHK68_TMP/restore.tfplan"`,
 		`terraform apply -input=false "$CHK68_TMP/restore.tfplan"`,
-		`[ "$ADD" = 0 ] && [ "$CHG" = 0 ] && [ "$DEL" = 14 ] && [ "$OTHER" = 0 ]`,
+		`select(.change.actions == ["delete","create"] or .change.actions == ["create","delete"] or .change.actions == ["forget"])`,
+		`[ "$ADD" = 0 ] && [ "$CHG" = 0 ] && [ "$SWAP" = 0 ] && [ "$DEL" -ge 1 ] && [ "$DEL" -le 14 ] && [ "$OTHER" = 0 ]`,
 		`google_project_iam_(custom_role|member)\.fugaro_deployer_(storage|secret|account|apikey|repository|run_job|scheduler_job)\[`,
 		`chk68_stop "`,
 	} {
@@ -1511,13 +1514,13 @@ func TestChecklistCheck68RestorePlanFilterIsRun(t *testing.T) {
 	}{
 		{"the gate's own fourteen, module-prefixed",
 			append(destroys(gate), own), true,
-			"restore plan: 0 to add, 0 to change, 14 to destroy, 0 outside the gate"},
+			"restore plan: 0 to add, 0 to change, 14 to destroy, 0 outside the gate, 0 to replace or forget"},
 		{"the gate's own fourteen, unprefixed",
 			append(destroys(unprefixed(gate)), own), true,
-			"restore plan: 0 to add, 0 to change, 14 to destroy, 0 outside the gate"},
+			"restore plan: 0 to add, 0 to change, 14 to destroy, 0 outside the gate, 0 to replace or forget"},
 		{"a no-op outside the gate",
 			append(append(destroys(gate), own), change{"module.installation.google_storage_bucket.runs[0]", []string{"no-op"}}), true,
-			"restore plan: 0 to add, 0 to change, 14 to destroy, 0 outside the gate"},
+			"restore plan: 0 to add, 0 to change, 14 to destroy, 0 outside the gate, 0 to replace or forget"},
 		{"a fifteenth destroy, of another resource",
 			append(destroys(gate), change{"module.installation.google_storage_bucket.runs[0]", []string{"delete"}}), false,
 			"1 address(es) outside the gate"},
@@ -1537,6 +1540,47 @@ func TestChecklistCheck68RestorePlanFilterIsRun(t *testing.T) {
 		{"an add the restore did not make",
 			append(append(destroys(gate), own), change{"module.installation.google_service_account.runs", []string{"create"}}), false,
 			"1 to add"},
+		// The partial set, and it is the case the restore used to refuse: step 2
+		// stops on any plan shape it does not expect, so the opening apply can
+		// have created six of the fourteen and been refused on the seventh, and
+		// the plan that closes the gate destroys exactly those six. A restore
+		// that demanded all fourteen stopped there, with the gate still open and
+		// nothing the owner could do, which is the state the step exists to
+		// avoid.
+		{"a partial set of the gate's own, six of the fourteen",
+			append(destroys(gate[:6]), own), true,
+			"restore plan: 0 to add, 0 to change, 6 to destroy, 0 outside the gate, 0 to replace or forget"},
+		{"one of the gate's own, the opening apply refused after the first",
+			append(destroys(gate[:1]), own), true,
+			"restore plan: 0 to add, 0 to change, 1 to destroy, 0 outside the gate, 0 to replace or forget"},
+		// The upper end of the range, which a real plan cannot reach (the gate
+		// writes fourteen addresses) and which the assertion still names: more
+		// destroys than the gate has addresses is not this check's restore.
+		{"more destroys than the gate has addresses",
+			append(destroys(gate), change{gate[0], []string{"delete"}}), false,
+			"15 to destroy"},
+		{"a restore with nothing to destroy",
+			[]change{own}, false,
+			"0 to destroy"},
+		// A REPLACEMENT OF A GATE ADDRESS, with the rest of the gate destroyed
+		// beside it: the address filter passes it (it is one of the gate's own),
+		// no exact count sees it, and the destroy count is inside the range — so
+		// the action filter is the only thing between the restore and destroying
+		// and rebuilding a conditioned role the check is about to measure. The
+		// replacement alone, with nothing else in the plan, is refused by the
+		// range instead: an exact ["delete"] count is zero for it.
+		{"a replace of one of the gate's own addresses, beside thirteen destroys",
+			append(append(destroys(gate[:13]), change{gate[13], []string{"delete", "create"}}), own), false,
+			"1 to replace or forget"},
+		{"a replace of one of the gate's own addresses, and nothing else",
+			append([]change{change{gate[0], []string{"delete", "create"}}}, own), false,
+			"0 to destroy"},
+		{"a forget of one of the gate's own addresses, beside thirteen destroys",
+			append(append(destroys(gate[:13]), change{gate[13], []string{"forget"}}), own), false,
+			"1 to replace or forget"},
+		{"a change of one of the gate's own addresses",
+			append(append(destroys(gate[:6]), change{gate[6], []string{"update"}}), own), false,
+			"1 to change"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

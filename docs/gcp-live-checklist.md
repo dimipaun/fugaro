@@ -4752,11 +4752,13 @@ grep -n 'managed_deployer_scoped' "$W/gcp/roots/installation/terraform.tfvars.js
 cd "$W/gcp/roots/installation"
 export TF_DATA_DIR="$W/.terraform" TF_CLI_CONFIG_FILE="$W/terraformrc"
 # Plan the restore, and read the plan before applying it. Closing the gate on
-# the installation the check opened it in destroys the gate's fourteen
-# addresses — the seven roles and the seven bindings — and nothing else, so a
-# plan carrying anything more is a change this check did not make and must not
-# apply. `-auto-approve` on its own would apply whatever the plan turned out to
-# be, and the restore is the one apply nobody reads.
+# the installation the check opened it in destroys the gate's own addresses —
+# the seven roles and the seven bindings the opening apply actually created,
+# between one and fourteen of them, because step 2 may have stopped the apply
+# after some of them — and nothing else, so a plan carrying anything more is a
+# change this check did not make and must not apply. `-auto-approve` on its own
+# would apply whatever the plan turned out to be, and the restore is the one
+# apply nobody reads.
 #
 # The plan, the assertion and the apply live in a FUNCTION because of the stop:
 # every other stop in this check is `{ echo …; exit 1; }`, which is right where
@@ -4771,11 +4773,30 @@ chk68_restore() {
   ADD=$(jq '[.resource_changes[] | select(.change.actions == ["create"])] | length' "$CHK68_TMP/restore.json")
   CHG=$(jq '[.resource_changes[] | select(.change.actions == ["update"])] | length' "$CHK68_TMP/restore.json")
   DEL=$(jq '[.resource_changes[] | select(.change.actions == ["delete"])] | length' "$CHK68_TMP/restore.json")
+  # A REPLACEMENT is neither an add, a change nor a destroy: Terraform plans one
+  # as ["delete","create"], which no exact count sees, and a replacement of one
+  # of the gate's OWN addresses is inside the address filter below — so without
+  # this count a plan that destroys and rebuilds a conditioned role passes as
+  # "nothing happened". The action filter is step 2's own, for the same reason.
+  SWAP=$(jq -r '.resource_changes[] | select(.change.actions == ["delete","create"] or .change.actions == ["create","delete"] or .change.actions == ["forget"]) | .address' "$CHK68_TMP/restore.json" | wc -l | tr -d ' ')
   OTHER=$(jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | .address' "$CHK68_TMP/restore.json" \
     | grep -cvE '^(module\.[A-Za-z0-9_-]+\.)?google_project_iam_(custom_role|member)\.fugaro_deployer_(storage|secret|account|apikey|repository|run_job|scheduler_job)\[')
-  echo "restore plan: ${ADD} to add, ${CHG} to change, ${DEL} to destroy, ${OTHER} outside the gate"
-  { [ "$ADD" = 0 ] && [ "$CHG" = 0 ] && [ "$DEL" = 14 ] && [ "$OTHER" = 0 ]; } \
-    || { chk68_stop "the restore plan is ${ADD} to add, ${CHG} to change, ${DEL} to destroy with ${OTHER} address(es) outside the gate's own fourteen. Closing the gate destroys the seven conditioned roles and the seven bindings and nothing else; read the plan's own lines above rather than apply it. THE GATE IS STILL OPEN: those seven roles and their bindings are live in ${P:?} until a restore that destroys them is applied, so this is not a state to leave the check in — find out what the plan carries that it should not, fix that, and run this step again."; return 1; }
+  echo "restore plan: ${ADD} to add, ${CHG} to change, ${DEL} to destroy, ${OTHER} outside the gate, ${SWAP} to replace or forget"
+  # BETWEEN ONE AND FOURTEEN destroys, and not exactly fourteen. Step 2 is a
+  # plan the owner reads before applying it, and it stops on any shape it does
+  # not expect — a refusal there is a result rather than a fault — so the
+  # opening apply can have created some of the fourteen and not others. The
+  # state then holds that partial set, and the plan that closes the gate
+  # destroys exactly it. A restore that demanded all fourteen would refuse
+  # there, with the gate still open and nothing the owner could do about it,
+  # which is the one state this step exists to avoid. Everything else still
+  # refuses, because everything else is a change this check did not make: an
+  # add, a change, a replacement (which no count sees), a destroy of an address
+  # outside the gate's fourteen, and a plan that destroys nothing at all — that
+  # last one is not a gate being closed but a restore with nothing to restore,
+  # and the stop says which of the two it is.
+  { [ "$ADD" = 0 ] && [ "$CHG" = 0 ] && [ "$SWAP" = 0 ] && [ "$DEL" -ge 1 ] && [ "$DEL" -le 14 ] && [ "$OTHER" = 0 ]; } \
+    || { chk68_stop "the restore plan is ${ADD} to add, ${CHG} to change, ${DEL} to destroy with ${OTHER} address(es) outside the gate's own fourteen and ${SWAP} to replace or forget. Closing the gate destroys the gate's own addresses — the seven conditioned roles and the seven bindings the opening apply actually created, between one and fourteen of them — and nothing else, so a plan carrying an add, a change, a replacement or an address outside the gate is a change this check did not make and must not apply. A plan that destroys none of them is the other refusal: either the opening apply created none (there is then no gate to close, and step 3's policy read is what says so) or the copy of the tfvars did not take effect. THE GATE IS STILL OPEN unless that read says otherwise: those roles and their bindings are live in ${P:?} until a restore that destroys them is applied, so this is not a state to leave the check in — find out what the plan carries that it should not, fix that, and run this step again."; return 1; }
   terraform apply -input=false "$CHK68_TMP/restore.tfplan"
 }
 if chk68_restore; then
