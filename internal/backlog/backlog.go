@@ -227,10 +227,17 @@ func checkBody(path, body string) error {
 // be a file the index silently does not list, which is the one thing the
 // folder's two guards exist to catch.
 func LoadDir(root string) ([]Item, error) {
-	dir := filepath.Join(root, Dir)
+	return Load(filepath.Join(root, Dir))
+}
+
+// Load reads every item in the folder dir. It is LoadDir's body: the folder is
+// a parameter there so a caller that is not standing at a repository root —
+// `fugaro backlog list --dir`, and the folder's own guards over a synthetic
+// tree — reads the same way.
+func Load(dir string) ([]Item, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", filepath.Join(Dir), err)
+		return nil, fmt.Errorf("read %s: %w", dir, err)
 	}
 	var items []Item
 	seen := map[string]string{}
@@ -239,11 +246,12 @@ func LoadDir(root string) ([]Item, error) {
 		if e.IsDir() || !strings.HasSuffix(name, ".md") || name == IndexName || name == FormatName {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, name))
+		itemPath := filepath.Join(dir, name)
+		data, err := os.ReadFile(itemPath)
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", path.Join(Dir, name), err)
+			return nil, fmt.Errorf("read %s: %w", itemPath, err)
 		}
-		item, err := Parse(path.Join(Dir, name), data)
+		item, err := Parse(itemPath, data)
 		if err != nil {
 			return nil, err
 		}
