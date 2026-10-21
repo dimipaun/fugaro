@@ -146,7 +146,7 @@ Minting a *second* account's token, when this terminal already holds one from `c
 
 ## 9. Hand off
 
-1. Run `fugaro update --repo --plan-only` (read-only; on a GitHub repository add `--github-app-id <id>` with the ID from step 5, topic 1) and show what update would create. It uses the user's own credentials and may refuse without a terminal or an installation: a refusal is normal, and the user then runs it and reads you the plan.
+1. Run `fugaro update --repo --plan-only` (read-only; on a GitHub repository add `--github-app-id <id>` with the ID from step 5, topic 1) and show what update would apply. It uses the user's own credentials and may refuse without a terminal or an installation: a refusal is normal, and the user then runs it and reads you the plan.
 2. Offer a pull request; make one only when the user says so. It holds `fugaro.yaml`, `mise.toml` if you wrote or changed one, each `.fugaro/<workflow>.Dockerfile`, the `agent.instructions` file if there is one,
 and the `.claude/settings.json` change the installation step already made (the plugin pin), if it is still uncommitted. Tell the user to put nothing else in it.
 3. Summarize: the workflows with their commands and report globs (each with its file), the image settings with their evidence and what you could not express or verify, the `project:` you wrote (the base branch must carry it before runs work), the decisions the user made, any `rebuild.paths`, and the secrets still missing.
