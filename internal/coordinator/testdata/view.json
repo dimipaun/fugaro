@@ -36,6 +36,13 @@
       "title": "Hand-written change no run opened",
       "branch": "topic/hand-written",
       "state": "open"
+    },
+    {
+      "number": 18,
+      "url": "https://github.com/acme/app/pull/18",
+      "title": "Mint the read-only token per repository",
+      "branch": "fugaro/20261014-100000-gggg",
+      "state": "open"
     }
   ],
   "runs": [
@@ -98,6 +105,16 @@
       "base_branch": "main",
       "declared_by": "someone@example.com",
       "files": ["internal/cli/exec.go"]
+    },
+    {
+      "id": "20261014-100000-gggg",
+      "pr": 18,
+      "status": "running",
+      "terminal": false,
+      "branch": "fugaro/20261014-100000-gggg",
+      "base_branch": "release/v0.12.0",
+      "declared_by": "other@example.com",
+      "files": ["internal/gitprov/github/apptoken.go"]
     }
   ]
 }

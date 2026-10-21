@@ -53,8 +53,10 @@
 //
 // The second half of the file is the mutation-proof half. `NEVER_REACHABLE` is
 // the table of commands and flags the console must never reach: every write
-// subcommand on this tree, the `secrets` commands, `init`, `upgrade` and the
-// hidden `exec`, the hidden `budget history` job command, `image git-credential`
+// subcommand on this tree -- including the converge, `setup` and `update`, which
+// create a project and apply Terraform -- the `secrets` commands, the retired
+// `init` tombstone, `upgrade` and the hidden `exec`, the hidden
+// `budget history` job command, `image git-credential`
 // (it prints a credential), the project-centric phase 1 commands that write or
 // publish, and the flags that make a read-only command into something else
 // (`--follow`, `--check-github-app`, `--strict`, `--csv`, `--watch`, the watch
@@ -680,9 +682,21 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
   },
   {
     shape: 'command',
+    value: 'setup',
+    why: 'a write: the first-run converge creates the GCP project, the installation and a repository’s Fugaro wiring, and it applies Terraform',
+    where: 'internal/cli/setup.go:235 (the setup door of internal/cli/init.go’s newInitCmdWith)',
+  },
+  {
+    shape: 'command',
+    value: 'update',
+    why: 'a write: the re-converge applies Terraform over an existing installation, and it may destroy what a removed flag built',
+    where: 'internal/cli/update.go:58 (the update door of internal/cli/init.go’s newInitCmdWith)',
+  },
+  {
+    shape: 'command',
     value: 'init',
-    why: "a write: it creates a repository's Fugaro wiring",
-    where: 'internal/cli/init.go:103',
+    why: 'the retired converge: a hidden tombstone that applies nothing and exits 1, naming `fugaro setup` and `fugaro update`. It stays on this table because the console may not drive it either — a verb that refuses every argv is not a read the console could make',
+    where: 'internal/cli/retired.go:39 (Hidden: true)',
   },
   {
     shape: 'command',

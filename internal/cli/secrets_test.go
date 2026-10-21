@@ -2096,8 +2096,8 @@ func TestNormalizeRepoArgs(t *testing.T) {
 			[]string{"secrets", "set", "npm-token", "--", "--repo"}},
 		{"global flags stay put", []string{"--config", "/tmp/c.yaml", "secrets", "set", "npm-token", "--repo"},
 			[]string{"--config", "/tmp/c.yaml", "secrets", "set", "npm-token", "--repo="}},
-		{"init's --repo is a bool", []string{"init", "--repo"},
-			[]string{"init", "--repo"}},
+		{"init's --repo is a bool", []string{"setup", "--repo"},
+			[]string{"setup", "--repo"}},
 		// A flag's *value* is not the command: the scan reads argv the way
 		// cobra's own does, so the first token that spells "secrets" being a
 		// value does not hide the subcommand behind it -- the rewrite would

@@ -97,13 +97,31 @@ var datedRecords = []string{
 	"docs/setup-wizard/",
 }
 
-// retirementText is the second exemption class, and it is not a judgement
+// retirementPaths is the second exemption class, and it is not a judgement
 // call: each of these paths names `fugaro init` *as the retired verb*, which
 // is its whole job and which no rename can remove. It is a list of paths that
 // MAY name the command, so a path that does not exist yet contributes nothing
 // -- W1.2 adds the first two, and the third is this file, whose scan pattern
 // is the string. W2.6 asserts that the files naming the command are exactly
-// `datedRecords` plus these three.
+// `datedRecords` plus these seven.
+//
+// The last four are #789's, and the test of whether they belong here rather
+// than on `pendingRename` is the class's own: the rename cannot remove the
+// mention without deleting the sentence that makes the file worth having.
+// The console's test/unit/ipc.test.ts carries the console's table of CLI leaf
+// commands, where `fugaro init` is a row named `retired` -- the row is the
+// command's real name, not a spelling of it -- and the console's README.md is
+// the same table's paragraph recording the 2026-10-21 split that left it a
+// tombstone. Both name the verb as the subject of a record. They sit outside
+// every live root, which is why the roots test below is the only walk that
+// would ever have seen them; a path here is exempt file by file, so a third
+// file in that directory that names the command in live text still fails it.
+//
+// The two are spelled through consoleDirName and never as the literal path,
+// which is censusOutputDirs' own rule below and docs_console_boundary_test.go's
+// reason for it: that file counts the directory's name followed by a slash
+// anywhere in a Go file, comments included, and this file names the directory
+// to step over it rather than to reach into it.
 //
 // internal/cli/testdata/init_retire.golden is deliberately NOT here, although
 // it names the command four times today: it is a transcript, not a retirement
@@ -111,7 +129,7 @@ var datedRecords = []string{
 // with TestInitRepoRetireTranscriptGolden -update-retire exactly like the other
 // two goldens. An exemption for a file the rename empties is the "wrong in one
 // direction" case Global Constraint 7 forbids.
-var retirementText = []string{
+var retirementPaths = []string{
 	// W1.2's tombstone: one message, two names, non-zero exit.
 	"internal/cli/retired.go",
 	// W1.2's test, which asserts that message.
@@ -119,6 +137,12 @@ var retirementText = []string{
 	// This file: `pendingRename` is a list of paths, but the pattern below is
 	// the string itself.
 	"internal/cli/docs_live_init_census_test.go",
+	// The console's never-reachable table: `fugaro init` is a row of it, named
+	// `retired`, and the row holds the command's actual name.
+	consoleDirName + "/test/unit/ipc.test.ts",
+	// The same table's paragraph in the console's README, recording the split
+	// that made the row a tombstone.
+	consoleDirName + "/README.md",
 }
 
 // liveRoots is what the census walks. Every top-level entry that names the
@@ -161,67 +185,95 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted, taken on main at 1d325928 -- this branch's base, and the
-// tree every count below was read from. It is 312 files -- 118 non-test Go
-// files, 117 test files, 34 markdown files, 29 Terraform files, the four
-// `.tftest.hcl` fixtures beside them, the two goldens, and the eight that fall
-// in none of those groups: the website's four (its install data, its two pages
-// and its test script), the two under images/ (a Dockerfile and a shell
-// script), the published schema, and internal/config/example.yaml, the sample
-// config internal/config/example.go embeds. Each task that renames a string
-// takes the file off this list in the same commit, and W2.6 empties it.
+// command, sorted. It is 275 files -- 114 non-test Go files, 118 test files,
+// 36 markdown files, the two goldens, and the five that fall in none of those
+// groups: the website's four (its install data, its two pages and its test
+// script) and the getting-started design board the redesign was approved from,
+// website/design-ref/GettingStartedV4.dc.html. Read on main at `1d325928`, the
+// branch's base, it was **312** files-- 118 non-test Go files, 117 test files,
+// 34 markdown files, 29 Terraform files, the four `.tftest.hcl` fixtures beside
+// them, the two goldens, and eight in none of those groups: the website's four,
+// the two under images/ (a Dockerfile and a shell script), the published
+// schema, and internal/config/example.yaml, the sample config
+// internal/config/example.go embeds.
+//
+// **The list moves in both directions, and each move is a merge a reader can
+// find.** Forty-four files left it because the rename reached them: #766 (W2.5)
+// renamed the 29 Terraform files, the four `.tftest.hcl` fixtures beside them,
+// the published schema, internal/config/example.{go,yaml}, the two files under
+// images/ and deploy/terraform/terraform.go with its test -- and
+// deploy/terraform/gcp/roots/repo/tests/testdata/README.md, whose mention the
+// same commit (03c70731) took out of its prose while leaving the file itself
+// where it is; #765 (W1.1) renamed internal/initflow's loop.go, loop_test.go and
+// stage.go. Leaving the list in the commit that renamed them is what the
+// paragraph below asks of every rename task, and a file that stayed on it after
+// its rename would fail the walk in the direction that costs the most: it would
+// read as a promise still owed.
+//
+// Eleven files joined it, every one a mention the rename still owes, and eight
+// merges put them there. #775 (the central-orchestrator folder's spec,
+// reconciliation and plan) added docs/central-orchestrator/{README,
+// implementation-plan}.md and #793 (the coordinator's plan) added
+// docs/coordinator/implementation-plan.md -- both another artifact's dated
+// record, which is the class docs/coordinator/**, docs/mobile/** and
+// docs/windows-cli/** are already in; #798 (the mobile sign-in folder) added
+// docs/mobile-auth/{implementation-plan,reconciliation}.md and #773 (the
+// rigor-modes folder) docs/rigor-modes/{implementation-plan,reconciliation}.md.
+// Three are code: #771 (W0.3, the register's Check 27 rewrite) added
+// internal/cli/docs_setup_wizard_checks_test.go, whose mention is a scan
+// pattern rather than text a user reads -- the guard that Check 27's Restore
+// does not name the retired command, the same job this file's own pattern does
+// -- so W2.1 has to re-point it rather than rename it; #765 (W1.1) added
+// internal/cli/loop_program_test.go, whose loopProgramWant is the front door
+// the stage engine is driven with and which W2.1 renames when the front door is
+// `fugaro setup`; and #770 (W0.1) added internal/cli/setup_refusals_test.go, a
+// comment naming the bare `init --repo` form. The eleventh, #778's
+// website/design-ref/GettingStartedV4.dc.html, is the one whose remedy is not
+// the rename's to make alone: it is the owner-approved board for the
+// getting-started page printing the command in its own copy, and the folder's
+// README says the boards are not built, not shipped and not served -- so W2.4
+// either renames the board or the owner rules the folder a dated record, and
+// leaving it on the list is what keeps that choice visible instead of settled
+// by a walk that stopped looking.
+//
+// **The tombstone moved the line, and this merge is where it moved.** #789
+// retired the verb and wrote the retirement sentence into six files that had
+// been on this list -- the setup skill's SKILL.md and its three reference
+// sheets, plugin/skills_lint_test.go and internal/cli/loop_program_test.go --
+// so the six left it, the same way the forty-four above did. Two joined it:
+// internal/agent/relay_test.go, whose redactor table drives `fugaro init
+// --repo` and asserts no subcommand survives it, and
+// internal/cli/docs_checkout_test.go, whose comment names the retired word
+// docs/checkout.md still uses for `fugaro setup` and which the rename of that
+// document rewrites with it. Two more #789 wrote -- the console's README.md and
+// its test/unit/ipc.test.ts, both recording the 2026-10-21 split of the
+// verb and the tombstone it left -- are not listed because they cannot be
+// renamed at all: they are retirement text, and they are on `retirementPaths`
+// below instead.
+//
+// Each task that renames a string takes the file off this list in the same
+// commit, and W2.6 empties it.
 var pendingRename = []string{
 	".claude/skills/new-release/SKILL.md",
 	"CONTRIBUTING.md",
 	"README.md",
 	"SECURITY.md",
-	"deploy/terraform/gcp/modules/compute/outputs.tf",
-	"deploy/terraform/gcp/modules/compute/variables.tf",
-	"deploy/terraform/gcp/modules/firebase/apis.tf",
-	"deploy/terraform/gcp/modules/firebase/firebase.tf",
-	"deploy/terraform/gcp/modules/firebase/outputs.tf",
-	"deploy/terraform/gcp/modules/firebase/variables.tf",
-	"deploy/terraform/gcp/modules/installation/bucket.tf",
-	"deploy/terraform/gcp/modules/installation/deployer.tf",
-	"deploy/terraform/gcp/modules/installation/iam.tf",
-	"deploy/terraform/gcp/modules/installation/outputs.tf",
-	"deploy/terraform/gcp/modules/installation/registry.tf",
-	"deploy/terraform/gcp/modules/installation/secrets.tf",
-	"deploy/terraform/gcp/modules/installation/variables.tf",
-	"deploy/terraform/gcp/modules/project/job.tf",
-	"deploy/terraform/gcp/modules/repo/check.tf",
-	"deploy/terraform/gcp/modules/repo/variables.tf",
-	"deploy/terraform/gcp/modules/workflow/job.tf",
-	"deploy/terraform/gcp/modules/workflow/variables.tf",
-	"deploy/terraform/gcp/roots/compute/main.tf",
-	"deploy/terraform/gcp/roots/compute/outputs.tf",
-	"deploy/terraform/gcp/roots/compute/tests/compute.tftest.hcl",
-	"deploy/terraform/gcp/roots/firebase/main.tf",
-	"deploy/terraform/gcp/roots/firebase/outputs.tf",
-	"deploy/terraform/gcp/roots/firebase/tests/firebase.tftest.hcl",
-	"deploy/terraform/gcp/roots/firebase/variables.tf",
-	"deploy/terraform/gcp/roots/installation/main.tf",
-	"deploy/terraform/gcp/roots/installation/outputs.tf",
-	"deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl",
-	"deploy/terraform/gcp/roots/installation/variables.tf",
-	"deploy/terraform/gcp/roots/repo/main.tf",
-	"deploy/terraform/gcp/roots/repo/outputs.tf",
-	"deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl",
-	"deploy/terraform/gcp/roots/repo/tests/testdata/README.md",
-	"deploy/terraform/gcp/roots/repo/variables.tf",
-	"deploy/terraform/terraform.go",
-	"deploy/terraform/terraform_test.go",
 	"docs/backends.md",
 	"docs/base-image-migration.md",
 	"docs/base-image.md",
+	"docs/central-orchestrator/README.md",
+	"docs/central-orchestrator/implementation-plan.md",
 	"docs/checkout.md",
 	"docs/coordinator/README.md",
+	"docs/coordinator/implementation-plan.md",
 	"docs/coordinator/reconciliation.md",
 	"docs/dogfooding.md",
 	"docs/gcp-live-checklist.md",
 	"docs/gcp-setup.md",
 	"docs/git-providers.md",
 	"docs/in-job-review/reconciliation.md",
+	"docs/mobile-auth/implementation-plan.md",
+	"docs/mobile-auth/reconciliation.md",
 	"docs/mobile/design/push-notifications.md",
 	"docs/mobile/functional-spec-reconciliation.md",
 	"docs/mobile/implementation-plan.md",
@@ -232,10 +284,11 @@ var pendingRename = []string{
 	"docs/recipes.md",
 	"docs/release.md",
 	"docs/releases/README.md",
+	"docs/rigor-modes/implementation-plan.md",
+	"docs/rigor-modes/reconciliation.md",
 	"docs/windows-cli/reconciliation.md",
-	"images/history/Dockerfile",
-	"images/verify-public.sh",
 	"internal/agent/agent_test.go",
+	"internal/agent/relay_test.go",
 	"internal/backend/backend.go",
 	"internal/backend/backendtest/backendtest.go",
 	"internal/backend/gcp/live_test.go",
@@ -260,6 +313,7 @@ var pendingRename = []string{
 	"internal/cli/config_list_test.go",
 	"internal/cli/config_publish.go",
 	"internal/cli/docs_base_test.go",
+	"internal/cli/docs_checkout_test.go",
 	"internal/cli/docs_clone_workflows_test.go",
 	"internal/cli/docs_compute_backend_test.go",
 	"internal/cli/docs_managed_label_test.go",
@@ -272,6 +326,7 @@ var pendingRename = []string{
 	"internal/cli/docs_providers_test.go",
 	"internal/cli/docs_recipes_test.go",
 	"internal/cli/docs_release_notes_test.go",
+	"internal/cli/docs_setup_wizard_checks_test.go",
 	"internal/cli/doctor.go",
 	"internal/cli/doctor_bucket.go",
 	"internal/cli/doctor_bucket_test.go",
@@ -360,6 +415,7 @@ var pendingRename = []string{
 	"internal/cli/runs_test.go",
 	"internal/cli/secrets.go",
 	"internal/cli/secrets_test.go",
+	"internal/cli/setup_refusals_test.go",
 	"internal/cli/sharedcfg.go",
 	"internal/cli/sharedcfg_fetch_test.go",
 	"internal/cli/sharedcfg_test.go",
@@ -373,8 +429,6 @@ var pendingRename = []string{
 	"internal/cli/validate.go",
 	"internal/cli/validate_test.go",
 	"internal/config/config.go",
-	"internal/config/example.go",
-	"internal/config/example.yaml",
 	"internal/config/project_secrets.go",
 	"internal/config/providers.go",
 	"internal/config/routing.go",
@@ -425,9 +479,6 @@ var pendingRename = []string{
 	"internal/infra/tfvars.go",
 	"internal/infra/workdir.go",
 	"internal/infra/workdir_test.go",
-	"internal/initflow/loop.go",
-	"internal/initflow/loop_test.go",
-	"internal/initflow/stage.go",
 	"internal/localcfg/localcfg.go",
 	"internal/localcfg/localcfg_test.go",
 	"internal/localcfg/select.go",
@@ -470,16 +521,11 @@ var pendingRename = []string{
 	"internal/runner/spend.go",
 	"plugin/readme_test.go",
 	"plugin/setup_skill_test.go",
-	"plugin/skills/setup/SKILL.md",
-	"plugin/skills/setup/reference/decisions.md",
-	"plugin/skills/setup/reference/transitions.md",
-	"plugin/skills/working/reference/status.md",
-	"plugin/skills_lint_test.go",
-	"schemas/fugaro.schema.json",
 	"website/README.md",
 	"website/content/cli-reference.md",
 	"website/content/security.md",
 	"website/data/install.yaml",
+	"website/design-ref/GettingStartedV4.dc.html",
 	"website/src/components/Changelog.astro",
 	"website/src/pages/getting-started.astro",
 	"website/test/caps-and-costs.mjs",
@@ -493,7 +539,7 @@ func censusExempt(rel string) bool {
 			return true
 		}
 	}
-	return slices.Contains(retirementText, rel)
+	return slices.Contains(retirementPaths, rel)
 }
 
 // censusOutputDirs, censusOutputNames and censusOutputMarkers are the third
@@ -532,10 +578,11 @@ func censusExempt(rel string) bool {
 //     it can carry a mention the census must not read as repository text.
 //
 // One class of ignored path is deliberately not here. The binaries a build
-// leaves at the root -- /fugaro, /clidoc -- are files, and censusNamesInit's
-// binary sniff is what steps over them, which keeps the rule in one place:
-// these lists are about what a build or a local run *writes*, that sniff is
-// about what a compiler *links*.
+// leaves in the tree -- /fugaro, /clidoc, and the `*.exe` a
+// `GOOS=windows go build` writes into the directory it ran in -- are files, and
+// censusNamesInit's binary sniff is what steps over them, which keeps the rule
+// in one place: these lists are about what a build or a local run *writes*,
+// that sniff is about what a compiler *links*.
 var censusOutputDirs = []string{
 	// website/.gitignore
 	websiteBuildDir,
@@ -552,6 +599,16 @@ var censusOutputDirs = []string{
 	consoleDirName + "/playwright-report",
 	consoleDirName + "/.record-fixture",
 	consoleDirName + "/.bundle-renderer",
+	// The screenshot tool's two trees, which the console's .gitignore declares
+	// beside the ones above: `.screenshots/` is the compiled tool `npm run
+	// screenshots` runs (`tsconfig.screenshots.json`), and `/screenshots/` is
+	// what that tool leaves -- the PNGs the website's Console page is
+	// illustrated from, and the MANIFEST.json beside them. Both are a machine's
+	// and a day's output; the fixtures the tool *reads* are test/fixtures/
+	// screenshots/, which the pattern is anchored away from and which stays
+	// repository text.
+	consoleDirName + "/.screenshots",
+	consoleDirName + "/screenshots",
 	// mobile/.gitignore
 	"mobile/dist",
 	"mobile/web-build",
@@ -810,7 +867,7 @@ func TestCensusNamesInitReadsPastTheHead(t *testing.T) {
 // wants true fails; drop websiteBuildDir from censusOutputDirs -- its two cases
 // fail; match the directory prefix with strings.Contains instead of a boundary --
 // the sibling cases fail; drop "docs/plans/" from datedRecords -- the dated-root
-// cases fail; make censusExempt a prefix match over retirementText -- the
+// cases fail; make censusExempt a prefix match over retirementPaths -- the
 // retired.go.md case fails.
 func TestCensusOutputAndExemptArePinned(t *testing.T) {
 	output := []struct {
@@ -944,6 +1001,7 @@ var censusIgnored = []struct {
 	{".gitignore", "/dist/", "dist/fugaro", false},
 	{".gitignore", "/fugaro", "fugaro", true},
 	{".gitignore", "/clidoc", "clidoc", true},
+	{".gitignore", "*.exe", "fugaro.exe", true},
 	{".gitignore", "/deploy/terraform/**/.terraform/", "deploy/terraform/prod/.terraform/providers/registry.terraform.io/hashicorp/google/6.0.0/linux_amd64/terraform-provider-google", false},
 	{".gitignore", "/deploy/terraform/**/*.tfstate", "deploy/terraform/prod/terraform.tfstate", false},
 	{".gitignore", "/deploy/terraform/**/*.tfstate.*", "deploy/terraform/prod/terraform.tfstate.backup", false},
@@ -962,6 +1020,8 @@ var censusIgnored = []struct {
 	{consoleDirName + "/.gitignore", "playwright-report/", consoleDirName + "/playwright-report/index.html", false},
 	{consoleDirName + "/.gitignore", ".record-fixture/", consoleDirName + "/.record-fixture/fixture.json", false},
 	{consoleDirName + "/.gitignore", ".bundle-renderer/", consoleDirName + "/.bundle-renderer/bundle.js", false},
+	{consoleDirName + "/.gitignore", ".screenshots/", consoleDirName + "/.screenshots/screenshots.mjs", false},
+	{consoleDirName + "/.gitignore", "/screenshots/", consoleDirName + "/screenshots/MANIFEST.json", false},
 	{"mobile/.gitignore", "node_modules/", "mobile/node_modules/expo/index.js", false},
 	{"mobile/.gitignore", ".expo/", "mobile/.expo/cache/state.json", false},
 	{"mobile/.gitignore", ".metro-health-check*", "mobile/.metro-health-check.json", false},
@@ -1147,10 +1207,12 @@ func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
 // not this test's business either. Without the exemption check the two
 // remedies it offers would both be impossible for such a file -- adding it to
 // liveRoots would make the first test demand it in `pendingRename`, which is
-// to demand renaming a dated record. No dated root or retirement path sits
-// outside docs/ or internal/cli/ today, so the hole is latent; it is closed
-// because it is the one place where the file's own rule was applied to one
-// half of the line and not the other.
+// to demand renaming a dated record. The exemption is not latent any more:
+// the console's README.md and its test/unit/ipc.test.ts are that directory's
+// record of the retired verb (#789), they sit under a directory that is not a
+// live root, and without this check the only two remedies on offer would each
+// be a demand to rename a record. It is closed because it is the one place where the
+// file's own rule was applied to one half of the line and not the other.
 //
 // Mutation (run, restore): add a line naming the command to a file under a
 // directory that is not a root -- mobile/README.md is one -- and this fails.

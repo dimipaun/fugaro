@@ -1,5 +1,5 @@
-# website/data/faq.yaml -- the FAQ's answers, the file each one is traceable to, and the
-# comparison rows (website plan, Task W1.10; findings 50-52, decisions D102 and D103).
+# website/data/faq.yaml -- the FAQ's answers and the file each one is traceable to (website
+# plan, Task W1.10; findings 50-52, decisions D102 and D103).
 #
 # This is the FAQ's one source of truth, and the rule it is written to is the site's
 # (Global Constraint 6): a page renders a fact, it never restates one. So every answer
@@ -90,16 +90,14 @@ questions:
     more_label: The security page
     more_href: /security/
 
-# The comparison section (D103, F51-F52). A row about another tool is a claim this
-# repository cannot verify: it has no network and it records no sourced, dated fact about
-# any other agent runner. So a row carries a `source:` and a `date:`, the page refuses to
-# build a row that carries neither, and the section is empty -- and says so -- until the
-# owner supplies rows that carry both. Adding a row is adding it with provenance:
+# **The comparison rows came out on 2026-10-21.** The owner's feedback on the preview: the
+# section headed "How Fugaro compares" is empty, and it is removed. The rows were D103's
+# `comparison:` list and the provenance rule (F51-F52) is exactly what kept it empty -- a
+# claim about another tool needs a `source:` and a `date:`, and this repository has no network
+# and records no sourced, dated fact about any other agent runner -- so what a reader met was
+# a heading over a panel that said nothing. The key is gone from this file and the section is
+# gone from the page; nothing else moved, and every answer above is the answer it was.
 #
-#   comparison:
-#     - id: <anchor>
-#       name: <the tool, as its own documentation names it>
-#       claim: <the comparison, in one sentence>
-#       source: <the URL the claim was read from>
-#       date: <the date it was read, YYYY-MM-DD>
-comparison: []
+# Writing a `comparison:` key here again does not bring it back: the page reads `version` and
+# `questions` and refuses every other key, so the build stops naming the key rather than
+# leaving a fact in this file that nothing renders (W1.10 step 2).

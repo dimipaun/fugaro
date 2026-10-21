@@ -497,7 +497,7 @@ func initOnTTY(t *testing.T, asJSON bool) {
 	cmd.SetIn(f.tty)
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	args := []string{"init"}
+	args := []string{"setup"}
 	if asJSON {
 		args = append(args, "--json")
 	}

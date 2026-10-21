@@ -20,7 +20,7 @@
         "internal/cli/exec.go"
       ],
       "services": [
-        "internal"
+        "internal/cli"
       ]
     },
     {
@@ -54,7 +54,8 @@
         "internal/coordinator/view.go"
       ],
       "services": [
-        "internal"
+        "internal/cli",
+        "internal/coordinator"
       ]
     },
     {
@@ -91,7 +92,8 @@
         "schemas/result.schema.json"
       ],
       "services": [
-        "internal",
+        "internal/cli",
+        "internal/coordinator",
         "schemas"
       ]
     },
@@ -135,6 +137,37 @@
     },
     {
       "pr": {
+        "number": 18,
+        "url": "https://github.com/acme/app/pull/18",
+        "title": "Mint the read-only token per repository",
+        "branch": "fugaro/20261014-100000-gggg",
+        "state": "open"
+      },
+      "runs": [
+        {
+          "id": "20261014-100000-gggg",
+          "pr": 18,
+          "status": "running",
+          "branch": "fugaro/20261014-100000-gggg",
+          "base_branch": "release/v0.12.0",
+          "declared_by": "other@example.com",
+          "files": [
+            "internal/gitprov/github/apptoken.go"
+          ]
+        }
+      ],
+      "branch": "fugaro/20261014-100000-gggg",
+      "release": "0.12.0",
+      "in_flight": true,
+      "files": [
+        "internal/gitprov/github/apptoken.go"
+      ],
+      "services": [
+        "internal/gitprov"
+      ]
+    },
+    {
+      "pr": {
         "number": 16,
         "url": "https://github.com/acme/app/pull/16",
         "title": "Tidy the docs",
@@ -162,7 +195,7 @@
         "internal/coordinator/view.go"
       ],
       "services": [
-        "internal"
+        "internal/coordinator"
       ]
     }
   ],
@@ -174,7 +207,7 @@
         "internal/cli/exec.go"
       ],
       "services": [
-        "internal"
+        "internal/cli"
       ]
     },
     {
@@ -184,7 +217,7 @@
         "internal/cli/exec.go"
       ],
       "services": [
-        "internal"
+        "internal/cli"
       ]
     },
     {
@@ -195,7 +228,8 @@
         "internal/coordinator/view.go"
       ],
       "services": [
-        "internal"
+        "internal/cli",
+        "internal/coordinator"
       ]
     }
   ]

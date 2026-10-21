@@ -12,12 +12,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -59,6 +61,11 @@ var updateCoordinatorGolden = flag.Bool("update-coordinator", false, "rewrite te
 //     request its record names, else its task's — runs.go's own order.
 //   - TestCoordinatorStatusSanitisesWhatSomebodyElseWrote: a branch name or a
 //     launcher's own string cannot redraw the table around itself.
+//   - TestCoordinatorStatusJSONSanitisesTheDeclaration: the same rule for the
+//     document, where the renderer's own cell is not what a reader parses.
+//   - TestCoordinatorStatusSurvivesGarbledRunObjects: a run whose task.json
+//     and result.json are half-written is still a run in flight, warned about
+//     on stderr and listed anyway.
 
 // coordinatorRunSeed is one run the test fixture's bucket holds, in the terms
 // the view reads it: what its task says, what its launch record declared, and
@@ -230,30 +237,39 @@ func TestCoordinatorStatusJSON(t *testing.T) {
 	if slices.Contains(labels, "20261013-140000-eeee") {
 		t.Error("the view lists a run that finished with no pull request")
 	}
-	// Three pairs, one per pair of in-flight records that touch something
-	// common: the running run and #12 share the service "internal" and no
-	// file, the running run and #14 the same, and #12 and #14 share one path.
-	// A pair that shares only a service is a collision — that is the rule.
+	// Two pairs, one per pair of in-flight records that touch something
+	// common. The running run touched internal/cli/root.go and #12 touched
+	// internal/cli/exec.go: they share the package internal/cli and no file,
+	// and a pair that shares only a service is a collision — that is the rule.
+	// #12 and #14 share one path. The service is the package
+	// (internal/cli, internal/coordinator), never the trunk both sit under:
+	// the running run and #14 share no file and no package — root.go is the
+	// CLI's, view.go the coordinator's — and the view reports no collision
+	// between them, which is the half of this fixture that a first-segment
+	// rule gets wrong.
 	var pairs []string
 	for _, c := range v.Collisions {
 		pairs = append(pairs, c.A+" and "+c.B)
 	}
 	wantPairs := []string{
 		"20261013-120000-cccc and #12",
-		"20261013-120000-cccc and #14",
 		"#12 and #14",
 	}
 	if !slices.Equal(pairs, wantPairs) {
 		t.Errorf("collisions = %v, want %v", pairs, wantPairs)
 	}
 	for _, c := range v.Collisions {
-		wantFiles := []string{}
+		wantFiles, wantServices := []string{}, []string{"internal/cli"}
 		if c.A == "#12" && c.B == "#14" {
+			// The services are the ones the pair *shares*, not the union:
+			// #14's one path is the coordinator's, so internal/coordinator is
+			// the whole of it even though #12 also touched the CLI's.
 			wantFiles = []string{"internal/coordinator/view.go"}
+			wantServices = []string{"internal/coordinator"}
 		}
-		if !slices.Equal(c.Files, wantFiles) || !slices.Equal(c.Services, []string{"internal"}) {
-			t.Errorf("collision %s and %s = files %q, services %q; want files %q, services [internal]",
-				c.A, c.B, c.Files, c.Services, wantFiles)
+		if !slices.Equal(c.Files, wantFiles) || !slices.Equal(c.Services, wantServices) {
+			t.Errorf("collision %s and %s = files %q, services %q; want files %q, services %q",
+				c.A, c.B, c.Files, c.Services, wantFiles, wantServices)
 		}
 	}
 	// The running run is on a release branch, and the record says so.
@@ -586,6 +602,90 @@ func TestCoordinatorStatusSanitisesWhatSomebodyElseWrote(t *testing.T) {
 	}
 	if !strings.Contains(out, "bob@example.com") {
 		t.Errorf("the declared launcher is not in the table at all:\n%s", out)
+	}
+}
+
+// The same rule reaches the document and not only the table. The table's own
+// cell cleans whatever it is handed (coordinatorCell -> cellOneLine), so a view
+// that carried the launcher's string raw would still render a clean table —
+// while --json, which is a document somebody parses and not cells somebody
+// looks at, handed the raw bytes on. The sanitisation is therefore the view's
+// (coordinatorRun, safetext.Field) and this is the half that shows it.
+func TestCoordinatorStatusJSONSanitisesTheDeclaration(t *testing.T) {
+	hostile := "bob@example.com\x1b[2J\x1b[31mnot really bob\x07\r" + strings.Repeat("x", 8192)
+	newCoordinatorFixture(t, []coordinatorRunSeed{
+		{id: "20261013-100000-aaaa", branch: "topic/hostile", who: hostile, status: runstore.StatusRunning},
+	})
+	out, _, err := execute(t, "coordinator", "status", "--json", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v coordinatorView
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	runs := 0
+	for _, r := range v.Records {
+		for _, run := range r.Runs {
+			runs++
+			if i := strings.IndexAny(run.DeclaredBy, "\x1b\x07\r\n\t"); i >= 0 {
+				t.Errorf("declared_by carries a control character at offset %d: %q: the launcher's own string reached the document raw", i, run.DeclaredBy)
+			}
+			if n := utf8.RuneCountInString(run.DeclaredBy); n > safetext.FieldMax {
+				t.Errorf("declared_by is %d runes, want it bounded at %d", n, safetext.FieldMax)
+			}
+			if !strings.HasPrefix(run.DeclaredBy, "bob@example.com") {
+				t.Errorf("declared_by = %q, want the launcher's own text at the front of it: the field is bounded and made safe, not dropped", run.DeclaredBy)
+			}
+		}
+	}
+	if runs != 1 {
+		t.Fatalf("the view holds %d runs, want the one the fixture seeded", runs)
+	}
+}
+
+// A run whose own objects are garbled is still a run, and still work in
+// flight: task.json and result.json are written by a runner that can die
+// mid-write, and dropping the work because its record is unreadable is the one
+// thing this view must not do. The run is listed, labelled by its ID (nothing
+// readable named a pull request), in flight (nothing readable said it
+// finished), and the read's own warning goes to stderr rather than into the
+// view. The command succeeds: one run's corrupt object is one run's row and not
+// the listing's failure.
+func TestCoordinatorStatusSurvivesGarbledRunObjects(t *testing.T) {
+	const id = "20261013-100000-aaaa"
+	f := newCoordinatorFixture(t, []coordinatorRunSeed{
+		{id: id, branch: "topic/garbled", who: "someone@example.com", status: runstore.StatusRunning, base: "main"},
+	})
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	for _, name := range []string{"task.json", "result.json"} {
+		// A write that stopped half way through: valid JSON's opening and
+		// nothing else.
+		if err := b.WriteAll(ctx, "runs/"+appSlug+"/"+id+"/"+name, []byte(`{"version": 1, "task": `), nil); err != nil {
+			t.Fatalf("garbling %s: %v", name, err)
+		}
+	}
+	out, errOut, err := execute(t, "coordinator", "status", "--json", "--since", "0")
+	if err != nil {
+		t.Fatalf("the run's corrupt objects failed the command: %v (stderr: %s)", err, errOut)
+	}
+	var v coordinatorView
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(v.Records) != 1 || recordLabel(v.Records[0]) != id {
+		t.Fatalf("records = %+v, want the one record labelled %s: a run whose objects are unreadable is still work in flight", v.Records, id)
+	}
+	if !v.Records[0].InFlight {
+		t.Error("the run with no readable record is not in flight: nothing readable said it finished, and the safe direction is to report it")
+	}
+	if !strings.Contains(errOut, id) || !strings.Contains(errOut, "unreadable") {
+		t.Errorf("stderr = %q, want the read's own warning naming %s and the unreadable object", errOut, id)
 	}
 }
 
