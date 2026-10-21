@@ -1,0 +1,509 @@
+---
+/**
+ * website/src/components/ZoomLevels.astro — the four levels, as four stills (the brief of
+ * 2026-10-21, `docs/website/zoom-diagrams/spec.md`; D237, D244, D245).
+ *
+ * **What it draws.** The zoom-out sequence the brief asks for, as four pictures a reader can
+ * see without a script: inside one cloud job, the orchestrator fanning jobs out, the
+ * developer's own view, and the whole project with everything of the other three inside it.
+ * This is the brief's **still** half. The pinned, scroll-driven section that zooms between the
+ * four is Part 5 and is not this component: nothing here moves, and nothing here is measured by
+ * a script.
+ *
+ * **The shapes are shared, and that is the point** (D244). One `<defs>` — in the zero-size
+ * `<svg class="zoom-defs">` under the heading — holds one `<symbol>` per entity: the job tile,
+ * the orchestrator, the developer, the console and the project boundary. Every level draws an
+ * entity **only** through `<use href="#zoom-…">`, so a job is the same tile in all four
+ * levels, and the first edit that redraws one level's copy of it is what
+ * `website/test/how-it-works.mjs` refuses. The shapes are referenced across `<svg>` elements
+ * within this one document, which is how a sprite sheet works: the ids are document-wide, the
+ * `<defs>` is written once, and the four drawings stay four drawings a browser lays out
+ * separately.
+ *
+ * **The words are rows of `website/data/zoom-levels.yaml`.** Every label this component draws
+ * is a row of that file, and every row is drawn: the picture and its text cannot drift, and a
+ * row whose `text` is not a line of the document it cites stops the build through
+ * `holdZoomLabels` (Global Constraint 6). The labels are the brief's, corrected to what the
+ * runner does (reconciliation §3): the first-line reviewer is the coder's own model in a fresh
+ * session, and the senior review is a loop bounded by `agent.review_rounds`.
+ *
+ * **One `<nav>` of markers, and no script** (D245). Four anchors, `#level-1` … `#level-4`, each
+ * with an accessible name, mirroring the console slider's dots: the linkcheck gate resolves
+ * them, a no-JS reader can use them, and Part 5 reuses the same ids rather than adding a second
+ * set.
+ *
+ * **A level is a list of labelled parts, so nothing here is one image.** The drawing is inline
+ * SVG whose text is the repository's own words: each level's parts carry that text, the
+ * `<figcaption>` names the level, and no `<svg>` announces itself as a single picture — a
+ * drawing that said both would be read out twice, once as "image" and once as its own labels.
+ *
+ * **Nothing is fetched, nothing is a picture file, no colour is a literal and no font is
+ * load-bearing.** Every paint is a palette token in the page's stylesheet, and the rules that
+ * paint the generated shapes carry `:global()` because the markup arrives through `set:html`,
+ * which Astro's scope attribute never reaches (the defect of 2026-10-21).
+ */
+import { loadZoomLevels } from '../content.ts'
+import { ENTITIES, holdZoomLabels } from '../lib/zoom-labels.mjs'
+
+const { levels } = loadZoomLevels()
+holdZoomLabels(levels)
+
+/** The `<symbol>` id an entity is drawn from. */
+const symbolId = (entity: string): string => `zoom-${entity}`
+
+/** The drawing's own coordinates. Every level is 760 units wide and as tall as it needs. */
+const W = 760
+const PAD = 24
+/** The baseline step between two lines of one part's words, and the step under a column. */
+const LINE = 21
+const COLUMN_LINE = 18
+/** The box an entity is drawn in, in the drawing's own units. */
+const TILE_W = 150
+const TILE_H = 108
+/** The room between two parts of a stacked level, which is where the plain `<line>` runs. */
+const GAP = 28
+/** Conservative per-character width of the reader's own sans, as `RunDiagram.astro` measures
+ *  it: the stack is wider per character on some systems than on others, and a label that
+ *  outgrows its room is refused here rather than drawn over its neighbour. */
+const CHAR = 0.62
+
+const esc = (text: string): string =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+/**
+ * A label that outgrows the room it was laid out for stops the build, naming the row and the
+ * line: the drawing measures every line it writes at a conservative character width, so a
+ * label too wide to fit is a defect this build finds rather than one a reader sees.
+ */
+function fits(what: string, text: string, size: number, room: number): void {
+  const width = text.length * CHAR * size
+  if (width > room) {
+    throw new Error(
+      `ZoomLevels.astro: ${what} is ${text.length} characters and measures ${width.toFixed(0)} units at ${size}, which is more than the ${room.toFixed(0)} units it has: the label would run over what is beside it. Shorten the row in website/data/zoom-levels.yaml or give the drawing more room.`,
+    )
+  }
+}
+
+/**
+ * A row of the data file broken into the lines a column can hold, on its own spaces. A column
+ * is narrower than the drawing, so a level that draws entities side by side breaks its words
+ * rather than running one over its neighbour — and a single word wider than the column is
+ * refused by `fits` rather than drawn outside it.
+ */
+function wrap(text: string, room: number, size: number): string[] {
+  const rows: string[] = []
+  let row = ''
+  for (const word of text.split(' ')) {
+    const next = row === '' ? word : `${row} ${word}`
+    if (row !== '' && next.length * CHAR * size > room) {
+      rows.push(row)
+      row = word
+    } else {
+      row = next
+    }
+  }
+  if (row !== '') rows.push(row)
+  for (const line of rows) fits(`the line ${JSON.stringify(line)}`, line, size, room)
+  return rows
+}
+
+/** A part's words, one `<text>` per row of the data file, all held to their document. */
+function labelTexts(rows: { text: string; source: string }[], x: number, first: number, size: number, klass: string): string {
+  return rows
+    .map((row, i) => {
+      const y = first + i * LINE
+      return `<text class="zoom-label ${klass}" x="${x}" y="${y.toFixed(1)}" font-size="${size}">${esc(row.text)}</text>`
+    })
+    .join('')
+}
+
+/** One entity, drawn only as a reference to the single `<defs>`: the shape is never redrawn. */
+function entityUse(entity: string, x: number, y: number, w: number, h: number): string {
+  return `<use class="zoom-entity" href="#${symbolId(entity)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w}" height="${h}" />`
+}
+
+/** A plain connector between two parts. It is a `<line>` and not an arrow: an arrowhead is a
+ *  shape of its own, and every shape in a level is an entity drawn through `<use>`. */
+function link(x1: number, y1: number, x2: number, y2: number): string {
+  return `<line class="zoom-link" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" />`
+}
+
+/**
+ * One level's drawing: a `<g>` per level, holding the entities it draws and its words, and
+ * nothing else. The four layouts are the four shapes the brief asks for — a stack, a fan, a
+ * chain and a project with everything inside it — and the geometry is this component's while
+ * the words are the data file's.
+ */
+type Drawing = { markup: string; height: number }
+
+/** Level 1: one entity, and the loop's own words beside it. */
+function stack(level: { parts: { entity: string; labels: { text: string; source: string }[] }[] }): Drawing {
+  const parts: string[] = []
+  let y = PAD
+  const textX = PAD + TILE_W + 28
+  const room = W - textX - PAD
+  for (const part of level.parts) {
+    const height = Math.max(TILE_H, part.labels.length * LINE + 12)
+    parts.push(entityUse(part.entity, PAD, y + (height - TILE_H) / 2, TILE_W, TILE_H))
+    const first = y + (height - part.labels.length * LINE) / 2 + LINE - 6
+    for (const label of part.labels) fits(`the label ${JSON.stringify(label.text)}`, label.text, 15, room)
+    parts.push(labelTexts(part.labels, textX, first, 15, ''))
+    y += height + GAP
+  }
+  return { markup: parts.join(''), height: y - GAP + PAD }
+}
+
+/** Level 2: the orchestrator above the jobs it launches, three tiles side by side. */
+function fan(level: { parts: { entity: string; labels: { text: string; source: string }[] }[] }): Drawing {
+  const parts: string[] = []
+  const top = PAD
+  const head = level.parts[0]
+  const headTextX = PAD + TILE_W + 28
+  const headRoom = W - headTextX - PAD
+  parts.push(entityUse(head.entity, PAD, top, TILE_W, TILE_H))
+  for (const label of head.labels) fits(`the label ${JSON.stringify(label.text)}`, label.text, 15, headRoom)
+  parts.push(labelTexts(head.labels, headTextX, top + TILE_H / 2 + 5, 15, ''))
+
+  const jobs = level.parts.slice(1)
+  const columns = jobs.length
+  const columnW = (W - PAD * 2) / columns
+  const tileW = 140
+  const tileH = 100
+  const rowTop = top + TILE_H + 46
+  const labelSize = 13
+  const labelRoom = columnW - 16
+  const lines: string[][] = jobs.map((job) =>
+    job.labels.flatMap((label) => wrap(label.text, labelRoom, labelSize)),
+  )
+  const labelRows = Math.max(0, ...lines.map((rows) => rows.length))
+  const rowHeight = tileH + labelRows * COLUMN_LINE + 10
+
+  jobs.forEach((job, index) => {
+    const columnX = PAD + index * columnW
+    const centre = columnX + columnW / 2
+    // The line leaves the orchestrator's own foot and lands on the top edge of the tile it
+    // launches: the fan the brief draws, in plain lines, one per job.
+    parts.push(link(PAD + TILE_W / 2, top + TILE_H, centre, rowTop))
+    parts.push(entityUse(job.entity, centre - tileW / 2, rowTop, tileW, tileH))
+    lines[index].forEach((text, row) => {
+      const y = rowTop + tileH + 22 + row * COLUMN_LINE
+      parts.push(`<text class="zoom-label" x="${centre.toFixed(1)}" y="${y.toFixed(1)}" font-size="${labelSize}" text-anchor="middle">${esc(text)}</text>`)
+    })
+  })
+
+  return { markup: parts.join(''), height: rowTop + rowHeight + PAD }
+}
+
+/** Level 3: the developer at the laptop, down the chain to the cloud job. */
+function chain(level: { parts: { entity: string; labels: { text: string; source: string }[] }[] }): Drawing {
+  const inner = stack(level)
+  const parts: string[] = [inner.markup]
+  // A line between each pair of parts, drawn from the foot of one tile to the head of the next,
+  // inside the gap `stack` left for it.
+  let y = PAD
+  const heights = level.parts.map((part) => Math.max(TILE_H, part.labels.length * LINE + 12))
+  for (let i = 0; i < heights.length - 1; i++) {
+    y += heights[i]
+    parts.push(link(PAD + TILE_W / 2, y + 4, PAD + TILE_W / 2, y + GAP - 4))
+    y += GAP
+  }
+  return { markup: parts.join(''), height: inner.height }
+}
+
+/** Level 4: the project, with the other three levels' own parts inside it. */
+function project(level: { parts: { entity: string; labels: { text: string; source: string }[] }[] }): Drawing {
+  const parts: string[] = []
+  const boundary = level.parts[0]
+  const height = 300
+  parts.push(entityUse(boundary.entity, 12, 12, W - 24, height - 24))
+  const textX = PAD + 24
+  const room = W - textX - PAD - 24
+  let y = 66
+  for (const label of boundary.labels) fits(`the label ${JSON.stringify(label.text)}`, label.text, 15, room)
+  parts.push(labelTexts(boundary.labels, textX, y, 15, ''))
+  y += boundary.labels.length * LINE + 22
+
+  const inside = level.parts.slice(1)
+  const columnW = (W - PAD * 2 - 24) / inside.length
+  const tileW = 140
+  const tileH = 100
+  const labelSize = 12
+  const labelRoom = columnW - 16
+  inside.forEach((part, index) => {
+    const columnX = PAD + 12 + index * columnW
+    const centre = columnX + columnW / 2
+    parts.push(entityUse(part.entity, centre - tileW / 2, y, tileW, tileH))
+    part.labels.flatMap((label) => wrap(label.text, labelRoom, labelSize)).forEach((line, row) => {
+      const lineY = y + tileH + 20 + row * COLUMN_LINE
+      parts.push(`<text class="zoom-label" x="${centre.toFixed(1)}" y="${lineY.toFixed(1)}" font-size="${labelSize}" text-anchor="middle">${esc(line)}</text>`)
+    })
+  })
+  return { markup: parts.join(''), height }
+}
+
+/** The layout each level is drawn with, by the id its row carries. A level with no layout is a
+ *  failure of the drawing rather than a level that quietly draws nothing. */
+const LAYOUTS: Record<string, (level: never) => Drawing> = {
+  'level-1': stack,
+  'level-2': fan,
+  'level-3': chain,
+  'level-4': project,
+}
+
+const drawings = levels.map((level) => {
+  const draw = LAYOUTS[level.id]
+  if (draw === undefined) {
+    throw new Error(
+      `ZoomLevels.astro: the level ${JSON.stringify(level.id)} of website/data/zoom-levels.yaml has no drawing in this component, and a level with no drawing is a figure with a caption and no picture. Add the layout beside the others, or remove the row.`,
+    )
+  }
+  for (const part of level.parts) {
+    if (!ENTITIES.includes(part.entity)) {
+      throw new Error(
+        `ZoomLevels.astro: the level ${JSON.stringify(level.id)} draws ${JSON.stringify(part.entity)}, and the drawing's one <defs> holds ${ENTITIES.join(', ')} — nothing else has a shape, so a level that names anything else draws an empty box (D244).`,
+      )
+    }
+  }
+  return { level, ...draw(level as never) }
+})
+
+/** The nav's markers, one per level: the anchor Part 5 reuses, and the name a screen reader
+ *  reads for it. The visible marker is the level's own number, the way the console's slider
+ *  dots are. */
+const markers = levels.map((level, index) => ({
+  href: `#${level.id}`,
+  number: `${index + 1}`,
+  name: `Level ${index + 1} — ${level.name.text}`,
+}))
+
+/**
+ * The five entities of the one `<defs>`, each drawn once in the palette's own tokens and each
+ * with a `viewBox` of its own, so a level that draws it through `<use>` at any size gets the
+ * same shape. No `<symbol>` carries text: the words of a level are rows of the data file and
+ * are drawn by the level, so a shape cannot say something a row does not.
+ */
+const SYMBOLS: Record<string, string> = {
+  job: [
+    '<symbol id="zoom-job" viewBox="0 0 150 108">',
+    '<rect class="zoom-tile" x="1.5" y="1.5" width="147" height="105" rx="16" fill="var(--surface)" stroke="var(--border)" />',
+    '<line class="zoom-tile-bar" x1="20" y1="28" x2="130" y2="28" stroke="var(--accent)" />',
+    '<rect class="zoom-tile-row" x="20" y="46" width="110" height="7" rx="3.5" fill="var(--text-muted)" stroke="none" />',
+    '<rect class="zoom-tile-row" x="20" y="64" width="84" height="7" rx="3.5" fill="var(--text-muted)" stroke="none" />',
+    '<rect class="zoom-tile-row" x="20" y="82" width="62" height="7" rx="3.5" fill="var(--text-muted)" stroke="none" />',
+    '</symbol>',
+  ].join(''),
+  orchestrator: [
+    '<symbol id="zoom-orchestrator" viewBox="0 0 120 120">',
+    '<circle class="zoom-orc-ring" cx="60" cy="60" r="52" fill="none" stroke="var(--accent)" />',
+    '<circle class="zoom-orc-core" cx="60" cy="60" r="30" fill="var(--surface)" stroke="var(--accent-on-dark)" />',
+    '<circle class="zoom-orc-dot" cx="60" cy="60" r="10" fill="var(--accent-on-dark)" stroke="none" />',
+    '</symbol>',
+  ].join(''),
+  developer: [
+    '<symbol id="zoom-developer" viewBox="0 0 100 120">',
+    '<circle class="zoom-dev-head" cx="50" cy="38" r="22" fill="var(--text-muted)" stroke="none" />',
+    '<path class="zoom-dev-body" d="M10 112c0-22 18-38 40-38s40 16 40 38z" fill="var(--text-muted)" stroke="none" />',
+    '</symbol>',
+  ].join(''),
+  console: [
+    '<symbol id="zoom-console" viewBox="0 0 150 108">',
+    '<rect class="zoom-console-body" x="1.5" y="1.5" width="147" height="105" rx="12" fill="var(--surface)" stroke="var(--border)" />',
+    '<line class="zoom-console-bar" x1="1.5" y1="26" x2="148.5" y2="26" stroke="var(--border)" />',
+    '<path class="zoom-console-prompt" d="M26 50l16 14-16 14" fill="none" stroke="var(--accent-on-dark)" />',
+    '<line class="zoom-console-line" x1="58" y1="78" x2="118" y2="78" stroke="var(--text-muted)" />',
+    '</symbol>',
+  ].join(''),
+  // The boundary stretches to the box it is drawn in (`preserveAspectRatio="none"`), so it is
+  // drawn square-cornered: a radius would scale unevenly and read as a wobble rather than a
+  // corner.
+  project: [
+    '<symbol id="zoom-project" viewBox="0 0 400 300" preserveAspectRatio="none">',
+    '<rect class="zoom-project-boundary" x="2" y="2" width="396" height="296" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="12 8" />',
+    '</symbol>',
+  ].join(''),
+}
+---
+
+<section class="zoom" aria-labelledby="zoom-title">
+  <h2 class="zoom-title" id="zoom-title">The four levels</h2>
+
+  <nav class="zoom-nav" aria-label="The four levels">
+    <ul class="zoom-marker-list">
+      {
+        markers.map((marker) => (
+          <li>
+            <a class="zoom-marker" href={marker.href} aria-label={marker.name}>
+              {marker.number}
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+  </nav>
+
+  <svg class="zoom-defs" aria-hidden="true" focusable="false" width="0" height="0">
+    <defs set:html={ENTITIES.map((entity) => SYMBOLS[entity]).join('')} />
+  </svg>
+
+  {
+    drawings.map(({ level, markup, height }) => (
+      <figure class="zoom-figure" id={level.id}>
+        <svg class="zoom-svg" viewBox={`0 0 ${W} ${height}`} set:html={markup} />
+        <figcaption class="zoom-caption">
+          <span class="zoom-level-name">{level.name.text}</span>
+          {level.caption !== null && <span class="zoom-level-caption">{level.caption.text}</span>}
+        </figcaption>
+      </figure>
+    ))
+  }
+</section>
+
+<style>
+  /* The section takes the page's column, like every other block on the page, and the drawing
+     sits on the panel — the step between the ground and the surface — inside the hairline and
+     the radius every raised thing on this site has. */
+  .zoom {
+    margin-top: var(--space-3xl);
+  }
+
+  .zoom-title {
+    margin: 0 0 var(--space-lg);
+  }
+
+  /* The markers: the level's own number, one per level, in a row above the drawings. They are
+     anchors rather than buttons (D245), so a reader with no script still has them, and the
+     linkcheck gate resolves every one of them. */
+  .zoom-nav {
+    margin: 0 0 var(--space-md);
+  }
+
+  .zoom-marker-list {
+    display: flex;
+    gap: var(--space-2xs);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .zoom-marker {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2rem;
+    min-height: 2rem;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
+    text-decoration: none;
+  }
+
+  figure.zoom-figure {
+    margin: 0 0 var(--space-lg);
+  }
+
+  /* The drawing scales to the column and never scrolls sideways: the `viewBox` is the
+     drawing's own coordinates and `width: 100%` maps them onto the column. */
+  .zoom-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: var(--panel);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-xl);
+  }
+
+  /* The one `<defs>`: it is the drawing's shapes and nothing a reader sees, so it takes no
+     room of its own. It is not `display: none` — a reference from another `<svg>` of this
+     document is what every level's `<use>` is, and a hidden subtree is a subtree some engines
+     resolve and others do not. */
+  .zoom-defs {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+  }
+
+  .zoom-caption {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2xs);
+    margin-top: var(--space-xs);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .zoom-level-name {
+    color: var(--text);
+    font-weight: var(--weight-medium);
+  }
+
+  /* Every shape of the drawing is markup this component generates and hands to `set:html`,
+     which Astro's scope attribute never reaches: a scoped `.zoom-tile[data-astro-cid-…]` rule
+     cannot match it, and the shape would fall back to SVG's initial values — a black fill
+     (the defect of 2026-10-21). `:global()` opts the shape's own compound out of the scoping
+     and leaves the rule reaching the shape. */
+  .zoom :global(.zoom-tile),
+  .zoom :global(.zoom-console-body) {
+    fill: var(--surface);
+    stroke: var(--border);
+  }
+
+  .zoom :global(.zoom-tile-bar) {
+    stroke: var(--accent);
+  }
+
+  .zoom :global(.zoom-tile-row) {
+    fill: var(--text-muted);
+    stroke: none;
+  }
+
+  .zoom :global(.zoom-orc-ring) {
+    fill: none;
+    stroke: var(--accent);
+  }
+
+  .zoom :global(.zoom-orc-core) {
+    fill: var(--surface);
+    stroke: var(--accent-on-dark);
+  }
+
+  .zoom :global(.zoom-orc-dot) {
+    fill: var(--accent-on-dark);
+    stroke: none;
+  }
+
+  .zoom :global(.zoom-dev-head),
+  .zoom :global(.zoom-dev-body) {
+    fill: var(--text-muted);
+    stroke: none;
+  }
+
+  .zoom :global(.zoom-console-bar),
+  .zoom :global(.zoom-console-line) {
+    stroke: var(--border);
+  }
+
+  .zoom :global(.zoom-console-prompt) {
+    fill: none;
+    stroke: var(--accent-on-dark);
+  }
+
+  .zoom :global(.zoom-project-boundary) {
+    fill: none;
+    stroke: var(--accent);
+  }
+
+  /* The connectors between a level's parts, and the level's own words. The labels are the
+     data file's rows and are painted with the page's own text colour, so every one of them
+     has a pair the contrast reading can compute against the panel they are drawn on. */
+  .zoom :global(.zoom-link) {
+    stroke: var(--border);
+  }
+
+  .zoom :global(.zoom-label) {
+    fill: var(--text-muted);
+    font-family: var(--font-sans);
+  }
+</style>
