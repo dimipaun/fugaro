@@ -3,7 +3,9 @@
 **Status: reconciliation only. No code, no config, no workflow and no live action follows from this
 document. The twelve decisions in §4 are answered** — the owner answered all twelve on 2026-10-20,
 and the table at the head of §4 records each one with its why — **and answering a decision is not
-approving the build: the plan's OWNER APPROVAL GATE is still not passed.** It reads the tree at
+approving the build — the two are separate: the answers are 2026-10-20, and the plan's OWNER APPROVAL
+GATE was passed on 2026-10-21, for the target release 0.11.0 on the branch `console-windows-wsl`.**
+It reads the tree at
 `ccc406b2` and every path and symbol in it was read at that commit. Where it disagrees with the brief
 in §0, **this document wins** and says so.
 
@@ -221,7 +223,8 @@ path that exists and is unused.
 Each is a real fork with a recommendation first, the alternative and what it costs. **The owner
 answered all twelve on 2026-10-20**, and the table below is the record: the option taken and the
 reason in one line. **Answering a decision is not approving the build** — the plan's OWNER APPROVAL
-GATE is where approval happens, and it is still not passed. The namespaces are local: **D1–D12 are
+GATE is where approval happens, and it **passed on 2026-10-21** (target release 0.11.0, branch
+`console-windows-wsl`). The namespaces are local: **D1–D12 are
 this folder's**, they are unrelated to
 [docs/design/desktop-console.md](../design/desktop-console.md)'s D1–D20 and to
 [docs/windows-cli/](../windows-cli/README.md)'s D1–D16, and O6 records the collision.
@@ -552,7 +555,7 @@ run by the owner, and so that no sentence in the docs depends on the answer befo
 |---|---|---|
 | **U1** | That `electron-builder --win` produces an NSIS installer for this app at all, with the six fuses flipped by the `win32` row | A manual dispatch of `console-windows.yml` on a `windows-latest` runner, once Part B lands — or the release-time run |
 | **U2** | That the fuse bytes are where the `win32` row says (`<appOutDir>/<productFilename>.exe`) for this packer version | The same run's artifact, opened; the Linux leg's `--appimage-extract` read-back is the precedent |
-| **U3** | Whether `npm run test:unit` passes on `windows-latest` once Part C lands — `vitest run --dir test/unit` covers 55 `.ts` files there (53 of them `*.test.ts`; `find console/test/unit -name '*.ts' \| wc -l`), and only some are platform-neutral | The same run's `npm run test:unit` step |
+| **U3** | Whether `npm run test:unit` passes on `windows-latest` once Part C lands — `vitest run --dir test/unit` covers 57 `.ts` files there (54 of them `*.test.ts`; `find console/test/unit -name '*.ts' \| wc -l`), and only some are platform-neutral | The same run's `npm run test:unit` step |
 | **U4** | The exact behaviour of `wsl.exe` when `WSLENV` is **absent** rather than empty | A Windows machine, or the WSL documentation read at the version the runner has |
 | **U5** | Whether killing the Windows-side `wsl.exe` kills the Linux process it started | A Windows machine: start `sleep 300` through `wsl.exe`, kill the Windows side, look inside the distribution |
 | **U6** | Whether the pid-capture design of D6(a) survives a `wsl.exe` that exits before the pid file is written | The same machine, with the race run deliberately |

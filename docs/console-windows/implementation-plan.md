@@ -1,9 +1,9 @@
 # The console on Windows — the implementation plan
 
-**Status: plan only; nothing is implemented; the twelve decisions are answered and the OWNER APPROVAL
-GATE is still not passed.** No task below is approved. **Part A is the first part that may start, and
-only after the OWNER APPROVAL GATE in §5 passes** — and Part A touches no production behaviour, which
-is why it is first and why it is safe first.
+**Status: approved to build on 2026-10-21 — target release 0.11.0, branch `console-windows-wsl`; the
+twelve decisions are answered and the OWNER APPROVAL GATE in §5 is passed.** Parts land in the order
+§3 gives, and each merges alone. **Part A is built** (T-A1 to T-A3, the fake `wsl.exe`): it touches no
+production behaviour, which is why it is first and why it is safe first.
 
 **The D7 ruling (2026-10-20): the Windows pack runs at release time only.** It is started by the
 release tag (`on: push: tags: ["v[0-9]+.[0-9]+.[0-9]+"]`) or by a `workflow_dispatch` before it, and
@@ -31,10 +31,10 @@ Each task has:
   that already owns it.
 - **Verification** — the exact command an agent runs. Five recur and are abbreviated afterwards:
   - **`[unit]`** = `cd console && npm run test:unit` — `vitest run --dir test/unit`, over the
-    **55** `.ts` files under `console/test/unit`, **53** of them `*.test.ts` (the other two are
-    `stub.ts` and `synthetic.ts`; the count is `find console/test/unit -name '*.ts' | wc -l`, and
-    the 75 `find console/test -name '*.ts'` returns is the whole `test/` tree, e2e and fixtures
-    included). A task's own run is `npm run test:unit -- <file>`.
+    **57** `.ts` files under `console/test/unit`, **54** of them `*.test.ts` (the other three are
+    `stub.ts`, `wslstub.ts` and `synthetic.ts`; the count is `find console/test/unit -name '*.ts' |
+    wc -l`, and the 75 `find console/test -name '*.ts'` returns is the whole `test/` tree, e2e and
+    fixtures included). A task's own run is `npm run test:unit -- <file>`.
   - **`[types]`** = `cd console && npm run typecheck`.
   - **`[pins]`** = `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint|Console' -count=1 -timeout 40m`
     — the Go guards over this folder, `docs/pending-workflows/` and `console/README.md`.
@@ -805,14 +805,18 @@ before it, which is the risk the ruling accepts and the dry run above is there t
 
 ## 5. OWNER APPROVAL GATE
 
-**Not passed. Nothing in this plan may start until the owner passes it.**
+**Passed on 2026-10-21: approved to build — target release 0.11.0, branch `console-windows-wsl`.**
+The owner approved **this plan**: the eight parts, the order in §3, the staged workflow in
+`docs/pending-workflows/console-windows.yml`, the owner-run checklist in §4, and the risk the D7
+ruling accepts (a packaging break shows at release time and is fixed then). Parts land in §3's order,
+each merging alone, and the long-lived branch `console-windows-wsl` is where they collect until
+0.11.0 — the pull request that carries each part is retargeted to that branch rather than to `main`.
 
-**Answering a decision is not approving the build.** The five conditions this gate used to list were
-the twelve decisions, and **the owner answered all twelve on 2026-10-20** — each with its one-line why
-in [reconciliation.md](reconciliation.md) §4. That removes the *decisions* from the gate; it does not
-pass the gate. What the owner has not yet approved is **this plan**: eight parts, the order in §3, the
-staged workflow in `docs/pending-workflows/console-windows.yml`, the owner-run checklist in §4, and the
-risk the D7 ruling accepts (a packaging break shows at release time and is fixed then).
+**Answering a decision was not approving the build, and the two dates are separate.** The five
+conditions this gate used to list were the twelve decisions, and **the owner answered all twelve on
+2026-10-20** — each with its one-line why in [reconciliation.md](reconciliation.md) §4. That removed
+the *decisions* from the gate; it did not pass it. The approval of the plan itself is the ruling of
+**2026-10-21**, and it is what this section now records.
 
 | Decision | Answered | What it settled |
 |---|---|---|
@@ -829,12 +833,13 @@ risk the D7 ruling accepts (a packaging break shows at release time and is fixed
 | **D11** | (a) | Part A, and therefore the test strategy of every other part: a fake `wsl.exe` built on `installStub`, asserting what the Linux side received. |
 | **D12** | (a) | §4 stays *proposed*: Check 119 is named and unclaimed, and no row is written into the register. |
 
-**What may start when the gate passes.** **Part A alone**, which touches no production code and no
-document outside this folder, and whose only claim is that the tests that follow can run anywhere.
-Parts B–H no longer wait on answers — theirs are above — they wait on the gate, and then on the order
-in §3.
+**What the approval covers, and in what order.** **Part A** — built, and it touches no production
+code, no `console/src/` file and no document outside this folder, its only claim being that the tests
+that follow can run anywhere — and then the parts in §3's order: B independently of A, C after A, D,
+E and F after C in any order among themselves, G after C and F, and H after B and C. Parts B–H never
+waited on answers — theirs are above — they waited on the gate, and now on the order in §3.
 
-**What is explicitly *not* approved by any answer to this gate**: copying
+**What the approval does *not* cover, and what still needs the owner**: copying
 `docs/pending-workflows/console-windows.yml` into `.github/workflows/` (that is Tier C, and the file's
 own header says what must land first); writing Check 119's row into the register (D12); touching
 `website/data/install.yaml` (F47); and anything under `.github/workflows/` by an agent (F44).
