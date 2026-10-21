@@ -97,7 +97,7 @@ var datedRecords = []string{
 	"docs/setup-wizard/",
 }
 
-// retirementText is the second exemption class, and it is not a judgement
+// retirementPaths is the second exemption class, and it is not a judgement
 // call: each of these paths names `fugaro init` *as the retired verb*, which
 // is its whole job and which no rename can remove. It is a list of paths that
 // MAY name the command, so a path that does not exist yet contributes nothing
@@ -111,7 +111,7 @@ var datedRecords = []string{
 // with TestInitRepoRetireTranscriptGolden -update-retire exactly like the other
 // two goldens. An exemption for a file the rename empties is the "wrong in one
 // direction" case Global Constraint 7 forbids.
-var retirementText = []string{
+var retirementPaths = []string{
 	// W1.2's tombstone: one message, two names, non-zero exit.
 	"internal/cli/retired.go",
 	// W1.2's test, which asserts that message.
@@ -504,7 +504,7 @@ func censusExempt(rel string) bool {
 			return true
 		}
 	}
-	return slices.Contains(retirementText, rel)
+	return slices.Contains(retirementPaths, rel)
 }
 
 // censusOutputDirs, censusOutputNames and censusOutputMarkers are the third
@@ -832,7 +832,7 @@ func TestCensusNamesInitReadsPastTheHead(t *testing.T) {
 // wants true fails; drop websiteBuildDir from censusOutputDirs -- its two cases
 // fail; match the directory prefix with strings.Contains instead of a boundary --
 // the sibling cases fail; drop "docs/plans/" from datedRecords -- the dated-root
-// cases fail; make censusExempt a prefix match over retirementText -- the
+// cases fail; make censusExempt a prefix match over retirementPaths -- the
 // retired.go.md case fails.
 func TestCensusOutputAndExemptArePinned(t *testing.T) {
 	output := []struct {
