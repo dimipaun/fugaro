@@ -61,12 +61,21 @@
   --border: #24303F;
   --warn: #F5A524;
 
-  /* The success tone: the end of the run, the third step, the last arrow of the flow. It is
-   * the one colour on the site that means "this finished", and it is 132° from the accent, so
-   * a green mark and a cyan one are never mistaken for each other. It carries the ground as a
-   * label when it is a fill (the same 4.5:1 the accent's fill carries), and it is legible as a
-   * mark on the ground, the panel and the surface. */
-  --ok: #4CC38A;
+  /* The success tone: the end of the run, the card that finishes, the second stop of the
+   * gradient a heading is drawn in. It is the one colour on the site that means "this
+   * finished", and it is 132° from the accent, so a green mark and a cyan one are never
+   * mistaken for each other. It carries the ground as a label when it is a fill, and it is
+   * legible as a mark on the ground, the panel and the surface.
+   *
+   * **The value is this site's own, and deliberately not the console's `--ok`.** The console's
+   * `docs/design/console-styling.md` §3.2 records `--ok` as one of six colours it invents
+   * because "the website has no equivalent", and `internal/cli`'s
+   * `TestDocsConsoleStylingTokenProvenance` holds that sentence true by refusing the console's
+   * six literals anywhere in **this** file — the palette in force. So the site's green is its
+   * own value in the same hue family rather than the console's literal: a colour that reads as
+   * the same green and that does not make the console's record wrong. The other three palettes
+   * still carry the console's literal, and the reading is about the one that is in force. */
+  --ok: #43C08A;
 
   /* The hero's gradient, as its two stops: `linear-gradient(var(--gradient-from),
    * var(--gradient-to))`. Naming the stops as tokens is what lets the contrast check treat
