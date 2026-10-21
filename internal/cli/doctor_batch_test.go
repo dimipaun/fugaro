@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -454,22 +456,33 @@ func TestDoctorBatchReadsTheProjectTheResourceNameNames(t *testing.T) {
 // exactly the state the operator is in). The endpoints here answer nothing:
 // nothing is listening on them, which is a read that cannot be made.
 //
+// The launchers' grant is read from the resource manager, which here answers
+// every request with a 500: a failed read that is not a refusal, so it takes
+// the unchecked arm and not the propagation one a 403 takes.
+//
 // Mutation (answer OK on a read error, i.e. `default: return
-// doctorCheck{ID: id, OK: true}`): each named check stops warning.
+// doctorCheck{ID: id, OK: true}`, or the IAM check's non-denied error arm
+// returning OK): each named check stops warning.
 func TestDoctorBatchNeverPassesAReadItCouldNotMake(t *testing.T) {
 	const dead = "http://127.0.0.1:1/"
 	r := newDoctorRig(t)
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"error":{"code":500,"message":"backend error","status":"INTERNAL"}}`, http.StatusInternalServerError)
+	}))
+	t.Cleanup(broken.Close)
 	// One endpoint, three services, nothing answering on it; no_auth carries
 	// over from the rig's own config, so the client does not go looking for
 	// credentials before the connection fails.
 	cfg := strings.Replace(r.cfg, "endpoints: { ",
-		"endpoints: { compute: "+dead+"compute/v1/, logging: "+dead+", service_usage: "+dead+", ", 1) + batchBlock
+		"endpoints: { compute: "+dead+"compute/v1/, logging: "+dead+", service_usage: "+dead+", ", 1)
+	cfg = strings.Replace(cfg, "resource_manager: "+r.crm.URL+"/", "resource_manager: "+broken.URL+"/", 1) +
+		batchBlock + "terraform: { launchers: [\"user:a@example.com\"] }\n"
 	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	o := r.runDoctorJSON(t)
-	for _, id := range []string{"batch-apis", "batch-image-family", "batch-network", "batch-subnetwork", "batch-log-sink"} {
+	for _, id := range []string{"batch-apis", "batch-image-family", "batch-network", "batch-subnetwork", "batch-log-sink", "batch-launcher-iam"} {
 		c, ok := doctorCheckByID(o.Checks, id)
 		if !ok {
 			t.Errorf("doctor reports no %s check", id)
