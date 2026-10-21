@@ -213,8 +213,10 @@ added or removed without this sentence moving fails there:
   - `main`'s picture: the owner's `fugaro watch` capture and its transcription, placed on the
     homepage by #655.
   - this branch's two changes from the owner's brief of 2026-10-19: the menu's drawer replaced
-    by the three group labels in the header's row (item 1), and the console's link in the
-    homepage's call to action (item 6), which renders from the console's flag.
+    by the group labels in the header's row (item 1; the labels are **two** now that the owner's
+    feedback of 2026-10-21 dropped the Reference group — see the bullet on it below), and the
+    console's link in the homepage's call to action (item 6), which renders from the console's
+    flag.
   - the console's release (W3.1): `features.console_downloads` and the data file's
     `available` turned on together, which puts the console page's downloads, Getting Started's
     console option and the hero's link to the console into this build.
@@ -782,7 +784,7 @@ added or removed without this sentence moving fails there:
     box — planted against the star as it shipped, so the fix and the check that would have caught
     it arrive together.
   - **Home is the menu's first item** (the owner's feedback of 2026-10-21: "I think we need a
-    'Home' as the first menu"). The item is a link in the menu's own list, in front of the three
+    'Home' as the first menu"). The item is a link in the menu's own list, in front of the
     groups, on every page and at every width, and the phone block's two rules are what pay for a
     fourth item in the header's row — the gap between the wordmark and the menu goes to the
     phone's 4 px and the items stand with no gap between them — with the wordmark's text leaving
@@ -794,8 +796,10 @@ added or removed without this sentence moving fails there:
     markup moves by the same 51 as every other page's). The script is untouched — the menu still
     opens and closes with JavaScript off, and Home is a link, so it needs none — and the count of
     files in `dist/` stays **28**. `test/base-styles.mjs` holds the item's position, its route and
-    its name and refuses a Home item that holds a list, and holds the phone block's two rules to
-    the row the fourth item was measured into.
+    its name and refuses a Home item that holds a list, and holds the phone block's two rules —
+    the cut the four-item row was measured into, kept now that the same day's later feedback left
+    the row a group narrower (the bullet on it below), where the two rules are headroom rather
+    than the whole of the payment.
   - **"Say it. Get pull requests." is a slider** (the owner's feedback of 2026-10-21: "can we
     auto-rotate between tabs every few seconds? Like a slider? Maybe a slider would work better
     than tabs?"). The same three slides and the same three panels, with the strip of tabs
@@ -872,6 +876,28 @@ added or removed without this sentence moving fails there:
     `test/base-styles.mjs`'s band gate reads the new `@supports` rule through one narrow
     exemption, for that query string alone: a capability gate is not a width band, and every
     other at-rule is refused there as before.
+
+  - **The menu lost its third group** (the owner's feedback of 2026-10-21: "let's drop the top
+    reference menu. We'll move the submenu console under product, and the rest go under
+    Project"). The Reference group's `<li>`, `<details>`, `<summary>` and its list wrapper are
+    gone from `NAV_GROUPS`, and the three links it held were moved rather than rewritten:
+    Console's item into *Product*'s list and Docs's and Changelog's into *Project*'s, so the
+    menu is two groups — *Product* (four items) and *Project* (five) — in front of the Home item
+    the same day's earlier feedback put first, and the footer still picks its entries out of the
+    same groups. **Every page carries the same move, because the menu is inlined into all of
+    them**: **110 bytes off each of the 11 pages' HTML** (the removed block's own elements and
+    their attributes, the three links themselves being moved and unchanged), **6 bytes off the
+    script** (the one comment that counted three groups), which is **116 off the page weight**
+    (the console page, which inlines the stylesheet, fetches the script and carries the four
+    screenshots, is the heaviest page either way) and **1,216 off the site figure** — the 1,210
+    of the pages and the 6 of the script. No file was added or removed, so the count of files in
+    `dist/` stays **28**, the count of pages **11**, and no page's words move: a menu label is
+    chrome, and the words the ceiling counts are `main`'s. The three budget figures below are
+    **left where they are**: the owner's ruling of 2026-10-20 is that they are re-derived when
+    the owner asks rather than on every round, so this move is stated here and the figures stay
+    the ones the round above derived. `test/base-styles.mjs`'s `navFailures` holds the two
+    groups by name and refuses a third, and `test/nav-hover.mjs` reads the two lists the menu
+    draws; `base.css`'s phone cut is left at the width the four-item row was measured at.
 
   - **JavaScript per page:** 248,211 bytes. Three times 82,737: the one script the site ships,
     `public/scripts/site.js` (66,189 bytes), plus 25 %. What the file carries is the copy
