@@ -137,7 +137,7 @@ func TestInitPublishConfigAsLauncherIsRefused(t *testing.T) {
 	}
 }
 
-// A plain `fugaro init` run (not --publish-config) only warns when the
+// A plain converge (not --publish-config) only warns when the
 // shared config publish is forbidden: the installation itself still
 // succeeds, exit 0 (initRun.publishSharedConfig, init.go).
 func TestInitWarnsWhenSharedConfigPublishIsForbidden(t *testing.T) {
@@ -204,7 +204,7 @@ func TestInitPublishFailureWarnsAndSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a publish failure must not fail init: %v", err)
 	}
-	if !strings.Contains(out, "warning: could not publish the shared config: ") || !strings.Contains(out, "teammates will need fugaro init until it is published") {
+	if !strings.Contains(out, "warning: could not publish the shared config: ") || !strings.Contains(out, "teammates will need fugaro setup until it is published") {
 		t.Errorf("no warning:\n%s", out)
 	}
 }
@@ -616,7 +616,7 @@ func TestInitPublishFromACodingAgentSession(t *testing.T) {
 			}
 			var buf strings.Builder
 			(&initRun{w: &buf}).publishSharedConfig(t.Context(), publishable(t))
-			want := "note: the shared config was not published: " + refusal + "; run fugaro init --publish-config in your own terminal\n"
+			want := "note: the shared config was not published: " + refusal + "; run fugaro update --publish-config in your own terminal\n"
 			if buf.String() != want {
 				t.Errorf("note:\n%q\nwant:\n%q", buf.String(), want)
 			}

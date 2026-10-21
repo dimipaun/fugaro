@@ -212,7 +212,7 @@ func reportHistory(ctx context.Context, lc *localcfg.Config, wantSlug string, fr
 	case errors.Is(err, firestore.ErrNoDatabase):
 		return nil, "the project's Firebase project has no Firestore database", nil
 	case errors.Is(err, firestore.ErrNotFound):
-		return nil, "the project's Firestore database has no history mark (fugaro init --firebase has not set it up)", nil
+		return nil, "the project's Firestore database has no history mark (fugaro update --firebase has not set it up)", nil
 	case err != nil:
 		return nil, "", firestoreErr(lc, err)
 	}

@@ -371,7 +371,7 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 		}
 		// M2: the launch that minted marks this execution with the token, and
 		// the marker is the run request's, not the job's deployment (that
-		// environment is init --repo's, and internal/infra pins that it never
+		// environment is update --repo's, and internal/infra pins that it never
 		// carries the marker). It is what makes a missing token a refusal for
 		// this run instead of "this project has published no policy", and its
 		// value is the launch's seal key (D15), checked by markerKey above.
@@ -455,7 +455,7 @@ func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a refusal (the policy node is published and cannot be read)", err)
 	}
-	for _, want := range []string{projectpolicy.PathShared(), projectpolicy.PathRulesMarker(), "init --firebase"} {
+	for _, want := range []string{projectpolicy.PathShared(), projectpolicy.PathRulesMarker(), "update --firebase"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}

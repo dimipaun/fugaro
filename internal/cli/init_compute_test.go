@@ -440,7 +440,7 @@ func TestProvisionBatchFlagIsRefusedWhereItCannotApply(t *testing.T) {
 
 // The --repo run's own check, and the one place a --repo run validates: it
 // never reaches check(), which is why the pair has to be refused here too.
-// Left unrefused, `fugaro init --repo --provision-batch` onboarded the
+// Left unrefused, `fugaro update --repo --provision-batch` onboarded the
 // repository and dropped the flag silently -- the user asked for an apply that
 // costs money and got no apply and no word about it. The flag's own help says
 // it excludes --repo, so the refusal names both.
@@ -448,7 +448,7 @@ func TestProvisionBatchIsRefusedOnTheRepoPath(t *testing.T) {
 	o := &initOptions{provisionBatch: true, repo: true}
 	err := o.checkRepo()
 	if err == nil {
-		t.Fatal("fugaro init --repo --provision-batch was accepted: the flag excludes --repo, and a flag that does nothing here must be refused, not ignored")
+		t.Fatal("fugaro update --repo --provision-batch was accepted: the flag excludes --repo, and a flag that does nothing here must be refused, not ignored")
 	}
 	if !strings.Contains(err.Error(), "--provision-batch") || !strings.Contains(err.Error(), "--repo") {
 		t.Fatalf("err = %v, want a refusal naming --provision-batch and --repo", err)

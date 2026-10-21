@@ -80,7 +80,7 @@ func newImageBuildCmd() *cobra.Command {
 			"Without --local, Cloud Build builds it from the repository's base branch\n" +
 			"as the repository's build account (cloning with its bitbucket-token, or\n" +
 			"a read-only token its GitHub App mints) and pushes it to the repository's\n" +
-			"own registry, which fugaro init --repo creates. It pushes a candidate,\n" +
+			"own registry, which fugaro update --repo creates. It pushes a candidate,\n" +
 			"smoke-tests it without network, and only then points latest at it and\n" +
 			"records what it was built from, unless a newer build is already\n" +
 			"recorded. Run it from the repository's checkout: the checkout's\n" +
@@ -234,7 +234,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if foreignProxyRef(base, host, kind, baseOwner(lc)) {
 		return foreignProxyRefusal("the base image for "+kind, base, host, kind, baseOwner(lc))
 	}
-	// Every name comes from the repository's spec, as fugaro init --repo
+	// Every name comes from the repository's spec, as fugaro update --repo
 	// creates them: the build account, the registry (refused when its host
 	// names another GCP project than the config's own) and the provider
 	// credential. The spec's check job needs a base image, which this
@@ -282,13 +282,13 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	case err != nil:
 		return remote(err)
 	case !exists:
-		return userErr("project %s has no image registry %s for %s yet, so the build would have nowhere to push. fugaro init --repo creates it: run that from this checkout first", lc.GCPProject, rs.RegistryPath, repo)
+		return userErr("project %s has no image registry %s for %s yet, so the build would have nowhere to push. fugaro update --repo creates it: run that from this checkout first", lc.GCPProject, rs.RegistryPath, repo)
 	}
 	if err := confirmBuild(cmd, lc.Name, lc.GCPProject, cloudBuildBanner(repo, name, lc.Build.MachineType, rs.BuildServiceAccountEmail, rs.RegistryPath)); err != nil {
 		return err
 	}
 	// Writes the repository's copy of the project layer only now, after the
-	// typed confirmation above: like fugaro init's own buildImages/
+	// typed confirmation above: like the converge's own buildImages/
 	// submitAndWait, a declined (or unconfirmable) build must leave no
 	// trace in the bucket.
 	if cfg.Layer != nil {
@@ -341,7 +341,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 }
 
 // cloudBuildBanner is what a Cloud Build confirmation says it does: the one
-// text fugaro image build and fugaro init's first build share.
+// text fugaro image build and the converge's first build share.
 func cloudBuildBanner(repo, workflow, machineType, account, registry string) string {
 	return fmt.Sprintf("submits a Cloud Build for %s/%s on %s, as %s (billable per build-minute: a 13-minute build on E2_HIGHCPU_8 is about $0.21); it builds, smoke-tests and promotes the image into %s and records it",
 		repo, workflow, machineType, account, registry)

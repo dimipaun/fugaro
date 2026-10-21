@@ -60,7 +60,7 @@ func TestDocsNameImageRefresh(t *testing.T) {
 			t.Errorf("%s never names fugaro image refresh", path)
 		}
 		if strings.Contains(doc, "from outside the checkout") {
-			t.Errorf("%s still gives the init --base from outside the checkout sequence", path)
+			t.Errorf("%s still gives the update --base from outside the checkout sequence", path)
 		}
 		for _, line := range strings.Split(doc, "\n") {
 			if !strings.Contains(line, "fugaro image refresh") {

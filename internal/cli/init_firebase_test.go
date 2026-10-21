@@ -26,7 +26,7 @@ const (
 	historyImagePath = "us-east5-docker.pkg.dev/proj-1234/" + infra.BaseRegistry + "/" + infra.HistoryImagePackage + ":latest"
 )
 
-// fbRig is the init rig plus the fakes of init --firebase: Cloud Billing, the
+// fbRig is the init rig plus the fakes of update --firebase: Cloud Billing, the
 // project's Realtime Database, and a Firebase project with billing.
 type fbRig struct {
 	*initRig
@@ -566,7 +566,7 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 // --firebase deploys the rules *this* binary carries, so it must refuse rather
 // than overwrite the newer installation's rules with older ones and record its
 // own generation over the newer number — the state doctor warns about and
-// tells the owner not to cause ("do not re-run 'fugaro init --firebase' with
+// tells the owner not to cause ("do not re-run 'fugaro update --firebase' with
 // this binary", policy-rules-skew).
 //
 // Hand mutation this fails on: dropping the refusal from infra.DB.Plan, which
@@ -939,7 +939,7 @@ func TestInitFirebasePrintVarsNoCalls(t *testing.T) {
 	}
 }
 
-// init --repo writes the backend's address and web key into the workflow jobs
+// update --repo writes the backend's address and web key into the workflow jobs
 // whenever the installation has them, whatever its budget mode (D11, plan
 // task 1.4 step 1). The mode is the project's policy now, and a run reads that
 // policy with these two (the token exchange needs the key, not only the URL);

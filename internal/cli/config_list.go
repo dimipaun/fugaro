@@ -141,7 +141,7 @@ func printConfigList(w io.Writer, doc configListDoc, asJSON bool) error {
 		return enc.Encode(doc)
 	}
 	if len(doc.Installations) == 0 {
-		fmt.Fprintln(w, "no Fugaro installations on this machine; run `fugaro init` to set one up")
+		fmt.Fprintln(w, "no Fugaro installations on this machine; run `fugaro setup` to set one up")
 	}
 	for _, n := range doc.Warnings {
 		fmt.Fprintln(w, "warning: "+pluginwire.Printable(n))

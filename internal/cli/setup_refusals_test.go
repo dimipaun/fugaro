@@ -362,11 +362,11 @@ func firestoreLocationLeft(t *testing.T) initflow.Left {
 // billableBuildPrompt is the left-for-you the repository stage leaves for a
 // billable first image build: init.go's own billableBuildLeft, the one function
 // repoEngine builds that step's left with, called the way the converge calls it
-// (embedded: the repository stage is the run's own, not fugaro init --repo). It
+// (embedded: the repository stage is the run's own, not fugaro update --repo). It
 // is not a copy of the prompt here, so a change to the prompt — its kind
 // included, which is the thing this matrix is about — moves this row with it.
 func billableBuildPrompt(*testing.T) initflow.Left {
-	return billableBuildLeft(true)
+	return billableBuildLeft(true, "setup")
 }
 
 // TestTheFourTypedStepsLeaveAPrompt is the other half of the plan's sentence:

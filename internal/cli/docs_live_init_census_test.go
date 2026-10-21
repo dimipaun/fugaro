@@ -138,6 +138,10 @@ var liveRoots = []string{
 	"website",
 	"schemas",
 	"scripts",
+	// The desktop console is a live root from W2.1 on: its README and one of
+	// its unit tests name the command, and the second test below refuses a
+	// root that names it and is not walked.
+	"console",
 	"internal",
 	"images",
 	"deploy",
@@ -161,11 +165,13 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 279 files -- 114 non-test Go files, 118 test files,
-// 40 markdown files, the two goldens, and the five that fall in none of those
+// command, sorted. It is 174 files -- 68 non-test Go files, 61 test files,
+// 37 markdown files, the two goldens, and the six that fall in none of those
 // groups: the website's four (its install data, its two pages and its test
-// script) and the getting-started design board the redesign was approved from,
-// website/design-ref/GettingStartedV4.dc.html. Read on main at `1d325928`, this
+// script), the getting-started design board the redesign was approved from,
+// website/design-ref/GettingStartedV4.dc.html, and console/test/unit/ipc.test.ts
+// (console/README.md is markdown and counted with the 37). Read on main at
+// `1d325928`, this
 // branch's base, it was **312** files -- 118 non-test Go files, 117 test files,
 // 34 markdown files, 29 Terraform files, the four `.tftest.hcl` fixtures beside
 // them, the two goldens, and eight in none of those groups: the website's four,
@@ -212,6 +218,23 @@ const censusRoot = "../.."
 // leaving it on the list is what keeps that choice visible instead of settled
 // by a walk that stopped looking.
 //
+// **W2.1 moved it furthest, and its branch also paid a debt W1.2 left.** The
+// internal/cli rename took 109 files off the list: every non-test and test file
+// of that package whose mention was text a reader acts on (the flag help, the
+// left-for-you lines, the refusals, the goldens' transcripts and the comments
+// that named the command), which is the bulk of it. Five of the 109 had already
+// stopped naming the command in the commit that renamed the front door -- W1.2's
+// b3cd14cd, which renamed plugin/skills/setup/SKILL.md and its two reference
+// pages, plugin/skills/working/reference/status.md and plugin/skills_lint_test.go
+// and left all five listed, and took the mention out of
+// internal/cli/loop_program_test.go without touching its row. The census failed
+// in both directions on that commit's tip, so W2.1's branch takes the five off
+// and adds the four the walk found unlisted: internal/cli/docs_checkout_test.go
+// and internal/agent/relay_test.go, whose mentions another task owns (the docs
+// rename and the agent package's), and console/README.md with
+// console/test/unit/ipc.test.ts, which is why the second test below now finds
+// console/ a live root -- it names the command, so the walk covers it.
+//
 // Each task that renames a string takes the file off this list in the same
 // commit, and W2.6 empties it.
 var pendingRename = []string{
@@ -219,6 +242,8 @@ var pendingRename = []string{
 	"CONTRIBUTING.md",
 	"README.md",
 	"SECURITY.md",
+	"console/README.md",
+	"console/test/unit/ipc.test.ts",
 	"docs/backends.md",
 	"docs/base-image-migration.md",
 	"docs/base-image.md",
@@ -249,6 +274,7 @@ var pendingRename = []string{
 	"docs/rigor-modes/reconciliation.md",
 	"docs/windows-cli/reconciliation.md",
 	"internal/agent/agent_test.go",
+	"internal/agent/relay_test.go",
 	"internal/backend/backend.go",
 	"internal/backend/backendtest/backendtest.go",
 	"internal/backend/gcp/live_test.go",
@@ -265,129 +291,26 @@ var pendingRename = []string{
 	"internal/budget/rules/marker.go",
 	"internal/budget/session.go",
 	"internal/budget/session_test.go",
-	"internal/cli/allow_delete.go",
-	"internal/cli/budget.go",
-	"internal/cli/budget_preview.go",
-	"internal/cli/cloud.go",
-	"internal/cli/config_list.go",
-	"internal/cli/config_list_test.go",
-	"internal/cli/config_publish.go",
 	"internal/cli/docs_base_test.go",
-	"internal/cli/docs_clone_workflows_test.go",
-	"internal/cli/docs_compute_backend_test.go",
-	"internal/cli/docs_managed_label_test.go",
+	"internal/cli/docs_checkout_test.go",
 	"internal/cli/docs_mobile_checks_review_test.go",
-	"internal/cli/docs_mobile_checks_test.go",
 	"internal/cli/docs_project_centric_test.go",
 	"internal/cli/docs_project_layer_test.go",
 	"internal/cli/docs_project_named_oauth_tokens_test.go",
 	"internal/cli/docs_project_wide_git_test.go",
-	"internal/cli/docs_providers_test.go",
 	"internal/cli/docs_recipes_test.go",
 	"internal/cli/docs_release_notes_test.go",
 	"internal/cli/docs_setup_wizard_checks_test.go",
-	"internal/cli/doctor.go",
-	"internal/cli/doctor_bucket.go",
-	"internal/cli/doctor_bucket_test.go",
-	"internal/cli/doctor_policy_test.go",
-	"internal/cli/doctor_shared_test.go",
-	"internal/cli/doctor_test.go",
-	"internal/cli/exec.go",
-	"internal/cli/exec_test.go",
-	"internal/cli/gitsecret.go",
-	"internal/cli/history_rollover.go",
 	"internal/cli/image.go",
-	"internal/cli/image_cloud_test.go",
-	"internal/cli/image_layer.go",
 	"internal/cli/image_layer_test.go",
-	"internal/cli/image_refresh.go",
-	"internal/cli/image_refresh_rules.go",
-	"internal/cli/image_refresh_steps.go",
 	"internal/cli/image_refresh_steps_test.go",
-	"internal/cli/image_refresh_test.go",
-	"internal/cli/image_refresh_upgrade_test.go",
-	"internal/cli/image_test.go",
-	"internal/cli/imagecheck.go",
-	"internal/cli/imagecheck_test.go",
 	"internal/cli/init.go",
-	"internal/cli/init_adopt.go",
-	"internal/cli/init_adopt_test.go",
-	"internal/cli/init_anchor.go",
-	"internal/cli/init_anchor_test.go",
-	"internal/cli/init_apis_test.go",
-	"internal/cli/init_budget_test.go",
-	"internal/cli/init_compute_test.go",
-	"internal/cli/init_firebase.go",
 	"internal/cli/init_firebase_test.go",
-	"internal/cli/init_fugaroyaml.go",
-	"internal/cli/init_fugaroyaml_test.go",
-	"internal/cli/init_gate_test.go",
-	"internal/cli/init_images.go",
-	"internal/cli/init_images_test.go",
-	"internal/cli/init_inputs.go",
-	"internal/cli/init_managed_test.go",
-	"internal/cli/init_plugin_stage.go",
-	"internal/cli/init_project.go",
-	"internal/cli/init_project_test.go",
-	"internal/cli/init_repo_gate.go",
-	"internal/cli/init_repo_gate_test.go",
-	"internal/cli/init_repo_stage.go",
-	"internal/cli/init_repo_stage_test.go",
-	"internal/cli/init_repo_target.go",
-	"internal/cli/init_retire.go",
-	"internal/cli/init_retire_test.go",
-	"internal/cli/init_review_test.go",
-	"internal/cli/init_stages.go",
-	"internal/cli/init_test.go",
-	"internal/cli/initsecrets.go",
-	"internal/cli/initsecrets_pty_test.go",
-	"internal/cli/launch_budget.go",
-	"internal/cli/launch_budget_test.go",
-	"internal/cli/layer_routes_overlap_test.go",
-	"internal/cli/layer_sites_test.go",
-	"internal/cli/loop_program_test.go",
-	"internal/cli/lswarn.go",
 	"internal/cli/managed_apply.go",
-	"internal/cli/managed_apply_test.go",
-	"internal/cli/managed_flag.go",
-	"internal/cli/managed_test.go",
-	"internal/cli/operator_write.go",
-	"internal/cli/operator_write_test.go",
-	"internal/cli/project.go",
-	"internal/cli/project_check_test.go",
-	"internal/cli/project_cmd.go",
-	"internal/cli/project_enroll.go",
 	"internal/cli/project_job.go",
-	"internal/cli/project_job_test.go",
-	"internal/cli/project_policy_test.go",
-	"internal/cli/project_shared_test.go",
-	"internal/cli/project_test.go",
-	"internal/cli/recipes_skew.go",
-	"internal/cli/recipes_skew_test.go",
-	"internal/cli/report.go",
-	"internal/cli/restore.go",
-	"internal/cli/restore_test.go",
-	"internal/cli/roles.go",
-	"internal/cli/root_test.go",
-	"internal/cli/run_allowlist_test.go",
-	"internal/cli/run_oauth_test.go",
-	"internal/cli/run_recipe_test.go",
-	"internal/cli/runs_test.go",
-	"internal/cli/secrets.go",
-	"internal/cli/secrets_test.go",
-	"internal/cli/setup_refusals_test.go",
-	"internal/cli/sharedcfg.go",
-	"internal/cli/sharedcfg_fetch_test.go",
-	"internal/cli/sharedcfg_test.go",
 	"internal/cli/sharedcfg_validate_test.go",
 	"internal/cli/testdata/init_commands.golden",
 	"internal/cli/testdata/init_retire.golden",
-	"internal/cli/upgrade.go",
-	"internal/cli/upgrade_cloud.go",
-	"internal/cli/upgrade_cloud_step_test.go",
-	"internal/cli/upgrade_cloud_test.go",
-	"internal/cli/validate.go",
-	"internal/cli/validate_test.go",
 	"internal/config/config.go",
 	"internal/config/project_secrets.go",
 	"internal/config/providers.go",
@@ -481,11 +404,6 @@ var pendingRename = []string{
 	"internal/runner/spend.go",
 	"plugin/readme_test.go",
 	"plugin/setup_skill_test.go",
-	"plugin/skills/setup/SKILL.md",
-	"plugin/skills/setup/reference/decisions.md",
-	"plugin/skills/setup/reference/transitions.md",
-	"plugin/skills/working/reference/status.md",
-	"plugin/skills_lint_test.go",
 	"website/README.md",
 	"website/content/cli-reference.md",
 	"website/content/security.md",

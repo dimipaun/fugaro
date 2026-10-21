@@ -811,7 +811,7 @@ func TestInitPrintVarsNoCalls(t *testing.T) {
 	}
 	// Discovery didn't run, so adopt_legacy_registry is only a default: the
 	// warning, on stderr, says so, and stdout stays the tfvars alone.
-	for _, want := range []string{"warning:", "ungated", "adopt_legacy_registry", "fugaro init"} {
+	for _, want := range []string{"warning:", "ungated", "adopt_legacy_registry", "fugaro setup"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
 		}
@@ -979,7 +979,7 @@ func TestInitForgetRefusesWithRepoStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, err := executeStdin(t, "", "update", "--forget", "--yes")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "init --repo --forget") || !strings.Contains(err.Error(), "*.tfstate") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "update --repo --forget") || !strings.Contains(err.Error(), "*.tfstate") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if len(r.ran(t, "plan"))+len(r.ran(t, "apply"))+len(r.ran(t, "state rm")) != 0 {
@@ -1016,7 +1016,7 @@ func (r *initRig) runInitTfvars(t *testing.T) map[string]any {
 	return r.tfvars(t)
 }
 
-// A stale lock under the repositories' prefix is not state: init --repo
+// A stale lock under the repositories' prefix is not state: update --repo
 // --forget deletes only *.tfstate objects, so the installation's rollback
 // counts only those too, and a leftover lock doesn't block it.
 func TestInitForgetIgnoresStaleRepoLock(t *testing.T) {
@@ -1234,7 +1234,7 @@ func TestInitConfigOnlyWithoutProjectName(t *testing.T) {
 	r.save(t)
 	before, _ := os.ReadFile(r.cfg)
 	_, _, err := executeStdin(t, "", "setup", "--config-only", "--yes")
-	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "the installation has no project name yet") || !strings.Contains(err.Error(), "fugaro init --name") {
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "the installation has no project name yet") || !strings.Contains(err.Error(), "fugaro setup --name") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if after, _ := os.ReadFile(r.cfg); string(after) != string(before) {
@@ -1276,7 +1276,7 @@ func TestInitConfigOnlyTakesNameFromOutputs(t *testing.T) {
 	}
 	// No name in the outputs: nothing to call the file.
 	if _, _, _, err := nameFromOutputs(provisional(), infra.InstallationOutputs{}); err == nil ||
-		!strings.Contains(err.Error(), "the installation has no project name yet; an operator runs fugaro init --name <name>") {
+		!strings.Contains(err.Error(), "the installation has no project name yet; an operator runs fugaro setup --name <name>") {
 		t.Fatalf("no project_name: %v", err)
 	}
 	if _, _, _, err := nameFromOutputs(provisional(), infra.InstallationOutputs{ProjectName: "Not A Name"}); err == nil {
@@ -1325,7 +1325,7 @@ func TestInitWriteConfigChecksName(t *testing.T) {
 	}
 }
 
-// A Vertex workflow can't be enforced yet: init --repo refuses before any
+// A Vertex workflow can't be enforced yet: update --repo refuses before any
 // plan or cloud call, while observe and off pass.
 func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	isolateProjects(t, t.TempDir())
@@ -1407,7 +1407,7 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	t.Chdir(t.TempDir())
 	_, _, err = execute(t, "setup", "--repo", "--yes", "--onboard-repo", "acme/webapp", "--project", "aurora", root)
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet") {
-		t.Fatalf("init --repo: exit %d, err %v", ExitCode(err), err)
+		t.Fatalf("update --repo: exit %d, err %v", ExitCode(err), err)
 	}
 }
 
@@ -1486,7 +1486,7 @@ func TestNewProjectConfigIsNotYAMLConcatenation(t *testing.T) {
 	}
 }
 
-// init --repo checks the repository's project against the installation's
+// update --repo checks the repository's project against the installation's
 // own name, from its outputs, before it plans anything.
 func TestInitRepoRefusesAnInstallationOfAnotherProject(t *testing.T) {
 	r := newInitRig(t)
@@ -1517,7 +1517,7 @@ func TestInitRepoRefusesAnInstallationOfAnotherProject(t *testing.T) {
 	}
 }
 
-// The ceiling's new keys reach the job env that init --repo computes.
+// The ceiling's new keys reach the job env that update --repo computes.
 func TestInitRepoPassesPolicyEnv(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	path := writeProject(t, "aurora", "proj-1234")
@@ -1547,7 +1547,7 @@ func TestInitRepoPassesPolicyEnv(t *testing.T) {
 // ["*"]) is named once, on stderr -- a repository's owner cannot see the
 // project config, and under the old rule an absent list meant nobody, so a
 // silently widened key has to be said out loud. stdout stays the tfvars
-// alone, as every other note of init --repo's does.
+// alone, as every other note of update --repo's does.
 func TestInitRepoNotesProvidersOpenToEveryRepository(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	path := writeProject(t, "aurora", "proj-1234")
@@ -1576,7 +1576,7 @@ func TestInitRepoNotesProvidersOpenToEveryRepository(t *testing.T) {
 	}
 }
 
-// init --repo says what ceiling it is about to apply and which keys of the
+// update --repo says what ceiling it is about to apply and which keys of the
 // checkout's committed budget block it would clamp.
 func TestInitRepoShowsCeilingAndClamps(t *testing.T) {
 	isolateProjects(t, t.TempDir())
@@ -1816,7 +1816,7 @@ func TestPlanRepoThreadsReadyToFirstBuild(t *testing.T) {
 	}
 }
 
-// L2 of the PR #379 review, the second mutation no test caught: init --repo
+// L2 of the PR #379 review, the second mutation no test caught: update --repo
 // must not pass on whether the project has published a policy. The CLI's side
 // of the Firebase gate (D11, plan task 1.4 step 2) is planRepo — it reads the
 // node with the operator's own credentials, which only this side holds, and
@@ -1844,7 +1844,7 @@ func TestPlanRepoGatesOnAPublishedPolicy(t *testing.T) {
 	if gate == "" {
 		t.Fatalf("missing = %v, want the Firebase gate for a published policy", missing)
 	}
-	for _, want := range []string{projectpolicy.PathShared(), infra.RTDBURLEnv, infra.FirebaseAPIKeyEnv, "fugaro init --firebase", "init --repo"} {
+	for _, want := range []string{projectpolicy.PathShared(), infra.RTDBURLEnv, infra.FirebaseAPIKeyEnv, "fugaro update --firebase", "update --repo"} {
 		if !strings.Contains(gate, want) {
 			t.Errorf("the gate does not say %q: %s", want, gate)
 		}
@@ -1976,7 +1976,7 @@ func TestInitAppPreCheckRefusesOnGrantMismatch(t *testing.T) {
 	if !strings.Contains(why, repoID) || !strings.Contains(why, projectID) {
 		t.Fatalf("the hold does not name both IDs: %q", why)
 	}
-	if out := g.out.String(); !strings.Contains(out, "init --repo acme/sandbox") || !strings.Contains(out, "not offered") {
+	if out := g.out.String(); !strings.Contains(out, "update --repo acme/sandbox") || !strings.Contains(out, "not offered") {
 		t.Fatalf("the hold names no fix:\n%s", out)
 	}
 	if g.readID != "" || len(*g.auth) != 0 {

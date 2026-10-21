@@ -347,7 +347,7 @@ func TestProjectPolicyPublishDeleteRefusesANewerNode(t *testing.T) {
 // TestProjectPolicyPublishRefusesAProfileMountingAClaudeOAuthToken: publish
 // copies the operator's profiles into the node verbatim, so the policy's own
 // rule (projectpolicy.validProfiles) is the only thing that can refuse a
-// profile here — and it must, because `fugaro init` refuses to deploy the job
+// profile here — and it must, because the converge refuses to deploy the job
 // such a profile names (internal/infra's projectJobSecrets). One rule for both
 // is what keeps a published profile from naming a job that does not exist: the
 // launcher would compute the account segment of that job (the default account)
@@ -690,7 +690,7 @@ func TestProjectPolicyPublishRefusesWithoutTheRulesMarker(t *testing.T) {
 	if err == nil {
 		t.Fatal("a publish without the rules marker was allowed")
 	}
-	if !strings.Contains(err.Error(), "init --firebase") {
+	if !strings.Contains(err.Error(), "update --firebase") {
 		t.Errorf("the refusal does not name the fix: %v", err)
 	}
 	// An absent marker is not an old one: the refusal must not tell the
@@ -716,7 +716,7 @@ func TestProjectPolicyPublishRefusesOlderRules(t *testing.T) {
 	if err == nil {
 		t.Fatal("a publish behind the deployed rules was allowed")
 	}
-	if !strings.Contains(err.Error(), "records generation "+strconv.Itoa(projectpolicy.PolicyRulesVersion-1)) || !strings.Contains(err.Error(), "init --firebase") {
+	if !strings.Contains(err.Error(), "records generation "+strconv.Itoa(projectpolicy.PolicyRulesVersion-1)) || !strings.Contains(err.Error(), "update --firebase") {
 		t.Errorf("the refusal does not say the marker is below the generation a policy is read under: %v", err)
 	} // Not the marker-current state's sentence: "the deployed rules are older
 	// than the marker" is a claim about a document, and nothing here compared
@@ -993,7 +993,7 @@ func TestProjectPolicyDeleteRefusesWithoutTheRulesMarker(t *testing.T) {
 	if err == nil {
 		t.Fatal("--delete without the rules marker was allowed")
 	}
-	if !strings.Contains(err.Error(), "init --firebase") {
+	if !strings.Contains(err.Error(), "update --firebase") {
 		t.Errorf("the refusal does not name the fix: %v", err)
 	}
 	if f.db.Value(projectpolicy.PathShared()) == nil {
@@ -1531,7 +1531,7 @@ func TestProjectReposEditRefusesWithoutTheRulesMarker(t *testing.T) {
 				if err == nil {
 					t.Fatalf("%v was allowed with %s", args, tc.what)
 				}
-				if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "init --firebase") {
+				if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "update --firebase") {
 					t.Errorf("%v refused with %q, want it to say %q and to name the fix", args, err, tc.want)
 				}
 			}

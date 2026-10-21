@@ -205,7 +205,7 @@ var commandFlagExceptions = map[string]map[string]map[string]bool{
 		"fugaro image refresh": {"local": true, "check": true,
 			// "Moving a repository... (2) The base step copies this
 			// release's base image of each selected workflow's kind as
-			// `init --base` does..." -- init's own flag, named without
+			// `update --base` does..." -- init's own flag, named without
 			// repeating "fugaro" (already established at the top of the
 			// same bullet).
 			"base": true},
@@ -309,7 +309,7 @@ func TestGCPSetupBaseImageSectionNamesRealKinds(t *testing.T) {
 		t.Fatalf("config.BaseKind %q is not in config.Bases %v", config.BaseKind, config.Bases)
 	}
 	for _, want := range []string{
-		"`fugaro init --base " + config.BaseKind + "`",
+		"`fugaro update --base " + config.BaseKind + "`",
 		"`--expect-digest " + config.BaseKind + "=sha256:<hex>`",
 		"`--base-image " + config.BaseKind + "=IMAGE`",
 	} {

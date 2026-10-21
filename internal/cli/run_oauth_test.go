@@ -138,7 +138,7 @@ func TestRunLaunchesTheVariantJob(t *testing.T) {
 }
 
 // TestRunTokenVariantJobMissingNeverFallsBackToDefault: a repository may
-// choose a named account whose job variant was never deployed (fugaro init
+// choose a named account whose job variant was never deployed (the converge
 // --repo not yet re-run); the launch must fail outright, never silently
 // reach the default account's job (carry-forward (b), Task 4/6 review).
 func TestRunTokenVariantJobMissingNeverFallsBackToDefault(t *testing.T) {
@@ -148,7 +148,7 @@ func TestRunTokenVariantJobMissingNeverFallsBackToDefault(t *testing.T) {
 	writeBuildRecord(t, f, otherSlug, "svc", release065)
 	// No AddJob for the "svc_acme-personal" variant: it does not exist yet.
 	_, _, err := execute(t, "run", "--run-id", "20261012-100000-ffff", "--token", "acme-personal", "A task")
-	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "fugaro init --repo") {
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "fugaro update --repo") {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
@@ -306,7 +306,7 @@ func TestFollowUpTokenOverrideRefusedWhenAuthNotOAuth(t *testing.T) {
 
 // TestFollowUpTokenOverrideRefusedWhenVariantJobMissing: the override never
 // falls back to the default job when the new account's variant was never
-// deployed (fugaro init --repo not yet re-run) — the same carry-forward
+// deployed (fugaro update --repo not yet re-run) — the same carry-forward
 // rule TestRunTokenVariantJobMissingNeverFallsBackToDefault pins for a
 // first run.
 func TestFollowUpTokenOverrideRefusedWhenVariantJobMissing(t *testing.T) {
@@ -316,7 +316,7 @@ func TestFollowUpTokenOverrideRefusedWhenVariantJobMissing(t *testing.T) {
 	// No AddJob for "web_acme-personal": it does not exist yet.
 	seedAppFollowUpRoot(t, f, "")
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "more work")
-	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "fugaro init --repo") {
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "fugaro update --repo") {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {

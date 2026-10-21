@@ -15,7 +15,7 @@ package cli
 // runs/ grant a run of a profile can write those prefixes).
 //
 // The interim path 1.6 opened (P4, 12a item 3) is closed here: a new repository
-// needs `repos add` or a confirmed `sync`, no Terraform and no init --repo.
+// needs `repos add` or a confirmed `sync`, no Terraform and no update --repo.
 
 import (
 	"bufio"
@@ -347,7 +347,7 @@ func spendRepos(ctx context.Context, lc *localcfg.Config, now time.Time) (recs [
 	case errors.Is(err, firestore.ErrNoDatabase):
 		return nil, "the project's Firebase project has no Firestore database, so its spend history was not read", nil
 	case errors.Is(err, firestore.ErrNotFound):
-		return nil, "the project's Firestore database has no history mark (fugaro init --firebase has not set it up), so its spend history was not read", nil
+		return nil, "the project's Firestore database has no history mark (fugaro update --firebase has not set it up), so its spend history was not read", nil
 	case err != nil:
 		return nil, "", firestoreErr(lc, err)
 	}

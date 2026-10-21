@@ -64,7 +64,7 @@ func (r *projectRig) existing(billing bool) {
 	r.bill.SetBilling(newProj, billing)
 }
 
-// run is fugaro init with the flags and the stdin; terminal says whether
+// run is the converge with the flags and the stdin; terminal says whether
 // stdin is a terminal.
 func (r *projectRig) run(t *testing.T, terminal bool, stdin string, args ...string) (string, string, error) {
 	t.Helper()

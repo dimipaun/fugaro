@@ -96,7 +96,7 @@ func TestDocsComputeBackendCitationsExist(t *testing.T) {
 		"internal/gcpfake/batch.go",
 		"internal/gcpfake/compute.go",
 		// The CLI sites the three TODO(compute-backend Task 8) markers sit in,
-		// and the stage `fugaro init --provision-batch` runs (Task 9 shipped it).
+		// and the stage `fugaro setup --provision-batch` runs (Task 9 shipped it).
 		"internal/cli/cloud.go",
 		"internal/cli/run.go",
 		"internal/cli/validate.go",
@@ -1246,9 +1246,9 @@ var computeBackendZeroNineZero = []struct {
 	anchor string
 	text   string
 }{
-	{"docs/releases/v0.8.6.md", "Managed projects and `fugaro init --provision-batch` are turned off in this release", "both are planned to return in 0.9.0 after a redesign"},
-	{"docs/releases/v0.8.6.md", "**`fugaro init --provision-batch` is disabled.**", "The reaper will be redesigned for 0.9.0."},
-	{"docs/design/compute-backend.md", "**Not shipped, and not in 0.9.0.**", "`fugaro init --provision-batch` no longer refuses"},
+	{"docs/releases/v0.8.6.md", "Managed projects and `fugaro setup --provision-batch` are turned off in this release", "both are planned to return in 0.9.0 after a redesign"},
+	{"docs/releases/v0.8.6.md", "**`fugaro setup --provision-batch` is disabled.**", "The reaper will be redesigned for 0.9.0."},
+	{"docs/design/compute-backend.md", "**Not shipped, and not in 0.9.0.**", "`fugaro setup --provision-batch` no longer refuses"},
 	{"docs/releases/v0.9.0.md", "**The Batch backend is still disabled.**", "would return in 0.9.0, and neither returns here"},
 }
 

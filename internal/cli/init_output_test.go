@@ -165,9 +165,9 @@ func outputHygieneLefts(t *testing.T) []printedLeft {
 	add("plugin/update", (&pluginStage{e: e}).Left())
 	add("plugin/fork", forkLeft())
 	add("repository", newRepositoryStage(e).Left())
-	add("repository/onboard", onboardLeft(originInfo{Repo: "acme/app", Host: "github.com"}))
-	add("repository/onboard-odd", onboardLeft(originInfo{Repo: "acme/app;rm -rf", Host: "github.com"}))
-	add("repository/unusual-host", onboardLeft(originInfo{Repo: "acme/app", Host: "git.example.com"}))
+	add("repository/onboard", onboardLeft(originInfo{Repo: "acme/app", Host: "github.com"}, "setup"))
+	add("repository/onboard-odd", onboardLeft(originInfo{Repo: "acme/app;rm -rf", Host: "github.com"}, "setup"))
+	add("repository/unusual-host", onboardLeft(originInfo{Repo: "acme/app", Host: "git.example.com"}, "setup"))
 	add("repository/switch", switchLeft("main"))
 	add("repository/switch-dash", switchLeft("-fix;rm -rf"))
 	add("repository/switch-quote", switchLeft("it's"))
@@ -237,7 +237,7 @@ func TestMissingAndRoleCommandsAreOneLine(t *testing.T) {
 	for _, c := range printedMissingCommands(buf.String()) {
 		checkPrinted(t, "missing", c, "fugaro", "claude")
 	}
-	for _, n := range roleNotes(infra.InstallationOutputs{Launchers: []string{"user:a@example.com"}}) {
+	for _, n := range roleNotes(infra.InstallationOutputs{Launchers: []string{"user:a@example.com"}}, "setup") {
 		if _, c, ok := strings.Cut(n, "run: "); ok {
 			checkPrinted(t, "roles", c, "fugaro")
 		}

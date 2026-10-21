@@ -22,7 +22,7 @@ import (
 // bucket. Its line in fugaro.yaml:
 const anchorRigLine = "gcp_project: proj-1234"
 
-// anchorModeRig is fugaro init --anchor's rig: the init rig's local config
+// anchorModeRig is fugaro update --anchor's rig: the init rig's local config
 // (a fake terraform on PATH, whose calls are logged) with acme/app onboarded,
 // a checkout of acme/app as the working directory, a fake runs bucket for the
 // build records and a file:// bucket the shared config would be published to.
@@ -56,7 +56,7 @@ func newAnchorModeRig(t *testing.T, yaml string, onboarded bool) *anchorModeRig 
 	return r
 }
 
-// anchorExec runs fugaro init with stdin, without the rig's own warning that
+// anchorExec runs the converge with stdin, without the rig's own warning that
 // its XDG directories are temporary.
 func anchorExec(t *testing.T, stdin string, args ...string) (string, string, error) {
 	t.Helper()
@@ -151,7 +151,7 @@ func TestInitAnchorOldRecordFails(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	want := wantFail("app", "base", r.cfg, false, reasonRecordVersionOld("0.3.1"))
-	for _, s := range []string{"fugaro 0.3.1", "In order: (1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (2) fugaro init --anchor"} {
+	for _, s := range []string{"fugaro 0.3.1", "In order: (1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (2) fugaro update --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -261,8 +261,8 @@ func TestInitAnchorCustomBaseFails(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	want := wantFail("app", "base", r.cfg, true, reasonConfigBaseCustom(ref, "base"))
-	for _, s := range []string{"the local config's base image " + ref + " for kind base is not a release >= 0.4.0", "is never replaced by fugaro init --base or fugaro image refresh",
-		"(1) remove base_images.base from " + quoteWord(r.cfg) + " (keep a backup), (2) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (3) fugaro init --anchor"} {
+	for _, s := range []string{"the local config's base image " + ref + " for kind base is not a release >= 0.4.0", "is never replaced by fugaro update --base or fugaro image refresh",
+		"(1) remove base_images.base from " + quoteWord(r.cfg) + " (keep a backup), (2) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (3) fugaro update --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -413,7 +413,7 @@ func TestInitAnchorCustomBucket(t *testing.T) {
 func TestInitAnchorRefusals(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), false)
 	_, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme/app is not one of project aurora's repositories") || !strings.Contains(err.Error(), "run fugaro init in this checkout to onboard it") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme/app is not one of project aurora's repositories") || !strings.Contains(err.Error(), "run fugaro update --repo in this checkout to onboard it") {
 		t.Errorf("not onboarded: exit %d, err %v", ExitCode(err), err)
 	}
 	r.check(t, r.yaml)
@@ -527,7 +527,7 @@ func TestInitAnchorUnsafeShape(t *testing.T) {
 	r.check(t, yaml)
 }
 
-// init --repo ends with one note pointing at --anchor while the checkout of
+// update --repo ends with one note pointing at --anchor while the checkout of
 // a listed repository lacks the line of a convention-bucket installation;
 // never otherwise, and never twice.
 func TestInitRepoNotesTheAnchor(t *testing.T) {
@@ -642,7 +642,7 @@ func TestBaseRefReason(t *testing.T) {
 }
 
 // repoReady is an applied installation of aurora with a base image for
-// base, and a repository plan with nothing to change: init --repo of the
+// base, and a repository plan with nothing to change: update --repo of the
 // listed acme/sandbox runs to its end.
 func (r *initRig) repoReady(t *testing.T) {
 	t.Helper()
@@ -654,7 +654,7 @@ func (r *initRig) repoReady(t *testing.T) {
 	r.save(t)
 }
 
-// End to end through the init rig: init --repo in the checkout of a listed
+// End to end through the init rig: update --repo in the checkout of a listed
 // repository without the line ends with the note, once, on stderr under
 // --json; never with --plan-only.
 func TestInitRepoEndToEndNotesTheAnchor(t *testing.T) {
@@ -681,7 +681,7 @@ func TestInitRepoEndToEndNotesTheAnchor(t *testing.T) {
 // kind), so the fix is fugaro image build for the workflow, then --anchor.
 func TestAnchorProblemTextKindUnknownNamesImageBuild(t *testing.T) {
 	got := anchorProblemText("acme/app", "app", "", "", []string{"x"}, false)
-	want := "In order: (1) fugaro image build --repo acme/app --workflow app, (2) fugaro init --anchor, before you merge"
+	want := "In order: (1) fugaro image build --repo acme/app --workflow app, (2) fugaro update --anchor, before you merge"
 	if !strings.Contains(got, want) || strings.Contains(got, "image refresh") {
 		t.Errorf("%s\nwant it to contain %q and no image refresh", got, want)
 	}

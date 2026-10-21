@@ -206,7 +206,7 @@ func (r *initRun) gatherInputs(ctx context.Context) error {
 		}
 		return userErr("there is no project config yet: pass %s to create one", strings.Join(flags, ", "))
 	}
-	fmt.Fprintln(r.w, "fugaro init: this is the first run here; each answer has a suggestion, press Enter to accept it.")
+	fmt.Fprintln(r.w, "fugaro setup: this is the first run here; each answer has a suggestion, press Enter to accept it.")
 	o := r.o
 	if o.cloud.gcpProject == "" {
 		v, err := r.prompt("GCP project ID", suggestGCPProject(), func(s string) error {

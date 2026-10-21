@@ -166,7 +166,7 @@ func TestJSONOutputsCarryProject(t *testing.T) {
 	}
 }
 
-// fugaro init with no project config creates projects/<name>.yaml from
+// fugaro setup with no project config creates projects/<name>.yaml from
 // --name, --gcp-project and --region. (Writing it needs the installation's
 // outputs, a cloud call, so the file is written here the way writeConfig
 // does.)
@@ -223,7 +223,7 @@ func TestInitCreatesProjectConfig(t *testing.T) {
 	}
 }
 
-// With no project config and nothing naming the project, fugaro init needs
+// With no project config and nothing naming the project, fugaro setup needs
 // --name; it refuses before any cloud call.
 func TestInitWithoutNameRefused(t *testing.T) {
 	isolateProjects(t, t.TempDir())
@@ -282,7 +282,7 @@ func TestCheckoutProjectFromBrokenFugaroYAML(t *testing.T) {
 	}
 }
 
-// init --repo PATH onboards PATH's checkout, so PATH's fugaro.yaml selects
+// update --repo PATH onboards PATH's checkout, so PATH's fugaro.yaml selects
 // the project, not the working directory's.
 func TestInitRepoSelectsFromPath(t *testing.T) {
 	isolateProjects(t, t.TempDir())
@@ -314,7 +314,7 @@ func TestInitRepoSelectsFromPath(t *testing.T) {
 	}
 }
 
-// Every Google call of fugaro init uses the GCP project ID, never the
+// Every Google call of the converge uses the GCP project ID, never the
 // project's name.
 func TestInitGCPCallsUseID(t *testing.T) {
 	noEnableWait(t, 5)
@@ -344,7 +344,7 @@ func TestInitGCPCallsUseID(t *testing.T) {
 	}
 }
 
-// fugaro init's typed confirmation is the project's name, not the GCP ID,
+// fugaro setup's typed confirmation is the project's name, not the GCP ID,
 // and the prompt names both.
 func TestInitConfirmationTypesName(t *testing.T) {
 	r := newInitRig(t)
@@ -397,7 +397,7 @@ func TestInitInCheckoutWithoutConfig(t *testing.T) {
 	}
 	// Every other command is refused there: it has no config to act on.
 	_, _, err = execute(t, "runs", "ls")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro init --config-only --gcp-project <id>") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro update --config-only --gcp-project <id>") {
 		t.Fatalf("ls: exit %d, err %v", ExitCode(err), err)
 	}
 }
@@ -425,7 +425,7 @@ func TestSelectionNotesFollowHeader(t *testing.T) {
 		t.Fatalf("ls: %v, stderr %q", err, stderr)
 	}
 
-	// fugaro init creating a project config announces it once it exists.
+	// fugaro setup creating a project config announces it once it exists.
 	t.Setenv("FUGARO_PROJECT", "")
 	t.Setenv("FUGARO_CONFIG", writeProject(t, "cyan", "proj-9999"))
 	t.Chdir(gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: delta\n"))
@@ -440,7 +440,7 @@ func TestSelectionNotesFollowHeader(t *testing.T) {
 	}
 }
 
-// init --repo needs project: in the checkout's fugaro.yaml, before any
+// update --repo needs project: in the checkout's fugaro.yaml, before any
 // cloud call, and names what to add when a project config is selectable.
 func TestInitRepoRequiresProject(t *testing.T) {
 	isolateProjects(t, t.TempDir())

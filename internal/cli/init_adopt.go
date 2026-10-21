@@ -15,7 +15,7 @@ import (
 
 // Adopt mode (design §3.1, "A new team member"): the installation exists
 // (its Terraform state is in the state bucket) and this machine has no local
-// config for it. The installation stage then does what init --config-only
+// config for it. The installation stage then does what update --config-only
 // does, writing the config from the installation's outputs after its own
 // confirmation, and applies nothing: the installation is the owner's, made
 // by their init, and a plan from this person's empty defaults would try to
@@ -36,12 +36,12 @@ func (r *initRun) installationExists(ctx context.Context, c *infra.Clients, spec
 // adopt writes the local config from the existing installation and says
 // what the person may lack, with the one-line command an owner runs.
 func (r *initRun) adopt(ctx context.Context, e *initEngine) error {
-	fmt.Fprintf(r.w, "adopt mode: the installation of GCP project %s already exists (its Terraform state is in gs://%s) and this machine has no local config for it: init writes the local config from it and applies nothing.\n", e.spec.Project, e.spec.StateBucket)
+	fmt.Fprintf(r.w, "adopt mode: the installation of GCP project %s already exists (its Terraform state is in gs://%s) and this machine has no local config for it: the converge writes the local config from it and applies nothing.\n", e.spec.Project, e.spec.StateBucket)
 	if r.o.planOnly {
 		return nil
 	}
 	if _, err := os.Lstat(e.path); err == nil {
-		return userErr("%s already exists: adopt mode writes only a new local config and never overwrites one; use fugaro init --config-only to update it", e.path)
+		return userErr("%s already exists: adopt mode writes only a new local config and never overwrites one; use fugaro update --config-only to update it", e.path)
 	}
 	outs, err := r.readOutputs(ctx, e.c, e.t, e.wd, e.spec)
 	if err != nil {
@@ -71,7 +71,7 @@ func (r *initRun) adopt(ctx context.Context, e *initEngine) error {
 		return err
 	}
 	r.res.Applied = false
-	for _, line := range adoptNotes(outs) {
+	for _, line := range adoptNotes(outs, r.o.doorName()) {
 		fmt.Fprintln(r.w, line)
 	}
 	e.adopted = "adopted the existing installation: wrote the local config, applied nothing"
@@ -90,26 +90,26 @@ func (e *initEngine) adoptGuard(stage string) error {
 	}
 	return &initflow.NeedsYouError{Left: initflow.Left{Stage: stage, Kind: initflow.LeftConsole,
 		Text:     "this run adopted an existing installation and changed nothing in the cloud; it changes nothing more there from here (only the plugin wiring still writes a local .claude/settings.json): an owner applies changes (the notes above say how), then rerun this once your roles are granted",
-		Commands: []string{selfCommand() + " init"}}}
+		Commands: []string{selfCommand() + " " + e.r.o.doorName()}}}
 }
 
 // adoptNotes is what the person is told after adopting: that the config is a
 // copy of what the outputs expose, which flags the owner passes for what they
 // do not, that a plan from here must not be applied, and the roles.
-func adoptNotes(outs infra.InstallationOutputs) []string {
+func adoptNotes(outs infra.InstallationOutputs, door string) []string {
 	lines := []string{
 		"the local config was copied from the installation's outputs: launchers, operators, registry cleanup (on, or dry-run when the outputs say a dry run), log isolation and the budget backend's history account; they do not carry the alert email, the scheduler region, whether cleanup is dry-run or off, or the Firebase project,",
-		"so a plan from this machine can differ from what the owner applied and look noisy: do not apply an installation plan from here; ask an owner to run fugaro init, passing --alert-email, --scheduler-region, --registry-cleanup and --firebase as they did",
+		"so a plan from this machine can differ from what the owner applied and look noisy: do not apply an installation plan from here; ask an owner to run fugaro update, passing --alert-email, --scheduler-region, --registry-cleanup and --firebase as they did",
 	}
-	return append(lines, roleNotes(outs)...)
+	return append(lines, roleNotes(outs, door)...)
 }
 
 // roleNotes names the roles a new member may lack and the one-line command
 // an owner runs to grant them (--launcher and --operator replace the lists,
 // so the command carries the current members).
-func roleNotes(outs infra.InstallationOutputs) []string {
+func roleNotes(outs infra.InstallationOutputs, door string) []string {
 	cmd := func(flag, you string, have []string) string {
-		parts := []string{selfCommand(), "init"}
+		parts := []string{selfCommand(), door}
 		for _, m := range have {
 			parts = append(parts, flag, quoteWord(m))
 		}
@@ -130,7 +130,7 @@ func roleNotes(outs infra.InstallationOutputs) []string {
 // adoptBudget fills next's budget section from the Firebase root's outputs
 // (the realtime database's URL, the Firebase project, its restricted web API
 // key and the token signer), so a teammate's watch and runs find the budget
-// backend without an owner's init --firebase. Read only: terraform init and
+// backend without an owner's update --firebase. Read only: terraform init and
 // output in the Firebase root, which needs no variables and changes no state.
 // None of the four is a secret (the API key is restricted by design) and
 // nothing the outputs do not hold is written: not the mode, not the caps. An
@@ -142,7 +142,7 @@ func (r *initRun) adoptBudget(ctx context.Context, e *initEngine, outs infra.Ins
 		return // no budget backend: nothing to find
 	}
 	skip := func(why string) {
-		fmt.Fprintf(r.w, "the budget section of the local config was left empty (%s); watch and the budget commands need it: an owner's fugaro init --firebase <project> fills it, or rerun this once the Firebase root's state can be read\n", why)
+		fmt.Fprintf(r.w, "the budget section of the local config was left empty (%s); watch and the budget commands need it: an owner's fugaro update --firebase <project> fills it, or rerun this once the Firebase root's state can be read\n", why)
 	}
 	switch ok, err := infra.StateExists(ctx, e.c, e.spec.StateBucket, infra.StatePrefixFirebase); {
 	case err != nil:

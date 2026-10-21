@@ -400,7 +400,7 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 }
 
 // TestRestoreMovesTheConfigByNameAndNeverGuesses: the local config names the
-// GCP project everywhere it appears, and fugaro init refuses a --gcp-project
+// GCP project everywhere it appears, and the converge refuses a --gcp-project
 // that is not the selected config's (localcfg.Config.Override) — which is why
 // the move is the restore's own step, before the creating path runs. What
 // moves is decided and what does not is refused by name: a field naming the
@@ -543,7 +543,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 				t.Errorf("the stranded base kinds are not named (%q missing): %v", kind, left)
 			}
 		}
-		if !strings.Contains(joined, "fugaro init --base") || !strings.Contains(joined, initProject) {
+		if !strings.Contains(joined, "fugaro update --base") || !strings.Contains(joined, initProject) {
 			t.Errorf("the stranded base images are not named with the old project and the step that pins them again: %v", left)
 		}
 
@@ -622,7 +622,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 	// The budget backend is the one thing that cannot move on its own: its
 	// RTDB, its Firestore database, its restricted key and its signer are the
 	// old project's, and where they live next is the operator's decision
-	// (fugaro init --firebase), not the restore's. The operator's own
+	// (fugaro update --firebase), not the restore's. The operator's own
 	// settings stay, the four that name the old project go, and the step that
 	// builds them again is named.
 	t.Run("the budget backend's project-naming fields go, and are named", func(t *testing.T) {
@@ -645,7 +645,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		if next.Budget.RTDBURL != "" || next.Budget.FirebaseProject != "" || next.Budget.FirebaseAPIKey != "" || next.Budget.TokenSigner != "" {
 			t.Errorf("the budget section still names the old project: %+v", *next.Budget)
 		}
-		if joined := strings.Join(left, "\n"); !strings.Contains(joined, "fugaro init --firebase") {
+		if joined := strings.Join(left, "\n"); !strings.Contains(joined, "fugaro update --firebase") {
 			t.Errorf("the stranded budget backend is not named with the step that builds it again: %v", left)
 		}
 	})
@@ -707,7 +707,7 @@ func TestRestoreConfirmWantsTheNameTyped(t *testing.T) {
 
 // TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer is the
 // guard test for the step the restore delegates: fugaro restore creates the
-// project through the same path `fugaro init --create-project --managed`
+// project through the same path `fugaro setup --create-project --managed`
 // uses, and that path is also what (a) writes the creation fact with the
 // amount Task 4.2 requires and (b) sets up D77's state bucket and binds the
 // deployer to it (Task 1.5). A restore needs no step of its own for either —
@@ -720,7 +720,7 @@ func TestRestoreConfirmWantsTheNameTyped(t *testing.T) {
 // this test exists for as much as the marker is: stdinIsTerminal in
 // production is a type assertion on an *os.File, so a restore that handed the
 // child a *bufio.Reader would leave every typed step of the creation for the
-// user ("fugaro init is not finished: 1 step(s) left for you") after it had
+// user ("fugaro setup is not finished: 1 step(s) left for you") after it had
 // already moved the operator's project config. A constant-true seam cannot
 // see that, which is why this test does not use one.
 func TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer(t *testing.T) {
@@ -1082,7 +1082,7 @@ func TestRestoreRefusesAProjectConfigItDoesNotHold(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
 	}
-	for _, want := range []string{"fugaro init --name " + initProjectName, initRunsBucket, "shared config"} {
+	for _, want := range []string{"fugaro setup --name " + initProjectName, initRunsBucket, "shared config"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}

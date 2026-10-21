@@ -27,7 +27,7 @@ func noCloudTouched(t *testing.T, r *initRig, what string) {
 	}
 }
 
-// init --repo on its own is the converge's hostile-checkout gate too: a
+// update --repo on its own is the converge's hostile-checkout gate too: a
 // repository the local config does not list is never onboarded by one
 // command with --yes, in a pipe, with --json or by an agent; it takes the
 // typed owner/name, or --onboard-repo in a terminal with no agent marker.
@@ -134,11 +134,11 @@ func TestOnboardRepoRefusedInAnAgentSession(t *testing.T) {
 	}
 	t.Setenv("CLAUDECODE", "")
 	oi := originInfo{Repo: "acme/app", Host: "github.com"}
-	if lf := onboardLeft(oi); !strings.Contains(strings.Join(lf.Commands, " ")+lf.Text, "init --onboard-repo") {
+	if lf := onboardLeft(oi, "setup"); !strings.Contains(strings.Join(lf.Commands, " ")+lf.Text, "setup --onboard-repo") {
 		t.Errorf("outside an agent session the flag line is the route: %+v", lf)
 	}
 	t.Setenv("CLAUDECODE", "1")
-	lf := onboardLeft(oi)
+	lf := onboardLeft(oi, "setup")
 	if strings.Contains(strings.Join(lf.Commands, " ")+lf.Text, "--onboard-repo") || !strings.Contains(lf.Text, "your own terminal window") || len(lf.Commands) != 1 {
 		t.Errorf("an agent session is handed the flag: %+v", lf)
 	}
@@ -155,7 +155,7 @@ func TestHostileOriginIsTruncatedInDetail(t *testing.T) {
 }
 
 // TestInitRepoRefusesCatalogSwitches (price-catalog plan Task 4 step 2): a
-// route that sets require_zdr or price_policy is refused by fugaro init
+// route that sets require_zdr or price_policy is refused at the converge
 // --repo before any cloud call, because the job it would deploy carries
 // FUGARO_MODEL_PROVIDERS with a key no release reads yet, and an older
 // runner fails the run at bootstrap on it. The same command with the switch
@@ -182,7 +182,7 @@ func TestInitRepoRefusesCatalogSwitches(t *testing.T) {
 	}
 	noCloudTouched(t, r, "a route with require_zdr set")
 	for _, want := range []string{
-		"fugaro init --repo refuses to deploy acme/sandbox's provider openrouter",
+		"fugaro update --repo refuses to deploy acme/sandbox's provider openrouter",
 		"require_zdr or price_policy",
 		"fugaro " + catalogSince,
 		"model_prices",

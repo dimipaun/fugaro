@@ -117,8 +117,8 @@ func TestReleaseNotesV090FollowsTheFormat(t *testing.T) {
 	// it a shared job keeps a runner that refuses the policy just published
 	// (the review of PR #660).
 	last := steps[len(steps)-1]
-	if !strings.Contains(last, "**Per installation") || !strings.Contains(last, "`fugaro init --firebase <gcp-project>`") {
-		t.Errorf("the operators' last step is %q: it must be the per-installation `fugaro init --firebase <gcp-project>` that moves the shared jobs onto the base image the image step pinned, since no image command touches them", last)
+	if !strings.Contains(last, "**Per installation") || !strings.Contains(last, "`fugaro update --firebase <gcp-project>`") {
+		t.Errorf("the operators' last step is %q: it must be the per-installation `fugaro update --firebase <gcp-project>` that moves the shared jobs onto the base image the image step pinned, since no image command touches them", last)
 	}
 	refresh := -1
 	for i, step := range steps {
@@ -321,7 +321,7 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		}
 		// The command must end where the notes' span or its argument does: a
 		// bare prefix would let "`fugaro upgrade --local`" stand in for the bare
-		// "`fugaro upgrade`" step, and "`fugaro init --repo`" for a longer flag.
+		// "`fugaro upgrade`" step, and "`fugaro update --repo`" for a longer flag.
 		ends := []string{"`", " <", " ."}
 		if c.flag != "" {
 			ends = append(ends, " ")
@@ -362,8 +362,8 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		}
 	}
 	if !batchProvisionShipped {
-		if !names("`fugaro init --provision-batch` refuses") {
-			t.Errorf("%s does not say `fugaro init --provision-batch` refuses, and batchProvisionShipped is false", releaseNotesV090)
+		if !names("`fugaro setup --provision-batch` refuses") {
+			t.Errorf("%s does not say `fugaro setup --provision-batch` refuses, and batchProvisionShipped is false", releaseNotesV090)
 		}
 		if cmd := notesCommand(t, "init"); cmd.Flags().Lookup("provision-batch") == nil {
 			t.Errorf("fugaro setup (the spelling the notes use is `fugaro init`) has no --provision-batch flag, and %s describes what it does when it refuses (batchProvisionShipped is false: the flag stays, the provisioning refuses)", releaseNotesV090)
@@ -396,7 +396,7 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		"the shared job's live check":    "Check 53",
 		"the not-yet-run marker":         "NOT RUN",
 		"the scoped deployer's absence":  "The deployer account, its create-and-read role and your impersonation grant are created as before",
-		"the Batch backend still off":    "`fugaro init --provision-batch` refuses",
+		"the Batch backend still off":    "`fugaro setup --provision-batch` refuses",
 		"the project export not shipped": "`fugaro project export` is not in this release",
 	} {
 		if !names(want) {
@@ -442,8 +442,8 @@ func TestReleaseNotesV090ManagedWordingMatchesTheGates(t *testing.T) {
 		notes string
 		args  []string
 	}{
-		{"`fugaro init --create-project --managed`", []string{"setup", "--create-project", "--gcp-project", "fugaro-newproj-1234", "--managed", "--budget", "50", "--budget-currency", "USD", "--billing-account", "000000-000000-000000"}},
-		{"`fugaro init --managed`", []string{"setup", "--managed"}},
+		{"`fugaro setup --create-project --managed`", []string{"setup", "--create-project", "--gcp-project", "fugaro-newproj-1234", "--managed", "--budget", "50", "--budget-currency", "USD", "--billing-account", "000000-000000-000000"}},
+		{"`fugaro setup --managed`", []string{"setup", "--managed"}},
 		{"`fugaro managed flag`", []string{"managed", "flag", "fugaro-newproj-1234", "--budget", "50", "--budget-currency", "USD"}},
 		{"`fugaro managed apply`", []string{"managed", "apply", "infra"}},
 		{"`fugaro restore`", []string{"restore", "fugaro-newproj-1234", "infra"}},

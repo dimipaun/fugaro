@@ -22,7 +22,7 @@ func layerSHAOf(cfg *config.Config) string {
 
 // resolveForBuild re-resolves the checkout's fugaro.yaml at root strictly,
 // against lc (decision L16: a billable Cloud Build submission, same as
-// fugaro image build's own), for fugaro init's first builds and fugaro
+// fugaro image build's own), for the converge's first builds and fugaro
 // image refresh's rebuilds. Both lead here from an earlier, lenient,
 // flag-blind read (loadCheckoutConfigAt, read with lc==nil before lc
 // itself was even loaded): reusing that cfg could silently send the build

@@ -303,7 +303,7 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 		"**its own exact\n  `allow_repos`**",
 		"**No Anthropic API key beside the accounts (D4).**",
 		// What init deploys, and the rollout.
-		"`fugaro init --repo .`",
+		"`fugaro update --repo .`",
 		"fugaro project policy publish --delete",
 		// Selection.
 		"oauth_token: acme-team",
@@ -546,7 +546,7 @@ func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
 		"fugaro image refresh",
 		// The shared jobs move last, per installation: image refresh never
 		// touches a project job (the review of PR #660).
-		"Move the shared jobs, **per installation**, on a machine where step 3 ran: `fugaro init --firebase <gcp-project>`",
+		"Move the shared jobs, **per installation**, on a machine where step 3 ran: `fugaro update --firebase <gcp-project>`",
 		"a project job runs the installation's base image, and only this re-apply of the installation moves it",
 		// And the one-line pointer in the optional pieces.
 		"**Named Claude accounts on a shared job (0.9.0):**",

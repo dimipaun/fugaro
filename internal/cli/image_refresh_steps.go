@@ -120,7 +120,7 @@ func (r *initRun) refreshCheckJob(ctx context.Context, t *refreshTarget) error {
 		return remote(err)
 	case u == nil && t.spec.Check != nil:
 		t.checkJobMissing = true
-		fmt.Fprintf(r.w, "  the daily image check job %s was not found, though this repository's spec has one: run fugaro init --repo in the checkout to deploy it (nothing was updated)\n", pluginwire.Printable(gcp.CheckJobName(t.spec.Slug)))
+		fmt.Fprintf(r.w, "  the daily image check job %s was not found, though this repository's spec has one: run fugaro update --repo in the checkout to deploy it (nothing was updated)\n", pluginwire.Printable(gcp.CheckJobName(t.spec.Slug)))
 		return nil
 	case u == nil:
 		fmt.Fprintln(r.w, "  no daily image check job (every workflow has rebuild.check: off): nothing to update")
@@ -135,7 +135,7 @@ func (r *initRun) refreshCheckJob(ctx context.Context, t *refreshTarget) error {
 	}
 	fmt.Fprintf(r.w, "  %s: image %s -> %s\n  %s base_images:\n%s  no other field of %s or the job changes; its execution tokens (startExecutionToken, runExecutionToken) are not sent back\n", pluginwire.Printable(u.Job()),
 		pluginwire.Printable(u.OldImage()), pluginwire.Printable(u.NewImage()), infra.CheckSpecEnv, diff, infra.CheckSpecEnv)
-	if err := r.confirm(fmt.Sprintf("updates the daily image check job %s in place through the Cloud Run Admin API, as you: its image and %s's base images, as listed above; no other field of %s or the job changes; its execution tokens (startExecutionToken, runExecutionToken) are not sent back, and the next fugaro init --repo from this local config is designed to plan no change to it (not yet verified against the real API: see docs/gcp-live-checklist.md Check 30)",
+	if err := r.confirm(fmt.Sprintf("updates the daily image check job %s in place through the Cloud Run Admin API, as you: its image and %s's base images, as listed above; no other field of %s or the job changes; its execution tokens (startExecutionToken, runExecutionToken) are not sent back, and the next fugaro update --repo from this local config is designed to plan no change to it (not yet verified against the real API: see docs/gcp-live-checklist.md Check 30)",
 		pluginwire.Printable(u.Job()), infra.CheckSpecEnv, infra.CheckSpecEnv), "the daily image check job was not updated"); err != nil {
 		return err
 	}
@@ -286,7 +286,7 @@ func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refre
 		case err != nil:
 			return remote(err)
 		case u == nil:
-			fmt.Fprintf(r.w, "  %s: the job %s was not found: run fugaro init --repo in the checkout to deploy it (nothing was updated)\n", wf, pluginwire.Printable(ws.Job))
+			fmt.Fprintf(r.w, "  %s: the job %s was not found: run fugaro update --repo in the checkout to deploy it (nothing was updated)\n", wf, pluginwire.Printable(ws.Job))
 			continue
 		case !u.Changes():
 			fmt.Fprintf(r.w, "  %s: No changes: the job already runs from %s\n", wf, pluginwire.Printable(u.NewImage()))
@@ -360,7 +360,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 	}
 	notes := func() {
 		for _, wf := range unrecorded {
-			fmt.Fprintf(r.w, "note: %s had no build record; if its job is not deployed yet, fugaro init --repo in this checkout deploys it\n", wf)
+			fmt.Fprintf(r.w, "note: %s had no build record; if its job is not deployed yet, fugaro update --repo in this checkout deploys it\n", wf)
 		}
 	}
 	// The provider credential's ID the rebuilds' clones read: a refresh has

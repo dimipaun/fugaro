@@ -11,7 +11,7 @@ import (
 )
 
 // validShared is a published shared config of the belong installation, as
-// fugaro init writes it.
+// the converge writes it.
 func validShared() string {
 	return `version: 1
 name: belong
@@ -557,7 +557,7 @@ func TestParseSharedAcceptsThePositivesTheBatchRefusalsLeaveOpen(t *testing.T) {
 		"image in this project's base repository": baseRepo,
 		"no network, subnetwork or account":       noNetwork,
 		// The strict path grammar (batchImageRE) is a refusal of empty, "."
-		// and ".." segments, and of nothing else: the shapes fugaro init
+		// and ".." segments, and of nothing else: the shapes the converge
 		// writes stay accepted, so a later tightening of it that refuses
 		// one of these is a refusal of this installation's own build.
 		"image pinned by digest":                          image("us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb@sha256:" + strings.Repeat("a", 64)),

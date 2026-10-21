@@ -299,7 +299,7 @@ func reasonBaseRefDev(ref string) string {
 }
 
 func reasonConfigBaseCustom(ref, kind string) string {
-	return fmt.Sprintf("the local config's base image %s for kind %s is not a release >= %s, and a base image set in the local config is never replaced by fugaro init --base or fugaro image refresh, so the next build would start from it", ref, kind, gcpProjectFieldSince)
+	return fmt.Sprintf("the local config's base image %s for kind %s is not a release >= %s, and a base image set in the local config is never replaced by fugaro update --base or fugaro image refresh, so the next build would start from it", ref, kind, gcpProjectFieldSince)
 }
 
 func reasonConfigBaseOld(ref, kind, version string) string {
@@ -330,7 +330,7 @@ func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBa
 	} else {
 		steps = append(steps, fmt.Sprintf("fugaro image build --repo %s --workflow %s", repo, wf))
 	}
-	steps = append(steps, "fugaro init --anchor")
+	steps = append(steps, "fugaro update --anchor")
 	for i, s := range steps {
 		steps[i] = fmt.Sprintf("(%d) %s", i+1, s)
 	}
@@ -394,14 +394,14 @@ func baseRefReason(ref, kind string) string {
 
 // gcpProjectProblems are the reasons repo's fugaro.yaml may not carry
 // gcp_project yet, one problem per workflow, the one source of the
-// repository stage's warnings and of fugaro init --anchor's checks. bases
+// repository stage's warnings and of fugaro update --anchor's checks. bases
 // are the repository's workflows, each with its base kind ("" for none
 // known). For every workflow, its build record in the runs bucket must exist
 // and be readable, name a release at or after gcpProjectFieldSince as the
 // CLI that submitted it, and name a release base image at or after it as the
 // base it was built FROM (the image holds that base's binary); and the
 // local config's base image for its kind, when one is set, must be a
-// release image fugaro init copied, at or after that release, else the next
+// release image the converge copied, at or after that release, else the next
 // build regresses. lcPath is the local config's file, for the advice. It
 // reads only the records: no other cloud call.
 func gcpProjectProblems(ctx context.Context, lc *localcfg.Config, lcPath, provider, repo string, bases map[string]string) []anchorProblem {
