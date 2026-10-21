@@ -188,16 +188,11 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 59 files -- 19 test files, 35 markdown files, and the
-// five that fall in none of those groups: the website's install data
-// (website/data/install.yaml), its two files that print the command
-// (website/src/pages/getting-started.astro and
-// website/src/components/Changelog.astro), its test script
-// (website/test/caps-and-costs.mjs), and the getting-started design board the
-// redesign was approved from, website/design-ref/GettingStartedV4.dc.html.
-// No non-test Go file and no golden is on it any more: W2.1's rename emptied
-// internal/cli and the retirement transcript, and the generated page left it
-// when its generator ran.
+// command, sorted. It is 52 files -- 18 test files and 34 markdown files, and
+// nothing else: the five that fell in no group were the website's, and W2.4
+// renamed them (below). No non-test Go file and no golden is on it any more:
+// W2.1's rename emptied internal/cli and the retirement transcript, and the
+// generated page left it when its generator ran.
 // Read on main at `1d325928`, this
 // branch's base, it was **312** files -- 118 non-test Go files, 117 test files,
 // 34 markdown files, 29 Terraform files, the four `.tftest.hcl` fixtures beside
@@ -258,7 +253,11 @@ const censusRoot = "../.."
 // README says the boards are not built, not shipped and not served -- so W2.4
 // either renames the board or the owner rules the folder a dated record, and
 // leaving it on the list is what keeps that choice visible instead of settled
-// by a walk that stopped looking.
+// by a walk that stopped looking. **W2.4 renamed it**: the folder is a live
+// root and not one of the ten dated ones, the board is the reference the page
+// it draws was built from, and "rename the mention, move nothing" is the rule
+// every other rename task follows. The folder keeps no old name for the reason
+// a dated record does -- it records a look, not a date's decision.
 //
 // **#789 (W1.2), the merge that retired the word, moved the list six files down
 // and one up, and this file is where that is paid for.** It emptied six listed
@@ -294,6 +293,24 @@ const censusRoot = "../.."
 // until W2.1 lands, and the file stays here with them. A test cannot be moved
 // to a string no task has written; that file is the one place the order of the
 // two L2 tasks is visible.
+//
+// **W2.4 moved the list seven files down, and it is the website's whole
+// share.** Six are the site's own: website/data/install.yaml (whose plugin
+// path now offers `fugaro setup`), website/src/pages/getting-started.astro
+// (whose `#setup` band is three steps and renders that command from the file),
+// website/src/components/Changelog.astro (a comment quoting release-note
+// prose), website/test/caps-and-costs.mjs (the comment resolving the page's
+// anchors), website/README.md (two sentences of a round's own log), and
+// website/design-ref/GettingStartedV4.dc.html, the board above. The seventh is
+// plugin/readme_test.go, and it left because the sentence it pins left
+// README.md's Getting started in the same commit: the file asserts that
+// section's two steps, so the two moves are one move.
+//
+// One website file stays, and it is the generated one: website/content/
+// security.md is SECURITY.md rendered byte for byte, so a document that still
+// names the command still generates a page that does -- and SECURITY.md is
+// W2.3's, which is why this task depends on it. website/content/
+// cli-reference.md left the list earlier, when W2.1 regenerated it.
 //
 // Each task that renames a string takes the file off this list in the same
 // commit, and W2.6 empties it.
@@ -348,15 +365,8 @@ var pendingRename = []string{
 	"internal/cli/docs_setup_wizard_checks_test.go",
 	"internal/cli/doctor_bucket_test.go",
 	"internal/cli/restore_test.go",
-	"plugin/readme_test.go",
 	"plugin/setup_skill_test.go",
-	"website/README.md",
 	"website/content/security.md",
-	"website/data/install.yaml",
-	"website/design-ref/GettingStartedV4.dc.html",
-	"website/src/components/Changelog.astro",
-	"website/src/pages/getting-started.astro",
-	"website/test/caps-and-costs.mjs",
 }
 
 // censusExempt reports whether a repository-relative path is one of the two
