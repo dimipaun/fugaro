@@ -1736,6 +1736,12 @@ func TestTheReaperJobRunsAsTheReaperAccountOnASchedule(t *testing.T) {
 	for _, want := range [][2]string{
 		{"name", `"FUGARO_GCP_PROJECT"`},
 		{"name", `"FUGARO_REGION"`},
+		// The marker that tells the command it is the job and not a shell:
+		// without it the environment path is a dry run
+		// (internal/cli/reaper.go's reaperEnvOptions), and the two variables
+		// above are the history job's.
+		{"name", `"FUGARO_REAPER_JOB"`},
+		{"value", `"1"`},
 	} {
 		if !hasAttr(job.body, want[0], want[1]) {
 			t.Errorf("%s: %s does not set %s = %s", path, job.name, want[0], want[1])

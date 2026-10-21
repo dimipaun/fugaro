@@ -35,6 +35,31 @@
 # nothing that can create anything, so a mistake here ends resources rather
 # than starting them.
 #
+# Two executions of this job can overlap -- Cloud Scheduler starts one on its
+# tick and an operator can start another by hand, a pass that outran its period
+# has the next queued behind it, and nothing here serialises them -- and that
+# is harmless by construction, which is worth saying because it is the kind of
+# thing a reader assumes a lock is needed for. Every action rests on state the
+# pass re-reads at the moment it acts (deleteQueued reads the job back before
+# it deletes), the deletes are idempotent (a resource someone else already
+# deleted answers 404, which the pass reads as success), and a refusal is not
+# an action. Two passes over one project delete the same things once and refuse
+# the same things twice (internal/backend/batch's TestReaperIsIdempotent and
+# its toleration of a delete of something already gone). A lock would be a
+# second thing that can fail, and the failure it would prevent is a second 404.
+#
+# An installation whose base image predates the release that added `fugaro
+# reaper` gets a job that fails on every tick: the CLI's own unknown-command
+# message, or a container that cannot start at all if the image carries no
+# /usr/local/bin/fugaro. That is the one failure mode of this resource an
+# operator meets without a run of their own, and it is reported ONCE per tick
+# and not retried inside one (max_retries = 0 on the task, retry_count = 0 on
+# the schedule): the log holds one clear line per fifteen minutes rather than a
+# storm, and the fix is to move the installation's pin forward. There is no
+# check to add before the container runs -- Cloud Run jobs' probes are HTTP,
+# TCP and gRPC, with no probe that runs a command -- so the container's own
+# start IS the check, and the command is the thing being checked.
+#
 # The APIs: this is the module's FIRST Cloud Run resource (its only other
 # scheduled resource, preload.tf's rebuild, is a Scheduler job), so it is the
 # one place the module leans on `run.googleapis.com` -- and on
@@ -135,8 +160,8 @@ resource "google_cloud_run_v2_job" "reaper" {
           }
         }
 
-        # The one Terraform-defined environment this job carries (the history
-        # job's R10 shape): no credential, because the job's identity is its
+        # The job's whole configuration, and one variable more than the history
+        # job carries: no credential, because the job's identity is its
         # account, and no FUGARO_PROJECT, because this module is not told the
         # Fugaro project's name and the reaper has no config file to find one
         # with.
@@ -147,6 +172,19 @@ resource "google_cloud_run_v2_job" "reaper" {
         env {
           name  = "FUGARO_REGION"
           value = var.region
+        }
+        # The marker that says this IS the reaper's own job. The two variables
+        # above are the HISTORY job's -- an operator who followed that job's
+        # documentation has both in their shell -- so a pass that deleted from
+        # them alone would sweep a live project from a command line by
+        # accident. internal/cli's environment path (reaperEnvOptions) deletes
+        # only where this marker is set, and is a dry run otherwise, so the
+        # marker is what makes this environment a configuration a pass may act
+        # on. It is a marker and not a credential: its value is a constant, and
+        # what it asserts is only "I am the job reaper.tf creates".
+        env {
+          name  = "FUGARO_REAPER_JOB"
+          value = "1"
         }
       }
     }

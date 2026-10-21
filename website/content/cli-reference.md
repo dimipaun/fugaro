@@ -2115,6 +2115,11 @@ job logs.
 Run it as the installation's reaper account. --dry-run prints the same report and
 deletes nothing.
 
+Where no project config is selected the pass reads the reaper job's own environment
+(FUGARO_GCP_PROJECT and FUGARO_REGION, which Terraform sets on the job), and deletes
+only inside the Cloud Run job that also sets FUGARO_REAPER_JOB: anywhere else that
+environment is a dry run, so an operator's shell never sweeps their project.
+
 Usage: `fugaro reaper`
 
 Flags:

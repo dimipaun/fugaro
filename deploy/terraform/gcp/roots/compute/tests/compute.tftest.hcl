@@ -718,8 +718,9 @@ run "TestTheReaperRunsAsTheReaperAccountOnASchedule" {
     condition = toset([for e in one(one(one(google_cloud_run_v2_job.reaper.template).template).containers).env : "${e.name}=${e.value}"]) == toset([
       "FUGARO_GCP_PROJECT=proj-1234",
       "FUGARO_REGION=us-east5",
+      "FUGARO_REAPER_JOB=1",
     ])
-    error_message = "the job's whole configuration is the project and the region: a Cloud Run job has no project config file and no checkout, and the timeouts it judges by are a run's own ceiling (the environment carries none)"
+    error_message = "the job's configuration is the project, the region and the marker: a Cloud Run job has no project config file and no checkout, the timeouts it judges by are a run's own ceiling (the environment carries none), and FUGARO_REAPER_JOB is what tells the command it may delete -- without it the same two variables in an operator's shell get a dry run"
   }
   assert {
     condition     = google_cloud_run_v2_job.reaper.labels["fugaro_role"] == "reaper" && google_cloud_run_v2_job.reaper.template[0].labels["fugaro_role"] == "reaper"
@@ -740,6 +741,18 @@ run "TestTheReaperRunsAsTheReaperAccountOnASchedule" {
   assert {
     condition     = google_cloud_scheduler_job.reaper_sweep.schedule == "*/15 * * * *" && google_cloud_scheduler_job.reaper_sweep.time_zone == "Etc/UTC"
     error_message = "the sweep is every fifteen minutes, which is ReapMargin: a slower schedule would leave a stuck job's VM alive for its own period plus the margin"
+  }
+  # A failure is reported once and not retried into a second pass of its own:
+  # the task is not retried (max_retries), and the schedule does not retry the
+  # POST (retry_count). An install whose pinned image predates the command
+  # therefore logs one clear line per tick instead of a storm.
+  assert {
+    condition     = google_cloud_run_v2_job.reaper.template[0].template[0].max_retries == 0
+    error_message = "the reaper's task must not be retried: a failed pass logs its failure, and the next tick a margin later is the retry"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.reaper_sweep.retry_config[0].retry_count == 0
+    error_message = "the schedule must not retry the POST: a failed pass is reported once, and the next tick a margin later is the retry"
   }
   assert {
     condition     = google_cloud_scheduler_job.reaper_sweep.http_target[0].http_method == "POST" && google_cloud_scheduler_job.reaper_sweep.http_target[0].uri == "https://run.googleapis.com/v2/projects/proj-1234/locations/us-east5/jobs/fugaroreap:run"
