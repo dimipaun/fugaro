@@ -3841,6 +3841,102 @@ release actually carries a Linux asset, and not before.
 **No Linux auto-update** (design §7.3 is Squirrel.Mac and an `electron-updater`
 feed; the AppImage has no such feed here), **no arm64 Linux build** until one can
 be built and verified on a runner that has it, **no Flatpak, snap or rpm**, **no
-Linux Homebrew cask**, **no Windows build**, and **no signature of any kind**.
-Each is a later decision and not an oversight: this ruling is the smallest thing
-that makes "Linux is supported" true.
+Linux Homebrew cask**, **no Windows build in *this* ruling** — Windows has its
+own section below, which is the console-on-Windows plan's Part B and not part of
+the 0.10.0 ruling — and **no signature of any kind**. Each is a later decision
+and not an oversight: this ruling is the smallest thing that makes "Linux is
+supported" true.
+
+## The Windows build, unsigned (the console-on-Windows plan, Part B)
+
+**The Windows pack produces one artifact and it is unsigned: an NSIS installer,
+`Fugaro.Console-<version>-win-x64.exe`.** There is no Authenticode identity —
+no certificate, no `signtoolOptions`, no `azureSignOptions`, no
+`forceCodeSigning` that would turn the absence into a build failure — so
+Windows will warn that the publisher is unknown on the first run. Nothing here
+buys a certificate or takes a decision about one; signing on Windows is the
+owner's, exactly as signing on macOS is.
+
+The plan is [docs/console-windows/implementation-plan.md](../docs/console-windows/implementation-plan.md),
+and this section describes its **Part B (the packer and the fuse table)** — the
+half that makes the CLI-inside-WSL route shippable. **Nothing about WSL is in
+this half**: the resolver, the paths and the credential boundary are Parts C–G.
+
+**Whether the plan may land is that plan's own §5 gate, and this file does not
+restate it.** `docs/console-windows/README.md` and §5 are the documents that
+record that state, and a second copy of it here would be a claim this file has
+no way to keep true — which is the same rule that keeps the fuse names in one
+table above rather than two.
+
+### What the pack is, and the three edits that make it possible
+
+| | |
+|---|---|
+| Command | `npm run package:win` — `npm run build && electron-builder --win --publish never`, the same pinned local packer as the other two legs and never `npx` |
+| Target | `nsis`, **x64**, named in `build.win.target` as `{ target: 'nsis', arch: ['x64'] }` rather than inherited from electron-builder's default |
+| Artifact names | `Fugaro.Console-<version>-win-x64.exe` — `build.win.artifactName` is `Fugaro.Console-${version}-win-${arch}.${ext}`, the Linux pattern with `win` in it |
+| Fuses | `src/main/fuses.ts`'s `win32Executable` — `<appOutDir>/<productFilename>.exe`, i.e. `release/win-unpacked/Fugaro Console.exe` — and the same six flips as macOS and Linux |
+| Electron archive | `electron-v44.7.2-win32-x64.zip`, in `build.electronDownload.checksums`, so the Windows leg's download is verified against a hash in *this* repository |
+| Signing | none |
+
+**`win.arch` would have been the obvious fourth key, and electron-builder has
+no such key.** Its schema for `win` is `additionalProperties: false` and the
+per-platform architecture lives in the target entry, which is why the
+architecture is pinned as `{ target: 'nsis', arch: ['x64'] }` — the shape the
+Linux block already uses, so the three legs read as one table.
+
+**Before the `win32` fuse row landed, `electron-builder --win` could not be run
+at all, on any host.** `fuseTarget` resolves the binary per platform and
+*refuses* a platform outside `SUPPORTED_PLATFORMS` rather than skipping the
+flip, because a skipped flip ships a binary with the fuses unset; so the row
+and the `win` block are one change or there is no artifact. That is why the
+staged job below says, in its first paragraph, which parts have to land before
+it can be copied in — and why it is a release-time job rather than a
+pull-request one.
+
+### What was verified here, and what was not
+
+- **Verified in this container, against the real packer**: the fuse hook's
+  `win32` row, the refusal kept for a platform nobody decided, the same-six-fuses
+  claim on the Windows executable, and the packaging configuration — the target,
+  x64, the artifact name, and the absence of every signing key
+  (`test/unit/fuses.test.ts`); the `package:win` script and the win32-x64
+  checksum, the latter read out of the pinned `electron` package's own
+  `checksums.json` (`test/unit/fuses.test.ts`); and the README-to-manifest guard
+  that every `package:*` script is described here, by name. Every new guard was
+  mutation-proven.
+- **Verified by running it**: `npx electron-builder --win --publish never --dir`
+  **succeeded** on this Linux host — it produced
+  `release/win-unpacked/Fugaro Console.exe` (245 MB), the packer logged
+  `no code signing certificate configured, signing is skipped`, the fuse hook
+  flipped that real Windows binary, and the wire read back out of it with the
+  pinned `@electron/fuses` is **the six flips and the two deliberate defaults
+  the fuse table above lists, in the same order** — the same six, in the same
+  state, on the third platform. (The names are deliberately not repeated here:
+  one list of them is in this file, and a second copy is a second thing to keep
+  in step.)
+- **Not verified here**: **the NSIS installer itself.** The same command
+  without `--dir` names its artifact correctly
+  (`release/Fugaro.Console-0.0.0-win-x64.exe`) and then fails with
+  `wine process failed ENOENT`: electron-builder needs wine on Linux for the
+  signing and resource steps around NSIS, and this container has none. So no
+  installer has been produced yet — the first one is the staged
+  `console-windows.yml` job's, run on a `windows-latest` runner, and the first
+  that ships is a decision D7 has not taken. With no signing certificate the
+  Windows installer is **not an asset of `console-vX.Y.Z`** until the owner
+  decides otherwise.
+- **Not verified anywhere**: whether Windows SmartScreen's warning reads the way
+  the release text says it does, and whether the console's own window and
+  resolution behave on a real Windows machine. Both are the plan's §4 manual
+  checklist, which is proposed and claimed by nobody.
+
+### What is not here
+
+**No signing or notarisation on Windows** (there is no Authenticode identity and
+this work buys none), **no arm64 Windows build** (the Linux leg's reason, and the
+one pinned archive), **no auto-update feed** (the Windows leg has none, and
+`publish` stays `null`), **no `build.win.icon`** — so the installer and the
+installed executable carry the packager's default icon rather than the website's
+mark, which is a decision this half does not take and the owner may — and
+**nothing about the WSL route**, which is Parts C–G of the plan and does not
+touch this file.

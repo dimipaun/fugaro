@@ -6,7 +6,7 @@
 - **`website-preview.yml`** and **`website-promote.yml`** — the website's two new workflows, both `workflow_dispatch`-only: one builds a chosen ref and deploys it to a Firebase Hosting preview channel of the site's own project and prints the preview URL, the other promotes an existing preview channel to live and is the owner's alone (`environment: website-live` plus a guard on `github.actor`). Staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Read `docs/website/preview-promote.md` first**: it carries the owner-only one-time setup (the Workload Identity Federation pool and provider, the deployer service account and its Firebase Hosting roles, the `website-live` environment and the three repository variables) that both files need before they can run at all.
 - **`console-linux.yml`** — the console's **Linux build check**: one job on `ubuntu-latest` that packs the AppImage and the `.deb` on every pull request and every push to `main` and uploads them, holding no secret at all. Staged by the 2026-10-20 run that packages the console for Linux (the owner's ruling: Linux for 0.10.0, unsigned). It is its own workflow rather than a second job in `console-tests.yml` because the release gate's required-check list is derived from that file's job set; see `## console-linux.yml` below.
 - **`console-release-linux.yml`** — the console's signing, notarisation and publishing pipeline **with the Linux legs added**: a third job that builds and verifies the unsigned AppImage and `.deb`, and a `publish` that merges both legs, signs one merged `console-sha256sums.txt` keyless with cosign and attaches everything to `console-vX.Y.Z`. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-linux.yml` below.
-- **`console-windows.yml`** — the console's **Windows pack**, and the one file here that is **not** a pull-request check: one job on `windows-latest` that typechecks, runs the unit suite and packs the unsigned NSIS installer **at release time only** — the release tag, or a `workflow_dispatch` before one, and **never on a pull request**, not even path-filtered — and uploads it, holding no secret at all. Staged by the 2026-10-20 run that plans the console's Windows build (the owner's ruling of that date: the console drives the **Linux** `fugaro` inside WSL, unsigned), and re-cut the same day for the owner's answer to that plan's decision D7, whose words were *"a waste of resources; if there are problems we will fix them then"*. **It is red until three things in `console/` land** — the `package:win` script and the `win32` fuse row, the POSIX repairs that let the unit suite run on a Windows runner, and the `win32-x64` Electron checksum pin — which is why it is staged now and copied in later; the file's own header says so first. It is its own workflow rather than a second job in `console-tests.yml` for the reason `console-linux.yml` gives below; see `## console-windows.yml` below.
+- **`console-windows.yml`** — the console's **Windows pack**, and the one file here that is **not** a pull-request check: one job on `windows-latest` that typechecks, runs the unit suite and packs the unsigned NSIS installer **at release time only** — the release tag, or a `workflow_dispatch` before one, and **never on a pull request**, not even path-filtered — and uploads it, holding no secret at all. Staged by the 2026-10-20 run that plans the console's Windows build (the owner's ruling of that date: the console drives the **Linux** `fugaro` inside WSL, unsigned), and re-cut the same day for the owner's answer to that plan's decision D7, whose words were *"a waste of resources; if there are problems we will fix them then"*. **One thing still keeps it red, and it is the console's own POSIX assumptions rather than this file's**: the unit suite has never run on a Windows runner, because `spawn.ts`'s `isExecutableFile` reads `stat.mode & 0o111` and splits the app's own `PATH` on `':'`. The two edits that used to sit beside it in this list **landed with Part B on 2026-10-21** — the `package:win` script with its `win` block, the `win32` fuse row and the `win32-x64` Electron checksum pin — so the pack step resolves and only the test step is red; that is why it is staged now and copied in later, and the file's own header says so first. It is its own workflow rather than a second job in `console-tests.yml` for the reason `console-linux.yml` gives below; see `## console-windows.yml` below.
 - **`images.yml` — applied, not pending.** The signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`, was staged here by a Fugaro run that cannot push a `.github/workflows/**` change, then copied into `.github/workflows/images.yml` and `git rm`'d from here in `6b57ba9`. `## images.yml` below is the record of that change and of the timing it had to meet, not something still to copy.
 
 **`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, it runs unconditionally on every pull request and every push to `main`, and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
@@ -800,31 +800,34 @@ POSIX repairs below worth doing. The e2e suite is not run here — it drives the
 console's real window under its real CSP and needs a display, which is the
 owner's manual checklist's job, not a runner's.
 
-**Read this before copying it in: it is red until three things in `console/` have
-landed, and they are not this directory's to do.**
+**Read this before copying it in: one thing in `console/` is still outstanding,
+and it is not this directory's to do.**
 
-1. `console/package.json` has no `package:win` script and no `win` block, and
-   `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is `['darwin','linux']`
-   with `fuseTarget` **throwing** for anything else. `afterPack` is the pack's
-   only fuse flipper, so `electron-builder --win` produces **no artifact at
-   all** today, and the pack step cannot succeed
-   ([docs/console-windows/reconciliation.md](../console-windows/reconciliation.md)
-   F35, and implementation-plan.md Part B).
-2. The unit suite has never run on Windows: `spawn.ts`'s `isExecutableFile`
-   reads `stat.mode & 0o111`, which Windows never sets, and the suite's stubs
-   are host executables (F4, F33) — so the test step is red on a Windows runner
-   until that is platform-aware, along with the `':'` split of the app's own
-   `PATH` (F5).
-3. `console/package.json`'s `build.electronDownload.checksums` pins three zips —
-   `darwin-arm64`, `darwin-x64`, `linux-x64` — and **no `win32-x64` one**, so the
-   Electron step downloads its distribution against no pinned hash on this
-   runner. That fourth hash is a supply-chain pin and an owner-reviewable edit
-   rather than a convenience (F37, Part B), and it lands with the other two.
+**What Part B landed (2026-10-21)**, so that this page does not read as if the
+pack were still impossible: `console/package.json` has a `package:win` script
+and a `win` block that names NSIS and x64, `console/src/main/fuses.ts`'s
+`SUPPORTED_PLATFORMS` carries a `win32` row whose `fuseTarget` resolves
+`<appOutDir>/<productFilename>.exe` rather than **throwing**, and
+`build.electronDownload.checksums` pins the fourth archive,
+`electron-v<version>-win32-x64.zip`. So the pack step resolves, the fuse hook
+flips the Windows executable, and the Electron step is verified against a hash in
+this repository
+([docs/console-windows/reconciliation.md](../console-windows/reconciliation.md)
+F35, F36, F37).
 
-The order the plan gives is: **stage this file, land those three edits, then copy
-it in.** Staging it now is the point of this directory — the file is reviewable
-while it is still a proposal, and the header's first paragraph says the same
-thing to whoever opens the file rather than this page.
+1. **Still outstanding: the unit suite has never run on Windows.** `spawn.ts`'s
+   `isExecutableFile` reads `stat.mode & 0o111`, which Windows never sets, and
+   the suite's stubs are host executables (F4, F33) — so the test step is red on
+   a Windows runner until that is platform-aware, along with the `':'` split of
+   the app's own `PATH` (F5). That is Parts A and C, and it is the last thing
+   between this file and the copy-in.
+
+The order the plan gives was: **stage this file, land those edits, then copy it
+in.** Two of the three are landed and the third is Parts A and C's, so the
+copy-in is one part away — and this file stays staged, which is the point of this
+directory: the file is reviewable while it is still a proposal, and the header's
+first paragraph says the same thing to whoever opens the file rather than this
+page.
 
 **Why it is its own workflow rather than a second job in `console-tests.yml`.**
 Exactly `console-linux.yml`'s reason, which is a test rather than a taste: **the
@@ -964,10 +967,14 @@ it, every `uses:` a 40-hex pin with its `# vX.Y.Z`, the six `run:` steps, the
 console/release/*.exe` — and
 `TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere`, which holds this section
 and `website/README.md`'s sentence to that file. **What is still prose, with a
-reviewer as the only thing checking it**: that the three `console/` edits above
-have landed, that the pack genuinely produces one installer, and that the fuse
-bytes are where the `win32` row says. Those are the first real run's, which is a
-manual dispatch before a tag.
+reviewer as the only thing checking it**: that the pack genuinely produces one
+installer, and that the fuse bytes in *that* artifact are where the `win32` row
+says. The console's own suite is narrower than that and says so: `fuses.test.ts`
+asserts the row's path and the same six flips handed to a stub flipper, plus the
+hook's read-back against a *fake* wire, while the one read-back against real
+bytes that has happened is the `--win --dir` pack on Linux the console's README
+records — so the bytes in the installer a Windows runner writes are the first
+real run's, which is a manual dispatch before a tag.
 ## `website-preview.yml` and `website-promote.yml`
 
 Two **new** workflows, both `workflow_dispatch`-only, staged by the run that
