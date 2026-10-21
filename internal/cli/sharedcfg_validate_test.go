@@ -302,8 +302,8 @@ func TestParseSharedRefusals(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("want error mentioning %q, got %v", c.want, err)
 			}
-			if !strings.Contains(err.Error(), "fugaro init") {
-				t.Errorf("the refusal does not say to run fugaro init again: %v", err)
+			if !strings.Contains(err.Error(), "fugaro update") {
+				t.Errorf("the refusal does not say to run fugaro update again: %v", err)
 			}
 			if strings.ContainsAny(err.Error(), "\n\x1b\a") {
 				t.Errorf("the refusal is not one clean line: %q", err.Error())

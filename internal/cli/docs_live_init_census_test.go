@@ -247,13 +247,18 @@ const censusRoot = "../.."
 // docs_compute_backend, docs_managed_label, docs_mobile_checks, docs_providers),
 // internal/cli/init_test.go quotes internal/infra/readiness.go's own refusal,
 // managed_apply_test.go internal/managed/budget.go's, project_test.go and
-// project_shared_test.go internal/localcfg/select.go's, and run_oauth_test.go
-// internal/backend/gcp/run.go's -- so renaming the expectation here would leave
+// project_shared_test.go internal/localcfg/select.go's, run_oauth_test.go
+// internal/backend/gcp/run.go's, and doctor_bucket_test.go the four cures
+// internal/infra/hardening.go writes -- so renaming an expectation there would leave
 // a test asserting a line its package no longer prints. They came off this list
 // in W2.1's first pass and the walk put them back the moment the expectations
 // were restored to the strings the tree actually emits: an assertion that pins
 // another package's text is a mention the other package's task takes off, not
-// this one's.
+// this one's. One file went the other way in the same pass:
+// internal/cli/sharedcfg_validate_test.go asserted the refusal sharedcfg.go
+// writes, which IS this package's own line, so its expectation moved with the
+// rename and it left the list -- the swap it makes with doctor_bucket_test.go
+// is the two directions this list is meant to move in, in one commit.
 //
 // Each task that renames a string takes the file off this list in the same
 // commit, and W2.6 empties it.
@@ -326,6 +331,7 @@ var pendingRename = []string{
 	"internal/cli/docs_recipes_test.go",
 	"internal/cli/docs_release_notes_test.go",
 	"internal/cli/docs_setup_wizard_checks_test.go",
+	"internal/cli/doctor_bucket_test.go",
 	"internal/cli/image.go",
 	"internal/cli/image_layer_test.go",
 	"internal/cli/image_refresh_steps_test.go",
@@ -338,7 +344,6 @@ var pendingRename = []string{
 	"internal/cli/project_shared_test.go",
 	"internal/cli/project_test.go",
 	"internal/cli/run_oauth_test.go",
-	"internal/cli/sharedcfg_validate_test.go",
 	"internal/config/config.go",
 	"internal/config/project_secrets.go",
 	"internal/config/providers.go",
