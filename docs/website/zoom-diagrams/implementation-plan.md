@@ -449,8 +449,9 @@ The remaining three are written and unblocked: **Part 2** adds a route, a data f
 entry and a nav item; **Part 3** is a page whose every claim is now settled (D239–D242); **Part
 5** waits on its own spike rather than on a decision, and Part 4 is the prerequisite of it.
 
-If the owner wants one thing after the two in progress: **Part 4's** dependencies are answered
-and it ships the brief's "still" half on its own.
+If the owner wants one thing next after the two in progress: **Part 2** is the smallest of the
+three — one route, one data file, one FAQ entry and one nav item, no component and no script —
+and **Part 3** is the brief's whole third item, with every claim on it now settled.
 
 **An answered decision is not an approved plan.** Each part starts on the owner's go for that
 part, and no part waits on a decision another part needs.
