@@ -616,7 +616,10 @@ func TestFirstRunSuggestsTheInstallationsName(t *testing.T) {
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if r.o.name != "team-x" || r.o.createProject || !strings.Contains(out.String(), setupAlreadySetUp) || strings.Contains(out.String(), "my-app") {
+	// The name is the installation's, so the name question is not asked at all
+	// (the ID's suggestion is the directory's name prefixed — fugaro-my-app —
+	// which is a suggestion for a project to create, not this run's name).
+	if r.o.name != "team-x" || r.o.createProject || !strings.Contains(out.String(), setupAlreadySetUp) || strings.Contains(out.String(), "Fugaro project name") {
 		t.Errorf("name %q, create %v:\n%s", r.o.name, r.o.createProject, out.String())
 	}
 	if len(asked) != 1 || asked[0] != "proj-1234 us-east5" {
