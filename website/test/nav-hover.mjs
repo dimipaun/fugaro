@@ -1133,9 +1133,18 @@ test('a browser with no matchMedia to ask keeps the click, and no width is ever 
   ancient.click(ancient.summaries[0])
   assert.equal(ancient.groups[0].open, true, 'a browser with no matchMedia lost the click as well')
 
-  // And what the script asks is the pointer's capability: one query, and not a width.
+  // And what the script asks is the pointer's capability: one query for the menu, and not a
+  // width. The second query is the slider's: the homepage's "See it" panel renders the site's
+  // shared slider since the 2026-10-21 brief (the console page's own component), and a slider
+  // asks the device for its motion preference — a capability of the device, like the pointer's,
+  // and not a width either. The menu's own query is still asked once and is still the first.
+  const SLIDER_QUERY = '(prefers-reduced-motion: reduce)'
   const page = stubPage(HOME.html)
-  assert.deepEqual(page.queries, [POINTER_QUERY], `the script asked ${JSON.stringify(page.queries)}: the submenu opens on the pointer that hovers, and the one query that says so is asked once`)
+  assert.deepEqual(
+    page.queries,
+    [POINTER_QUERY, SLIDER_QUERY],
+    `the script asked ${JSON.stringify(page.queries)}: the submenu opens on the pointer that hovers and the slider stops for a reader who has asked for less motion, and each query that says so is asked once`,
+  )
   for (const query of page.queries) {
     assert.ok(!/width/.test(query), `the script asked ${query}: screen width is not the question — a tablet is wide and cannot hover, and a phone with a mouse attached can`)
   }

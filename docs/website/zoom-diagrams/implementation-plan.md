@@ -1,6 +1,8 @@
 # Website zoom diagrams — implementation plan
 
-Status: **plan only; nothing is implemented.** Owner: **@Dimi**. Date: **2026-10-21**.
+Status: **Part 1 is implemented** (`website`'s PR of 2026-10-21: one slider, two pages —
+the shared component, `website/data/home-screens.yaml`, and the hooks); **parts 2–5 are
+plan only.** Owner: **@Dimi**. Date: **2026-10-21**.
 Source: [spec.md](spec.md), the brief. This plan executes
 [reconciliation.md](reconciliation.md) — its findings `ZF1`–`ZF59`, its unverified items
 `ZU1`–`ZU5` and its decisions `D237`–`D252`. Read that document first: this one cites its

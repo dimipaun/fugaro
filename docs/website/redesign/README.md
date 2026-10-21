@@ -80,7 +80,7 @@ The owner accepted every recommendation of D180 to D192, as written in `reconcil
 - **D183** the JavaScript is one first-party file, `website/public/scripts/site.js`; no inline script, no CSP edit.
 - **D184** the homepage animation shows the README's documented sequence, held to the file at build time, captioned as the documented sequence.
 - **D185** How It Works uses the brief's four steps, each captioned by a quoted line.
-- **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog) — amended 2026-10-19: the privacy statement's own ceiling is derived from its own count, and every other page stays at 250 — amended 2026-10-21: the number is 500, the bold redesign's homepage being five blocks and 468 words (the reading below).
+- **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog) — amended 2026-10-19: the privacy statement's own ceiling is derived from its own count, and every other page stays at 250 — amended 2026-10-21: the number is 500, the bold redesign's homepage being five blocks and 468 words (the reading below) — amended 2026-10-21 again: the number is **600**, the 2026-10-21 brief's slider being the sixth block on that page, 563 words with the three pictures' `alt` texts it leads with (the reading below).
 - **D187** the fold is checked by the word ceiling plus one owner-run live check (70b).
 - **D189** long-page summaries are rendered from files; **D190** the design lives in the owner's tool, the repository keeps `design.md`, screenshots are regenerated and never committed; **D191** the redesign goes first; **D192** the byte budgets are re-derived in the commit that ships the script.
 
@@ -639,14 +639,20 @@ the owner's draft of 2026-10-19, the reading at the foot of this file): the pane
 the slot `[data-slot="watch-screenshot"]`, and the panel reads heading, picture, command — the block that
 was empty until the asset existed is the picture the owner took. It was `AgentChat.astro`'s slot until
 that draft folded the chat into the slider's first panel and deleted the component, and the picture moved
-with the slot. The markup declares the capture's logical size (1459 x 441, the 2x file's own ratio) so the
-box is reserved before the file arrives, `loading="lazy"` because the picture is behind the third tab and
-nothing on the first screen waits on it, and the `alt` is the gist of `fugaro-watch.txt` — the
-transcription ships as the text a reader gets when the picture does not. `website/test/home.mjs` holds all
-four (in the slot, a non-empty `alt`, the declared dimensions, and no external URL) and holds the slot to
-its place in the panel, and `website/test/base-styles.mjs`'s `watchSlotFailures` holds the sizing that
-makes it scale — a width that is a percentage of the panel it sits in and a height that follows the file's
-own ratio, refused if either becomes a pixel count (the two planted cases). The rendered page was measured
+with the slot. **Since the 2026-10-21 brief the picture is the last slide of the slider the panel
+renders** (`website/data/home-screens.yaml`, `website/src/components/ScreenshotSlider.astro`; D251,
+D252): the slot is unchanged and still `HomeSlider.astro`'s, and what is in it is the site's one
+slider component, over four rows — the console page's own three captures and this one, last. The
+row declares the capture's logical size (1459 x 441, the 2x file's own ratio) so the box is
+reserved before the file arrives, the slide is `loading="lazy"` because it is the last of the four
+and the first slide is the only eager one, and the row's `alt` is the gist of `fugaro-watch.txt` —
+the transcription ships as the text a reader gets when the picture does not. `website/test/home.mjs`
+holds the row to the data file, the data file's row to the sizes recorded here, and the built page's
+slides to the rows in the order the file names them, so the capture is last; the slot's four
+pictures are sized by the slider's own rule (`.screen-image`: a width that is a percentage of the
+slide it sits in and a height that follows the file's ratio), and `website/test/base-styles.mjs`'s
+`watchSlotFailures` reads that rule off the built page through the class the slot's own `<img>`
+elements carry, refusing a fixed width or a fixed height wherever it stands (the planted cases). The rendered page was measured
 in a headless Chromium over the built site at 1280, 768 and 375 while the picture sat in the chat's block:
 `scrollWidth` was the viewport's width at all three (no horizontal scroll, the picture being the page's own
 and nothing else overflowing), and the picture laid out at 750 x 228, 722 x 220 and 329 x 101 px — the
@@ -889,6 +895,28 @@ changes are cited as the feedback's own.
   `figure.hero-shot` the lead reading excludes whole, the way it already excludes the block the
   first `h2` belongs to. Both changes are read off the built page by `website/test/budget.mjs`,
   which is where the numbers above come from.
+- **D188's ceiling moves again, from 500 to 600, for the 2026-10-21 brief's slider.** The brief
+  (`docs/website/zoom-diagrams/spec.md`, Part 1 of its implementation plan) asks the homepage's
+  "See it" panel for a slider of four slides: the console's own three screenshots first, the
+  `fugaro watch` capture last (D251, D252). The three that lead it are the console page's
+  pictures, so they carry the console page's own `alt` texts — one picture has one account of
+  what it shows — and an image's `alt` is text a reader reads (`website/README.md`, "Words per
+  page"). The four slides are the whole of the move: the homepage's count goes 461 → **563**,
+  and the rule is the one above, applied again: the number is the smallest round ceiling above
+  the page that carries every block its briefs require, and 563's is **600**. Still a ceiling
+  rather than a target — the next page down is How It Works at 332 words — and the lead ceiling
+  is untouched: the slider's heading and its controls are not between the homepage's `h1` and
+  its first `h2`, so the lead stays 16 words. The number is read off the built page by
+  `website/test/budget.mjs`'s `wordsCeilingFailures`, which is where every figure here comes
+  from. The three byte figures are re-derived in the same commit, as the rounds in
+  `website/README.md`'s list re-derive theirs: the site figure moves 1,437,824 → **1,447,967**,
+  and **the heaviest page of the site is the homepage now** (563,219 bytes, the four pictures it
+  fetches), where every derivation before this one named the console page or the docs hub — so
+  the page-weight ceiling is derived from the homepage here. The review round of the same pull
+  request moved the script's bytes again (the guard that keeps the shared slider's count and dots
+  on the slide its track is showing while its panel is `display: none`, the two step controls read
+  through `own()`, and the gates that run the shared slider as the homepage renders it), and the
+  three figures are re-derived from that build rather than from the round before it.
 - **The byte figures are not re-derived, and that is the owner's ruling and not an omission.**
   The owner ruled on 2026-10-20 that the three figures `website/README.md` states are re-derived
   **only when the owner asks** — `website/test/budget.mjs` runs D192's exact derivation only with

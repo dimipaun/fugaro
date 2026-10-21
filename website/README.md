@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,432,910 bytes in a checkout with no tags** and to **1,432,910 bytes with the
+  commit builds to **1,447,967 bytes in a checkout with no tags** and to **1,447,967 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -903,6 +903,47 @@ added or removed without this sentence moving fails there:
 
   - **JavaScript per page:** 248,211 bytes. Three times 82,737: the one script the site ships,
     `public/scripts/site.js` (66,189 bytes), plus 25 %. What the file carries is the copy
+||||||| d3a2ef08
+  - **JavaScript per page:** 248,211 bytes. Three times 82,737: the one script the site ships,
+    `public/scripts/site.js` (66,189 bytes), plus 25 %. What the file carries is the copy
+  - **The homepage's "See it" panel is a slider of the console page's own pictures** (the owner's
+    brief of 2026-10-21, `docs/website/zoom-diagrams/spec.md`, Part 1 of its implementation plan;
+    D246, D250, D251, D252), and **no picture is added**: `ScreenshotSlider.astro` is the site's
+    one slider now — it takes its heading, its `data-slot` and the id prefix of the slides it
+    names, and keeps everything else, so the console page renders it exactly as before — and the
+    homepage's slot renders it over four rows of `website/data/home-screens.yaml`: the console
+    page's own `console-spend`, `console-live` and `console-run` captures first, `alt` and
+    `caption` copied from `console-screens.yaml` row for row, and the `fugaro watch` capture the
+    panel has always shown, last, with the alt text and the transcription beside it it has had
+    since PR #622. The script's interior hooks became `[data-slider-track]`,
+    `[data-slider-slide]` and `[data-slider-dot]` in the commit before this one — the classes
+    stay, because they are what the stylesheet draws — and the driver reads a hook only when
+    `closest('[data-slider]')` is the block it started from, which is what keeps the homepage's
+    own slider's panels out of the shared slider's reading and the shared slider's slides out of
+    the homepage block's. **The move is three files and nothing else**: `dist/scripts/site.js`
+    66,189 → **70,016** (+3,827: the shared slider's own 2,293 bytes and the 1,534 of the review
+    round below), `dist/index.html` 50,808 → **56,969** (+6,161, the slider's
+    markup and the shared component's rules) and `dist/console/index.html` 31,874 → **32,029**
+    (+155, the same rows' hooks), so the site figure moves 1,437,824 → **1,447,967** by exactly
+    those 10,143 — no file is added or removed (`dist/` stays **28 files**, the site **11 pages**)
+    and no other file moves a byte. **The page weight is re-derived from another page**: the
+    homepage fetches the three console captures and the watch capture now, so it is the heaviest
+    page of the site, 563,219 bytes, where the figure before this round was the console page's
+    427,596 (the console page is 431,578). The homepage's words go 461 → **563** — the three
+    leading slides' `alt` texts, which are the console page's own — and D188's number moves with
+    them, 500 → **600** (the reading is in the words ceiling below and in
+    `docs/website/redesign/README.md`). `test/home.mjs` holds the slot to the rows the data file
+    names in the order it names them, the three shared rows to the console's own file, the Watch
+    row's declared size to the design record, and the whole slider to the no-JS page; the
+    console's own gate, `test/console-screens.mjs`, runs unchanged against it. **The review round
+    on this pull request added the gates for the second slider**: `test/slider.mjs` now runs
+    `site.js` against the built homepage and drives the shared slider inside the "See it" panel —
+    its four rows counted, marked and stepped, and its clock refused while the panel is
+    `display: none` — and holds every hook read in the file to `own()`, which is what keeps a
+    block from being handed a nested slider's elements by document order.
+
+  - **JavaScript per page:** 262,560 bytes. Three times 87,520: the one script the site ships,
+    `public/scripts/site.js` (70,016 bytes), plus 25 %. What the file carries is the copy
     control, the menu, the consent gate and **both of the site's sliders** — the console page's,
     which the feedback-B round above added, and the homepage's, which the feedback-A round above
     it added.
@@ -919,10 +960,21 @@ added or removed without this sentence moving fails there:
     `scroll-behavior: smooth`) and a first reading taken from the track rather than from the
     first slide. `test/console-screens.mjs` runs the file in `test/lib/dom.mjs`'s stub browser
     to hold that half, and refuses a planted defect in each part of it. **The homepage's half is
-    the feedback-A round's 13,211 bytes, and the review round below is the last this file has
-    gained**:
+    the feedback-A round's 13,211 bytes, and the last 1,534 of them are this pull request's own
+    review fix**: the guard that keeps a track the page
+    is not laying out out of the count (the "See it" panel is `display: none` until its dot is
+    pressed, and the count and the dots were advancing inside it), the block's two step controls
+    read through `own()` like every other hook, and the gates that run the shared slider as this
+    page renders it. The 2,293 bytes before the review round are the hooks and the `own()` rule
+    themselves — the three interior hooks are
+    `data-slider-*` rather than the console page's class names, and the driver keeps a hook only
+    when `closest('[data-slider]')` is the block it started from, which is what lets one file
+    drive two blocks that carry the same hooks.
     `test/slider.mjs` runs the same file against the built homepage in a stub DOM of its own, to
-    hold the clock, the wrap, the two holds and the mark on the dot, each case planted against
+    hold the clock, the wrap, the two holds and the mark on the dot, the two blocks' hooks read
+    through `own()`, and **the shared slider as this page renders it** — the four rows it counts,
+    marks and steps, and the beats it refuses while its panel is `display: none` — each case
+    planted against
     the line of the script it reads. **The two halves share the four names they have to agree on
     and nothing else** — the block's attribute, the two step controls, the six seconds and the
     motion query are declared once, with the console's section, and each half drives its own kind
@@ -949,10 +1001,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,603,485 bytes. Three times 534,495: the heaviest page, the
-    console page, at 427,596 bytes (its HTML, the four screenshots it renders, and the files
+  - **Page weight per page:** 2,112,072 bytes. Three times 704,024: the heaviest page, the
+    homepage, at 563,219 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,373,414 bytes. Three times 1,791,138 (every file in `dist/`, 1,432,910
+  - **Whole site:** 5,429,877 bytes. Three times 1,809,959 (every file in `dist/`, 1,447,967
     bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -1026,22 +1078,30 @@ added or removed without this sentence moving fails there:
     `docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
     getting-started 431, privacy 277, community 268, every one of them over it — and the
     redesign brought every one of those pages but the privacy statement inside it.)
-    **D188's number was 250, the owner's feedback of 2026-10-19 moved it to 300, and the
-    bold redesign of 2026-10-20 moved it to 500.** The 2026-10-19 brief asks the homepage for
+    **D188's number was 250, the owner's feedback of 2026-10-19 moved it to 300, the
+    bold redesign of 2026-10-20 moved it to 500, and the 2026-10-21 brief moved it to 600.**
+    The 2026-10-19 brief asks the homepage for
     a benefits section, which is a fourth required
     block on the one page that already carried the three the briefs before it require — the
     promise, the chat (changes spec item 3) and the flow (item 4) — and the four together
     measure 294 words. The bold redesign then builds the owner's approved board
     (`design-ref/HomeV3.dc.html`), whose homepage is five blocks — the hero, the slider, the
     run band, the grid of what a run leaves behind, and the closing call to action with the
-    install command — and the five together measure **468 words**. D188's number is therefore
+    install command — and the five together measure **468 words**. The 2026-10-21 brief
+    (`docs/website/zoom-diagrams/spec.md`) then asks the "See it" panel for a slider of four
+    slides — the console's own three screenshots first and the `fugaro watch` capture last
+    (D251, D252) — and the three pictures that lead it are the console page's own, so they
+    carry the console page's own `alt` texts: one picture has one account of what it shows,
+    and an image's `alt` is text a reader reads. **The four slides are the whole of that
+    move**, 461 → **563 words**, and the page's blocks therefore measure 563. D188's number
+    is therefore
     the smallest round ceiling above the page that carries every block its briefs and its
     boards require, and it is still a ceiling rather than a
-    target: the highest of the pages that gained nothing from those briefs or that board is How
+    target: the next page down is How
     It Works at
-    279 words (Getting Started is 257), and a page that wants the extra room has to carry a
+    332 words (Getting Started is 291), and a page that wants the extra room has to carry a
     brief's own block for it.
-    Both raises are recorded as readings in `docs/website/redesign/README.md`, the way every
+    Every raise is recorded as a reading in `docs/website/redesign/README.md`, the way every
     number the briefs do not spell out is.
 - `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
