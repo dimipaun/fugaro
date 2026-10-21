@@ -116,6 +116,18 @@ const (
 	centralOrchPlanStatus            = "P0 — the guard test that pins this folder and its citations, `internal/cli/docs_central_orchestrator_test.go` — has landed"
 	centralOrchReadmeNoCheck         = "**not claimed and not written.**"
 	centralOrchReadmeRegisterReading = "**the highest D-number written anywhere under `docs/` is D220 and the next free block is D221 onward**"
+	// The three sentences that say P0 has landed, one per document. Each was stale until the
+	// pull request that landed P0: C1 of the reconciliation said the work "writes **no guard
+	// test**", the plan's P0 said "This folder has none", and the index still described
+	// reconciliation section 6 as "Open for the owner" after that section grew an answer
+	// column. The negatives below are the check that would have caught each of them: the
+	// present-tense claim and the retired section title must not come back.
+	centralOrchReconciledC1        = "**That pull request is the one that landed P0**"
+	centralOrchReconciledStale     = "In particular it writes **no guard test**"
+	centralOrchPlanP0Landed        = "it has since landed"
+	centralOrchPlanP0Stale         = "This folder has none, because"
+	centralOrchReadmeSection6      = "the same decisions tabled **for the owner — the answered six, and the open twenty**"
+	centralOrchReadmeSection6Stale = "the same decisions tabled as **Open for the owner**"
 )
 
 // centralOrchSpecSections are the spec's own headings, in order: the pin that spec.md is the
@@ -321,6 +333,22 @@ func TestDocsCentralOrchestratorIsWritten(t *testing.T) {
 	plan := flattenDoc(readDoc(t, centralOrchPlan))
 	if !strings.Contains(plan, centralOrchPlanStatus) {
 		t.Errorf("%s lacks the sentence recording that P0, and only P0, has landed: %q", centralOrchPlan, centralOrchPlanStatus)
+	}
+	// The three sentences that went stale the day P0 landed, and the three that replaced
+	// them: a document that still says the guard is unwritten contradicts the guard standing
+	// beside it, and a reader who finds one has no way to tell which of the two is current.
+	for _, c := range []struct{ doc, file, stale, now string }{
+		{centralOrchReconciled, "correction C1", centralOrchReconciledStale, centralOrchReconciledC1},
+		{centralOrchPlan, "P0's scope", centralOrchPlanP0Stale, centralOrchPlanP0Landed},
+		{centralOrchReadme, "the index row for reconciliation.md", centralOrchReadmeSection6Stale, centralOrchReadmeSection6},
+	} {
+		body := flattenDoc(readDoc(t, c.doc))
+		if strings.Contains(body, c.stale) {
+			t.Errorf("%s' %s still carries %q: P0 has landed and section 6 has an answer column, so this sentence describes a state that has changed", c.doc, c.file, c.stale)
+		}
+		if !strings.Contains(body, c.now) {
+			t.Errorf("%s' %s lacks %q: it is the sentence that replaced the stale one, and without it the staleness comes back unnoticed", c.doc, c.file, c.now)
+		}
 	}
 }
 
@@ -546,11 +574,17 @@ type centralOrchContentAnchor struct {
 var centralOrchContentAnchors = []centralOrchContentAnchor{
 	{"spec.md", "docs/central-orchestrator/spec.md", "the document's status block, above its first section", "# Fugaro Central Orchestrator Spec", "", ""},
 	{"spec.md", "docs/central-orchestrator/spec.md", "the document's status block, above its first section", "## Resolved questions", "", ""},
+	// This file cites itself, and an entry for a citation into this file has one extra
+	// constraint: its anchor text is written into this table as well, so a line without a
+	// double quote in it would be carried twice -- once where it lives and once here -- and
+	// read as an anchor that names two lines. Both self-entries anchor on a line carrying a
+	// `"`, which this table writes escaped, so the anchor names exactly the line it means.
 	{"internal/cli/docs_central_orchestrator_test.go", "internal/cli/docs_central_orchestrator_test.go", "the document's status block, above its first section", "const centralOrchCheckedAgainst = \"2f8b4dca\"", "", ""},
 	{"docs/mobile/design/always-on-orchestrator.md", "docs/mobile/design/always-on-orchestrator.md", "the document's status block, above its first section", "", "the design lives only in open PR #632 and is not on main, so there is no line here for an anchor to be held to", ""},
 	{"docs/coordinator/README.md", "docs/coordinator/README.md", "the document's status block, above its first section", "**Every block is cited by content and not by line**", "", ""},
 	{"internal/cli/docs_artifact_runs_test.go", "internal/cli/docs_artifact_runs_test.go", "0. Corrections to the brief this work was written from", "func TestArtifactRunsDesignSecurityText(t *testing.T) {", "", ""},
 	{"internal/cli/docs_windows_cli_test.go", "internal/cli/docs_windows_cli_test.go", "0. Corrections to the brief this work was written from", "func TestDocsWindowsCLIIsWritten(t *testing.T) {", "", ""},
+	{"internal/cli/docs_central_orchestrator_test.go", "internal/cli/docs_central_orchestrator_test.go", "0. Corrections to the brief this work was written from", "const centralOrchSpecSHA256 = \"2f56725b63459806985226145656dea35d61fe36f26990116857ec014733a01d\"", "", ""},
 	{"internal/cli/docs_base_test.go", "internal/cli/docs_base_test.go", "0. Corrections to the brief this work was written from", "func readDoc(t *testing.T, path string) string {", "", ""},
 	{"internal/rtdb/client.go", "internal/rtdb/client.go", "0. Corrections to the brief this work was written from", "func (c *Client) Get(ctx context.Context, path string, out any) (found bool, err error) {", "", ""},
 	{"internal/rtdb/stream.go", "internal/rtdb/stream.go", "0. Corrections to the brief this work was written from", "func (c *Client) Stream(ctx context.Context, path string) <-chan Event {", "", ""},
@@ -563,9 +597,9 @@ var centralOrchContentAnchors = []centralOrchContentAnchor{
 	{"docs/mobile/functional-spec-v0.1.md", "docs/mobile/functional-spec-v0.1.md", "0. Corrections to the brief this work was written from", "# Fugaro Mobile App — Functional Spec (v0.1)", "", ""},
 	{"docs/mobile/functional-spec-reconciliation.md", "docs/mobile/functional-spec-reconciliation.md", "0. Corrections to the brief this work was written from", "**G12 — \"Anyone can authenticate with Firebase\" is false for a Fugaro installation. Wrong.**", "", ""},
 	{"docs/rigor-modes/spec.md", "docs/rigor-modes/spec.md", "0. Corrections to the brief this work was written from", "", "the document lives only in open PR #773 and is not on main, so there is no line here for an anchor to be held to", ""},
-	{"reconciliation.md", "docs/rigor-modes/spec.md", "0. Corrections to the brief this work was written from", "", "the document lives only in open PR #773 and is not on main, so there is no line here for an anchor to be held to", ""},
-	{"implementation-plan.md", "docs/rigor-modes/spec.md", "0. Corrections to the brief this work was written from", "", "the document lives only in open PR #773 and is not on main, so there is no line here for an anchor to be held to", ""},
-	{"README.md", "docs/rigor-modes/spec.md", "0. Corrections to the brief this work was written from", "", "the document lives only in open PR #773 and is not on main, so there is no line here for an anchor to be held to", ""},
+	{"reconciliation.md", "docs/rigor-modes/reconciliation.md", "0. Corrections to the brief this work was written from", "", "the document lives only in open PR #773 and is not on main, so there is no line here for an anchor to be held to", ""},
+	{"implementation-plan.md", "docs/rigor-modes/implementation-plan.md", "0. Corrections to the brief this work was written from", "", "the document lives only in open PR #773 and is not on main, so there is no line here for an anchor to be held to", ""},
+	{"README.md", "docs/rigor-modes/README.md", "0. Corrections to the brief this work was written from", "", "the document lives only in open PR #773 and is not on main, so there is no line here for an anchor to be held to", ""},
 	{"internal/infra/tf/cover.go", "internal/infra/tf/cover.go", "1. The spec's concepts against what the repository has", "var allowedTypes = map[string]bool{", "", ""},
 	{"internal/gateway/gateway.go", "internal/gateway/gateway.go", "1. The spec's concepts against what the repository has", "func Start(ctx context.Context, o Options) (*Server, error) {", "", ""},
 	{"internal/runstore/launch.go", "internal/runstore/launch.go", "1. The spec's concepts against what the repository has", "type Claim struct {", "", ""},
@@ -814,7 +848,7 @@ var centralOrchContentAnchors = []centralOrchContentAnchor{
 	{"internal/cli/docs_mobile_plan_test.go", "internal/cli/docs_mobile_plan_test.go", "5. Decisions D1–D26", "func TestDocsMobilePlanPhase6IsApproved(t *testing.T) {", "", ""},
 	{"docs/coordinator/README.md", "docs/coordinator/README.md", "5. Decisions D1–D26", "The numbers this work holds", "", ""},
 	{"docs/design/voice.md", "docs/design/voice.md", "5. Decisions D1–D26", "the phase that ships the check writes them", "", ""},
-	{"budget/sweep.go", "budget/sweep.go", "6. For the owner — the answered six, and the open twenty", "", "a run artifact written by the agent's container under runs/<slug>/<run>/, not a file in this repository, so there is no line here for an anchor to be held", ""},
+	{"budget/sweep.go", "internal/budget/sweep.go", "6. For the owner — the answered six, and the open twenty", "// DefaultStaleAfter is how long an entry may go without a heartbeat", "", ""},
 	{"docs/coordinator/README.md", "docs/coordinator/README.md", "7. The numbers this work would hold", "The numbers this work holds", "", ""},
 	{"README.md", "docs/mobile/voice-session/README.md", "7. The numbers this work would hold", "| **D201–D220** | this work's decisions, all written and **all open**.", "", ""},
 	{"reconciliation.md", "docs/mobile/voice-session/reconciliation.md", "7. The numbers this work would hold", "tree. So this work starts at **D201** and leaves D193–D200 alone rather than", "", ""},
@@ -884,6 +918,18 @@ func TestDocsCentralOrchestratorCitationsAreAnchoredByContent(t *testing.T) {
 		if a.excused != "" {
 			if !strings.Contains(a.excused, "PR #") && !strings.Contains(a.excused, "not a file in this repository") {
 				t.Errorf("the entry for %s is excused with %q, which names neither the pull request the file lives in nor a run artifact: an excuse has to say what it is excusing", a.token, a.excused)
+			}
+			// The reason is written once, in centralOrchCitationsAbsent, and the entry
+			// quotes it: a table entry whose reason has drifted from the declaration is
+			// an excuse that declaration does not make, and that is exactly how the D2
+			// row's shortened `budget/sweep.go` -- a file in this tree -- came to be
+			// excused as a run artifact while the check read only the phrase.
+			reason, declared := centralOrchCitationsAbsent[a.doc]
+			switch {
+			case !declared:
+				t.Errorf("the entry for %s is excused to %s, and centralOrchCitationsAbsent does not carry that path: an excuse has to be declared where every other one is, or it is a reason this test wrote for itself", a.token, a.doc)
+			case reason != a.excused:
+				t.Errorf("the entry for %s is excused with %q and centralOrchCitationsAbsent gives %s the reason %q: the two have to be the same sentence, or the table excuses something the declaration does not", a.token, a.excused, a.doc, reason)
 			}
 			if _, err := os.Stat("../../" + filepath.FromSlash(a.doc)); err == nil {
 				t.Errorf("%s is excused as %q, and the file is now in this tree: the excuse has expired, so the citation needs an anchor of the content it means", a.doc, a.excused)
@@ -997,20 +1043,33 @@ func TestDocsCentralOrchestratorCitationsExist(t *testing.T) {
 // centralOrchCitationsAbsent are the citations that name something this tree does not have,
 // each with the reason the document itself gives. Nothing else may fail to resolve.
 var centralOrchCitationsAbsent = map[string]string{
-	"docs/mobile/design/always-on-orchestrator.md": "PR #632's always-on orchestrator design, which is not on main",
-	"docs/design/always-on-orchestrator.md":        "the stale path finding #55 records; PR #632 places the document under docs/mobile/design/",
-	"docs/rigor-modes/spec.md":                     "PR #773's rigor-mode documents, which are not on main",
-	"fugaro-mobile-app-spec.md":                    "the file correction C5 records as not existing anywhere",
-	"result.json":                                  "a run artifact, written under runs/<slug>/<run>/",
-	"launch.json":                                  "a run artifact, written under runs/<slug>/<run>/",
-	"task.json":                                    "a run artifact, written under runs/<slug>/<run>/",
-	"comments.json":                                "a run artifact, written under runs/<slug>/<run>/",
-	"session/session.json":                         "a run artifact, written under runs/<slug>/<run>/",
-	"README.md":                                    "cited bare, and every README.md this document means is named by an anchor entry",
-	"spec.md":                                      "cited bare, and every spec.md this document means is named by an anchor entry",
-	"reconciliation.md":                            "cited bare, and every reconciliation.md this document means is named by an anchor entry",
-	"implementation-plan.md":                       "cited bare, and every implementation-plan.md this document means is named by an anchor entry",
-	"budget/sweep.go":                              "the second, shortened citation of internal/budget/sweep.go in the same row",
+	// The documents that live only in an open pull request, and the stale path finding #55
+	// records. These are the ones the anchor table excuses, and its excuse has to be this
+	// sentence, word for word: the reason is written once, here, and quoted there.
+	"docs/mobile/design/always-on-orchestrator.md": "the design lives only in open PR #632 and is not on main, so there is no line here for an anchor to be held to",
+	"docs/design/always-on-orchestrator.md":        "this path is the stale citation finding #55 records: the document is not at this path on main (PR #632 places it under docs/mobile/design/), so there is no line here to hold",
+	"docs/rigor-modes/spec.md":                     "the document lives only in open PR #773 and is not on main, so there is no line here for an anchor to be held to",
+	"docs/rigor-modes/reconciliation.md":           "the document lives only in open PR #773 and is not on main, so there is no line here for an anchor to be held to",
+	"docs/rigor-modes/implementation-plan.md":      "the document lives only in open PR #773 and is not on main, so there is no line here for an anchor to be held to",
+	"docs/rigor-modes/README.md":                   "the document lives only in open PR #773 and is not on main, so there is no line here for an anchor to be held to",
+	"fugaro-mobile-app-spec.md":                    "the file is not a file in this repository and exists nowhere: correction C5 records that the brief's bullet names a file the tree does not have, so there is no line here to hold",
+	// The run artifacts a run writes under runs/<slug>/<run>/.
+	"result.json":          "a run artifact written by the agent's container under runs/<slug>/<run>/, not a file in this repository, so there is no line here for an anchor to be held",
+	"launch.json":          "a run artifact written by the agent's container under runs/<slug>/<run>/, not a file in this repository, so there is no line here for an anchor to be held",
+	"task.json":            "a run artifact written by the agent's container under runs/<slug>/<run>/, not a file in this repository, so there is no line here for an anchor to be held",
+	"comments.json":        "a run artifact written by the agent's container under runs/<slug>/<run>/, not a file in this repository, so there is no line here for an anchor to be held",
+	"session/session.json": "a run artifact written by the agent's container under runs/<slug>/<run>/, not a file in this repository, so there is no line here for an anchor to be held",
+	// The bare names. Each occurrence is resolved by the anchor table to the document its
+	// sentence means, so these are paths the *existence* test must not stat rather than
+	// citations nothing holds; the reason says which.
+	"README.md":              "cited bare, and the anchor table resolves every occurrence to the README.md its sentence means",
+	"spec.md":                "cited bare, and the anchor table resolves every occurrence to the spec.md its sentence means",
+	"reconciliation.md":      "cited bare, and the anchor table resolves every occurrence to the reconciliation.md its sentence means",
+	"implementation-plan.md": "cited bare, and the anchor table resolves every occurrence to the implementation-plan.md its sentence means",
+	// Not an excuse: the D2 row writes the module's name twice, and the shortened second
+	// citation is anchored on internal/budget/sweep.go like any other. It is here because the
+	// short spelling is not a path on disk, and the existence test must not stat it.
+	"budget/sweep.go": "the D2 row's shortened second citation of internal/budget/sweep.go, which is in this tree and is anchored on that file in centralOrchContentAnchors",
 }
 
 // centralOrchCitationAbsent reports whether a citation names something this tree does not have.

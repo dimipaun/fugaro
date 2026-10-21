@@ -25,13 +25,18 @@ sentence turns on, for the reason `docs/coordinator/README.md` gives for its own
 
 - **C1 — "docs only" means what it says.** The brief this work was written from asks for a
   spec, a reconciliation and a plan, and says no code, no Terraform and no workflow is
-  touched. This pull request writes four Markdown files under
-  `docs/central-orchestrator/` and nothing else. In particular it writes **no guard test**:
+  touched. The pull request that wrote these three documents added four Markdown files under
+  `docs/central-orchestrator/` and nothing else. In particular it wrote **no guard test**:
   the folder-per-work convention in this tree is a guard package beside the CLI —
   `ls internal/cli/docs_*_test.go | wc -l` is **49** at `2f8b4dca`, from
   `internal/cli/docs_artifact_runs_test.go` to `internal/cli/docs_windows_cli_test.go` — and
-  this folder's own guard is listed as **P0** in the implementation plan instead, to be added
-  by a later code-bearing pull request. Nothing else needs registering: there is no
+  this folder's own guard was listed as **P0** in the implementation plan instead, to be added
+  by a later code-bearing pull request. **That pull request is the one that landed P0**:
+  `internal/cli/docs_central_orchestrator_test.go` is in the tree now — the fiftieth such file
+  (`ls internal/cli/docs_*_test.go | wc -l` is **50** on this branch), and the one piece of Go
+  this work has written — and it added no feature code, so this correction still holds of
+  everything the orchestrator would have to be built from. Nothing else needed registering:
+  there is no
   docs-folder registry (`internal/clidoc/` holds the CLI reference generator and
   `internal/cli/docs_base_test.go` the shared helpers), so no existing test names this folder
   and none fails for its absence.

@@ -65,11 +65,13 @@ and what was not).
 
 **Scope.** Every other plan folder in this tree pins itself with a guard — 49 of them live in
 `internal/cli/` at `2f8b4dca`, from `internal/cli/docs_artifact_runs_test.go` to
-`internal/cli/docs_windows_cli_test.go`. This folder has none, because the pull request that
-wrote it was docs-only (reconciliation C1). P0 is that guard. **Note for whoever writes it:**
+`internal/cli/docs_windows_cli_test.go`. This folder had none when this plan was written,
+because the pull request that wrote it was docs-only (reconciliation C1); P0 is that guard, and
+it has since landed — `internal/cli/docs_central_orchestrator_test.go` is in the tree, and the
+five tests below are what it holds. **Note for whoever reads it:**
 the rigor modes work's guard (`internal/cli/docs_rigor_modes_test.go`) is *not* in this tree
 to copy — that work is in open PR #773, as the folder's own documents say (README, and C6 of
-the reconciliation) — so the models to follow are
+the reconciliation) — so the models it follows are
 `internal/cli/docs_coordinator_test.go` and `internal/cli/docs_windows_cli_test.go`, both on
 `main`.
 
