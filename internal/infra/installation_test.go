@@ -153,6 +153,14 @@ func TestInstallationLogIsolation(t *testing.T) {
 // container's ID derived the way the loader derives it (the project-wide
 // secret of CredentialsBundleName).
 //
+// The spec's field is set directly, and deliberately NOT through
+// InstallOptions: there is no option for it and there must not be one. The
+// credentials stage (internal/cli/init_credentials.go) does not build a spec
+// at all — it read-modify-writes the key into the document the installation
+// stage already wrote (SetCredentialsService), because a document rebuilt from
+// a spec would drop the discovery's project_secrets and plan their
+// destruction.
+//
 // TestInstallationVarsMatchModule beside it is what holds the key to the
 // root's own variable: this test is about the value.
 func TestInstallationCredentialsServiceVars(t *testing.T) {
@@ -175,10 +183,11 @@ func TestInstallationCredentialsServiceVars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err = Installation(lc, InstallOptions{CredentialsService: &svc})
+	s, err = Installation(lc, InstallOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.CredentialsService = &svc
 	data, err = InstallationVars(s)
 	if err != nil {
 		t.Fatal(err)

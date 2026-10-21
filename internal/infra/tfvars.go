@@ -3,12 +3,8 @@ package infra
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"maps"
-	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -80,11 +76,6 @@ type InstallOptions struct {
 	// managedDeployerShipped is false (0.8.6): the binding's fmgd- fence is
 	// not an IAM condition GCP accepts yet (deployer.tf's header).
 	ManagedDeployerScoped bool
-	// CredentialsService opts the installation in to the credentials service
-	// (D146). Only init's credentials stage sets it, and only from a
-	// Credentials() of its own after it verified the image's digest; nil is
-	// every other caller, and writes no variable at all.
-	CredentialsService *CredentialsServiceSpec
 }
 
 // Budget is an optional budget on the project, in whole units of currency.
@@ -249,7 +240,15 @@ func SetCredentialsService(vars []byte, svc CredentialsServiceSpec) ([]byte, err
 }
 
 // CarriedCredentialsService returns vars with the credentials_service entry
-// that root's workdir already carried, when vars carry none of their own.
+// that the workdir's PREVIOUS tfvars carried, when vars carry none of their
+// own.
+//
+// prev is those tfvars — infra.Workdir.PrevVars, which PrepareWorkdir read
+// before it rebuilt the tree, or infra.ReadWorkdirVars — and nil when the
+// workdir held none. It is handed over as bytes rather than read from a path
+// here on purpose: the caller's workdir has already been prepared, so the file
+// is gone, and a read at this point would answer "nothing to carry" for an
+// installation that has opted in (the bug C1.20's review found).
 //
 // The variable is the credentials stage's alone (C1.20), and every ordinary
 // run of init rewrites the tfvars from its spec — which never sets the key.
@@ -261,21 +260,17 @@ func SetCredentialsService(vars []byte, svc CredentialsServiceSpec) ([]byte, err
 // opted in carries no key and is unchanged, and the runbook's opt-out — the
 // owner deleting the key by hand — is respected for the same reason: the
 // entry is taken as it is found.
-func CarriedCredentialsService(vars []byte, root string) ([]byte, error) {
-	old, err := os.ReadFile(filepath.Join(root, VarsFile))
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return vars, nil // no workdir yet: nothing to carry
-	case err != nil:
-		return nil, err
+func CarriedCredentialsService(vars, prev []byte) ([]byte, error) {
+	if prev == nil {
+		return vars, nil // no workdir held one: nothing to carry
 	}
-	prev, err := varsDoc(old)
+	previous, err := varsDoc(prev)
 	if err != nil {
 		// A tfvars that cannot be read is not a reason to write a plan that
 		// drops the service: fail rather than carry nothing forward.
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
 	}
-	svc, ok := prev["credentials_service"]
+	svc, ok := previous["credentials_service"]
 	if !ok || svc == nil {
 		return vars, nil
 	}
@@ -407,7 +402,12 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 	}
 	s.ProjectJobs = jobs
 	s.ManagedDeployerScoped = o.ManagedDeployerScoped
-	s.CredentialsService = o.CredentialsService
+	// CredentialsService is deliberately NOT set from the options: the opt-in
+	// is the credentials stage's alone (C1.20), and that stage never comes
+	// through here — it read-modify-writes the one key of the document the
+	// installation stage wrote (infra.SetCredentialsService), because a
+	// document rebuilt from a spec would drop the discovery's project_secrets
+	// and plan their destruction.
 	if o.NoLogIsolation {
 		s.LogIsolation = new(false)
 	}

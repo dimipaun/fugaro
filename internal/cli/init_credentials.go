@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,9 +21,20 @@ import (
 // owner's step and it is behind --provision-credentials.
 //
 // What it turns on is the single identity that reads EVERY model credential
-// the installation holds: the Cloud Run service the run's job accounts call
-// for a credential instead of mounting one (D145, the OAuth token's keep-out
-// invariant). That is why, exactly as the compute backend's provisioning is,
+// the installation holds: the Cloud Run service the run's job accounts are
+// meant to call for a credential instead of mounting one (D145, the OAuth
+// token's keep-out invariant).
+//
+// What it does NOT yet do — and what its confirmation and the flag's help say
+// in as many words — is hand a run that credential: the repository roots'
+// half (this release's: every job stops mounting its model credential, in
+// every auth mode) is in, the runner's half (C1.19, the wiring that fetches
+// one from the service at call time) is not. So on an installation whose
+// roots have been re-applied since the opt-in, no run has a model credential
+// at all until C1.19 lands. Turning it on early costs exactly that, and the
+// owner is told so before they type the project's name.
+//
+// That is why, exactly as the compute backend's provisioning is,
 // it is registered noYes, its confirmation is the project's name typed at a
 // real terminal (initflow.Typed), and a coding agent's session never gets
 // past the loop's own refusal.
@@ -56,7 +68,11 @@ type credentialsStage struct {
 	// changes and applied mirror computeStage's, so the plan view and the
 	// JSON result read the same either way.
 	changes *infra.PlanCounts
-	applied bool
+	// attempted is whether this stage reached the APPLY: from that moment the
+	// installation's state may hold part of the service, so the TFVARS KEEP
+	// the key whatever the apply answered (see putBack). It is not "the apply
+	// succeeded" — that fact is r.res.Applied, set after the apply returned.
+	attempted bool
 	// image is the digest-pinned reference the stage wrote into the tfvars:
 	// what it reports, and what its result records.
 	image string
@@ -145,16 +161,13 @@ func (s *credentialsStage) Plan(ctx context.Context, _ initflow.Env) (initflow.P
 // service on, then reads the outputs back (Verify's subject).
 //
 // Anything short of an apply — the owner declining, no terminal to ask at, a
-// failure before the apply ran — puts the tfvars back as the stage found them.
-func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outcome, error) {
-	defer func() {
-		if s.applied {
-			return
-		}
-		if err := s.restore(); err != nil {
-			fmt.Fprintf(s.e.r.w, "warning: %v\n", err)
-		}
-	}()
+// failure before the apply ran — puts the tfvars back as the stage found them
+// (putBack), and a failure to put them back is an error of the run rather
+// than a warning: the key it failed to remove IS the opt-in, and the next
+// ordinary init would carry it forward and apply the service with none of
+// this stage's typed confirmation.
+func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (out initflow.Outcome, err error) {
+	defer func() { out, err = s.putBack(out, err) }()
 	e, r := s.e, s.e.r
 	plan, err := s.plan(ctx)
 	if err != nil {
@@ -177,7 +190,7 @@ func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (initflow.
 
 	// The confirmation, typed at a real terminal: --yes never covers this
 	// stage, and a run that cannot ask leaves it for the owner.
-	what := fmt.Sprintf("turns ON the credentials service in GCP project %s, as the one identity that reads every model credential the installation holds: a Cloud Run service (%s) running the image %s, its own service account, and one Secret Manager bundle secret whose accessor grant is the service's alone. Every job that mounts a model credential today stops mounting one and asks this service instead, so the service being down is runs unable to start (%s)",
+	what := fmt.Sprintf("turns ON the credentials service in GCP project %s, as the one identity that reads every model credential the installation holds: a Cloud Run service (%s) running the image %s, its own service account, and one Secret Manager bundle secret whose accessor grant is the service's alone. Every repository root re-applied after this drops EVERY job's model credential — in every agent.auth mode, oauth and api-key as much as cascade — and the part that would give a run a credential from this service instead is NOT in this release yet, so until it lands every run of this installation has no model credential at all (%s)",
 		e.lc.GCPProject, infra.CredentialsServiceName, s.image, counts.String())
 	confirmed, reachable, err := r.askTyped(what)
 	if err != nil {
@@ -189,10 +202,16 @@ func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (initflow.
 	if !confirmed {
 		return initflow.Outcome{}, r.notConfirmed("nothing was applied")
 	}
+	// The apply starts here, so the key stays from here on: terraform may
+	// create part of the service and then fail, and a tfvars without the key
+	// would plan that part's destruction — a plan the bundle container's
+	// prevent_destroy refuses, which leaves the installation holding a
+	// half-built service that no run can put right. A run that never reached
+	// the apply is the only one that puts the key back.
+	s.attempted = true
 	if err := e.t.Apply(ctx, infra.PlanFile); err != nil {
 		return initflow.Outcome{}, remote(err)
 	}
-	s.applied = true
 	r.res.Applied = true
 	if err := s.Verify(ctx); err != nil {
 		return initflow.Outcome{}, err
@@ -236,7 +255,18 @@ func (s *credentialsStage) requireCredsRules(ctx context.Context) error {
 	var raw json.RawMessage
 	found, err := db.Get(ctx, rules.PathCredsRulesMarker(), &raw)
 	if err != nil {
-		return dbErr(lc, err, false)
+		// FAILS CLOSED, and the refusal says which read it was: a database
+		// that could not answer is not a database that answered "the rules
+		// carry the credentials children". The stage below is the one that
+		// turns on the identity that reads every model credential the
+		// installation holds, and this read is its whole gate, so an
+		// unanswered read must stop the run rather than pass for a pass —
+		// "carry on and hope" is the direction that ends with a run halted
+		// mid-flight by rules that predate the children.
+		//
+		// The wrapped error carries the node's PATH and the transport's own
+		// message and no value from the database at all.
+		return dbErr(lc, fmt.Errorf("reading the credentials rules marker at %s: %w", rules.PathCredsRulesMarker(), err), false)
 	}
 	if !found {
 		return userErr("the installation's database carries no credentials rules marker at %s, so its rules predate the credentials service: the service's runs write the registry entry's credential and waiting_until and are denied /creds, and rules without them would halt every run in the middle; re-run 'fugaro init --firebase <firebase-project-id>' with fugaro >= %s, then run this stage", rules.PathCredsRulesMarker(), credsServiceSince)
@@ -330,6 +360,30 @@ func (s *credentialsStage) prepare(ctx context.Context) error {
 	}
 	s.image = image
 	return nil
+}
+
+// putBack is Apply's deferred return: the tfvars go back as the stage found
+// them when the run never reached the apply, and a restore that fails is an
+// ERROR — joined with whatever the stage was already returning, so neither
+// failure is lost.
+//
+// Why an error and not a warning: restore is the only thing that stands
+// between a declined or interrupted run and a leftover key, and a leftover key
+// is the whole opt-in (the next ordinary init carries it forward,
+// infra.CarriedCredentialsService). A warning is a run that reports success
+// while leaving exactly that behind.
+func (s *credentialsStage) putBack(out initflow.Outcome, err error) (initflow.Outcome, error) {
+	if s.attempted {
+		return out, err
+	}
+	rerr := s.restore()
+	switch {
+	case rerr == nil:
+		return out, err
+	case err == nil:
+		return initflow.Outcome{}, rerr
+	}
+	return out, errors.Join(err, rerr)
 }
 
 // restore puts the installation root's tfvars back as this stage found them,

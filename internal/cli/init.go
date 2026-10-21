@@ -429,7 +429,7 @@ secrets stage is behind the same gate.`,
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.provisionBatch, "provision-batch", false, "after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so --yes never covers it and it is typed at a real terminal; nothing runs it by default, and no run can use the backend until the enable task. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
-	f.BoolVar(&o.provisionCredentials, "provision-credentials", false, "after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service that is the one identity reading the model credentials (its own account, one Secret Manager bundle secret), running this release's image pinned by digest through the installation's remote repository. Every repository root re-applied after this stops mounting each job's model credential and asks the service instead, so a service that is down is runs that cannot start; it needs the installation's Firebase rules (fugaro init --firebase) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both")
+	f.BoolVar(&o.provisionCredentials, "provision-credentials", false, "after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service that is the one identity reading the model credentials (its own account, one Secret Manager bundle secret), running this release's image pinned by digest through the installation's remote repository. Every repository root re-applied after this drops EVERY job's model credential — in every agent.auth mode, oauth and api-key as much as cascade — and the part that gives a run a credential from the service instead is not in this release yet, so until it lands no run of the installation has a model credential to use: this is the owner's step of a service that is not finished. It needs the installation's Firebase rules (fugaro init --firebase) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both")
 	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). Never covers creating a project, billing, a secret, an unlisted repository, the Firestore location, a billable first image build or replacing an image tag (typed at a real terminal). Under a coding agent's environment variable (CLAUDECODE and the like) init applies nothing, --yes included (except init --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one non-interactive opt-in to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes never covers it, and a coding agent's environment refuses it; any other origin takes the typed confirmation)")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
@@ -638,6 +638,21 @@ func runInit(r *initRun) error {
 		data, err := infra.InstallationVars(spec)
 		if err != nil {
 			return err
+		}
+		// The printed variables are the installation as it STANDS, so the one
+		// key this spec never carries is carried forward from the workdir —
+		// the same carry a real run makes (prepare). Without it, --print-vars
+		// on an installation that has opted in prints a document that drops
+		// the opt-in, which is a reading of it the owner cannot trust. It is
+		// read, never written: --print-vars changes nothing, and a missing or
+		// unreadable workdir is "no key", not an error to print a warning
+		// about (this path touches no cloud and no Terraform by design).
+		if dir, derr := infra.InstallationWorkdir(os.Getenv, lc.GCPProject); derr == nil {
+			if prev, perr := infra.ReadWorkdirVars(dir, "installation"); perr == nil {
+				if data, err = infra.CarriedCredentialsService(data, prev); err != nil {
+					return err
+				}
+			}
 		}
 		// Printed without a cloud call, so without discovery: stdout stays
 		// the tfvars alone.
@@ -1627,8 +1642,13 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (
 		// would lose the key here and plan the service's removal — a plan the
 		// bundle container's prevent_destroy refuses, so every ordinary run of
 		// fugaro init after the opt-in would fail instead of applying. The key
-		// is carried forward exactly as the workdir has it, present or absent.
-		if vars, err = infra.CarriedCredentialsService(vars, wd.Root); err != nil {
+		// is carried forward exactly as the workdir had it, present or absent.
+		//
+		// From wd.PrevVars and never from wd.Root: PrepareWorkdir has already
+		// rebuilt the tree by now, so the file it names does not exist, and a
+		// read of it would answer "nothing to carry" for exactly the
+		// installation that opted in.
+		if vars, err = infra.CarriedCredentialsService(vars, wd.PrevVars); err != nil {
 			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}

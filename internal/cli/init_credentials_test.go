@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -433,6 +434,184 @@ func TestProvisionCredentialsFlagIsRefusedWhereItCannotApply(t *testing.T) {
 	}
 }
 
+// A database that cannot ANSWER the marker read is refused exactly as one that
+// answers "no marker" is (C1.20's review finding F2; mutation M07). "The read
+// failed" is not "the rules carry the credentials children", and this read is
+// the whole gate of the stage that turns on the one identity which reads every
+// model credential the installation holds — so an unanswered read has to stop
+// the run, and the refusal has to say which read it was so the owner can act.
+//
+// Value-free by construction: the refusal carries the node's PATH and the
+// transport's own message, and no value from the database at all.
+//
+// Mutation (verified, run and restored): make the read's error non-fatal in
+// requireCredsRules (drop the return and carry on as if the marker had been
+// found): this test fails — the stage plans, resolves a digest and writes the
+// tfvars.
+func TestInitCredentialsStageRefusedWhenTheMarkerCannotBeRead(t *testing.T) {
+	r := credentialsStageRig(t)
+	// Only the marker's own read fails: RefusePath matches on the request
+	// path, so every other read of the run (the installation's, the Firebase
+	// root's) is untouched and the refusal below can only be this read's.
+	r.db.RefusePath(rules.PathCredsRulesMarker(), 500, "INTERNAL", "", "the database answered nothing")
+	r.setPlanAt(t, "installation")
+	credentialsOutputs(t, r)
+	typedThroughYes(t)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials")
+	s := out + errOut
+	if err == nil {
+		t.Fatalf("the stage carried on when the credentials rules marker could not be read:\n%s", s)
+	}
+	if !strings.Contains(err.Error(), rules.PathCredsRulesMarker()) {
+		t.Errorf("the refusal does not name the node that could not be read: %v\n%s", err, s)
+	}
+	if r.resolveCalls != 0 {
+		t.Errorf("a digest was resolved before the rules gate answered (%d calls)", r.resolveCalls)
+	}
+	if _, ok := r.tfvars(t)["credentials_service"]; ok {
+		t.Errorf("the tfvars were written when the rules gate could not be read: %v", r.tfvars(t)["credentials_service"])
+	}
+	if applies := r.ran(t, "apply"); len(applies) != 1 {
+		// The one apply is the installation stage's own: a stage that ran
+		// would make it two.
+		t.Errorf("the stage applied when the rules gate could not be read: %v", applies)
+	}
+}
+
+// The apply can finish and the installation's outputs still carry no
+// credentials_service (C1.20's review finding M10). The whole of this stage's
+// change is one key of a JSON document, and Terraform only WARNS about a
+// tfvars key no variable declares: without this check a misspelled key would
+// leave the plan empty, the apply with nothing to change, and the stage
+// reporting a service that does not exist — while the repository roots, which
+// read exactly this output, drop every job's model-secret accessor for a
+// service nothing can call.
+//
+// The key STAYS: the apply ran, so the installation's state may already hold
+// the service, and a tfvars without the key is a plan of its destruction.
+//
+// Mutation (verified, run and restored): delete the `outs.CredentialsService
+// == nil` refusal in Verify: this test fails (the run reports success).
+func TestInitCredentialsStageRefusedWhenTheOutputsCarryNoService(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	// A null value, which is what the installation's output answers for a
+	// service the module did not create.
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"credentials_service": nil})}
+	r.save(t)
+	typedThroughYes(t)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials")
+	s := out + errOut
+	if err == nil {
+		t.Fatalf("the stage reported a service the installation's outputs do not carry:\n%s", s)
+	}
+	if !strings.Contains(err.Error(), "carry no credentials service") {
+		t.Errorf("the refusal does not say what the outputs were missing: %v\n%s", err, s)
+	}
+	if applies := r.ran(t, "apply"); len(applies) != 2 {
+		t.Errorf("applies = %v, want the installation root twice", applies)
+	}
+	if _, ok := r.tfvars(t)["credentials_service"]; !ok {
+		t.Error("a finished apply left the tfvars without the opt-in: the next init would plan the service's destruction, which the bundle container's prevent_destroy refuses")
+	}
+}
+
+// A part-way apply failure must NOT drop the opted-in key (C1.20's review).
+//
+// Terraform can create part of the service — the account, the container, the
+// grant — and then stop. Taking the key back out afterwards would make the
+// next ordinary init plan exactly that part's destruction, a plan the bundle
+// container's prevent_destroy refuses: the installation would be left holding
+// a half-built service whose removal no run can plan and no run can finish.
+// Only a run that never reached the apply puts the key back (putBack).
+//
+// Mutation (verified, run and restored): return to the old rule — restore on
+// every path that did not set s.applied: this test fails, the tfvars losing
+// credentials_service while the service may already exist in state.
+func TestInitCredentialsStageKeepsTheKeyWhenTheApplyFailsPartWay(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	credentialsOutputs(t, r)
+	// The installation stage's apply succeeds; this stage's fails. The fake
+	// answers a key's calls in the order its list names them, so the two
+	// applies of the run get different answers.
+	r.script["apply"] = []any{
+		map[string]any{"exit": 0},
+		map[string]any{"exit": 1, "stderr": "Error: the apply was interrupted\n"},
+	}
+	r.save(t)
+	typedThroughYes(t)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials")
+	s := out + errOut
+	if err == nil {
+		t.Fatalf("the stage reported success when its apply failed:\n%s", s)
+	}
+	if applies := r.ran(t, "apply"); len(applies) != 2 {
+		t.Fatalf("applies = %v, want the installation stage's and this stage's (the second failing)", applies)
+	}
+	if _, ok := r.tfvars(t)["credentials_service"]; !ok {
+		t.Errorf("a part-way apply dropped the opt-in from the tfvars: the next init would plan the service's destruction, which the bundle container's prevent_destroy refuses, so a half-built service would be stuck:\n%s", s)
+	}
+}
+
+// A restore that FAILS is an error of the run, not a warning (C1.20's
+// review). restore is the only thing between a declined run and a leftover
+// key, and a leftover key IS the opt-in — the next ordinary init carries it
+// forward (infra.CarriedCredentialsService) and applies the service with none
+// of this stage's typed confirmation. A warning is a run that reports success
+// while leaving exactly that behind.
+//
+// The failure is driven where it really happens: at the confirmation, which
+// the stage reaches after prepare wrote the key and before it would and
+// applied nothing, the tfvars file is replaced by a directory — a write to it
+// fails for root too, unlike a mode bit.
+//
+// Mutation (verified, run and restored): make the deferred restore print its
+// error and return (fmt.Fprintf(r.w, "warning: %v")) instead of returning it:
+// this test fails — the run's own error is "nothing was applied" and the
+// restore failure is only a line of output.
+func TestInitCredentialsStageFailsWhenItCannotPutTheKeyBack(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	fakeTerminal(t)
+	path := filepath.Join(r.root(), infra.VarsFile)
+	done := false
+	old := canConfirmTyped
+	canConfirmTyped = func(_ initflow.ConfirmClass, c initflow.Conditions) bool {
+		// The opt-in is in the workdir's tfvars by now and nothing has
+		// applied: this is the moment before the stage takes it back out.
+		if !done {
+			if b, err := os.ReadFile(path); err == nil && bytes.Contains(b, []byte("credentials_service")) {
+				done = true
+				if err := os.Remove(path); err != nil {
+					t.Errorf("removing the tfvars to drive the failed put-back: %v", err)
+				} else if err := os.Mkdir(path, 0o700); err != nil {
+					t.Errorf("making a directory of the tfvars: %v", err)
+				}
+			}
+		}
+		return c.Agent == ""
+	}
+	t.Cleanup(func() { canConfirmTyped = old })
+	out, errOut, err := executeStdin(t, "", "init", "--yes", "--provision-credentials")
+	s := out + errOut
+	if !done {
+		t.Fatalf("the stage never wrote the opt-in into the workdir's tfvars, so no put-back was driven:\n%s", s)
+	}
+	if err == nil {
+		t.Fatalf("a run that could not take the opt-in back out reported success:\n%s", s)
+	}
+	if !strings.Contains(err.Error(), "before the next fugaro init") {
+		t.Errorf("the run's own error is not the failed put-back: %v\n%s", err, s)
+	}
+	if applies := r.ran(t, "apply"); len(applies) != 1 {
+		t.Errorf("applies = %v, want the installation stage's alone: a stage that declined must not apply", applies)
+	}
+}
+
 // The two owner-run applies do NOT exclude one another, and the flag's help
 // says so: they are applies of different roots (the installation's credentials
 // service, the Batch backend's own state), each with its own typed
@@ -455,5 +634,161 @@ func TestProvisionCredentialsAndBatchAreIndependentApplies(t *testing.T) {
 	ro := &initOptions{provisionCredentials: true, repo: true}
 	if err := ro.checkRepo(); err == nil || !strings.Contains(err.Error(), "--provision-credentials") {
 		t.Errorf("fugaro init --repo --provision-credentials: err = %v, want a refusal naming the flag", err)
+	}
+}
+
+// The confirmation AND the flag's help tell the owner what this release's
+// opt-in actually does (C1.20's review finding F1). They used to say a job
+// that mounts a model credential today would "ask this service instead" —
+// which is not what happens here at all:
+//
+//   - what the opt-in removes is EVERY job's model credential, in EVERY
+//     agent.auth mode (internal/infra/spec.go's dropModelMounts, which the
+//     repository roots run for oauth and api-key as much as for cascade), and
+//   - the runner half that would fetch one from the service at call time
+//     (C1.19) is not in this release, so until it lands no run of the
+//     installation has a model credential at all.
+//
+// An owner typing their project's name at this prompt is deciding something
+// money-and-permanent with that in front of them, so both texts are pinned
+// here — the words that must be there, and the claim that must not come back.
+//
+// Mutation (verified, run and restored): restore either old sentence ("stops
+// mounting one and asks this service instead" in the confirmation, "stops
+// mounting each job's model credential and asks the service instead" in the
+// flag's help): this test fails.
+func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "init", "--yes", "--provision-credentials")
+	s := out + errOut
+	if err == nil {
+		t.Fatalf("--yes stood in for the typed confirmation:\n%s", s)
+	}
+	if !strings.Contains(s, "⚠ CONFIRM") {
+		t.Fatalf("the stage never showed its confirmation, so this test read the wrong text:\n%s", s)
+	}
+	for _, want := range []string{
+		"EVERY job's model credential",
+		"in every agent.auth mode",
+		"oauth and api-key as much as cascade",
+		"in this release yet",
+		"no model credential",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("the confirmation does not say %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "asks this service instead") {
+		t.Errorf("the confirmation still promises that a job asks the service instead:\n%s", s)
+	}
+
+	// The flag's help, which is what an owner reads BEFORE they run it.
+	cmd := NewRootCmd()
+	initCmd, _, ferr := cmd.Find([]string{"init"})
+	if ferr != nil {
+		t.Fatal(ferr)
+	}
+	f := initCmd.Flags().Lookup("provision-credentials")
+	if f == nil {
+		t.Fatal("fugaro init has no --provision-credentials flag")
+	}
+	for _, want := range []string{
+		"EVERY job's model credential",
+		"in every agent.auth mode",
+		"oauth and api-key as much as cascade",
+		"in this release yet",
+		"no run of the installation has a model credential to use",
+	} {
+		if !strings.Contains(f.Usage, want) {
+			t.Errorf("the flag's help does not say %q:\n%s", want, f.Usage)
+		}
+	}
+	if strings.Contains(f.Usage, "asks the service instead") {
+		t.Errorf("the flag's help still promises that a job asks the service instead:\n%s", f.Usage)
+	}
+}
+
+// THE ROOT CAUSE of C1.20's second review round (finding F3): an ordinary
+// `fugaro init` after the opt-in must keep the credentials_service key.
+//
+// The tfvars are rewritten from the spec on every run, and the spec never
+// carries the key — so the key is carried forward from the workdir's PREVIOUS
+// tfvars (infra.CarriedCredentialsService, init.go's prepare). The order is
+// what broke it: PrepareWorkdir rebuilds the workdir's tree (os.RemoveAll of
+// dir/gcp) BEFORE the installation stage calls prepare, so a carry that reads
+// wd.Root at that point reads a file that no longer exists, answers "nothing
+// to carry", and drops the key. The next apply then plans the service, its
+// account and its grant away — a plan the bundle container's prevent_destroy
+// refuses, so every ordinary init after the opt-in FAILS instead of applying.
+//
+// This runs the real thing end to end: the real opt-in, then the real
+// ordinary run over the same workdir.
+//
+// Mutation (verified, run and restored): read the carried key from wd.Root
+// again in prepare (the order this test exists to pin): the second run drops
+// credentials_service and this test fails.
+func TestOrdinaryInitAfterTheOptInKeepsTheCredentialsService(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	credentialsOutputs(t, r)
+	typedThroughYes(t)
+	fakeTerminal(t)
+	if out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials"); err != nil {
+		t.Fatalf("the opt-in run failed: %v\n%s%s", err, out, errOut)
+	}
+	want, err := json.Marshal(r.tfvars(t)["credentials_service"])
+	if err != nil || string(want) == "null" {
+		t.Fatalf("the opt-in run wrote no credentials_service (%s, %v)", want, err)
+	}
+
+	// The ordinary run: no --provision-credentials, so the credentials stage
+	// is not even registered, and nothing but the carry can keep the key.
+	out, errOut, err := executeStdin(t, "", "init", "--yes")
+	if err != nil {
+		t.Fatalf("the ordinary run after the opt-in failed: %v\n%s%s", err, out, errOut)
+	}
+	got, err := json.Marshal(r.tfvars(t)["credentials_service"])
+	if err != nil || string(got) == "null" {
+		t.Fatalf("an ordinary fugaro init dropped the opt-in: the next plan is the service's destruction, which the bundle container's prevent_destroy refuses\n%s%s", out, errOut)
+	}
+	if string(got) != string(want) {
+		t.Errorf("credentials_service = %s, want it carried forward exactly as %s", got, want)
+	}
+}
+
+// --print-vars prints the installation as it STANDS, so it carries the
+// opted-in key too (C1.20's review). Printing a document that drops the
+// opt-in is a reading of the installation the owner cannot trust: it is the
+// same document a real run writes (init.go's prepare does the same carry),
+// and --print-vars is how an owner looks at the variables without a cloud
+// call.
+//
+// Mutation (verified, run and restored): drop the carry from the --print-vars
+// branch: this test fails, the key missing from the printed document.
+func TestPrintVarsCarriesTheOptedInKey(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	credentialsOutputs(t, r)
+	typedThroughYes(t)
+	fakeTerminal(t)
+	if out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials"); err != nil {
+		t.Fatalf("the opt-in run failed: %v\n%s%s", err, out, errOut)
+	}
+	out, errOut, err := executeStdin(t, "", "init", "--print-vars")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("--print-vars did not print one JSON object: %v\n%s", err, out)
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	if svc == nil {
+		t.Fatalf("--print-vars dropped the opt-in the workdir carries:\n%s", out)
+	}
+	if svc["image"] != r.credentialsRef() {
+		t.Errorf("printed credentials_service.image = %v, want %q", svc["image"], r.credentialsRef())
 	}
 }
