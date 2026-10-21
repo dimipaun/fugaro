@@ -2546,7 +2546,7 @@ var coordinatorPlanNewPaths = map[string]string{
 // P0 whose Files lines name it, not there, declared new by P1, and read by no
 // check at all.
 var coordinatorPlanNewDirs = map[string]string{
-	"internal/coordinator/":                     "P1's new package: the view's types, the join and the collision rule; P2-P7 add to it",
+	"internal/coordinator/":                     "P1's new package: the view's types, the join and the collision rule; P2-P5 and P8 add to it",
 	"internal/coordinator/testdata/":            "P1's fixtures for the join, written before the package they sit in exists",
 	"deploy/terraform/gcp/modules/coordinator/": "P7's new Terraform module: the service, its account and its scale-to-zero configuration",
 }
