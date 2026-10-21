@@ -227,8 +227,14 @@ escaped form — a space in a value as \x20, a backslash as \\, a parenthesis as
 \x28 and \x29, any other byte with no printable form as \xHH, and every byte a
 shell reads in a way of its own — a separator, a pipe, a redirection, a
 substitution, a quote, a glob, an expansion — as \xHH as well, so that what a
-refusal prints is one word no shell rewrites, whether the reader quotes it or
-not, and is exactly what a plan shows. An identity longer than 8192
+refusal prints holds no byte that can begin, end or continue a command, and is
+exactly what a plan shows. Two bytes a shell rewrites are in it all the same,
+because the form needs them: the single space between two parts, and the
+backslash that introduces an escape. A paste that does not keep those two whole
+arrives here as several arguments and is refused rather than recorded — nothing
+is written, and no entry is made that would match no removal — but the identity
+has to reach this command as one argument, byte for byte as the plan shows it,
+for the loop to close. An identity longer than 8192
 characters is refused here and by the plan: no refusal prints one, and the plan
 refuses the removal rather than matching a printed part of it, so recording it
 would be an approval that deletes nothing.

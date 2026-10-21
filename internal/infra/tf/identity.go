@@ -86,10 +86,12 @@ import (
 // id, project and instance value are read as they stand. So an identity may
 // hold a separator, a pipe, a substitution or a glob, and one that printed them
 // raw would be a command line its reader pastes. They are escaped out of it too
-// (identitySafe), so the line holds none of them, and a reader who quotes it and
-// a reader who does not both hand fugaro allow-delete the identity and nothing
-// else (TestManagedCoverRefusalOfAShellCommandNameIsPasteable is the reachable
-// end of it).
+// (identitySafe), so the line holds no byte that can begin, end or continue a
+// command (TestManagedCoverRefusalOfAShellCommandNameIsPasteable is the
+// reachable end of it). The encoding's own space and backslash are not escaped
+// — it writes both itself — and a shell does rewrite those; what that costs a
+// paste, and why the result is refused rather than recorded, is at the
+// escaping's own comment below.
 
 // removalInstanceAttributes is the attribute of each resource type whose
 // before view carries a value the provider mints per INSTANCE of the object
@@ -332,14 +334,21 @@ func identityPart(k, v string) string {
 // owner's list with. Quoting is not open to this text (the command compares
 // what it is given byte for byte), so the bytes a shell reads in a way of its
 // own are escaped out of it instead: what shellword.Quote would quote, a value
-// here escapes (identitySafe). What is left of the line is one word no shell
-// rewrites — a letter, a digit, or one of _ . / : @ % + = , - , the single
-// space between two parts, and the backslash that introduces an escape — so a
-// reader who quotes it and a reader who does not both get the identity and
-// nothing else. An ordinary identity — a type, a project, a DNS-shaped name, a
-// provider id — holds none of them and reads exactly as it always did; the
-// only identities whose printed text this changes are the ones a plan carried a
-// metacharacter in, and for those an entry recorded from an earlier refusal
+// here escapes (identitySafe). What is left of the line is the bytes
+// shellword.SafeByte accepts — the letters, the digits, and the punctuation no
+// shell of the family these commands are pasted into reads in a way of its own
+// — beside the encoding's own two, the single space between two parts and the
+// backslash that introduces an escape; and none of them can begin, end or
+// continue a command, which is what this escaping buys and what the test holds
+// (TestAnIdentityHoldsNoByteAShellWouldRead). A shell does rewrite the
+// encoding's own two, so a paste that does not keep the space and the backslash
+// whole arrives as several arguments and is refused rather than recorded
+// (approveArgument — fail-closed, and never a wrong entry, but not the entry
+// its reader meant either). An ordinary identity — a type, a project, a
+// DNS-shaped name, a provider id — holds none of them and reads exactly as it
+// always did; the only identities whose printed text this changes are the ones
+// a plan carried a metacharacter in, and for those an entry recorded from an
+// earlier refusal
 // holds the older spelling and approves nothing — the removal is refused again,
 // with the text to copy, which is the fail-closed direction the rest of this
 // rule takes.

