@@ -440,7 +440,7 @@ const preemptMarker = "preempted"
 // preemption at all if this Batch version reports the event and not the code --
 // while the first is the documented machine-readable half.
 //
-// "Names it" is the narrow claim, and the marker below is what keeps it narrow:
+// "Names it" is the narrow claim, and the marker above is what keeps it narrow:
 // an event is evidence of a reclaim only when it says the machine *was*
 // preempted, never merely for mentioning preemption. See preemptMarker.
 //
