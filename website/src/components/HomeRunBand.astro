@@ -1,0 +1,162 @@
+---
+/**
+ * website/src/components/HomeRunBand.astro — the run, as four steps on the homepage (the
+ * owner's approved board `website/design-ref/HomeV3.dc.html`, 2026-10-20; redesign part P1).
+ *
+ * **What it is.** The board's band under the slider: an eyebrow, the line "How a task becomes
+ * a pull request", the run's four steps as numbered cards, and one link to the page that draws
+ * the whole thing. It is not the picture of the run — that is `/how-it-works/`'s
+ * `RunDiagram.astro`, and `website/test/home.mjs` refuses a `figure.run-diagram` on this page
+ * on purpose — it is the four names a reader needs before the slider's panels make sense.
+ *
+ * **Every word of it is already held to a document.** The four step names and the line under
+ * each one are `RunDiagram.astro`'s own — its `BOXES` names and four of its `LABELS` — and that
+ * component holds every label to the document it cites at build time, in the same file the
+ * line is written in. So this component imports them rather than writing them again: a second
+ * copy of a label is a copy that drifts from the README, and a second copy of the guard is two
+ * guards that can disagree about what "the same line" means. `website/test/home.mjs` reads the
+ * built page and holds the four lines to their documents from the outside, the way it does for
+ * the picture on the page that carries it.
+ *
+ * **The two headings the board adds are the board's.** "The run" and "How a task becomes a
+ * pull request" are the approved board's own words — the second is also the aria-label the
+ * how-it-works picture carries — and they are listed in the pull request for the owner to veto,
+ * because no document of this repository writes them.
+ *
+ * The band is drawn as the board draws it: a panel strip the width of the page, a hairline
+ * above and below, and the cards on the surface tone. Its top padding is on the inner block
+ * and not on the section, because every top-level block of the homepage pads the gap below
+ * itself once (`website/test/base-styles.mjs`'s `homeRhythmFailures`).
+ */
+import { BOXES, LABELS } from '../lib/run-labels.mjs'
+
+/** The four steps, in the run's order: the diagram's own box names, and the line the diagram
+ *  prints for each of them where it prints one. The last step is the run's result, which is
+ *  why its badge is the green one (`base.css`'s `.step-badge[data-state='done']`). */
+const STEPS = [
+  { name: BOXES[0].name, line: LABELS.howItStarts, done: false },
+  { name: BOXES[1].name, line: LABELS.yourCredential, done: false },
+  { name: BOXES[2].name, line: LABELS.oneExecution, done: false },
+  { name: BOXES[3].name, line: LABELS.checkpoint, done: true },
+]
+---
+
+<section class="home-run" aria-labelledby="home-run-title">
+  <div class="home-run-inner">
+    {/* The board's eyebrow and headline, and the one line of the block that is not a document's
+        own: both are listed in the pull request for the owner to veto. */}
+    <p class="eyebrow">The run</p>
+    <h2 class="home-run-title display-lg" id="home-run-title">How a task becomes a pull request</h2>
+
+    {/* The run's four steps, numbered, each with the repository's own line under it. An `ol`
+        because it is a sequence, and the badge is `aria-hidden` because the position is what
+        the list already says. */}
+    <ol class="home-run-steps">
+      {
+        STEPS.map((step, index) => (
+          <li class="home-run-step">
+            <span class="step-badge" data-state={step.done ? 'done' : undefined} aria-hidden="true">
+              {index + 1}
+            </span>
+            <h3 class="home-run-step-name">{step.name}</h3>
+            <p class="home-run-step-line" data-source={step.line.source}>
+              {step.line.text}
+            </p>
+          </li>
+        ))
+      }
+    </ol>
+
+    {/* The board's link to the page that draws the run. It is a control a reader taps, so it
+        carries the 44 px minimum the owner's brief measures every control against
+        (`website/test/home.mjs`'s `controlTargetFailures`). */}
+    <p class="home-run-more">
+      <a class="home-run-link" href="/how-it-works/">See the whole run on How it works</a>
+    </p>
+  </div>
+</section>
+
+<style>
+  /* The band: the panel tone, the hairline above and below, and the room below the block —
+     and **no top padding**, because the block above already carries the gap between them. The
+     room inside the band, above its first line, is the inner block's. */
+  .home-run {
+    background: var(--panel);
+    border-block: var(--border-width) solid var(--border);
+    padding: 0 var(--space-md) var(--space-3xl);
+  }
+
+  .home-run-inner {
+    display: flex;
+    flex-direction: column;
+    max-width: var(--page-max);
+    margin-inline: auto;
+    padding-top: var(--space-3xl);
+  }
+
+  .home-run-title {
+    margin: var(--space-2xs) 0 var(--space-xl);
+  }
+
+  /* The four steps: a row on a desktop, two by two on a tablet and one under the other on a
+     phone, by the same `auto-fit` the site's other grids use. Every card is the same height,
+     because a row of four cards of four heights reads as four things rather than one run. */
+  .home-run-steps {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: var(--space-md);
+    margin: 0 0 var(--space-lg);
+    padding: 0;
+    list-style: none;
+  }
+
+  .home-run-step {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    padding: var(--space-lg);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+  }
+
+  /* The last step is the run's result, so it is the card the board marks: the green border and
+     the green badge, which is the one accent the site uses for "finished". */
+  .home-run-step:last-child {
+    border-color: var(--ok);
+  }
+
+  .home-run-step-name {
+    margin: var(--space-2xs) 0 0;
+    font-family: var(--font-sans);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-tight);
+    color: var(--text);
+  }
+
+  .home-run-step-line {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-base);
+    line-height: var(--leading-normal);
+  }
+
+  .home-run-more {
+    margin: 0;
+  }
+
+  /* A quiet link rather than a button: it is the way to the page that draws the run, and the
+     page's own call to action is the hero's. The minimum is what makes it a target a reader
+     can tap, and it is declared outside any media query because the minimum holds at every
+     width. */
+  .home-run-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    color: var(--accent-on-dark);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-semibold);
+  }
+</style>

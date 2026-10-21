@@ -1691,14 +1691,18 @@ test('the rhythm refusal fires on the doubled gap, and the pairs that keep the r
     // The defect as it shipped: the install section's own `--space-lg` on top of the room the
     // block above it already carries — the 144 px band the review of round 5 measured between
     // the last block and the "Install" heading, which was the flow's last card then and is the
-    // benefits section now. The plant names the rule rather than the declaration, because all
-    // three blocks write `padding:0 var(--space-md) var(--space-3xl)` (the benefits' rule first
-    // in the built page, the install's second and the page's last) and a case about the
-    // install's declaration is a case about the rule the install's file declares it in.
+    // benefits panel of the 2026-10-19 draft. **The bold redesign of 2026-10-20 moved the
+    // install section to the end of the page, so the block above it is now the "what you get"
+    // grid** (`.home-get`) — the defect, the number and the rule are unchanged, and only the
+    // name of the block above changed. The plant names the rule rather than the declaration,
+    // because every block of this page writes `padding:0 var(--space-md) var(--space-3xl)`
+    // (the hero's and the slider's first in the built page, then the band's, the grid's and the
+    // install's) and a case about the install's declaration is a case about the rule the
+    // install's file declares it in.
     [
-      'an install section padding the gap the slider above it already pads',
+      'an install section padding the gap the grid above it already pads',
       plantRule('.home-install[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
-      [/\.home-slider ends with 112 px under it and \.home-install opens with 32 px over it, so the gap between them is 144 px/],
+      [/\.home-get ends with 112 px under it and \.home-install opens with 32 px over it, so the gap between them is 144 px/],
     ],
     // And the same edit on the block between the two: the slider's top padding over the hero's
     // bottom one, which is the pair the hero's own bottom padding makes. Every block on this

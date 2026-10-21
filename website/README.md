@@ -784,15 +784,20 @@ added or removed without this sentence moving fails there:
     `docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
     getting-started 431, privacy 277, community 268, every one of them over it — and the
     redesign brought every one of those pages but the privacy statement inside it.)
-    **D188's number was 250, and the owner's feedback of 2026-10-19 is what moved it to
-    300.** That brief asks the homepage for a benefits section, which is a fourth required
+    **D188's number was 250, the owner's feedback of 2026-10-19 moved it to 300, and the
+    bold redesign of 2026-10-20 moved it to 500.** The 2026-10-19 brief asks the homepage for
+    a benefits section, which is a fourth required
     block on the one page that already carried the three the briefs before it require — the
     promise, the chat (changes spec item 3) and the flow (item 4) — and the four together
-    measure 294 words. D188's number is therefore the smallest round ceiling above the page
-    that carries every block its briefs require, and it is still a ceiling rather than a
-    target: the highest of the pages that gained nothing from that brief is Getting Started at
-    250 words, and a page that wants the extra 50 has to carry a brief's own block for them.
-    That raise is recorded as a reading in `docs/website/redesign/README.md`, the way every
+    measure 294 words. The bold redesign then builds the owner's approved board
+    (`design-ref/HomeV3.dc.html`), whose homepage is five blocks — the hero, the slider, the
+    run band, the grid of what a run leaves behind, and the closing call to action with the
+    install command — and the five together measure **468 words**. D188's number is therefore
+    the smallest round ceiling above the page that carries every block its briefs and its
+    boards require, and it is still a ceiling rather than a
+    target: the highest of the pages that gained nothing from those briefs is Getting Started at
+    250 words, and a page that wants the extra room has to carry a brief's own block for it.
+    Both raises are recorded as readings in `docs/website/redesign/README.md`, the way every
     number the briefs do not spell out is.
 - `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the

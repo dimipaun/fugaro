@@ -972,12 +972,18 @@ test('the word reader counts what a reader reads, and nothing else', (t) => {
 
 /**
  * D188's own words-per-page ceiling, the number the raise above it is measured against: 250 as
- * D188 set it, and 300 since the owner's feedback of 2026-10-19 asked the homepage for a fourth
+ * D188 set it, 300 since the owner's feedback of 2026-10-19 asked the homepage for a fourth
  * required block (its benefits section — headed "Why Fugaro?" since the owner's ruling of
- * 2026-10-20 — 294 words with the three before it). website/README.md
- * records that reading beside the words line.
+ * 2026-10-20 — 294 words with the three before it), and **500 since the bold redesign of
+ * 2026-10-20**, which is the owner's approved board `website/design-ref/HomeV3.dc.html` built:
+ * the homepage is the board's five blocks — the hero, the slider, the run band, the grid of
+ * what a run leaves behind, and the closing call to action — and they measure 468 words, so
+ * the smallest round ceiling above the page that carries every block its briefs and its boards
+ * require is 500. D188's own rule is what moves it and not convenience: the number is the
+ * ceiling above the page that carries the required blocks, and a page that wants the room has
+ * to carry one. website/README.md records both readings beside the words line.
  */
-export const D188_WORDS = 300
+export const D188_WORDS = 500
 
 /** The one page the words ceiling is derived from, by its built URL. */
 const WORDS_CEILING_PAGE = '/privacy/'

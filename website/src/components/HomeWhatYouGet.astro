@@ -1,0 +1,225 @@
+---
+/**
+ * website/src/components/HomeWhatYouGet.astro — what a run leaves behind (the owner's approved
+ * board `website/design-ref/HomeV3.dc.html`, 2026-10-20; redesign part P1).
+ *
+ * **Five cards, and every line under a card is a line of this repository.** The board draws the
+ * grid and its five names; the sentences under them are `README.md`'s — the pull request the
+ * run opens, the diff, the report and the logs that come with it, where the logs live, what the
+ * spend caps do, and where the agent runs — quoted through `src/lib/repo-quote.mjs`, which
+ * stops the build naming the file when a line is not in the document it cites. The five names
+ * are the board's own words and are listed in the pull request for the owner to veto; the
+ * sentences are not written here at all.
+ *
+ * Each card's line carries the document it is quoted from in `data-source`, which is the
+ * mechanism the rest of the site's quoted prose uses, and `website/test/home.mjs` reads the
+ * built page and holds each one to its document from the outside as well as here.
+ */
+import { holdLabels, section, wholeFile } from '../lib/repo-quote.mjs'
+
+const README = 'README.md'
+const README_WHY = 'README.md#Why Fugaro'
+const README_HOW = 'README.md#How it works'
+const README_SAFETY = 'README.md#Safety and cost controls'
+const GCP_RUN = 'docs/gcp-setup.md#Run, watch, diagnose'
+
+const SOURCES = {
+  [README_WHY]: section(README, 'Why Fugaro'),
+  [README_HOW]: section(README, 'How it works'),
+  [README_SAFETY]: section(README, 'Safety and cost controls'),
+  [GCP_RUN]: section('docs/gcp-setup.md', 'Run, watch, diagnose'),
+}
+
+/** The line under the heading: the promise the five cards are the detail of. */
+const LEAD = {
+  text: 'Every run that pushed ends in a pull request, a draft one if it failed.',
+  source: GCP_RUN,
+}
+
+/**
+ * The five cards: the board's name, the repository's line, and the glyph the board draws. The
+ * glyphs are the board's own paths, drawn in the accent and hidden from a reader who cannot see
+ * them — the name and the line say everything the picture says.
+ */
+const CARDS = [
+  {
+    name: 'A pull request per task',
+    line: {
+      text: 'a draft opens at the first push (marked not verified), and it is marked ready only when the run passes',
+      source: README_HOW,
+    },
+    glyph: 'pull-request',
+  },
+  {
+    name: 'The diff and the report',
+    line: { text: 'with the diff, the report and the logs', source: README_WHY },
+    glyph: 'document',
+  },
+  {
+    name: 'The logs',
+    line: {
+      text: "Run logs carry agent output, so by default they go to Fugaro's own log bucket, which only launchers and operators (and the project's owners and editors) can read.",
+      source: README_SAFETY,
+    },
+    glyph: 'log-lines',
+  },
+  {
+    name: 'The cost',
+    line: {
+      text: 'Spend caps, on by default: every stage passes Claude Code a dollar limit (`agent.max_budget_usd`, default 25)',
+      source: README_SAFETY,
+    },
+    glyph: 'cost',
+  },
+  {
+    name: 'Your cloud, your laptop free',
+    line: {
+      text: "Your laptop runs the `fugaro` CLI, Terraform and `gcloud` (during `init`) and your own agent; the run's agent is in a Cloud Run container.",
+      source: README_SAFETY,
+    },
+    glyph: 'laptop',
+  },
+]
+
+/** The board's glyphs, as the one path list each one is drawn from. */
+const GLYPHS: { [name: string]: string[] } = {
+  'pull-request': ['M6 6m-2.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0', 'M6 18m-2.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0', 'M18 18m-2.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0', 'M6 8.5 V15.5', 'M18 15.5 V10 A3 3 0 0 0 15 7 H11'],
+  document: ['M14 3 H6 V21 H18 V7 Z', 'M14 3 V7 H18', 'M9 12 H15', 'M9 16 H15'],
+  'log-lines': ['M4 6 H20', 'M4 12 H20', 'M4 18 H14'],
+  cost: ['M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0', 'M15 9 C14.5 8 13.4 7.5 12 7.5 C10.2 7.5 9 8.4 9 9.7 C9 12.7 15 11.3 15 14.3 C15 15.6 13.8 16.5 12 16.5 C10.6 16.5 9.5 16 9 15', 'M12 6 V7.5', 'M12 16.5 V18'],
+  laptop: ['M4 5 H20 V16 H4 Z', 'M2 19 H22'],
+}
+
+holdLabels({ lead: LEAD, ...Object.fromEntries(CARDS.map((card) => [card.name, card.line])) }, SOURCES, 'website/src/components/HomeWhatYouGet.astro')
+---
+
+<section class="home-get" aria-labelledby="home-get-title">
+  <div class="home-get-head">
+    {/* The board's eyebrow and headline, listed in the pull request for the owner to veto. */}
+    <p class="eyebrow">What you get</p>
+    <h2 class="home-get-title display-lg" id="home-get-title">Pull requests, not promises</h2>
+    <p class="home-get-lead" data-source={LEAD.source}>{LEAD.text}</p>
+  </div>
+
+  {/* The grid: one card per thing a run leaves behind, each with the repository's own line. */}
+  <ul class="home-get-cards">
+    {
+      CARDS.map((card, index) => (
+        <li class="home-get-card" data-lead={index === 0 ? '' : undefined}>
+          <svg class="home-get-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            {GLYPHS[card.glyph].map((d) => (
+              <path d={d} />
+            ))}
+          </svg>
+          <h3 class="home-get-name">{card.name}</h3>
+          <p class="home-get-line" data-source={card.line.source}>
+            {card.line.text}
+          </p>
+        </li>
+      ))
+    }
+  </ul>
+</section>
+
+<style>
+  /* The block: the gutter and the room below it, and no top padding — the band above carries
+     the gap between them (`website/test/base-styles.mjs`'s `homeRhythmFailures`). */
+  .home-get {
+    max-width: var(--page-max);
+    margin: 0 auto;
+    padding: 0 var(--space-md) var(--space-3xl);
+  }
+
+  .home-get-head {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: var(--space-xl);
+  }
+
+  .home-get-title {
+    margin: var(--space-2xs) 0 var(--space-sm);
+  }
+
+  .home-get-lead {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-normal);
+  }
+
+  /* Five cards: two columns on a desktop, one on a phone, with the first card taking the room
+     the board gives it — the one that carries the promise the other four detail. */
+  .home-get-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: var(--space-md);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  @media (min-width: 60rem) {
+    .home-get-cards {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .home-get-card[data-lead] {
+      grid-column: span 2;
+      grid-row: span 2;
+      justify-content: center;
+    }
+
+    .home-get-card[data-lead] .home-get-name {
+      font-size: var(--font-size-3xl);
+    }
+  }
+
+  .home-get-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    padding: var(--space-lg);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--surface);
+  }
+
+  /* The card the board tints: the accent's hairline and a wash of the accent at the top of the
+     card. The wash is a gradient of palette tokens in `background-image` — a colour function
+     would be a literal no palette holds, and `background` would make the contrast check read a
+     gradient as the one colour the text sits on. */
+  .home-get-card[data-lead] {
+    border-color: var(--accent);
+    background-image: linear-gradient(180deg, var(--panel) 0%, var(--surface) 55%);
+  }
+
+  .home-get-icon {
+    width: 28px;
+    height: 28px;
+    margin-bottom: var(--space-3xs);
+    color: var(--accent-on-dark);
+    stroke: currentColor;
+  }
+
+  .home-get-card[data-lead] .home-get-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .home-get-name {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: var(--font-size-xl);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-tight);
+    color: var(--text);
+  }
+
+  .home-get-line {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-base);
+    line-height: var(--leading-normal);
+  }
+</style>
