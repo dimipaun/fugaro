@@ -28,7 +28,7 @@ import (
 // Two directions decide an entry, and leaving one out is the safe one: a
 // refused plan falls back to a confirmation, which is a working program, while
 // a permitted plan that should not have been is the failure this gate exists
-// to avoid. So the list is smaller than init's — the twelve entries in
+// to avoid. So the list is smaller than init's — the seventeen entries in
 // managedDropped are Fugaro's own plumbing, the project-level IAM authority
 // the deployer must not hold, or a type whose resources GCP names on the
 // server's side, where no prefix condition can tell the agent's from Fugaro's.
@@ -187,8 +187,8 @@ var managedGrantRules = map[string]bool{
 //     object the change removes (tf.Approves), and only when the resource it
 //     removes or creates is one the rules below admit — neither the address nor
 //     the list alone admits one (NotCovered);
-//   - the type: managedTypes rather than allowedTypes, so the twelve entries
-//     of managedDropped ask for a confirmation instead;
+//   - the type: managedTypes rather than allowedTypes, so the seventeen
+//     entries of managedDropped ask for a confirmation instead;
 //   - the resource: every name a managed resource carries must carry
 //     ManagedPrefix, and the accounts a job or a scheduler runs as must be the
 //     managed project's own, so a plan cannot reach Fugaro's resources, the

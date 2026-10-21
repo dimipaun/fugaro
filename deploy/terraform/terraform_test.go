@@ -3627,6 +3627,28 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 		t.Errorf("%s: a condition outside the account's precondition. Q6 replaced the name-prefix fence and the secretId filter with one unconditioned grant on one container:\n%s", path, rest)
 	}
 
+	// Every resource in the file is gated on the one boolean, which is what the
+	// header's "keeps every resource in this file in step" means: a resource
+	// added without it is created in an installation that never opted in. This
+	// is the count the header used to carry ("the five resources of this file",
+	// when the file had four) read as the property it was standing in for.
+	gated := 0
+	for _, m := range resourceHeader.FindAllStringSubmatchIndex(code, -1) {
+		end := matchBrace(code, m[1]-1)
+		if end < 0 {
+			t.Fatalf("%s: unbalanced braces in %s.%s", path, code[m[2]:m[3]], code[m[4]:m[5]])
+		}
+		body := squash(code[m[1]:end])
+		if !strings.Contains(body, "count = local.credentials_service_on ? 1 : 0") {
+			t.Errorf("%s: %s.%s is not gated on local.credentials_service_on, so it is created in an installation that never opted in:\n%s", path, code[m[2]:m[3]], code[m[4]:m[5]], body)
+			continue
+		}
+		gated++
+	}
+	if gated != len(resourceHeader.FindAllString(code, -1)) {
+		t.Fatalf("%s: %d of the file's resources were read as gated; the sweep above is not covering the file", path, gated)
+	}
+
 	if !strings.Contains(code, "service_account = google_service_account.credentials[0].email") {
 		t.Errorf("%s: the service must run as its own account", path)
 	}

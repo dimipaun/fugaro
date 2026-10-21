@@ -620,6 +620,33 @@ func TestScrubTokenStrict(t *testing.T) {
 	}
 }
 
+// TestCarriesTokenIsFalseWithoutAToken: a Server whose token is empty is not
+// one every value carries the token of. strings.Contains(v, "") is true for
+// every v, so without this arm scrubToken deletes every header it is handed and
+// upstreamQuery drops every query -- and a test that builds its Server by hand
+// to exercise the header allow-list (the OAuth destination controls do) would
+// be asserting against an empty header set rather than against the allow-list.
+// No started gateway is in that state (Start makes the token), which is why
+// this is pinned on the function and not through a route.
+//
+// Mutation (drop the `s.token == ""` arm): every assertion below fails.
+func TestCarriesTokenIsFalseWithoutAToken(t *testing.T) {
+	s := &Server{}
+	for _, v := range []string{"", "x", "Bearer abc", "%2F", "100%zz"} {
+		if s.carriesToken(v) {
+			t.Errorf("carriesToken(%q) = true on a Server with no token", v)
+		}
+	}
+	h := http.Header{"X-A": {"keep"}, "X-B": {"also keep"}}
+	s.scrubToken(h)
+	if h.Get("X-A") != "keep" || h.Get("X-B") != "also keep" {
+		t.Errorf("a Server with no token scrubbed its headers: %v", h)
+	}
+	if q := s.upstreamQuery(&http.Request{URL: &url.URL{RawQuery: "beta=true"}}); q != "?beta=true" {
+		t.Errorf("a Server with no token dropped the query: %q", q)
+	}
+}
+
 func TestStartCopiesRoutes(t *testing.T) {
 	routes := []Route{{Name: "openrouter", Models: []string{"deepseek/*"}, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
 		Credential: func() (string, error) { return "k", nil }}}

@@ -1208,6 +1208,11 @@ func TestManagedDeployerCitationsNameThePlaceNotTheLine(t *testing.T) {
 		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "fugaro_deployer_scheduler_job"},
 		{"docs/gcp-live-checklist.md", "docs/design/managed-deployer-fence.md", "### Option 2 — fence by project, not by name"},
 		{"docs/gcp-live-checklist.md", "docs/design/managed-deployer-fence.md", "| C7 |"},
+		// The two tests C7's paragraph rests on, cited by name: the line numbers
+		// it used to carry (1491 and 1649) had each drifted 176 lines by the
+		// time this branch's file growth was merged, and the names had not.
+		{"docs/gcp-live-checklist.md", "internal/infra/tf/cover_test.go", "TestExtractSegmentModelsTheRecordedReading"},
+		{"docs/gcp-live-checklist.md", "internal/infra/tf/cover_test.go", "TestDeployerConditionFencesOnlyTheManagedPrefix"},
 		{"docs/plans/2026-10-16-managed-projects.md", "internal/infra/tf/cover.go", "accountClause"},
 	}
 	docs := map[string]string{}
@@ -1223,10 +1228,15 @@ func TestManagedDeployerCitationsNameThePlaceNotTheLine(t *testing.T) {
 		}
 	}
 	// And the line-number form those citations replaced is gone from the two
-	// documents this branch rewrote, not merely joined by an anchor.
+	// documents this branch rewrote, not merely joined by an anchor. The
+	// checklist's `cover_test.go:` citations are the same rule applied to a
+	// file whose paths are not `deployer.tf`: the two above had drifted 176
+	// lines and nothing in the tree noticed, because the ban was written for
+	// the file this branch rewrote and not for the tests it cites.
 	for _, wrong := range []struct{ doc, citation string }{
 		{"docs/design/managed-deployer-fence.md", "deployer.tf:"},
 		{"docs/gcp-live-checklist.md", "managed-deployer-fence.md:"},
+		{"docs/gcp-live-checklist.md", "cover_test.go:"},
 	} {
 		if m := regexp.MustCompile(regexp.QuoteMeta(wrong.citation) + `\d`).FindString(readDoc(t, wrong.doc)); m != "" {
 			t.Errorf("%s still cites by line (%q): a line citation is a second fact that an edit anywhere above it falsifies, and the anchor is what a reader finds the place by", wrong.doc, m)

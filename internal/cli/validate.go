@@ -1513,7 +1513,12 @@ func newValidateCmd() *cobra.Command {
 				// 2026-10-19-compute-backend.md Task 8 step 4, design §4.4).
 				// They return nothing for every other project: the backend
 				// name they are about is refused by internal/localcfg until
-				// the enable task, so no installation reaches them today.
+				// the enable task, so no installation reaches them today --
+				// and they judge only the installation of the project this
+				// file names, so a config selected for another project is not
+				// one they read -- the guard budgetProblems, providerProblems
+				// and cascadeProblems carry, and computeProblems above returns
+				// early the same way.
 				// The recipe is the one this checkout resolves the way a
 				// launch would (agent.recipe, else the default): its mode is
 				// what decides whether a run of this repository produces

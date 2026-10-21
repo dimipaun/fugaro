@@ -1032,14 +1032,22 @@ func TestTheSharedControlsDoNotReachThePaidTier(t *testing.T) {
 	// other runs holding the credential, which under a cap of one excludes a
 	// third.
 	since := now.Add(-time.Minute)
+	// Four run ids, not two: the store keys a lease by the run that holds it
+	// (key(r) is slug and id, the credential is the value), so writing a1's and
+	// b1's holds under the same two ids leaves a1 with NONE of them — the second
+	// pass overwrites the first — and the "held by the cap" half below would be
+	// carried by the window alone.
+	holds := func(st *fakeStore, name string, ids ...string) {
+		for _, id := range ids {
+			st.setLease(Run{Slug: run.Slug, ID: id}, Lease{Credential: name, Until: now.Add(30 * time.Minute)})
+		}
+	}
 	state := func() *fakeStore {
 		st := newFakeStore()
 		st.setMark(a1.Name, Mark{State: StateExhausted, Since: since, Until: now.Add(-time.Second)})
 		st.setMark(b1.Name, Mark{State: StateExhausted, Since: since, Until: now.Add(-time.Second)})
-		st.setLease(Run{Slug: run.Slug, ID: "other-1"}, Lease{Credential: a1.Name, Until: now.Add(30 * time.Minute)})
-		st.setLease(Run{Slug: run.Slug, ID: "other-2"}, Lease{Credential: a1.Name, Until: now.Add(30 * time.Minute)})
-		st.setLease(Run{Slug: run.Slug, ID: "other-1"}, Lease{Credential: b1.Name, Until: now.Add(30 * time.Minute)})
-		st.setLease(Run{Slug: run.Slug, ID: "other-2"}, Lease{Credential: b1.Name, Until: now.Add(30 * time.Minute)})
+		holds(st, a1.Name, "other-1", "other-2")
+		holds(st, b1.Name, "other-3", "other-4")
 		return st
 	}
 
@@ -1061,6 +1069,29 @@ func TestTheSharedControlsDoNotReachThePaidTier(t *testing.T) {
 	}
 	if want := since.Add(DefaultBackoffCap); !eu.At.Equal(want) {
 		t.Fatalf("the shared token's answer = %s; want %s, the end of the window", eu.At, want)
+	}
+
+	// And each control holds on its own, which is what makes the sentence above
+	// about two facts rather than one: with no mark at all the shared token is
+	// still refused, by the cap, and for as long as the holding leases run. This
+	// is the half the four run ids are for — with a1's holds keyed together the
+	// token ends with a single one, room under a cap of one, and the selection
+	// goes through instead of answering.
+	byCap := func() *fakeStore {
+		st := newFakeStore()
+		holds(st, a1.Name, "other-1", "other-2")
+		holds(st, b1.Name, "other-3", "other-4")
+		return st
+	}
+	_, _, err = selector(byCap(), set).Select(ctx, run, []Credential{a1})
+	if !errors.As(err, &eu) {
+		t.Fatalf("a shared token held twice under a cap of one = %v; want an ExhaustedUntil answer", err)
+	}
+	if want := now.Add(30 * time.Minute); !eu.At.Equal(want) {
+		t.Errorf("the cap's answer = %s; want %s, when the holding leases lapse", eu.At, want)
+	}
+	if c, _, err := selector(byCap(), set).Select(ctx, run, []Credential{b1}); err != nil || c.Name != b1.Name {
+		t.Errorf("the paid key under the same two holds = %q, %v; want it selected: the cap is the shared tier's", c.Name, err)
 	}
 }
 
