@@ -886,17 +886,19 @@ added or removed without this sentence moving fails there:
     the same day's earlier feedback put first, and the footer still picks its entries out of the
     same groups. **Every page carries the same move, because the menu is inlined into all of
     them**: **110 bytes off each of the 11 pages' HTML** (the removed block's own elements and
-    their attributes, the three links themselves being moved and unchanged), **6 bytes off the
-    script** (the one comment that counted three groups), which is **116 off the page weight**
+    their attributes, the three links themselves being moved and unchanged), **8 bytes off the
+    script** (the two comments in it that counted three groups), which is **118 off the page
+    weight**
     (the console page, which inlines the stylesheet, fetches the script and carries the four
-    screenshots, is the heaviest page either way) and **1,216 off the site figure** — the 1,210
-    of the pages and the 6 of the script. No file was added or removed, so the count of files in
+    screenshots, is the heaviest page either way) and **1,218 off the site figure** — the 1,210
+    of the pages and the 8 of the script. No file was added or removed, so the count of files in
     `dist/` stays **28**, the count of pages **11**, and no page's words move: a menu label is
     chrome, and the words the ceiling counts are `main`'s. The three budget figures below are
     **left where they are**: the owner's ruling of 2026-10-20 is that they are re-derived when
     the owner asks rather than on every round, so this move is stated here and the figures stay
     the ones the round above derived. `test/base-styles.mjs`'s `navFailures` holds the two
-    groups by name and refuses a third, and `test/nav-hover.mjs` reads the two lists the menu
+    groups by name and by the routes each lists, and refuses a third, a renamed group and a
+    route that has left its group, and `test/nav-hover.mjs` reads the two lists the menu
     draws; `base.css`'s phone cut is left at the width the four-item row was measured at.
 
   - **JavaScript per page:** 248,211 bytes. Three times 82,737: the one script the site ships,

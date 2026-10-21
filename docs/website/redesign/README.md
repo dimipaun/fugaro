@@ -1595,7 +1595,9 @@ rather than written over the decision**: the 2026-10-18 ruling, the 2026-10-19 b
   **"Why GCP" is not added here**: a later part of this line of work adds a fourth *Product*
   item, and this round adds none — the group counts above are what the menu draws today.
 - **The gates moved with it.** `website/test/base-styles.mjs`'s `navFailures` holds **two**
-  groups and names them (*Product* and *Project*) rather than counting to three, its fixture is
+  groups, names them (*Product* and *Project*) and holds the routes each group lists, rather
+  than counting to three — the count alone was all it held until the review of this round
+  found that a renamed group left every gate green — its fixture is
   the real two-group shape the layout writes, and the refusal case that plants a fourth menu
   item expects the four items the two-group menu plus one makes. `website/test/nav-hover.mjs`
   reads the two lists the menu draws — its `.site-nav-group ul` count, its phone case's opening
@@ -1613,8 +1615,11 @@ rather than written over the decision**: the 2026-10-18 ruling, the 2026-10-19 b
   `base.css` and `website/test/base-styles.mjs` say so beside the rules.
 - **The bytes.** The move is uniform, because the menu is inlined into every page: **110 bytes
   off each of the 11 pages' HTML** (the removed block's own elements and their attributes; the
-  three links themselves are moved, not rewritten), **6 bytes off the script** (the one comment
-  that counted three groups), so **116 off the page weight** and **1,216 off the site figure**.
+  three links themselves are moved, not rewritten), **8 bytes off the script** (the two
+  comments in it
+  that counted three groups — the second one found by the review of this round, which is why
+  the figure is eight and not six), so **118 off the page weight** and **1,218 off the site
+  figure**.
   No file was added or removed (`dist/` stays 28 files and 11 pages) and no page's words move —
   a menu label is chrome, and D188's ceilings count `main`. **The three budget figures are left
   where they are**, per the owner's ruling of 2026-10-20 that they are re-derived when the owner
