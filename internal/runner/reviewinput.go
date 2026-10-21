@@ -30,7 +30,9 @@ import (
 // them untrusted input to every git call here: they are passed as literals
 // (--literal-pathspecs), never as pathspec magic or globs, and each path is
 // asked for on its own so that git's pathspec prefix matching cannot pull a
-// second file's text — a binary file's bytes among it — into the answer.
+// second file's text — a binary file's bytes among it — into the answer. The
+// range goes after --end-of-options, the way internal/gitops/changedfiles.go
+// passes the same one: a ref name is not an option.
 
 // binaryRule is what the review stage's prompt tells the reviewer about
 // binary files. The builder's own header carries it whenever a diff is
@@ -160,7 +162,8 @@ func buildReviewInput(ctx context.Context, repo *gitops.Repo, base, head string)
 // influence — its own .gitattributes can mark a binary file as text — which
 // is why reviewTextDiff checks the bytes it gets back as well.
 func reviewChanges(ctx context.Context, repo *gitops.Repo, rng string) ([]reviewChange, error) {
-	out, err := sessionGit(ctx, repo, "diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", rng)
+	out, err := sessionGit(ctx, repo, "diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv",
+		"--end-of-options", rng)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +228,7 @@ func binarySizes(ctx context.Context, repo *gitops.Repo, base, head string, path
 func treeSizes(ctx context.Context, repo *gitops.Repo, rev string, paths []string) (map[string]int64, error) {
 	sizes := make(map[string]int64, len(paths))
 	for _, batch := range reviewBatches(paths, reviewPathsPerCall) {
-		out, err := sessionGit(ctx, repo, append([]string{"--literal-pathspecs", "ls-tree", "-l", "-z", rev, "--"}, batch...)...)
+		out, err := sessionGit(ctx, repo, append([]string{"--literal-pathspecs", "ls-tree", "-l", "-z", "--end-of-options", rev, "--"}, batch...)...)
 		if err != nil {
 			return nil, err
 		}
@@ -273,7 +276,8 @@ func reviewTextDiff(ctx context.Context, repo *gitops.Repo, rng string, paths []
 	var binary []string
 	for _, path := range paths {
 		out, err := sessionGit(ctx, repo, "--literal-pathspecs", "diff",
-			"--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", rng, "--", path)
+			"--no-color", "--no-ext-diff", "--no-textconv", "--no-renames",
+			"--end-of-options", rng, "--", path)
 		if err != nil {
 			return "", nil, err
 		}
