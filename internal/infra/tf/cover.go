@@ -549,8 +549,8 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, "imports "+rc.Change.Importing.ID+", which is not in this run's projects")
 		case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
 			add(rc, "imports "+rc.Change.Importing.ID+", which this run's discovery did not find")
-		case c.attributes(rc, creates) != "":
-			add(rc, c.attributes(rc, creates))
+		case c.attributes(rc, creates, createdSAIDs, heldSAIDs) != "":
+			add(rc, c.attributes(rc, creates, createdSAIDs, heldSAIDs))
 		case strings.HasSuffix(t, "_iam_member"):
 			if why := c.grant(rc, creates, createdSAIDs, heldSAIDs, dep); why != "" {
 				add(rc, why)
@@ -686,7 +686,7 @@ func (c Cover) GrantsNotCovered(p *Plan) []string {
 		case t == "google_service_account_key":
 			add(rc, "a service account key")
 		case strings.HasSuffix(t, "_iam_member"):
-			if why := c.attributes(rc, made); why != "" {
+			if why := c.attributes(rc, made, createdSAIDs, heldSAIDs); why != "" {
 				add(rc, why)
 			} else if why := c.grant(rc, made, createdSAIDs, heldSAIDs, dep); why != "" {
 				add(rc, why)
@@ -1453,7 +1453,7 @@ func objects(v any) []map[string]any {
 // this project, a private bucket, this run's projects and buckets, the
 // billing account the review showed, and the web key's two API targets. ""
 // when all is as the modules write it.
-func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
+func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[string]bool) string {
 	a := rc.Change.After
 	if a == nil {
 		a = map[string]any{}
@@ -1521,26 +1521,47 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 		// The credentials service (D146, C1.18): the one container image in
 		// the tree that is not a job's. Its container sits one `template`
 		// shorter than a job's (template[0].containers[0]), and it is held to
-		// this run's registry exactly as a job's image is — without this case
-		// init's one typed confirmation would cover a plan whose service runs
-		// whatever var.credentials_service.image names, so a hand-edited or
-		// stale terraform.tfvars.json could point it at any registry, owner
-		// and digest, and the apply would run that image as the account that
-		// reads every model credential in the bundle (independent security
-		// review of this file, which found the case missing).
+		// the released pin — without this case init's one typed confirmation
+		// would cover a plan whose service runs whatever
+		// var.credentials_service.image names, so a hand-edited or stale
+		// terraform.tfvars.json could point it at any registry, owner and
+		// digest, and the apply would run that image as the account that reads
+		// every model credential in the bundle (independent security review of
+		// this file, which found the case missing).
 		//
-		// Two checks are stricter than a job's, because of what that account
-		// is. The image must be pinned by an @sha256: digest as well as be in
-		// this run's registry: credentials.tf's M1 comment makes that a
-		// security rule, because the registry grants
-		// roles/artifactregistry.writer to every operator (iam.tf) and a
-		// mutable tag would let an operator push the code the next owner apply
-		// runs as this account. (No plan the module can produce is refused for
-		// it — its own variable validation requires the digest — so this is
-		// the rule held at the layer a hand-edited module does not pass
-		// through.) And the environment is the module's three names and
-		// nothing else: an environment is the one path a credential could
-		// reach this process without a Secret Manager read.
+		// This case is STRICTER than a job's in four ways, because of what that
+		// account is, and every one of them is a rule the modules already write
+		// (so no plan they produce is refused):
+		//
+		//   - the image must be the base pin's closed shape through the
+		//     pull-through repository, with the recorded owner
+		//     (credentialsImageOK), and not merely a reference under this run's
+		//     registry as a job's may be: modules/installation/iam.tf grants
+		//     roles/artifactregistry.writer on the run's own repositories to
+		//     EVERY operator, so bytes an operator can push and read a digest
+		//     back from are bytes an operator can name here — an @sha256 rule
+		//     alone forbids rewriting a pin without forbidding choosing one
+		//     (independent security review of this file, which found the gap:
+		//     baseImageOK admits <registry>/<project>/fugaro-base/…, which is
+		//     exactly the operator-writable repository, and D145/M1 is lost
+		//     with it);
+		//   - no command and no args: credentials.tf sets neither, so the
+		//     image's own entrypoint is the service (C1.14), and a hand edit
+		//     adding `command = ["/bin/sh","-c",…]` would run something the
+		//     module does not write under init's one confirmation (the same
+		//     check the job case makes, with the module's pair rather than a
+		//     table of them);
+		//   - the environment is the module's three names, with literal values
+		//     and no value_source: an environment is the one path a credential
+		//     could reach this process without a Secret Manager read, and a
+		//     value_source on an allow-listed name is that read (independent
+		//     security review of this file, which found both unchecked);
+		//   - the account it runs as is the one this plan creates (or holds)
+		//     for it in the same module: credentials.tf writes
+		//     google_service_account.credentials[0].email there, and an
+		//     unchecked template.service_account is a hand edit that runs the
+		//     service's image as somebody else's identity (independent security
+		//     review of this file).
 		if unknown(rc.Change, "invoker_iam_disabled") {
 			return "an IAM setting that is not known"
 		}
@@ -1555,27 +1576,35 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 		if len(cs) == 0 {
 			return "no container"
 		}
+		if why := c.serviceAccount(a, unk, pre, creates, createdSAIDs, heldSAIDs); why != "" {
+			return why
+		}
 		for i, m := range cs {
 			cp := []any{"template", 0, "containers", i}
-			if unknownAt(unk, append(slices.Clone(cp), "image")...) {
-				return "a container image that is not known"
+			for _, attr := range []string{"image", "command", "args"} {
+				if unknownAt(unk, append(slices.Clone(cp), attr)...) {
+					return "a container " + attr + " that is not known"
+				}
 			}
 			img := str(m["image"])
-			if !c.baseImageOK(img, proj) {
-				return fmt.Sprintf("runs the image %q, which is outside this run's registry %s/%s/ or not a base image of it in the shape this installation pins (%s/%s/%s/<owner>/fugaro-<kind>:<version>@sha256:<digest>)",
-					img, c.Registry, proj, c.Registry, proj, c.Ghcr)
+			if !c.credentialsImageOK(img, proj) {
+				return fmt.Sprintf("runs the image %q, which is not this installation's released pin read back through the pull-through repository (%s/%s/%s/%s/fugaro-<kind>:<version>@sha256:<digest>): this account reads every model credential in the bundle, and an image under this run's own repositories is one every operator may push to (iam.tf), so only the recorded owner's pin is covered",
+					img, c.Registry, proj, c.Ghcr, c.Owner)
 			}
-			if _, digest, ok := strings.Cut(img, "@"); !ok || !pinDigestRE.MatchString(digest) {
-				return fmt.Sprintf("runs the image %q, which is not pinned by an @sha256: digest: this service's account reads every model credential in the bundle and every operator may push to this run's registry",
-					img)
+			if cmd, args := strList(m["command"]), strList(m["args"]); len(cmd) != 0 || len(args) != 0 {
+				return "a container that sets a command or args, which the module does not: the image's own entrypoint is the service"
 			}
 			if unknownAt(unk, append(slices.Clone(cp), "env")...) {
 				return "an environment that is not known"
 			}
 			for j, e := range objects(m["env"]) {
 				ep := append(slices.Clone(cp), "env", j)
-				if unknownAt(unk, append(slices.Clone(ep), "name")...) || unknownAt(unk, append(slices.Clone(ep), "value")...) {
+				if unknownAt(unk, append(slices.Clone(ep), "name")...) || unknownAt(unk, append(slices.Clone(ep), "value")...) ||
+					unknownAt(unk, append(slices.Clone(ep), "value_source")...) {
 					return "an environment variable that is not known"
+				}
+				if e["value_source"] != nil {
+					return "an environment variable whose value comes from somewhere else (a value_source), not the literal the module sets: the module hands this process no secret ID and no secret value, it reads its one bundle as its own account"
 				}
 				if n := str(e["name"]); !slices.Contains(credentialsServiceEnv, n) {
 					return fmt.Sprintf("an environment variable %q, which the credentials service does not read: its container sets only %s",
@@ -1688,6 +1717,11 @@ func (c Cover) buildAccount(email string) bool {
 // an empty owner refuses every remote path. refChars and the ".." guard are
 // the ones this check has always had.
 //
+// A job's image is the loose half on purpose: a repository under this run's
+// registry is what the run's own build pushed there. The credentials
+// service's image is not — credentialsImageOK below is the strict half, and
+// it is the one that account is held to.
+//
 // What this closes is bounded, and the bound is design §10.7's: the owner
 // and the entry it is checked against can be published in the same shared
 // config, so against whoever writes that document this is a *consistency*
@@ -1696,15 +1730,61 @@ func (c Cover) buildAccount(email string) bool {
 // config records our owner — a hand-edited config, a stale entry, an
 // accidental paste.
 func (c Cover) baseImageOK(ref, proj string) bool {
-	prefix := c.Registry + "/" + proj + "/"
-	if c.Registry == "" || !strings.HasPrefix(ref, prefix) || len(ref) == len(prefix) || !refChars.MatchString(ref) ||
-		slices.Contains(strings.Split(ref, "/"), "..") {
+	if !c.refOK(ref, proj) {
 		return false
 	}
-	if c.Ghcr == "" || !strings.HasPrefix(ref, prefix+c.Ghcr+"/") {
+	if c.Ghcr == "" || !strings.HasPrefix(ref, c.registryPrefix(proj)+c.Ghcr+"/") {
 		return true
 	}
-	owner, rest, ok := strings.Cut(strings.TrimPrefix(ref, prefix+c.Ghcr+"/"), "/")
+	return c.pinOK(ref, proj)
+}
+
+// credentialsImageOK reports whether ref may be the credentials service's
+// image (D146, C1.18): the base pin's closed shape through the pull-through
+// repository and NOTHING else — the recorded owner, a fugaro-<kind> image, a
+// release version tag and a digest:
+//
+//	<host>/<project>/<ghcr>/<owner>/fugaro-<kind>:<version>@sha256:<64 hex>
+//
+// baseImageOK, which a job's image is held to, is deliberately looser: it
+// also admits any reference under the run's own repositories. That half is
+// the hole for THIS image. modules/installation/iam.tf grants
+// roles/artifactregistry.writer on the run's base repository to every
+// operator, so an operator can push bytes there, read the digest back and
+// name it in var.credentials_service.image — and the apply then runs their
+// code as the account that reads every model credential in the bundle,
+// which is the boundary D145 and credentials.tf's M1 comment exist to keep.
+// The @sha256 rule forbids REWRITING a pin; it does not forbid CHOOSING one,
+// so the pin's owner is what has to be checked (independent security review
+// of this file, which found the gap; baseImageOK is unchanged for jobs,
+// whose image is the run's own build). An empty repository ID, owner or
+// registry refuses every reference.
+func (c Cover) credentialsImageOK(ref, proj string) bool {
+	if c.Ghcr == "" || !c.refOK(ref, proj) || !strings.HasPrefix(ref, c.registryPrefix(proj)+c.Ghcr+"/") {
+		return false
+	}
+	return c.pinOK(ref, proj)
+}
+
+// registryPrefix is this run's registry and project: the prefix both image
+// checks read a reference against.
+func (c Cover) registryPrefix(proj string) string { return c.Registry + "/" + proj + "/" }
+
+// refOK is the part both image checks share: a reference under this run's
+// registry, with the characters a reference may hold here and no ".."
+// segment. It says nothing about the repository or the owner.
+func (c Cover) refOK(ref, proj string) bool {
+	prefix := c.registryPrefix(proj)
+	return c.Registry != "" && strings.HasPrefix(ref, prefix) && len(ref) > len(prefix) &&
+		refChars.MatchString(ref) && !slices.Contains(strings.Split(ref, "/"), "..")
+}
+
+// pinOK reports whether ref is the base pin's closed shape under the
+// pull-through repository. The caller has already established that ref sits
+// there (refOK and the repository's ID); this reads the rest: the recorded
+// owner, a fugaro-<kind> image, a release version tag and a digest.
+func (c Cover) pinOK(ref, proj string) bool {
+	owner, rest, ok := strings.Cut(strings.TrimPrefix(ref, c.registryPrefix(proj)+c.Ghcr+"/"), "/")
 	if !ok || c.Owner == "" || owner != c.Owner {
 		return false
 	}
@@ -1714,6 +1794,31 @@ func (c Cover) baseImageOK(ref, proj string) bool {
 	}
 	version, digest, ok := strings.Cut(tag, "@")
 	return ok && pinVersionRE.MatchString(version) && pinDigestRE.MatchString(digest)
+}
+
+// serviceAccount checks the account a covered run service's template names:
+// the service account this plan creates — or holds — for it in the same
+// module, in one of this run's projects. credentials.tf writes
+// google_service_account.credentials[0].email, which is computed while that
+// account is being created, so an unknown value is the module's own only
+// when the module creates the account with it; a known value must be an
+// account this plan holds there. Anything else is a hand edit that would run
+// the service's image — the one account that reads every model credential in
+// the bundle — as an identity of the editor's choosing (independent security
+// review of this file).
+func (c Cover) serviceAccount(a map[string]any, unk any, pre string, creates, created, held map[string]bool) string {
+	if unknownAt(unk, "template", 0, "service_account") {
+		if !creates[pre+"|google_service_account"] {
+			return "runs as an account that is not known and none is created with it"
+		}
+		return ""
+	}
+	email := str(at(a["template"], "service_account"))
+	sm := saMember.FindStringSubmatch("serviceAccount:" + email)
+	if sm == nil || !slices.Contains(c.Projects, sm[2]) || !(created[pre+"|"+sm[1]] || held[pre+"|"+sm[1]]) {
+		return "runs as " + email + ", not the service account this plan creates for it in this module"
+	}
+	return ""
 }
 
 // checkSpecs checks every FUGARO_CHECK_SPEC entry of a container's
