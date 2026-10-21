@@ -49,6 +49,21 @@ const (
 	// windowsCLIPin is this file, by path: the plan names it as the owning guard
 	// test of every documentation task, so the name lives in one place.
 	windowsCLIPin = "internal/cli/docs_windows_cli_test.go"
+
+	// windowsCLIWSLStatus is wsl.md's opening sentence about the native build,
+	// pinned whole rather than by its fragment. The claim flips on one word —
+	// "**No** Windows archive is published" becomes "**A** Windows archive is
+	// published" the day the port ships — and the fragment "Windows archive is
+	// published" is a substring of both, so a pin on it would pass on the
+	// sentence that says the opposite. It is compared whitespace-normalised
+	// because the sentence wraps across two lines in the document.
+	windowsCLIWSLStatus = "**Status: the route that works today.** No Windows archive is published and `fugaro.exe` does not build yet"
+
+	// windowsCLIPlanDecisions is the plan's own statement of which decisions are
+	// open, which is the same claim as the status line above and moved with it
+	// on 2026-10-20: the sentence read "(all open)" while the index beside it
+	// said D1–D6 and D16 were answered.
+	windowsCLIPlanDecisions = "decisions are **D1–D16** (D1–D6 and D16 answered on 2026-10-20; D7–D15 open)"
 )
 
 // windowsCLIRevision is the commit the reconciliation was read at. A later run
@@ -142,6 +157,10 @@ func TestDocsWindowsCLIIsWritten(t *testing.T) {
 
 	for _, want := range []string{
 		windowsCLIStatus,
+		// The same claim one paragraph further down, which is where it was
+		// left behind when the status line moved: a reader who quotes the plan
+		// has to get the same answer from both.
+		windowsCLIPlanDecisions,
 		windowsCLISupportHeading,
 		"## 3. The slices",
 		windowsCLIGate,
@@ -158,9 +177,14 @@ func TestDocsWindowsCLIIsWritten(t *testing.T) {
 	// requirement, and the console's own answer (F40). Each is a sentence a
 	// later edit can drop without any other symptom.
 	wsl := readDoc(t, windowsCLIWSL)
+	// The opening sentence is pinned whole, whitespace-normalised: it is the one
+	// claim on the page a later edit flips by a single word, and the fragment
+	// every other pin below is written as — "Windows archive is published" —
+	// survives that flip.
+	if flat, want := strings.Join(strings.Fields(wsl), " "), strings.Join(strings.Fields(windowsCLIWSLStatus), " "); !strings.Contains(flat, want) {
+		t.Errorf("%s does not carry its status sentence %q: the claim is what the sentence says, not the fragment inside it", windowsCLIWSL, windowsCLIWSLStatus)
+	}
 	for _, want := range []string{
-		// The route, and the honest state of the native one beside it.
-		"Windows archive is published",
 		"**F39**",
 		"**F40**",
 		// F39's two traps, each by the path it is about: the checkout's

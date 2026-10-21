@@ -80,7 +80,7 @@ register, and checks 113–118) · [../../../mobile/README.md](../../../mobile/R
 | The interrupt rule the session must not stale: `interruptDecision({ switch, severity, highest, speaking, turn })`, `INTERRUPT_SWITCH`, `INTERRUPT_REASON` | `mobile/src/voice/interrupt.js` | VS1.1, VS0.2 |
 | The speaker port | `mobile/src/voice/speaker.js` (`createPipelineSpeaker`) | VS0.3 |
 | The app's one wiring file, and the fences over it | `mobile/index.js`, `mobile/src/boundary.test.js`, `dependencies.test.js` | VS1.3 |
-| The identity fences: no `com.` in `app.json`; no `dev.fugaro.app` anywhere under `mobile/` or `docs/mobile/`; `bundleIdentifier`/`package` absent from `app.json` | `mobile/src/app-config.test.js`, `app-config.ids.test.js` | VS2.1, VS2.3 |
+| The identity fences: no `com.` in `app.json`; no `<reverse-dns-name>` committed anywhere under `mobile/` or `docs/mobile/`; `bundleIdentifier`/`package` absent from `app.json` | `mobile/src/app-config.test.js`, `app-config.ids.test.js` | VS2.1, VS2.3 |
 | The dynamic config and its two environment variables: `ID_VARIABLES = { ios: 'FUGARO_IOS_BUNDLE_ID', android: 'FUGARO_ANDROID_PACKAGE' }`, the `ios.infoPlist` merge | `mobile/app.config.js` | VS2.1, VS2.2, VS4.1 |
 | The dependency scan: every bare import declared in `package.json`, the lockfile matching it, `metro.config.cjs` present | `mobile/src/dependencies.test.js` | VS1.3, VS3.1, VS4.2 |
 | The build profiles: `development` (`developmentClient: true`), `preview`, `internal` (`distribution: store`, `android.buildType: app-bundle`), `cli.requireCommit`, `submit.internal.ios.ascAppId` | `mobile/eas.json`, `mobile/src/eas-config.test.js` | VS2.2, VS3.3, VS4.3, VS7.1 |
@@ -174,10 +174,15 @@ mode, the microphone ask, Bluetooth, and barge-in"* (P3.5/P4.2, owner-run), its
 text is unwritten, and it keeps its number and its subject. The six below cover
 what it does not name. F17.
 
-**None of the six is written into the register by this plan.** The register's own
-rules are that *a check is never run before its text is in the register*, that
-*the phase that ships the check writes it*, and that *a reserved number is never
-reused or renumbered* — and no phase here is approved. D219 records the choice.
+**None of the six is written into the register by this plan.** The three rules
+that keep it out are not all the register's, and each is attributed to the file
+it is in: *"a reserved number is never reused or renumbered"* is the register's
+([../../gcp-live-checklist.md](../../gcp-live-checklist.md)); *"the phase that
+ships the check writes them"* is [../../design/voice.md](../../design/voice.md)
+§5.3's convention, the one the project-centric plan sets and the console plan
+follows; and *"A check is never run before its text is in the register"* is
+[docs/mobile/implementation-plan.md](../implementation-plan.md)'s own sentence —
+and no phase here is approved. D219 records the choice.
 
 | # | The check's subject (the text is VS7's) | Covers | Runs on |
 |---|---|---|---|
@@ -419,8 +424,8 @@ and `FUGARO_ANDROID_PACKAGE` remain the only two, `eas.json` gains no identity
 (`mobile/src/eas-config.test.js` stays as it is), and no committed file gains a
 reverse-DNS literal — including the new one this work adds for the widget.
 **Tests.** The existing scan stays green unchanged; one new assertion pins the
-widget identifier's derivation so that `dev.fugaro.app` never has to appear
-anywhere.
+widget identifier's derivation so that `<reverse-dns-name>` never has to be
+written anywhere.
 **Verification.** **`fugaro verify test`**.
 **Reviewer.** standard.
 
