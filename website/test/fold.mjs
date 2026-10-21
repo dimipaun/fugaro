@@ -369,7 +369,7 @@ test('the promise, its prompt line and its call to action above the fold are eno
   // a checked rule rather than a description of today's markup.
   const dist = distOf(t, {
     'index.html': page(
-      '<h1>t</h1><p class="hero-prompt"><span class="hero-prompt-mark" aria-hidden="true">&gt;</span> Fan out these three bug fixes.</p><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a><a class="hero-cta-quiet" href="/how-it-works/">How it works</a></p><section class="home-slider"><ul class="tab-bar"><li><a class="tab" href="#home-panel-easy">Easy to use</a></li></ul><div class="panels"><div class="panel" id="home-panel-easy"><h2 class="panel-title">Easy to use</h2></div></div></section>',
+      '<h1>t</h1><p class="hero-prompt"><span class="hero-prompt-mark" aria-hidden="true">&gt;</span> Fan out these three bug fixes.</p><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a><a class="hero-cta-quiet" href="/how-it-works/">How it works</a></p><section class="home-slider" data-slider><ul class="slider-dots"><li class="slider-dot-item"><a class="slider-dot" href="#home-panel-easy" aria-label="Slide 1 of 3: Easy to use"></a></li></ul><div class="panels"><div class="panel" id="home-panel-easy"><h2 class="panel-title">Easy to use</h2></div></div></section>',
     ),
   })
   assert.deepEqual(foldFailures(dist), [], 'a homepage that keeps the prompt line, the promise and its call to action as its whole lead region was refused')
@@ -384,7 +384,7 @@ test('the hero’s illustration is taken out of the lead region whole, and only 
   // the exclusion must not hide: a command block beside the promise rather than inside a
   // picture is still a command block in the lead.
   const slider =
-    '<section class="home-slider"><ul class="tab-bar"><li><a class="tab" href="#home-panel-easy">Easy to use</a></li></ul><div class="panels"><div class="panel" id="home-panel-easy"><h2 class="panel-title">Easy to use</h2></div></div></section>'
+    '<section class="home-slider" data-slider><ul class="slider-dots"><li class="slider-dot-item"><a class="slider-dot" href="#home-panel-easy" aria-label="Slide 1 of 3: Easy to use"></a></li></ul><div class="panels"><div class="panel" id="home-panel-easy"><h2 class="panel-title">Easy to use</h2></div></div></section>'
   const hero = (picture) =>
     `<h1>t <span class="gradient-text">coding agents</span></h1><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a></p>${picture}${slider}`
   const card =

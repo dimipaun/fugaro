@@ -4802,16 +4802,16 @@ follows the page rather than the part that wrote it: the owner's changes spec of
 the one bold diagram, both shipped by #623) took the commands out of the hero and made the page the promise and
 its call to action, then the chat, then the diagram, then the two install cards — and **the
 owner's approved draft "Home, draft 2 (slider)" of 2026-10-19 folds that middle and those cards
-into two blocks**: the hero, then one slider whose three tabs are how it is to use, why it is
+into two blocks**: the hero, then one slider whose three slides are how it is to use, why it is
 worth it and what it looks like running, then one large "Get started" button with the one command
 most readers run under it. So the homepage's first screen is still the promise and the links
 under it and no command. The page's first command in the HTML is the slider's `fugaro watch`
-block, inside the "See it" panel — and that panel is shown by the stylesheet only once its tab is
-chosen, so the first command a reader *meets* without choosing a tab is the install command in the
+block, inside the "See it" panel — and that panel is shown by the stylesheet only once its dot is
+chosen, so the first command a reader *meets* without choosing a slide is the install command in the
 page's last section. The command-above-the-fold claim this check's step 2 used to carry for the
 homepage is Getting Started's alone (step 3). **The picture is still there**: #655's capture of
 the owner's real `fugaro watch` screen is in that block, above the command, so step 2 reads the
-block's three parts in order — heading, screenshot, command — on the panel its tab opens. **The numbers above are the owner's record of the page before the
+block's three parts in order — heading, screenshot, command — on the panel its dot opens. **The numbers above are the owner's record of the page before the
 redesign** (`docs/website/redesign/reconciliation.md` §6, the capture set described by
 `docs/website/redesign/current/README.md`): they are not measurements of the page as it is now, and
 every number this check passes or fails on is one it takes itself.
@@ -4850,9 +4850,13 @@ sed -n '/^export const PHRASES = \[/,/^\]/p' website/test/meta.mjs
 # of the hero and into the page's last section; the draft of 2026-10-19 put the page's middle
 # into the slider).
 grep -n "Hero\|HomeSlider\|HomeInstall" website/src/pages/index.astro
-# The tabs, the panels and the fragment each tab carries, out of the component that renders them:
-# the three ids step 2 clicks are the panels' own, and the class the slider's block carries.
-grep -n "home-panel-\|TABS = \|home-slider" website/src/components/HomeSlider.astro
+# The dots, the panels and the fragment each dot carries, out of the component that renders them:
+# the three ids step 2 opens are the panels' own, and the class the slider's block carries.
+grep -n "home-panel-\|SLIDES = \|home-slider" website/src/components/HomeSlider.astro
+# The clock, out of the one script the site ships, because it is what decides which slide a reader
+# finds on screen: six seconds after the page lands the block moves on by itself, and it holds
+# while the pointer or the keyboard's focus is inside it.
+grep -n "ADVANCE_MS\|prefers-reduced-motion" website/public/scripts/site.js
 # The one install path the homepage renders, and the markup its command is in: the path the
 # component names, and the class its command block carries.
 grep -n "HOME_PATH\|home-install-command" website/src/components/HomeInstall.astro
@@ -4920,17 +4924,25 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    exactly the two links while the flag is false); a hero with three links is a site whose flag
    has been flipped, which is a later reading of this step rather than a failure of it.
 
-   **The page's middle is one slider with three tabs** (the draft of 2026-10-19): `HomeSlider.astro`
-   renders `.home-slider`, a row of three fragment links — "Easy to use", "Benefits", "See it" —
-   and three panels, of which the stylesheet shows one at a time (`.panel` is `display: none`;
-   the panel the address's fragment names, or the first one while no fragment does, is
-   `display: block`). All three panels are in the HTML the page serves, so read the middle by
-   **clicking each tab** rather than by scrolling: the panel a tab opens is the element the
-   address names, and a reader with no JavaScript gets the same three panels. What step 2 reads
-   on the first screen is that the slider's row of tabs is what follows the hero, and that no
-   command has climbed back above it. The page's first command **in the HTML** is the slider's
-   `fugaro watch` block — `.watch-block` inside the "See it" panel, which is the panel the third
-   tab opens — and the first command a reader meets *without choosing a tab* is the install
+   **The page's middle is one slider with three slides** (the draft of 2026-10-19; the owner's
+   feedback of 2026-10-21 turned the strip of tabs into the slider): `HomeSlider.astro` renders
+   `.home-slider`, a row of three dots — each one a fragment link to the panel it opens, named
+   "Slide 1 of 3: Easy to use", "Slide 2 of 3: Why Fugaro?" and "Slide 3 of 3: See it" — beside
+   two step controls, and three panels, of which the stylesheet shows one at a time (`.panel` is
+   `display: none`; the panel the address's fragment names, or the first one while no fragment
+   does, is `display: block`). All three panels are in the HTML the page serves, so read the
+   middle by **clicking each dot** rather than by scrolling: the panel a dot opens is the element
+   the address names, and a reader with no JavaScript gets the same three panels. **The block
+   advances on its own every six seconds** once the page has loaded — the script moves it on,
+   wrapping at the third slide back to the first — so a slide you are reading stays where it is
+   only while the pointer or the keyboard's focus is inside the block: put the pointer over the
+   block (or Tab into one of its dots) before you start reading a panel, and it holds. A reader
+   whose system asks for less motion gets no clock at all, and the dots and the two step controls
+   work for them as they do for everyone. What step 2 reads on the first screen is that the
+   slider's row of dots is what follows the hero, and that no command has climbed back above it.
+   The page's first command **in the HTML** is the slider's `fugaro watch` block — `.watch-block`
+   inside the "See it" panel, which is the panel the third dot opens — and the first command a
+   reader meets *without choosing a slide* is the install
    command in the page's last section, `HomeInstall.astro`'s `.home-install-command`. On the
    "See it" panel the block is three things in that order: the panel's "See it" heading, the
    owner's real `fugaro watch` screenshot above the command (`div.watch-shot`'s `img`,
@@ -4947,10 +4959,10 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    block inside the "See it" panel, where an element with `display: none` has no rectangle and a
    reading taken from `document.querySelector('main pre')` alone would be an empty box's 0. The
    number this step reports for the homepage is therefore the install command's — the command
-   above, the one a reader meets without choosing a tab — and the reading is the one that claim
+   above, the one a reader meets without choosing a slide — and the reading is the one that claim
    is read against: at 390 × 844 that bottom has to be **below** 844, because the homepage's
    first screen holds the promise and its call to action and **no** command. To read the watch
-   command's own place inside the "See it" panel, choose that tab first and take that element's
+   command's own place inside the "See it" panel, choose that dot first and take that element's
    rectangle; the key is the page as it lands, with no fragment chosen. Beside
    it read the copy control's own rectangle: the control is `website/src/lib/copy-control.mjs`'s
    markup, `.command-controls` inside the same `.command-block`, and the block lays the two out in
@@ -4961,7 +4973,7 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    Fails-when block below names — where the command is visible and the button is not, and which
    no reading of the command's own rectangle can see. **FACT:** the first screen's blocks in
    order and whether any of them is a command block; the hero's links as rendered and how many
-   they are, against `features.console_downloads`; the three tabs and, per tab, the panel it
+   they are, against `features.console_downloads`; the three dots and, per dot, the panel it
    opens with the block's three parts in order — heading, screenshot, command — the screenshot's
    own height and whether it is above the command; the page's first command as rendered, the
    block it is in, its bottom in pixels and whether it is above or below 844; and the control's
@@ -5040,10 +5052,10 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
 the `h1`'s bottom and the lead's bottom both under 844 — the homepage's first screen holds the
 promise and its call to action and **no command**, the call to action is the **two** links the
 site's own flag renders (the console's link is absent while `features.console_downloads` is
-false), the slider's three tabs each open a panel that is in the HTML with the stylesheet showing
+false), the slider's three dots each open a panel that is in the HTML with the stylesheet showing
 the one the fragment names, the "See it" panel's block is its heading, the owner's `fugaro watch`
 screenshot and then the command, and the page's first command (that block, or the install command
-a reader meets without choosing a tab) carries its copy control in the command's own row wherever
+a reader meets without choosing a slide) carries its copy control in the command's own row wherever
 it sits, Getting Started's
 first command block is above the
 fold at 390 × 844 **and** at 1280 × 900, the consent banner covers neither the first command nor
@@ -5058,7 +5070,7 @@ in; a **third** link under the promise — the console's — on a site whose `we
 still says `features.console_downloads: false` (a hero that disagrees with the site's own flag, so
 either the flag has been flipped and this reading is stale or the link was written into the hero
 rather than rendered from the flag); the "See it" panel's block missing its screenshot, or
-carrying it **below** the command, so the command is not under the picture this step reads; a tab
+carrying it **below** the command, so the command is not under the picture this step reads; a dot
 whose panel is not in the HTML, or a panel the stylesheet never shows once its fragment is in the
 address, so a reader without JavaScript has two panels rather than three; Getting
 Started's first command block is below the fold at either width; the consent banner
@@ -5081,7 +5093,7 @@ added to the gate that can see it.
 
 **Paste back:** per page at 390 × 844, the `h1`'s bottom and the lead's bottom, and whether each is
 above the fold; the homepage's first screen's blocks in order, the hero's links as rendered and how
-many they are, the three tabs with the panel each opens and the block's three parts in order with
+many they are, the three dots with the panel each opens and the block's three parts in order with
 the screenshot's height, and the page's first command as
 rendered with the block it is in, its bottom and its control's rectangle;
 Getting Started's first command block's bottom at both widths; the consent banner's height and top

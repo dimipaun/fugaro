@@ -1223,7 +1223,7 @@ in the commit that made it.
 ## The owner's ruling of 2026-10-20: the benefits section is headed "Why Fugaro?"
 
 The owner's ruling of 2026-10-20 renames the homepage's "Benefits" heading to exactly `Why
-Fugaro?` — capital W and F, question mark — and the slider's middle tab with it. Nothing else
+Fugaro?` — capital W and F, question mark — and the slider's middle slide with it. Nothing else
 about the section moves.
 
 - **What the ruling settles.** The section renders README.md's `## Why Fugaro`: the four names
@@ -1234,8 +1234,10 @@ about the section moves.
   carried: `data-source="README.md#Why Fugaro"` has cited that heading since the section
   landed.
 - **What changed, and what did not.** `src/components/Benefits.astro`'s `<h2>` reads "Why
-  Fugaro?", and `src/components/HomeSlider.astro`'s `TABS` middle entry carries the same
-  string as its label. The component's and the file's names, the section's `id`
+  Fugaro?", and `src/components/HomeSlider.astro`'s `SLIDES` middle entry carries the same
+  string as its label. (The entry was `TABS` when the ruling was written; the owner's feedback
+  of 2026-10-21, item 3, turned the tabs into the slider, and the list is `SLIDES` now. The
+  string it carries is where it was.) The component's and the file's names, the section's `id`
   (`benefits-title`), its `class` (`home-benefits`), the panel's `id`
   (`home-panel-benefits`) and the `aria-labelledby` that ties the heading to the section are
   all where they were: they are the element's name in the markup, which the stylesheet and the
@@ -1247,16 +1249,16 @@ about the section moves.
   reads the built page's `benefits-title` and refuses anything but the exact string, so the
   question mark is held as well as the words: its case plants the owner's own phrase without
   the question mark, and a second plants the label the section carried before the ruling.
-  `website/test/slider.mjs` already held each panel's own `h2` equal to the label of the tab
-  that opens it — a reader who arrives on a panel reads the label of the tab that opens it —
-  so the tab and the heading are one name by construction, and a rename that reached only one
+  `website/test/slider.mjs` already held each panel's own `h2` equal to the label of the dot
+  that opens it — a reader who arrives on a panel reads the label of the slide it is — so the
+  dot's name and the heading are one name by construction, and a rename that reached only one
   of the two stops the build. The other gates named in the brief pin no string of this
   section: `a11y.mjs` reads the section as a named landmark and its `h3`s as headings under
   one `h2` and never the words; `copy.mjs` reads no heading of the homepage; and
   `stacking.mjs` reads the blocks' order and their rule, not their text. Nothing there moved.
 - **The figures, re-derived rather than argued.** The site figure moved by the **6 bytes** the
   longer string costs in the built page — "Why Fugaro?" is three characters longer than
-  "Benefits" and the string is written twice, once in the `<h2>` and once in the tab — so
+  "Benefits" and the string is written twice, once in the `<h2>` and once in the dot's own name — so
   `website/README.md`'s byte budget is re-derived in the same commit, 988,253 → **988,259**
   bytes across the same 23 files, with the whole-site ceiling following it, 3,705,951 →
   **3,705,972**. One more byte lands on the same branch after it, from the second item of the
@@ -1420,3 +1422,99 @@ later reader does not have to guess them from the markup.
   artifact and the stylesheet, through the gates above, with `(cd website && npm run check)`
   green over all 415 cases. **Whether the star now reads as symmetric and whether the phone's
   header row fits at 320 px are the owner's check at the preview** (70a–70c, P9, D190).
+
+## The owner's 2026-10-21 feedback, item 3: the tabs become a slider
+
+The third reading of the owner's feedback of 2026-10-21 is the homepage's middle block:
+"**'Say it. Get pull requests.': can we auto-rotate between tabs every few seconds? Like a
+slider? Maybe a slider would work better than tabs?**" The 2026-10-19 draft approved the block as
+a strip of three tabs; this section is what changed, why, and what the gates now read instead.
+The draft's own section above still describes the shape the block was approved in — the three
+slides, the three panels, the fragment links and the no-script switching are all still exactly
+what it says — and the strip of tabs is the one part of it that is gone.
+
+- **The controls are a row of dots and two step controls.** `HomeSlider.astro` renders
+  `.slider-controls` — a previous button, a list of three dots, a next button — above the
+  panels. Each dot is `<a class="slider-dot" href="#home-panel-…">` with an empty body and its
+  own `aria-label` ("Slide 2 of 3: Why Fugaro?"): the circle a reader taps is a drawing, so the
+  name a screen reader reads is the whole of what the dot says, and it says both the slide and
+  the reader's place in the three. **The dots are fragment links and not buttons**, which is the
+  2026-10-19 section's own decision kept: the block switches with no JavaScript at all, every
+  panel's text is in the HTML a reader receives, and the no-script state of the block is a
+  stylesheet rule rather than a script. **The two step controls are buttons**, because they step
+  a block rather than going anywhere, and the markup emits them `hidden` — a control rendered
+  visible by the markup is a button that does nothing for a reader whose browser runs no script
+  (D183's "no broken control"), so the site's one script is what reveals them.
+- **The script drives the block, and the stylesheet stands the no-script state down while it
+  does.** `public/scripts/site.js` gains a `slider()` section: it finds the block by
+  `[data-slider]`, writes the name of the slide on screen to the block's `data-active`, and the
+  stylesheet's `.home-slider[data-active='easy'] #home-panel-easy`-style rules are what show the
+  panel it belongs to. The no-script rules — the `:target` one and the one that shows the first
+  panel while nothing is targeted — are scoped `.home-slider:not([data-active])`, and that
+  scoping is load-bearing rather than tidiness: a reader who arrived on `#home-panel-see` and
+  then let the block advance would otherwise have **two** panels shown at once, because the
+  `:target` selector and the script's own rule are both (1,2,0) and the earlier one would win.
+  The script also marks the dot of the slide on screen with `aria-current="true"`, which the
+  stylesheet draws in the accent — the mark a reader has instead of a text label.
+- **The clock, and the four things that stop it.** The block advances every six seconds
+  (`ADVANCE_MS = 6000`) and wraps from the third slide back to the first. It is held while the
+  pointer is over the block or the keyboard's focus is inside it (a reader who is reading must
+  not have the slide move under them), it does not run while the page is not being shown at all
+  (`document.hidden`), and it does not run for a reader whose system asks for less motion
+  (`prefers-reduced-motion: reduce`) — for that reader the dots, the two controls and the arrow
+  keys all still work, because what they asked for is that nothing move **on its own**. A click
+  on a dot is `preventDefault`ed: with the script running the block's state is its own, and an
+  address that kept the fragment would send the reader back to that slide on a reload. The script
+  never writes to the address. Arrow keys work on the dots and on the two controls, and every
+  other key is left to the browser, because Tab has to reach the next control.
+- **The stub DOMs the whole file runs in, and why the clock is behind a short circuit.**
+  `website/test/copy.mjs`, `website/test/consent.mjs` and `website/test/nav-hover.mjs` each run
+  the real `site.js` against the built homepage, and none of them is a browser: they have no
+  `document.hidden` and two of them have no `matchMedia`. So `still()` reads
+  `held || !shown() || calm()`, and `shown()` is `document.hidden === false` — a document that
+  cannot answer is a document no clock is started in, which is both the correct reading of a
+  browser that does not answer and the reason those three gates keep their timer and query
+  assertions unchanged. `website/test/consent.mjs`'s two selector maps did have to learn the
+  block: that stub refuses a selector it does not read rather than matching nothing, so the five
+  `data-slider` attributes are written into it, and the file's own comment says why.
+- **What the gates read now.** `website/test/slider.mjs` is rewritten around the slider, and its
+  six rules are: the three slides and the three dots paired (each dot a fragment link to the
+  panel it opens, named after it, announced with its place in the three, and the panel headed
+  with the same label); the stylesheet read in **both** states, one selector at a time so a rule
+  that marks one dot for another dot's panel is refused rather than counted as a pair present;
+  the block held to carrying no script and the script to naming no id and no class of the block
+  (the two files are joined by the `data-` attributes alone); the 44 px targets, the wrapping
+  rows, the focus ring and the 360 px content box; **the behaviour, run** — the file the site
+  ships, against the built homepage, in a fourth stub DOM written for this gate, with seven
+  cases (the first slide and both controls revealed; the clock stepping and wrapping; the hold
+  under the pointer and under the keyboard's focus; a page nobody is shown; less motion; the
+  dots, the controls and the arrow keys, and the address left alone; a reader arriving on a
+  fragment) and each one planted against the line of the script it reads, with the plant
+  asserted to parse; and the steps' provenance, unchanged. `website/test/home.mjs`'s gate over
+  the block reads dots where it read tabs, `fold.mjs`'s fixture and `stacking.mjs`'s class list
+  follow the new markup, and `website/test/budget.mjs`'s ceilings are re-derived in the commit
+  that moved the bytes.
+- **The bytes.** The block is only on the homepage, so its own bytes land there and nowhere
+  else: **2,186 onto the homepage's HTML** — 1,054 of stylesheet and 1,132 of markup — and
+  **10,912 onto the script**, which every page loads once. The page weight (the console page,
+  still the heaviest) moves by the script alone, 399,902 → **410,814**; the site figure by both,
+  1,402,356 → **1,415,454**; and all three of the README's byte budgets are re-derived in the
+  commit that ships the script (D192). The count of files in `dist/` stays **28** and the count
+  of pages **11**, and the homepage's own words go 468 → **461**, because a dot is a circle with
+  no text in it: the three labels the tabs showed are now the dots' names, which a screen reader
+  reads and the page does not draw.
+- **The live check, and the one line of it that had to change with the page.**
+  `docs/gcp-live-checklist.md`'s check 70b reads the block, so its Method now reads `SLIDES` out
+  of the component and the clock out of the script, and its step 2 reads dots rather than tabs.
+  **The step also tells the owner to put the pointer over the block before reading a panel**:
+  the block moves on by itself six seconds after the page lands, and a slide that is being read
+  stays where it is only while the pointer or the focus is inside it — a live check that took
+  longer than six seconds to read a panel would otherwise be reading a different panel than the
+  one it chose.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round and this run cannot see a picture. What was read is the built
+  artifact, the stylesheet and the script, through the gates above, with `(cd website && npm run
+  check)` green over all 423 cases. **Whether the slider reads as a slider — the look of the
+  dots, the feel of the six seconds, whether the motion is too fast or too slow — is the owner's
+  check** (70a–70c, P9, D190), and the number to move first if it is wrong is `ADVANCE_MS` in
+  `public/scripts/site.js`.
