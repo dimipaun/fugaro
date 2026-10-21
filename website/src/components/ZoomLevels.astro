@@ -385,12 +385,14 @@ const SYMBOLS: Record<string, string> = {
     list-style: none;
   }
 
+  /* The target size every control on this site carries (the owner's brief of 2026-10-19),
+     as the homepage slider's dots write it: these are four controls a reader taps. */
   .zoom-marker {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 2rem;
-    min-height: 2rem;
+    min-width: 44px;
+    min-height: 44px;
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-pill);
     color: var(--text-muted);
