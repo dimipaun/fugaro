@@ -378,7 +378,7 @@ func TestDocsRigorModesFindingsDecisionsAndItemsAreNumbered(t *testing.T) {
 // every row, and running that command reproduces the count the row states. A
 // count without its command is a figure a later reader cannot re-derive, and a
 // command that no longer produces its figure is worse than no command at all:
-// it is a claim that looks checked. The other 47 rows this repository's folders
+// it is a claim that looks checked. The other 51 rows this repository's folders
 // assert in prose; this one is the only place the figure can be re-derived by
 // the test itself, so it is re-derived.
 //
@@ -404,7 +404,7 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 		body = body[:j]
 	}
 	rows, commands, checked, skipped := 0, 0, 0, 0
-	// Six rows are `git grep`, and the census states its commands run from the
+	// Seven rows are `git grep`, and the census states its commands run from the
 	// repository root. A tree that is not the root of a git work tree is not
 	// that root, and `git grep` there fails -- exit 128, nothing on stdout --
 	// rather than printing a figure. That tree is not hypothetical: it is the
@@ -488,16 +488,54 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 
 // rigorModesCommandNeedsGit reports whether a census command reads the tree
 // through git rather than reading its files directly. `git grep` is the only
-// such command in the census today, and it appears in three positions -- at the
-// front, inside a `{ …; }` group, and inside a pipe -- so the word is matched
-// rather than the prefix: a row that grows a `git` anywhere is covered instead
-// of only the ones spelled at the front. The word boundary is what keeps
-// `.gitignore` and `.gitattributes` out of it, which are paths a census command
-// may perfectly well read without a repository.
-var rigorModesNeedsGitRE = regexp.MustCompile(`\bgit\b`)
+// such command in the census today, and its seven rows all spell it at the front
+// of a command or of a pipeline; the slack in matching the word rather than the
+// prefix is for the row that grows one further along -- inside a `{ …; }` group
+// or after a pipe -- so a `git` anywhere a shell would run it is covered.
+// "Anywhere a shell would run it" is the rule, not "anywhere the three letters
+// appear": `git` has to sit at the start of a command, after `|`, `;`, `&`, `(`
+// or `{`, and be followed by whitespace or the end. That is what keeps
+// `.gitignore`, `.gitattributes` and docs/git-providers.md out of it -- paths a
+// census command may perfectly well read without a repository, and a row that
+// reads one is not skipped in a tree that has none.
+var rigorModesNeedsGitRE = regexp.MustCompile(`(?:^\s*|[|;&({]\s*)git(?:\s|$)`)
 
 func rigorModesCommandNeedsGit(cmd string) bool {
 	return rigorModesNeedsGitRE.MatchString(cmd)
+}
+
+// TestDocsRigorModesCensusSkipsGitOnlyWhereAShellRunsIt pins the skip rule above,
+// because its two mistakes are not symmetric. A command that really runs `git`
+// and is not skipped fails in a tree without a repository rather than printing a
+// figure, which is the failure this rule exists to prevent; a command that only
+// reads a path with the three letters in it and *is* skipped loses a row the
+// copy-in tree could have checked. So both directions are pinned: the shapes the
+// census's own `git` rows have, and the paths a census row may read.
+func TestDocsRigorModesCensusSkipsGitOnlyWhereAShellRunsIt(t *testing.T) {
+	runsGit := []string{
+		`git grep -l 'Severity' -- internal/runner ':!*_test.go' | wc -l`,
+		`git ls-tree --name-only 1d325928:internal/cli | grep -c '^docs_.*_test\.go$'`,
+		`{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; git grep -c Path internal/recipe/recipe.go; } | wc -l`,
+		`sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go | git grep -c Path`,
+		`grep -c x docs/a.md && git grep -c y docs/b.md`,
+	}
+	for _, cmd := range runsGit {
+		if !rigorModesCommandNeedsGit(cmd) {
+			t.Errorf("rigorModesCommandNeedsGit(%q) = false: the command runs git, so in a tree without a repository it prints a failure instead of a figure, and the guard has to skip it there rather than fail on it", cmd)
+		}
+	}
+	readsFiles := []string{
+		`ls internal/cli/docs_*_test.go | wc -l`,
+		`sed -n 's/^const Version = //p' internal/projectpolicy/version.go`,
+		`grep -c gitignore .gitignore`,
+		`grep -c git docs/git-providers.md`,
+		`sed -n '/^## /p' .gitattributes | wc -l`,
+	}
+	for _, cmd := range readsFiles {
+		if rigorModesCommandNeedsGit(cmd) {
+			t.Errorf("rigorModesCommandNeedsGit(%q) = true: the command reads its files directly and needs no repository, so skipping it there would drop a row the copy-in tree can check", cmd)
+		}
+	}
 }
 
 // rigorModesCommand is the shell command inside a census row's code span, with

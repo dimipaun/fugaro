@@ -177,13 +177,16 @@ const censusRoot = "../.."
 // find.** Forty-four files left it because the rename reached them: #766 (W2.5)
 // renamed the 29 Terraform files, the four `.tftest.hcl` fixtures beside them,
 // the published schema, internal/config/example.{go,yaml}, the two files under
-// images/ and deploy/terraform/terraform.go with its test; #765 (W1.1) renamed
-// internal/initflow's loop.go, loop_test.go and stage.go. Leaving the list in
-// the commit that renamed them is what the paragraph below asks of every rename
-// task, and a file that stayed on it after its rename would fail the walk in
-// the direction that costs the most: it would read as a promise still owed.
+// images/ and deploy/terraform/terraform.go with its test -- and
+// deploy/terraform/gcp/roots/repo/tests/testdata/README.md, whose mention the
+// same commit (03c70731) took out of its prose while leaving the file itself
+// where it is; #765 (W1.1) renamed internal/initflow's loop.go, loop_test.go and
+// stage.go. Leaving the list in the commit that renamed them is what the
+// paragraph below asks of every rename task, and a file that stayed on it after
+// its rename would fail the walk in the direction that costs the most: it would
+// read as a promise still owed.
 //
-// Eleven files joined it, every one a mention the rename still owes, and six
+// Eleven files joined it, every one a mention the rename still owes, and eight
 // merges put them there. #775 (the central-orchestrator folder's spec,
 // reconciliation and plan) added docs/central-orchestrator/{README,
 // implementation-plan}.md and #793 (the coordinator's plan) added

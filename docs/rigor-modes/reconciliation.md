@@ -667,11 +667,11 @@ without its command is a figure a later reader cannot re-derive. All commands ar
 run from the repository root against the working tree — and the guard,
 `internal/cli/docs_rigor_modes_test.go`, re-runs every one of them there, so a
 figure that has drifted from its command is a failing test rather than a stale
-number. At this folder's own commit, `1d325928`, the tree differed from its base
-by this folder's four documents and its pin test and nothing else, so one row is
-then the folder's own: the pins were **48** — the 47 that already existed plus
-this folder's `internal/cli/docs_rigor_modes_test.go` — and they are files rather
-than folders, 13 of them pinning one of `docs/`'s folders and the rest a
+number. At this folder's own commit, `e5211a8a` (#773) — whose own diff is this
+folder's four documents and its pin test and nothing else — one row is then the
+folder's own: the pins were **48**, the 47 the base `1d325928` (§1) already held
+plus this folder's `internal/cli/docs_rigor_modes_test.go`, and they are files
+rather than folders, 13 of them pinning one of `docs/`'s folders and the rest a
 standalone document, which is why the row above counts the pins and not the
 folders they sit beside. **The figure is 52 today, because four folders have
 written a pin since**: `internal/cli/docs_gcp_setup_test.go` (#764, the WSL
