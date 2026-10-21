@@ -10,8 +10,9 @@ owner's answer.**
 
 The findings below are cited by number (**F1**, **D4**, **C1**) and live in
 [reconciliation.md](reconciliation.md) — the whole set is **F1–F42**, the
-decisions are **D1–D16** (all open) and the owner-run checks the plan needs are
-**U1–U13** in that document's UNVERIFIED table; the ranges are stated here so a
+decisions are **D1–D16** (D1–D6 and D16 answered on 2026-10-20; D7–D15 open)
+and the owner-run checks the plan needs are **U1–U13** in that document's
+UNVERIFIED table; the ranges are stated here so a
 citation in this plan can be read without opening the other document. Where a
 task cites a decision, the task is written to the *recommended* option and
 states what changes if the owner answers differently.
