@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -776,5 +777,62 @@ func TestJoinReboundsTheRecordedChangedFiles(t *testing.T) {
 	if row.ChangedFiles == nil || len(row.ChangedFiles.Paths) != runstore.MaxChangedFiles || !row.ChangedFiles.Truncated {
 		t.Fatalf("an oversized record reached the row as %d paths, truncated %v",
 			len(row.ChangedFiles.Paths), row.ChangedFiles.Truncated)
+	}
+}
+
+// TestJoinCarriesTheRunsRigor: the row carries the record's rigor block, and
+// the JSON key is `rigor`, so `runs ls --json`, `diagnose` and the console
+// read the mode, the layer that won and the areas that matched from the one
+// place the record wrote them (D24). A run with no block carries none: nil,
+// never an empty block a reader would render as a decision nobody took.
+func TestJoinCarriesTheRunsRigor(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	r.Rigor = &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
+		Areas: []runstore.RigorArea{{Name: "payments", At: runstore.RigorAtBootstrap}},
+		At:    runstore.RigorAtFinalize, Revision: "origin/main"}
+	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
+	if row.Rigor == nil || row.Rigor.Mode != rigor.Critical || row.Rigor.From != rigor.FromArea ||
+		len(row.Rigor.Areas) != 1 || row.Rigor.Revision != "origin/main" {
+		t.Fatalf("row.Rigor = %+v", row.Rigor)
+	}
+	b, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"rigor":{"mode":"critical","from":"area"`) {
+		t.Fatalf("the row does not carry the block under %q:\n%s", "rigor", b)
+	}
+	if plain := Join(Input{Task: spec}, prices, now); plain.Rigor != nil {
+		t.Fatalf("a run that resolved none: %+v", plain.Rigor)
+	}
+	b, err = json.Marshal(Join(Input{Task: spec}, prices, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "rigor") {
+		t.Fatalf("a row with no block names the field:\n%s", b)
+	}
+}
+
+// TestJoinBoundsTheRecordedRigor: the block is the job's own object, so the
+// row does not pass it through as written. A record whose block cannot name a
+// mode, a layer or a moment reaches the row as none at all — the same answer
+// as no block, which every reader already renders — and one carrying too much
+// reaches it bounded. This is the guard that keeps a hand-edited result.json
+// out of the console's field table.
+func TestJoinBoundsTheRecordedRigor(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	r.Rigor = &runstore.RigorRecord{Mode: "paranoid", From: rigor.FromRepo, At: runstore.RigorAtFinalize}
+	if row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now); row.Rigor != nil {
+		t.Fatalf("a block outside the vocabulary reached the row: %+v", row.Rigor)
+	}
+	var many []runstore.RigorArea
+	for i := range 3 * rigor.MaxAreas {
+		many = append(many, runstore.RigorArea{Name: fmt.Sprintf("a%03d", i), At: runstore.RigorAtRound})
+	}
+	r.Rigor = &runstore.RigorRecord{Mode: rigor.POC, From: rigor.FromRepo, Areas: many, At: runstore.RigorAtFinalize}
+	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
+	if row.Rigor == nil || len(row.Rigor.Areas) != rigor.MaxAreas {
+		t.Fatalf("an oversized block reached the row as %+v", row.Rigor)
 	}
 }

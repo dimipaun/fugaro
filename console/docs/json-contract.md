@@ -401,6 +401,36 @@ reads:
 | `artifact_count` | int | **yes** | what an artifact run's record says it delivered; absent for every run that has none, and the count `runs ls`'s `ARTIFACTS` column shows — its total is `artifact_bytes` |
 | `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
 | `changed_files` | `*runstore.ChangedFiles` | **yes** | the paths the run changed, as the run itself recorded them (design D27, console v2 plan V2.1.2): `paths`, `total` and `truncated` below. **Absent for a run that recorded none** — every record written before the field existed, and every run that died before finalize — and absence means **"no record of what this run changed"**, never "it changed nothing" (the `-` cell of `runs ls`'s `FILES` column) |
+| `rigor` | `*runstore.RigorRecord` | **yes** | the mode the run resolved, the layer that won and the areas that matched (docs/rigor-modes D22, D24, D25): `mode`, `from`, `areas`, `at` and `revision` below. **Absent for a run that resolved none** — a record written before the field existed, a run that died before bootstrap, or a block that cannot be read as a decision — and absence means **"no record of this run's rigor"**, never "it resolved nothing" (the `-` cell of `runs ls`'s `MODE` column) |
+
+**`rigor` is the mode the run resolved, and it is read from the base branch.**
+The block is one decision (docs/rigor-modes D24), carrying the mode, the layer
+that decided it (`area`, `repo`, `project`, `default`, `request` or `reached`),
+every area rule that matched with the moment it was first applied at
+(`bootstrap`, `round` or `finalize` — D22's three moments) and the revision the
+configuration was read from. The mode's configuration comes from the **base
+branch** for every run kind (D25), so a run's other keys may come from the
+checked-out ref while its rigor comes from what it will merge into: `revision`
+is how a reader tells those apart, and it is written either way. The block is
+D22's monotone fold — a later moment never lowers the mode, and the moment it
+names is the last one that changed the block.
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `mode` | string | no | the resolved mode: `poc`, `startup`, `pro`, `critical` or `hotfix` (`pro` is Fugaro's built-in default, D19) |
+| `from` | string | no | the layer that decided it; `reached` means an earlier moment set the mode and this one did not lower it (D22) |
+| `areas` | `[]object` | **yes** | every rule that matched, **strictest first** (D23) and at most `rigor.MaxAreas` = **100** of them, each `name` (the rule's own name) and `at` (the moment it was first applied). **Absent when none matched** — a reader must not see "there were rules" where the answer is "there were none" |
+| `at` | string | no | the moment of the resolution the block records: the last one that changed it |
+| `revision` | string | **yes** | where the configuration was read from, `origin/<base branch>`; absent when the run could not name it |
+
+**The reader bounds it again.** The block is job-writable, so `runview.Join`
+does not pass it through as written: `RigorRecord.Bounded` refuses a block
+whose mode, layer or moment is outside its vocabulary — the row then carries no
+block, the same answer as a record that has none — and re-applies the caps
+(`rigor.MaxAreas` rules, `rigor.MaxAreaName` = 40 runes a name, 120 runes of
+revision), dropping an area whose own moment is unreadable. A tampered
+`result.json` therefore reaches the console as no block or as a bounded one,
+never as a value no reader can check.
 
 **`changed_files` is the run's own account, and it is bounded.** The runner
 reads the paths of the run's own commits (`origin/<base>...HEAD` for a first

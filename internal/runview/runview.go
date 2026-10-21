@@ -135,6 +135,14 @@ type Row struct {
 	// that died before finalize, or a record from before the field existed —
 	// so a reader never sees an empty set where the answer is unknown.
 	ChangedFiles *runstore.ChangedFiles `json:"changed_files,omitempty"`
+	// Rigor is the mode the run resolved, the layer that decided it, the
+	// areas that matched and the moment of the run each was known at
+	// (docs/rigor-modes D22, D24): the record's own block, bounded on read
+	// (runstore.RigorRecord.Bounded), and nil when the run recorded none —
+	// a record from before the field existed, a run that died before
+	// bootstrap, or a block that cannot be read as a decision — so no reader
+	// renders "no record" as "it resolved nothing".
+	Rigor *runstore.RigorRecord `json:"rigor,omitempty"`
 	// ArtifactCount and ArtifactBytes are what the run's record says it
 	// delivered: how many artifacts, and their recorded total size (design
 	// artifact-runs.md §9). Both are the record's own account, never a
@@ -285,6 +293,11 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		// Bounded again on read: the record is job-writable, so the row
 		// never carries more than the bound or a cut set dressed as whole.
 		row.ChangedFiles = r.ChangedFiles.Bounded()
+		// The same for the rigor block (docs/rigor-modes D22, D24): a block
+		// that cannot name a mode from the vocabulary, a layer from
+		// rigor.Layers or one of D22's three moments reaches the row as none
+		// at all, which is the answer its absence already gives.
+		row.Rigor = r.Rigor.Bounded()
 		row.Stage = r.Stage
 		if r.Reason != "" {
 			row.Reason = r.Reason
