@@ -58,6 +58,26 @@ func sched(uri, email string) ResourceChange {
 	return rc("google_cloud_scheduler_job", map[string]any{"http_target": []any{map[string]any{"uri": uri, "oauth_token": []any{map[string]any{"service_account_email": email}}}}}, map[string]any{}, "create")
 }
 
+// service is a Cloud Run service as the central orchestrator's own module will
+// write it (docs/central-orchestrator/implementation-plan.md, P4): the type
+// P1 admits to allowedTypes, a name and the revision template's account. The
+// fixture is deliberately the shape a module writes rather than the smallest
+// one that passes: what P1 decides is the type, and the attribute checks a
+// service will owe are P4's, whose module literals they pin.
+func service(name string) ResourceChange {
+	return rc("google_cloud_run_v2_service", map[string]any{"name": name,
+		"template": []any{map[string]any{"service_account": "fugaro-orchestrator@proj-1.iam.gserviceaccount.com"}}},
+		map[string]any{}, "create")
+}
+
+// serviceGrant is a grant on a service, through the *_iam_member type beside
+// it. That type is NOT admitted (P1 admits the service alone): a plan holding
+// one is refused for its type, which is what keeps an invoker grant a decision
+// of its own, taken with the module and the role table that justify it.
+func serviceGrant(member, role string) ResourceChange {
+	return rc("google_cloud_run_v2_service_iam_member", map[string]any{"name": "fugaro-orchestrator", "member": member, "role": role}, map[string]any{}, "create")
+}
+
 func customRole(id, project string, perms []any) ResourceChange {
 	a := map[string]any{"role_id": id, "permissions": perms}
 	if project != "" {
@@ -158,15 +178,22 @@ func TestCoverNotCovered(t *testing.T) {
 		"computed role from another module's custom role": {[]ResourceChange{
 			{Address: "module.a.google_project_iam_custom_role.r", Type: "google_project_iam_custom_role", Change: Change{Actions: []string{"create"}, After: map[string]any{}, AfterUnknown: map[string]any{}}},
 			{Address: "module.b.google_project_iam_member.m", Type: "google_project_iam_member", Change: Change{Actions: []string{"create"}, After: map[string]any{"member": "user:me@example.com"}, AfterUnknown: map[string]any{"role": true}}}}, false},
-		"delete":                    {[]ResourceChange{rc("google_storage_bucket", nil, nil, "delete")}, false},
-		"replace":                   {[]ResourceChange{rc("google_storage_bucket", nil, nil, "delete", "create")}, false},
-		"forget":                    {[]ResourceChange{rc("google_storage_bucket", nil, nil, "forget")}, false},
-		"no actions":                {[]ResourceChange{rc("google_storage_bucket", nil, nil)}, false},
-		"iam_binding create":        {[]ResourceChange{rc("google_project_iam_binding", map[string]any{"role": "roles/storage.objectUser", "members": []any{"user:me@example.com"}}, nil, "create")}, false},
-		"iam_policy":                {[]ResourceChange{rc("google_project_iam_policy", nil, nil, "create")}, false},
-		"audit config":              {[]ResourceChange{rc("google_project_iam_audit_config", nil, nil, "create")}, false},
-		"service account key":       {[]ResourceChange{rc("google_service_account_key", nil, nil, "create")}, false},
-		"unknown resource type":     {[]ResourceChange{rc("google_compute_instance", nil, nil, "create")}, false},
+		"delete":                {[]ResourceChange{rc("google_storage_bucket", nil, nil, "delete")}, false},
+		"replace":               {[]ResourceChange{rc("google_storage_bucket", nil, nil, "delete", "create")}, false},
+		"forget":                {[]ResourceChange{rc("google_storage_bucket", nil, nil, "forget")}, false},
+		"no actions":            {[]ResourceChange{rc("google_storage_bucket", nil, nil)}, false},
+		"iam_binding create":    {[]ResourceChange{rc("google_project_iam_binding", map[string]any{"role": "roles/storage.objectUser", "members": []any{"user:me@example.com"}}, nil, "create")}, false},
+		"iam_policy":            {[]ResourceChange{rc("google_project_iam_policy", nil, nil, "create")}, false},
+		"audit config":          {[]ResourceChange{rc("google_project_iam_audit_config", nil, nil, "create")}, false},
+		"service account key":   {[]ResourceChange{rc("google_service_account_key", nil, nil, "create")}, false},
+		"unknown resource type": {[]ResourceChange{rc("google_compute_instance", nil, nil, "create")}, false},
+		// The central orchestrator's service type is admitted deliberately
+		// (central-orchestrator P1, D19): a plan holding one is covered, while
+		// the type beside it — the invoker grant, which no module declares and
+		// whose roles no table decides — stays refused, and so does every type
+		// nobody has decided on (the row above).
+		"a Cloud Run service":                     {[]ResourceChange{service("fugaro-orchestrator")}, true},
+		"an invoker grant on a Cloud Run service": {[]ResourceChange{serviceGrant("user:me@example.com", "roles/run.invoker")}, false},
 		"allUsers":                  {[]ResourceChange{grant("google_storage_bucket_iam_member", "allUsers", "roles/storage.objectViewer")}, false},
 		"allAuthenticatedUsers":     {[]ResourceChange{grant("google_storage_bucket_iam_member", "allAuthenticatedUsers", "roles/storage.objectViewer")}, false},
 		"domain member":             {[]ResourceChange{grant("google_project_iam_member", "domain:example.com", "roles/datastore.viewer")}, false},

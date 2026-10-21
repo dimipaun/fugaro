@@ -221,12 +221,20 @@ func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
 		return &tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: "module.x." + typ + ".z", Type: typ, Change: tf.Change{Actions: acts, After: after, AfterUnknown: map[string]any{}}}}}
 	}
 	additive := mk("google_storage_bucket", map[string]any{"public_access_prevention": "enforced", "uniform_bucket_level_access": true}, "create")
+	// The central orchestrator's service type is admitted deliberately
+	// (central-orchestrator P1, D19): a plan holding one is covered by the run's
+	// one confirmation as any module resource is, while the invoker grant
+	// beside it — a type no module declares and no role table decides — is not
+	// admitted and asks its own.
+	service := mk("google_cloud_run_v2_service", map[string]any{"name": "fugaro-orchestrator"}, "create")
 	for name, bad := range map[string]*tf.Plan{
 		"replace":       mk("google_storage_bucket", nil, "delete", "create"),
 		"iam binding":   mk("google_project_iam_binding", nil, "create"),
 		"unlisted user": mk("google_project_iam_member", map[string]any{"member": "user:eve@example.com", "role": "roles/storage.objectUser"}, "create"),
 		"owner":         mk("google_project_iam_member", map[string]any{"member": "user:me@example.com", "role": "roles/owner"}, "create"),
 		"nil":           nil,
+		"an invoker grant on a service": mk("google_cloud_run_v2_service_iam_member",
+			map[string]any{"name": "fugaro-orchestrator", "member": "user:me@example.com", "role": "roles/run.invoker"}, "create"),
 		"an import discovery did not write": {ResourceChanges: []tf.ResourceChange{{Address: "module.x.google_storage_bucket.z", Type: "google_storage_bucket",
 			Change: tf.Change{Actions: []string{"no-op"}, Importing: &tf.Importing{ID: initProject + "/elsewhere"}, After: map[string]any{"public_access_prevention": "enforced", "uniform_bucket_level_access": true}, AfterUnknown: map[string]any{}}}}},
 	} {
@@ -236,8 +244,8 @@ func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
 		}{"its own answer": {initProjectName + "\n" + initProjectName + "\n", false}, "only the run's answer": {initProjectName + "\n", true}} {
 			t.Run(name+"/"+sname, func(t *testing.T) {
 				r, _, out, _, _ := c.reviewRun(t, tc.stdin, true)
-				if r.notCovered(additive, nil) != "" || r.notCovered(bad, nil) == "" {
-					t.Fatalf("notCovered: additive %q, bad %q", r.notCovered(additive, nil), r.notCovered(bad, nil))
+				if r.notCovered(additive, nil) != "" || r.notCovered(service, nil) != "" || r.notCovered(bad, nil) == "" {
+					t.Fatalf("notCovered: additive %q, service %q, bad %q", r.notCovered(additive, nil), r.notCovered(service, nil), r.notCovered(bad, nil))
 				}
 				if err := r.confirmOrdinary("applies the additive plan", "x", r.notCovered(additive, nil)); err != nil {
 					t.Fatal(err)
