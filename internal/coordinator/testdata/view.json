@@ -65,7 +65,7 @@
       "branch": "fugaro/20261011-090000-bbbb",
       "base_branch": "main",
       "declared_by": "other@example.com",
-      "files": ["console/src/main/ipc.ts", "internal/coordinator/view.go"]
+      "files": ["console/src/main/ipc.ts", "internal/cli/exec.go", "internal/coordinator/view.go"]
     },
     {
       "id": "20261012-120000-cccc",

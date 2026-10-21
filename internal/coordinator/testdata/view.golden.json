@@ -72,6 +72,7 @@
           "declared_by": "other@example.com",
           "files": [
             "console/src/main/ipc.ts",
+            "internal/cli/exec.go",
             "internal/coordinator/view.go"
           ]
         }
@@ -80,6 +81,7 @@
       "in_flight": true,
       "files": [
         "console/src/main/ipc.ts",
+        "internal/cli/exec.go",
         "internal/coordinator/view.go"
       ],
       "services": [
@@ -163,6 +165,7 @@
       "a": "#12",
       "b": "#14",
       "files": [
+        "internal/cli/exec.go",
         "internal/coordinator/view.go"
       ],
       "services": [

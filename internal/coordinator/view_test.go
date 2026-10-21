@@ -66,7 +66,7 @@ func TestCoordinatorViewCollisionsNameBothRecords(t *testing.T) {
 	if c.A != "#12" || c.B != "#14" {
 		t.Errorf("the collision names %s and %s, want #12 and #14", c.A, c.B)
 	}
-	if want := []string{"internal/coordinator/view.go"}; !slices.Equal(c.Files, want) {
+	if want := []string{"internal/cli/exec.go", "internal/coordinator/view.go"}; !slices.Equal(c.Files, want) {
 		t.Errorf("the collision's files = %q, want %q", c.Files, want)
 	}
 	if want := []string{"internal"}; !slices.Equal(c.Services, want) {
@@ -169,6 +169,30 @@ func TestCoordinatorViewInFlightRunWithoutPullRequest(t *testing.T) {
 	}
 	if _, ok := recordOf(v, "20261009-090000-ffff"); ok {
 		t.Errorf("the view lists 20261009-090000-ffff, a run that finished with no pull request: %+v", v.Records)
+	}
+}
+
+// A run naming a pull request the reader did not return still names one: the
+// record exists, with the host's own answer missing rather than invented, so
+// that a reader which returned fewer pull requests than the store knows about
+// loses no work.
+func TestCoordinatorViewKeepsARunOnAnUnreadPullRequest(t *testing.T) {
+	v := Join("acme/app", nil, []Run{{ID: "20261013-150000-1111", PR: 9, Status: "running", Files: []string{}}})
+	if len(v.Records) != 1 {
+		t.Fatalf("records = %+v, want the one run's", v.Records)
+	}
+	r := v.Records[0]
+	if r.PR == nil || r.PR.Number != 9 {
+		t.Fatalf("the record's pull request = %+v, want #9", r.PR)
+	}
+	if r.PR.State != "" {
+		t.Errorf("the record invents the host's answer %q for a pull request the reader did not return", r.PR.State)
+	}
+	if !r.InFlight {
+		t.Error("a running run on an unread pull request is not in flight")
+	}
+	if r.Label() != "#9" {
+		t.Errorf("the record labels itself %q, want #9", r.Label())
 	}
 }
 
