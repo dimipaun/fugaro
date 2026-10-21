@@ -1,26 +1,31 @@
 # The coordinator — the implementation plan
 
-**Status: plan written; no code is implemented; approval gate open.** This plan follows from
+**Status: approved to build on the branch `coordinator`, target 0.11.0; no code is implemented yet.** This plan follows from
 [reconciliation.md](reconciliation.md), which wins wherever it disagrees with
 [spec.md](spec.md). Every path and symbol below was re-read against `main` at `1e0953b7`
 (`docs(central-orchestrator): spec, reconciliation and plan for central orchestrators (#775)`)
 on **2026-10-21**, and is cited by **path and symbol, never by line number**. A path marked
 **new** does not exist yet. **Owner: Dimi Paun. Date: 2026-10-21.**
+**Amended 2026-10-21**: the owner answered **D193–D197**, four as recommended and **D196 against
+the recommendation**, and passed this plan's **owner approval gate** for the parts that need only
+those decisions — **P0–P6**. **P7 and P8 still wait**, on the front-door design review and on the
+owner's **U2/U3** checks, and §11 says so in full.
 
 **Every part is independently mergeable**, on the long-lived branch **`coordinator`** that this
 work creates: a part lands, it is verified, and the tree works with it and without the parts
 after it. **Target release: 0.11.0**, and no part assumes a release that has not shipped, so the
 branch is mergeable into whatever release is current when the owner asks for it.
 
-**The plan is written to two things, and the owner must answer both.** The first is the owner's
+**The plan is written to two things, and the owner has answered both.** The first is the owner's
 own answers to **Q1–Q16** of the reconciliation, given on **2026-10-19**, each taking **option
 (A)** — that is what the parts mean by "the front door is a service", "the store is the Realtime
 Database", "there is no model credential in v1". **An answer is not an approval**: the owner
 answered a question, and this plan is the document that turns those answers into work. The second
 is the **five new decisions the planning found** — **D193–D197**, recorded in
-[reconciliation.md](reconciliation.md) §6 — which the answers do not settle and which no part
-before the gate can be built without. **No part starts before the owner passes the gate at the
-end of this document**, and each part names the decision it would be rewritten for.
+[reconciliation.md](reconciliation.md) §6 — which the answers do not settle, and which the owner
+**answered on 2026-10-21**: four by taking the recommendation and **D196 against it**. On those
+answers the owner passed this plan's **gate** (§11) for the parts that need only them, **P0–P6**;
+**P7 and P8 still wait**, and each part names what it waits on.
 
 ## 1. What changed since the reconciliation, and what this plan does about it
 
@@ -36,12 +41,18 @@ since, and each one changes this plan rather than decorating it:
    plan as one of the two siblings it depends on. **P4 below is that missing definition**: the
    report path, its record and its idempotency, written so that one writer serves every
    orchestrator — the local one today and the central one when it exists.
-2. **The same plan's P4 builds the first Cloud Run *service* in Fugaro.** Q10(A) answered that
-   there is **one resident service per installation, with the coordinator as a role it plays** —
-   so the coordinator's front door and the central orchestrator's service are the same process,
-   and this plan must not build a second one. Q1(A)'s "a Cloud Run service in the installation
-   root" and that plan's P4 are therefore one service under two documents, and **D196** is the
-   owner's decision about which document builds it.
+2. **The same plan's P4 builds the first Cloud Run *service* in Fugaro — and its P1 admits the
+   type.** Q10(A) answered that one service per installation would serve both, the coordinator
+   being a role of it, and this plan was written to that reading until **2026-10-21**, when the
+   owner answered **D196 option (B)**: the coordinator is **not** tied to the central
+   orchestrator, because *"there can be multiple central orchestrators in the near future"*. So
+   the coordinator gets **its own resident service**, built by **P7** of this plan, with its own
+   identity, its own scale-to-zero configuration and its own ID-token front door — and **P7 and
+   P8 no longer wait on that plan's P4 and P5**. One thing is still shared, and it is the one
+   thing two plans cannot both do: the allow-list admission of `google_cloud_run_v2_service`,
+   which **whichever part lands first admits it and the other cites it** — that plan's **P1** or
+   this plan's **P7**. Q10's recorded answer of 2026-10-19 is **amended, not rewritten**, in the
+   reconciliation, which is where the owner's own words stay.
 3. **`docs/credentials-service/` is still plan-only** — its own README says so, its D130–D154
    were answered on 2026-10-17 and its Q6 was ruled on 2026-10-19, and nothing is implemented.
    Q4(A)'s "no model credential in v1" is therefore not a deferral this plan invented: it is the
@@ -108,9 +119,11 @@ Named, so that a reader does not look for it and a later writer does not re-add 
 - **Webhooks, a public endpoint, and the MCP specification's OAuth 2.1 authorization** (Q7 B,
   Q16 B): polling is the intake, and Cloud Run IAM invoker is the authorization, recorded as a
   deliberate departure.
-- **A second resident service, and any `fugaro run` authority in the coordinator** (Q10 B, Q10 C):
-  the coordinator is advisory, it never blocks or reorders a merge, and it holds no write to
-  GitHub (Q3 A).
+- **Any `fugaro run` authority in the coordinator** (Q10 C, refused): the coordinator is advisory,
+  it never blocks or reorders a merge, and it holds no write to GitHub (Q3 A). **The second
+  resident service is NOT on this list any more**: it was, while the plan was written to Q10(A),
+  and D196's answer of 2026-10-21 is what took it off — P7 builds it, and it is the coordinator's
+  own.
 - **Bitbucket** (Q12 A): refused with a line naming the reason, because its credential is per
   repository and cannot be widened to a project (finding #30).
 - **The phone's own reads** (Q15 A grants them, and D112's direct reads are the mobile work's
@@ -120,19 +133,21 @@ Named, so that a reader does not look for it and a later writer does not re-add 
 
 ## 4. What the owner must answer before any part starts
 
-The plan is written to the recommendation in each decision; a part whose decision is answered the
-other way is rewritten before it starts, not after. **Five of these are new** — they were found by
-planning and are numbered in [reconciliation.md](reconciliation.md) §6 — and **one is the set of
-answers the plan already stands on**.
+**Answered 2026-10-21: all five.** The plan was written to the recommendation in each decision,
+and a part whose decision was answered the other way is rewritten before it starts — which is what
+**P7** and **P8** are, rewritten here for **D196's option (B)**. **Five of these were new** — they
+were found by planning and are numbered in [reconciliation.md](reconciliation.md) §6 — and **one is
+the set of answers the plan already stands on**. The answers are in the table's first column and in
+full under each decision in §6 of the reconciliation.
 
 | Decision | What it blocks | The recommendation the plan is written to |
 | --- | --- | --- |
-| **Q1–Q16**, answered 2026-10-19, option (A) each | the plan's whole shape | the front door is a service in the installation root with the aggregation a scheduled job (Q1); the caller is a per-person IAM invoker with a CLI that mints the ID token (Q2); the credential is the existing App and a named read-only set, never a write (Q3); no model credential in v1 (Q4); the Realtime Database (Q5); deterministic IDs, ETag CAS, no new lock (Q6); Cloud Scheduler polling (Q7); the console reads through the CLI sidecar (Q8); two named model slots and an explicit `allow_data_to` (Q9); one resident service per installation with the coordinator as a role (Q10); no cap yet (Q11); GitHub only, Bitbucket refused by name (Q12); v0 is a read-only aggregation (Q13); `record_override` writes and is shown, nothing is fed back (Q14); the coordinator is the only writer and the CLI and phone get a read grant (Q15); streamable HTTP with IAM invoker as the authorization (Q16) |
-| **D193** | P2 | **one read-only installation token per repository**, minted through `MintInstallationToken` and cached per repository; the project-wide token only once U3 is settled |
-| **D194** | P3, P5 | **the aggregation job's own service account holds `roles/firebasedatabase.admin`** beside the history account's, and the rules change is the read grant only |
-| **D195** | P3, P4, P5 | **a new top-level `coordinator/` subtree**, `coordinator/project/` and `coordinator/repos/<slug>/`, deterministic document IDs, `GetETag` + `PutIfMatch` |
-| **D196** | P7, P8 | **the resident service the central orchestrator plan builds is the one**; this work admits the type and mints the ID token, and builds no second service |
-| **D197** | P8 | **the last 200 overrides per project**, newest first, no expiry in v1, readable by the CLI and shown as plain text |
+| **Q1–Q16**, answered 2026-10-19, option (A) each | the plan's whole shape | the front door is a service in the installation root with the aggregation a scheduled job (Q1); the caller is a per-person IAM invoker with a CLI that mints the ID token (Q2); the credential is the existing App and a named read-only set, never a write (Q3); no model credential in v1 (Q4); the Realtime Database (Q5); deterministic IDs, ETag CAS, no new lock (Q6); Cloud Scheduler polling (Q7); the console reads through the CLI sidecar (Q8); two named model slots and an explicit `allow_data_to` (Q9); **Q10's answer is amended by D196** — the plan no longer reads it as one service playing both roles; no cap yet (Q11); GitHub only, Bitbucket refused by name (Q12); v0 is a read-only aggregation (Q13); `record_override` writes and is shown, nothing is fed back (Q14); the coordinator is the only writer and the CLI and phone get a read grant (Q15); streamable HTTP with IAM invoker as the authorization (Q16) |
+| **D193** — answered 2026-10-21, option (A) | P2 | **one read-only installation token per repository**, minted through `MintInstallationToken` and cached per repository; the project-wide token only once U3 is settled |
+| **D194** — answered 2026-10-21, option (A) | P3, P5 | **the aggregation job's own service account holds `roles/firebasedatabase.admin`** beside the history account's, and the rules change is the read grant only |
+| **D195** — answered 2026-10-21, option (A) | P3, P4, P5 | **a new top-level `coordinator/` subtree**, `coordinator/project/` and `coordinator/repos/<slug>/`, deterministic document IDs, `GetETag` + `PutIfMatch` |
+| **D196** — answered 2026-10-21, option (B), against the recommendation | P7, P8 | **the coordinator's own resident service**, built by this work in P7, with its own identity, its own scale-to-zero configuration and its own ID-token front door — the recommendation was the sibling plan's service, and the owner ruled the other way, so **P7 and P8 no longer wait on that plan's P4/P5** |
+| **D197** — answered 2026-10-21, option (A) | P8 | **the last 200 overrides per project**, newest first, no expiry in v1, readable by the CLI and shown as plain text |
 
 Two things the table cannot express, said here so they are not lost:
 
@@ -140,11 +155,15 @@ Two things the table cannot express, said here so they are not lost:
   what one stolen read token reaches; D194 decides what one compromised service account can write
   in the project's database; D197 decides how much attacker-writable text the coordinator keeps.
   Each recommendation is the smallest of its options, and each alternative is a real security
-  posture rather than a worse default.
-- **Nothing in this plan says the coordinator's parts may start on the day the gate passes.**
-  P7 and P8 also wait on the central orchestrator plan's P4 and P5, which are unapproved and
-  unbuilt, and §7 says which parts are security-sensitive and what an independent review of each
-  must cover.
+  posture rather than a worse default. **D196 is not one of those**: it is a decision about
+  ownership, and the owner took the option that costs a second identity, a second scale-to-zero
+  configuration and two things to keep in step.
+- **The gate's passing is not a permission to start P7 and P8.** They still wait — on the
+  **front-door design review** (§7 asks for an independent review of each, and the service's own
+  design is what that review has to see), and on the owner's **U2** and **U3** checks (§9: the
+  App's actual `pull_requests: read` grant, and whether an installation token may omit
+  `repositories`). **No part waits on the central orchestrator plan**, which was the other half of
+  P7's and P8's block before 2026-10-21.
 
 ## 5. The parts
 
@@ -158,8 +177,9 @@ Reviewer tiers are this plan's own vocabulary: **standard** (one reviewer, the u
 asks for Opus — with its own paragraph in the pull request body saying what was reviewed and what
 was not).
 
-**P0 and P1 need no new decision and are the two parts that can start as soon as the owner says
-so.** P2–P6 need one each. P7 and P8 are blocked twice.
+**P0–P6 are approved to build**, on the answers of 2026-10-19 and 2026-10-21, and P1 is the part
+to start with. **P7 and P8 still wait** — on the front-door design review §7 asks for and on the
+owner's U2/U3 checks (§9), and on nothing else.
 
 ---
 
@@ -450,9 +470,9 @@ existing allow-list and changes no CSP, and the review's job is to confirm exact
 
 ---
 
-### P7 — The first service: admit the type, and the front door's credential (D196)
+### P7 — The coordinator's own service: the type, the module, and the front door's credential (D196)
 
-**Scope.** Two halves, and only the first is this work's unconditionally.
+**Scope.** Three halves, and after **D196's answer of 2026-10-21** all three are this work's.
 
 - **The type.** `google_cloud_run_v2_service` and its `*_iam_member` enter
   `internal/infra/tf/cover.go`'s `allowedTypes` and `internal/infra/tf/managed_cover.go`'s
@@ -461,8 +481,22 @@ existing allow-list and changes no CSP, and the review's job is to confirm exact
   its allow-list exists to make deliberate, so `internal/cli/init_review.go`'s `notCovered` must
   still fire the typed confirmation the owner designed. **The cost table already knows the type**:
   `internal/infra/tf/managed_cost.go` carries the service's rows, and its own comment says they
-  *"become load-bearing the moment the allowlist admits a service"* — so this part adds the type
-  to the two refusal lists, changes no cost row, and **writes no Terraform module**.
+  *"become load-bearing the moment the allowlist admits a service"* — so this half adds the type
+  to the two refusal lists and changes no cost row. **This admission is shared with the central
+  orchestrator plan's P1, which admits the same type**: **whichever part lands first admits it and
+  the other cites it** rather than re-adding it, and the part that lands second says in its own
+  commit that the admission is already there.
+- **The module, and the service.** D196's answer is **option (B)**: the coordinator is **not** the
+  central orchestrator's service, because *"there can be multiple central orchestrators in the
+  near future"*. So this part writes the Terraform the earlier draft of it deliberately did not: a
+  new `deploy/terraform/gcp/modules/coordinator/` holding the service, **its own service account**,
+  its IAM, and its `min_instance_count = 0` configuration — the shape
+  `deploy/terraform/gcp/modules/installation/history.tf` gives the history job and
+  `deploy/terraform/gcp/modules/project/job.tf` gives a project job, wired into
+  `deploy/terraform/gcp/modules/installation/` beside them. The service is the tenant of P8's
+  handler and it holds **no model credential** (Q4 A). Two services per installation is now the
+  design, not an accident: this one and the central orchestrator's, with separate identities,
+  separate scale-to-zero configurations and separate grants.
 - **The credential.** Q2(A)'s plumbing: a `fugaro` command that mints the Google ID token for the
   coordinator's URL from the CLI's own user ADC (`internal/backend/gcp/gcp.go`), so nobody types
   `gcloud auth print-identity-token`; and the per-person Cloud Run IAM invoker member, in the
@@ -471,40 +505,46 @@ existing allow-list and changes no CSP, and the review's job is to confirm exact
   `domain:`**, which is the rule `internal/cli/init_review.go`'s `reviewScreen` already refuses in
   a plan and `internal/cli/doctor_launcher.go` reports as a problem when it finds one.
 
-**Where the service itself is built is D196.** Q10(A) says there is **one resident service per
-installation, with the coordinator as a role it plays**; the resident service is the central
-orchestrator plan's P4. D196's recommendation is that that service is the one, so this part
-admits the type, mints the token and grants the invoker, and builds **no second service**.
+**Where the service is built is D196, and it is answered.** The plan was written to D196's
+recommendation — that a sibling plan's resident service would serve as the front door, with this
+work admitting the type and minting the token only — and the owner **ruled the other way**.
+This part is therefore the rewritten one, and it is the reason the plan's own status moved from
+"approval gate open" to "approved to build": **the front door has no other author**.
 
 **Files.** `internal/infra/tf/cover.go` (`allowedTypes`), `internal/infra/tf/managed_cover.go`
 (`managedTypes`), `internal/infra/tf/managed_cost.go`, `internal/cli/init_review.go`
-(`notCovered`), `internal/cli/coordinator.go` (the ID token), `internal/backend/gcp/gcp.go`,
-`internal/initflow/stage.go` (the stage that carries the grant, if the owner's answer places it
-there), and the goldens under `internal/infra/tf/` and `internal/cli/`.
+(`notCovered`), new `deploy/terraform/gcp/modules/coordinator/` (the service, its account, its
+IAM, its scale-to-zero settings) wired into `deploy/terraform/gcp/modules/installation/`,
+`internal/cli/coordinator.go` (the ID token), `internal/backend/gcp/gcp.go`,
+`internal/initflow/stage.go` (the stage that carries the grant), and the goldens under
+`internal/infra/tf/`, `internal/cli/` and `deploy/terraform/gcp/`.
 
-**Red step.** Three tests: a plan holding a `google_cloud_run_v2_service` is **admitted** (it fails
+**Red step.** Four tests: a plan holding a `google_cloud_run_v2_service` is **admitted** (it fails
 today, because the type is refused) and a plan holding an unrelated unknown type is **still
-refused** (it passes today and must keep passing); a minted ID token carries the coordinator's
-audience, and a token minted for a second audience is **refused** by the client that checks it
-(mutate the audience and the test must fail); and the generated plan's invoker members are one
-person each, asserted from the plan rather than from the code.
+refused** (it passes today and must keep passing); the generated plan carries **the coordinator's
+own service and its own service account**, and the account is not the central orchestrator's
+(mutate the module to reuse that account and the test must fail); a minted ID token carries the
+coordinator's audience, and a token minted for a second audience is **refused** by the client that
+checks it (mutate the audience and the test must fail); and the generated plan's invoker members
+are one person each, asserted from the plan rather than from the code.
 
 **Verification.** `terraform fmt -check -recursive deploy/terraform/`; `terraform validate` in
 every module that has a golden; the golden plans **regenerated and read diff by diff**;
 `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./internal/infra/tf/... ./internal/cli/
 -run 'TestCoordinator|TestAllowedTypes|TestInitReview'`.
 
-**Depends on.** **D196**, and on the central orchestrator plan's P4 for the service itself. Either
-way the type admission is reviewable on its own.
+**Depends on.** **D196** (answered), and on **P3** for the state the service reads. **It no longer
+depends on the central orchestrator plan** — that dependency is what D196 removed. The type
+admission is reviewable on its own, and it is the one half another plan may land first.
 
 **Reviewer tier.** **SECURITY-SENSITIVE.** **Yes — this admits the first request-serving resource
-type into an allow-list that exists to make such admissions deliberate, and it is the tenant of
-the coordinator's front door.** Independent review required, and the pull request body must state:
-which types were added and which stayed refused; that the typed confirmation still fires; the
-audience the ID token is minted for and how the client checks it; and that every invoker member
-is a person.
+type into an allow-list that exists to make such admissions deliberate, and it builds the tenant
+of the coordinator's front door.** Independent review required, and the pull request body must
+state: which types were added and which stayed refused; that the typed confirmation still fires;
+that the service has its own identity and is not the central orchestrator's; the audience the ID
+token is minted for and how the client checks it; and that every invoker member is a person.
 
-**Commit.** `infra: admit the Cloud Run service type, and the coordinator's ID token`
+**Commit.** `infra: the coordinator's own service, and its ID token`
 
 ---
 
@@ -518,11 +558,13 @@ read), and **`record_override`** — the override log, which **writes and is sho
 fed back into a prompt in v1** (Q14 A). The injection rules are code here, not prose: GitHub text
 and intent signals are read as **data**, an instruction found in them is never acted on, the
 coordinator **never writes to GitHub**, and every answer is **plain text, never markup and never a
-link the user did not ask for** (finding #28). The override log's retention is **D197**.
+link the user did not ask for** (finding #28). The override log's retention is **D197**. The
+service this runs in is **this work's own**, from P7 — no other document defines its protocol, so
+the protocol and the tools are specified and built together here.
 
-**Files.** The service's handler and the route (the resident service of P7, owned by the central
-orchestrator plan's P4/P5); `internal/coordinator/` (the tools, the data-boundary convention the
-prompt-free v1 still needs for its text, the override record and its cap); the `record_override`
+**Files.** `internal/coordinator/` (the handler, the route, the tools, the data-boundary
+convention the prompt-free v1 still needs for its text, the override record and its cap); the
+service's entry point under `cmd/fugaro` and its package, beside P7's module; the `record_override`
 reader in `internal/cli/coordinator.go`; and the design text that records the departure.
 
 **Red step.** Four tests: a tool call whose input carries an instruction-shaped string behaves
@@ -538,8 +580,9 @@ screen.
 ./internal/cli/ -run 'TestCoordinator|TestTools'`; the console's suite if any of the text reaches
 it; and the Terraform checks if the route changes the service's plan.
 
-**Depends on.** P7 (the type and the credential), **the central orchestrator plan's P4 and P5**
-(the service and its protocol), and **D197**.
+**Depends on.** P7 (the service, the type and the credential) and **D197**. **It no longer depends
+on the central orchestrator plan's P4 and P5** — D196's answer is what removed that, and it is the
+whole reason this part can be built in this work.
 
 **Reviewer tier.** **SECURITY-SENSITIVE.** **Yes — this is the only place in this work that
 accepts a request from another process, and everything it reads is text somebody else wrote.**
@@ -557,18 +600,25 @@ P1 ── P2 ── P5 ───────────────────
       │
 P3 ── P4 ── P5
 P1, P3 ── P6
-P7(blocked: D196, the sibling plan's P4) ── P8(blocked: D197)
+P7(was blocked: D196, answered) ── P8(blocked: D197)
 ```
 
 - **The critical path is P1 → P3 → P4 → P5.** P1 is the view; P3 is where it is kept; P4 is who
   writes it; P5 is what keeps it true. Everything a person can see before the front door exists
   is on this path.
 - **P0 and P1 can start the day the owner says so**, and P1 is deliberately the part with no new
-  decision, no store and no credential in it at all — which is why it is worth starting first
-  whatever the owner answers about D193–D197.
+  decision, no store and no credential in it at all — which is why it is worth starting first.
+  Since 2026-10-21 that is true of P2–P6 as well: the owner's answers cleared the gate for them
+  (§11).
+- **P7 and P8 no longer wait on another plan.** D196's answer of 2026-10-21 gave the coordinator
+  **its own** service, so the chain is P7 → P8 inside this work and the critical path above is
+  the whole of it: **no part of this plan is blocked on the central orchestrator plan's P4 or
+  P5**, and the only thing the two plans share is the allow-list admission of
+  `google_cloud_run_v2_service`, which whichever part lands first makes and the other cites.
 - **Effort, in parts:** 9 parts; **5 SECURITY-SENSITIVE** (P2, P3, P5 partly, P7, P8 — §7 lists
-  each and what an independent review must cover); **2 blocked outright** (P7 on D196 and on the
-  central orchestrator plan's P4; P8 on P7 and D197); **2 that need no new decision** (P0, P1).
+  each and what an independent review must cover); **2 waiting on a review rather than on a
+  decision** (P7 and P8, on the front-door design review — §11); **2 that need no new decision**
+  (P0, P1).
 - **The first cut a user can feel is P1 + P2 + P3 + P4 + P6**: a project view, every repository's
   pull requests in it, the intent records the orchestrators write, and a console screen that draws
   it. Nothing in it can block a merge, write to GitHub, or spend a cent on a model — which is the
@@ -663,7 +713,9 @@ Each check below is **owner-run, on a real project, by the owner** unless it is 
   one, deliberately: this folder holds the register that lists every block, four other folders
   have taken a folder-local `D1`, and a second `D1` here would be a fifth meaning for one number.
   Each is written in [reconciliation.md](reconciliation.md) §6, **recommendation first**, with the
-  alternative and its cost.
+  alternative and its cost, and each carries **the owner's answer of 2026-10-21** under it —
+  four as recommended and **D196 against the recommendation**, which is what moved this work from
+  admitting a type and minting a token to **building the service itself** (P7).
 - **Check numbers: none claimed**, for the reason in §9. The part that ships a check takes the
   number free at its own merge, which is the register's rule and not this plan's.
 - **No Go code exists in this work yet.** The only Go it has added is the folder's own guard —
@@ -674,6 +726,19 @@ Each check below is **owner-run, on a real project, by the owner** unless it is 
   needed is a plan that starts with a lie of omission.
 
 ## 11. The owner approval gate
+
+**Passed 2026-10-21 for P0–P6.** The owner answered all five of §4's decisions — four as
+recommended and **D196 the other way** — and named the branch and the release, so the parts that
+needed only those answers may start. **P7 and P8 still wait**, and on a review rather than on a
+decision: the front-door design review, because D196(B) is what makes this work the author of a
+request-serving service, and that design has not been reviewed by anyone but its writer. **U2 and
+U3 remain owner checks** and are not answered by anything here: U2 is whether the GitHub App
+already holds `pull_requests: read` (which P2's credential needs), and U3 is whether an
+installation token may omit `repositories` (which is what the project-wide token D193 leaves
+aside waits on).
+
+What follows is the gate as it was written before the owner passed it, kept in place so the
+answer can be read against what it was answering.
 
 **No part of this plan starts before the owner passes this gate.** Passing it means, at minimum:
 

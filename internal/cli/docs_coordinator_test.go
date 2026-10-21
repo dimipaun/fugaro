@@ -427,20 +427,22 @@ const (
 // the document NAMES it, not that HEAD is it.
 const coordinatorBase = "1e0953b7"
 
-// coordinatorReadmeStatus is the index's status line after the plan was
-// written. It replaces the reconciliation-only status this package pinned
-// before, and it is pinned whole: the two things a reader has to take from it
-// are that a plan now EXISTS and that it is not approved, and a rewrap that
-// keeps the first and drops the second is exactly the edit this catches.
-const coordinatorReadmeStatus = "plan written; no code is implemented; approval gate open"
+// coordinatorReadmeStatus is the index's status line after the owner answered
+// D193-D197 and passed the plan's gate for the parts that need only those
+// decisions. It replaces the "plan written; approval gate open" status this
+// package pinned before, and it is pinned whole: what a reader has to take from
+// it is that the work is APPROVED TO BUILD, on which branch, and for which
+// release -- and a rewrap that keeps the branch and drops the release is exactly
+// the edit this catches.
+const coordinatorReadmeStatus = "**Status: approved to build on the branch `coordinator`, target 0.11.0; no code is implemented yet.**"
 
-// coordinatorReadmePlanNewDecisions is the index's own sentence about the
-// decisions the planning found -- written, not answered -- pinned so that the
-// README cannot describe D193-D197 as taken or answered. The reconciliation's
-// §6 says the same thing in its own words, and both are pinned for the reason
-// the answered-rather-than-approved pair is: it is the claim a later edit
-// softens first.
-const coordinatorReadmePlanNewDecisions = "**written, not answered.**"
+// coordinatorReadmeDecisionsAnswered is the index's own sentence about the
+// decisions the planning found, after the owner answered them on 2026-10-21.
+// It replaces the "written, not answered" state this package pinned while the
+// gate was open, and it is pinned for the reason that one was: the answered
+// state is the claim a later edit softens first, and a README that went back to
+// calling D193-D197 unanswered would say the gate never passed.
+const coordinatorReadmeDecisionsAnswered = "are **answered 2026-10-21**"
 
 // coordinatorReadmeDriftHeading is the index's section recording what writing
 // into the D193 block made stale elsewhere: three other works read this register
@@ -465,8 +467,11 @@ const coordinatorPlanGateColumns = "| Decision | What it blocks | The recommenda
 
 // coordinatorPlanStatus is the plan's own status line, the same statement the
 // index makes, held separately because the plan is the document a builder reads
-// first and it must not be able to say something else.
-const coordinatorPlanStatus = "**Status: plan written; no code is implemented; approval gate open.**"
+// first and it must not be able to say something else. It moved with the index
+// when the owner answered D193-D197: the plan used to say its gate was open, and
+// a plan whose parts may start while its own status still says they may not is
+// the mismatch this pair of pins exists to catch.
+const coordinatorPlanStatus = "**Status: approved to build on the branch `coordinator`, target 0.11.0; no code is implemented yet.**"
 
 // coordinatorPlanParts are the plan's parts in order, as their headings are
 // written. Contiguity and order are the assertion: the plan's whole claim is
@@ -511,14 +516,70 @@ const coordinatorAnsweredMarker = "**Answered 2026-10-19: option (A)**"
 // touching the other.
 const (
 	coordinatorReadmeAnswered = "**All sixteen questions are answered, and none is approved.**"
-	// Rewritten when the plan landed: the sentence used to say this directory
-	// held "no plan" and no decision number, and both halves stopped being true
-	// on 2026-10-21. What stays is the claim that matters and that no other test
-	// can see -- an answer is not an approval, the plan has its own gate, and no
-	// part of it starts before that gate passes.
-	coordinatorReadmeNotApproval  = "**An answer is not an approval**: nothing in this directory has been accepted or approved, the planning's own five decisions are numbered and written but **not answered** ([reconciliation.md](reconciliation.md) §6), the plan has its own gate, and no part of it starts before the owner passes that gate."
+	// Rewritten when the plan landed, and again when the owner answered D193-D197
+	// and passed the gate for P0-P6. What the sentence said before was that
+	// nothing in this directory had been accepted or approved; what it has to say
+	// now is the narrower thing that is still true and that no other test can see
+	// -- an answer picks an option and approves no work -- beside the gate that
+	// DID pass, for which parts, and the two parts it did not open.
+	coordinatorReadmeNotApproval  = "**An answer is not an approval**: an answer picks an option and approves no work."
 	coordinatorReconciledAnswered = "**The owner answered all sixteen on 2026-10-19, each by taking option (A) — the recommendation — and an answer is not an approval.**"
 )
+
+// coordinatorReadmeGatePassed is the index's sentence recording that the plan's
+// owner gate is passed, and for which parts: P0-P6, the ones that need only
+// Q1-Q16 and D193-D197. It is pinned whole because it is the claim a reader acts
+// on -- the sentence that says which parts may start -- and because the two
+// parts it does NOT open are named in the same breath, so a rewrite that widens
+// the gate over P7 and P8 fails here rather than reading as a permission.
+const coordinatorReadmeGatePassed = "the plan's owner gate is **passed for the parts that need only those decisions (P0–P6)**, on the long-lived branch **`coordinator`**, target **0.11.0**"
+
+// coordinatorDecisionAnsweredA and coordinatorDecisionAnsweredB are how the
+// reconciliation's §6 records the owner's answers of 2026-10-21, in the same
+// shape §3 uses for the sixteen questions: the option taken, in place, under the
+// decision it answers. Four took the recommendation and therefore carry the
+// first marker; **D196 was answered against it** and carries the second, which
+// says so -- a document that recorded D196 as option (A) would be describing the
+// plan's own recommendation as the owner's ruling, and the two differ about
+// which document builds the coordinator's front door.
+const (
+	coordinatorDecisionAnsweredA = "**Answered 2026-10-21: option (A)**"
+	coordinatorDecisionAnsweredB = "**Answered 2026-10-21: option (B), against the recommendation**"
+)
+
+// coordinatorReconciledDecisionsAnswered is §6's own sentence stating that the
+// owner answered all five decisions, and when. It replaces the section's
+// "None is answered." line, which was true while the gate was open and is a
+// claim the section can no longer make.
+const coordinatorReconciledDecisionsAnswered = "**The owner answered all five on 2026-10-21**"
+
+// coordinatorQ10Amended is the note the reconciliation carries under Q10's
+// recorded answer of 2026-10-19. The owner's answer is not edited -- it is the
+// owner's, given on that date, and rewriting it would erase what D196 later
+// changed -- so the amendment sits under it and says which decision changed it.
+const coordinatorQ10Amended = "**Amended 2026-10-21**"
+
+// coordinatorGateAnsweredA and coordinatorGateAnsweredB are the plan's gate
+// table recording the same answers, one row per decision. The table is where a
+// reader learns which part waits on which decision, so an answer recorded in the
+// reconciliation and missing from the table is a part that still reads as
+// blocked.
+const (
+	coordinatorGateAnsweredA = "answered 2026-10-21, option (A)"
+	coordinatorGateAnsweredB = "answered 2026-10-21, option (B), against the recommendation"
+)
+
+// coordinatorPlanGatePassed is the plan's own sentence opening the gate it used
+// to hold shut, and naming the parts that may now start. It is pinned whole for
+// the reason the index's sentence is: it is the permission a builder acts on.
+const coordinatorPlanGatePassed = "**Passed 2026-10-21 for P0–P6.**"
+
+// coordinatorPlanGateStillWaits is the plan's sentence naming what the gate did
+// NOT open, and what those two parts wait on. It is pinned beside the permission
+// because the failure mode of a gate sentence is that it widens: a reader who
+// takes "passed" without the second half starts P7 on a front door nobody has
+// reviewed.
+const coordinatorPlanGateStillWaits = "**P7 and P8 still wait**"
 
 // coordinatorSections are the spec's own section headings, in order: the pin
 // that spec.md is the document the owner wrote and not a summary of it.
@@ -549,7 +610,8 @@ func TestDocsCoordinatorIsWritten(t *testing.T) {
 	readme := readDoc(t, coordinatorReadme)
 	for _, want := range []string{
 		coordinatorReadmeStatus,
-		coordinatorReadmePlanNewDecisions,
+		coordinatorReadmeDecisionsAnswered,
+		coordinatorReadmeGatePassed,
 		"**Owner: Dimi Paun. Date: 2026-10-19.**",
 		coordinatorCheckedAgainst,
 		coordinatorBase,
@@ -723,9 +785,11 @@ func TestDocsCoordinatorNewDecisionsAreNumbered(t *testing.T) {
 			t.Errorf("%s's %s does not name where it lands: a decision the plan's parts cannot point at is a decision the gate table cannot block on", coordinatorReconciled, n)
 		}
 	}
-	// The index has to say they are written and NOT answered, in its own words.
-	if !strings.Contains(readDoc(t, coordinatorReadme), coordinatorReadmePlanNewDecisions) {
-		t.Errorf("%s does not state that the planning's decisions are written and not answered: it lacks %q", coordinatorReadme, coordinatorReadmePlanNewDecisions)
+	// The index has to say they are ANSWERED, in its own words, and dated: the
+	// state this replaced was "written, not answered", which is what the folder
+	// said while the gate was open.
+	if !strings.Contains(readDoc(t, coordinatorReadme), coordinatorReadmeDecisionsAnswered) {
+		t.Errorf("%s does not state that the planning's decisions are answered: it lacks %q", coordinatorReadme, coordinatorReadmeDecisionsAnswered)
 	}
 	// And the claim the old test protected, kept: an answer allocates nothing.
 	if !strings.Contains(reconciled, "**an answer picks an option; it allocates nothing.**") {
@@ -760,6 +824,112 @@ func TestDocsCoordinatorNewDecisionsAreNumbered(t *testing.T) {
 	// take, and it would say a number had been answered as well as written.
 	if m := coordinatorAllocationRowRE.FindString(readDoc(t, coordinatorReadme)); m != "" {
 		t.Errorf("%s allocates a decision number row by row: %q. This folder reports the block as a range; the five decisions are §6 headings", coordinatorReadme, strings.TrimSpace(m))
+	}
+}
+
+// TestDocsCoordinatorDecisionsAreAnswered: the five decisions planning found are
+// ANSWERED, and the one answered against the recommendation is pinned as such.
+//
+// This is the test the folder needs now that the gate has moved, and it is the
+// mirror of the one above. That test holds the decisions to being numbered and
+// written recommendation-first, which is what "the plan is written to the
+// recommendation" means; this one holds them to being ANSWERED, which is what
+// "the owner passed the gate" means. Both are needed, because the two states
+// look identical in a table: a decision with a recommendation and no answer is a
+// plan nobody may start, and a plan whose parts may start while its decisions
+// still read as open is the mismatch.
+//
+// D196 is the one that matters. It was answered **against** the recommendation,
+// so a document that recorded it as option (A) would describe the plan's own
+// recommendation as the owner's ruling -- and the two differ about which
+// document builds the coordinator's front door, which is the one decision that
+// allocates work between two plans.
+func TestDocsCoordinatorDecisionsAreAnswered(t *testing.T) {
+	reconciled := readDoc(t, coordinatorReconciled)
+	at := 0
+	for _, n := range coordinatorPlanDecisions {
+		head := "### " + n + " — "
+		i := strings.Index(reconciled[at:], head)
+		if i < 0 {
+			t.Fatalf("%s lost the %s heading after the loop above found it", coordinatorReconciled, head)
+		}
+		start := at + i
+		at = start + len(head)
+		next := strings.Index(reconciled[at:], "\n### ")
+		end := len(reconciled)
+		if next >= 0 {
+			end = at + next
+		}
+		body := reconciled[start:end]
+		want := coordinatorDecisionAnsweredA
+		if n == "D196" {
+			want = coordinatorDecisionAnsweredB
+		}
+		if !strings.Contains(body, want) {
+			t.Errorf("%s's %s does not record the owner's answer of 2026-10-21 (%q): a decision the owner has ruled on and the document still reads as open is the state this round ended",
+				coordinatorReconciled, n, want)
+		}
+	}
+	// The section says so in its own words, and the sentence it used to carry --
+	// that none of the five is answered -- is gone. That sentence was the claim
+	// that kept every part behind the gate, so leaving it standing would have the
+	// reconciliation deny an approval the plan records.
+	if !strings.Contains(reconciled, coordinatorReconciledDecisionsAnswered) {
+		t.Errorf("%s does not state that the owner answered all five decisions: it lacks %q", coordinatorReconciled, coordinatorReconciledDecisionsAnswered)
+	}
+	if strings.Contains(reconciled, "**None is answered.**") {
+		t.Errorf("%s still says none of the five decisions is answered: the owner answered them on 2026-10-21, and the plan's parts P0–P6 are written to those answers", coordinatorReconciled)
+	}
+	// Q10's answer is the owner's, given on 2026-10-19, and it is left as it was
+	// given: D196 changed what the plan does, not what the owner answered. The
+	// amendment is what says so, and it is the only thing that does.
+	if !strings.Contains(reconciled, coordinatorQ10Amended) {
+		t.Errorf("%s carries no %q note under Q10: D196 was answered against Q10(A)'s one-resident-service reading, and the owner's answer of 2026-10-19 is amended under it rather than rewritten", coordinatorReconciled, coordinatorQ10Amended)
+	}
+
+	plan := readDoc(t, coordinatorPlan)
+	// The gate table records the same answers, one row per decision, read from
+	// the gate section rather than the document: the table is where a reader
+	// learns which part waits on what, and an answer recorded in the
+	// reconciliation and missing from the table leaves the part reading as
+	// blocked.
+	gate := ""
+	if loc := coordinatorPlanGateHeadingRE.FindStringIndex(plan); loc != nil {
+		rest := plan[loc[1]:]
+		if next := strings.Index(rest, "\n## "); next >= 0 {
+			gate = rest[:next]
+		} else {
+			gate = rest
+		}
+	}
+	if gate == "" {
+		t.Fatalf("%s' gate section is empty or unfindable, so its rows cannot be read", coordinatorPlan)
+	}
+	for _, n := range coordinatorPlanDecisions {
+		want := coordinatorGateAnsweredA
+		if n == "D196" {
+			want = coordinatorGateAnsweredB
+		}
+		row := -1
+		for _, line := range strings.Split(gate, "\n") {
+			if strings.Contains(line, "**"+n+"**") {
+				row = strings.Index(line, want)
+				break
+			}
+		}
+		if row < 0 {
+			t.Errorf("%s' gate table's %s row does not record the owner's answer (%q): the table is the list of what each part waits on, and a row whose decision is answered but whose answer is not written there leaves the part looking blocked",
+				coordinatorPlan, n, want)
+		}
+	}
+	// And the gate itself, in the plan's own words: passed, for which parts, and
+	// what it did not open. Both halves are pinned, because the failure mode of a
+	// gate sentence is that it widens -- P7 and P8 wait on a front-door design
+	// review and on two owner checks, and neither is done.
+	for _, want := range []string{coordinatorPlanGatePassed, coordinatorPlanGateStillWaits} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s does not carry %q: the gate's state, the parts it opened and the parts it did not are the permission a builder acts on", coordinatorPlan, want)
+		}
 	}
 }
 
@@ -2184,6 +2354,30 @@ var coordinatorPlanNewPaths = map[string]string{
 	"internal/cli/coordinator.go": "P1's new read command; P0's plan is what names it before it exists",
 }
 
+// coordinatorPlanRolePhraseRE is the reading D196 replaced, and it is matched as
+// a phrase rather than pinned as a line because the plan carried it in four
+// places -- its §1, its §3, its gate table's Q1–Q16 row and its P7 -- and a
+// rewrite that fixes three of them leaves the fourth saying the coordinator is a
+// role the central orchestrator's service plays. What it matches is the
+// ASSERTION, not the words: the plan still describes the sibling plan's own
+// per-installation service, which is a fact about that plan and stays true, and
+// its §1 records the reading D196 replaced as history, which is what makes the
+// change readable. What may not survive is a sentence of this plan's own saying
+// the front door belongs to somebody else's service, or that this work builds
+// none.
+var coordinatorPlanRolePhraseRE = regexp.MustCompile(`as a role it plays|as a role \(Q10\)|builds no second service|builds no second one|must not build a second|the central orchestrator plan builds is the one`)
+
+// coordinatorPlanOwnService is the plan's sentence stating whose service the
+// coordinator's front door is, after D196 was answered (B).
+const coordinatorPlanOwnService = "**its own resident service**"
+
+// coordinatorPlanSharedAdmission is the plan's sentence recording that the
+// allow-list admission of the Cloud Run service type is shared with the central
+// orchestrator plan's P1, and that whichever part lands first admits it while
+// the other cites it. The two plans cannot both add the type, and the second one
+// to land must not re-add it.
+const coordinatorPlanSharedAdmission = "**whichever part lands first admits it and the other cites it**"
+
 // TestDocsCoordinatorPlanIsWritten: the plan exists, says what state the work is
 // in, and is an ORDER rather than a list.
 //
@@ -2259,6 +2453,20 @@ func TestDocsCoordinatorPlanIsWritten(t *testing.T) {
 	}
 	if !strings.Contains(plan, "**new**") {
 		t.Errorf("%s never marks a path as **new**: the paths that do not exist yet have to be distinguishable from the ones that do", coordinatorPlan)
+	}
+	// D196 was answered (B), so the plan builds the coordinator's OWN resident
+	// service, and no sentence of it may still say the coordinator is a role the
+	// central orchestrator's service plays. That reading is what the plan was
+	// written to before 2026-10-21, it is the reading every part after P6 was
+	// written against, and a plan carrying both is a plan whose P7 builds nothing
+	// while its prose says somebody else does.
+	if m := coordinatorPlanRolePhraseRE.FindAllString(plan, -1); len(m) > 0 {
+		t.Errorf("%s still writes %v: D196 was answered (B) on 2026-10-21, so the coordinator gets its own resident service and no part of this plan may describe it as a role another service plays", coordinatorPlan, m)
+	}
+	for _, want := range []string{coordinatorPlanOwnService, coordinatorPlanSharedAdmission} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s does not carry %q: the plan has to say whose service the front door is, and that the allow-list admission is shared with the central orchestrator plan's own part", coordinatorPlan, want)
+		}
 	}
 	// The plan cites by path and symbol, never by line number -- the brief it
 	// was written under, and the reason its citations do not rot the way the

@@ -13,7 +13,7 @@ questions the owner had to answer, and the owner's answers to them, then what co
 verified.
 
 **Nothing here is implemented, and nothing here is approved.** No Go, no TypeScript, no
-Terraform, no rules change, no live action follows from this document. The findings that needed the owner were numbered **Q1–Q16**, and **the owner answered all sixteen on 2026-10-19** (§3), each by taking option (A), the recommended one — **an answer picks an option; it allocates nothing.** Planning the work afterwards found five things the answers do not settle, and those are decisions rather than questions, so they are numbered **D193–D197** and written in **§6**, each **recommendation first**. They are taken from the **D193 onward** block the owner's register records as free ([README.md](README.md)); **none is answered, and the plan that follows is written to the recommendation it names** ([implementation-plan.md](implementation-plan.md)).
+Terraform, no rules change, no live action follows from this document. The findings that needed the owner were numbered **Q1–Q16**, and **the owner answered all sixteen on 2026-10-19** (§3), each by taking option (A), the recommended one — **an answer picks an option; it allocates nothing.** Planning the work afterwards found five things the answers do not settle, and those are decisions rather than questions, so they are numbered **D193–D197** and written in **§6**, each **recommendation first**. They are taken from the **D193 onward** block the owner's register records as free ([README.md](README.md)); **the owner answered all five on 2026-10-21** — four as recommended, **D196 against it** — and the plan that follows is written to those answers ([implementation-plan.md](implementation-plan.md)).
 
 ---
 
@@ -614,8 +614,11 @@ not lost:
   `pull_requests: read`; whether the App has actually been granted that on GitHub is
   configured in GitHub's UI and could not be read from this container (§4, U2). The answer is
   contingent on it.
-- **U6 and U7 are still drafts**, not merged: Q10's answer (A) is one resident service per
+- **U6 and U7 are still drafts**, not merged: Q10's answer (A) was one resident service per
   installation, and the sibling design in PR #632 is where that service is specified (§4).
+  **D196's answer of 2026-10-21 leaves U6 and U7 exactly where they were**: the coordinator is
+  not tied to that design, so what PR #632 finally rules no longer decides this work's front
+  door — the amendment under Q10 records what changed and what did not.
 - **The findings in §2 are unchanged.** An answer decides the question it belongs to; it does
   not re-classify a finding, and none of the "Wrong" findings becomes "Exists" because the
   owner chose an option. §0, §1, §4 and §5 are likewise untouched.
@@ -709,6 +712,13 @@ not lost:
 *Consequence:* (A) is the option that does not decide D115 by accident, and it is the reason this question exists at all.
 
 **Answered 2026-10-19: option (A)** — one resident service per installation, with the coordinator as a role it plays, which means **Q4 (A)** for v1 and the model credential arriving only when the credentials service does.
+
+**Amended 2026-10-21** — the owner answered **D196** (§6) **option (B)**, against that decision's
+recommendation and against this answer's reading: the coordinator is **not** tied to the central
+orchestrator, because *"there can be multiple central orchestrators in the near future"*, so it
+gets its own resident service and the plan builds it. The answer above is the owner's, given on
+2026-10-19, and it is **left as it was given** — this note is what records what the later decision
+changed, and the plan's P7 and P8 are rewritten to it rather than to the answer above.
 
 ### Q11 — How is the coordinator's spend capped, and charged to the project?
 **Changes spec §9.**
@@ -818,7 +828,13 @@ commits, and one of them offers "move this work to D193–D218" as a live altern
 overlaps **D193–D197**. Those documents are deliberately not edited from here.
 
 **Each is written recommendation first.** The plan is written to the recommendation; a part whose
-decision is answered the other way is rewritten before it starts, not after. **None is answered.**
+decision is answered the other way is rewritten before it starts, not after.
+**The owner answered all five on 2026-10-21** — four by taking the recommendation, and **D196
+against it** — and each answer is recorded under its decision below, with what it means for the
+plan. The wording of every recommendation, alternative and "Where it lands" line is this
+document's, written before the answer, and is left as it was so that the answer can be read
+against what it was choosing between.
+
 Every path and symbol named below was read at `1e0953b7`; none is a line number.
 
 ### D193 — How far does one coordinator's GitHub credential reach?
@@ -840,6 +856,12 @@ repositories" to "everything the App is installed on", which the answer does not
 
 **Where it lands.** The plan's **P2**, and the credential Q3(A) chose. **U2 stays open either
 way**: the App must already be granted `pull_requests: read`, and only the owner can read that.
+
+**Answered 2026-10-21: option (A)** — one read-only installation token per repository, minted
+through `MintInstallationToken` and cached per repository for the token's life, with the
+project-wide token waiting until **U3** is settled. *Why:* it is the smallest step of the two
+that are buildable — the tree mints this token today and mints nothing else — and a leak is
+worthless for every repository but one.
 
 ### D194 — Who is the database's writer?
 
@@ -864,6 +886,13 @@ a security-sensitive file than the read grant the answer asked for, and one whos
 **Where it lands.** The plan's **P3** and **P5**. **U5** — whether the rules can express the read
 grant — is answered by P3, by writing it.
 
+**Answered 2026-10-21: option (A)** — the aggregation job's own service account holds
+`roles/firebasedatabase.admin` beside the history account's, the rules change is the **read**
+grant only, and the comment that records the history account as the only account holding such a
+role is **amended with the part**. *Why:* it is the house precedent rather than an invention —
+the history job holds exactly this role, with its blast radius written beside it — and it keeps
+the rules change a read.
+
 ### D195 — Where does the coordinator's state live?
 
 **Recommendation — (A): a new top-level `coordinator/` subtree, `coordinator/project/` and
@@ -880,6 +909,12 @@ are authorized on, and every future widening of `config/` would silently reach t
 state as well.
 
 **Where it lands.** The plan's **P3**, **P4** and **P5**.
+
+**Answered 2026-10-21: option (A)** — a new top-level `coordinator/` subtree, `coordinator/project/`
+and `coordinator/repos/<slug>/`, every document keyed by a deterministic ID and written with
+`GetETag` + `PutIfMatch`. *Why:* it is a separate tree from `config/`, which is the policy every
+run reads, so a bug in the coordinator cannot move a policy node — and the read grant becomes one
+prefix rather than a list.
 
 ### D196 — Which service is the coordinator's front door?
 
@@ -899,6 +934,15 @@ in this folder while the one next door decides when it is deployed.
 **Where it lands.** The plan's **P7** and **P8**. **It is the one decision that allocates work
 between two documents**, and shipping either plan without it decides the other's question.
 
+**Answered 2026-10-21: option (B), against the recommendation** — the coordinator is **not** tied
+to the central orchestrator, because *"there can be multiple central orchestrators in the near
+future"*: it gets **its own resident service**, built in this work, with its own identity, its own
+scale-to-zero configuration and its own ID-token front door. **P7 and P8 no longer wait on the
+central orchestrator plan's P4 and P5**, and the allow-list admission of
+`google_cloud_run_v2_service` is shared with that plan's **P1** — **whichever part lands first
+admits it and the other cites it**. *Why:* the owner ruled the two services independent, and a
+front door that waits on an unapproved sibling plan is a front door that may never be built.
+
 ### D197 — How much of the override log is kept?
 
 **Recommendation — (A): the last 200 per project, newest first, with no expiry in v1.** The log
@@ -915,3 +959,8 @@ project's own database, with no reader that can use all of it.
 entries. The cost is that it is the only option that needs the sweep to delete, in v1.
 
 **Where it lands.** The plan's **P8**, and the read the console and the CLI show.
+
+**Answered 2026-10-21: option (A)** — the last **200** overrides per project, newest first, with
+**no expiry in v1**. *Why:* the log is the one node whose content is written by whoever can call
+the front door, so its size is the size of the text an attacker can make the coordinator store —
+and 200 is a cap in one place, with no deletion path to go wrong.
