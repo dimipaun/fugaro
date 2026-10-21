@@ -680,11 +680,11 @@ the row above counts the pins and not the folders they sit beside.
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 8 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
-| Top-level `fugaro.yaml` keys | 9 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
+| Top-level `fugaro.yaml` keys | 10 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 68 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 70 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
-| Blocks the project layer's `defaults:` may set | 2 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
+| Blocks the project layer's `defaults:` may set | 3 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 4 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
@@ -718,8 +718,9 @@ is the entire surface a scoring change touches inside the runner, which is why D
 is as small as it is.
 
 The four layering rows the 2026-10-20 amendment added are these: **4** layers a
-key may be set in (F37), **2** blocks the project layer's closed `defaults:` may
-set (F36), **4** fields of `task.Spec.Overrides` and **0** fields of `task.Spec`
+key may be set in (F37), **3** blocks the project layer's closed `defaults:` may
+set (F36 — two at this folder's tree, the third Slice 1's `defaults.rigor`),
+**4** fields of `task.Spec.Overrides` and **0** fields of `task.Spec`
 or `recipe.Step` whose name is a path (F38). The last row counts *declared
 fields*, which is why its command matches a field name at the start of a line
 rather than any mention: the `Spec` struct's prose mentions a path, and a count of
@@ -735,7 +736,12 @@ and names the fourth list whose lower-case heading keeps it out of the figure);
 and **0** item files exist under `docs/backlog/`, which is this
 amendment's own claim about itself: it changes documents and nothing else. A later
 slice that writes its own pin moves the pin-count row above in the same commit
-(the plan's T4.3 is the first that will).
+(the plan's T4.3 is the first that will). A slice that adds a top-level key, a
+scope row or a member of the project layer's `defaults:` moves the row that
+counts it in the same commit for the same reason: the figure and the command
+beside it are read together, and the command reads the tree the slice leaves
+behind — Slice 1 moved all three (10 keys, 70 scope rows, 3 `defaults:` blocks),
+which is the five-edit shape F7 and F36 price, measured.
 
 The **51** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and
