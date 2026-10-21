@@ -1148,7 +1148,9 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
     // The list under the picture: a fact dropped from it, and one reordered.
     [
       'a fact dropped from the list',
-      page.replace(/<li class="run-fact"[^>]*><strong class="run-fact-name"[^>]*>Pull request<\/strong>[\s\S]*?<\/li>/, ''),
+      // The card's own markup: the item, its number and its name — the number the bold
+      // redesign draws inside every card, read past rather than spelled out here.
+      page.replace(/<li class="run-fact"[^>]*>[\s\S]*?<strong class="run-fact-name"[^>]*>Pull request<\/strong>[\s\S]*?<\/li>/, ''),
       /the list under the picture reads/,
     ],
     // A second drawing that says something else: the phone is told a different run.
