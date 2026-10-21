@@ -1166,10 +1166,11 @@ const FREE_TEXT_RULES: readonly OneRule[] = Object.freeze([
 /**
  * isPathShapedSecret is a high-entropy run the path rule would otherwise split:
  * it is not rooted -- a rooted run is a path, redacted whole by the path rule,
- * which is `isRootedRun`'s question and not `isPathRun`'s, because this rule
- * runs *before* the path rule and asking the net's question here would take a
- * blob inside a path away from it -- and holds two or more slashes, so the path
- * rule's unrooted alternative would take `/a/b` and leave the run's first
+ * which is `isRootedRun`'s question and **not** `isPathRun`'s: this rule runs
+ * *before* the path rule, and asking the net's question here would redact a blob
+ * inside a path as `[redacted-token]` rather than leaving the whole run to be
+ * drawn as the path it is (`<path>`) -- and holds two or more slashes, so the
+ * path rule's unrooted alternative would take `/a/b` and leave the run's first
  * fragment on screen (review round 2 of PR 494). One slash is a repository path
  * and is the repository rule's. The recorder runs the same rule at the same
  * place.

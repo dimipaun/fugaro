@@ -90,8 +90,8 @@ export type RunTheme = (typeof RUN_THEMES)[number]
  * number: the design's gap 7, in the design's own words -- section 5.1 rule 2's
  * sentence, verbatim. It was written here as a two-clause explanation of the
  * same thing (what a rebuilt link would name, and which providers there are),
- * and the owner read it as the long explanatory sentence under the panel
- * (2026-10-21); the design already had the one line.
+ * and the owner's report of 2026-10-21 named it "the long explanatory sentence
+ * under it"; the design already had the one line.
  */
 export const PR_NO_LINK_REASON =
   'this CLI does not say which provider this run’s repository is on, so the console will not build a link from it'
