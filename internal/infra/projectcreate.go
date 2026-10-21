@@ -408,7 +408,7 @@ func CreateProject(ctx context.Context, pc *ProjectClients, s CreateSpec) error 
 	for i := 0; !op.Done; i++ {
 		if i >= Wait.Tries {
 			return &ProjectError{Kind: ProjectOther, Err: fmt.Errorf("creating project %s: the operation %s is not done yet", s.ID, op.Name),
-				Fix: "rerun fugaro init --create-project to continue once it is: it adopts the project when it exists"}
+				Fix: "rerun fugaro setup to continue once it is: it adopts the project when it exists"}
 		}
 		if err := sleep(ctx); err != nil {
 			return err
@@ -458,7 +458,7 @@ func WaitReadable(ctx context.Context, pc *ProjectClients, id string) error {
 			return classify(err, "reading project "+id)
 		case i >= Wait.Tries:
 			return &ProjectError{Kind: ProjectOther, Err: fmt.Errorf("project %s was created but cannot be read yet: %w", id, err),
-				Fix: "rerun fugaro init --create-project in a few minutes: it adopts the project once it can be read"}
+				Fix: "rerun fugaro setup in a few minutes: it adopts the project once it can be read"}
 		}
 		if err := sleep(ctx); err != nil {
 			return err
@@ -478,7 +478,7 @@ func AddFirebase(ctx context.Context, pc *ProjectClients, id string) error {
 	for i := 0; !op.Done; i++ {
 		if i >= Wait.Tries {
 			return &ProjectError{Kind: ProjectOther, Err: fmt.Errorf("adding Firebase to project %s: the operation %s is not done yet", id, op.Name),
-				Fix: "rerun fugaro init --create-project to continue once it is"}
+				Fix: "rerun fugaro setup to continue once it is"}
 		}
 		if err := sleep(ctx); err != nil {
 			return err

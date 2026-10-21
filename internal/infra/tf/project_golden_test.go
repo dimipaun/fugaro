@@ -614,7 +614,7 @@ func TestProjectJobTokenGrantsAreTheWidenedTokensRead(t *testing.T) {
 	p := goldenPlan(t, "installation")
 	want := gcp.ProjectTokenBucketCondition(f.RunsBucket)
 	for name, j := range f.ProjectJobs {
-		// The fixture is what fugaro init writes (internal/infra.ProjectJobs):
+		// The fixture is what fugaro update writes (internal/infra.ProjectJobs):
 		// the same widening the module's grant carries, from the Go side.
 		if j.TokenCondition.Expression != want {
 			t.Errorf("the fixture's job %s carries %q, want the widened %q", name, j.TokenCondition.Expression, want)

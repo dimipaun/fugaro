@@ -397,7 +397,7 @@ func TestInitInCheckoutWithoutConfig(t *testing.T) {
 	}
 	// Every other command is refused there: it has no config to act on.
 	_, _, err = execute(t, "runs", "ls")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro init --config-only --gcp-project <id>") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro setup --config-only --gcp-project <id>") {
 		t.Fatalf("ls: exit %d, err %v", ExitCode(err), err)
 	}
 }

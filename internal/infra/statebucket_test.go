@@ -141,7 +141,7 @@ func TestRepoStates(t *testing.T) {
 	f := newCloud(t)
 	f.gcs.AddBucket(testStateBucket, testProjectNumber, tfstate)
 	b := f.gcs.Bucket(t, testStateBucket)
-	// A stale lock is not state: init --repo --forget leaves it, so it
+	// A stale lock is not state: fugaro update --repo --forget leaves it, so it
 	// must not block the installation's rollback.
 	for _, k := range []string{"fugaro/installation/default.tfstate", "fugaro/repos/bitbucket-acme-sandbox/default.tfstate",
 		"fugaro/repos/bitbucket-acme-other/default.tflock"} {

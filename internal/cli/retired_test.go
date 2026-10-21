@@ -42,8 +42,8 @@ func TestInitIsRetiredAndSaysBothNames(t *testing.T) {
 				t.Errorf("%v exits %d, want %d (a user error)", args, got, ExitUserError)
 			}
 			got := out + errOut + ErrorText(err)
-			if !strings.Contains(got, retirementSentence) {
-				t.Fatalf("%v does not say %q:\n%s", args, retirementSentence, got)
+			if !strings.Contains(got, retiredInitMessage) {
+				t.Fatalf("%v does not say %q:\n%s", args, retiredInitMessage, got)
 			}
 			for _, name := range []string{"fugaro setup", "fugaro update"} {
 				if !strings.Contains(got, name) {
@@ -78,8 +78,8 @@ func TestRetiredInitRefusalIsPlainText(t *testing.T) {
 	if got := ExitCode(err); got != ExitUserError {
 		t.Errorf("`fugaro init --json` exits %d, want %d (a user error)", got, ExitUserError)
 	}
-	if got := errOut + ErrorText(err); !strings.Contains(got, retirementSentence) {
-		t.Errorf("`fugaro init --json` does not say %q:\n%s", retirementSentence, got)
+	if got := errOut + ErrorText(err); !strings.Contains(got, retiredInitMessage) {
+		t.Errorf("`fugaro init --json` does not say %q:\n%s", retiredInitMessage, got)
 	}
 	if got := strings.TrimSpace(out); got != "" {
 		t.Errorf("`fugaro init --json` wrote %q to stdout, want nothing: the tombstone prints no Result", got)
@@ -127,7 +127,7 @@ func TestRetiredInitAppliesNothing(t *testing.T) {
 	if got := ExitCode(err); got != ExitUserError {
 		t.Errorf("exit %d, want %d", got, ExitUserError)
 	}
-	if !strings.Contains(out+errOut+ErrorText(err), retirementSentence) {
+	if !strings.Contains(out+errOut+ErrorText(err), retiredInitMessage) {
 		t.Errorf("the tombstone said something else:\n%s%s%s", out, errOut, ErrorText(err))
 	}
 	if calls := r.calls(t); len(calls) != 0 {
@@ -146,7 +146,7 @@ func TestRetiredInitAppliesNothing(t *testing.T) {
 	// with the load error instead of the tombstone's sentence.
 	t.Setenv("FUGARO_CONFIG", filepath.Join(t.TempDir(), "absent.yaml"))
 	_, _, err = executeStdin(t, "", "init", "--yes")
-	if err == nil || !strings.Contains(ErrorText(err), retirementSentence) {
+	if err == nil || !strings.Contains(ErrorText(err), retiredInitMessage) {
 		t.Errorf("with no config: %v", err)
 	}
 }
@@ -178,7 +178,7 @@ func TestRetiredInitConvergesNothing(t *testing.T) {
 	if got := ExitCode(err); got != ExitUserError {
 		t.Errorf("exit %d, want %d", got, ExitUserError)
 	}
-	if !strings.Contains(out+errOut+ErrorText(err), retirementSentence) {
+	if !strings.Contains(out+errOut+ErrorText(err), retiredInitMessage) {
 		t.Errorf("the tombstone said something else:\n%s%s%s", out, errOut, ErrorText(err))
 	}
 	if calls := r.calls(t); len(calls) != 0 {

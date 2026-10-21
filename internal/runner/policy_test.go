@@ -23,7 +23,7 @@ func setMain(t *testing.T, h *harness, yaml string) {
 	})
 }
 
-// ceilingOf builds the job-environment ceiling the way init --repo writes it.
+// ceilingOf builds the job-environment ceiling the way fugaro update writes it.
 func ceilingOf(t *testing.T, kv ...string) runner.Spend {
 	t.Helper()
 	m := map[string]string{}

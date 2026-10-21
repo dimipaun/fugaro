@@ -267,7 +267,7 @@ func jobWorkflow(workflow, token string) (variant string, ok bool) {
 // to deploy rules that are already deployed.
 func cannotPlaceJob(job string, p *projectpolicy.Policy, found bool, slug, workflow, variant string) error {
 	detail := "This project has published no policy, so it defines no project job at all"
-	fix := "The fix is `fugaro doctor`, then `fugaro init --firebase` with the current Fugaro"
+	fix := "The fix is `fugaro doctor`, then `fugaro update --firebase` with the current Fugaro"
 	if found {
 		if names := p.ProfileNames(); len(names) > 0 {
 			detail = fmt.Sprintf("This project's published policy defines the job profiles %s, and a project job is one whose name is gcp.ProjectJobName of one of their (profile, provider, account) triples", strings.Join(names, ", "))

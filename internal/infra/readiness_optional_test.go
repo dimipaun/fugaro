@@ -71,7 +71,7 @@ func TestReadinessOptionalAnthropicKey(t *testing.T) {
 	if note == "" {
 		t.Fatalf("no note about the absent key: %v", missing)
 	}
-	for _, want := range []string{"deploys without it", "fugaro secrets set anthropic-api-key", "fugaro init --repo"} {
+	for _, want := range []string{"deploys without it", "fugaro secrets set anthropic-api-key", "fugaro update"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("the note does not say %q: %s", want, note)
 		}

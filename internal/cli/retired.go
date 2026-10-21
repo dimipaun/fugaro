@@ -18,18 +18,20 @@ import (
 // constructs no client — and it is hidden, because it is not a command this
 // CLI offers any more.
 
-// retirementSentence is the one sentence the retired `fugaro init` says, whatever
-// came after it on the command line. It is a constant because the tombstone
-// and its test both quote it, and because the plan's census (W0.2) exempts
-// the files that name the command only to retire it.
+// retiredInitMessage is the one sentence the retired `fugaro init` says,
+// whatever came after it on the command line. It is a constant because the
+// tombstone and its test both quote it, and because the plan's census (W0.2)
+// exempts the files that name the command only to retire it.
 //
-// It is called a *sentence* and not `retirementText` because that name is
-// already taken, one package over: docs_live_init_census_test.go declares
-// `retirementText` as W0.2's second exemption class, the list of paths that
-// may name the retired command. Two declarations of one identifier do not
-// compile, and the census's name is the one the plan writes down (W0.2, W2.6,
-// and the file-lane table), so this one yields to it.
-const retirementSentence = "`fugaro init` is now `fugaro setup` (first run) and `fugaro update` (after a CLI upgrade)"
+// It is not named `retirementText`, although that is the phrase this file's
+// own comment uses for it: `retirementText` is the census's
+// (internal/cli/docs_live_init_census_test.go, W0.2), where it is the list of
+// the paths that may name the retired command -- four of them, this file and
+// its test among them. Two package-level declarations of one name do not
+// compile, so the tombstone's sentence and the census's list cannot share it,
+// and the census keeps it because the plan names the exemption class, not this
+// string.
+const retiredInitMessage = "`fugaro init` is now `fugaro setup` (first run) and `fugaro update` (after a CLI upgrade)"
 
 // newRetiredInitCmd is the hidden `init`: one message, two names, exit 1.
 //
@@ -55,12 +57,12 @@ func newRetiredInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "init",
 		Short:              "Retired: fugaro setup on a first run, fugaro update after a CLI upgrade",
-		Long:               retirementSentence + ".\n\nIt applies nothing: it names the two commands that replaced it and exits 1.",
+		Long:               retiredInitMessage + ".\n\nIt applies nothing: it names the two commands that replaced it and exits 1.",
 		Hidden:             true,
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return userErr("%s", retirementSentence)
+			return userErr("%s", retiredInitMessage)
 		},
 	}
 }
