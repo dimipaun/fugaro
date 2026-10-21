@@ -1,8 +1,12 @@
 # Central orchestrators — the implementation plan
 
-**Status: plan only; no part but P0 is approved and no feature code is implemented.** P0 — the
-guard test that pins this folder and its citations, `internal/cli/docs_central_orchestrator_test.go`
-— has landed; **P1–P9 implement nothing.** This plan follows from
+**Status: plan only; no part but P0 is approved, and the only feature code in the tree is P3's
+lease.** P0 — the guard test that pins this folder and its citations,
+`internal/cli/docs_central_orchestrator_test.go` — has landed, and **P3 has landed since**
+(`internal/lease`, the rules' `orchestrators` family and `RulesVersion` 4, landed by #782; the
+model the rules implement is written out at the end of P3 below, because the pull request that
+landed it describes the model as it stood before its review); **P1, P2 and P4–P9 implement
+nothing.** This plan follows from
 [reconciliation.md](reconciliation.md), which wins wherever it disagrees with
 [spec.md](spec.md). Every part below is **independently mergeable**: it lands, it is verified,
 and the repository works with it and without the parts after it. Every part cites **paths and
@@ -218,6 +222,97 @@ required; the body must state the CAS, what happens on a lost race, and what the
 next action gets.
 
 **Commit.** `lease: one job, one shepherd, in the Realtime Database`
+
+#### P3 as built — the deployed rules model of the lease
+
+**P3 has landed** (`internal/lease`, the template family and `RulesVersion` 4 are
+in the tree), and the model the rules actually implement is written out here
+because the pull request that landed it describes the model as it stood
+*before* its own review fixed it, and nothing in the tree superseded that text.
+What that description says and this one does not: a `LEASETAKE` macro taking
+over a seat whose `renewed_at` is merely not ahead of `now`, a `LEASEKEEP` and a
+`LEASERELEASE`, and the whole transition sitting in the **`generation` field's
+`.validate`**. That is not the deployed document — the review of P3 found it
+writable field by field (a write to `lease/holder_uid` never reaches a sibling's
+`.validate`, so any paired device could sit in the seat at the same generation)
+— and the two shapes are told apart by the second bullet below, which is the one
+thing about this family a reader has to have right. The model of record:
+
+- **The family and the grant.** `orchestrators/$slug/$job/lease`, granted to
+  `USER` — the device allowlist (`config/admin/devices/<uid>`, D6) and nothing
+  else: a run token, a pairing session and a consumer reach it not at all. Both
+  keys are bounded by `MaxKeyLength` and `$other` is refused at every level, so
+  the record is exactly the fields `internal/lease`'s `wire` writes (plus the
+  optional `mode` and `pr`).
+- **The transition is the lease node's `.write`, never a child's `.validate`.**
+  `leaseWrite` renders one predicate — four alternatives and nothing else — at
+  the node, because the engine reads a `.write` for the location written **and
+  every ancestor**, with `data`/`newData` at that ancestor, so this one rule
+  sees every write to any part of the record as the whole record it makes. A
+  `.validate` is read at the location written, its ancestors **and its
+  children** — not at a sibling — which is exactly why the transition cannot
+  live on `generation`: a write to `holder_uid` never reaches it. A child
+  `.write: false` would not help either (a grant cascades down and cannot be
+  withdrawn by a deeper node, measured).
+- **The four transitions**, each reading `data`, `newData` and `auth.uid`:
+  **create** on an absent node at generation 1 by the writer itself; **renew**
+  by the recorded holder at the same generation (the heartbeat — the token does
+  not move for a holder, which is what makes a stale process's write refusable);
+  **takeover** of a free or stale seat at `generation + 1` by the writer, stale
+  meaning `now - renewed_at >= LeaseGraceMs` on the database's own `now`;
+  **release** by the recorded holder, moving the generation on and emptying the
+  holder.
+- **Every write that leaves a *held* seat carries a stamp the database made.**
+  `renewed_at` goes out as `rtdb.ServerTimestamp`, the field's `.validate` is
+  `TIMESTAMP && NEW == now`, and the create and takeover branches require
+  `newData.renewed_at == now` **beside** that clause. The second copy is the
+  fix the review's leftovers added: a `.validate` never reaches a sibling, so a
+  takeover sent as an atomic multi-path update touching `holder`, `holder_uid`
+  and `generation` alone walked past the field's clause and left the *previous*
+  holder's stamp on the record — a seat stale the instant it was taken (measured
+  on the emulator). A renewal that writes only the `mode` deliberately does not
+  carry it: the seat then still ages from the last heartbeat, which is the grace
+  working, not a hole. A free seat's stamp decides nothing (the takeover branch
+  takes a free seat whatever its age, and `Record.Fresh` calls a free seat never
+  fresh), so the release branch is left as it is.
+- **The shape clause.** The node's `.validate` carries
+  `newData.hasChildren(['holder', 'holder_uid', 'generation', 'renewed_at'])`,
+  which is what refuses a write that deletes a required field — the `.write`
+  predicate alone allows the holder's `renewed_at`-only heartbeat. A lease with
+  no stamp is one nobody can call stale; one with no generation is a fencing
+  token that has restarted.
+- **The node is never deleted.** No branch of the transition accepts a write to
+  an absent node but the create, so a `DELETE` satisfies none of them, and
+  `internal/lease`'s `Release` writes an empty holder at `generation + 1`
+  instead: the generation must not restart.
+- **The grace is one number, in both places.** `LeaseGraceMs` (600 000) is
+  rendered into the takeover's staleness test, and `internal/lease`'s
+  `DefaultGrace` is the same number applied at the same boundary
+  (`now < renewed_at + grace` against the rules' `now - renewed_at >= grace`),
+  which `TestTheRulesCarryTheLeaseAndTheGraceWeApply` holds character by
+  character.
+- **The generation and the redeploy.** The family is `RulesVersion` 4, and an
+  installation still on a generation-3 document has no orchestrators at all
+  until the owner re-runs `fugaro init --firebase` (the argument is in
+  `internal/projectpolicy`'s `RulesVersion` comment). The stamp clause above
+  does **not** bump that number — no family, node or field changed, so a
+  reader's obligation is the same one — but the deployed document and this
+  binary's differ until that redeploy, which is what `fugaro doctor`'s
+  `policy-rules-skew` reports and what check 82 in `docs/gcp-live-checklist.md`
+  clears.
+
+The cases that hold all of it are `internal/budget/rules/orchestrator_lease_emulator_test.go`
+(the `firebase` suite, run by CI's `rules` job): one seat's whole life; a
+takeover of a fresh seat refused and of a stale one allowed, at the grace's
+boundary either side; the holder-only renew and release; a generation that
+jumps or stands still; **the holder rewriting its own generation**, and a stale
+process of the *same identity* writing over a newer one; the field-by-field
+writes, including the seat and the stamp one child at a time; the stamp, and
+**a takeover that omits it**; the record's shape and its bounds; the deletions;
+the grants (a run token, a pairing session and a consumer admitted nowhere, and
+the create left project-scoped until P2's access record scopes it); the race;
+and `TestLeaseTheLeasePackageHoldsItsOwnSeat`, which points `internal/lease`
+itself at the real engine so the client and the document cannot drift.
 
 ---
 

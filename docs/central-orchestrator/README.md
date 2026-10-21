@@ -1,18 +1,20 @@
 # Central orchestrators — the documents
 
-**Status: plan only; no code is implemented, except the guard test P0 adds
-(`internal/cli/docs_central_orchestrator_test.go`, the one file that owns this folder) — every
-part after P0 is unbuilt, and no feature code exists.** This directory holds the owner's spec
+**Status: plan only; no part but P0 is approved, and the code in the tree is P0's guard test
+(`internal/cli/docs_central_orchestrator_test.go`, the one file that owns this folder) and P3's
+lease (the `internal/lease` package and the rules' `orchestrators` family, landed by #782, whose
+model is written out at the end of P3 in `implementation-plan.md`) — every other part is
+unbuilt.** This directory holds the owner's spec
 for **central orchestrators** — Fugaro orchestrators that run permanently in the cloud instead
 of on a developer's machine (`spec.md`, verbatim) — the reconciliation of that spec against the
 code at `origin/main` **`2f8b4dca`**, the decisions the reconciliation could not answer on its
 own (**D1–D26**), and the plan that follows from them (`implementation-plan.md`). **Six of the
 twenty-six decisions are answered — D1, D2, D3, D6, D12 and D19, each as its recommendation,
 by the owner on 2026-10-20 — and D4–D5, D7–D11, D13–D18 and D20–D26 are still open**
-(reconciliation §6). Nothing else follows from these documents yet: no feature Go, no
-TypeScript, no Terraform, no rules change, no `.github/workflows` change and no live action —
-the only Go they have produced is `internal/cli/docs_central_orchestrator_test.go`, the guard
-test P0 adds. **Owner: Dimi Paun. Date: 2026-10-20. Base: `main` at `2f8b4dca`** — the commit
+(reconciliation §6). Nothing else follows from these documents yet: no TypeScript, no
+Terraform, no `.github/workflows` change and no live action — the Go and the one rules change
+they have produced are P0's guard test and P3's lease and its `orchestrators` family, both named
+above. **Owner: Dimi Paun. Date: 2026-10-20. Base: `main` at `2f8b4dca`** — the commit
 every path and symbol below was read at, and this branch's own merge base.
 
 **Nothing here is approved.** The owner wrote the spec; the reconciliation and the plan are
