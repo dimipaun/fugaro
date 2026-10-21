@@ -44,7 +44,8 @@ import { LABELS } from '../lib/run-labels.mjs'
  * A label as a sentence rather than as the clause it is: the diagram's labels are written
  * mid-sentence, and the page opens and closes with one of them. The text is the label's own
  * and only its first letter moves — `website/test/how-it-works.mjs` holds every sourced line
- * of this page, with the document its `data-source` names, over the built page.
+ * of this page, with the document its `data-source` names, over the built page, and refuses a
+ * block of text in the opening or the close that quotes no document at all.
  */
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
 
