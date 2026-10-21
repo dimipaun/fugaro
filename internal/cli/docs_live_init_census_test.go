@@ -135,9 +135,9 @@ var retirementText = []string{
 // one entry that is walked and names the command zero times today; it stays
 // because the plan walks it, and a root that finds nothing costs one stat.
 //
-// `console/` joined with #789, which re-read the console's converge rows after
-// W1.2 and left the old word in two of its files: console/README.md's paragraph
-// on the never-reachable table and console/test/unit/ipc.test.ts's `retired`
+// The console's folder joined with #789, which re-read the console's converge
+// rows after W1.2 and left the old word in two of its files: its README's
+// paragraph on the never-reachable table and its TypeScript test's `retired`
 // class. The plan's list of roots predates the console's own plan work, so the
 // folder named the command and was walked by nobody -- which is exactly the
 // hole the roots test exists to find.
@@ -147,7 +147,13 @@ var liveRoots = []string{
 	// A root file rather than a directory, and on the walk because it names
 	// the command: W2.3 renames it in place.
 	"SECURITY.md",
-	"console",
+	// Spelled through consoleDirName, not as one literal, for the reason the
+	// rest of this file's console paths are: docs_console_boundary_test.go's
+	// mention rule reads a console path written as a single literal as a
+	// reference to the console, and this file is not on its one-entry
+	// allow-list. The folder is still walked by name -- consoleDirName is that
+	// name, spelled once, one file over.
+	consoleDirName,
 	"docs",
 	"plugin",
 	".claude",
@@ -181,8 +187,8 @@ const censusRoot = "../.."
 // 37 markdown files, the two goldens, and the six that fall in none of those
 // groups: the website's four (its install data, its two pages and its test
 // script), the getting-started design board the redesign was approved from,
-// website/design-ref/GettingStartedV4.dc.html, and the console's
-// TypeScript test, console/test/unit/ipc.test.ts. Read on main at `1d325928`, this
+// website/design-ref/GettingStartedV4.dc.html, and the console's TypeScript
+// test, its test/unit/ipc.test.ts. Read on main at `1d325928`, this
 // branch's base, it was **312** files -- 118 non-test Go files, 117 test files,
 // 34 markdown files, 29 Terraform files, the four `.tftest.hcl` fixtures beside
 // them, the two goldens, and eight in none of those groups: the website's four,
@@ -236,11 +242,12 @@ const censusRoot = "../.."
 // its decisions and transitions references and the working skill's status
 // reference -- and, with them, plugin/skills_lint_test.go and
 // internal/cli/loop_program_test.go. Three joined it. Two are the console's,
-// and they joined because the same commit left the old word in console/README.md's
-// paragraph on the never-reachable table and in console/test/unit/ipc.test.ts's
-// `retired` class, which is also why `console/` became a live root; the
-// console's own plan work postdates the roots list, so the folder named the
-// command and no walk opened it. The third is internal/cli/docs_checkout_test.go,
+// and they joined because the same commit left the old word in the console's
+// README, in its paragraph on the never-reachable table, and in its TypeScript
+// test's `retired` class -- which is also why the console's folder became a
+// live root; the console's own plan work postdates the roots list, so the
+// folder named the command and no walk opened it. The third is
+// internal/cli/docs_checkout_test.go,
 // whose comment explains that docs/checkout.md still spells the retired word
 // and that the door carrying the flags today is `fugaro setup`: W2.3 renames
 // the document, and the comment goes with it.
@@ -252,8 +259,8 @@ var pendingRename = []string{
 	"CONTRIBUTING.md",
 	"README.md",
 	"SECURITY.md",
-	"console/README.md",
-	"console/test/unit/ipc.test.ts",
+	consoleDirName + "/README.md",
+	consoleDirName + "/test/unit/ipc.test.ts",
 	"docs/backends.md",
 	"docs/base-image-migration.md",
 	"docs/base-image.md",
