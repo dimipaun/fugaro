@@ -35,6 +35,9 @@ func wizardRun(t *testing.T, stdin string, o *initOptions) (*initRun, *strings.B
 	if o == nil {
 		o = &initOptions{}
 	}
+	// The door `fugaro setup` builds, because that is the door these runs are:
+	// the wizard asks the one door that can act on the answer.
+	o.door = setupDoor.name
 	out := &strings.Builder{}
 	return &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader(stdin)), cmd: NewRootCmd()}, out
 }
@@ -65,7 +68,7 @@ func stdinFor(flag string) string {
 }
 
 func optionsFor(flag string) *initOptions {
-	o := &initOptions{}
+	o := &initOptions{door: setupDoor.name}
 	switch flag {
 	case "--create-project":
 		o.createProject = true
@@ -192,10 +195,10 @@ func TestSetupTakesNoAnswerNobodyGave(t *testing.T) {
 		terminal bool
 		o        *initOptions
 	}{
-		{"no terminal", false, &initOptions{}},
-		{"--yes at a terminal", true, &initOptions{yes: true}},
-		{"--json at a terminal", true, &initOptions{asJSON: true}},
-		{"--non-interactive at a terminal", true, &initOptions{nonInteractive: true}},
+		{"no terminal", false, &initOptions{door: setupDoor.name}},
+		{"--yes at a terminal", true, &initOptions{door: setupDoor.name, yes: true}},
+		{"--json at a terminal", true, &initOptions{door: setupDoor.name, asJSON: true}},
+		{"--non-interactive at a terminal", true, &initOptions{door: setupDoor.name, nonInteractive: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			firstRunEnv(t)
@@ -212,6 +215,102 @@ func TestSetupTakesNoAnswerNobodyGave(t *testing.T) {
 			}
 			if out.Len() != 0 {
 				t.Errorf("the question was asked of a run that cannot be asked one:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestTheQuestionIsAskedOnlyWhereItCanBeActedOn: a run that would ignore the
+// answer is not asked. `fugaro update` creates nothing — there is no project
+// stage in its set at all (init_stages.go) — and `setup --config-only` writes
+// the local config from an installation that is already there, touching no
+// cloud. Both reach this function (gatherInputs is the same for both doors), so
+// both are pinned here: the question is not printed, and the stdin that answers
+// it is left unread, because a person who answers a question about creation in
+// a run that cannot create has been asked something that is not true.
+func TestTheQuestionIsAskedOnlyWhereItCanBeActedOn(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		o    *initOptions
+	}{
+		{"the update door", &initOptions{door: updateDoor.name}},
+		{"setup --config-only", &initOptions{door: setupDoor.name, configOnly: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			firstRunEnv(t)
+			fakeTerminal(t)
+			// The stdin is held on to: what is left of it says whether the run
+			// read an answer at all, which the printed transcript alone cannot
+			// (a prompt written somewhere else would look the same).
+			src := strings.NewReader(setupAnswerCreate + "\n")
+			out := &strings.Builder{}
+			r := &initRun{o: tc.o, w: out, in: bufio.NewReader(src), cmd: NewRootCmd()}
+			if err := r.askProjectAnswer(); err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			if strings.Contains(out.String(), setupAskProject) {
+				t.Errorf("the run asked whether to create the project, and it creates nothing whatever the answer is:\n%s", out)
+			}
+			if r.o.createProject {
+				t.Errorf("the run recorded the answer %q, and it has no project stage to act on it:\n%s", setupAnswerCreate, out)
+			}
+			if src.Len() == 0 {
+				t.Error("the answer was read out of stdin: the question was asked, this run just did not print it")
+			}
+		})
+	}
+}
+
+// TestTheCreateAnswerIsHeldToTheFlagsChecks: the answer is the flag, so what
+// the flag is held to holds for it too. check() runs before the question is
+// asked (init.go), so the checks for a create-project run have to be applied to
+// the typed answer here — and one of them is a rule the prompt cannot know: a
+// project ID may not contain Google's restricted words (infra.ValidateNewProjectID),
+// which the prompt's own check accepts. Without this, "create" typed at a
+// terminal would reach Google with an ID Google refuses, or create a project
+// that is not the one --firebase names.
+func TestTheCreateAnswerIsHeldToTheFlagsChecks(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		o    *initOptions
+		want string
+	}{
+		{
+			name: "an ID Google restricts",
+			o:    &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: "my-google-proj", region: "us-east5"}},
+			want: "google",
+		},
+		{
+			name: "--firebase names another project",
+			o:    &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}, firebase: "proj-9999"},
+			want: "--firebase",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			firstRunEnv(t)
+			fakeTerminal(t)
+			out := &strings.Builder{}
+			r := &initRun{o: tc.o, w: out, in: bufio.NewReader(strings.NewReader(setupAnswerCreate + "\n")), cmd: NewRootCmd()}
+			err := r.askProjectAnswer()
+			if err == nil {
+				t.Fatalf("the answer %q was taken for %s, and the flag that says the same thing is refused:\n%s", setupAnswerCreate, tc.name, out)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not say what is wrong (%q): %v", tc.want, err)
+			}
+			// The other answer is still open to the same run: adoption of an
+			// ID Google restricts is the installation's business, not this
+			// run's (adoptDetail). The refused answer left the field saying
+			// create — the run it refused returns on the error, so nothing
+			// reads it, and the second leg is a fresh run over the same flags.
+			tc.o.createProject = false
+			out.Reset()
+			r = &initRun{o: tc.o, w: out, in: bufio.NewReader(strings.NewReader(setupAnswerAdopt + "\n")), cmd: NewRootCmd()}
+			if err := r.askProjectAnswer(); err != nil {
+				t.Fatalf("the answer %q was refused too, and it creates nothing: %v", setupAnswerAdopt, err)
+			}
+			if r.o.createProject {
+				t.Errorf("the answer %q recorded creation", setupAnswerAdopt)
 			}
 		})
 	}

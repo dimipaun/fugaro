@@ -365,9 +365,26 @@ var setupQuestions = []wizardQuestion{
 // permanent, its ID is global and unusable by anyone afterwards, and everything
 // that would make it billable arrives with the billing link — and the answer a
 // scripted run gives is `--create-project`, explicitly.
+//
+// A run that cannot act on the answer is not asked: `fugaro update` creates
+// nothing (its stage set has no project stage at all, init_stages.go), and
+// --config-only writes the local config from an installation that is already
+// there and touches no cloud. In both, the question would be asked and then
+// ignored, and an ignored question about the one irreversible thing in this
+// door is worse than no question. No production run is door-less (every run is
+// built by newInitCmdWith, which names its door); a hand-built options value
+// with no door is a test's, and asks — the question list's contract
+// (TestEveryWizardQuestionHasAFlag) is checked on one.
+//
+// The answer that does create goes through the flag's own checks
+// (checkCreateProject): init.go's check() ran before the question was asked, so
+// this is where the ID's rules — Google's restricted words among them, which
+// the prompt's own check does not know — and the --firebase mismatch are
+// applied to what the person typed. The answer is the flag, so it is held to
+// what the flag is held to.
 func (r *initRun) askProjectAnswer() error {
 	o := r.o
-	if o.createProject || !r.canAsk() {
+	if o.door == updateDoor.name || o.configOnly || o.createProject || !r.canAsk() {
 		return nil
 	}
 	v, err := r.prompt(setupAskProject, setupAnswerCreate, func(s string) error {
@@ -379,8 +396,12 @@ func (r *initRun) askProjectAnswer() error {
 	if err != nil {
 		return err
 	}
-	o.createProject = v == setupAnswerCreate
-	return nil
+	if v != setupAnswerCreate {
+		o.createProject = false
+		return nil
+	}
+	o.createProject = true
+	return o.checkCreateProject()
 }
 
 // announceAlreadySetUp is setup's one line for a run whose installation is
