@@ -52,7 +52,13 @@
 //     column puts that label at 12 px or more, and the tall drawing — drawn at a phone's own
 //     width, with a ceiling of its own scale — meets the phone's column instead. Which *side*
 //     of that width each rule holds on is read too, since the same width read from the other
-//     side shows the wide drawing to the phone it cannot be read on. A number typed in here
+//     side shows the wide drawing to the phone it cannot be read on. Both drawings have to be
+//     on the page, and each is held to its own half of the changeover: the stacked drawing must
+//     be off where the queries are silent — above that width the wide one is the one shown — and
+//     the wide drawing must not be, since a wide drawing turned off there leaves a desktop no
+//     run at all, the stacked one being `display: none` above the changeover. Only one of the
+//     two is displayed at a time, so a page that lost one of them, or that turned the wide one
+//     off outside the changeover, is a page whose reader is shown no run. A number typed in here
 //     would keep agreeing with itself after the page's gutter moved.
 //   - **The loop's arrow is drawn, and it joins the stages the run repeats.** The draft draws
 //     `[fix ─► review(2)]`: the arrow leaves `review`, runs up beside the pills and lands back
@@ -814,6 +820,17 @@ export function runDiagramFailures(html, css, docs = sources()) {
   if (!tallShown.plain.includes('none')) {
     out.push(`the tall drawing is \`display: ${tallShown.plain.join(', ') || '(nothing declared)'}\` above the width the two drawings change over at, and only one of the two drawings is shown at a time: the run is drawn twice and read once (the owner's draft of 2026-10-19)`)
   }
+  // The wide drawing's half of the same reading. `wideShown.plain` was collected and never
+  // looked at, so the drawing turned off **where no query asks** passed: the query's own
+  // `display: none` written onto the base rule as well leaves a desktop with no drawing at all,
+  // since the stacked one is `display: none` above the changeover, and the two `switched`
+  // readings below went on agreeing with themselves. The read is `includes('none')` and not
+  // "the page declares an unconditional display", because the wide `<svg>` carries `.run-svg`
+  // and no display rule of its own: what is refused is a rule that takes it off where the
+  // queries are silent, and a page that declares nothing there is a page that shows it.
+  if (wideShown.plain.includes('none')) {
+    out.push(`the wide drawing is \`display: ${wideShown.plain.join(', ')}\` outside the media query the two drawings change over in, and the wide drawing is the one shown where that query does not hold — the stacked drawing is \`display: none\` above that width —: a drawing turned off where no query asks for it leaves the desktop with no run at all, both drawings off at once (the owner's draft of 2026-10-19)`)
+  }
   if (switchAt === null) {
     out.push(`the two drawings change over at ${widths.length === 0 ? 'no width this check can read' : `${widths.length} different widths (${widths.map((at) => (at === null ? 'one it cannot read' : `${at} px`)).join(', ')})`}: one drawing is shown at a time, so the page's stylesheet declares the single width that swaps them, and the whole reason that width is where it is is the label size below (the owner's draft of 2026-10-19)`)
   } else {
@@ -842,6 +859,15 @@ export function runDiagramFailures(html, css, docs = sources()) {
     return { smallest, units: box[2], px: (smallest * column) / box[2] }
   }
   const wide = diagram.drawings.find((drawing) => drawing.wide)
+  // And the wide drawing is *there*, which is the other half nothing read. The stacked drawing
+  // is held to existing below; the wide one was held to nothing, so a page built with the wide
+  // `<svg>` dropped still passed every reading in this file — the stages, the labels, the loop's
+  // arrow and the list under the picture are read out of whichever drawings the page carries,
+  // and every one of them is true of the stacked drawing alone. Above the changeover that
+  // drawing is `display: none`, so what such a page draws for a desktop is nothing.
+  if (!wide) {
+    out.push(`the page carries no wide drawing, and the two drawings are one picture at two scales with only one of them shown at a time: above the width they change over at the stacked drawing is \`display: none\`, so a page that lost the wide one draws no run for the reader a desktop is (the owner's draft of 2026-10-19)`)
+  }
   if (wide && switchAt !== null) {
     const read = scaledInto(wide, switchColumn)
     if (read && !(read.px >= floor)) {
@@ -1164,6 +1190,15 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       /holds no drawing/,
     ],
     [
+      'a diagram that lost the wide drawing',
+      // The wide drawing alone taken out, the stacked one left: above the width the two change
+      // over at the stacked drawing is `display: none`, so the reader a desktop is gets no run.
+      // Only one drawing is displayed at a time, which is why "one drawing is still there" is
+      // not the same page as "the run is drawn at every width".
+      page.replace(/<svg class="run-svg run-wide"[\s\S]*?<\/svg>/, ''),
+      /carries no wide drawing/,
+    ],
+    [
       'a drawing with no name',
       page.replace(/(class="run-svg run-wide" viewBox="[^"]*" role="img" aria-label=")[^"]*"/, '$1"'),
       /carries no `aria-label`|different accessible names/,
@@ -1383,6 +1418,17 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       'a wide drawing that is not turned off at the changeover',
       replaceOnce('{display:none}.run-tall', '{display:block}.run-tall'),
       /the wide drawing is `display: block`/,
+    ],
+    // And the wide drawing off where no query asks for it: the query's own `display: none`
+    // written onto the base rule as well, which is the changeover undone in the one direction
+    // the tall rule cannot see — the stacked drawing is still turned off above that width, so
+    // the two rules together leave a desktop reader with no drawing at all. The rule is written
+    // in front of the query rather than found and rewritten, because the only `.run-wide` rule
+    // the page carries is inside it.
+    [
+      'a wide drawing turned off at every width',
+      replaceOnce('@media (width<=59.25rem){', '.run-wide{display:none}@media (width<=59.25rem){'),
+      /the wide drawing is `display: none`/,
     ],
     // The same width read from the other side: `(width>=59.25rem)` names the width the page
     // changes over at and changes over the wrong way — the stacked drawing is shown to the
