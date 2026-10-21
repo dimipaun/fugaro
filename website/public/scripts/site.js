@@ -32,6 +32,16 @@
  *     somewhere else is not answered that way: a press outside the menu forgets where the focus
  *     was, because a click on the page's own text moves it to the body without a `focusin` to
  *     hear, and the focus a reader has just dismissed the menu from stays where they put it.
+ *   - **The homepage's slider (the owner's feedback of 2026-10-21, item 3).** The block's three
+ *     slides are three panels that are all in the markup, and the three dots that choose
+ *     between them are fragment links the stylesheet's `:target` rules answer — so a reader
+ *     whose browser runs no script has the whole block and every slide in it. What this adds is
+ *     the clock: the block advances every six seconds, stops while the reader is in it (a
+ *     pointer over it or the keyboard's focus inside it) and while the page is not being shown,
+ *     steps back and forward on the two buttons the markup emits `hidden`, answers the arrow
+ *     keys, and marks the dot of the slide on screen with `aria-current`. A reader who has
+ *     asked their system for less motion gets none of the clock at all — the slides, the dots
+ *     and the two buttons still work, and nothing moves on its own.
  *   - **The consent banner, and the analytics gate behind it (W1.12, W3.2; D93, D106).** The
  *     banner's two buttons write one decision to `localStorage`; this file reveals the banner
  *     when no decision is stored, and — only when that decision is `granted` — loads Google's
@@ -59,8 +69,10 @@
  *
  * Nothing here is load-bearing: the commands are in the markup in full, and every one of
  * them is readable, selectable and copyable by hand without this file ever arriving; the
- * menu is a `<details>` at both levels and needs none of this to work; and with no script the
- * banner is not shown at all, so a reader who runs none is measured by nothing.
+ * menu is a `<details>` at both levels and needs none of this to work; the slider's three
+ * slides are in the markup and the dots that open them are links, so the block works with no
+ * script and only its clock is lost; and with no script the banner is not shown at all, so a
+ * reader who runs none is measured by nothing.
  *
  * It is loaded with `defer` from the base layout, so it runs once the document has been
  * parsed and every block and banner it looks for is in the tree. The only thing it stores is
@@ -743,9 +755,238 @@
     analytics(banner)
   }
 
+  // ---- the homepage's slider (the owner's feedback of 2026-10-21, item 3) -------------------
+
+  // The block, and the four things in it this file drives: the slides (the panels, each
+  // carrying its own name), the dots (fragment links, one per slide), and the two step
+  // controls. Every one of them is a presence-only attribute selector, because the three
+  // hand-written stub DOMs `website/test/copy.mjs`, `website/test/consent.mjs` and
+  // `website/test/nav-hover.mjs` run this whole file and read selectors of that shape and no
+  // other (`website/test/slider.mjs` runs it against the built homepage and reads the
+  // behaviour out of it).
+  var SLIDER = '[data-slider]'
+  var SLIDE = '[data-slider-slide]'
+  var DOT = '[data-slider-dot]'
+  var BACK = '[data-slider-prev]'
+  var ON = '[data-slider-next]'
+
+  // The name the slide on screen is written under, on the block itself: the stylesheet shows
+  // the panel whose name matches it, and it is what stands the no-script `:target` rules down
+  // once this file is driving.
+  var ACTIVE = 'data-active'
+
+  // How long a slide is given before the block moves on. Long enough to read a slide's heading
+  // and its first line, short enough that a reader who is waiting sees it move: the owner asked
+  // for "every few seconds" and this is the six the brief of 2026-10-21 names.
+  var ADVANCE_MS = 6000
+
+  // Less motion, as the reader asked their system for it. The block still slides when they
+  // choose a slide — that is motion the reader asked for by clicking — and nothing moves on
+  // its own.
+  var CALM_QUERY = '(prefers-reduced-motion: reduce)'
+
+  /**
+   * Whether the page is in front of the reader. A tab nobody is looking at is a tab nobody is
+   * reading, and a block that advanced behind the reader's back would have moved on by the time
+   * they came back — so the clock runs only while the page is shown, and a document that cannot
+   * answer is not one this file starts a clock in. Every browser that runs this file answers
+   * (`document.hidden` has been a boolean everywhere since 2013), and a browser that does not
+   * loses the clock and keeps the slides, the dots and the two step controls.
+   */
+  function shown() {
+    return document.hidden === false
+  }
+
+  /** Whether the reader has asked for less motion, where the browser can be asked at all. */
+  function calm() {
+    if (typeof window.matchMedia !== 'function') return false
+    var answer = window.matchMedia(CALM_QUERY)
+    return !!(answer && answer.matches)
+  }
+
+  function slider() {
+    var blocks = document.querySelectorAll(SLIDER)
+    for (var i = 0; i < blocks.length; i++) slideshow(blocks[i])
+  }
+
+  /**
+   * One block, driven. The slides are the panels in the order they are written, the dots are
+   * the links to them, and the two step controls move one slide either way and wrap.
+   *
+   * Nothing here is required for a slide to be reachable: with the file absent, the dots are
+   * links that open the panel each one names, and the first panel is the one the stylesheet
+   * shows. This is the clock, the two controls and the mark on the current dot.
+   */
+  function slideshow(block) {
+    var slides = block.querySelectorAll(SLIDE)
+    // One slide is not a slider, and no slide is a block this file has nothing to say about.
+    // A block that grew a second panel gets the whole behaviour from the same markup.
+    if (slides.length < 2) return
+
+    var dots = block.querySelectorAll(DOT)
+    var back = block.querySelector(BACK)
+    var on = block.querySelector(ON)
+    var at = 0
+    var timer = null
+    // Whether the reader is in the block: a pointer over it or the keyboard's focus inside it.
+    // Held rather than counted, because a pointer that arrives twice and leaves once is still
+    // one reader in one place.
+    var held = false
+
+    /** A slide's own name: the panel's `data-slider-slide` and the dot's, one name. */
+    function nameOf(slide) {
+      return slide.getAttribute('data-slider-slide') || ''
+    }
+
+    function idOf(slide) {
+      return slide.getAttribute('id') || ''
+    }
+
+    function stop() {
+      if (timer === null) return
+      // Guarded rather than assumed: `window.clearTimeout` is not in the two stub DOMs that run
+      // this file without a clock, and a timer id they never gave out is not one to hand back.
+      if (typeof window.clearTimeout === 'function') window.clearTimeout(timer)
+      timer = null
+    }
+
+    /** Whether the block should be still. The page's own visibility first, so a page nobody is
+     *  shown costs no media query and no timer at all. */
+    function still() {
+      return held || !shown() || calm()
+    }
+
+    /** Put the clock back, from whatever the block's state is now. Called after every change:
+     *  the reader's own step restarts the six seconds rather than racing them. */
+    function arm() {
+      stop()
+      if (still()) return
+      timer = window.setTimeout(function () {
+        timer = null
+        step(1)
+      }, ADVANCE_MS)
+    }
+
+    /** Show one slide: the block's name for it, and the mark on the dot that opens it. The
+     *  mark is written as `true` or `false` rather than added and removed, because `false` is
+     *  what a link that is not current should say and the two stub DOMs that run this file
+     *  have no `removeAttribute`. */
+    function show(slide) {
+      for (var i = 0; i < slides.length; i++) if (slides[i] === slide) at = i
+      block.setAttribute(ACTIVE, nameOf(slide))
+      for (var j = 0; j < dots.length; j++) {
+        dots[j].setAttribute('aria-current', dots[j].getAttribute('data-slider-dot') === nameOf(slide) ? 'true' : 'false')
+      }
+    }
+
+    function step(by) {
+      at = (at + by + slides.length) % slides.length
+      show(slides[at])
+      arm()
+    }
+
+    /** The slide a dot opens, read out of the link itself: the fragment it carries is the
+     *  panel's own id, which is the pairing the stylesheet's no-script rules are built on, and
+     *  reading it here keeps one name for the link, the panel and this file's state. */
+    function slideFor(dot) {
+      var href = dot.getAttribute('href') || ''
+      if (href.charAt(0) !== '#') return null
+      for (var i = 0; i < slides.length; i++) if (idOf(slides[i]) === href.slice(1)) return slides[i]
+      return null
+    }
+
+    /** The arrow keys, on a control of this block: the keys a reader presses to step a slider,
+     *  and the keys a link or a button has no other use for. */
+    function keys(control) {
+      control.addEventListener('keydown', function (event) {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+        if (typeof event.preventDefault === 'function') event.preventDefault()
+        step(event.key === 'ArrowLeft' ? -1 : 1)
+      })
+    }
+
+    for (var d = 0; d < dots.length; d++) {
+      ;(function (dot) {
+        dot.addEventListener('click', function (event) {
+          var slide = slideFor(dot)
+          if (!slide) return
+          // Shown in place rather than followed: with this file running, the state is the
+          // block's own name for the slide, and an address that kept a fragment would be a
+          // second state to keep in step — and one the browser would jump back to on a reload.
+          if (event && typeof event.preventDefault === 'function') event.preventDefault()
+          show(slide)
+          arm()
+        })
+        keys(dot)
+      })(dots[d])
+    }
+
+    if (back) {
+      // The markup emits both controls `hidden`, so a reader whose browser runs no script is
+      // shown no control that steps nowhere (D183). This is what reveals them.
+      back.hidden = false
+      back.addEventListener('click', function () {
+        step(-1)
+      })
+      keys(back)
+    }
+    if (on) {
+      on.hidden = false
+      on.addEventListener('click', function () {
+        step(1)
+      })
+      keys(on)
+    }
+
+    // The reader is in the block: the pointer is over it, or the keyboard's focus is inside
+    // it. Both hold the clock, and both let it go when they leave — a focus that moves from
+    // one dot to the next never leaves the block, which is what `contains` answers.
+    block.addEventListener('pointerenter', function () {
+      held = true
+      arm()
+    })
+    block.addEventListener('pointerleave', function () {
+      held = false
+      arm()
+    })
+    block.addEventListener('focusin', function () {
+      held = true
+      arm()
+    })
+    block.addEventListener('focusout', function (event) {
+      if (event && event.relatedTarget && typeof block.contains === 'function' && block.contains(event.relatedTarget)) return
+      held = false
+      arm()
+    })
+
+    // A tab that goes away stops the clock and a tab that comes back starts it again, from the
+    // six seconds rather than from wherever the clock had got to.
+    if (typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', function () {
+        arm()
+      })
+    }
+
+    // Where the block opens. A reader who arrived on one of the slides — the dots are links,
+    // and a link whose fragment is a slide's own id is a link to that slide — opens on that
+    // one; a
+    // reader who arrived on the page opens on the first, which is the panel the stylesheet
+    // shows while no fragment is targeted, so the mark and the panel agree from the first
+    // frame. The address is read defensively: the stub DOMs that run this file have no
+    // `location`, and a block that threw on one would take the copy controls down with it.
+    var opening = slides[0]
+    var hash = window.location && window.location.hash ? window.location.hash.slice(1) : ''
+    if (hash) {
+      for (var h = 0; h < slides.length; h++) if (idOf(slides[h]) === hash) opening = slides[h]
+    }
+    show(opening)
+    arm()
+  }
+
   function start() {
     menu()
     consent()
+    slider()
     var blocks = document.querySelectorAll('[data-copy]')
     if (blocks.length === 0) return
     if (!canCopy()) return

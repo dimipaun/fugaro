@@ -755,11 +755,32 @@ added or removed without this sentence moving fails there:
     `dist/` stays **28**. `test/base-styles.mjs` holds the item's position, its route and its name
     and refuses a Home item that holds a list, and holds the phone block's two rules to the row
     the fourth item was measured into.
+  - **"Say it. Get pull requests." is a slider** (the owner's feedback of 2026-10-21: "can we
+    auto-rotate between tabs every few seconds? Like a slider? Maybe a slider would work better
+    than tabs?"). The same three slides and the same three panels, with the strip of tabs
+    replaced by a row of three dots — each one a fragment link to the panel it opens, so the
+    block still switches with no script — and a pair of step controls the markup emits `hidden`
+    and the site's script reveals. The script gains the clock (six seconds a slide), the wrap,
+    the hold while a pointer or the keyboard's focus is in the block, the stop while the page is
+    not being shown and the stop for a reader who has asked their system for less motion, and it
+    writes the slide on screen to the block's `data-active` for the stylesheet to draw. **The
+    block is only on the homepage, so its own bytes land there and nowhere else**: **2,186 bytes**
+    onto the homepage's HTML — **1,054** of stylesheet and **1,132** of markup — and **10,912**
+    onto the script, which every page loads once, so the page weight moves by the script alone,
+    399,902 → **410,814** on the console page, and the site figure by both, 1,402,356 →
+    **1,415,454**. The count of files in `dist/` stays **28**, the count of pages **11**, and the
+    homepage's own words go 468 → **461** — a dot is a circle with no text in it, and the three
+    labels the tabs showed are now the dots' own names, which a screen reader reads and the page
+    does not draw. **All three figures are re-derived here**, from the gates' own build, in the commit
+    that moves those bytes (D192). `test/slider.mjs` holds the block's shape, the two states of
+    the stylesheet, the target size of a dot and of a step control, and the behaviour itself —
+    the file the site ships, run against the built homepage in a stub DOM — with each case
+    planted against the line of the script it reads.
 
-  - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
-    `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
-    control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
-    to: the hover behaviour is bound only where `matchMedia` says the device's pointer hovers
+  - **JavaScript per page:** 190,500 bytes. Three times 63,500: the one script the site ships,
+    `public/scripts/site.js` (50,800 bytes), plus 25 %. What the file carries is the copy
+    control, the menu, the consent gate and the homepage's slider above, in the detail
+    `test/nav-hover.mjs` holds it to: the hover behaviour is bound only where `matchMedia` says the device's pointer hovers
     and only for a pointer that says it is a mouse or a pen — a tap sends a pointer of its
     own, and a finger never hovers, so a touch screen keeps the tap it has always had — and
     the answer is watched rather than sampled once, so a pointer plugged in or taken away
@@ -779,10 +800,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,499,634 bytes. Three times 499,878: the heaviest page, the
-    console page, at 399,902 bytes (its HTML, the four screenshots it renders, and the files
+  - **Page weight per page:** 1,540,554 bytes. Three times 513,518: the heaviest page, the
+    console page, at 410,814 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,258,835 bytes. Three times 1,752,945 (every file in `dist/`, 1,402,356
+  - **Whole site:** 5,307,954 bytes. Three times 1,769,318 (every file in `dist/`, 1,415,454
     bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 

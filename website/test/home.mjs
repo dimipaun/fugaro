@@ -599,7 +599,7 @@ const BENEFITS_SOURCE = 'README.md#Why Fugaro'
  * Fugaro?" — capital W and F and the question mark — because the four points under it are the
  * reasons the README argues under that heading, and the section is the answer to the question
  * rather than a list of "benefits". Held as one string and read twice (the heading, and the
- * tab label `slider.mjs` pairs with it), so the two halves of the rename cannot drift apart.
+ * slide label `slider.mjs` pairs with it), so the two halves of the rename cannot drift apart.
  */
 const BENEFITS_TITLE = 'Why Fugaro?'
 
@@ -826,7 +826,7 @@ function benefitsOf(html) {
  * Every failure of the benefits' rule, as the lines a reader of this file sees:
  *
  *   - **the section is headed "Why Fugaro?"**, the owner's own name for it since the ruling of
- *     2026-10-20, and the same string the slider's tab carries;
+ *     2026-10-20, and the same string the slider's second slide carries;
  *   - **the page renders the README's reasons, all of them and in the README's order** — one
  *     benefit per reason, named with the README's own name for it (the number off, which is
  *     the README's device for counting and not part of the name). A reason the page drops is a
@@ -1560,16 +1560,16 @@ test('the watch screenshot is in the slot the "See it" panel marks, named, sized
   }
 
   // **It is in the third panel, and it opens it.** The owner's approved draft of 2026-10-19
-  // puts the capture in the "See it" tab, and the panel reads: its heading, then the picture,
+  // puts the capture in the "See it" slide, and the panel reads: its heading, then the picture,
   // then the command the reader runs to see the same screen. Held as structure — the panel's
   // own children — rather than as a class name, because the panel is what a reader switches to,
   // and a picture moved into the "Why Fugaro?" panel is a picture under a heading about something
   // else.
   const panel = findAll(page, (el) => el.attrs.get('id') === 'home-panel-see')[0]
-  assert.ok(panel, 'the homepage carries no #home-panel-see, and the capture is what the draft\'s "See it" tab shows (the owner\'s approved draft of 2026-10-19)')
+  assert.ok(panel, 'the homepage carries no #home-panel-see, and the capture is what the draft\'s "See it" slide shows (the owner\'s approved draft of 2026-10-19)')
   let inPanel = false
   for (let parent = slot.parent; parent; parent = parent.parent) if (parent === panel) inPanel = true
-  assert.ok(inPanel, 'the watch screenshot is not in the "See it" panel, and the draft puts the capture in the tab a reader opens to see what a run looks like (the owner\'s approved draft of 2026-10-19)')
+  assert.ok(inPanel, 'the watch screenshot is not in the "See it" panel, and the draft puts the capture in the slide a reader opens to see what a run looks like (the owner\'s approved draft of 2026-10-19)')
   const children = (panel.children ?? []).filter((child) => child.name !== undefined)
   const heading = children.find((child) => child.name === 'h2')
   assert.ok(heading, 'the "See it" panel carries no heading, and the picture and the command below it belong to a named block (the owner\'s approved draft of 2026-10-19)')
@@ -1750,26 +1750,29 @@ test("the run is How It Works' own picture of one, and the homepage carries the 
   )
 
   // And the slider is the block in its place, read as the retired gate read the picture: three
-  // tabs, three panels, all of them in the HTML a reader receives, each tab a link to the panel
-  // it shows. A homepage whose tabs pointed at nothing would be a homepage whose blocks a reader
-  // without JavaScript cannot reach — which is what the flow's own gate said about the figure
-  // when it asked a page to render exactly one of them.
-  const tabs = findAll(home, (el) => el.name === 'a' && classes(el).includes('tab')).map((el) => el.attrs.get('href') ?? '')
+  // slides, three panels, all of them in the HTML a reader receives, each dot a link to the
+  // panel it shows. A homepage whose dots pointed at nothing would be a homepage whose blocks a
+  // reader without JavaScript cannot reach — which is what the flow's own gate said about the
+  // figure when it asked a page to render exactly one of them. (The owner's feedback of
+  // 2026-10-21, item 3, turned the strip of tabs into this slider; the slides, the dots and the
+  // two step controls are read in full in `website/test/slider.mjs`, and this is the homepage's
+  // own gate keeping the one reading the retired flow's gate left behind.)
+  const dots = findAll(home, (el) => el.name === 'a' && classes(el).includes('slider-dot')).map((el) => el.attrs.get('href') ?? '')
   const panels = findAll(home, (el) => classes(el).includes('panel')).map((el) => el.attrs.get('id') ?? '')
   assert.equal(
-    tabs.length,
+    dots.length,
     3,
-    `the homepage's slider offers ${tabs.length} tabs, and the draft's first panel is the three steps of using Fugaro beside a Benefits tab and a See it tab (the owner's approved draft of 2026-10-19; changes spec 2026-10-18, item 4)`,
+    `the homepage's slider offers ${dots.length} dots, and the draft's first panel is the three steps of using Fugaro beside a Why Fugaro? slide and a See it slide (the owner's approved draft of 2026-10-19; the owner's feedback of 2026-10-21, item 3; changes spec 2026-10-18, item 4)`,
   )
   assert.equal(
     panels.length,
     3,
-    `the homepage's slider carries ${panels.length} panels, and every tab it offers is a link to a panel: a tab that points at nothing shows nothing (the owner's approved draft of 2026-10-19)`,
+    `the homepage's slider carries ${panels.length} panels, and every dot it offers is a link to a panel: a dot that points at nothing shows nothing (the owner's approved draft of 2026-10-19)`,
   )
   assert.deepEqual(
-    tabs,
+    dots,
     panels.map((id) => `#${id}`),
-    `the homepage's tabs point at ${JSON.stringify(tabs)} and its panels are ${JSON.stringify(panels.map((id) => `#${id}`))}: each tab is the link to the panel in its place, so the block is reachable without the script (the owner's approved draft of 2026-10-19)`,
+    `the homepage's dots point at ${JSON.stringify(dots)} and its panels are ${JSON.stringify(panels.map((id) => `#${id}`))}: each dot is the link to the panel in its place, so the block is reachable without the script (the owner's approved draft of 2026-10-19; the owner's feedback of 2026-10-21, item 3)`,
   )
 
   // **And the picture is item 4's four steps, drawn**: the drawing's boxes, its labels, the run
@@ -2209,8 +2212,8 @@ test('the tokens the pages name are the ones the design layer declares', () => {
  * page asks a reader to tap is at least 44 px tall**, and the page's own controls are the hero's
  * two links in the action row, the run band's link to the page that draws the run, and the one
  * button in the closing call to action (`HomeRunBand.astro`, `HomeInstall.astro`); the slider's
- * three tabs are `test/slider.mjs`'s, which reads them at the widths the page is read at, so this
- * reading is about the controls outside the slider.
+ * three dots and its two step controls are `test/slider.mjs`'s, which reads them at the widths
+ * the page is read at, so this reading is about the controls outside the slider.
  */
 const CONTROL_TARGETS = [
   ['hero-cta', "the hero's filled call to action"],
@@ -2224,9 +2227,10 @@ const CONTROL_TARGETS = [
  * it against, as the lines a reader of a failure gets. **Every control the page asks a reader
  * to tap is at least 44 px tall**, and the page's own controls are the hero's two links in the
  * action row, the run band's link to the page that draws the run, and the one button in the
- * closing call to action (`HomeRunBand.astro`, `HomeInstall.astro`); the slider's three tabs
- * are `test/slider.mjs`'s, which reads them at the widths the page is read at, so this reading
- * is about the controls outside the slider. The reading itself is `test/lib/controls.mjs`'s —
+ * closing call to action (`HomeRunBand.astro`, `HomeInstall.astro`); the slider's three dots and
+ * its two step controls are `test/slider.mjs`'s, which reads them at the widths the page is read
+ * at, so this reading is about the controls outside the slider. The reading itself is
+ * `test/lib/controls.mjs`'s —
  * one rule read in two places, since `test/caps-figures.mjs` runs it over the caps page's two
  * hero actions as well — and the list above is this page's.
  */

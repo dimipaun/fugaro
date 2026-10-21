@@ -128,6 +128,9 @@ const DOCUMENT_SELECTORS = new Map([
   ['[data-copy]', (el) => el.attrs.has('data-copy')],
   ['[data-copy-button]', (el) => el.attrs.has('data-copy-button')],
   ['[data-copy-status]', (el) => el.attrs.has('data-copy-status')],
+  // The homepage's slider: the one block, found by its own attribute and by nothing else. What
+  // is inside it is asked of the block, not of the document (the map below).
+  ['[data-slider]', (el) => el.attrs.has('data-slider')],
   ['.site-nav details[open]', (el) => el.name === 'details' && el.attrs.has('open')],
   // The keyboard's way into a group asks for the groups themselves, whatever the device answers
   // (the pointer's half above asks for the open ones). Every shipped page carries the menu, and
@@ -142,6 +145,13 @@ const DOCUMENT_SELECTORS = new Map([
 const ELEMENT_SELECTORS = new Map([
   ['[data-consent]', (el) => el.attrs.has('data-consent')],
   ['summary', (el) => el.name === 'summary'],
+  // The slider's own four: the slides (the panels, each one carrying its name), the dots, and
+  // the two step controls. All four are asked of the block, which is why they are here rather
+  // than in the document's map above.
+  ['[data-slider-slide]', (el) => el.attrs.has('data-slider-slide')],
+  ['[data-slider-dot]', (el) => el.attrs.has('data-slider-dot')],
+  ['[data-slider-prev]', (el) => el.attrs.has('data-slider-prev')],
+  ['[data-slider-next]', (el) => el.attrs.has('data-slider-next')],
 ])
 
 // The address a stubbed page is "at", and the page it was reached from: both carry a query
