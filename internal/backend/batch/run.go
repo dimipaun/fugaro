@@ -406,6 +406,23 @@ func (b *Backend) toExecution(j *batch.Job) (backend.Execution, error) {
 // over the whole directory. The number has one home until 57a-7 runs.
 const preemptExitCode = 50001
 
+// preemptMarker is the word a status event's description carries when the
+// platform reclaimed the machine this execution was on: it is the participle a
+// report of the *event* uses ("the VM was preempted"), matched without regard
+// to case because the prose is the platform's own.
+//
+// It is the participle and deliberately not the stem. "preempt" also matches
+// "preemptible" -- the adjective that names a *class* of VM, which a quota
+// event says the project ran out of ("Quota 'PREEMPTIBLE_CPUS' exceeded") --
+// and "preemption", the notice's noun rather than the reclaim. Either would
+// make a reader call a run reclaimed because of a fact about the project's
+// capacity or about a notice the job asked for, and the run that later crashed
+// would be reported to a person as the platform having taken its VM. A run
+// whose machine was reclaimed is one the report says *was preempted*; nothing
+// weaker is evidence, and the exact wording a live preemption leaves behind is
+// Check 57a step 7's to record (design §7.2, §9).
+const preemptMarker = "preempted"
+
 // preempted reports whether the platform's own report of job j names a Spot
 // preemption, which is what makes a terminal failure a reclamation rather than
 // a fault of the run (backend.Execution.Preempted).
@@ -417,12 +434,15 @@ const preemptExitCode = 50001
 // (stateOf) and must not become evidence of anything here. And the job's own
 // report must name it, in one of the two shapes Batch leaves such a report in:
 // a task-level status event whose task execution ended with the reserved
-// preemption code, or a status event whose description says the VM was
-// preempted. The second is the platform's own prose and is matched loosely on
-// purpose -- the exact wording is Check 57a step 7's to record, and a reader
-// that only knew the exit code would find no preemption at all if this Batch
-// version reports the event and not the code -- while the first is the
-// documented machine-readable half.
+// preemption code, or a status event whose description carries preemptMarker.
+// The second is the platform's own prose -- the exact wording is Check 57a step
+// 7's to record, and a reader that only knew the exit code would find no
+// preemption at all if this Batch version reports the event and not the code --
+// while the first is the documented machine-readable half.
+//
+// "Names it" is the narrow claim, and the marker below is what keeps it narrow:
+// an event is evidence of a reclaim only when it says the machine *was*
+// preempted, never merely for mentioning preemption. See preemptMarker.
 //
 // Nothing else is read: not the runnable's own exit code, not the job's
 // counts, and nothing that a *run* can write. The job body is the platform's,
@@ -438,7 +458,7 @@ func preempted(j *batch.Job) bool {
 		if ev.TaskExecution != nil && ev.TaskExecution.ExitCode == preemptExitCode {
 			return true
 		}
-		if strings.Contains(strings.ToLower(ev.Description), "preempt") {
+		if strings.Contains(strings.ToLower(ev.Description), preemptMarker) {
 			return true
 		}
 	}
