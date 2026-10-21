@@ -1580,7 +1580,8 @@ under the run's picture are a real list.
   picture twice — a wide default and a tall twin with `hidden` — since the run's timeline came
   out; this page follows it rather than inventing a second way to do the same thing.
 - **Which one a reader gets, and where the changeover sits.** The shared
-  `.boundary-drawing` rule renders the drawing block and full-width; `.boundary-drawing-tall`
+  `.boundary-drawing` rule renders the drawing block at the column's own width and no ceiling
+  (`width: 100%`, `max-width: 100%`, `height: auto`); `.boundary-drawing-tall`
   adds `max-width: 22.5rem` and `display: none`, and one `@media (max-width: 70rem)` block swaps
   them — the tall drawing for a phone and the wide one above the changeover. The stylesheet says
   which is which in one place, and **the value of the changeover is not a taste: 70 rem is
@@ -1608,19 +1609,31 @@ under the run's picture are a real list.
   the shared class's own rule the way a browser resolves it — and the `hidden` attribute has to
   sit on the drawing the stylesheet turns off, so the two can never both be visible or both be
   hidden; the changeover has to be one width, read from below, with the tall drawing block and
-  the wide one off; the wide drawing's smallest label has to stay at or above 12 px in the
-  column it is actually shown in at that width; and the headline plus the whole drawing has to
-  fit 1440 × 800. **Each refusal of the four rules has a plant that proves it fires**: a third
+  the wide one off; the wide drawing's smallest label has to stay at or above 12 px **in the box
+  the page actually draws it in** at that width; and the headline plus the whole drawing has to
+  fit 1440 × 800. The box is read, not assumed (the review of 2026-10-21): the shared
+  `.boundary-drawing` rule has to lay the drawing out in the column — `width: 100%` and no
+  ceiling of the site's own, `max-width: 100%`, the same pair How It Works' `.run-svg` is held to
+  — and a layout class may cap its own drawing under that (the tall one does, at 22.5 rem), so
+  the check reads the `width` and `max-width` in force for the wide layout's own class, takes the
+  smaller of it and the column in pixels, and takes both the label floor and the fold height **in
+  that box**. Without it a `max-width: 600px` on the wide drawing passed every rule while its
+  14-unit labels rendered at 7.12 px: the column was the wrong box to measure a drawing that is
+  not drawn in it. **Each refusal of the four rules has a plant that proves it fires**: a third
   unclassed `<svg>`, a wide drawing stripped of its class, a mismatched label, a shared rule with
   no `display` left on it (so neither layout has a value where no query holds), a tall drawing
   left rendered, a drawing turned off with no `hidden` on it, a changeover read the wrong way
   round, a `viewBox` made 900 units tall so the arithmetic stops fitting a first screen, a
   `viewBox` with no readable width and another with no readable height, a page whose media query
   is taken out and a page with a second one, the wide drawing left on below the changeover, a
-  label shrunk to 8 units, and the two values the arithmetic is read through (`--page-max`, and
-  `--leading-display` under the headline) made unreadable. The reader-guard branches — a column,
-  a `viewBox` and a room the check cannot turn into pixels — are planted with those same unreadable
-  values rather than left as branches nothing has seen fire.
+  label shrunk to 8 units, a `max-width: 600px` cap added to the wide drawing's own class, the
+  shared rule's `max-width` capped at 600 px and its `width` taken off, a cap written as
+  `max-width: thin` so nothing here can turn it into pixels, and the two values the arithmetic is
+  read through (`--page-max`, and `--leading-display` under the headline) made unreadable. The
+  reader-guard branches — a column, a `viewBox`, a cap and a room the check cannot turn into
+  pixels — are planted with those same unreadable values rather than left as branches nothing has
+  seen fire; disabling the box reading or the shared-rule pin makes the plants above fail, which
+  is how the two new rules were proved rather than asserted.
 - **The five facts are a list, and they always were one.** The "Also true of a run" panel on
   How It Works is a `<ul>` of five `<li>`s drawn from the owner's board — the panel, the hairline
   between two rows and the larger radius are the board's — but every row was set with
@@ -1647,9 +1660,10 @@ under the run's picture are a real list.
   first reading of this rule, which asked whether **every** word of the value was `none` and so
   called `list-style: none inside` a bulleted list.
 - **The figures, and the numbers that did not move.** Nothing here is re-derived (D192: the
-  budgets move only when the owner asks). The built `/security/` page weighs **119,067 bytes**
-  (HTML 30,327, of which inline CSS 15,734; fetched files 88,740) inside the 1,603,485-byte page
-  budget, and the whole site is **1,436,570 bytes** inside the 5,373,414-byte one — the figures as
+  budgets move only when the owner asks). The built `/security/` page weighs **119,082 bytes**
+  (HTML 30,342, of which inline CSS 15,749; fetched files 88,740) inside the 1,603,485-byte page
+  budget — the 15 bytes the shared rule's `max-width: 100%` pin costs — and the whole site is
+  **1,436,585 bytes** inside the 5,373,414-byte one — the figures as
   this branch reads them once `main`'s console page and slider (#841, #842) are merged in, since
   both pages fetch the same one script and `main` re-derived the ceilings for it; `/security/` is
   one of the three reference pages D188 exempts from the page word ceiling, with its lead measured

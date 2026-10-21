@@ -93,12 +93,18 @@
 //      none`, falling back to the shared class's own rule the way a browser resolves it), the
 //      `hidden` attribute has to sit on the drawing the stylesheet turns off, the changeover
 //      has to be one width with the tall drawing block below it and the wide one above it, the
-//      wide drawing's smallest label has to stay legible in the column it is shown in at that
-//      width, and the headline plus the whole wide drawing has to fit 1440 × 800. **The fold
-//      itself is the owner's live-browser check** (D187, the redesign's 70b): nothing here can
-//      see a viewport, so what this holds is the arithmetic the layout rests on — the column
-//      the drawing is given, the drawing's own aspect ratio, and the room above it, each read
-//      from the built page's own stylesheet and the drawing's own `viewBox`.
+//      wide drawing's smallest label has to stay legible in the box it is drawn in at that
+//      width, and the headline plus the whole wide drawing has to fit 1440 × 800. **Both of
+//      those numbers are taken in the box the drawing is rendered in and not in the column the
+//      page gives it**: the shared class both layouts carry has to lay the drawing out in the
+//      column (`width: 100%` and no ceiling of the site's own), and a layout class may cap its
+//      own drawing under that — the tall one does — so a cap is read and the arithmetic taken in
+//      the capped box (the review of 2026-10-21: a `max-width` that shrinks the drawing leaves
+//      the column the wrong box to measure, and a label at 14 units renders at 7 px in one).
+//      **The fold itself is the owner's live-browser check** (D187, the redesign's 70b): nothing
+//      here can see a viewport, so what this holds is the arithmetic the layout rests on — the
+//      box the drawing is drawn in, the drawing's own aspect ratio, and the room above it, each
+//      read from the built page's own stylesheet and the drawing's own `viewBox`.
 //
 // **Two readers, and why the text is read the hard way** (round 3 of the review, findings 3 and
 // 4). The text of the page is read with `test/lib/html.mjs`'s `verbatimText`, which invents
@@ -684,33 +690,49 @@ function querySide(conditions) {
 }
 
 /**
- * Every `display` a built stylesheet gives one class, in the order the cascade has them, each
- * with the media query it sits in: the conditions as written, the width they name and the side
- * they read from. Only a rule whose **subject** is the class counts — the last compound of each
- * comma-separated alternative — so a rule that names the class as an ancestor (the shared
+ * Every value a built stylesheet gives one class for one property, in the order the cascade has
+ * them, each with the media query it sits in: the conditions as written, the width they name and
+ * the side they read from. Only a rule whose **subject** is the class counts — the last compound
+ * of each comma-separated alternative — so a rule that names the class as an ancestor (the shared
  * `.boundary-drawing` rule, or anything above it in a descendant selector) is not read as a
  * declaration about this layout. `website/test/spacing.mjs` reads a class's own `display` the
  * same way, for the same reason: a declaration belongs to the selector's subject.
+ *
+ * `display` is what this file spent its first round reading; the width a layout draws its
+ * `<svg>` at is read with the same walk, because both are one declaration of the class the
+ * layout is marked by and both are only true of the rules whose subject that class is.
  */
-function displayDeclarations(css, klass) {
+function declarationsFor(css, klass, property) {
   const out = []
   for (const rule of cssRules(css)) {
     const subject = (rule.selector ?? '')
       .split(',')
       .map((part) => part.trim().split(/[\s>+~]+/).filter(Boolean).pop() ?? '')
     if (!subject.some((compound) => new RegExp(`\\.${klass}(?![\\w-])`).test(compound))) continue
-    const display = cssDeclarations(rule.body ?? '').find(([property]) => property === 'display')?.[1]
-    if (display === undefined) continue
+    const value = cssDeclarations(rule.body ?? '').find(([name]) => name === property)?.[1]
+    if (value === undefined) continue
     const conditions = (rule.conditions ?? []).join(' ')
-    out.push({ display: display.trim(), query: conditions, at: queryWidth(conditions), side: querySide(conditions) })
+    out.push({ display: value.trim(), query: conditions, at: queryWidth(conditions), side: querySide(conditions) })
   }
   return out
 }
 
-/** The `display` in force for a class outside every media query — the value a reader whose width
- *  no query of the page's holds gets — or `null` when no unqueried rule declares one. */
+/** Every `display` a built stylesheet gives one class, the way the reading above reads any other
+ *  property of it. */
+function displayDeclarations(css, klass) {
+  return declarationsFor(css, klass, 'display')
+}
+
+/** One property of a class as the value in force **outside every media query** — the value a
+ *  reader whose width no query of the page's holds gets — or `null` when no unqueried rule
+ *  declares one. */
+function unconditional(css, klass, property) {
+  return declarationsFor(css, klass, property).filter((rule) => rule.query === '').at(-1) ?? null
+}
+
+/** The `display` in force for a class outside every media query. */
 function unconditionalDisplay(css, klass) {
-  return displayDeclarations(css, klass).filter((rule) => rule.query === '').at(-1) ?? null
+  return unconditional(css, klass, 'display')
 }
 
 /** A `display` declaration, as the sentence a refusal names it by. */
@@ -812,13 +834,14 @@ function factorOf(css, value) {
 }
 
 /**
- * The width the page gives the drawing at a viewport, out of its own stylesheet: the page's
- * ceiling for the column (`--page-max`), the gutter inside it (the article's own padding, which
- * is what `main` does not add because this page's article takes it over) and the padding of the
- * card the figure sits on. The drawing is `width: 100%` of that box, so this is the width it is
- * scaled into — the number the label floor and the fold below are both taken at. `null` when any
- * part of it cannot be turned into pixels, which the caller reports rather than measuring against
- * a guess.
+ * The width of the column the page gives the drawing at a viewport, out of its own stylesheet:
+ * the page's ceiling for the column (`--page-max`), the gutter inside it (the article's own
+ * padding, which is what `main` does not add because this page's article takes it over) and the
+ * padding of the card the figure sits on. The shared `.boundary-drawing` rule lays a drawing out
+ * at `width: 100%` of that box, so this is the column a drawing fills unless its own layout class
+ * caps it — which is what `drawingBox` below reads, and which is why neither number the check
+ * holds is taken here. `null` when any part of it cannot be turned into pixels, which the caller
+ * reports rather than measuring against a guess.
  */
 function drawingColumn(css, viewport) {
   const px = (value) => (value === null ? null : lengthAtViewport(css, value, viewport))
@@ -829,6 +852,37 @@ function drawingColumn(css, viewport) {
   const inset = card === null ? null : px(boxSides(card)[1])
   if (ceiling === null || gutter === null || inset === null) return null
   return Math.min(viewport, ceiling) - 2 * gutter - 2 * inset
+}
+
+/**
+ * The width one layout actually renders its drawing at, in px: the column above, as the layout's
+ * own class resizes it. The class may declare a `width` under the shared `100%` and a `max-width`
+ * over it — the tall drawing declares `max-width: 22.5rem` — and **the drawing is scaled into
+ * that box, not into the column**: a `<svg>` capped at 600 px in a 1056 px column draws its
+ * labels at the 600 px, so a label floor or a fold height taken against the column would pass a
+ * drawing a reader cannot read and a drawing taller than the screen it was measured for. Both of
+ * those are what this box exists to prevent, and both are taken in it below.
+ *
+ * Read off the layout's own class alone, because that is the only place a cap can come from: the
+ * shared class both layouts carry is pinned to `width: 100%` and `max-width: 100%` by rule 4a
+ * below, so a class that declares neither is the column. `100%` is the column by definition; any
+ * other percentage is a box this check cannot turn into pixels. `null` for a declaration it cannot
+ * read, which the caller reports rather than measuring a first screen against a guess.
+ */
+function drawingBox(css, klass, column, viewport) {
+  if (column === null) return null
+  let box = column
+  for (const property of ['width', 'max-width']) {
+    const rule = unconditional(css, klass, property)
+    if (rule === null) continue
+    const value = rule.display
+    const drawn = value === '100%' ? column : lengthAtViewport(css, value, viewport)
+    if (drawn === null) return null
+    // `max-width` is the cap on whatever `width` resolved to, so it is applied to the box the
+    // width left rather than replacing it.
+    box = property === 'max-width' ? Math.min(box, drawn) : drawn
+  }
+  return box
 }
 
 /**
@@ -897,10 +951,14 @@ function roomAbove(css, viewport) {
  *      drawing at its own scale rather than a shrunk desktop one, and the width is read from
  *      below (`max-width`) — a query naming the same width from above shows the tall drawing to a
  *      desktop and the shrunk wide one to the phone it cannot be read on.
- *   4. **The wide drawing is readable where it is shown, and it fits the first screen.** Its
- *      smallest label is at least `MIN_LABEL_PX` in the narrowest column it is shown in, and the
- *      room above it plus its own height is inside a 1440 × 800 screen — the owner's ask, which
- *      is the whole reason a desktop layout exists.
+ *   4. **The wide drawing is readable where it is shown, and it fits the first screen.** Both of
+ *      those are claims about the drawing **as it is rendered**, so both are taken in the box the
+ *      page draws it in rather than in the column the page gives it: the shared `boundary-drawing`
+ *      rule has to lay the drawing out in the column (`width: 100%`, `max-width: 100%`), and the
+ *      layout's own class may cap its drawing under that, so the box is the column as the class
+ *      resizes it. Its smallest label is at least `MIN_LABEL_PX` in the narrowest box it is shown
+ *      in, and the room above it plus its own height is inside a 1440 × 800 screen — the owner's
+ *      ask, which is the whole reason a desktop layout exists.
  */
 function checkDrawingLayout(drawings, css, fail) {
   const wide = drawings.find((drawing) => drawing.key === 'wide')
@@ -978,40 +1036,54 @@ function checkDrawingLayout(drawings, css, fail) {
       )
     }
 
-    // 4a. The floor: the smallest label of the wide drawing, in the narrowest column the page
-    //     gives it — the column at the width the two change over at.
-    const box = wide.viewBox.split(/\s+/).map(Number)
-    const column = drawingColumn(css, at)
-    const sizes = findAll(wide.picture, 'text').map((node) => Number(node.attrs.get('font-size')))
-    const smallest = sizes.filter(Number.isFinite).sort((a, b) => a - b)[0]
-    if (column === null) {
+    // 4a. The box the two numbers below are taken in: the shared rule lays the drawing out in the
+    //     column — `width: 100%` of the card's content box and no ceiling of the site's own
+    //     (`max-width: 100%`) — and a layout class may still cap its own drawing under that. The
+    //     floor and the fold are claims about the drawing as it is rendered, so they are taken in
+    //     that box, and the shared pair is what says the box is the column every time.
+    const sharedWidth = unconditional(css, 'boundary-drawing', 'width')
+    const sharedCeiling = unconditional(css, 'boundary-drawing', 'max-width')
+    if (sharedWidth?.display !== '100%' || sharedCeiling?.display !== '100%') {
       fail(
-        `the column the page gives the drawing at ${Math.round(at)} px — the width the two layouts change over at, and the narrowest viewport the wide drawing is shown at — cannot be read out of the page's own stylesheet (\`[data-security-page]\`'s \`max-width\` and padding, and the card's own padding): that column is where the wide drawing's label size is taken, and a width this check cannot turn into pixels is a floor it cannot take (the owner's feedback of 2026-10-21)`,
-      )
-    } else if (!Number.isFinite(box[2]) || box[2] <= 0 || smallest === undefined) {
-      fail(
-        `the wide drawing declares \`viewBox="${wide.viewBox}"\` and ${sizes.length} label sizes this check cannot read, so the size its labels are rendered at is not a number anything here can take: the drawing's units are what its labels scale by, and an unreadable one is a floor nothing holds (the owner's feedback of 2026-10-21)`,
-      )
-    } else if (smallest * (column / box[2]) < MIN_LABEL_PX) {
-      fail(
-        `the wide drawing's smallest label is ${smallest} units, which is ${(smallest * (column / box[2])).toFixed(2)} px in the ${Math.round(column)} px column the page gives the drawing at ${Math.round(at)} px — the narrowest viewport it is shown at: a label under ${MIN_LABEL_PX} px is a label a reader cannot read, and the wide drawing is shown from the width its own labels fit at or it is shown to a reader who cannot read it (the owner's feedback of 2026-10-21)`,
+        `the \`boundary-drawing\` class both layouts carry declares ${sharedWidth === null ? 'no `width`' : `\`width: ${sharedWidth.display}\``} and ${sharedCeiling === null ? 'no `max-width`' : `\`max-width: ${sharedCeiling.display}\``} outside every media query, and the drawing is laid out in the column the page gives it: the box the label floor and the fold below are both taken in is that box, so a layout that does not fill the column is a label size and a height this check would otherwise take against a width the drawing is never drawn at (the owner's feedback of 2026-10-21; the How It Works drawing is held to the same pair, \`website/test/how-it-works.mjs\`)`,
       )
     }
 
-    // 4b. And the fold: the room above the drawing plus the drawing itself, inside the owner's
-    //     1440 × 800 screen. All four numbers are the page's own — the room and the column out of
+    // 4b. The floor: the smallest label of the wide drawing, in the narrowest box the page draws
+    //     it in — the box at the width the two change over at.
+    const units = wide.viewBox.split(/\s+/).map(Number)
+    const column = drawingColumn(css, at)
+    const box = drawingBox(css, 'boundary-drawing-wide', column, at)
+    const sizes = findAll(wide.picture, 'text').map((node) => Number(node.attrs.get('font-size')))
+    const smallest = sizes.filter(Number.isFinite).sort((a, b) => a - b)[0]
+    if (box === null) {
+      fail(
+        `the box the page draws the wide drawing in at ${Math.round(at)} px — the width the two layouts change over at, and the narrowest viewport the wide drawing is shown at — cannot be read out of the page's own stylesheet (\`[data-security-page]\`'s \`max-width\` and padding, the card's own padding, and the \`width\`/\`max-width\` the wide drawing's own class declares): that box is where the wide drawing's label size is taken, and a width this check cannot turn into pixels is a floor it cannot take (the owner's feedback of 2026-10-21)`,
+      )
+    } else if (!Number.isFinite(units[2]) || units[2] <= 0 || smallest === undefined) {
+      fail(
+        `the wide drawing declares \`viewBox="${wide.viewBox}"\` and ${sizes.length} label sizes this check cannot read, so the size its labels are rendered at is not a number anything here can take: the drawing's units are what its labels scale by, and an unreadable one is a floor nothing holds (the owner's feedback of 2026-10-21)`,
+      )
+    } else if (smallest * (box / units[2]) < MIN_LABEL_PX) {
+      fail(
+        `the wide drawing's smallest label is ${smallest} units, which is ${(smallest * (box / units[2])).toFixed(2)} px in the ${Math.round(box)} px box the page draws it in at ${Math.round(at)} px — the narrowest viewport it is shown at${box < column ? `, the ${Math.round(column)} px column capped by the wide drawing's own \`max-width\`` : ''}: a label under ${MIN_LABEL_PX} px is a label a reader cannot read, and the wide drawing is shown from the width its own labels fit at or it is shown to a reader who cannot read it (the owner's feedback of 2026-10-21)`,
+      )
+    }
+
+    // 4c. And the fold: the room above the drawing plus the drawing itself, inside the owner's
+    //     1440 × 800 screen. All four numbers are the page's own — the room and the box out of
     //     its stylesheet, the height out of the drawing's own `viewBox`.
     const room = roomAbove(css, FIRST_SCREEN.width)
-    const across = drawingColumn(css, FIRST_SCREEN.width)
+    const across = drawingBox(css, 'boundary-drawing-wide', drawingColumn(css, FIRST_SCREEN.width), FIRST_SCREEN.width)
     if (room === null || across === null) {
       fail(
-        `the room above the drawing and the column it is drawn in at ${FIRST_SCREEN.width} px cannot be read out of the page's own stylesheet: the header's padding and border and the control inside it, the title band's padding and the headline's size, the step between the page's blocks, the card's padding and the section heading are what the fold is measured against, and one of them is a value this check cannot turn into pixels (the owner's feedback of 2026-10-21)`,
+        `the room above the drawing and the box it is drawn in at ${FIRST_SCREEN.width} px cannot be read out of the page's own stylesheet: the header's padding and border and the control inside it, the title band's padding and the headline's size, the step between the page's blocks, the card's padding and the section heading are what the fold is measured against, and one of them is a value this check cannot turn into pixels (the owner's feedback of 2026-10-21)`,
       )
-    } else if (Number.isFinite(box[3]) && box[3] > 0) {
-      const height = across * (box[3] / box[2])
+    } else if (Number.isFinite(units[3]) && units[3] > 0) {
+      const height = across * (units[3] / units[2])
       if (room + height > FIRST_SCREEN.height) {
         fail(
-          `the drawing is drawn ${box[2]} × ${box[3]} units, which the ${Math.round(across)} px column renders ${Math.round(height)} px tall, and the page carries ${Math.round(room)} px of header, title band, step, card padding and section heading above it: the headline and the whole drawing do not fit a ${FIRST_SCREEN.width} × ${FIRST_SCREEN.height} first screen — the layout the owner asked for is one a desktop reads whole, which is why the wide drawing exists at all (the owner's feedback of 2026-10-21, D187: the fold itself is the owner's check on a real browser, and this is the arithmetic it rests on)`,
+          `the drawing is drawn ${units[2]} × ${units[3]} units, which the ${Math.round(across)} px box the page draws it in renders ${Math.round(height)} px tall, and the page carries ${Math.round(room)} px of header, title band, step, card padding and section heading above it: the headline and the whole drawing do not fit a ${FIRST_SCREEN.width} × ${FIRST_SCREEN.height} first screen — the layout the owner asked for is one a desktop reads whole, which is why the wide drawing exists at all (the owner's feedback of 2026-10-21, D187: the fold itself is the owner's check on a real browser, and this is the arithmetic it rests on)`,
         )
       }
     } else {
@@ -2056,7 +2128,11 @@ test('the gate refuses each planted defect', (t) => {
 
   // The wide drawing turned off where no query holds: a reader above the changeover is left with
   // no drawing at all.
-  const nothing = planted(html, '.boundary-drawing{width:100%;height:auto;display:block}', '.boundary-drawing{width:100%;height:auto;display:none}')
+  const nothing = planted(
+    html,
+    '.boundary-drawing{width:100%;max-width:100%;height:auto;display:block}',
+    '.boundary-drawing{width:100%;max-width:100%;height:auto;display:none}',
+  )
   assert.match(
     verdict(t, nothing).join('\n'),
     /the wide drawing is `display: none` outside every media query/,
@@ -2069,8 +2145,8 @@ test('the gate refuses each planted defect', (t) => {
   // page's — and the check says that rather than passing the pair.
   const undeclared = planted(
     html,
-    '.boundary-drawing{width:100%;height:auto;display:block}',
-    '.boundary-drawing{width:100%;height:auto}',
+    '.boundary-drawing{width:100%;max-width:100%;height:auto;display:block}',
+    '.boundary-drawing{width:100%;max-width:100%;height:auto}',
   )
   assert.match(
     verdict(t, undeclared).join('\n'),
@@ -2126,7 +2202,7 @@ test('the gate refuses each planted defect', (t) => {
   const tiny = planted(html, /font-size="14"/g, 'font-size="8"')
   assert.match(
     verdict(t, tiny).join('\n'),
-    /the wide drawing's smallest label is 8 units, which is \d+\.\d+ px in the \d+ px column/,
+    /the wide drawing's smallest label is 8 units, which is \d+\.\d+ px in the \d+ px box the page draws it in/,
     'a wide drawing whose labels are too small to read where it is shown is not refused, so the desktop layout can be one nobody can read',
   )
 
@@ -2137,17 +2213,68 @@ test('the gate refuses each planted defect', (t) => {
     'a wide drawing too tall for the first screen is not refused, which is the very thing the owner asked for: the drawing does not fit above the fold on a desktop',
   )
 
-  // The four refusals that are about what this check **cannot read**: the page's own numbers, or
-  // the drawing's own shape, turned into something nothing here can turn back into pixels. They
-  // are guard rails rather than defects a reader meets, and each is planted the same way — the one
-  // value the arithmetic is taken at is made unreadable — because a branch whose refusal has never
-  // been seen to fire is a branch nobody knows the shape of, which is the same reason every other
-  // rule here has a plant.
+  // And the width the drawing is actually rendered at, which is the box both of those numbers are
+  // taken in. The wide drawing's own class is capped at 600 px while the column the page gives it
+  // stays 1024 px: the drawing is scaled into the 600 px, so its 14-unit labels render at about
+  // 7 px and the fold is measured against a box half the width of the one the check would have
+  // used. The cap is planted on the layout's own class rather than on the shared rule because
+  // that is where a cap belongs — the shared pair is pinned by the two plants below it.
+  const capped = planted(
+    html,
+    '[data-security-diagram] .boundary-drawing-tall{max-width:22.5rem;display:none}',
+    '[data-security-diagram] .boundary-drawing-tall{max-width:22.5rem;display:none}[data-security-diagram] .boundary-drawing-wide{max-width:600px}',
+  )
+  assert.match(
+    verdict(t, capped).join('\n'),
+    /which is 7\.12 px in the 600 px box the page draws it in at 1120 px — the narrowest viewport it is shown at, the 1024 px column capped by the wide drawing's own `max-width`/,
+    'a wide drawing capped narrower than the column is not refused, so the label floor is taken against a box the drawing is never drawn in and a label half the readable size passes',
+  )
+
+  // The pair that says the box the two numbers are taken in is the column every time: the class
+  // both layouts carry gives the drawing `width: 100%` and no ceiling of the site's own, so a cap
+  // is a layout class's own and is read as one. Both halves are planted — a ceiling under the
+  // column, and no width at all — because a shared rule that declares one of them and not the
+  // other is a drawing whose rendered width this check is guessing at.
+  const SHARED = '.boundary-drawing{width:100%;max-width:100%;height:auto;display:block}'
+  const sharedCap = planted(html, SHARED, '.boundary-drawing{width:100%;max-width:600px;height:auto;display:block}')
+  assert.match(
+    verdict(t, sharedCap).join('\n'),
+    /the `boundary-drawing` class both layouts carry declares `width: 100%` and `max-width: 600px` outside every media query/,
+    'a drawing capped under the column by the class both layouts carry is not refused, so the page lays the drawing out in a box neither the label floor nor the fold is taken in',
+  )
+
+  const sharedWidth = planted(html, SHARED, '.boundary-drawing{max-width:100%;height:auto;display:block}')
+  assert.match(
+    verdict(t, sharedWidth).join('\n'),
+    /the `boundary-drawing` class both layouts carry declares no `width` and `max-width: 100%` outside every media query/,
+    "a shared rule that never gives the drawing the column's width is not refused, so the width the drawing is rendered at is the browser's own rendering of an `<svg>` rather than the page's",
+  )
+
+  // The five refusals that are about what this check **cannot read**: the page's own numbers, the
+  // drawing's own shape, or a cap on the drawing, turned into something nothing here can turn back
+  // into pixels. They are guard rails rather than defects a reader meets, and each is planted the
+  // same way — the one value the arithmetic is taken at is made unreadable — because a branch whose
+  // refusal has never been seen to fire is a branch nobody knows the shape of, which is the same
+  // reason every other rule here has a plant.
   const noCeiling = planted(html, '--page-max:72rem;', '--page-max:fit-content;')
   assert.match(
     verdict(t, noCeiling).join('\n'),
-    /that column is where the wide drawing's label size is taken/,
+    /that box is where the wide drawing's label size is taken/,
     'a column this check cannot read is not refused, so the label floor is taken against a guess or against nothing',
+  )
+
+  // The cap read the same way: a `max-width` on the drawing's own class that is not a length this
+  // check can turn into pixels leaves the box the floor and the fold are taken in unknown, which is
+  // a refusal rather than a fall back to the column.
+  const unreadableCap = planted(
+    html,
+    '[data-security-diagram] .boundary-drawing-tall{max-width:22.5rem;display:none}',
+    '[data-security-diagram] .boundary-drawing-tall{max-width:22.5rem;display:none}[data-security-diagram] .boundary-drawing-wide{max-width:thin}',
+  )
+  assert.match(
+    verdict(t, unreadableCap).join('\n'),
+    /that box is where the wide drawing's label size is taken/,
+    'a cap this check cannot turn into pixels is not refused, so the label floor is taken against a box nothing here has',
   )
 
   // The plant takes the drawing's own **width** out of its `viewBox`: the labels are still the
@@ -2171,7 +2298,7 @@ test('the gate refuses each planted defect', (t) => {
   const noLeading = planted(html, '--leading-display:.94;', '--leading-display:roomy;')
   assert.match(
     verdict(t, noLeading).join('\n'),
-    /the room above the drawing and the column it is drawn in at 1440 px cannot be read out of the page's own stylesheet/,
+    /the room above the drawing and the box it is drawn in at 1440 px cannot be read out of the page's own stylesheet/,
     'a part of the room above the drawing that cannot be read is not refused, so the fold is measured with a header, a headline or a heading standing in as nothing',
   )
 

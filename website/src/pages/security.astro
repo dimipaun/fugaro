@@ -848,9 +848,17 @@ const DIAGRAM_LIMITS = [
     margin: 0;
   }
 
+  /* **The drawing is laid out in the column, and both numbers the page rests on are taken in that
+     box**: `width: 100%` of the card's content box and no ceiling of the site's own
+     (`max-width: 100%`), which is the box the label floor and the fold are measured in
+     (`website/test/security.mjs`, and the pair the How It Works drawing is held to). A layout
+     class may still cap its own drawing — the tall one does, at a phone's 22.5rem — and a cap
+     shrinks the box the labels are read in, so the gate reads the cap rather than assuming the
+     column. */
   [data-security-diagram] .boundary-drawing {
     display: block;
     width: 100%;
+    max-width: 100%;
     height: auto;
   }
 
