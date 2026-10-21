@@ -49,6 +49,43 @@ bundle. `npx expo export` builds a JavaScript bundle for both platforms; a
 native build is still owner-run — see "Building for internal testing" and "What
 is not verified here".
 
+**The Android launch crash, and the two things that came out of it (added
+2026-10-21).** The owner installed the `preview` APK on Android on 2026-10-21
+and it **opened and closed with no screen at all**. The cause was a `TypeError`
+thrown while `index.js` was being *evaluated*: `expoSecureStorePort` required
+`SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY`, and that constant **does not exist
+on Android** — `expo-secure-store`'s `ios/SecureStoreModule.swift` registers
+seven `Constant(...)` entries and its
+`android/.../SecureStoreModule.kt` registers **none**, so the SDK's own
+`export const WHEN_UNLOCKED_THIS_DEVICE_ONLY = ExpoSecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY`
+is `undefined` there. Nothing else about the build was wrong:
+`expo-secure-store` 58.0.2 is the version `node_modules/expo/bundledNativeModules.json`
+pins for SDK 58, its config plugin is listed in `app.json`, and its native
+module is linked and works on Android — it simply has no accessibility levels to
+name. Two changes answer it:
+
+* **the port takes the platform** (`expoSecureStorePort(SecureStore, { platform:
+  Platform.OS })`). On iOS the constant is still required, so a rename is a loud
+  refusal rather than a silent downgrade to `WHEN_UNLOCKED` — the item that
+  rides an iCloud backup onto another phone; on Android no constant is asked for
+  and the write carries no `keychainAccessible`, which the Kotlin
+  `SecureStoreOptions` record has no field for. `src/accounts/expo-secure-store.js`
+  has the full account, `src/accounts/expo-secure-store.test.js` the tests.
+* **the startup is guarded** (`src/app/startup.js`, wired in `index.js`). The
+  whole of the wiring — both ports, the store, the demo, the screens, the shell
+  — is built inside `startup.root(build)`, so a throw from any of it renders a
+  plain screen: what failed, the error's message, and a **"Copy details"** line
+  a reviewer can long-press and paste. A root error boundary catches a
+  render-time throw the same way, and `startup.guard(what, run)` — built on
+  `report(error, what)` — is the door for a failure that arrives *after* a
+  successful start, catching **both** halves: a rejected promise (its `try`
+  cannot see what happens after an `await`) and a **synchronous** throw (a tap
+  handler runs from the platform's event loop, not from `root`'s `try`, so a
+  throw there is an uncaught error in a release build; the demo's entry is the
+  app's first guarded step today, and a future SecureStore read, listener or
+  fetch joins it). A release build on a phone has no terminal and no
+  red box, so a startup failure that is not *drawn* is one nobody can report.
+
 **Two audio seams, and now one of them is wired.** P3.6 defined the one audio
 seam it needed -- `src/mailbox/speaker.js`, `speak(text)` answering whether the
 utterance was spoken, which is what the ack's rule is written against -- before
@@ -119,7 +156,7 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 
 | Path | What it is |
 | --- | --- |
-| `index.js` | The entry. The one file that knows what a device is: it imports `expo`, `expo-secure-store`, `@react-native-async-storage/async-storage`, `react` and `react-native`, builds the two ports, the store and the demo controller, wires the two screens and registers the root. No decisions of its own, and no test (see "What is not verified"). |
+| `index.js` | The entry. The one file that knows what a device is: it imports `expo`, `expo-secure-store`, `@react-native-async-storage/async-storage`, `react` and `react-native`, builds the two ports (the Keychain one with `Platform.OS`, the constant that decides its rule being iOS's), the store and the demo controller, wires the two screens, and registers the root **inside the guarded startup**. No decisions of its own, and no test (see "What is not verified"). |
 | `package.json`, `package-lock.json` | The manifest and the tree `npm ci` installs. The dependencies are the packages `index.js` and `src/` actually import — `expo`, `react`, `react-native`, `expo-secure-store` and `@react-native-async-storage/async-storage` — plus `expo-splash-screen`, which nothing imports and which `app.json` names as a **config plugin** (a plugin that is not installed is a prebuild that stops): `src/dependencies.test.js` fails on an undeclared import and on a manifest that lacks `expo`, `react` or `react-native`. |
 | `metro.config.cjs` | Metro's config, and the one entry in it that matters: `watchFolders` includes the **repository root**, because the app imports `shared/` (`../../../shared/confirm/index.js` and its siblings) and Metro's project root is `mobile/`. Without it the bundle fails to resolve them — `npx expo export` stops at `Unable to resolve module ../../../shared/confirm/index.js` — so it is not removable, and `src/dependencies.test.js` fails if it goes. `.cjs`, because `package.json` is `"type": "module"`. |
 | `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. Three fields are what SDK 58 needs: `icon` and `android.adaptiveIcon` (`./assets/icon.png` and `./assets/adaptive-icon.png`, the two brand masters copied in — see `assets/` below and `src/app-config.icons.test.js`), `plugins: ["expo-secure-store", ["expo-splash-screen", …]]` (the module that holds D111's two items, whose config plugin is what configures it for a native build — `npx expo install` asks for it — and the splash SDK 58 has no top-level key for) and **no `edgeToEdgeEnabled` and no `newArchEnabled`**: `npx expo-doctor` reports each of the two as `Additional property "…" is not allowed` against the SDK 58 schema (one error per run, so removing the first is what makes the second visible — 19/20, then 19/20, then 20/20). Both flags ask for what SDK 58 builds anyway: edge-to-edge is mandatory from Android 16 (Expo's own `withEdgeToEdge` says so), and the new architecture is the only architecture. |
@@ -128,6 +165,7 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 | `assets/` | The app's icons (the owner's task of 2026-10-21): `icon.png` and `adaptive-icon.png` are **byte copies** of `brand/app-icon-1024.png` (the opaque master — iOS refuses an icon with transparency) and `brand/app-icon-android-foreground-1024.png` (the transparent adaptive-icon foreground), which `scripts/gen-brand-icons.py` writes from `brand/fugaro-logo.png` alone — the masters are never edited by hand, and neither is this copy: change an icon by re-running the script and copying again, and `src/app-config.icons.test.js` fails on the bytes if it is forgotten. The splash shows the same `icon.png` over the masters' own ground colour, so the app's first screen is the logo on the brand's dark ground. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from; while demo mode is on it draws the banner and the way out on **every** screen, above whatever the screen holds. |
+| `src/app/startup.js` | The guarded startup and the root error boundary (added 2026-10-21, after the Android launch crash): `startup.root(build)` builds the app inside a `try` and renders the failure screen if it throws, `report(error, what)` is the same door for a failure that arrives later, `guard(what, run)` wraps one step the app runs later -- a tap handler, an async startup step -- and catches **both** its synchronous throw and its rejected promise, because a handler runs from the platform's event loop and not from any `try` in this file, and `failureDetails`/`createFailureScreen` turn anything thrown -- a string, `undefined`, a circular object -- into what the phone shows: the step, the message, and a selectable "Copy details" line. `React` arrives as an argument that must carry `Component`, because an error boundary is a class. `src/app/startup.test.js` drives it with a fake React, a renderer and all. |
 | `src/app/first-screen.js` | The first screen: what the app is waiting for, the "Try the demo" control, and the slot (`pairingScreen`) where P6.8's pairing screen goes -- above the demo control, never instead of it. |
 | `src/demo/` | Demo mode (the owner's ruling of 2026-10-19): the fixed sample data (`sample.js`), the placeholder key source (`keys.js`), the transport that plants the consumer's side in the port double (`transport.js`), the controller (`index.js`) and the screen (`screen.js`). `safety.test.js` is the scan that holds the three fences (no network, no secure storage, no credential). |
 | `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
@@ -385,13 +423,31 @@ storage (Keychain on iOS, Keystore-backed storage on Android) via
 
 They are written under `fugaro.account.<accountId>.<item>`, one Keychain item
 per account per item, with `keychainAccessible:
-WHEN_UNLOCKED_THIS_DEVICE_ONLY` (`src/accounts/expo-secure-store.js`). That
+WHEN_UNLOCKED_THIS_DEVICE_ONLY` **on iOS** (`src/accounts/expo-secure-store.js`;
+Android's store is SharedPreferences behind the Keystore, declares no
+accessibility constant and takes no such option, which is the platform split
+the 2026-10-21 crash was about). That
 choice is the one security decision the port makes, and it has its own test: it
 keeps an item out of an **iCloud Keychain backup** and off a **restored-to-
 another-phone** device. The MAC key proves possession of the pairing, so a key
 that could be restored anywhere would restore the ability to speak as this
-installation — `per-pairing` in name only. It is also not readable while the
-phone is locked. `requireAuthentication` (a Face ID prompt on every read) is
+installation — `per-pairing` in name only. **On iOS** it is also not readable
+while the phone is locked, which is what `WHEN_UNLOCKED` rather than
+`AFTER_FIRST_UNLOCK` buys and what the voice-session reconciliation's **F24**
+(and VS5.1, a paused session touches no credential) rests on. **That sentence is
+iOS's, and this branch has just made that distinction load-bearing**: Android's
+store is SharedPreferences behind the Keystore, has no accessibility constant to
+set, and its key is **not** unlock-gated, so F24 is **not** a property of the
+Android build — an Android session paused on a call can still read its pairing
+key. That is read off the installed module, not assumed:
+`expo-secure-store/android/.../encryptors/AESEncryptor.kt:64` is
+`.setUserAuthenticationRequired(options.requireAuthentication)`, and this app
+never sets `requireAuthentication`, so the Android key is generated
+authentication-free (there is no `setUnlockedDeviceRequired` call either).
+Nothing in this repository asserts a cross-platform version of F24: F24's own
+evidence is the port's **iOS** rule, and neither platform's constant has been
+exercised on a device (see the unverified list below).
+`requireAuthentication` (a Face ID prompt on every read) is
 deliberately **not** set: the ID token is refreshed and read in the background,
 and a prompt per refresh is a prompt the owner switches off.
 
@@ -1441,6 +1497,13 @@ the two apart -- so it is written down here rather than claimed as a kill.
   bundle `index.js` and everything it reaches, `shared/` included, with no
   unresolved import. That is a **JavaScript** proof: Metro resolved the graph
   and produced a bundle.
+  **Re-run on 2026-10-21**, after the Android launch crash, in the same
+  toolchain (Node 22.23.3, npm 10.9.9): `npx expo-doctor` **20/20**,
+  `npx expo install --check` → *Dependencies are up to date* (so every
+  installed package matches the SDK 58 `bundledNativeModules.json`), and
+  `npx expo export --platform android` produced an Android bundle of
+  **655 modules** (654 before the guard was added). `npm test` was **640/640**
+  green. None of that is a device: the bundle *builds*, it has not been *run*.
   **Still not run, and it is the larger half:** no `expo start`, no `expo lint`,
   no `eas build`, no `expo prebuild`, no Xcode or Gradle run, no simulator and
   no device. So a **native** iOS or Android build — the pods, the Gradle
@@ -1481,8 +1544,11 @@ the two apart -- so it is written down here rather than claimed as a kill.
   `@react-native-async-storage/async-storage`, `react` and `react-native` are
   faked in every test that touches them: what is tested is the shape of the
   calls this repository makes (including the accessibility constant, read off
-  the module rather than guessed), not what the modules do. `index.js`, which
-  imports the real ones, is untested for that reason.
+  the module **when the platform has one** — the Android half of that was the
+  2026-10-21 crash), not what the modules do. `index.js`, which imports the
+  real ones, is untested for that reason, and the guard around it
+  (`src/app/startup.js`) is what turns the next untested import into a screen
+  somebody can read instead of an app that closes.
 * **`useSyncExternalStore`, and the demo as a running app.** The demo's
   subscription is `React.useSyncExternalStore(demo.subscribe, demo.state)`,
   passed into the shell as the `useDemo` hook (`index.js`); every test supplies
@@ -1492,9 +1558,27 @@ the two apart -- so it is written down here rather than claimed as a kill.
   and no device run, which is the first bullet in this list.
 * **`WHEN_UNLOCKED_THIS_DEVICE_ONLY`'s name and value**, which come from the
   documented `expo-secure-store` API and are not exercised against the package.
-  The port refuses to construct if the constant is missing, so an SDK rename is
-  a loud failure rather than a silent downgrade to the platform default — but
-  the constant has not been seen on a device here.
+  The port requires the constant **where the platform declares it** (iOS) and
+  refuses to construct if it is missing, so an SDK rename is a loud failure
+  rather than a silent downgrade to the platform default — but the constant has
+  not been seen on a device here. That requirement is now **per platform**,
+  which is the 2026-10-21 fix: `expo-secure-store`'s Kotlin module registers no
+  `Constant(...)` at all (`mobile/src/accounts/expo-secure-store.js` has the
+  grep), so requiring it everywhere was a `TypeError` at module scope on
+  Android — which is the crash — and requiring it nowhere would silently drop
+  the iOS accessibility level. Both halves are tested against a fake module on
+  each platform; neither has been run on either.
+* **The voice-session reconciliation's F24, on Android.** F24 says the secure
+  store is unreadable while the phone is locked, and that is a property of the
+  **iOS** Keychain item (`WHEN_UNLOCKED_THIS_DEVICE_ONLY` and nothing to do with
+  this app's code). Its Android half is a claim **read off the installed
+  module's source** — `AESEncryptor.kt:64` sets `setUserAuthenticationRequired`
+  from the caller's `requireAuthentication`, which this app never passes — and
+  never observed: no device here has been locked mid-session with the store
+  open. A test on a device, or a design that does not lean on unlock-gating on
+  Android, is what would make VS5.1's "a paused session touches no credential"
+  true on both platforms rather than on one.
+  (O7 in the reconciliation's open list tracks the same gap.)
 * **Every speech engine, and every acoustic behaviour.** Nothing under
   `src/audio/` is an engine: the ports are contracts and the tests drive them
   with fakes, which is D52's rule and P3.4's whole scope. Which engine is
