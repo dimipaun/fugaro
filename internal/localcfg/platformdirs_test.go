@@ -144,6 +144,30 @@ func TestConfigDirFollowsThePlatform(t *testing.T) {
 			want: filepath.Join(profile, ".config"),
 		},
 		{
+			// The same rule one step down: a home directory is read the way an
+			// XDG variable is. A relative one is not a home directory — joining
+			// the fallback onto it would hand back a relative path, and the
+			// caller would then write "rel/.config/fugaro" under whatever the
+			// process's working directory happened to be — so it is ignored and
+			// the next name is tried.
+			name: "a relative HOME is ignored in favour of %USERPROFILE%",
+			goos: "windows", kind: DirConfig,
+			env:  map[string]string{"HOME": "rel", "USERPROFILE": profile},
+			want: filepath.Join(profile, ".config"),
+		},
+		{
+			name: "a relative HOME is not a home directory at all",
+			goos: "linux", kind: DirConfig,
+			env:     map[string]string{"HOME": "rel"},
+			wantErr: []string{"HOME", "USERPROFILE"},
+		},
+		{
+			name: "a relative %USERPROFILE% is refused too",
+			goos: "windows", kind: DirConfig,
+			env:     map[string]string{"USERPROFILE": "rel"},
+			wantErr: []string{"USERPROFILE"},
+		},
+		{
 			name: "nothing set on Linux names every variable it tried",
 			goos: "linux", kind: DirConfig,
 			wantErr: []string{"XDG_CONFIG_HOME", "HOME", "USERPROFILE"},
