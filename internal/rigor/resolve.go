@@ -151,7 +151,7 @@ func Resolve(cfg Config, req Request) Resolved {
 	var areas []Area
 	if matched := Select(cfg.Areas(), req.Paths); len(matched) > 0 {
 		// An area replaces the value below it whole, in either direction
-		// (D21), and the names are kept whatever the mode turns out to be
+		// (D21), and the rules are kept whatever the mode turns out to be
 		// (D23: the record lists every area that matched).
 		mode, from = Strictest(ModesOf(matched)...), FromArea
 		areas = matched
