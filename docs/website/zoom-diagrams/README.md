@@ -13,8 +13,8 @@ language, on its own deploy.
 
 **No code, no schema, no config and no page has changed in this line of work's own branch.**
 Nothing under `website/` is touched by it: the parts in progress are the plan's **Part 1** and
-**Part 4**, each in a pull request of its own, and Parts 2, 3 and 5 are written and waiting on
-the owner's go. The four documents below are the whole of it, and every claim in them was read
+**Part 4**, each landing as a pull request of its own, and Parts 2, 3 and 5 are written and
+waiting on the owner's go. The four documents below are the whole of it, and every claim in them was read
 out of the tree at `3021f4b3` on 2026-10-21, with one exception the answers recorded: `#842`
 has merged into this branch's history since (`3c5cc354`), so the slider the answers name is
 the merged component and not the one the readings were taken from.
