@@ -77,8 +77,8 @@ locals {
   #     is a repository access token, issued for one repository, which no
   #     service can mint per job (F7).
   #
-  # TestServiceHeldSecretsMatchTheCredentialsService pins these three literals
-  # and the drop below to Go.
+  # TestServiceHeldSecretsMatchTheCredentialsService pins these four literals
+  # and both expressions below to Go.
   model_secret_env_names    = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
   model_secret_env_prefix   = "FUGARO_PROVIDER_KEY_"
   service_held_secret_names = ["github-app-key"]
@@ -94,9 +94,9 @@ locals {
   # nothing changes", and the same set (and the same instance keys) as before
   # this file knew about the service — and, once it is on, every mounted
   # secret that is not one the service holds (C1.11's bundle holds the model
-  # credentials, C2.1 mints the App key's installation tokens, and C1.20/C2.2
-  # drop the job's mount of each). One member per mounted secret, never the
-  # project's, never another workflow's.
+  # credentials, C2.1 mints installation tokens from the App key, and
+  # C1.20/C2.2 drop the job's mount of each). One member per mounted secret,
+  # never the project's, never another workflow's.
   job_secret_names = toset([
     for env, logical in var.workflow.secret_env :
     logical if var.credentials_service == null || !local.is_service_held[env]
