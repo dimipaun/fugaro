@@ -1265,7 +1265,13 @@ func TestDeployerExtractRuleIsRecordedAsUnverified(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		text := strings.Join(strings.Fields(string(b)), " ")
+		// Lower-cased on both sides. The scan used to be case-sensitive, and the
+		// module wrote the claim in capitals — "the template is the DOCUMENTED
+		// form … which is what the resource-attribute reference documents for
+		// resource.name.extract" — so the one file this test exists to watch was
+		// the one file it could not see. A phrase list that a capital letter
+		// defeats is not a scan.
+		text := strings.ToLower(strings.Join(strings.Fields(string(b)), " "))
 		for _, phrase := range []string{
 			"documented semantics",
 			"documented form",

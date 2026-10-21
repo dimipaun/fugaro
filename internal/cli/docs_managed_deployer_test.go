@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -16,11 +17,12 @@ import (
 // managed-deployer-fence.md; deploy/terraform/gcp/modules/installation/
 // deployer.tf). The section is the only place the shape's open questions are
 // measured, so what this test holds is what makes it runnable by the owner and
-// safe to run: whose check it is, the eight hard stops in the guard block (the
+// safe to run: whose check it is, the nine hard stops in the guard block (the
 // pin to installation `fugaro` / project `fugaro-dev`, the belong and
 // production refusals comparing PROJECT IDS and the installation's name — never
 // a `fugaro doctor` line read out of the checkout — the owner-typed variable,
-// and the config's own project, region and runs bucket), the workdir and backend
+// and the config's own project, region, Scheduler region and runs bucket), the
+// workdir and backend
 // configuration every terraform command below it needs (the checkout's
 // `deploy/terraform/gcp/roots/installation` has no tfvars and no backend), the
 // two directions every service is measured in, the Secret Manager version read
@@ -186,6 +188,14 @@ func TestChecklistHasCheck68(t *testing.T) {
 		// value gets typed into, and step 5 reads the runs bucket.
 		`sed -n 's/^region: *//p' "$C"`,
 		`sed -n 's/^runs_bucket: *//p' "$C"`,
+		// The Scheduler region is a value of its own and not the region: Cloud
+		// Scheduler is not offered everywhere (this installation's us-east5
+		// gives us-east4), so a Scheduler command given the region fails on the
+		// pinned installation and its condition goes unmeasured. The config
+		// records it — `fugaro init` writes it from gcp.SchedulerRegion — and
+		// the guard refuses to run without it.
+		`sed -n 's/^scheduler_region: *//p' "$C"`,
+		"SREGION",
 		// The state bucket, read from the installation's config instead of
 		// assumed: `fugaro-tfstate-<gcp-project>` is only the default, and this
 		// check has to init the backend the sandbox's own state lives under.
@@ -215,8 +225,8 @@ func TestChecklistHasCheck68(t *testing.T) {
 			t.Errorf("Check 68's stop does not refuse: %q", line)
 		}
 	}
-	if stops < 8 {
-		t.Errorf("Check 68's guard carries %d hard stops, and the check documents eight", stops)
+	if stops < 9 {
+		t.Errorf("Check 68's guard carries %d hard stops, and the check documents nine", stops)
 	}
 	if strings.Contains(guard, "gcloud config get-value project") {
 		t.Error("Check 68's guard reads the project from gcloud's ambient configuration, which is the trap the check names")
@@ -442,8 +452,13 @@ func TestChecklistHasCheck68(t *testing.T) {
 		"terraform apply -input=false \"$CHK68_TMP/restore.tfplan\"",
 		// The Restore deletes everything the check created, the near miss
 		// included: a probe left behind is a resource the next run's plan and
-		// the next reader both have to account for.
-		"gcloud run jobs delete fmgd-chk68-job xfmgd-chk68-job",
+		// the next reader both have to account for. One command per resource —
+		// the line that used to carry `fmgd-chk68-job xfmgd-chk68-job` in one
+		// `gcloud run jobs delete` deleted neither, because the subcommand takes
+		// a single positional name.
+		"gcloud run jobs delete fmgd-chk68-job --project=",
+		"gcloud run jobs delete xfmgd-chk68-job --project=",
+		"gcloud run jobs delete chk68-neg-job --project=",
 		"rm -rf \"$CHK68_TMP\"",
 		"**Passes when:**",
 		"**Fails when:**",
@@ -600,14 +615,17 @@ func runChk68Guard(t *testing.T, guard string, env []string) (int, string) {
 
 // writeChk68Config writes an installation's local config where the guard reads
 // it: $HOME/.config/fugaro/projects/<installation>.yaml, the file the guard now
-// takes the project, the region and the runs bucket from.
-func writeChk68Config(t *testing.T, home, installation, project, region, runsBucket string) {
+// takes the project, the region, the Scheduler region and the runs bucket from.
+// An empty value writes the key with nothing after it, which is what a config
+// that carries no such value looks like to the guard's `sed`.
+func writeChk68Config(t *testing.T, home, installation, project, region, schedulerRegion, runsBucket string) {
 	t.Helper()
 	dir := filepath.Join(home, ".config", "fugaro", "projects")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := "name: " + installation + "\ngcp_project: " + project + "\nregion: " + region + "\nruns_bucket: " + runsBucket + "\n"
+	body := "name: " + installation + "\ngcp_project: " + project + "\nregion: " + region +
+		"\nscheduler_region: " + schedulerRegion + "\nruns_bucket: " + runsBucket + "\n"
 	if err := os.WriteFile(filepath.Join(dir, installation+".yaml"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -650,7 +668,7 @@ func TestChecklistCheck68GuardRefusesBelong(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
 			if tc.configProject != "" {
-				writeChk68Config(t, home, tc.installation, tc.configProject, "us-east5", "sandbox-runs")
+				writeChk68Config(t, home, tc.installation, tc.configProject, "us-east5", "us-east4", "sandbox-runs")
 			}
 			code, out := runChk68Guard(t, guard, []string{
 				"HOME=" + home,
@@ -691,9 +709,9 @@ func TestChecklistCheck68GuardRefusesBelong(t *testing.T) {
 // meant to run. The guard now pins the pair the tree records for this check —
 // installation `fugaro` in project `fugaro-dev` (docs/dogfooding.md:3,11) —
 // refuses belong and production by name, requires the installation's config to
-// exist and to name `$P`, reads `L` and `RUNS_BUCKET` out of that config rather
-// than out of the environment, and refuses to run at all unless the owner has
-// typed an explicit variable.
+// exist and to name `$P`, reads `L`, `SREGION` and `RUNS_BUCKET` out of that
+// config rather than out of the environment, and refuses to run at all unless
+// the owner has typed an explicit variable.
 //
 // Mutations (verified, run and restored): the pin comparison dropped → the
 // wrong-project and wrong-installation cases pass; the `prod` refusal dropped →
@@ -702,51 +720,62 @@ func TestChecklistCheck68GuardRefusesBelong(t *testing.T) {
 // this test's environment sets no L and the config is the only place the region
 // is written; the owner check dropped → the "not typed by the owner" case
 // passes; a `${VAR:?}` dropped → the "every variable is required" case for that
-// variable passes.
+// variable passes; the Scheduler region's stop dropped → the "config carries no
+// scheduler region" case passes, and the check then runs every Scheduler
+// command against the region on an installation where Scheduler is not offered
+// there.
 func TestChecklistCheck68GuardPinsTheInstallation(t *testing.T) {
 	guard := chk68GuardBlock(t)
 
 	cases := []struct {
-		name          string
-		ownerRun      string // CHK68_OWNER_RUN
-		installation  string // CHK68_INSTALLATION
-		project       string // CHK68_PROJECT
-		configProject string // the config's `gcp_project:`; "" writes no config
-		configRegion  string // the config's `region:`; "" writes the file's own default
-		configBucket  string // the config's `runs_bucket:`
-		want          string // the phrase the refusal must carry
+		name            string
+		ownerRun        string // CHK68_OWNER_RUN
+		installation    string // CHK68_INSTALLATION
+		project         string // CHK68_PROJECT
+		configProject   string // the config's `gcp_project:`; "" writes no config
+		configRegion    string // the config's `region:`; "" writes the file's own default
+		configScheduler string // the config's `scheduler_region:`
+		configBucket    string // the config's `runs_bucket:`
+		want            string // the phrase the refusal must carry
 	}{
 		// The pin: one installation, by name. Nothing else runs this check.
-		{"a project that is not fugaro-dev", "yes", "fugaro", "fugaro-sandbox-1", "fugaro-sandbox-1", "us-east5", "sandbox-runs",
+		{"a project that is not fugaro-dev", "yes", "fugaro", "fugaro-sandbox-1", "fugaro-sandbox-1", "us-east5", "us-east4", "sandbox-runs",
 			"runs on installation fugaro"},
-		{"an installation that is not fugaro", "yes", "sandbox", "fugaro-dev", "fugaro-dev", "us-east5", "sandbox-runs",
+		{"an installation that is not fugaro", "yes", "sandbox", "fugaro-dev", "fugaro-dev", "us-east5", "us-east4", "sandbox-runs",
 			"runs on installation fugaro"},
 		// Production, by name: the same rule the belong stop applies, for the
 		// same reason — the ambient project of an owner running this is often a
 		// *-prod one, and `fugaro-prod` is the site's own Firebase project.
-		{"a production project", "yes", "fugaro", "fugaro-prod", "fugaro-prod", "us-east5", "sandbox-runs",
+		{"a production project", "yes", "fugaro", "fugaro-prod", "fugaro-prod", "us-east5", "us-east4", "sandbox-runs",
 			"production project"},
 		// The config is what names the installation's project, and the check
 		// edits that installation's workdir and applies a policy in that project:
 		// a config naming a different project is a refusal, not a warning.
-		{"the config names another project", "yes", "fugaro", "fugaro-dev", "fugaro-other", "us-east5", "sandbox-runs",
+		{"the config names another project", "yes", "fugaro", "fugaro-dev", "fugaro-other", "us-east5", "us-east4", "sandbox-runs",
 			"has to exist and name gcp_project"},
-		{"no config at all", "yes", "fugaro", "fugaro-dev", "", "", "",
+		{"no config at all", "yes", "fugaro", "fugaro-dev", "", "", "", "",
 			"has to exist and name gcp_project"},
 		// L and RUNS_BUCKET come from the config now, so a config that carries
 		// neither is a stop rather than a step that acts on an empty name.
-		{"the config carries no region", "yes", "fugaro", "fugaro-dev", "fugaro-dev", "", "sandbox-runs",
+		{"the config carries no region", "yes", "fugaro", "fugaro-dev", "fugaro-dev", "", "us-east4", "sandbox-runs",
 			"region=''"},
-		{"the config carries no runs bucket", "yes", "fugaro", "fugaro-dev", "fugaro-dev", "us-east5", "",
+		{"the config carries no runs bucket", "yes", "fugaro", "fugaro-dev", "fugaro-dev", "us-east5", "us-east4", "",
 			"runs_bucket=''"},
+		// And the Scheduler region, which is not the region: Cloud Scheduler is
+		// not offered in every region, so a Scheduler command given `L` fails on
+		// the pinned installation and the one condition this check would then
+		// never measure is the scheduler job's. The stop is what keeps that from
+		// being a silent skip.
+		{"the config carries no scheduler region", "yes", "fugaro", "fugaro-dev", "fugaro-dev", "us-east5", "", "sandbox-runs",
+			"no scheduler_region"},
 		// And the owner-typed variable: prose that says "no agent runs this" is
 		// not a stop, and this is the one that is.
-		{"the owner did not type the run variable", "maybe", "fugaro", "fugaro-dev", "fugaro-dev", "us-east5", "sandbox-runs",
+		{"the owner did not type the run variable", "maybe", "fugaro", "fugaro-dev", "fugaro-dev", "us-east5", "us-east4", "sandbox-runs",
 			"CHK68_OWNER_RUN"},
 		// The control: the pinned installation with a config that names it, and
 		// nothing else in place, reaches the workdir stop — no earlier stop is
 		// what refused it.
-		{"the pinned installation", "yes", "fugaro", "fugaro-dev", "fugaro-dev", "us-east5", "sandbox-runs",
+		{"the pinned installation", "yes", "fugaro", "fugaro-dev", "fugaro-dev", "us-east5", "us-east4", "sandbox-runs",
 			"does not exist"},
 	}
 
@@ -754,7 +783,7 @@ func TestChecklistCheck68GuardPinsTheInstallation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
 			if tc.configProject != "" {
-				writeChk68Config(t, home, tc.installation, tc.configProject, tc.configRegion, tc.configBucket)
+				writeChk68Config(t, home, tc.installation, tc.configProject, tc.configRegion, tc.configScheduler, tc.configBucket)
 			}
 			code, out := runChk68Guard(t, guard, []string{
 				"HOME=" + home,
@@ -786,7 +815,7 @@ func TestChecklistCheck68GuardPinsTheInstallation(t *testing.T) {
 		for _, missing := range []string{"CHK68_OWNER_RUN", "CHK68_PROJECT", "CHK68_INSTALLATION"} {
 			t.Run(missing, func(t *testing.T) {
 				home := t.TempDir()
-				writeChk68Config(t, home, "fugaro", "fugaro-dev", "us-east5", "sandbox-runs")
+				writeChk68Config(t, home, "fugaro", "fugaro-dev", "us-east5", "us-east4", "sandbox-runs")
 				env := []string{
 					"HOME=" + home,
 					"PATH=" + os.Getenv("PATH"),
@@ -886,7 +915,9 @@ func TestReleaseManagedDeployerBulletStatesTheCurrentReason(t *testing.T) {
 // section prose; the row kept the number it had when the guard had four. The
 // independent review of the redesigned runbook then added three more — the pin
 // to installation `fugaro` / project `fugaro-dev`, the owner-typed variable, and
-// the config's own project, region and runs bucket — so the number is eight.
+// the config's own project, region and runs bucket — so the number was eight,
+// and the Scheduler region's own stop (Cloud Scheduler is not offered in every
+// region, and the region is not its location) makes it nine.
 // Three places state the same fact, so this reads all three and requires one
 // number — a guard whose count is stated in prose is exactly the kind of claim
 // that survives a silent edit.
@@ -939,7 +970,7 @@ func TestChecklistCheck68HardStopCountsAgree(t *testing.T) {
 	if rowN != sectionN || rowN != stops {
 		t.Errorf("Check 68's hard stops are counted three ways and disagree: the index row says %d, the guard comment says %d, and the guard carries %d `Check 68 stopped:` refusals", rowN, sectionN, stops)
 	}
-	if stops < 8 {
+	if stops < 9 {
 		t.Errorf("Check 68's guard carries %d `Check 68 stopped:` refusals, and this check's belong stop and its pin to the sandbox installation are among them: the guard is what keeps a live IAM check off an installation it must never write in", stops)
 	}
 }
@@ -1216,5 +1247,702 @@ func TestChecklistCheck68AssertsThePlanShape(t *testing.T) {
 	}
 	if restoreAsserted < 0 || restoreAsserted > restoreApply {
 		t.Error("Check 68's Restore asserts the plan's shape after applying it")
+	}
+}
+
+// chk68Block returns the first bash block of section that carries marker. The
+// section's blocks are addressed by what they contain and not by index: a step
+// that grows a second block would otherwise move every assertion onto its
+// neighbour's text.
+func chk68Block(t *testing.T, section, marker string) []string {
+	t.Helper()
+	for _, b := range bashBlocks(section) {
+		if strings.Contains(strings.Join(b, "\n"), marker) {
+			return b
+		}
+	}
+	t.Fatalf("Check 68 has no bash block carrying %q", marker)
+	return nil
+}
+
+// chk68FuncBody returns the body of the shell function name declared in the
+// guard block, from its `name() {` line to the `}` at column 0 that closes it.
+func chk68FuncBody(t *testing.T, guard, name string) string {
+	t.Helper()
+	i := strings.Index(guard, "\n"+name+"() {")
+	if i < 0 {
+		t.Fatalf("Check 68's guard block does not declare %s()", name)
+	}
+	rest := guard[i+1:]
+	if j := strings.Index(rest, "\n}\n"); j >= 0 {
+		return rest[:j+1]
+	}
+	t.Fatalf("Check 68's %s() is never closed by a `}` at column 0", name)
+	return ""
+}
+
+// runChk68Shell writes script to a file and runs it under bash, returning the
+// exit code, stdout and stderr. It skips when bash is not on PATH, the way
+// runChk68Guard does: what the tests below run is Check 68's own lines, and bash
+// is what they are written in.
+func runChk68Shell(t *testing.T, script string, env []string) (int, string, string) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	file := filepath.Join(t.TempDir(), "chk68.sh")
+	if err := os.WriteFile(file, []byte(script+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bash, file)
+	cmd.Env = env
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	runErr := cmd.Run()
+	code := 0
+	if ee, ok := runErr.(*exec.ExitError); ok {
+		code = ee.ExitCode()
+	} else if runErr != nil {
+		t.Fatalf("running the script: %v", runErr)
+	}
+	return code, out.String(), errOut.String()
+}
+
+// TestChecklistCheck68RestorePlanFilterIsRun executes Check 68's restore
+// assertion instead of pinning its text.
+//
+// The assertion's job is to let the restore apply only a plan that destroys the
+// gate's own fourteen addresses and nothing else, and as it was first written it
+// could not do that job at all: the address filter was anchored at
+// `^google_project_iam_…`, and a root plan's addresses carry the root's module —
+// `module.installation.google_project_iam_custom_role.fugaro_deployer_storage[0]`
+// (deploy/terraform/gcp/roots/installation/main.tf declares `module
+// "installation"`). So OTHER counted the fourteen gate addresses themselves, the
+// stop fired on a CORRECT plan, and the restore never ran: the check would have
+// ended with the gate open and seven conditioned roles and bindings live in
+// `fugaro-dev`, which is the one state the section forbids. A test that read the
+// filter as a string could not see it — the string was what the review asked
+// for.
+//
+// So this test runs the block. The four counts, the `grep -cvE` filter and the
+// stop are lifted out of the section exactly as they are written, a synthetic
+// `restore.json` is written for each case, and the block is run under bash with
+// `CHK68_TMP` pointing at it. The filter's own ERE is compiled and applied
+// in-process as well, so the case that matters — a module-prefixed gate address
+// — is checked even where jq is not installed.
+//
+// Mutations (verified, run and restored): the filter anchored back at
+// `^google_project_iam_…` → every module-prefixed case fails, in the ERE check
+// and in the run; the `OTHER = 0` clause dropped from the stop → the
+// extra-address cases pass; the stop's `exit 1` turned into a no-op → the
+// extra-address cases pass; the jq `select` on `["no-op"]` dropped → the no-op
+// case fails; `set -e` added above the counts → the passing cases fail, because
+// `grep -cv` exits 1 when it excludes nothing.
+func TestChecklistCheck68RestorePlanFilterIsRun(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+	restore := docSection(t, path, section, "### 7. Restore")
+
+	// The assertion, as the section writes it: from the first count to the line
+	// carrying the stop.
+	lines := strings.Split(restore, "\n")
+	start, stop := -1, -1
+	for i, l := range lines {
+		s := strings.TrimSpace(l)
+		if start < 0 && strings.HasPrefix(s, "ADD=$(jq") {
+			start = i
+		}
+		if start >= 0 && strings.Contains(l, "Check 68 plan stop:") {
+			stop = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatal("Check 68's Restore no longer counts the plan's adds, changes and destroys (there is no `ADD=$(jq` line): the restore is the one apply nobody reads, and the counts are what stop it")
+	}
+	if stop < 0 {
+		t.Fatal("Check 68's Restore counts the plan and never stops on it: the counts have to be asserted rather than printed")
+	}
+	assertion := strings.Join(lines[start:stop+1], "\n")
+	if !strings.Contains(assertion, "exit 1") {
+		t.Fatal("Check 68's restore assertion does not refuse: the stop prints its message and carries on, which is not a stop")
+	}
+	// The stop leaves the gate open — the roles and bindings the restore was
+	// about to destroy are still live — and the one state the section forbids is
+	// exactly that. A stop that does not say so reads as "the restore is done".
+	if !strings.Contains(assertion, "THE GATE IS STILL OPEN") {
+		t.Error("Check 68's restore stop does not say that the gate is still open when it fires: hitting it leaves the seven conditioned roles and their bindings live in the project, and a reader who does not know that stops there")
+	}
+	// `grep -cv` exits 1 when it excludes nothing, and excluding nothing is the
+	// PASSING case: `set -e` anywhere in the restore would abort it exactly when
+	// the plan is right, and the gate would never be closed.
+	if strings.Contains(restore, "set -e") {
+		t.Error("Check 68's Restore turns on `set -e`: the `grep -cv` in the OTHER count exits 1 when it excludes nothing, which is the case the restore has to pass, so `set -e` would abort it there and leave the gate open")
+	}
+
+	// The filter's own ERE, compiled here: this half runs without jq.
+	ere := ""
+	for _, l := range lines[start : stop+1] {
+		if i := strings.Index(l, "grep -cvE '"); i >= 0 {
+			ere = strings.TrimSuffix(l[i+len("grep -cvE '"):], "')")
+		}
+	}
+	if ere == "" {
+		t.Fatal("Check 68's restore filter no longer runs `grep -cvE '…'` over the plan's addresses")
+	}
+	re, err := regexp.Compile(ere)
+	if err != nil {
+		t.Fatalf("Check 68's restore filter is not an ERE grep -E can run: %v", err)
+	}
+
+	services := []string{"storage", "secret", "account", "apikey", "repository", "run_job", "scheduler_job"}
+	kinds := []string{"google_project_iam_custom_role", "google_project_iam_member"}
+	var gate []string
+	for _, k := range kinds {
+		for _, s := range services {
+			gate = append(gate, "module.installation."+k+".fugaro_deployer_"+s+"[0]")
+		}
+	}
+	if len(gate) != 14 {
+		t.Fatalf("the gate is seven roles and seven bindings, and this test built %d addresses", len(gate))
+	}
+	// What the gate does not write, and what the restore must therefore refuse to
+	// destroy: the unconditioned role, a name one service away from a gate
+	// address, the unconditioned binding, and a resource of another type.
+	outside := []string{
+		"module.installation.google_project_iam_custom_role.fugaro_deployer[0]",
+		"module.installation.google_project_iam_custom_role.fugaro_deployer_extra[0]",
+		"module.installation.google_project_iam_member.fugaro_deployer",
+		"module.installation.google_storage_bucket.runs[0]",
+		"module.installation.google_service_account.fugaro_deployer[0]",
+	}
+	for _, a := range gate {
+		if !re.MatchString(a) {
+			t.Errorf("Check 68's restore filter does not exclude %q, which is one of the gate's own fourteen addresses: a root plan's addresses carry the root's module name, so OTHER counts them, the stop fires on a correct plan, and the restore that closes the gate never runs", a)
+		}
+		// The same address without the module prefix: the other form a plan's
+		// addresses take, and what the filter's optional group is for.
+		if bare := strings.TrimPrefix(a, "module.installation."); !re.MatchString(bare) {
+			t.Errorf("Check 68's restore filter does not exclude %q: the module prefix is optional in the addresses a root plan carries, and a filter that only knows the prefixed form counts the gate's own addresses as outside it", bare)
+		}
+	}
+	for _, a := range outside {
+		if re.MatchString(a) {
+			t.Errorf("Check 68's restore filter excludes %q, which is not one of the gate's fourteen addresses: the restore may destroy the seven roles and the seven bindings and nothing else", a)
+		}
+	}
+
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is not on PATH: the filter's own ERE is checked above")
+	}
+	type change struct {
+		address string
+		actions []string
+	}
+	planJSON := func(changes []change) string {
+		parts := make([]string, 0, len(changes))
+		for _, c := range changes {
+			quoted := make([]string, 0, len(c.actions))
+			for _, a := range c.actions {
+				quoted = append(quoted, `"`+a+`"`)
+			}
+			parts = append(parts, fmt.Sprintf(`{"address":%q,"change":{"actions":[%s]}}`, c.address, strings.Join(quoted, ",")))
+		}
+		return `{"resource_changes":[` + strings.Join(parts, ",") + `]}`
+	}
+	destroys := func(addrs []string) []change {
+		out := make([]change, 0, len(addrs))
+		for _, a := range addrs {
+			out = append(out, change{a, []string{"delete"}})
+		}
+		return out
+	}
+	unprefixed := func(addrs []string) []string {
+		out := make([]string, 0, len(addrs))
+		for _, a := range addrs {
+			out = append(out, strings.TrimPrefix(a, "module.installation."))
+		}
+		return out
+	}
+	// A resource of the installation's own that the gate neither creates nor
+	// destroys: the restore's plan is full of these, and they are no-ops.
+	own := change{"module.installation.google_service_account.fugaro_deployer", []string{"no-op"}}
+
+	cases := []struct {
+		name    string
+		changes []change
+		passes  bool
+		want    string
+	}{
+		{"the gate's own fourteen, module-prefixed",
+			append(destroys(gate), own), true,
+			"restore plan: 0 to add, 0 to change, 14 to destroy, 0 outside the gate"},
+		{"the gate's own fourteen, unprefixed",
+			append(destroys(unprefixed(gate)), own), true,
+			"restore plan: 0 to add, 0 to change, 14 to destroy, 0 outside the gate"},
+		{"a no-op outside the gate",
+			append(append(destroys(gate), own), change{"module.installation.google_storage_bucket.runs[0]", []string{"no-op"}}), true,
+			"restore plan: 0 to add, 0 to change, 14 to destroy, 0 outside the gate"},
+		{"a fifteenth destroy, of another resource",
+			append(destroys(gate), change{"module.installation.google_storage_bucket.runs[0]", []string{"delete"}}), false,
+			"1 address(es) outside the gate"},
+		{"a destroy of a gate-shaped name the gate does not write",
+			append(destroys(gate), change{"module.installation.google_project_iam_custom_role.fugaro_deployer_extra[0]", []string{"delete"}}), false,
+			"1 address(es) outside the gate"},
+		{"a destroy of the unconditioned binding",
+			append(destroys(gate), change{"module.installation.google_project_iam_member.fugaro_deployer", []string{"delete"}}), false,
+			"1 address(es) outside the gate"},
+		// A REPLACEMENT, and it is the case the three counts cannot see: the
+		// plan's actions are ["delete", "create"], so ADD, CHG and DEL all count
+		// nothing for it, and only the address filter stands between the restore
+		// and a resource of the installation's own being destroyed and rebuilt.
+		{"a replace outside the gate, which the three counts cannot see",
+			append(destroys(gate), change{"module.installation.google_service_account.runs", []string{"delete", "create"}}), false,
+			"1 address(es) outside the gate"},
+		{"an add the restore did not make",
+			append(append(destroys(gate), own), change{"module.installation.google_service_account.runs", []string{"create"}}), false,
+			"1 to add"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "restore.json"), []byte(planJSON(tc.changes)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			script := "set -u\nCHK68_TMP='" + dir + "'\nP=fugaro-dev\n" + assertion + "\necho CHK68-ASSERTED\n"
+			code, out, errOut := runChk68Shell(t, script, []string{"PATH=" + os.Getenv("PATH")})
+			if tc.passes {
+				if code != 0 {
+					t.Fatalf("Check 68's restore assertion refused a plan of the shape the restore is for (exit %d):\nstdout:\n%s\nstderr:\n%s", code, out, errOut)
+				}
+				if !strings.Contains(out, "CHK68-ASSERTED") {
+					t.Fatalf("the assertion did not reach the end of the block, so it stopped somewhere it should not have:\nstdout:\n%s\nstderr:\n%s", out, errOut)
+				}
+				if !strings.Contains(out, tc.want) {
+					t.Errorf("Check 68's restore assertion ran but did not print %q:\n%s", tc.want, out)
+				}
+				return
+			}
+			if code == 0 {
+				t.Fatalf("Check 68's restore assertion passed a plan the restore must refuse:\n%s", out)
+			}
+			if !strings.Contains(errOut, "Check 68 plan stop:") {
+				t.Errorf("the assertion refused the plan without a `Check 68 plan stop:` line:\nstderr:\n%s", errOut)
+			}
+			if !strings.Contains(errOut, tc.want) {
+				t.Errorf("the assertion's stop does not carry %q:\nstderr:\n%s", tc.want, errOut)
+			}
+		})
+	}
+}
+
+// TestChecklistCheck68LeftoverFilterIsRun: Check 68's own guarantee is that it
+// leaves nothing behind, and the two places that check the guarantee — step 0's
+// read-only look and the end of the Restore — filter the six listings with
+// `$CHK68_OWNED`. The filter has to match the name inside a line rather than at
+// the start of it: five of the six listings print a FULL RESOURCE PATH
+// (`projects/<P>/secrets/<name>`, `…/locations/<L>/repositories/<name>`), so an
+// anchored `^fmgd-chk68-` matches no line any of them prints, and the check
+// reports "no leftover" with all sixteen resources still in the project.
+//
+// This runs both blocks against a stubbed `gcloud` — the six listings print a
+// synthetic project, once with a leftover of the check's own and once without —
+// so what decides is the section's own filter, stop and messages. The filter's
+// ERE is also applied in-process, so the anchoring is checked even where bash is
+// absent.
+//
+// Mutations (verified, run and restored): `CHK68_OWNED` anchored at `^fmgd-…`
+// (the form the prose was written for) → the leftover cases report no leftover
+// and fail; the `[ -z "$CHK68_LEFT" ]` stop dropped from the Restore → the
+// leftover case exits 0; step 0's filter dropped → the leftover case prints
+// nothing of the check's own; a listing dropped from either look → the leftover
+// that listing carries is not seen, and the case fails on the line it is missing
+// (the scheduler listing, for the one leftover only it prints); a listing added
+// → the stub reports the unexpected call and the block fails.
+func TestChecklistCheck68LeftoverFilterIsRun(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+	guard := chk68GuardBlock(t)
+
+	owned := ""
+	for _, l := range strings.Split(guard, "\n") {
+		if s := strings.TrimSpace(l); strings.HasPrefix(s, "CHK68_OWNED=") {
+			owned = s
+		}
+	}
+	if owned == "" {
+		t.Fatal("Check 68's guard block no longer defines CHK68_OWNED: both looks for the check's own leftovers filter on it")
+	}
+	ere := strings.Trim(strings.TrimPrefix(owned, "CHK68_OWNED="), "'")
+	for _, anchor := range []string{"^fmgd-", "^xfmgd-", "^chk68-"} {
+		if strings.HasPrefix(ere, anchor) {
+			t.Errorf("Check 68's leftover filter is %s, anchored at the start of the line: five of the six listings print a full resource path, so an anchored prefix matches none of the check's own names and the look reports an empty project", ere)
+		}
+	}
+	re, err := regexp.Compile(ere)
+	if err != nil {
+		t.Fatalf("Check 68's leftover filter is not an ERE grep -E can run: %v", err)
+	}
+	// The names as the listings print them, with the prefix inside the line.
+	leftovers := []string{
+		"projects/fugaro-dev/secrets/chk68-neg-secret",
+		"projects/fugaro-dev/secrets/fmgd-chk68-secret",
+		"projects/fugaro-dev/locations/us-east5/repositories/fmgd-chk68-repo",
+		"projects/fugaro-dev/locations/us-east5/jobs/fmgd-chk68-job",
+		"projects/fugaro-dev/locations/us-east4/jobs/xfmgd-chk68-sched",
+		"projects/fugaro-dev/locations/global/keys/fmgd-chk68-key",
+		"fmgd-chk68-sa@fugaro-dev.iam.gserviceaccount.com",
+		"chk68-neg-sa@fugaro-dev.iam.gserviceaccount.com",
+	}
+	// The installation's own, which the filter must leave alone: a look that
+	// reports these is a look that sends the operator deleting the sandbox.
+	ownLines := []string{
+		"projects/fugaro-dev/secrets/fugaro-runs",
+		"projects/fugaro-dev/locations/us-east5/repositories/fugaro-base",
+		"projects/fugaro-dev/locations/us-east5/jobs/fugaro-daily",
+		"projects/fugaro-dev/locations/us-east4/jobs/fugaro-image-check",
+		"projects/fugaro-dev/locations/global/keys/abc123",
+		"fugaro-deployer@fugaro-dev.iam.gserviceaccount.com",
+		"fugaro-history@fugaro-dev.iam.gserviceaccount.com",
+	}
+	for _, l := range leftovers {
+		if !re.MatchString(l) {
+			t.Errorf("Check 68's leftover filter does not match %q, a line one of the six listings prints for a resource the check created: the look would report nothing left behind while the resource was there", l)
+		}
+	}
+	for _, l := range ownLines {
+		if re.MatchString(l) {
+			t.Errorf("Check 68's leftover filter matches %q, which is the installation's own: a look that prints it sends the operator to delete a resource the check never created", l)
+		}
+	}
+
+	// The two blocks, as the section writes them.
+	lookBlock := chk68Block(t, section, "CHK68_LOOK=$( {")
+	restoreBlock := bashBlocks(docSection(t, path, section, "### 7. Restore"))[0]
+	restoreStart, restoreStop := -1, -1
+	for i, l := range restoreBlock {
+		s := strings.TrimSpace(l)
+		if restoreStart < 0 && strings.HasPrefix(s, "CHK68_LEFT=$(") {
+			restoreStart = i
+		}
+		if restoreStart >= 0 && strings.Contains(l, "Check 68 stop: these are still in") {
+			restoreStop = i
+		}
+		if restoreStart >= 0 && strings.Contains(l, "no leftover of this check's own in the six listings") {
+			restoreStop = i
+			break
+		}
+	}
+	if restoreStart < 0 || restoreStop < restoreStart {
+		t.Fatal("Check 68's Restore no longer re-runs the filtered look over the six listings: the check's guarantee that it leaves nothing behind is checked there, not assumed")
+	}
+	restoreLook := strings.Join(restoreBlock[restoreStart:restoreStop+1], "\n")
+
+	// A stubbed gcloud, because what is run here is the section's filtering and
+	// not gcloud: each of the six listings prints its variable, and any other
+	// call is reported so a listing added to the block cannot pass unnoticed.
+	const stub = `
+gcloud() {
+  case "$*" in
+    "secrets list"*)               printf '%s\n' "$STUB_SECRETS" ;;
+    "artifacts repositories list"*) printf '%s\n' "$STUB_REPOSITORIES" ;;
+    "run jobs list"*)              printf '%s\n' "$STUB_JOBS" ;;
+    "scheduler jobs list"*)        printf '%s\n' "$STUB_SCHEDULER" ;;
+    "services api-keys list"*)     printf '%s\n' "$STUB_KEYS" ;;
+    "iam service-accounts list"*)  printf '%s\n' "$STUB_ACCOUNTS" ;;
+    *) echo "stub gcloud: unexpected call: $*" >&2; return 1 ;;
+  esac
+}
+`
+	listings := func(secret, repo, job, sched, key, account string) string {
+		return "STUB_SECRETS='" + secret + "'\nSTUB_REPOSITORIES='" + repo + "'\nSTUB_JOBS='" + job +
+			"'\nSTUB_SCHEDULER='" + sched + "'\nSTUB_KEYS='" + key + "'\nSTUB_ACCOUNTS='" + account + "'\n"
+	}
+	clean := listings(
+		ownLines[0], ownLines[1], ownLines[2], ownLines[3], ownLines[4], ownLines[5]+"\n"+ownLines[6])
+	// One leftover per listing that prints a path, and one service account:
+	// every shape of line the filter has to see through.
+	dirty := listings(
+		ownLines[0]+"\n"+leftovers[0]+"\n"+leftovers[1],
+		ownLines[1]+"\n"+leftovers[2],
+		ownLines[2]+"\n"+leftovers[3],
+		ownLines[3]+"\n"+leftovers[4],
+		ownLines[4]+"\n"+leftovers[5],
+		ownLines[5]+"\n"+ownLines[6]+"\n"+leftovers[6]+"\n"+leftovers[7])
+
+	prefix := "set -u\n" + owned + "\nP=fugaro-dev\nL=us-east5\nSREGION=us-east4\n" + stub
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash is not on PATH: the filter's own ERE is checked above")
+	}
+
+	// Step 0's look: a leftover is printed, and a clean project says so.
+	for _, tc := range []struct {
+		name     string
+		listings string
+		left     bool
+	}{
+		{"step 0, a clean project", clean, false},
+		{"step 0, a leftover of the check's own", dirty, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := prefix + tc.listings + strings.Join(lookBlock, "\n") + "\n"
+			code, out, errOut := runChk68Shell(t, script, []string{"PATH=" + os.Getenv("PATH")})
+			if code != 0 {
+				t.Fatalf("Check 68's step-0 look exited %d:\nstdout:\n%s\nstderr:\n%s", code, out, errOut)
+			}
+			if strings.Contains(errOut, "stub gcloud") {
+				t.Fatalf("Check 68's step-0 look calls gcloud in a way this stub does not know: %s", errOut)
+			}
+			if !tc.left {
+				if !strings.Contains(out, "no leftover of this check's own in the six listings") {
+					t.Errorf("Check 68's step-0 look did not say the project is clean:\n%s", out)
+				}
+				return
+			}
+			if strings.Contains(out, "no leftover of this check's own in the six listings") {
+				t.Errorf("Check 68's step-0 look reported no leftover while the listings carried eight of the check's own names:\n%s", out)
+			}
+			for _, l := range leftovers {
+				if !strings.Contains(out, l) {
+					t.Errorf("Check 68's step-0 look did not print %q, which a listing carries: the filter misses the name inside the line", l)
+				}
+			}
+		})
+	}
+
+	// The Restore's look: the same filter, and this time a leftover is a stop.
+	for _, tc := range []struct {
+		name     string
+		listings string
+		left     bool
+	}{
+		{"the Restore, a clean project", clean, false},
+		{"the Restore, a leftover of the check's own", dirty, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := prefix + tc.listings + restoreLook + "\necho CHK68-ASSERTED\n"
+			code, out, errOut := runChk68Shell(t, script, []string{"PATH=" + os.Getenv("PATH")})
+			if strings.Contains(errOut, "stub gcloud") {
+				t.Fatalf("Check 68's Restore look calls gcloud in a way this stub does not know: %s", errOut)
+			}
+			if !tc.left {
+				if code != 0 {
+					t.Fatalf("Check 68's Restore stopped on a project with nothing of the check's own left in it (exit %d):\nstderr:\n%s", code, errOut)
+				}
+				if !strings.Contains(out, "no leftover of this check's own in the six listings") {
+					t.Errorf("Check 68's Restore did not say the project is clean:\n%s", out)
+				}
+				return
+			}
+			if code == 0 {
+				t.Fatalf("Check 68's Restore passed while the listings still carried the check's own resources:\n%s", out)
+			}
+			if !strings.Contains(errOut, "Check 68 stop: these are still in fugaro-dev after the restore:") {
+				t.Errorf("Check 68's Restore stopped without naming what is left:\nstderr:\n%s", errOut)
+			}
+			for _, l := range leftovers {
+				if !strings.Contains(errOut, l) {
+					t.Errorf("Check 68's Restore stop does not name %q:\n%s", l, errOut)
+				}
+			}
+		})
+	}
+}
+
+// TestChecklistCheck68DeletesOneResourcePerCommand: the trap and the Restore
+// deleted the check's throwaway resources several to a line —
+// `gcloud run jobs delete fmgd-chk68-job xfmgd-chk68-job` and the like — and
+// every one of those subcommands takes a single positional name, so gcloud
+// refused the extra positional and deleted NOTHING on that line. Only
+// `gcloud storage rm -r` takes several URLs. With the trap also sending its
+// errors to /dev/null, a check that stopped halfway looked as though it had
+// cleaned up while about eight of its sixteen resources were still in the
+// project, which is the opposite of what the section promises.
+//
+// So each delete is held to one positional name, the trap is held to
+// `chk68_try` (which prints a failure instead of hiding it), and the trap and
+// the Restore are held to the same set of names: a resource one of them deletes
+// and the other does not is one a stopped check leaves behind.
+//
+// Mutations (verified, run and restored): two names put back on one
+// `gcloud run jobs delete` line → FAIL; a name dropped from the trap → FAIL; a
+// name dropped from the Restore → FAIL; `2>/dev/null` put on a delete → FAIL; a
+// delete taken out of `chk68_try` → FAIL.
+func TestChecklistCheck68DeletesOneResourcePerCommand(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+	guard := chk68GuardBlock(t)
+	cleanup := chk68FuncBody(t, guard, "cleanup_chk68")
+
+	if !strings.Contains(guard, `chk68_try() { "$@" || echo "Check 68 cleanup:`) {
+		t.Error("Check 68's guard block no longer declares chk68_try, which is what makes a delete that failed say so: a trap whose failures are hidden is a trap that reports a clean exit over the check's own resources")
+	}
+	for _, line := range strings.Split(cleanup, "\n") {
+		cmd := strings.TrimSpace(line)
+		if strings.HasPrefix(cmd, "#") || !strings.Contains(cmd, "gcloud ") {
+			continue
+		}
+		if !strings.HasPrefix(cmd, "chk68_try ") {
+			t.Errorf("Check 68's cleanup_chk68 runs %q without chk68_try: a delete that failed there is silent, and the trap's own line then says the resources are gone", cmd)
+		}
+	}
+
+	trapNames := chk68DeleteNames(t, strings.Split(cleanup, "\n"), "Check 68's cleanup_chk68 trap")
+	restoreNames := chk68DeleteNames(t, bashBlocks(docSection(t, path, section, "### 7. Restore"))[0], "Check 68's Restore")
+
+	// The check creates sixteen throwaway resources (step 4's seven, step 5's
+	// three near misses and its six negative probes), and the two cleanups are
+	// what make the section's "leaves nothing behind" true.
+	if len(trapNames) != 16 {
+		t.Errorf("Check 68's cleanup_chk68 trap deletes %d distinct resources, and the check creates sixteen: %v", len(trapNames), trapNames)
+	}
+	if len(restoreNames) != 16 {
+		t.Errorf("Check 68's Restore deletes %d distinct resources, and the check creates sixteen: %v", len(restoreNames), restoreNames)
+	}
+	for n := range trapNames {
+		if _, ok := restoreNames[n]; !ok {
+			t.Errorf("Check 68's Restore does not delete %q, which the trap does: the Restore is what runs when the trap has not (a step that stopped the check before the trap was armed), so the two lists have to be the same one", n)
+		}
+	}
+	for n := range restoreNames {
+		if _, ok := trapNames[n]; !ok {
+			t.Errorf("Check 68's cleanup_chk68 trap does not delete %q, which the Restore does: a probe that fails leaves that resource behind until the owner runs the Restore, which is the case the trap exists for", n)
+		}
+	}
+}
+
+// chk68DeleteNames parses every gcloud delete in block and returns the
+// positional resource names it carries, failing the test for the one thing that
+// makes such a line delete nothing: more than one positional name on a
+// subcommand that takes a single one.
+func chk68DeleteNames(t *testing.T, block []string, label string) map[string]int {
+	t.Helper()
+	names := map[string]int{}
+	commands := 0
+	for _, line := range block {
+		cmd := strings.TrimSpace(line)
+		cmd = strings.TrimPrefix(cmd, "chk68_try ")
+		if !strings.HasPrefix(cmd, "gcloud ") {
+			continue
+		}
+		if !strings.Contains(cmd, " delete ") && !strings.Contains(cmd, " rm ") {
+			continue
+		}
+		commands++
+		if strings.Contains(cmd, "2>/dev/null") {
+			t.Errorf("%s runs %q with its error output thrown away: a delete that failed would look exactly like one that worked, which is how a stopped check leaves most of its resources behind while the cleanup reads as done", label, cmd)
+		}
+		if !strings.Contains(cmd, "--project=") {
+			t.Errorf("%s runs %q without naming the project: every gcloud command in this check carries --project", label, cmd)
+		}
+		toks := strings.Fields(cmd)
+		verb := -1
+		for i, tk := range toks {
+			if tk == "delete" || tk == "rm" {
+				verb = i
+				break
+			}
+		}
+		if verb < 0 {
+			t.Errorf("%s runs %q, which is neither a delete nor a `storage rm`", label, cmd)
+			continue
+		}
+		var positionals []string
+		for _, tk := range toks[verb+1:] {
+			if strings.HasPrefix(tk, "-") {
+				continue
+			}
+			positionals = append(positionals, strings.Trim(tk, `"'`))
+		}
+		// `gcloud storage rm -r` is the one delete that takes several URLs.
+		if strings.Contains(cmd, "gcloud storage rm ") {
+			if len(positionals) == 0 {
+				t.Errorf("%s runs %q with no URL to delete", label, cmd)
+			}
+			for _, n := range positionals {
+				names[strings.TrimPrefix(n, "gs://")]++
+			}
+			continue
+		}
+		if len(positionals) != 1 {
+			t.Errorf("%s runs %q with %d positional resource names: every gcloud delete but `gcloud storage rm -r` takes exactly ONE, so a line carrying several deletes none of them — gcloud refuses the extra positional — and a check that stopped halfway leaves most of its sixteen resources behind while the cleanup looks as though it ran", label, cmd, len(positionals))
+			continue
+		}
+		names[positionals[0]]++
+	}
+	if commands == 0 {
+		t.Fatalf("%s has no gcloud delete at all: the check's resources are deleted there", label)
+	}
+	return names
+}
+
+// TestChecklistCheck68SchedulerRegionComesFromTheConfig: every Cloud Scheduler
+// command in Check 68 took its `--location` from the config's `region`, and
+// Cloud Scheduler is not offered in every region: `gcp.SchedulerRegion` maps
+// this installation's `us-east5` to `us-east4`
+// (internal/backend/gcp/names.go:282), the installation's own jobs run in the
+// recorded `scheduler_region` (internal/localcfg, written by `fugaro init` from
+// the region unless `--scheduler-region` overrides it), and
+// `gcloud scheduler jobs … --location=us-east5` fails on the pinned
+// installation. Every one of those commands would have failed — the listing,
+// both probes and both cleanups — and the
+// `cloudscheduler.googleapis.com/Job` condition would never have been measured:
+// the one service the check would have skipped in silence, with the check
+// reporting a pass.
+//
+// Mutations (verified, run and restored): the Scheduler commands put back on
+// `${L:?}` → FAIL; the guard's `SREGION` read dropped → FAIL; the Scheduler
+// region's stop dropped → the guard test's "config carries no scheduler region"
+// case passes; the prose that says Scheduler is not offered everywhere dropped
+// → FAIL.
+func TestChecklistCheck68SchedulerRegionComesFromTheConfig(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+	guard := chk68GuardBlock(t)
+
+	if !strings.Contains(guard, `SREGION=$(sed -n 's/^scheduler_region: *//p' "$C")`) {
+		t.Error("Check 68's guard block does not read the Scheduler region out of the installation's config: the region is not the Scheduler location, and the two differ on this installation")
+	}
+	if !strings.Contains(guard, "no scheduler_region") {
+		t.Error("Check 68's guard block does not stop when the config carries no Scheduler region: every Scheduler command below would then run against a location that is not one, and the scheduler job's condition would go unmeasured")
+	}
+	// Every Scheduler command in the section. The guard's own comment names the
+	// wrong form (`--location=\"${L:?}\"`) as the thing this rule exists for, so
+	// comments are not commands and are skipped.
+	scheduler := 0
+	for _, line := range strings.Split(section, "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" || strings.HasPrefix(s, "#") || !strings.Contains(s, "gcloud scheduler ") {
+			continue
+		}
+		scheduler++
+		if !strings.Contains(s, `--location="${SREGION:?}"`) {
+			t.Errorf("Check 68 runs %q: every Scheduler command needs the Scheduler LOCATION, which is the config's `scheduler_region` and not its `region` — this installation's us-east5 gives us-east4, so a Scheduler command given the region fails and its condition is never measured", s)
+		}
+		if strings.Contains(s, `--location="${L:?}"`) {
+			t.Errorf("Check 68 runs %q with the region where the Scheduler location belongs: Cloud Scheduler is not offered in every region, and this installation is one of the pairs that proves it", s)
+		}
+	}
+	if scheduler < 9 {
+		t.Errorf("Check 68 has %d Scheduler commands, want the listing, the positive probe, the negative probe, the near-miss job and both cleanups: a command that went missing takes its service's measurement with it", scheduler)
+	}
+	// And why the region is not the answer, in the section's own words: the
+	// reader who finds a Scheduler command failing has to be able to see that the
+	// region was never its location.
+	for _, want := range []string{
+		"Cloud Scheduler is NOT offered in every region",
+		"gcp.SchedulerRegion",
+		"us-east5",
+		"us-east4",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 68 does not say %q: the Scheduler region is a value of its own, and a reader who does not know that types the region", want)
+		}
 	}
 }

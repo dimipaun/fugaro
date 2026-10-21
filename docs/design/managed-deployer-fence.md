@@ -57,8 +57,9 @@ Check 68 has run.
 ## 1. The problem, as the tree records it
 
 **F1 — the fence is off because it cannot be applied.** `deploy/terraform/gcp/
-modules/installation/deployer.tf:29-41` records the owner's 2026-10-18 ruling
-("Gate it off by default; redesign for 0.9.0") and the three defects:
+modules/installation/deployer.tf:46-53` records the owner's 2026-10-18 ruling
+("Gate it off by default; redesign for 0.9.0"), and `deployer.tf:25-30` records
+the three defects:
 
 1. the expression joins 9 clauses with **17 logical operators** where IAM allows
    **12**;
@@ -89,9 +90,10 @@ owner's delete list are), Fugaro's own accounts, jobs, scheduler jobs, secrets,
 repositories, API key or state buckets, or the project's default compute account
 — which holds Editor by default.
 
-**F4 — the prefix is the fence's only key.** The two roles are the only thing
-the account holds (`tf.RolePermissions`), and the condition is the only thing
-that makes the second one narrow. There is no second mechanism: no VPC-SC, no
+**F4 — the prefix is the fence's only key.** The eight roles are the only thing
+the account holds (`tf.RolePermissions`: one unconditioned, seven conditioned —
+§7 lists the eight), and a condition is the only thing that narrows a role that
+holds a fence-limited permission. There is no second mechanism: no VPC-SC, no
 separate project, no deny policy.
 
 **F5 — what is proved live today, and what is not.**
@@ -118,10 +120,10 @@ R4. **The shape is pinned by the tree**: the Terraform module and
      refuse any other expression rather than accept a plan that has been
      loosened.
 R5. **A service that does not honour the name form is dropped, not unfenced.**
-     `deployer.tf:73-76`: "If a service does not honour it, the permission that
-     needs it cannot be fenced, so Task 1.1 drops the matching type; none of
-     these permissions is ever moved into fugaroDeployer (the unconditioned
-     role) or into a binding with no condition."
+     `deployer.tf:120-123`: "If a service does not honour its form, the
+     permission that needs it cannot be fenced, so the matching type is dropped;
+     none of these permissions is ever moved into fugaroDeployer (the
+     unconditioned role) or into a binding with no condition."
 R6. **The failure mode is fail-closed.** If a condition is wrong in a way the
      tree cannot see, the plan must be refused or the grant must be denied —
      never silently widened.
@@ -134,16 +136,16 @@ cannot test it and this run makes no live call.
 
 | # | fact | source | status |
 | --- | --- | --- | --- |
-| C1 | a condition expression allows at most 12 logical operators | recorded in `deployer.tf:32-33` (the 0.8.6 defect) and `docs/plans/2026-10-16-managed-projects.md` Task 1.5 | recorded, not measured here |
-| C2 | the supported `resource.name` functions are `startsWith`, `endsWith`, `extract`, `==`, `!=`; `contains` is not one | `deployer.tf:34-35` | recorded |
-| C3 | `resource.name` is unsupported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, IAM service accounts and API keys | `deployer.tf:35-37` | recorded; **UNVERIFIED** — it is one of the things Check 68 measures (the other is the Secret Manager name form, so six of the seven services are measured) |
+| C1 | a condition expression allows at most 12 logical operators | recorded in `deployer.tf:25-26` (the 0.8.6 defect) and `docs/plans/2026-10-16-managed-projects.md` Task 1.5 | recorded, not measured here |
+| C2 | the supported `resource.name` functions are `startsWith`, `endsWith`, `extract`, `==`, `!=`; `contains` is not one | `deployer.tf:26-28` | recorded |
+| C3 | `resource.name` is unsupported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, IAM service accounts and API keys | `deployer.tf:28-30` | recorded; **UNVERIFIED** — it is one of the things Check 68 measures (the other is the Secret Manager name form, so six of the seven services are measured) |
 | C4 | an unconditioned binding of a role defeats a conditioned binding of the same role; effective grant = union over bindings of (role's permissions ∩ resources the condition matches) | `deployer.tf:19-21`; enforced by `internal/infra/tf`'s `deployerGrant`/`unconditionedDeployerViolations` | **established in-tree** (the cover refuses the plan) |
-| C5 | `resource.type` for the nine types D75 names, and the name shapes (`projects/_/buckets/<b>`, `projects/<n>/secrets/<s>`, …) | `deployer.tf:51-64`; `internal/infra/tf/cover.go`'s clause model | recorded, and the storage form is proved (Check 32) |
+| C5 | `resource.type` for the nine types D75 names, and the name shapes (`projects/_/buckets/<b>`, `projects/<n>/secrets/<s>`, …) | `deployer.tf:69-107` (the conditions' comment: the two forms and the name shapes); `internal/infra/tf/cover.go`'s clause model | recorded, and the storage form is proved (Check 32) |
 | C6 | `resource.name.extract("<template>")` takes a template of literal text around **one** `{identifier}` placeholder and returns the text that placeholder matched — **read here as** the reference defining that by **occurrence**: with a prefix-only template, the characters after the **first** occurrence of the literal prefix (to the end of the name), and with a suffix as well, the characters between that first occurrence of the prefix and the **first subsequent** occurrence of the suffix. A template with more than one placeholder is not the form these templates use, and not the form this design reads as documented | **uncited** — no source in this tree quotes the reference's text. `deployer.tf`'s header states the rule without naming a document, and Task 1.5 (`docs/plans/2026-10-16-managed-projects.md:454`) cites the reference for the services' *name shapes*, never for this grammar | **UNVERIFIED — recorded, not cited.** The fence's templates are written in that form and only that form, pinned by `TestDeployerExtractTemplatesAreTheRecordedForm`, and the first cut of this fence wrote `extract("projects/{project}/secrets/{secret}")`, two placeholders in the shape of a resource name, which is not that form — and the form the other four services carried, `extract("projects/{project}/locations/{location}/keys/{key}")`, is the three-placeholder one: either `setIamPolicy` refuses the expression (F1's failure, the 0.8.6 outage again) or the call extracts nothing and the role grants nothing. What is UNVERIFIED is the grammar and the **first**-occurrence rule above: they are this repository's reading, and the review that reclassified them as settled could point at no source — so the templates stand as the reading's form, and remain the reason to quote the reference's text before the fence is trusted |
 | C7 | a name that does not carry the template's literal text matches nothing, so `extract` returns the empty string, and `"".startsWith("fmgd-")` is false — a non-match denies, so the fence is **fail-closed** in this direction | the same reading, taken with C2 (`startsWith` is the function applied to the result); **the tree is cited for the direction, no source is cited for Google's behaviour** — `extractSegment` (`internal/infra/tf/cover_test.go`) models the reading and `TestExtractSegmentModelsTheRecordedReading` pins the model, and the fail-closed rows of `TestDeployerConditionFencesOnlyTheManagedPrefix` assert that a name which does not match is denied | **UNVERIFIED for Google, established in-tree for this repository**, and unmeasurable live. What the tree establishes is what *this* code does with the reading — the model and its pins are the citation for the fail-closed direction — while whether `extract` on Google's side returns the empty string for a non-match is uncited, like C6. **No step of §9 can falsify it**: every conditioned type's real names carry their own clause's anchor, so no probe can construct the non-match, and the near miss tests the prefix, not the template. The two readings of the grammar differ only in which half of the fence grants nothing — a whole-name template extracts the project number or the location and never matches the prefix, and an anchored mid-name template cannot match at all — and both are fail-closed. So the residual is not a measured fact but a risk about the reference itself, **including the one direction that is not fail-closed**: a non-matching name making the condition TRUE would invert the fence rather than close it, and this check cannot reach that either. Until the reference's text is quoted in §3, C7 is in the same class as C3 and C9 |
 | C8 | a project-level binding of a custom role reaches only that project's resources | IAM's resource hierarchy; also how every other Fugaro grant is written | recorded |
 | C9 | `resource.matchTag` exists and can test a tag on a resource, but tag *values* are per-project and a tag key has to be created in the organisation/project first | Task 1.5's option list; no Fugaro code uses tags today | **UNVERIFIED** |
-| C10 | `cloudscheduler.jobs.resume` does not exist; resume is `cloudscheduler.jobs.enable` | `deployer.tf:164` (the second 0.8.6 defect, already fixed) | recorded |
+| C10 | `cloudscheduler.jobs.resume` does not exist; resume is `cloudscheduler.jobs.enable` | `deployer.tf:334` (the second 0.8.6 defect, already fixed) | recorded |
 
 ## 4. Options
 
@@ -221,7 +223,7 @@ the literal is not always knowable:
 - **Cloud Storage** — fine. `projects/_/buckets/fmgd-` carries no project.
 - **IAM service accounts** — fine *if* the condition may name the project:
   `resource.name.startsWith("projects/${var.project}/serviceAccounts/fmgd-")`.
-  `var.project` is known at plan time (`deployer.tf:198`).
+  `var.project` is known at plan time (`deployer.tf:348`, and the clause itself at `deployer.tf:152`).
 - **Secret Manager** — the name carries the project **number**, which the module
   does not have at plan time; a `startsWith` would have to omit the front, and
   `"/secrets/fmgd-"` cannot be a `startsWith` (the name does not start with it).
@@ -271,7 +273,7 @@ something even where the deployer is the only actor.
 **What it needs from the owner at creation.** A per-managed-project bootstrap
 step (the grant in the managed project), and a decision on the question above.
 Also a decision on who may create the managed project: today the account cannot
-(`resourcemanager.projects.*` is deliberately absent, `deployer.tf:141-143`).
+(`resourcemanager.projects.*` is deliberately absent, `deployer.tf:37-39`).
 
 **Failure modes.** No name-based failure mode. The exposure is exactly the
 project: an agent-authored plan that deletes the wrong resource in its own

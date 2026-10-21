@@ -135,13 +135,15 @@ locals {
 
   # One clause, the container's own type: a version's name does not carry this
   # clause's type, and no permission of this role acts on a version. The
-  # template is the DOCUMENTED form — literal text and ONE placeholder, which is
-  # what the resource-attribute reference documents for resource.name.extract —
-  # and it anchors at the collection segment the resource's own name follows.
-  # The multi-placeholder form ("projects/{project}/secrets/{secret}") is not
-  # that form, and a condition IAM refuses stops the whole apply (the 0.8.6
-  # outage); the project in a secret's name is its NUMBER, which this module does
-  # not know at plan time, so the anchor is the segment and not the front.
+  # template is literal text and ONE {identifier} placeholder — the reading this
+  # repository follows, and NOT a citation: no source in the tree quotes the
+  # reference's text for resource.name.extract's grammar, which is why the
+  # design's C6 carries that reading as UNVERIFIED — and it anchors at the
+  # collection segment the resource's own name follows. The multi-placeholder
+  # form ("projects/{project}/secrets/{secret}") is not that form, and a
+  # condition IAM refuses stops the whole apply (the 0.8.6 outage); the project
+  # in a secret's name is its NUMBER, which this module does not know at plan
+  # time, so the anchor is the segment and not the front.
   deployer_condition_secret = join(" || ", [
     "(resource.type == \"secretmanager.googleapis.com/Secret\" && resource.name.extract(\"/secrets/{secret}\").startsWith(\"fmgd-\"))",
   ])
