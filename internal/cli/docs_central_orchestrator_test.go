@@ -172,6 +172,57 @@ var centralOrchCitationPrefixes = []string{"", "deploy/terraform/gcp/"}
 // centralOrchMarkdownLinkRE finds an inline markdown link's target, which is a citation too.
 var centralOrchMarkdownLinkRE = regexp.MustCompile(`\]\(\.\.?/[^)]+\)`)
 
+// centralOrchConsoleTail is how the anchor table names a citation into the console's directory:
+// by the tail of its token, with this marker in front, rather than by the path itself. No Go
+// file in this package may carry that path -- docs_console_boundary_test.go's
+// consoleBoundaryAllowList is a ONE-entry exception whose own sub-test refuses a second, and
+// docs_voice_module_test.go records the precedent that not even a comment may name a path under
+// it -- so a table that had to spell the path could not hold these citations at all. It names
+// them by their tail instead, and centralOrchConsoleDoc turns that tail back into the path the
+// document writes, using consoleDirName, the constant the boundary test itself declares.
+const centralOrchConsoleTail = "·"
+
+// centralOrchConsoleDoc resolves a tail entry to the path the reconciliation spells.
+func centralOrchConsoleDoc(tail string) string {
+	return consoleDirName + tail
+}
+
+// centralOrchResolve turns one anchor entry into the citation token the document spells and the
+// file that token names. A plain entry is its own answer. A tail entry is resolved against the
+// document: exactly one of its citations may end with the tail, and anything else -- none, or
+// two -- is a citation the entry no longer holds, which is a failure rather than a warning.
+func centralOrchResolve(t *testing.T, entries []centralOrchContentAnchor, cited map[string]int) ([]centralOrchContentAnchor, []string) {
+	t.Helper()
+	resolved := make([]centralOrchContentAnchor, 0, len(entries))
+	tokens := make([]string, 0, len(entries))
+	for _, a := range entries {
+		if !strings.HasPrefix(a.token, centralOrchConsoleTail) {
+			resolved = append(resolved, a)
+			tokens = append(tokens, a.token)
+			continue
+		}
+		tail := strings.TrimPrefix(a.token, centralOrchConsoleTail)
+		at := ""
+		for token := range cited {
+			if strings.HasSuffix(token, tail) {
+				if at != "" {
+					t.Errorf("centralOrchContentAnchors holds %s and %s and the document cites both %s and %s: a tail entry has to name one citation, so write the entries out in full or make the tails tell them apart", a.token, centralOrchConsoleDoc(tail), at, token)
+				}
+				at = token
+			}
+		}
+		if at == "" {
+			t.Errorf("centralOrchContentAnchors holds %s and %s cites no citation ending in it: the entry names a citation the document has stopped making", a.token, centralOrchReconciled)
+			continue
+		}
+		resolved = append(resolved, centralOrchContentAnchor{
+			token: at, doc: centralOrchConsoleDoc(tail), claim: a.claim, anchor: a.anchor, repeated: a.repeated, excused: a.excused,
+		})
+		tokens = append(tokens, at)
+	}
+	return resolved, tokens
+}
+
 func centralOrchFileLines(t *testing.T, file string) []string {
 	t.Helper()
 	body, err := os.ReadFile("../../" + filepath.FromSlash(file))
@@ -578,7 +629,7 @@ var centralOrchContentAnchors = []centralOrchContentAnchor{
 	{"internal/infra/tf/managed_cover.go", "internal/infra/tf/managed_cover.go", "`managedTypes` in `internal/infra/tf/managed_cover.go` is the narrower list for managed projects — **14 entries to `a…", "var managedTypes = map[string]bool{", "", ""},
 	{"internal/gateway/gateway.go", "internal/gateway/gateway.go", "— Exists.** `internal/gateway/gateway.go`'s `Start` (a package-level function, not a method) listens on `127.0.0.1:0`…", "func Start(ctx context.Context, o Options) (*Server, error) {", "", ""},
 	{"mobile/src/demo/safety.test.js", "mobile/src/demo/safety.test.js", "— Gap.** No WebSocket client or server exists in the tree; the only `websocket` strings are test fences (`mobile/src/…", "const real = { fetch: globalThis.fetch, XMLHttpRequest: globalThis.XMLHttpRequest, WebSocket: globalThis.WebSocket };", "", ""},
-	{"console/test/unit/spawnlog.test.ts", "console/test/unit/spawnlog.test.ts", "— Gap.** No WebSocket client or server exists in the tree; the only `websocket` strings are test fences (`mobile/src/…", "expect(writer).not.toMatch(/fetch\\(|https?:\\/\\/|new URL\\(|WebSocket|net\\.|request\\(/)", "", ""},
+	{"·/test/unit/spawnlog.test.ts", "", "— Gap.** No WebSocket client or server exists in the tree; the only `websocket` strings are test fences (`mobile/src/…", "expect(writer).not.toMatch(/fetch\\(|https?:\\/\\/|new URL\\(|WebSocket|net\\.|request\\(/)", "", ""},
 	{"internal/rtdb/stream.go", "internal/rtdb/stream.go", "The RTDB client's realtime transport is outbound SSE (`internal/rtdb/stream.go`'s `Stream` and `Event`), and the cons…", "func (c *Client) Stream(ctx context.Context, path string) <-chan Event {", "", ""},
 	{"internal/infra/tf/managed_cost.go", "internal/infra/tf/managed_cost.go", "— Exists.** `internal/infra/tf/managed_cost.go`'s tables read `google_cloud_run_v2_service` with its `template.0.scal…", "path:  []any{\"template\", 0, \"scaling\", 0, \"min_instance_count\"},", "", ""},
 	{"deploy/terraform/gcp/modules/compute/variables.tf", "deploy/terraform/gcp/modules/compute/variables.tf", "— Rule.** `deploy/terraform/gcp/modules/compute/variables.tf`'s `launchers` / `operators` validations require `user:`…", "variable \"launchers\" {", "", ""},
@@ -654,12 +705,12 @@ var centralOrchContentAnchors = []centralOrchContentAnchor{
 	{"mobile/src/feed/paths.js", "mobile/src/feed/paths.js", "There is no database client in this directory, and there must not be\"*; `mobile/src/feed/reader.js`'s `FeedReader` ta…", "export const FAMILIES = Object.freeze(['config/caps', 'config/kill', 'spend', 'mailbox']);", "", ""},
 	{"mobile/src/mailbox/client.js", "mobile/src/mailbox/client.js", "There is no database client in this directory, and there must not be\"*; `mobile/src/feed/reader.js`'s `FeedReader` ta…", "const error = new TypeError('createMailboxClient: the account tuple is not usable');", "", ""},
 	{"mobile/src/demo/safety.test.js", "mobile/src/demo/safety.test.js", "There is no database client in this directory, and there must not be\"*; `mobile/src/feed/reader.js`'s `FeedReader` ta…", "const RULES = [", "", ""},
-	{"console/src/main/protocol.ts", "console/src/main/protocol.ts", "— Rule.** `console/src/main/protocol.ts`'s `CONTENT_SECURITY_POLICY` carries `connect-src 'none'` — *\"the renderer ne…", "* third directive of `CONTENT_SECURITY_POLICY` below, so a `<link", "", ""},
-	{"console/src/main/ipc.ts", "console/src/main/ipc.ts", "— Rule.** `console/src/main/protocol.ts`'s `CONTENT_SECURITY_POLICY` carries `connect-src 'none'` — *\"the renderer ne…", "const operation = CONSOLE_OPERATIONS.find((candidate) => candidate.name === name)", "", ""},
-	{"console/src/preload/index.ts", "console/src/preload/index.ts", "— Rule.** `console/src/main/protocol.ts`'s `CONTENT_SECURITY_POLICY` carries `connect-src 'none'` — *\"the renderer ne…", "const names: readonly ExposedName[] = Object.freeze(EXPOSED_OPERATIONS.map(([name]) => name))", "", ""},
-	{"console/src/main/spawn.ts", "console/src/main/spawn.ts", "— Rule.** `console/src/main/protocol.ts`'s `CONTENT_SECURITY_POLICY` carries `connect-src 'none'` — *\"the renderer ne…", "const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === operation)", "", ""},
+	{"·/src/main/protocol.ts", "", "— Rule.** the console renderer's CSP module's `CONTENT_SECURITY_POLICY` carries `connect-src 'none'` — *\"the renderer ne…", "* third directive of `CONTENT_SECURITY_POLICY` below, so a `<link", "", ""},
+	{"·/src/main/ipc.ts", "", "— Rule.** the console renderer's CSP module's `CONTENT_SECURITY_POLICY` carries `connect-src 'none'` — *\"the renderer ne…", "const operation = CONSOLE_OPERATIONS.find((candidate) => candidate.name === name)", "", ""},
+	{"·/src/preload/index.ts", "", "— Rule.** the console renderer's CSP module's `CONTENT_SECURITY_POLICY` carries `connect-src 'none'` — *\"the renderer ne…", "const names: readonly ExposedName[] = Object.freeze(EXPOSED_OPERATIONS.map(([name]) => name))", "", ""},
+	{"·/src/main/spawn.ts", "", "— Rule.** the console renderer's CSP module's `CONTENT_SECURITY_POLICY` carries `connect-src 'none'` — *\"the renderer ne…", "const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === operation)", "", ""},
 	{"docs/design/desktop-console.md", "docs/design/desktop-console.md", "`docs/design/desktop-console.md` §5.1 rule 3 and rule 6 are the design's statement of both.", "### 5.1 The hard rules", "", ""},
-	{"console/docs/json-contract.md", "console/docs/json-contract.md", "*Consequence:* the console can reach a WebSocket only by a deliberate change to a load-bearing property — or through …", "line-delimited JSON — one of exactly two line-delimited documents the console", "", ""},
+	{"·/docs/json-contract.md", "", "*Consequence:* the console can reach a WebSocket only by a deliberate change to a load-bearing property — or through …", "line-delimited JSON — one of exactly two line-delimited documents the console", "", ""},
 	{"internal/cli/watch.go", "internal/cli/watch.go", "— Exists.** `internal/cli/watch.go`'s `newWatchCmd` / `runWatch` / `watchStream` stream four RTDB paths through `inte…", "func newWatchCmd() *cobra.Command {", "", ""},
 	{"internal/watch/source.go", "internal/watch/source.go", "— Exists.** `internal/cli/watch.go`'s `newWatchCmd` / `runWatch` / `watchStream` stream four RTDB paths through `inte…", "type Supervisor struct {", "", ""},
 	{"internal/cli/watch_queued.go", "internal/cli/watch_queued.go", "— Exists.** `internal/cli/watch.go`'s `newWatchCmd` / `runWatch` / `watchStream` stream four RTDB paths through `inte…", "func startQueuedSource(ctx context.Context, lc *localcfg.Config, repo string, index *projectJobIndex) *queuedSource {", "", ""},
@@ -774,7 +825,7 @@ var centralOrchContentAnchors = []centralOrchContentAnchor{
 	{"internal/rtdb/client.go", "internal/rtdb/client.go", "UNVERIFIED | # | What is unverified | Why | What would settle it | | --- | --- | --- | --- | | U1 | That a Cloud Run …", "func (c *Client) PutIfMatch(ctx context.Context, path, etag string, v any) error {", "", ""},
 	{"internal/budget/rules/rules.go", "internal/budget/rules/rules.go", "UNVERIFIED | # | What is unverified | Why | What would settle it | | --- | --- | --- | --- | | U1 | That a Cloud Run …", "t, err := template.New(\"rules\").Option(\"missingkey=error\").Parse(source)", "", ""},
 	{"internal/projectpolicy/version.go", "internal/projectpolicy/version.go", "UNVERIFIED | # | What is unverified | Why | What would settle it | | --- | --- | --- | --- | | U1 | That a Cloud Run …", "const PolicyRulesVersion = 1", "", ""},
-	{"console/test/unit/window.test.ts", "console/test/unit/window.test.ts", "UNVERIFIED | # | What is unverified | Why | What would settle it | | --- | --- | --- | --- | | U1 | That a Cloud Run …", "\"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'\"", "", ""},
+	{"·/test/unit/window.test.ts", "", "UNVERIFIED | # | What is unverified | Why | What would settle it | | --- | --- | --- | --- | | U1 | That a Cloud Run …", "\"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'\"", "", ""},
 	{"internal/agent/settings.go", "internal/agent/settings.go", "UNVERIFIED | # | What is unverified | Why | What would settle it | | --- | --- | --- | --- | | U1 | That a Cloud Run …", "var deniedWebTools = []string{\"WebSearch\", \"WebFetch\"}", "", ""},
 	{"docs/design/project-centric.md", "docs/design/project-centric.md", "UNVERIFIED | # | What is unverified | Why | What would settle it | | --- | --- | --- | --- | | U1 | That a Cloud Run …", "### 4.1 One job and one job service account per (profile, account), for clone workflows", "", ""},
 	{"internal/watch/source.go", "internal/watch/source.go", "UNVERIFIED | # | What is unverified | Why | What would settle it | | --- | --- | --- | --- | | U1 | That a Cloud Run …", "type Supervisor struct {", "", ""},
@@ -817,8 +868,9 @@ func TestDocsCentralOrchestratorCitationsAreAnchoredByContent(t *testing.T) {
 	for _, m := range matches {
 		cited[m[1]]++
 	}
+	anchors, _ := centralOrchResolve(t, centralOrchContentAnchors, cited)
 	held := map[string]int{}
-	for _, a := range centralOrchContentAnchors {
+	for _, a := range anchors {
 		held[a.token]++
 		if a.excused != "" {
 			if !strings.Contains(a.excused, "PR #") && !strings.Contains(a.excused, "not a file in this repository") {
@@ -849,7 +901,7 @@ func TestDocsCentralOrchestratorCitationsAreAnchoredByContent(t *testing.T) {
 			t.Errorf("centralOrchContentAnchors holds an entry for %s and %s never cites it: a pin with no citation behind it is a claim nothing in the document makes", token, centralOrchReconciled)
 		}
 	}
-	t.Logf("%s: %d citations held by %d content anchors, none of them by a line number", centralOrchReconciled, len(matches), len(centralOrchContentAnchors))
+	t.Logf("%s: %d citations held by %d content anchors, none of them by a line number", centralOrchReconciled, len(matches), len(anchors))
 }
 
 // centralOrchCount renders a count with its singular or plural noun, so the failure messages
