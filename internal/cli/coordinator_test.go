@@ -33,9 +33,13 @@ var updateCoordinatorGolden = flag.Bool("update-coordinator", false, "rewrite te
 // and a fake host. What each of them is for:
 //
 //   - TestCoordinatorStatusJSON: the joined view, read as data, over real run
-//     objects and a real (fake) provider.
+//     objects and a real (fake) provider — the records, the collision rule
+//     (one per pair, and a pair that shares only a service is one) and the
+//     declaration under a name that says it is one.
 //   - TestCoordinatorStatusTextGolden: the rendered view, read rather than
 //     accepted.
+//   - TestCoordinatorStatusWritesNothing: the plan's sentence for P1, held by
+//     a test — the runs bucket is unchanged and the host's write log is empty.
 //   - TestCoordinatorStatusReadsOnlyThePullRequestsTheRunsName: P1's reader,
 //     pinned as the limitation it is (finding #10), so that P2 replacing it is
 //     a deliberate change and not a surprise.
@@ -43,9 +47,15 @@ var updateCoordinatorGolden = flag.Bool("update-coordinator", false, "rewrite te
 //     is asked for by name.
 //   - TestCoordinatorStatusNeverPrintsACredential: the one security rule this
 //     path owns — the provider's own credential values never reach an error
-//     this command prints.
+//     this command prints, from opening the provider or from a read.
 //   - TestCoordinatorStatusWithNoRuns: an empty bucket is a view with nothing
 //     in it, not a failure.
+//   - TestCoordinatorStatusWindow: the window is runs ls's, measured back from
+//     runs ls's clock.
+//   - TestCoordinatorStatusFollowsTheRecordsPullRequest: a run is on the pull
+//     request its record names, else its task's — runs.go's own order.
+//   - TestCoordinatorStatusSanitisesWhatSomebodyElseWrote: a branch name or a
+//     launcher's own string cannot redraw the table around itself.
 
 // coordinatorRunSeed is one run the test fixture's bucket holds, in the terms
 // the view reads it: what its task says, what its launch record declared, and
