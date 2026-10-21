@@ -384,6 +384,7 @@ cleanup() {
   # a live bearer token inside a directory that survives the run. Check 90
   # reports its token file the same way (its TOKEN_REMOVED); this is the same
   # row for this script's credential file.
+  optional_cleanup_note
   rm -f "$AUTH_CONF" || true
   AUTH_CONF_REMOVED=no
   [ ! -e "$AUTH_CONF" ] && AUTH_CONF_REMOVED=yes
@@ -1092,17 +1093,68 @@ ROLES_LOG='roles/logging.logWriter roles/logging.admin roles/owner roles/editor'
 # bucket, one per line. Read-only. Non-zero when the policy cannot be read: a
 # failed read is not the answer "it holds nothing".
 sa_roles() {
-  local kind=$1 err=$SCRATCH/policy.err
+  local kind=$1 err=$SCRATCH/policy.err raw
+  # No --filter: `gcloud storage buckets get-iam-policy` is not a list command
+  # and has none. Both reads flatten to "role,member" lines and the account is
+  # picked out here, so the two calls take the same flags.
   case "$kind" in
   project)
-    gcloud projects get-iam-policy "${P:?}" --flatten='bindings[].members' \
-      --filter="bindings.members=serviceAccount:${BUILD_SA}" --format='value(bindings.role)' 2>"$err"
+    raw=$(gcloud projects get-iam-policy "${P:?}" --flatten='bindings[].members' \
+      --format='csv[no-heading](bindings.role,bindings.members)' 2>"$err") || return 1
     ;;
   bucket)
-    gcloud storage buckets get-iam-policy "gs://${P:?}_cloudbuild" --flatten='bindings[].members' \
-      --filter="bindings.members=serviceAccount:${BUILD_SA}" --format='value(bindings.role)' 2>"$err"
+    raw=$(gcloud storage buckets get-iam-policy "gs://${P:?}_cloudbuild" --flatten='bindings[].members' \
+      --format='csv[no-heading](bindings.role,bindings.members)' 2>"$err") || return 1
     ;;
   esac
+  printf '%s\n' "$raw" | awk -F, -v m="serviceAccount:${BUILD_SA}" '$2 == m { print $1 }'
+}
+
+# owner_can_act_as — whether the owner's active account can use BUILD_SA
+# (roles/iam.serviceAccountUser, or a role that contains it), read from the
+# build account's own policy and the project's. Prints "yes", "no" or
+# "unknown:<why>". Read-only. A grant held through a group reads as "no", which
+# errs on the safe side: the owner is told, not stopped.
+owner_can_act_as() {
+  local acct=${OWNER_ACCT:-} sa_pol proj_pol
+  if [ -z "$acct" ]; then
+    echo "unknown:the active gcloud account cannot be read"
+    return 0
+  fi
+  sa_pol=$(gcloud iam service-accounts get-iam-policy "$BUILD_SA" --project="${P:?}" --flatten='bindings[].members' \
+    --format='csv[no-heading](bindings.role,bindings.members)' 2>"$SCRATCH/policy.err") \
+    || { echo "unknown:the policy of ${BUILD_SA} cannot be read"; return 0; }
+  if printf '%s\n' "$sa_pol" | awk -F, -v m="user:${acct}" '$2 == m && ($1 == "roles/iam.serviceAccountUser" || $1 == "roles/iam.serviceAccountAdmin" || $1 == "roles/owner" || $1 == "roles/editor") { f = 1 } END { exit !f }'; then
+    echo yes
+    return 0
+  fi
+  proj_pol=$(gcloud projects get-iam-policy "${P:?}" --flatten='bindings[].members' \
+    --format='csv[no-heading](bindings.role,bindings.members)' 2>"$SCRATCH/policy.err") \
+    || { echo "unknown:the project policy cannot be read"; return 0; }
+  if printf '%s\n' "$proj_pol" | awk -F, -v m="user:${acct}" '$2 == m && ($1 == "roles/iam.serviceAccountUser" || $1 == "roles/iam.serviceAccountAdmin" || $1 == "roles/owner" || $1 == "roles/editor") { f = 1 } END { exit !f }'; then
+    echo yes
+  else
+    echo no
+  fi
+}
+
+# The dedicated account this check recommends, and the commands to make it.
+DEDICATED_SA_ID=fugaro-chk91-build
+print_dedicated_setup() {
+  local sa="${DEDICATED_SA_ID}@${P}.iam.gserviceaccount.com"
+  say "  [per installation fugaro (${P}), run by YOU] gcloud iam service-accounts create ${DEDICATED_SA_ID} --project=${P} --display-name='Check 91 throwaway build account'"
+  say "  [per installation fugaro (${P}), run by YOU] gcloud projects add-iam-policy-binding ${P} --member=serviceAccount:${sa} --role=roles/artifactregistry.writer --condition=None"
+  say "  [per installation fugaro (${P}), run by YOU] gcloud storage buckets add-iam-policy-binding gs://${P}_cloudbuild --member=serviceAccount:${sa} --role=roles/storage.objectViewer"
+  say "  [per installation fugaro (${P}), run by YOU, optional] gcloud projects add-iam-policy-binding ${P} --member=serviceAccount:${sa} --role=roles/logging.logWriter --condition=None"
+  say "  [per installation fugaro (${P}), run by YOU, unless you are a project owner] gcloud iam service-accounts add-iam-policy-binding ${sa} --project=${P} --member=user:YOUR-EMAIL --role=roles/iam.serviceAccountUser"
+  say "  then: CHECK91_BUILD_SA=${sa} bash scripts/live-checks/check91.sh"
+}
+
+# optional_cleanup_note: the account this check was told to build as is the
+# owner's to remove, never this script's.
+optional_cleanup_note() {
+  [ "${BUILD_SA%%@*}" = "$DEDICATED_SA_ID" ] || return 0
+  say "OPTIONAL owner step, per installation fugaro (${P}), run by YOU (this script never runs it): remove the throwaway build account and its grants when you are done with Check 91: gcloud iam service-accounts delete ${BUILD_SA} --project=${P} (its project-level bindings go with the account once the policy is cleaned: gcloud projects remove-iam-policy-binding ${P} --member=serviceAccount:${BUILD_SA} --role=roles/artifactregistry.writer, and the same for roles/logging.logWriter; and gcloud storage buckets remove-iam-policy-binding gs://${P}_cloudbuild --member=serviceAccount:${BUILD_SA} --role=roles/storage.objectViewer)"
 }
 
 # holds ROLES... — reads the role lines on stdin; true when any of ROLES is there.
@@ -1131,7 +1183,8 @@ guard_build_identity() {
     st=$(describe_state gcloud iam service-accounts describe "$cand" --project="${P:?}")
     case "$st" in
     there) BUILD_SA=$cand ;;
-    not-there) stop "CHECK91_BUILD_SA=${cand} does not exist in ${P}. Per installation fugaro (${P}), run by YOU: gcloud iam service-accounts create ${cand%%@*} --project=${P} --display-name='Check 91 throwaway build account' — then run this check again. Nothing was created" ;;
+    not-there) [ "${cand%%@*}" = "$DEDICATED_SA_ID" ] && print_dedicated_setup
+      stop "CHECK91_BUILD_SA=${cand} does not exist in ${P}. Per installation fugaro (${P}), run by YOU: gcloud iam service-accounts create ${cand%%@*} --project=${P} --display-name='Check 91 throwaway build account' — then run this check again. Nothing was created" ;;
     *) stop "whether ${cand} exists cannot be read (the describe failed for a reason other than NOT_FOUND: an expired session, a transient error or a missing permission). Nothing was created" ;;
     esac
   else
@@ -1139,7 +1192,9 @@ guard_build_identity() {
       || stop "the installation's build service accounts cannot be listed in ${P}: gcloud iam service-accounts list failed with $(tail -n 1 "$lerr" | tr -d '\r' | tr '\n' ' '). Nothing was created"
     n=$(printf '%s\n' "$list" | grep -c . || true)
     if [ "$n" = 0 ]; then
-      stop "installation fugaro (${P}) has no build service account (fugaro-b-*), and this check will NOT fall back to the project's default Compute service account (it holds nothing on the staging bucket or on Artifact Registry there, and its grants are not this check's to widen). Fix, per REPOSITORY, run by YOU: 'fugaro init --repo' in a checkout of a repository set up for this installation — it creates that repository's build account. Or, per INSTALLATION (${P}), a dedicated one: gcloud iam service-accounts create fugaro-chk91-build --project=${P} --display-name='Check 91 throwaway build account' — then run: CHECK91_BUILD_SA=fugaro-chk91-build@${P}.iam.gserviceaccount.com bash scripts/live-checks/check91.sh. Nothing was created"
+      say "The dedicated build account this check recommends (commands for YOU; this script never runs them):"
+      print_dedicated_setup
+      stop "installation fugaro (${P}) has no build service account (fugaro-b-*), and this check will NOT fall back to the project's default Compute service account (it holds nothing on the staging bucket or on Artifact Registry there, and its grants are not this check's to widen). Fix, per REPOSITORY, run by YOU: 'fugaro init --repo' in a checkout of a repository set up for this installation — it creates that repository's build account. Or, per INSTALLATION (${P}) and RECOMMENDED, a dedicated one (it never widens a product account): see the commands printed above, then run CHECK91_BUILD_SA=${DEDICATED_SA_ID}@${P}.iam.gserviceaccount.com bash scripts/live-checks/check91.sh. Nothing was created"
     elif [ "$n" != 1 ]; then
       stop "installation fugaro (${P}) has ${n} build service accounts (fugaro-b-*: $(printf '%s' "$list" | tr '\n' ' ')): pick one and run again with CHECK91_BUILD_SA=<that account>. Nothing was created"
     fi
@@ -1150,6 +1205,12 @@ guard_build_identity() {
   say "  It needs: roles/artifactregistry.writer on the repository this run creates (${SVC}), which does not exist yet, so the grant is project-level (artifactregistry.repositories.uploadArtifacts);"
   say "            roles/storage.objectViewer on gs://${P}_cloudbuild (it reads the staged source); roles/logging.logWriter (build logs; the build itself still runs without it)."
   say "  YOU need roles/iam.serviceAccountUser on it (project owners have it). This script reads these grants below and never writes IAM."
+  case "${BUILD_SA%%@*}" in
+  fugaro-b-*)
+    say "WARNING: ${BUILD_SA} is a per-repository product build account. Granting it roles/artifactregistry.writer on the WHOLE project (the only grant that covers a repository this run creates) also lets it write fugaro-base and every other repository's images, which run holding the repositories' credentials. Prefer the dedicated account:"
+    print_dedicated_setup
+    ;;
+  esac
 
   local missing="" pr br rc=0
   pr=$(sa_roles project) || rc=$?
@@ -1177,8 +1238,24 @@ guard_build_identity() {
     log_missing="  [per installation fugaro (${P}), run by YOU, optional] gcloud projects add-iam-policy-binding ${P} --member=serviceAccount:${BUILD_SA} --role=roles/logging.logWriter --condition=None
 "
   fi
+  # The owner's own right to use the account (the build is submitted by the
+  # owner as that account). A missing right is printed, and it stops the run
+  # when it can be read as missing: the build would fail late otherwise.
+  local actas
+  OWNER_ACCT=$(gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null | tr -d '\r' | head -n 1) || OWNER_ACCT=""
+  actas=$(owner_can_act_as)
+  case "$actas" in
+  yes) ;;
+  no)
+    missing="${missing}  [per installation fugaro (${P}), run by YOU] gcloud iam service-accounts add-iam-policy-binding ${BUILD_SA} --project=${P} --member=user:${OWNER_ACCT:-YOUR-EMAIL} --role=roles/iam.serviceAccountUser
+"
+    ;;
+  *)
+    say "NOTE: whether your account can act as ${BUILD_SA} could not be read (${actas#unknown:}); if the build fails on permission, grant: gcloud iam service-accounts add-iam-policy-binding ${BUILD_SA} --project=${P} --member=user:YOUR-EMAIL --role=roles/iam.serviceAccountUser"
+    ;;
+  esac
   if [ -n "$missing" ]; then
-    say "MISSING GRANTS for ${BUILD_SA} (this script never grants IAM; run these yourself, wait a minute or two for them to take effect, then run this check again; revoke the project-level one afterwards if the installation does not want it kept):"
+    say "MISSING GRANTS for ${BUILD_SA} (this script never grants IAM; run these yourself, wait a minute or two for them to take effect, then run this check again; the project-level one is wider than this check needs for a product account: prefer the dedicated account, and revoke it afterwards):"
     printf '%s%s' "$missing" "$log_missing" >&2
     fact "build-identity" FAIL "the build would run as ${BUILD_SA}, which lacks a required grant (see the stop): nothing was created, built or deployed"
     stop "${BUILD_SA} lacks a role the build needs; the commands are printed above. Nothing was created, built or deployed"
@@ -1216,6 +1293,9 @@ print_plan() {
   say "  [network, deletes] gcloud artifacts docker images delete ${IMG} --project=${P} --delete-tags"
   say "  [network, deletes] gcloud artifacts repositories delete ${SVC} --project=${P} --location=${L}"
   say "  [network, deletes] gcloud storage rm -r ${STAGING_PREFIX}"
+  if [ "${BUILD_SA%%@*}" = "$DEDICATED_SA_ID" ]; then
+    say "  [optional, per installation fugaro (${P}), run by YOU, never run by this script] gcloud iam service-accounts delete ${BUILD_SA} --project=${P}"
+  fi
   say "What needed the network and your credentials in THIS dry run: fugaro doctor, the describes of the service and the repository, the build-account list, the two IAM policy reads and the staging-bucket list (all reads). Local only: the scratch directory and the files in it (relay.py, Dockerfile, cloudbuild.yaml)."
 }
 

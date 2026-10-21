@@ -331,18 +331,44 @@ if args[:2] == ["iam", "service-accounts"]:
             sys.exit(0)
         describe_absent("iam.service-accounts.describe")
 
-if args[:2] == ["projects", "get-iam-policy"] or args[:3] == ["storage", "buckets", "get-iam-policy"]:
-    # The build account's roles, on the project and on the staging bucket.
-    # FAKE_GCLOUD_PROJECT_ROLES / FAKE_GCLOUD_BUCKET_ROLES are space-separated.
-    if os.environ.get("FAKE_GCLOUD_POLICY_FAILS") == "yes":
+if args[:2] == ["auth", "list"]:
+    print(os.environ.get("FAKE_GCLOUD_ACCOUNT", "owner@example.com"))
+    sys.exit(0)
+
+IAM_READS = (["projects", "get-iam-policy"], ["storage", "buckets", "get-iam-policy"],
+             ["iam", "service-accounts", "get-iam-policy"])
+iam_read = next((r for r in IAM_READS if args[:len(r)] == r), None)
+if iam_read:
+    # Like the real commands, a flag the subcommand does not have is an error: the
+    # three policy reads are plain `get` commands and take only --flatten, --format
+    # and --project. `--filter` is NOT among them for the storage one (it is not a
+    # list command), and a script that passed it would stop on every real run.
+    for a in args[len(iam_read) + 1:]:
+        if a.startswith("--") and a.split("=")[0] not in ("--flatten", "--format", "--project"):
+            sys.stderr.write("ERROR: (gcloud.%s) unrecognized arguments: %s\n" % (".".join(iam_read), a))
+            sys.exit(2)
+    # Each read can be made to fail on its own (FAKE_GCLOUD_POLICY_FAILS fails the
+    # project and the bucket together, the way it always did).
+    kind = {"projects": "PROJECT", "storage": "BUCKET", "iam": "SA"}[iam_read[0]]
+    if os.environ.get("FAKE_GCLOUD_POLICY_FAILS") == "yes" and kind != "SA" or os.environ.get("FAKE_GCLOUD_%s_POLICY_FAILS" % kind) == "yes":
         sys.stderr.write("ERROR: (gcloud.get-iam-policy) PERMISSION_DENIED: the fake gcloud was told to fail this read\n")
         sys.exit(1)
-    if args[0] == "projects":
+    member = "serviceAccount:" + os.environ.get("FAKE_GCLOUD_POLICY_SA", "fugaro-b-sandbox-abc123@fugaro-dev.iam.gserviceaccount.com")
+    if kind == "SA":
+        # Who may act as the build account: FAKE_GCLOUD_ACTAS=no -> nobody.
+        if os.environ.get("FAKE_GCLOUD_ACTAS", "yes") == "yes":
+            print("roles/iam.serviceAccountUser,user:" + os.environ.get("FAKE_GCLOUD_ACCOUNT", "owner@example.com"))
+        print("roles/iam.serviceAccountUser,user:somebody-else@example.com")
+        sys.exit(0)
+    if kind == "PROJECT":
         roles = os.environ.get("FAKE_GCLOUD_PROJECT_ROLES", "roles/artifactregistry.writer roles/logging.logWriter")
     else:
         roles = os.environ.get("FAKE_GCLOUD_BUCKET_ROLES", "roles/storage.objectViewer")
     for r in roles.split():
-        print(r)
+        print(r + "," + member)
+    # Another account holding everything: the script must pick out ITS account.
+    for r in ("roles/owner", "roles/artifactregistry.writer", "roles/storage.objectViewer", "roles/logging.logWriter"):
+        print(r + ",serviceAccount:other-account@fugaro-dev.iam.gserviceaccount.com")
     sys.exit(0)
 
 if args[:1] == ["builds"]:
@@ -353,6 +379,10 @@ if args[:1] == ["builds"]:
     # grant on the object) happens after the upload, so the fake stages the
     # source on both paths.
     touch("staged")
+    # Keep the build config this build was given, for the test to read.
+    cfg = flag("--config")
+    if cfg and os.path.exists(cfg):
+        open(os.path.join(LOG, "build.config"), "w").write(open(cfg).read())
     if os.environ.get("FAKE_GCLOUD_BUILD_FAIL") == "yes":
         # What the real gcloud prints when the build cannot read its source,
         # plus an authorization header, which is exactly the kind of run the
@@ -817,6 +847,41 @@ test_build_identity_preflight() {
   expect_contains "$err" "cannot be read" "unreadable policy: said"
   expect_absent "$(cat "$dir/unread/logs/gcloud.calls")" "repositories create" "unreadable policy: nothing created"
 
+  # Each policy read stops the run on its own, with its own text.
+  prepare "$dir/unread-project"
+  run91 "$dir/unread-project" FAKE_GCLOUD_PROJECT_POLICY_FAILS=yes
+  expect_status "$status" 1 "unreadable project policy: the run stops"
+  expect_contains "$err" "the project's IAM policy cannot be read" "unreadable project policy: said"
+  expect_absent "$(cat "$dir/unread-project/logs/gcloud.calls")" "repositories create" "unreadable project policy: nothing created"
+  prepare "$dir/unread-bucket"
+  run91 "$dir/unread-bucket" FAKE_GCLOUD_BUCKET_POLICY_FAILS=yes
+  expect_status "$status" 1 "unreadable bucket policy: the run stops"
+  expect_contains "$err" "the staging bucket's IAM policy cannot be read" "unreadable bucket policy: said"
+  expect_absent "$(cat "$dir/unread-bucket/logs/gcloud.calls")" "repositories create" "unreadable bucket policy: nothing created"
+
+  # The owner's own right to act as the build account: read, and printed when missing.
+  prepare "$dir/actas"
+  run91 "$dir/actas" FAKE_GCLOUD_ACTAS=no
+  expect_status "$status" 1 "no actAs: the run stops"
+  expect_contains "$err" "[per installation fugaro (fugaro-dev), run by YOU] gcloud iam service-accounts add-iam-policy-binding fugaro-b-sandbox-abc123@fugaro-dev.iam.gserviceaccount.com --project=fugaro-dev --member=user:owner@example.com --role=roles/iam.serviceAccountUser" "no actAs: the grant is printed"
+  expect_absent "$(cat "$dir/actas/logs/gcloud.calls")" "repositories create" "no actAs: nothing created"
+  expect_contains "$(cat "$dir/actas/logs/gcloud.calls")" "iam service-accounts get-iam-policy fugaro-b-sandbox-abc123@" "actAs: the build account's policy is read"
+
+  # A product account gets the broader-grant warning and the dedicated alternative.
+  expect_contains "$(cat "$dir/miss/err")" "WARNING: fugaro-b-sandbox-abc123@" "product account: the broader-grant warning"
+  expect_contains "$(cat "$dir/miss/err")" "gcloud iam service-accounts create fugaro-chk91-build --project=fugaro-dev" "product account: the dedicated account is offered"
+
+  # The dedicated account: no warning, and the optional removal is listed at the end.
+  prepare "$dir/dedicated"
+  run91 "$dir/dedicated" FAKE_GCLOUD_BUILD_SAS="fugaro-b-sandbox-abc123 fugaro-chk91-build" CHECK91_BUILD_SA=fugaro-chk91-build@fugaro-dev.iam.gserviceaccount.com \
+    FAKE_GCLOUD_POLICY_SA=fugaro-chk91-build@fugaro-dev.iam.gserviceaccount.com
+  expect_status "$status" 0 "dedicated account: the run"
+  expect_absent "$err" "WARNING:" "dedicated account: no broader-grant warning"
+  expect_contains "$err" "OPTIONAL owner step" "dedicated account: the removal is listed"
+  expect_contains "$err" "gcloud iam service-accounts delete fugaro-chk91-build@fugaro-dev.iam.gserviceaccount.com --project=fugaro-dev" "dedicated account: the removal command"
+  expect_absent "$(cat "$dir/dedicated/logs/gcloud.calls")" "service-accounts delete" "dedicated account: the script never deletes it"
+  expect_contains "$(cat "$dir/dedicated/logs/gcloud.calls")" "--service-account=projects/fugaro-dev/serviceAccounts/fugaro-chk91-build@" "dedicated account: the real build runs as it"
+
   # No build account: stop with the fix, never fall back to the Compute account.
   prepare "$dir/none"
   run91 "$dir/none" FAKE_GCLOUD_BUILD_SAS=none
@@ -1116,6 +1181,9 @@ test_staged_source_is_removed() {
   expect_contains "$calls" "builds submit --project=fugaro-dev --config=" "build identity: the build uses the check's own config (CLOUD_LOGGING_ONLY)"
   expect_contains "$calls" "--service-account=projects/fugaro-dev/serviceAccounts/fugaro-b-sandbox-abc123@fugaro-dev.iam.gserviceaccount.com" \
     "build identity: the build names the installation's build account, never the default Compute account"
+  expect_contains "$(grep 'builds submit' "$dir/logs/gcloud.calls")" "--service-account=projects/fugaro-dev/serviceAccounts/fugaro-b-sandbox-abc123@" \
+    "build identity: the real builds submit carries --service-account"
+  expect_contains "$(cat "$dir/logs/build.config" 2>/dev/null)" "CLOUD_LOGGING_ONLY" "build identity: the build config selects CLOUD_LOGGING_ONLY"
   expect_absent "$calls" "compute@developer" "build identity: the default Compute account is never named"
   expect_contains "$calls" "storage rm -r gs://fugaro-dev_cloudbuild/chk91-source/" \
     "staged source: the prefix is removed by the Restore"
