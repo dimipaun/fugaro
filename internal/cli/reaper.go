@@ -12,7 +12,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/batch"
 	"github.com/dimipaun/fugaro/internal/localcfg"
-	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 const (
@@ -134,8 +133,18 @@ func runReaper(ctx context.Context, cmd *cobra.Command, o cloudOptions, dryRun b
 	// The report is printed whether or not the pass finished (Reap returns
 	// what it did before an error), and the error follows it: a caller that
 	// reads only the exit code still gets the lines in the job's log.
+	// The report is the audit trail -- the Cloud Run job's stdout is the only
+	// place it lives -- and a refusal's reason is the whole of what a reader
+	// needs from it, so the lines are printed WHOLE: oneLine escapes what must
+	// not reach a terminal (control and bidi characters, a newline) without
+	// bounding the length, which is what the sibling scheduled command does
+	// (history.go) and what internal/pluginwire's Printable does not -- its
+	// 200-rune cap cuts the tail off the longest lines, and the tail is the
+	// reason. A line this command prints is the engine's own sentence about
+	// this installation's project, region and job id; it is bounded by what
+	// those are, not by a wire format.
 	for _, line := range rep.Lines() {
-		if _, werr := fmt.Fprintln(cmd.OutOrStdout(), pluginwire.Printable(line)); werr != nil {
+		if _, werr := fmt.Fprintln(cmd.OutOrStdout(), oneLine(line)); werr != nil {
 			return werr
 		}
 	}

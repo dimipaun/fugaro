@@ -12,11 +12,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/batch"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // reaperRig is one `fugaro reaper` fixture: the Batch and Compute Engine
@@ -285,6 +287,64 @@ func TestReaperCommandExitsNonZeroOnAnError(t *testing.T) {
 	}
 	if got := rig.bf.Deletes(); len(got) != 1 || got[0] != job {
 		t.Errorf("jobs deleted = %v, want [%s]", got, job)
+	}
+}
+
+// TestReaperCommandPrintsTheWholeRefusalLine: a refusal's REASON is the whole
+// of what a reader needs from it -- the command's Long help calls the report
+// the account of what the pass left alone and why, SECURITY.md calls it the
+// audit trail, and the Cloud Run job's stdout is its only home -- so a line cut
+// off part-way is a line that cannot be acted on. The command used to print
+// every line through internal/pluginwire's Printable, whose cap is 200 runes
+// (MaxPrintable), and these lines are long by construction: a refusal names the
+// job's full resource name (project, region and job id) and then a sentence.
+// The sibling scheduled command does not bound its lines at all (history.go
+// prints through oneLine, safetext.OneLine), which is the shape this asserts.
+//
+// The test drives the one shape whose refusal reason is the longest in the
+// engine -- a SCHEDULED job whose only job-level status event dates its queue
+// wait (reap.go's refuseStaleStateEvent) -- and asserts the line EXACTLY, since
+// a HasPrefix/Contains assertion passes on a line with its tail cut off. The
+// last check is what keeps the test honest: the line must be longer than the
+// cap, or it would pass with the cap still in place.
+func TestReaperCommandPrintsTheWholeRefusalLine(t *testing.T) {
+	rig := newReaperRig(t, true)
+	// Created past the queue deadline (addQueuedJob's age), then moved into
+	// SCHEDULED with the one job-level event the API leaves on it put back at
+	// the creation time: the shape whose time in state cannot be read, so the
+	// pass refuses it rather than deleting a run that may be live.
+	job := rig.addQueuedJob(t, theRun, reaperQueueDeadline()+time.Hour)
+	rig.bf.SetStateAt(job, "SCHEDULED", time.Now().Add(-time.Second))
+	rig.bf.SetStatusEvents(job, map[string]any{
+		"type": "STATUS_CHANGED", "description": "Job state is QUEUED",
+		"eventTime": time.Now().Add(-(reaperQueueDeadline() + time.Hour)).Format(time.RFC3339Nano),
+	})
+
+	out, _, err := execute(t, "reaper", "--dry-run")
+	if err != nil {
+		t.Fatalf("fugaro reaper --dry-run: %v", err)
+	}
+	want := "refused projects/proj-1234/locations/us-east5/jobs/" + job +
+		": its latest job-level status event predates its queue deadline, so it may date the queue wait" +
+		" rather than the SCHEDULED state it reports: how long it has been in that state is unknown" +
+		" and no deadline can clear it"
+	if n := utf8.RuneCountInString(want); n <= pluginwire.MaxPrintable {
+		t.Fatalf("the refusal line is %d runes, not past the %d-rune cap: this test would pass with the cap in place", n, pluginwire.MaxPrintable)
+	}
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	found := false
+	for _, l := range lines {
+		if l == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the report has no whole refusal line\nwant %q\n got %q", want, lines)
+	}
+	for _, l := range lines {
+		if strings.Contains(l, "truncated") {
+			t.Errorf("report line %q is cut off: the reason is the point of the line", l)
+		}
 	}
 }
 
