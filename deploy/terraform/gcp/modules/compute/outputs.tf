@@ -43,13 +43,15 @@ output "preload_scheduler_job" {
 
 # The reaper's invocation, by name: the Cloud Run job that runs `fugaro
 # reaper`, and the Scheduler job that starts it every ReapMargin (reaper.tf).
-# Neither name starts with `fugaro-`, so neither is a workflow's, and a reader
-# that only wanted to sweep an installation by hand
-# (`gcloud run jobs execute <this>`), or to check that the schedule exists,
-# would otherwise have to read the module to learn them. They are the module's
-# own locals and not inputs, because nothing outside the module creates them --
-# unlike the names in `var.names`, which fugaro init computes because two
-# sides write them.
+# The JOB's name does not start with `fugaro-`, so it is not a workflow's and
+# `fugaro ls` and max_parallel never count it (reaper.tf's locals say why); the
+# SCHEDULER job's does, as the preload rebuild's and the history rollover's do,
+# because nothing counts a schedule's name. A reader that only wanted to sweep
+# an installation by hand (`gcloud run jobs execute <this>`), or to check that
+# the schedule exists, would otherwise have to read the module to learn them.
+# They are the module's own locals and not inputs, because nothing outside the
+# module creates them -- unlike the names in `var.names`, which fugaro init
+# computes because two sides write them.
 #
 # They travel the whole way out: this file, the root's outputs.tf and
 # internal/infra.ComputeOutputs are one interface, one-for-one

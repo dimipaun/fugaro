@@ -72,23 +72,38 @@
 # rather than assumed because apis.tf is not this task's file to change.
 
 locals {
-  # The job's name and the Scheduler job's. Neither starts with `fugaro-`, for
-  # the reason internal/infra/firebase.go's HistoryJob gives: `fugaro ls` and
-  # max_parallel count the `fugaro-` jobs as a workflow's, and this is not one
-  # (check.tf and history.tf make the same choice: fugarochk-, fugarohist). The
-  # `fugaro_reaper` label below, not the name, is what a reader greps for.
+  # The Cloud Run job's name and the Scheduler job's, and they are spelled
+  # differently on purpose.
+  #
+  # The JOB's does not start with `fugaro-`, for the reason
+  # internal/infra/firebase.go's HistoryJob gives: `fugaro ls` and max_parallel
+  # count the `fugaro-` Cloud Run jobs as a workflow's, and this is not one
+  # (check.tf and history.tf make the same choice: fugarochk-, fugarohist, and
+  # the installation module validates the history job's name against exactly
+  # this).
+  #
+  # The SCHEDULER job's does, as this module's preload rebuild and the
+  # installation's history rollover do (fugaro-preload-rebuild,
+  # fugaro-history-rollover): nothing counts a Cloud Scheduler job's name --
+  # there is no `fugaro ls` for schedules -- and the prefix is what makes the
+  # installation's schedules read as Fugaro's in the console.
+  #
+  # What a reader greps for on the job's own resources is the label, and it is
+  # `fugaro_role = "reaper"` below (beside `fugaro = "managed"`, which every
+  # Fugaro resource carries). There is no `fugaro_reaper` label anywhere: the
+  # role is a VALUE of fugaro_role.
   reaper_job           = "fugaroreap"
   reaper_scheduler_job = "fugaro-reaper-sweep"
 }
 
 # The job that runs the sweep. `args` are the command -- the command the task
 # adds to internal/cli, whose own environment path (reaper.go's reaperEnvOptions)
-# is what reads the two variables below, because a Cloud Run job has no project
-# config file, no checkout and no FUGARO_PROJECT to find one with. Those two
-# variables are the whole of the job's configuration, and they are the ones
-# Terraform knows: this module is the Batch provisioning, so its project and
-# region ARE the installation's Batch configuration (the command refuses to run
-# where it is told neither that nor a config's batch: block).
+# is what reads the variables below, because a Cloud Run job has no project
+# config file, no checkout and no FUGARO_PROJECT to find one with. The first two
+# are the whole of the job's configuration, and they are the ones Terraform
+# knows: this module is the Batch provisioning, so its project and region ARE
+# the installation's Batch configuration (the command refuses to run where it is
+# told neither that nor a config's batch: block).
 #
 # The timeouts a sweeper judges by are NOT here, by construction: they are the
 # installation's own task timeouts, which live in its project config and in no
@@ -180,7 +195,8 @@ resource "google_cloud_run_v2_job" "reaper" {
         # job carries: no credential, because the job's identity is its
         # account, and no FUGARO_PROJECT, because this module is not told the
         # Fugaro project's name and the reaper has no config file to find one
-        # with.
+        # with. The three below are always there; the fourth, at the end, only
+        # where the installation names projects its sweep must never touch.
         env {
           name  = "FUGARO_GCP_PROJECT"
           value = var.project
@@ -201,6 +217,35 @@ resource "google_cloud_run_v2_job" "reaper" {
         env {
           name  = "FUGARO_REAPER_JOB"
           value = "1"
+        }
+        # The installation's own never-touch list, when it has one: the projects
+        # this sweep refuses BY NAME on top of the ones the engine refuses
+        # whatever it is told (internal/backend/batch's outOfBoundsFloor). It is
+        # the same variable internal/cli reads for both of its paths, so a list
+        # an operator declared for `fugaro reaper` holds for the unattended
+        # sweep too -- which is the whole point of wiring it here: a list the
+        # job cannot carry is a list that stops holding the moment the sweep
+        # runs from the schedule instead of a shell.
+        #
+        # What makes it safe to take the value from a tfvars is that it can only
+        # ADD: the engine puts its own two ids first and refuses them whatever
+        # this variable says (outOfBoundsProjects), so nothing an installation
+        # writes here takes a refusal off the list. An entry that is not a
+        # project id is refused by the variable's own validation rather than
+        # dropped, because a project named and not refused is a project swept as
+        # if the list did not exist.
+        #
+        # Absent rather than set to the empty string when the list is empty, so
+        # an installation that names none has the same environment it had before
+        # this variable existed: internal/cli reads an unset variable and an
+        # empty one alike (reaperRefuseProjects), and the three variables above
+        # stay the whole of such a job's configuration.
+        dynamic "env" {
+          for_each = length(var.reaper_refuse_projects) > 0 ? [join(",", var.reaper_refuse_projects)] : []
+          content {
+            name  = "FUGARO_REAPER_REFUSE_PROJECTS"
+            value = env.value
+          }
         }
       }
     }
@@ -240,11 +285,25 @@ resource "google_service_account_iam_member" "reaper_scheduler_agent" {
   member             = local.cloud_scheduler_agent
 }
 
-# The installation's operators, who apply this root. Creating the Scheduler job
-# below -- whose OAuth token is minted from the reaper account -- needs actAs
-# on that account (cloud.google.com/scheduler/docs/http-target-auth, checked
-# 2026-10-15; preload_operator makes the same grant for the same reason). It is
-# actAs on this one account, never a role on the project.
+# The installation's operators, who apply this root, and the one thing they
+# need on the reaper account: actAs, because the Scheduler job below carries an
+# oauth_token block naming that account and Google requires the caller who
+# creates such a job to hold actAs on the account the token is minted from
+# (cloud.google.com/scheduler/docs/http-target-auth, checked 2026-10-15). It is
+# the same role, for the same reason, that the installation module grants its
+# operators on its scheduler account (modules/installation/scheduler.tf's
+# scheduler_user) and that iam.tf's preload_operator grants them on the preload
+# account -- so it is kept rather than narrowed to an actAs-only custom role of
+# this module's own.
+#
+# What it is exactly: the PREDEFINED roles/iam.serviceAccountUser, on THIS ONE
+# account and never a role on the project. That role is actAs plus get and list
+# on the account, and what an operator can reach through it is bounded by what
+# the reaper account itself holds -- iam.tf's fugaroReaper role, the five
+# permissions that delete Batch jobs and Compute instances and do nothing else.
+# It is not the wider grant iam.tf's preload_operator note describes (actAs on
+# an account that can act as every run account and create instances): the
+# reaper account can act as nothing and create nothing.
 resource "google_service_account_iam_member" "reaper_operator" {
   for_each = var.operators
 

@@ -90,3 +90,8 @@ variable "builder_machine_type" {
 variable "build_submitter_role" {
   type = string
 }
+
+variable "reaper_refuse_projects" {
+  type    = list(string)
+  default = []
+}

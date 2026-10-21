@@ -89,10 +89,40 @@ run "root_passes_inputs" {
       name = "fugaro-preload-rebuild"
     }
   }
+  # The reaper's custom role and its Scheduler job, for the two outputs below
+  # that read them: a custom role's name is computed by the API (the mock's own
+  # invented value is not a role path), and the Scheduler job's is the same
+  # computed-attribute case as the preload rebuild's above.
+  override_resource {
+    target          = module.compute.google_project_iam_custom_role.reaper
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroReaper"
+    }
+  }
+  override_resource {
+    target          = module.compute.google_cloud_scheduler_job.reaper_sweep
+    override_during = plan
+    values = {
+      name = "fugaro-reaper-sweep"
+    }
+  }
 
   assert {
     condition     = output.preload_image == "fugaro-preload-a0b6aca0"
     error_message = "the root must output the preloaded image's family name, which carries a hash of the pinned base image"
+  }
+  assert {
+    condition     = output.preload_socket_gid_label == "socket-gid"
+    error_message = "the root must output the label a generation of that family records its socket gid under: a run reaches the socket through --group-add <gid>, so the name travels beside the family"
+  }
+  assert {
+    condition     = output.reaper_role == "projects/proj-1234/roles/fugaroReaper"
+    error_message = "the root must output the reaper's custom role, which is the one role the reaper account holds"
+  }
+  assert {
+    condition     = output.reaper_job == "fugaroreap" && output.reaper_scheduler_job == "fugaro-reaper-sweep"
+    error_message = "the root must output the reaper's invocation by name: the Cloud Run job that runs `fugaro reaper` and the Scheduler job that starts it every ReapMargin"
   }
   assert {
     condition     = output.reaper_account == "fugaro-reaper@proj-1234.iam.gserviceaccount.com"
@@ -778,5 +808,65 @@ run "TestTheReaperRunsAsTheReaperAccountOnASchedule" {
   assert {
     condition     = keys(google_service_account_iam_member.reaper_operator) == ["user:operator@example.com"]
     error_message = "the installation's operators hold actAs on the reaper account: applying this root creates the Scheduler job whose token is minted from it"
+  }
+}
+
+# The installation's own never-touch list, which the scheduled sweep could not
+# carry at all before this: the job's environment is the whole of what
+# internal/cli's environment path reads, and it set exactly three variables, so
+# a list an operator declared for `fugaro reaper` in their shell stopped
+# holding the moment the sweep ran from the schedule instead -- which is the
+# one way it runs unattended. The variable only ADDS to the ids the engine
+# refuses whatever it is told (internal/backend/batch's outOfBoundsFloor), and
+# can take none of them off, which is what makes a tfvars a safe place to put
+# it.
+#
+# The run above asserts the other half: with nothing set the job's environment
+# is the same three variables it has always been, and this fourth one is absent
+# rather than present and empty.
+run "TestTheReaperCarriesTheInstallationsNeverTouchList" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  variables {
+    reaper_refuse_projects = ["acme-prod", "acme-staging"]
+  }
+
+  override_resource {
+    target          = google_service_account.reaper
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = toset([for e in one(one(one(google_cloud_run_v2_job.reaper.template).template).containers).env : "${e.name}=${e.value}"]) == toset([
+      "FUGARO_GCP_PROJECT=proj-1234",
+      "FUGARO_REGION=us-east5",
+      "FUGARO_REAPER_JOB=1",
+      "FUGARO_REAPER_REFUSE_PROJECTS=acme-prod,acme-staging",
+    ])
+    error_message = "the job must carry the installation's never-touch list as FUGARO_REAPER_REFUSE_PROJECTS, comma-separated in the order it was given: it is the variable internal/cli reads for both of its paths, and a list the scheduled sweep cannot carry is a list that stops holding where it matters most"
+  }
+}
+
+# The root's half of the same wiring. The value's shape is the module's to
+# check and the value's destination is a module resource, so the run above
+# plans the module to read the job's environment; what is left for the root is
+# that it takes the variable at all and hands it on as the module's
+# list(string). This run plans the ROOT with the list set, so a root that never
+# declared it fails here (an unsupported argument) and one that passed it in
+# the wrong shape fails at the module's own type check.
+run "the_root_takes_the_never_touch_list" {
+  command = plan
+
+  variables {
+    reaper_refuse_projects = ["acme-prod", "acme-staging"]
   }
 }

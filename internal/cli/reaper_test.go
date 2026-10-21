@@ -41,9 +41,19 @@ type reaperRig struct {
 // which is what the command refuses.
 func newReaperRig(t *testing.T, withBatch bool) *reaperRig {
 	t.Helper()
+	return newReaperRigFor(t, withBatch, "proj-1234")
+}
+
+// newReaperRigFor is newReaperRig for an installation whose project is not the
+// rig's own. The engine's never-touch floor is a list of PROJECT IDS, so a pass
+// aimed at one of them -- the case that shows the installation's own list can
+// only add to it -- needs a rig whose project IS one
+// (TestReaperRefuseProjectsCanOnlyAdd).
+func newReaperRigFor(t *testing.T, withBatch bool, project string) *reaperRig {
+	t.Helper()
 	rig := &reaperRig{bf: gcpfake.NewBatch(t), cf: gcpfake.NewCompute(t)}
-	rig.bf.Project, rig.bf.Region = "proj-1234", "us-east5"
-	rig.cf.Project = "proj-1234"
+	rig.bf.Project, rig.bf.Region = project, "us-east5"
+	rig.cf.Project = project
 	// The fake's zones are the reaper's region's: a VM of another zone is
 	// refused by the region check, which is not what these tests are about.
 	rig.cf.Zones = []string{"us-east5-a"}
@@ -57,12 +67,12 @@ func newReaperRig(t *testing.T, withBatch bool) *reaperRig {
 	// so without an isolated projects directory a developer's own config
 	// could answer for it.
 	isolateProjects(t, dir)
-	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: my-runs\n" +
+	cfg := "version: 1\nname: aurora\ngcp_project: " + project + "\nregion: us-east5\nruns_bucket: my-runs\n" +
 		"endpoints: { batch: " + rig.bf.URL + "/, no_auth: true }\n"
 	if withBatch {
 		cfg += "batch:\n" +
-			"  image: us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro:1\n" +
-			"  service_account: fugaro-batch@proj-1234.iam.gserviceaccount.com\n"
+			"  image: us-east5-docker.pkg.dev/" + project + "/fugaro/fugaro:1\n" +
+			"  service_account: fugaro-batch@" + project + ".iam.gserviceaccount.com\n"
 	}
 	cfg += "repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
 	path := filepath.Join(dir, "project.yaml")
@@ -447,6 +457,54 @@ func TestReaperRefusesTheProjectsTheInstallationNames(t *testing.T) {
 	}
 	if got, err := reaperRefuseProjects(func(string) string { return "" }); err != nil || got != nil {
 		t.Errorf("reaperRefuseProjects(unset) = %v, %v, want no list at all", got, err)
+	}
+}
+
+// TestReaperRefuseProjectsCanOnlyAdd: the list the variable carries is
+// ADDITIVE. The engine refuses its own floor whatever it is handed
+// (internal/backend/batch's outOfBoundsFloor, put first by outOfBoundsProjects),
+// so a pass aimed at one of those two ids is refused even when the
+// installation's list names something else entirely -- and the refusal names
+// the floor.
+//
+// That is the property that makes the variable safe to write into a tfvars and
+// to hand to the unattended sweep (modules/compute/reaper.tf, which is where
+// the scheduled job's copy comes from): a value there can add projects to the
+// list the sweep never touches and can take none off it.
+//
+// The refusal names the list it refused on, so this test reads both halves out
+// of one message: the floor's two ids first (the ones nothing can remove) and
+// the installation's own entries after them. A command that dropped the
+// variable on the way to the engine would still be refused here -- the floor
+// alone is enough for that -- and would fail on the missing entries instead,
+// which is what makes this the assertion that the list is CARRIED and not only
+// that the floor holds.
+func TestReaperRefuseProjectsCanOnlyAdd(t *testing.T) {
+	// The pass is aimed at a floor id -- the belong installation, the one
+	// exception CONTRIBUTING.md records -- and the installation's own list
+	// names two other projects.
+	rig := newReaperRigFor(t, true, "fugaro-belong")
+	rig.addQueuedJob(t, theRun, reaperQueueDeadline()+time.Hour)
+	rig.addLeakedVM(t, otherRun, reaperMaxAge()+time.Hour)
+	t.Setenv(envReaperRefuseProjects, "acme-prod,acme-staging")
+
+	out, _, err := execute(t, "reaper")
+	if err == nil {
+		t.Fatal("fugaro reaper swept fugaro-belong: the installation's list names other projects, and a list can only ADD to the engine's floor")
+	}
+	if code := ExitCode(err); code != ExitUserError {
+		t.Errorf("exit code = %d, want %d (a user error)", code, ExitUserError)
+	}
+	// The floor's two ids, and then the installation's own entries in the order
+	// it wrote them: the list the refusal is made on is the floor's plus the
+	// caller's, never the caller's alone.
+	for _, want := range []string{"fugaro-belong", "out of bounds", "edge-devel-dimi, fugaro-belong, acme-prod, acme-staging"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal = %q, want it to say %q: the floor's own refusal, over the floor plus the installation's list", err, want)
+		}
+	}
+	if out != "" || len(rig.bf.Deletes()) != 0 || len(rig.cf.Deletes()) != 0 {
+		t.Errorf("stdout = %q, deletes = %v and %v, want nothing read and nothing deleted", out, rig.bf.Deletes(), rig.cf.Deletes())
 	}
 }
 

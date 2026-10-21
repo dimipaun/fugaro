@@ -1595,6 +1595,7 @@ func TestManagedCoverDropsInitAttributeChecks(t *testing.T) {
 // approval to (Task 6.3). The fixtures above are written without one — no
 // other rule reads it — so it is added here, on a copy, and never on the
 // fixture's own map, which every test in this file shares.
+
 // withInstance is rc with the per-instance attribute its type carries filled
 // into its before view when the fixture did not write one
 // (removalInstanceAttributes, read here as the rule reads it). A state

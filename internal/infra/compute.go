@@ -21,6 +21,7 @@ import (
 	iam "google.golang.org/api/iam/v1"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
@@ -184,6 +185,20 @@ type ComputeSpec struct {
 	// the image needs it. It is the installation's own role, passed by
 	// reference so it cannot drift from the installation that made it.
 	BuildSubmitterRole string `json:"build_submitter_role"`
+
+	// ReaperRefuseProjects are GCP project ids the reaper's SCHEDULED sweep
+	// must never touch, on top of the ones it refuses whatever it is told
+	// (internal/backend/batch's outOfBoundsFloor). They reach the job's
+	// environment as FUGARO_REAPER_REFUSE_PROJECTS (the module's reaper.tf),
+	// which is the variable internal/cli reads for both of its paths -- so the
+	// list an operator declares for `fugaro reaper` is the list the unattended
+	// sweep carries, and neither path can be walked around by being started
+	// the other way.
+	//
+	// It can only ADD: the floor is the engine's and no value here removes an
+	// id from it (outOfBoundsProjects). Empty is the ordinary case and means
+	// the floor alone.
+	ReaperRefuseProjects []string `json:"reaper_refuse_projects"`
 }
 
 // ComputeVars is the compute root's terraform.tfvars.json. It refuses what
@@ -212,6 +227,17 @@ func ComputeVars(spec ComputeSpec) ([]byte, error) {
 		if !computeOperator.MatchString(m) {
 			return nil, fmt.Errorf("the compute root's operator %q is not a user:, group: or serviceAccount: member: every operator gets actAs on the preload account, which can act as the run accounts and create instances, so a whole domain or a wildcard is refused (the module's operators validation)", m)
 		}
+	}
+	for _, p := range spec.ReaperRefuseProjects {
+		if !config.GCPProjectRE.MatchString(p) {
+			return nil, fmt.Errorf("the compute root's reaper never-touch list names %q, which is not a GCP project ID: the list is the projects the scheduled sweep must never touch, and an entry it cannot read is one it cannot refuse, so the project the entry was meant to name would be swept as usual (the module's reaper_refuse_projects validation, and the same refusal internal/cli's reaperRefuseProjects makes of the variable the job reads)", p)
+		}
+	}
+	// A nil slice marshals to JSON null, and this variable is a list(string):
+	// the root's own default is the empty list, and the tfvars says so rather
+	// than leaving the value to terraform's null-means-default rule.
+	if spec.ReaperRefuseProjects == nil {
+		spec.ReaperRefuseProjects = []string{}
 	}
 	return sortedJSON(spec)
 }
@@ -299,10 +325,12 @@ type ComputeOutputs struct {
 	// ReaperJob and ReaperScheduler are the reaper's invocation by name: the
 	// Cloud Run job that runs `fugaro reaper` (as the reaper account above)
 	// and the Scheduler job that starts it every ReapMargin (reaper.tf, design
-	// §8.1 Task 11). Neither name starts with `fugaro-`, so neither is a
-	// workflow's, and a check that wants to ask Google whether the invocation
-	// exists -- `fugaro doctor`'s reaper check is the one that will -- would
-	// otherwise have to re-derive them from the module.
+	// §8.1 Task 11). The job's name does not start with `fugaro-`, so it is
+	// not a workflow's and `fugaro ls` never counts it; the Scheduler job's
+	// does, as the preload rebuild's does, because nothing counts a schedule's
+	// name. A check that wants to ask Google whether the invocation exists --
+	// `fugaro doctor`'s reaper check is the one that will -- would otherwise
+	// have to re-derive them from the module.
 	ReaperJob       string `json:"reaper_job"`
 	ReaperScheduler string `json:"reaper_scheduler_job"`
 	Router          string `json:"router"`

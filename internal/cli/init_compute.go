@@ -328,6 +328,18 @@ func (s *computeStage) prepare(ctx context.Context) error {
 		return initErr(err)
 	}
 	pin := e.lc.BaseImage(config.BaseKind)
+	// The installation's never-touch list, read from the same variable the
+	// reaper command reads (reaperRefuseProjects): it goes into this root's
+	// tfvars so the SCHEDULED sweep refuses the same projects a pass run from a
+	// shell does. Without it the list would hold only while the sweep was
+	// started by hand, which is exactly when it matters least. It can only ADD
+	// to the engine's own floor, and an entry that is not a project id is
+	// refused here rather than dropped, for the reason reaperRefuseProjects
+	// gives.
+	refuse, err := reaperRefuseProjects(os.Getenv)
+	if err != nil {
+		return err
+	}
 	spec := infra.ComputeSpec{
 		Project:            e.spec.Project,
 		ProjectNumber:      fmt.Sprint(number),
@@ -348,6 +360,8 @@ func (s *computeStage) prepare(ctx context.Context) error {
 		PreloadRefreshDays: infra.PreloadRefreshDaysDefault,
 		BuilderMachineType: "e2-medium",
 		BuildSubmitterRole: outs.RoleIDs.BuildSubmitter,
+
+		ReaperRefuseProjects: refuse,
 	}
 	vars, err := infra.ComputeVars(spec)
 	if err != nil {

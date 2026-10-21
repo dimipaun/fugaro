@@ -1204,8 +1204,9 @@ func TestReaperRefusesAJobWhoseTimeInStateIsUnknown(t *testing.T) {
 		id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
 		rt.bf.SetStatusEvents(id)
 		rt.bf.SetRunDuration(id, rt.stuck().String())
-		if got := rt.reap(t).Actions; len(got) != 1 || got[0].Kind != ActionDeleteJob {
-			t.Fatalf("actions = %v, want the job deleted: runDuration says it has been running past the run budget", rt.reap(t).Lines())
+		rep := rt.reap(t)
+		if got := rep.Actions; len(got) != 1 || got[0].Kind != ActionDeleteJob {
+			t.Fatalf("actions = %v, want the job deleted: runDuration says it has been running past the run budget", rep.Lines())
 		}
 	})
 	t.Run("a task-level event is not when the job changed state", func(t *testing.T) {
@@ -1218,8 +1219,9 @@ func TestReaperRefusesAJobWhoseTimeInStateIsUnknown(t *testing.T) {
 			"eventTime": rt.now.Add(-time.Minute).Format(time.RFC3339Nano),
 		})
 		rt.bf.SetRunDuration(id, rt.stuck().String())
-		if got := rt.reap(t).Actions; len(got) != 1 || got[0].Kind != ActionDeleteJob {
-			t.Fatalf("actions = %v, want the job deleted by its runDuration", rt.reap(t).Lines())
+		rep := rt.reap(t)
+		if got := rep.Actions; len(got) != 1 || got[0].Kind != ActionDeleteJob {
+			t.Fatalf("actions = %v, want the job deleted by its runDuration", rep.Lines())
 		}
 	})
 }
@@ -1237,6 +1239,40 @@ func TestReaperKeepsAYoungVM(t *testing.T) {
 	}
 	if !refused(rep, "fake-region-a/vm-1") {
 		t.Fatalf("report = %v, want the young VM refused and named", rep.Lines())
+	}
+}
+
+// TestReaperRefusesAVMWhoseAgeItCannotRead: the age floor is the last thing
+// between a live run's VM and a delete, so a VM whose creationTimestamp the
+// pass cannot read -- an empty one (which the API answers as no timestamp, and
+// the parser reads as the zero time) or one that is not a time at all -- is
+// refused rather than deleted: an unknown age is not an age past the floor. It
+// is the same fail-closed posture as an unreadable job createTime, and the
+// refusal says which, because the report is the audit trail.
+func TestReaperRefusesAVMWhoseAgeItCannotRead(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		plant func(t *testing.T, rt *reapTest)
+	}{
+		{"an empty creationTimestamp", func(t *testing.T, rt *reapTest) {
+			rt.cf.AddInstanceCreated("fake-region-a", "vm-1", runLabels(t, "20260927-100000-abcd"), time.Time{})
+		}},
+		{"a creationTimestamp that is not a time", func(t *testing.T, rt *reapTest) {
+			rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
+			rt.cf.SetInstanceCreatedRaw("fake-region-a", "vm-1", "yesterday")
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rt := newReaperTest(t, nil)
+			c.plant(t, rt)
+			rep := rt.reap(t)
+			if got := rt.cf.Deletes(); len(got) != 0 {
+				t.Fatalf("a VM whose age is unknown was deleted: %v", got)
+			}
+			if !refusedBecause(rep, "fake-region-a/vm-1", "its creation time is unreadable") {
+				t.Fatalf("report = %v, want the refusal to name the unreadable creation time", rep.Lines())
+			}
+		})
 	}
 }
 
@@ -1601,21 +1637,34 @@ func TestReaperDryRunListsWhatItWouldDelete(t *testing.T) {
 	}
 }
 
-// TestReaperRefusalsCarryAReason checks that every refusal
-// carries why, since the report is the audit trail: a bare "refused" line is
-// useless to the person reading it.
+// TestReaperRefusalsCarryAReason checks that a refusal carries why, since the
+// report is the audit trail: a bare "refused" line is useless to the person
+// reading it. The two refusals a pass with nothing to act on produces are the
+// ones asserted here, each with the reason that belongs to it -- a refusal
+// that names the wrong cause is as unusable as one that names none.
 func TestReaperRefusalsCarryAReason(t *testing.T) {
 	rt := newReaperTest(t, nil)
+	// A VM carrying this installation's managed label and nothing else: no
+	// run can be attributed to it, so it is refused rather than deleted.
 	rt.vm("vm-1", map[string]string{labelManaged: managedValue}, rt.old())
-	rt.addJob(t, "20260927-100000-abcd", "SUCCEEDING", 3*time.Hour)
+	// And a job in a state this build does not know (SUCCEEDING is not one of
+	// Batch's states), which the job pass refuses rather than guesses at.
+	id := rt.addJob(t, "20260927-100000-abcd", "SUCCEEDING", 3*time.Hour)
 	rep := rt.reap(t)
-	if len(rep.Refused) == 0 {
-		t.Fatal("no refusals, want two")
+	if len(rep.Refused) != 2 {
+		t.Fatalf("report = %v, want exactly two refusals: the VM and the job", rep.Lines())
 	}
-	for _, f := range rep.Refused {
-		if f.Target == "" || f.Reason == "" {
-			t.Fatalf("refusal %+v has no target or no reason", f)
+	for _, c := range []struct{ target, reason string }{
+		{"fake-region-a/vm-1", "it carries no " + RunLabel + " label, so it cannot be attributed to a run"},
+		{rt.name(id), `its Batch state "SUCCEEDING" is not one this build knows`},
+	} {
+		if !refusedBecause(rep, c.target, c.reason) {
+			t.Errorf("report = %v, want %s refused with %q", rep.Lines(), c.target, c.reason)
 		}
+	}
+	// Both refusals are fail-closed: neither touched anything.
+	if len(rt.bf.Deletes()) != 0 || len(rt.cf.Deletes()) != 0 {
+		t.Fatalf("a refusal acted: jobs=%v instances=%v", rt.bf.Deletes(), rt.cf.Deletes())
 	}
 }
 

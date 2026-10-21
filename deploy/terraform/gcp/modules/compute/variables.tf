@@ -252,3 +252,21 @@ variable "build_submitter_role" {
   description = "The installation's build-submitter custom role id, which is what lets an account create a Cloud Build (cloudbuild.builds.create/get). The scheduled rebuild's account holds it and nothing else on Cloud Build."
   type        = string
 }
+
+variable "reaper_refuse_projects" {
+  description = "Further GCP project ids the reaper's scheduled sweep must never touch, on top of the ones it refuses whatever it is told (internal/backend/batch's outOfBoundsFloor). They reach the job's environment as FUGARO_REAPER_REFUSE_PROJECTS (reaper.tf), which is the variable internal/cli reads for both of its paths, so an installation's list is written once and holds whether the sweep runs from the job or from a shell."
+  type        = list(string)
+  default     = []
+
+  # The module checks the SHAPE only, as it does for every other name here;
+  # what the list MEANS is the engine's (internal/backend/batch's
+  # outOfBounds), which matches an entry exactly and case-insensitively. A
+  # malformed entry is refused rather than dropped, which is the same choice
+  # internal/cli's reaperRefuseProjects makes and for the same reason: a
+  # project an operator named and the reaper could not read is a project swept
+  # as if the list did not exist.
+  validation {
+    condition     = alltrue([for p in var.reaper_refuse_projects : can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", p))])
+    error_message = "reaper_refuse_projects must be GCP project ids: 6-30 characters of a-z, 0-9 and -, starting with a letter and ending with a letter or a digit."
+  }
+}

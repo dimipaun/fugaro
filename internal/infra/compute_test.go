@@ -110,6 +110,10 @@ func TestComputeVarsRefuseWhatTheModuleRefuses(t *testing.T) {
 		{"no repository", func(s *ComputeSpec) { s.RegistryRepository = "" }, "repository"},
 		{"no base image", func(s *ComputeSpec) { s.BaseImage = "" }, "base image"},
 		{"no build-submitter role", func(s *ComputeSpec) { s.BuildSubmitterRole = "" }, "build-submitter"},
+		// The never-touch list is the reaper's, and it is a list of PROJECT
+		// IDS: an entry the reaper could not read is one it could not refuse,
+		// so the project it names would be swept as if the list did not exist.
+		{"a never-touch entry that is not a project id", func(s *ComputeSpec) { s.ReaperRefuseProjects = []string{"acme-prod", "not a project"} }, "never-touch"},
 		{"no refresh window", func(s *ComputeSpec) { s.PreloadRefreshDays = 0 }, "refresh window"},
 		// A window at or past the lifetime is refused: Batch documents a
 		// custom image's support as ending 60 days after its starting date,
@@ -122,6 +126,47 @@ func TestComputeVarsRefuseWhatTheModuleRefuses(t *testing.T) {
 			c.mut(&s)
 			if _, err := ComputeVars(s); err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Errorf("ComputeVars = %v, want a refusal naming %q", err, c.want)
+			}
+		})
+	}
+}
+
+// The reaper's never-touch list reaches the root as a JSON list whatever the
+// caller has to say: a spec that names none writes `[]` and not `null` (the
+// variable is a list(string) whose default is the empty list, and a tfvars
+// written to be read by hand should not depend on terraform's null-means-
+// default rule), and a spec that names some writes them through in order --
+// the order the module joins them in for FUGARO_REAPER_REFUSE_PROJECTS.
+func TestComputeVarsWriteTheNeverTouchList(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"none named", nil, []string{}},
+		{"the caller's own", []string{"acme-prod", "acme-staging"}, []string{"acme-prod", "acme-staging"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := computeSpec()
+			s.ReaperRefuseProjects = c.in
+			raw, err := ComputeVars(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &doc); err != nil {
+				t.Fatal(err)
+			}
+			field := doc["reaper_refuse_projects"]
+			if strings.TrimSpace(string(field)) == "null" {
+				t.Fatalf("reaper_refuse_projects is null: the variable is a list(string), and the tfvars is written to be read by hand as well as by terraform")
+			}
+			var got []string
+			if err := json.Unmarshal(field, &got); err != nil {
+				t.Fatalf("reaper_refuse_projects = %s: %v", field, err)
+			}
+			if !slices.Equal(got, c.want) {
+				t.Errorf("reaper_refuse_projects = %q, want %q", got, c.want)
 			}
 		})
 	}
