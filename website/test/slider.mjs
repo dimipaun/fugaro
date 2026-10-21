@@ -1,45 +1,58 @@
 // website/test/slider.mjs — the homepage's one slider (the owner's approved draft "Home, draft 2
-// (slider)", 2026-10-19).
+// (slider)", 2026-10-19; the owner's feedback of 2026-10-21, item 3, which turned the strip of
+// tabs into a slider).
 //
-// The draft puts the whole of what the page has to show into one block with three tabs, and the
-// one thing that shape can get wrong without anyone noticing is the thing that makes it a
-// slider: a panel that is not in the HTML a reader receives, a tab that opens nothing, or a
-// switch that only works once a script has run. A reader with no JavaScript is not a corner
-// case on this site — `privacy.astro` states that the page asks them for nothing, and the copy
-// control is the site's one script — so the tabs are read here as what they are: three fragment
-// links and a stylesheet.
+// The draft puts the whole of what the page has to show into one block, and the one thing that
+// shape can get wrong without anyone noticing is the thing that makes it a slider: a slide that
+// is not in the HTML a reader receives, a dot that opens nothing, or a switch that only works
+// once a script has run. A reader with no JavaScript is not a corner case on this site —
+// `privacy.astro` states that the page asks them for nothing, and the copy control is the site's
+// one script — so the block is read here as what it is: three panels, three fragment links and a
+// stylesheet, with the clock as something laid over the top of them.
 //
-//   1. **Three tabs, three panels, all of them in the HTML.** The tabs are a list of three
-//      links, each one's `href` is the fragment of the panel beside it, and each panel carries
-//      the tab's own label as its heading. A tab whose `href` names an id no element carries is
-//      a tab that opens nothing, and it is the defect the pairing below exists for.
-//   2. **The panel the fragment names is the panel the stylesheet shows, per tab.** The
-//      stylesheet hides every panel, shows the targeted one, shows the first one while nothing
-//      is targeted, and marks the tab that belongs to each panel — read one tab at a time, so a
-//      stylesheet that pairs the Why Fugaro? tab with the See it panel is refused rather than
-//      counted as three pairs present.
-//   3. **No script switches them.** Nothing in the block is a script, the site's one script
-//      names none of the block's ids or classes, and the tabs carry no `role="tab"` /
-//      `aria-selected` — the roles describe a widget whose selection is scripted, and this
-//      selection is the address.
-//   4. **A 44 px target that wraps, and the ring the site draws.** The tab is a link at least
-//      44 px tall, the row wraps rather than scrolls, no rule on the tabs removes the focus
-//      outline, the page carries the site's `:focus-visible` ring, and nothing in the block is
-//      wider than a 360 px phone's content box or refuses to break a line.
-//   5. **The three steps are the repository's own lines.** Each step's line is a line of the
+//   1. **Three slides, three panels, all of them in the HTML.** The dots are a list of three
+//      links, each one's `href` is the fragment of the panel it opens, and each panel carries the
+//      slide's own label as its heading. A dot whose `href` names an id no element carries is a
+//      dot that opens nothing, and it is the defect the pairing below exists for.
+//   2. **The stylesheet shows one panel, in both states, and marks the dot of the slide on
+//      screen.** Every panel is hidden; the script's state shows the panel the block's own name
+//      points at; the fragment's state shows the targeted panel, and shows the first one while
+//      nothing is targeted; and each state is paired with the dot it belongs to, read one slide
+//      at a time so a stylesheet that pairs the Why Fugaro? dot with the See it panel is refused
+//      rather than counted as three pairs present. The fragment's rules stand down while the
+//      script is driving (`:not([data-active])`), because a reader who arrived on a fragment and
+//      then let the block advance would otherwise be shown two panels at once.
+//   3. **The block is a slider with no script in it, and the site's one script names nothing in
+//      it.** The two step controls are emitted `hidden` — a reader whose browser runs no script
+//      is shown no control that steps nowhere (D183) — the block carries no `<script>`, and the
+//      script joins itself to the block through `data-` attributes alone, so neither file has to
+//      be edited when the other changes.
+//   4. **A 44 px target that wraps, and the ring the site draws.** A dot and a step control are
+//      each at least 44 px tall, the two rows wrap rather than scroll, no rule on either removes
+//      the focus outline, the page carries the site's `:focus-visible` ring, and nothing in the
+//      block is wider than a 360 px phone's content box or refuses to break a line.
+//   5. **The behaviour, run.** The file the site ships, against the built homepage, in a stub
+//      DOM: the clock steps the block on and wraps, a pointer or a focus in the block holds it,
+//      a page nobody is shown runs no clock, a reader who asked for less motion gets none of it,
+//      the dots and the two controls and the arrow keys all move the block, and a reader who
+//      arrives on a fragment opens on that slide. Each case is planted below with the line it
+//      reads taken out of the script, so a case that cannot fail is caught here.
+//   6. **The three steps are the repository's own lines.** Each step's line is a line of the
 //      section of the document it cites, in that section's order — the same reading the
 //      component's own build guard takes, held here against the page a reader receives, so a
 //      guard removed from the component is a red gate rather than a page that paraphrases.
 //
-// Every check below is a reading of `dist/index.html` and of the repository, and each one is
-// the mechanical form of one of the rules above rather than a check on the component's own
-// text: what a page says about itself is not evidence, and the artifact is what a reader gets.
+// Every check below is a reading of `dist/index.html`, of the repository, or of a run of the
+// script the site ships, and each one is the mechanical form of one of the rules above rather
+// than a check on the component's own text: what a page says about itself is not evidence, and
+// the artifact is what a reader gets.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { REPO, DIST, builtPages, cssDeclarations, cssRules, findAll, find, parse, textOf, walk } from './lib/html.mjs'
+import vm from 'node:vm'
+import { REPO, builtPages, cssDeclarations, cssRules, findAll, find, parse, textOf, walk } from './lib/html.mjs'
 
 /** The homepage, as the artifact: the page the checks below are about. */
 function homepage() {
@@ -52,6 +65,9 @@ function homepage() {
 function pageCss(html) {
   return [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
 }
+
+/** The site's one script, which is what the behaviour cases below run. */
+const SCRIPT_SOURCE = readFileSync(path.join(REPO, 'website/public/scripts/site.js'), 'utf8')
 
 /** A string with its markdown markers and its whitespace removed — how a step's line and the
  *  section it claims to come from are compared. The component's build guard reads it the same
@@ -72,6 +88,10 @@ function section(document, heading) {
 
 const CLASSES_OF = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
 const HAS = (el, name) => CLASSES_OF(el).includes(name)
+
+/** The three slides, in the order the page reads them: the labels the dots are announced with
+ *  and the headings the panels carry. */
+const LABELS = ['Easy to use', 'Why Fugaro?', 'See it']
 
 /** A length as pixels, resolving one level of `var(--token)` out of the stylesheet's own
  *  declarations, or `null` when it is not a length this reading can turn into pixels. */
@@ -99,9 +119,16 @@ function lengthPx(value, css) {
  *
  * The two forms a width is written in are read as one list: `min-width: 48rem` and `width>=48rem`
  * are the same bound, and a query carrying both forms carries both bounds.
+ *
+ * **An `@supports` condition holds.** It is not a question about the width — it is asked of the
+ * browser — and this reading is taken in a browser that answers it: the block's no-script state
+ * is written inside `@supports selector(:has(*))` (the component says why there), and a reading
+ * that treated the condition as not holding would report a block that opens empty on every
+ * browser, which is the opposite of what it does.
  */
 function appliesAt(conditions, width) {
   for (const condition of conditions) {
+    if (/^@supports\b/i.test(condition)) continue
     const at = /@media([^{]*)/i.exec(condition)
     if (!at) return false
     const bounds = [
@@ -140,11 +167,44 @@ function declaredAt(css, width, names, property) {
   return found
 }
 
+/** Whether a rule's declarations take a panel out of the layout or put it back. */
+function shows(declarations) {
+  const display = declarations.get('display')
+  return display !== undefined && display !== 'none'
+}
+
+/**
+ * A selector list split at its **top-level** commas: the commas inside `:has(…)`, `:not(…)` and
+ * `:is(…)` are part of one selector, not separators between two. `main:has(> .hero, >
+ * [data-security-page])` is one selector and not two, and a reading that cut it in half would
+ * report a `:has()` selector beside one that has none where there is only the one selector.
+ */
+function selectorParts(selector) {
+  const parts = []
+  let depth = 0
+  let quote = ''
+  let start = 0
+  for (let i = 0; i < selector.length; i += 1) {
+    const c = selector[i]
+    if (quote) {
+      if (c === quote) quote = ''
+    } else if (c === '"' || c === "'") quote = c
+    else if (c === '(') depth += 1
+    else if (c === ')') depth -= 1
+    else if (c === ',' && depth === 0) {
+      parts.push(selector.slice(start, i).trim())
+      start = i + 1
+    }
+  }
+  parts.push(selector.slice(start).trim())
+  return parts.filter(Boolean)
+}
+
 /**
  * A selector with its functional pseudo-classes' arguments removed: what the selector's last
  * compound names, which is the element a rule draws. A panel named inside `:has(.panel:target)`
  * is a panel the rule *looks for*, not one it draws, and a reading that took the two for the
- * same would call a rule that marks a tab selected a rule that shows a panel.
+ * same would call a rule that marks a dot the current one a rule that shows a panel.
  */
 function subject(selector) {
   let out = selector
@@ -171,8 +231,10 @@ function subject(selector) {
   return out
 }
 
-const TAB = /\.tab(?![\w-])/
-const TAB_BAR = /\.tab-bar(?![\w-])/
+const DOT = /\.slider-dot(?![\w-])/
+const STEP = /\.slider-step(?![\w-])/
+const DOTS = /\.slider-dots(?![\w-])/
+const CONTROLS = /\.slider-controls(?![\w-])/
 const PANEL = /\.panel(?![\w-])/
 
 /**
@@ -180,7 +242,7 @@ const PANEL = /\.panel(?![\w-])/
  * looks at the block rather than at the page.
  */
 const SLIDER_CLASSES =
-  /\.(home-slider|tab-bar|tab-item|tab|panels|panel|panel-title|easy-steps|easy-step|step-number|step-icon|step-name|step-line|watch-shot|watch-block|watch-command|watch-note)(?![\w-])/
+  /\.(home-slider|slider-title|slider-controls|slider-step|slider-arrow|slider-dots|slider-dot-item|slider-dot|panels|panel|panel-title|easy-steps|easy-step|step-number|step-icon|step-name|step-line|watch-shot|watch-block|watch-command|watch-note)(?![\w-])/
 
 /** The phone the block has to fit, and the content box it has to fit in: the page's own gutter,
  *  read out of the same stylesheet rather than typed, so the arithmetic cannot drift. */
@@ -198,163 +260,250 @@ function phoneBox(css) {
 }
 
 /**
- * Everything the slider can be wrong about, as sentences a reader of a red run can act on. The
- * plants at the foot of this file are each one of these refusals, and the homepage as it ships
- * is the case that passes.
+ * Everything the slider's markup and stylesheet can be wrong about, as sentences a reader of a
+ * red run can act on. The plants at the foot of this file are each one of these refusals, and the
+ * homepage as it ships is the case that passes.
  */
 export function sliderFailures(css, html) {
   const out = []
   const doc = parse(html)
-  const sliders = findAll(doc, (el) => HAS(el, 'home-slider'))
-  if (sliders.length !== 1) {
+  const blocks = findAll(doc, (el) => HAS(el, 'home-slider'))
+  if (blocks.length !== 1) {
     out.push(
-      `the homepage carries ${sliders.length} sliders, and the draft asks for one block with three tabs: ${sliders.length === 0 ? 'nothing here is the block the tabs are read from' : 'a second one is a second set of panels with its own tabs'}`,
+      `the homepage carries ${blocks.length} sliders, and the draft asks for one block with three slides: ${blocks.length === 0 ? 'nothing here is the block the slides are read from' : 'a second one is a second set of slides with its own controls'}`,
     )
     return out
   }
-  const slider = sliders[0]
+  const block = blocks[0]
 
-  // 1. the three tabs, the three panels, and the pairing between them.
-  const tabs = findAll(slider, (el) => el.name === 'a' && HAS(el, 'tab'))
-  const panels = findAll(slider, (el) => HAS(el, 'panel'))
-  const LABELS = ['Easy to use', 'Why Fugaro?', 'See it']
-  if (tabs.length !== 3) out.push(`the slider carries ${tabs.length} tabs, and the draft asks for three ("Easy to use", "Why Fugaro?", "See it")`)
-  if (panels.length !== 3) out.push(`the slider carries ${panels.length} panels, and every tab has one: a panel that is not in the HTML is a tab that opens nothing`)
-  if (tabs.length === 3 && panels.length === 3) {
-    for (const [index, tab] of tabs.entries()) {
-      const label = textOf(tab).trim()
-      const href = tab.attrs.get('href') ?? ''
-      const panel = panels[index]
+  // 1. the three slides, the three dots, and the pairing between them.
+  const panels = findAll(block, (el) => el.attrs.has('data-slider-slide'))
+  const dots = findAll(block, (el) => el.attrs.has('data-slider-dot'))
+  if (!block.attrs.has('data-slider')) {
+    out.push(
+      'the block carries no `data-slider` attribute, and that attribute is the whole of how the site’s one script finds it: without it the block is three panels and three links with no clock, no step controls and no mark on the dot a reader is looking at',
+    )
+  }
+  if (panels.length !== 3) {
+    out.push(`the block carries ${panels.length} slides, and the draft asks for three: the panels, each one carrying its own name in \`data-slider-slide\``)
+  }
+  if (dots.length !== 3) {
+    out.push(`the block carries ${dots.length} dots, and every slide has one: the dots are what tell a reader which of the three they are looking at and how many there are`)
+  }
+  if (panels.length === 3 && dots.length === 3) {
+    for (const [index, panel] of panels.entries()) {
+      const label = LABELS[index]
+      const name = panel.attrs.get('data-slider-slide') ?? ''
       const id = panel.attrs.get('id') ?? ''
-      if (label !== LABELS[index]) {
-        out.push(`tab ${index + 1} reads ${JSON.stringify(label)} where the draft's third tab is ${JSON.stringify(LABELS[index])}: the three labels are "Easy to use", "Why Fugaro?" and "See it", in that order`)
+      const dot = dots[index]
+      const href = dot.attrs.get('href') ?? ''
+      const said = dot.attrs.get('aria-label') ?? ''
+      if (id !== `home-panel-${name}`) {
+        out.push(
+          `slide ${index + 1} is named ${JSON.stringify(name)} and carries the id ${JSON.stringify(id)}, and the two are one name: the dot links to the id, the stylesheet keys the panel's \`:target\` rule on it, and the script writes the name on the block — a name that is not the id is a dot that opens nothing`,
+        )
+      }
+      if (dot.name !== 'a') {
+        out.push(
+          `dot ${index + 1} is a <${dot.name}>, and a dot is a fragment link: the link is the whole of the switching with no script, and the script's own state is laid over the top of it`,
+        )
       }
       if (!/^#home-panel-[\w-]+$/.test(href)) {
-        out.push(`tab ${index + 1} (${JSON.stringify(label)}) links to ${JSON.stringify(href)}, and a tab is a fragment link to the panel it opens: without the fragment the stylesheet has nothing to key the panel's \`:target\` rule on`)
+        out.push(
+          `dot ${index + 1} links to ${JSON.stringify(href)}, and a dot is a fragment link to the panel it shows: without the fragment neither the stylesheet nor the script has anything to open the panel with`,
+        )
       } else if (href !== `#${id}`) {
-        out.push(`tab ${index + 1} (${JSON.stringify(label)}) links to ${href} where the panel beside it is #${id}: a tab whose fragment names another element opens nothing, and the address is the whole of the switching`)
+        out.push(
+          `dot ${index + 1} links to ${href} where the slide beside it is #${id}: a dot whose fragment names another element opens nothing, and the fragment is the whole of the switching with no script`,
+        )
+      }
+      if (dot.attrs.get('data-slider-dot') !== name) {
+        out.push(
+          `dot ${index + 1} carries ${JSON.stringify(dot.attrs.get('data-slider-dot') ?? '')} where the slide it opens is named ${JSON.stringify(name)}: the script finds the dot of the slide on screen by that name, and a dot named after another slide marks the wrong one as current`,
+        )
+      }
+      if (said !== `Slide ${index + 1} of ${LABELS.length}: ${label}`) {
+        out.push(
+          `dot ${index + 1} is announced as ${JSON.stringify(said)}, and a dot is a circle with no text in it: its name is the whole of what a screen reader reads, so it is the slide and the reader's place in the three ("Slide ${index + 1} of ${LABELS.length}: ${label}")`,
+        )
       }
       const headings = findAll(panel, 'h2')
       const heading = headings.length ? textOf(headings[0]).trim() : ''
       if (heading !== label) {
-        out.push(`the panel tab ${index + 1} opens is headed ${JSON.stringify(heading)} where its tab reads ${JSON.stringify(label)}: a reader who arrives on a panel — by tab, by screen reader or in the HTML — reads the label of the tab that opens it`)
+        out.push(
+          `the panel dot ${index + 1} opens is headed ${JSON.stringify(heading)} where its dot reads ${JSON.stringify(label)}: a reader who arrives on a panel — by the dots, by the clock, by a screen reader or in the HTML — reads the label of the slide it is`,
+        )
       }
       if (textOf(panel).trim() === '') {
-        out.push(`the panel tab ${index + 1} (${JSON.stringify(label)}) opens carries no text, so the tab opens an empty box`)
+        out.push(`the panel dot ${index + 1} (${JSON.stringify(label)}) opens carries no text, so the dot opens an empty box`)
       }
     }
   }
 
-  // The block is one slider: the panels are siblings inside it, and nothing about them is built
-  // at runtime. A `hidden` attribute or an `aria-hidden` panel is a panel the page ships and a
-  // reader cannot reach.
+  // The two step controls: the script's, emitted `hidden` and revealed by it, each one a button
+  // with a name (D183's "no broken control").
+  for (const [what, attribute] of [
+    ['previous', 'data-slider-prev'],
+    ['next', 'data-slider-next'],
+  ]) {
+    const found = findAll(block, (el) => el.attrs.has(attribute))
+    if (found.length !== 1) {
+      out.push(`the block carries ${found.length} ${what}-slide controls, and the draft asks for one of each: a reader who has only the dots cannot step through the block without moving their hands`)
+      continue
+    }
+    const control = found[0]
+    if (control.name !== 'button' || (control.attrs.get('type') ?? '') !== 'button') {
+      out.push(`the ${what}-slide control is a <${control.name}> of type ${JSON.stringify(control.attrs.get('type') ?? '')}, and it steps a block rather than going anywhere: a button, so that nothing about it is a navigation and no browser offers it a new tab`)
+    }
+    if (!control.attrs.has('hidden')) {
+      out.push(
+        `the ${what}-slide control is not emitted \`hidden\`, and the site's script is what reveals it: a control rendered visible by the markup is a button that does nothing for a reader whose browser runs no script (D183)`,
+      )
+    }
+    if ((control.attrs.get('aria-label') ?? '').trim() === '') {
+      out.push(`the ${what}-slide control carries no name, and it is a button with a drawing in it: an arrow is not text, so the name is the whole of what a screen reader reads`)
+    }
+  }
+
+  // Nothing about the block is built at runtime, and no panel is shipped hidden.
+  if (findAll(block, 'script').length > 0) {
+    out.push('the block carries a script, and every slide is in the HTML a reader receives: a reader whose script never arrives is a reader with no slides at all, which is the one thing this pattern exists to avoid')
+  }
   for (const panel of panels) {
     if (panel.attrs.has('hidden') || panel.attrs.get('aria-hidden') === 'true') {
-      out.push(`the panel #${panel.attrs.get('id') ?? '(no id)'} is marked hidden in the markup, and every panel is one of the three a reader can open: the stylesheet is what hides the two that are not targeted, and it is what shows them again`)
+      out.push(
+        `the panel #${panel.attrs.get('id') ?? '(no id)'} is marked hidden in the markup, and every panel is one of the three a reader can open: the stylesheet is what hides the two that are not on screen, and it is what shows them again`,
+      )
     }
   }
-
-  // 2. the stylesheet: hide them all, show the targeted one, show the first while none is
-  // targeted, and mark one tab per panel.
-  const rules = rulesAt(css, 1280)
-  const hidden = rules.some(
-    (rule) => PANEL.test(subject(rule.selector)) && !/:target/.test(rule.selector) && declarationsOf(rule).get('display') === 'none',
-  )
-  if (!hidden) {
-    out.push('no rule hides the panels, and the block is a slider rather than three panels one under the other: the stylesheet shows the panel the address names and takes the other two out of the layout')
-  }
-  const shown = rules.some((rule) => {
-    const display = declarationsOf(rule).get('display')
-    return PANEL.test(subject(rule.selector)) && /:target/.test(subject(rule.selector)) && display !== undefined && display !== 'none'
-  })
-  if (!shown) {
-    out.push('no rule shows a targeted panel, so a tab that is clicked (or reached by a fragment in the address) switches nothing: the panel the address names has to be the one the stylesheet shows')
-  }
-  if (tabs.length === 3) {
-    const first = tabs[0].attrs.get('href') ?? ''
-    const opening = rules.some(
-      (rule) =>
-        rule.selector.includes(first) &&
-        /:not\(/.test(rule.selector) &&
-        declarationsOf(rule).get('display') !== undefined &&
-        declarationsOf(rule).get('display') !== 'none',
-    )
-    if (!opening) {
-      out.push(`no rule shows ${first} while no panel is targeted, and the first panel is the one the page a reader arrives on has to be: with every panel hidden and no fragment in the address, the block opens empty`)
-    }
-    // A selector list is read one selector at a time, the way a browser reads it: the pair is
-    // the tab and the panel *in one selector*, and a rule that carries three pairs in a list is
-    // three pairs rather than one selector naming three tabs.
-    const selectors = rules.flatMap((rule) =>
-      rule.selector.split(',').map((part) => ({ part: part.trim(), declarations: declarationsOf(rule) })),
-    )
-    for (const tab of tabs) {
-      const href = tab.attrs.get('href') ?? ''
-      if (!href.startsWith('#')) continue
-      const id = href.slice(1)
-      const marked = selectors.filter(({ part, declarations }) => part.includes(`#${id}:target`) && declarations.size > 0)
-      if (marked.length === 0) {
-        out.push(`no rule marks the tab for ${href} as the selected one (no selector names #${id}:target and the tab beside it): the reader has no way to see which of the three panels they are looking at`)
-        continue
-      }
-      for (const { part } of marked) {
-        const names = /\.tab(?![\w-])(?:\[[^\]]*\])*\[href\s*=\s*["']?\\?#([\w-]+)/.exec(part)
-        if (!names || `#${names[1]}` !== href) {
-          out.push(
-            `the selector \`${part}\` marks a tab for #${id} but names ${names ? `#${names[1]}` : 'no tab at all'}: the pair of a tab and the panel it opens is the whole of what makes a tab switch, and a selector that names one panel and another tab marks the wrong one selected`,
-          )
-        }
-      }
-    }
-  }
-
-  // 3. no script, and no scripted widget's roles.
-  if (findAll(slider, (el) => el.name === 'script').length > 0) {
-    out.push('the slider carries a script, and the tabs are the address and the stylesheet: a reader whose script never arrives is a reader with no tabs at all, which is the one thing this pattern exists to avoid')
-  }
-  for (const el of [...tabs, ...panels]) {
+  for (const el of [...panels, ...dots]) {
     const role = el.attrs.get('role')
     if (role === 'tab' || role === 'tabpanel' || el.attrs.has('aria-selected')) {
       out.push(
-        `the element carrying ${JSON.stringify(el.attrs.get('class') ?? '')} declares role=${JSON.stringify(role)}${el.attrs.has('aria-selected') ? ' / aria-selected' : ''}, and those roles describe a widget whose selection is scripted: the selection here is the address's fragment, and a role promising \`aria-selected\` is a promise only a script can keep`,
+        `the element carrying ${JSON.stringify(el.attrs.get('class') ?? '')} declares role=${JSON.stringify(role)}${el.attrs.has('aria-selected') ? ' / aria-selected' : ''}, and those roles describe a widget whose selection is scripted: the slides here are reachable with no script at all, and a role promising \`aria-selected\` is a promise only a script can keep`,
       )
     }
   }
-  for (const tab of tabs) {
-    if (tab.attrs.get('tabindex') === '-1') {
-      out.push(`a tab carries tabindex="-1", and every tab is a control a keyboard reaches: a tab the tab key skips is a panel the keyboard cannot open`)
+  for (const dot of dots) {
+    if (dot.attrs.get('tabindex') === '-1') {
+      out.push('a dot carries tabindex="-1", and every dot is a control a keyboard reaches: a dot the tab key skips is a slide the keyboard cannot open')
     }
   }
 
-  // 4. the target size, the wrap, the ring, and the phone.
-  for (const width of [PHONE, 1280]) {
-    const height = lengthPx(declaredAt(css, width, TAB, 'min-height'), css)
-    if (height === null || height < 44) {
+  // 2. the stylesheet: hide them all, show one per state, and mark one dot per slide.
+  const rules = rulesAt(css, 1280)
+  const hidden = rules.some(
+    (rule) =>
+      PANEL.test(subject(rule.selector)) &&
+      !/:target/.test(rule.selector) &&
+      !/data-active/.test(rule.selector) &&
+      declarationsOf(rule).get('display') === 'none',
+  )
+  if (!hidden) {
+    out.push('no rule hides the panels, and the block is a slider rather than three panels one under the other: the stylesheet shows the panel the block is on and takes the other two out of the layout')
+  }
+  // A selector list is read one selector at a time, the way a browser reads it: the pair is the
+  // slide and the panel *in one selector*, and a rule that carries three pairs in a list is three
+  // pairs rather than one selector naming three slides.
+  const parts = rules.flatMap((rule) => rule.selector.split(',').map((part) => ({ part: part.trim(), declarations: declarationsOf(rule) })))
+
+  const targeted = parts.filter(({ part, declarations }) => PANEL.test(subject(part)) && /:target/.test(subject(part)) && shows(declarations))
+  if (targeted.length === 0) {
+    out.push('no rule shows a targeted panel, so a dot that is clicked (or reached by a fragment in the address) switches nothing: the panel the address names has to be the one the stylesheet shows')
+  }
+  for (const { part } of targeted) {
+    if (!/:not\(\[data-active/.test(part)) {
       out.push(
-        `at ${width} px the tabs declare \`min-height: ${declaredAt(css, width, TAB, 'min-height') ?? '(nothing)'}\`, and the owner's brief asks a control for a 44 px target: a tab is the whole of what a reader touches to open a panel`,
+        `the selector \`${part}\` shows the panel the address names and does not stand down while the script is driving (\`:not([data-active])\`): a reader who arrived on a fragment and then let the block advance would be shown two panels at once`,
       )
     }
   }
-  if (declaredAt(css, PHONE, TAB_BAR, 'flex-wrap') !== 'wrap') {
+  const opening = parts.some(
+    ({ part, declarations }) => /#home-panel-easy/.test(part) && /:not\(:has\(\.panel:target\)\)/.test(part) && shows(declarations),
+  )
+  if (!opening) {
     out.push(
-      `the tab row declares \`flex-wrap: ${declaredAt(css, PHONE, TAB_BAR, 'flex-wrap') ?? '(nothing)'}\` at ${PHONE} px, and three tabs on a phone are a row that wraps rather than one that runs off the side: a row that cannot wrap is a page the phone scrolls sideways`,
+      'no rule shows #home-panel-easy while no panel is targeted, and the first slide is the one the page a reader arrives on has to be: with every panel hidden and no fragment in the address, the block opens empty',
     )
   }
+  for (const panel of panels) {
+    const name = panel.attrs.get('data-slider-slide') ?? ''
+    const id = panel.attrs.get('id') ?? ''
+    if (!id) continue
+    const scripted = parts.some(
+      ({ part, declarations }) =>
+        new RegExp(`\\[data-active\\s*=\\s*["']?${name}["']?\\]`).test(part) && part.includes(`#${id}`) && shows(declarations),
+    )
+    if (!scripted) {
+      out.push(
+        `no rule shows #${id} while the block is on the slide ${JSON.stringify(name)}: the script writes that name on the block and the stylesheet is what shows the panel it belongs to, and without the rule the block advances to a panel nothing draws`,
+      )
+    }
+  }
+  for (const [index, dot] of dots.entries()) {
+    const href = dot.attrs.get('href') ?? ''
+    if (!href.startsWith('#')) continue
+    const id = href.slice(1)
+    const marked = parts.filter(({ part, declarations }) => part.includes(`#${id}:target`) && DOT.test(subject(part)) && /accent/.test(declarations.get('background') ?? ''))
+    if (marked.length === 0) {
+      out.push(
+        `no rule marks the dot for ${href} as the slide on screen (no selector pairs #${id}:target with the dot that links to it, in the accent): a reader who has opened a slide has nothing on the page that says which of the three they are looking at`,
+      )
+    }
+    for (const { part } of marked) {
+      const named = /\[href\s*=\s*["']?\\?#([\w-]+)/.exec(part)
+      if (!named || `#${named[1]}` !== href) {
+        out.push(
+          `the selector \`${part}\` marks a dot for #${id} but names ${named ? `#${named[1]}` : 'no dot at all'}: the pair of a dot and the panel it opens is the whole of what makes a dot switch a slide, and a selector that names one panel and another dot marks the wrong one as current`,
+        )
+      }
+    }
+    if (index === 0 && !parts.some(({ part, declarations }) => DOT.test(subject(part)) && /\[aria-current\s*=\s*["']?true/.test(part) && /accent/.test(declarations.get('background') ?? ''))) {
+      out.push(
+        'no rule marks the dot the script calls the current one (`aria-current="true"`): with the script driving, the block’s own name for the slide is what the mark is read from, and without the rule a reader who lets the block advance loses the dot that says where they are',
+      )
+    }
+  }
+
+  // 3. the target size, the wrap, the ring, and the phone.
+  for (const width of [PHONE, 1280]) {
+    for (const [what, pattern] of [
+      ['dots', DOT],
+      ['step controls', STEP],
+    ]) {
+      const height = lengthPx(declaredAt(css, width, pattern, 'min-height'), css)
+      if (height === null || height < 44) {
+        out.push(
+          `at ${width} px the ${what} declare \`min-height: ${declaredAt(css, width, pattern, 'min-height') ?? '(nothing)'}\`, and the owner's brief asks a control for a 44 px target: ${what === 'dots' ? 'a dot is the whole of what a reader taps to open a slide' : 'a step control is the whole of what a reader taps to step one way'}`,
+        )
+      }
+    }
+  }
+  for (const [what, pattern] of [
+    ['dots', DOTS],
+    ['control row', CONTROLS],
+  ]) {
+    if (declaredAt(css, PHONE, pattern, 'flex-wrap') !== 'wrap') {
+      out.push(
+        `the ${what} declare \`flex-wrap: ${declaredAt(css, PHONE, pattern, 'flex-wrap') ?? '(nothing)'}\` at ${PHONE} px, and three dots and two arrows on a phone are a row that wraps rather than one that runs off the side: a row that cannot wrap is a page the phone scrolls sideways`,
+      )
+    }
+  }
   for (const rule of rules) {
-    if (!TAB.test(rule.selector)) continue
+    if (!DOT.test(rule.selector) && !STEP.test(rule.selector)) continue
     const declarations = declarationsOf(rule)
     for (const property of ['outline', 'outline-style', 'outline-width']) {
       const value = declarations.get(property)
       if (value !== undefined && /^(none|0)(px)?\b/.test(value) && !/:not\(\s*:focus-visible\s*\)/.test(rule.selector)) {
         out.push(
-          `\`${rule.selector}\` removes the focus outline (\`${property}: ${value}\`), and a tab is a control the keyboard moves through: the ring is how a reader sees where they are, and a rule that takes it off the tabs takes it off the one control the block has`,
+          `\`${rule.selector}\` removes the focus outline (\`${property}: ${value}\`), and a dot and a step control are controls the keyboard moves through: the ring is how a reader sees where they are, and a rule that takes it off the block's controls takes it off the only way the block is driven by hand`,
         )
       }
     }
   }
   const ring = rulesAt(css, 1280).some((rule) => /:focus-visible/.test(rule.selector) && /outline\s*:/.test(rule.body))
   if (!ring) {
-    out.push('the page carries no `:focus-visible` rule drawing an outline, and the ring a keyboard reader follows through the tabs is that rule: without it a tab the keyboard is on looks like every other tab')
+    out.push('the page carries no `:focus-visible` rule drawing an outline, and the ring a keyboard reader follows through the dots is that rule: without it a dot the keyboard is on looks like every other dot')
   }
   const box = phoneBox(css)
   for (const rule of rulesAt(css, PHONE)) {
@@ -372,9 +521,29 @@ export function sliderFailures(css, html) {
     }
     if (declarations.get('white-space') === 'nowrap') {
       out.push(
-        `\`${rule.selector}\` is \`white-space: nowrap\`, and the slider's own lines are prose and a row of tabs: a line that cannot break is a line the phone cannot fit, and the wrap is what keeps the block inside the page`,
+        `\`${rule.selector}\` is \`white-space: nowrap\`, and the slider's own lines are prose and a row of controls: a line that cannot break is a line the phone cannot fit, and the wrap is what keeps the block inside the page`,
       )
     }
+  }
+
+  // A selector list is not forgiving. One selector a browser cannot read makes the whole rule
+  // invalid, so a rule carrying a `:has()` selector beside one that has none is a rule that
+  // hides the panel a dot opens — and the panel the script's own name points at — from every
+  // browser too old to answer `:has()`. The block has exactly one selector that asks for it, the
+  // one that shows the first panel while the fragment names none, and the component keeps it
+  // inside an `@supports selector(:has(*))` rule of its own for this reason. Writing it as a
+  // sibling of the rule above is not enough: the build merges adjacent rules that carry the same
+  // declaration, and `display: block` is what both of them say — the built stylesheet put all
+  // five selectors back into one rule when that was tried. This reads the artifact, so it holds
+  // whichever way the component is written.
+  for (const rule of cssRules(css)) {
+    if (rule.selector === undefined) continue
+    const parts = selectorParts(rule.selector)
+    const asking = parts.filter((part) => /:has\(/.test(part))
+    if (asking.length === 0 || asking.length === parts.length) continue
+    out.push(
+      `\`${rule.selector}\` carries ${asking.length} selector(s) asking for \`:has()\` beside ${parts.length - asking.length} that do not, and a selector list is not forgiving: a browser too old to answer \`:has()\` drops the whole rule, and every panel those other selectors show goes with it. The \`:has()\` selector belongs in an \`@supports selector(:has(*))\` rule of its own`,
+    )
   }
 
   return out
@@ -439,24 +608,47 @@ function built() {
   return { html: page.html, css: pageCss(page.html) }
 }
 
-test('the slider is three tabs and three panels, all of them in the HTML a reader receives', () => {
+test('the slider is three slides and three panels, all of them in the HTML a reader receives', () => {
   const { html, css } = built()
   assert.deepEqual(sliderFailures(css, html), [], `the homepage's slider is not the block the draft asks for:\n  ${sliderFailures(css, html).join('\n  ')}`)
 })
 
-test('no script switches the tabs, and the site’s one script does not know they exist', () => {
+test('the site’s one script is joined to the block by its data attributes and by nothing else', () => {
   const { html } = built()
-  const script = readFileSync(path.join(REPO, 'website/public/scripts/site.js'), 'utf8')
   const doc = parse(html)
-  const slider = findAll(doc, (el) => HAS(el, 'home-slider'))[0]
-  const names = [...new Set(findAll(slider, (el) => el.attrs.has('id')).map((el) => el.attrs.get('id')))]
-  assert.ok(names.length >= 3, `the slider carries ${names.length} ids and this case holds the script to each of them`)
+  const block = findAll(doc, (el) => HAS(el, 'home-slider'))[0]
+  const names = [...new Set(findAll(block, (el) => el.attrs.has('id')).map((el) => el.attrs.get('id')))]
+  assert.ok(names.length >= 3, `the block carries ${names.length} ids and this case holds the script to each of them`)
   for (const name of names) {
-    assert.ok(!script.includes(name), `website/public/scripts/site.js names ${name}, and the tabs are the address and the stylesheet: a slider whose state the script sets is a slider a reader without it does not have`)
+    assert.ok(
+      !SCRIPT_SOURCE.includes(name),
+      `website/public/scripts/site.js names ${name}, and the block is joined to the script by its \`data-\` attributes: a script keyed to this block's ids is a script that has to be edited when the block is`,
+    )
   }
-  for (const klass of ['home-slider', 'tab-bar', 'easy-step']) {
-    assert.ok(!script.includes(klass), `website/public/scripts/site.js names ${klass}, and nothing in this block is scripted: the switching is the fragment and the stylesheet`)
+  for (const klass of ['home-slider', 'slider-dot', 'slider-step']) {
+    // The name as a *class*: in a selector (`.slider-dot`) or in a quoted `classList` argument.
+    // The block's own `data-` attribute names carry the same words (`[data-slider-dot]`), and
+    // reading those is exactly how the two files find each other.
+    const asAClass = [`.${klass}`, `'${klass}'`, `"${klass}"`]
+    assert.ok(
+      !asAClass.some((written) => SCRIPT_SOURCE.includes(written)),
+      `website/public/scripts/site.js names the class ${klass}, and the block is joined to the script by its \`data-\` attributes: a class is a drawing, and a script that reads one is a script that stops working the day the drawing is renamed`,
+    )
   }
+  for (const hook of ['[data-slider]', '[data-slider-slide]', '[data-slider-dot]', '[data-slider-prev]', '[data-slider-next]']) {
+    assert.ok(
+      SCRIPT_SOURCE.includes(hook),
+      `website/public/scripts/site.js never reads ${hook}, and that attribute is how the block and the script find each other: the clock, the two step controls and the mark on the current dot are all bound to it`,
+    )
+  }
+  assert.ok(
+    SCRIPT_SOURCE.includes('(prefers-reduced-motion: reduce)'),
+    'website/public/scripts/site.js never names the reduced-motion query, and the owner asked the block to stop moving on its own for a reader who has asked their system for less motion',
+  )
+  assert.ok(
+    SCRIPT_SOURCE.includes('6000'),
+    'website/public/scripts/site.js names no interval for the clock, and the block is asked to advance every few seconds',
+  )
 })
 
 test('the three steps are the repository’s own lines, in the order their sections write them', () => {
@@ -464,7 +656,479 @@ test('the three steps are the repository’s own lines, in the order their secti
   assert.deepEqual(stepFailures(html), [], `the slider's first panel is not the reader's three steps:\n  ${stepFailures(html).join('\n  ')}`)
 })
 
-// ---- the plants ---------------------------------------------------------------------------
+// ---- the behaviour, run ---------------------------------------------------------------------
+//
+// The cases below run the file the site ships against the built homepage, in a stub DOM, and read
+// what it does. That is the only way to hold the clock, the pauses and the two states of the
+// address to anything: the stylesheet readings above say what the block looks like in each state,
+// and these say which state it is put in and when.
+//
+// The stub is deliberately not a browser. It is the surface the slider path touches — elements
+// with attributes and listeners, a clock, the page's visibility, the reader's system preference
+// and the address — and it runs the whole file, so the menu and the consent banner load in it
+// too. What it does NOT do is stand in for those two readings: `nav-hover.mjs` and `consent.mjs`
+// are where the menu and the gate are read, and here the pointer query is answered "no" (the
+// menu's hover behaviour is never bound) and the banner is left alone. Each case is planted
+// below with the line it reads taken out of the script, so a case that cannot fail is caught.
+
+/** The clock the block is asked for, and the two queries the file asks the browser. */
+const CLOCK_MS = 6000
+const CALM_QUERY = '(prefers-reduced-motion: reduce)'
+
+/** A built page as a document the site's one script can run in. */
+function stubPage(html, { hash = '', hidden = false, calm = false, script = SCRIPT_SOURCE } = {}) {
+  const root = parse(html)
+  const wrapped = new Map()
+  const timers = []
+  const queries = []
+  const media = []
+  const hashWrites = []
+  const windowListeners = new Map()
+  const state = { activeElement: null }
+  let shown = !hidden
+  // The reader's system preference is not fixed: `setCalm` below is that reader turning reduced
+  // motion on (or off) under a page that has already loaded, which a browser reports to the lists
+  // subscribed to *that* query as a `change` — and the pointer's own list hears nothing, because
+  // the pointer did not move.
+  let reduced = calm
+
+  // Compound selectors joined by descendant spaces, in a comma list: `tag`, `.class`,
+  // `[attr]` — the selectors the site's script writes, and a refusal for anything else. The
+  // refusal is the point: a selector this stub silently matched nothing with would make every
+  // case below pass by doing nothing.
+  function compound(node, part) {
+    if (!/^[a-z]*(\.[\w-]+|\[[\w-]+\])*$/.test(part)) throw new Error(`the slider stub does not understand the selector part ${part}`)
+    const tag = /^[a-z]+/.exec(part)?.[0]
+    if (tag && node.name !== tag) return false
+    const cls = (node.attrs.get('class') ?? '').split(/\s+/)
+    for (const [, c] of part.matchAll(/\.([\w-]+)/g)) if (!cls.includes(c)) return false
+    for (const [, a] of part.matchAll(/\[([\w-]+)\]/g)) if (!node.attrs.has(a)) return false
+    return true
+  }
+
+  function matches(node, selector) {
+    return selector.split(',').some((one) => {
+      const parts = one.trim().split(/\s+/)
+      if (!compound(node, parts[parts.length - 1])) return false
+      let at = node.parent
+      for (let i = parts.length - 2; i >= 0; i--) {
+        while (at && at.name !== '#document' && !compound(at, parts[i])) at = at.parent
+        if (!at || at.name === '#document') return false
+        at = at.parent
+      }
+      return true
+    })
+  }
+
+  /** One parsed element, with the DOM surface the site's script touches. */
+  class Element {
+    constructor(node) {
+      this.node = node
+      this.listeners = new Map()
+    }
+    get name() {
+      return this.node.name
+    }
+    get attrs() {
+      return this.node.attrs
+    }
+    getAttribute(name) {
+      return this.attrs.has(name) ? this.attrs.get(name) : null
+    }
+    hasAttribute(name) {
+      return this.attrs.has(name)
+    }
+    setAttribute(name, value) {
+      this.attrs.set(name, String(value))
+    }
+    get classList() {
+      const classes = (this.attrs.get('class') ?? '').split(/\s+/)
+      return { contains: (name) => classes.includes(name) }
+    }
+    get hidden() {
+      return this.attrs.has('hidden')
+    }
+    set hidden(value) {
+      if (value) this.attrs.set('hidden', '')
+      else this.attrs.delete('hidden')
+    }
+    /** A `<details>`'s own state. The menu's two levels are read in `nav-hover.mjs`; here it
+     *  only has to be a property the file can set without throwing. */
+    get open() {
+      return this.attrs.has('open')
+    }
+    set open(value) {
+      if (value) this.attrs.set('open', '')
+      else this.attrs.delete('open')
+    }
+    get parentElement() {
+      const parent = this.node.parent
+      return parent && parent.name !== '#document' ? dom.wrap(parent) : null
+    }
+    contains(other) {
+      for (let node = other?.node; node; node = node.parent) if (node === this.node) return true
+      return false
+    }
+    matches(selector) {
+      return matches(this.node, selector)
+    }
+    closest(selector) {
+      for (let node = this.node; node && node.name !== '#document'; node = node.parent) {
+        if (matches(node, selector)) return dom.wrap(node)
+      }
+      return null
+    }
+    querySelectorAll(selector) {
+      return [...walk(this.node)].filter((node) => matches(node, selector)).map((node) => dom.wrap(node))
+    }
+    querySelector(selector) {
+      return this.querySelectorAll(selector)[0] ?? null
+    }
+    getClientRects() {
+      return [{}]
+    }
+    focus() {
+      state.activeElement = this
+      this.dispatch('focusin', { target: this, bubbles: true })
+    }
+    addEventListener(type, handler) {
+      if (!this.listeners.has(type)) this.listeners.set(type, [])
+      this.listeners.get(type).push(handler)
+    }
+    removeEventListener(type, handler) {
+      const bound = this.listeners.get(type) ?? []
+      const at = bound.indexOf(handler)
+      if (at >= 0) bound.splice(at, 1)
+    }
+    /** Dispatch at this element, for its own listeners. A `pointerenter` does not bubble and
+     *  a `focusin` does; every listener the cases below reach is on the element the event is
+     *  dispatched at, so the two are the same here. */
+    dispatch(type, init = {}) {
+      const event = {
+        type,
+        defaultPrevented: false,
+        preventDefault() {
+          this.defaultPrevented = true
+        },
+        ...init,
+      }
+      if (event.target === undefined) event.target = this
+      for (const handler of this.listeners.get(type) ?? []) handler.call(this, event)
+      return event
+    }
+  }
+
+  const dom = {
+    wrap(node) {
+      if (!wrapped.has(node)) wrapped.set(node, new Element(node))
+      return wrapped.get(node)
+    },
+  }
+
+  const document = dom.wrap(root)
+  document.readyState = 'complete'
+  document.createElement = (name) => ({ name, src: '', async: false })
+  document.head = { appendChild: () => {} }
+  document.getElementById = (id) => {
+    const node = [...walk(root)].find((one) => one.attrs.get('id') === id)
+    return node ? dom.wrap(node) : null
+  }
+  Object.defineProperty(document, 'activeElement', { get: () => state.activeElement, configurable: true })
+  Object.defineProperty(document, 'hidden', { get: () => !shown, configurable: true })
+
+  // The address, with its fragment readable and its writes recorded: the script has no business
+  // moving a reader's page, and a case below is what says so.
+  const location = {}
+  Object.defineProperty(location, 'hash', { get: () => hash, set: (value) => hashWrites.push(value), configurable: true })
+
+  const window = {
+    location,
+    // The reader's system preference and the pointer's capability. The pointer is answered "no"
+    // on purpose: the menu's hover behaviour belongs to `nav-hover.mjs`, and a stub that bound
+    // it here would be reading the menu with half a DOM.
+    matchMedia(query) {
+      queries.push(query)
+      const listeners = []
+      const list = {
+        media: query,
+        get matches() {
+          return query === CALM_QUERY ? reduced : false
+        },
+        addEventListener(type, handler) {
+          if (type === 'change') listeners.push(handler)
+        },
+        // The name a MediaQueryList had for the same subscription before `addEventListener`
+        // reached it. A browser old enough to need this one still reports the change.
+        addListener(handler) {
+          listeners.push(handler)
+        },
+      }
+      media.push({ query, list, listeners })
+      return list
+    },
+    setTimeout(handler, ms) {
+      const timer = { handler, ms, cancelled: false }
+      timers.push(timer)
+      return timer
+    },
+    clearTimeout(timer) {
+      if (timer) timer.cancelled = true
+    },
+    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+    addEventListener(type, handler) {
+      if (!windowListeners.has(type)) windowListeners.set(type, [])
+      windowListeners.get(type).push(handler)
+    },
+    dispatchEvent: () => true,
+  }
+
+  class StubEvent {
+    constructor(type, init = {}) {
+      this.type = type
+      this.detail = init.detail
+    }
+  }
+
+  vm.runInNewContext(script, { window, document, navigator: {}, CustomEvent: StubEvent })
+
+  const block = document.querySelectorAll('[data-slider]')[0] ?? null
+  assert.ok(block, 'the built homepage carries no `[data-slider]` block for the script to find')
+  const dots = block.querySelectorAll('[data-slider-dot]')
+  const slides = block.querySelectorAll('[data-slider-slide]')
+  const back = block.querySelector('[data-slider-prev]')
+  const on = block.querySelector('[data-slider-next]')
+  const pending = () => timers.filter((timer) => !timer.cancelled)
+
+  return {
+    block,
+    dots,
+    slides,
+    back,
+    on,
+    timers,
+    queries,
+    hashWrites,
+    /** The slide the block is on, as the name the script wrote on it. */
+    active: () => block.getAttribute('data-active'),
+    /** The names of the dots the block marks as the slide on screen. */
+    marked: () =>
+      dots
+        .filter((dot) => dot.getAttribute('aria-current') === 'true')
+        .map((dot) => dot.getAttribute('data-slider-dot')),
+    /** The block's clock, as the timers it has asked for and not cancelled. */
+    pending,
+    /** Six seconds passing. */
+    tick() {
+      const timer = pending().find((one) => one.ms === CLOCK_MS)
+      assert.ok(timer, `the block has no clock to run: ${pending().length} of its timers are pending, and none of them is the ${CLOCK_MS} ms step`)
+      timer.handler()
+    },
+    click: (element) => element.dispatch('click', { target: element }),
+    key: (element, key) => element.dispatch('keydown', { target: element, key }),
+    enter: () => block.dispatch('pointerenter', { target: block }),
+    leave: () => block.dispatch('pointerleave', { target: block }),
+    focusIn: (element) => block.dispatch('focusin', { target: element }),
+    focusOut: (relatedTarget) => block.dispatch('focusout', { target: block, relatedTarget }),
+    /** The reader coming back to the tab, which is what a browser reports as a change of the
+     *  page's visibility. */
+    reveal() {
+      shown = true
+      document.dispatch('visibilitychange', { type: 'visibilitychange' })
+    },
+    /** Every list the page asked the browser for, with what it subscribed to each one: a case
+     *  below reads whether the block watched the reduced-motion answer at all. */
+    media,
+    /** The reader turning reduced motion on (or off) without reloading, which a browser reports
+     *  to the lists subscribed to that query as a `change` carrying the new answer. */
+    setCalm(value) {
+      reduced = value
+      for (const one of media) {
+        if (one.query !== CALM_QUERY) continue
+        for (const handler of one.listeners) handler({ type: 'change', media: one.query, matches: value })
+      }
+    },
+  }
+}
+
+/**
+ * The behaviour the block is read for, one case at a time: the page it runs in, what it must do,
+ * and the line of the script the case exists for — which the plants below take out of the file
+ * and hold the same case to.
+ */
+const CASES = [
+  {
+    name: 'the block opens on its first slide, with both step controls revealed',
+    options: {},
+    check(page) {
+      assert.equal(page.active(), 'easy', `the block opened on ${JSON.stringify(page.active())} rather than the first slide: a reader who has chosen nothing is reading the first thing the block has to say`)
+      assert.deepEqual(page.marked(), ['easy'], `the block opened on the first slide and marked ${JSON.stringify(page.marked())} as the dot on screen`)
+      assert.equal(page.back.hidden, false, 'the previous-slide control is still `hidden`: the script reveals the two controls the markup emits hidden, and a control that is never revealed is a button no reader is shown')
+      assert.equal(page.on.hidden, false, 'the next-slide control is still `hidden`: the script reveals the two controls the markup emits hidden')
+      assert.ok(page.pending().some((timer) => timer.ms === CLOCK_MS), 'the block armed no clock: a slider that never moves on its own is the tab strip the owner asked to be rid of')
+    },
+    plant: ['    show(opening)\n', ''],
+  },
+  {
+    name: 'the clock steps the block on, and wraps at the last slide',
+    options: {},
+    check(page) {
+      page.tick()
+      assert.equal(page.active(), 'benefits', 'six seconds passed and the block did not move on')
+      assert.deepEqual(page.marked(), ['benefits'], 'the block moved on and the mark on the dots did not follow it: the dot that says where the reader is has to be the dot of the slide on screen')
+      page.tick()
+      assert.equal(page.active(), 'see', 'the block did not step on a second time')
+      page.tick()
+      assert.equal(page.active(), 'easy', 'the block did not wrap: a slider that stops at the last slide is a slider whose first slide a reader who waits never sees again')
+    },
+    plant: ['        step(1)\n', ''],
+  },
+  {
+    name: 'the clock stops while the reader is in the block, and starts again when they leave',
+    options: {},
+    check(page) {
+      page.enter()
+      assert.equal(page.pending().length, 0, 'a pointer over the block left the clock running: the slide a reader is reading would move under them')
+      page.leave()
+      assert.ok(page.pending().some((timer) => timer.ms === CLOCK_MS), 'the clock did not start again when the pointer left: the block stops for good the first time a reader touches it')
+      page.focusIn(page.dots[1])
+      assert.equal(page.pending().length, 0, 'the keyboard’s focus inside the block left the clock running: a reader tabbing through the dots is reading them')
+      page.focusOut(page.dots[0])
+      assert.equal(page.pending().length, 0, 'a focus moving from one dot to the next was read as the reader leaving the block')
+      page.focusOut(null)
+      assert.ok(page.pending().some((timer) => timer.ms === CLOCK_MS), 'the clock did not start again when the focus left the block')
+    },
+    // The block's own `over = true` and not the console slider's, which is written `over = true;
+    // settle()` on one line earlier in the file: a plant that matched that one would edit a
+    // slider this case never touches, and the case would pass with its own line still standing.
+    plant: ['      over = true\n', '      over = false\n'],
+  },
+  {
+    name: 'the pointer’s hold and the focus’s hold are separate, and neither one lets go of the other',
+    options: {},
+    check(page) {
+      page.enter()
+      page.focusIn(page.dots[1])
+      page.leave()
+      assert.equal(page.pending().length, 0, 'the pointer leaving the block started the clock again while the keyboard’s focus was still inside it: a reader tabbing through the dots has the slide move under them the moment a resting pointer drifts off the block')
+      page.enter()
+      page.focusOut(null)
+      assert.equal(page.pending().length, 0, 'the focus leaving the block started the clock again while the pointer was still over it: a reader reading with the pointer resting on the block has the slide move under them')
+      page.leave()
+      assert.ok(page.pending().some((timer) => timer.ms === CLOCK_MS), 'the clock did not start again once the reader had left the block both ways: a block that stops for good the first time a pointer crosses it is a block that stopped')
+    },
+    // The defect this case exists for: one flag for both readers, so the pointer's leaving clears
+    // the focus's hold as well.
+    plant: ['      over = false\n      arm()\n', '      over = false\n      inside = false\n      arm()\n'],
+  },
+  {
+    name: 'a page nobody is shown runs no clock, and starts one when it is shown again',
+    options: { hidden: true },
+    check(page) {
+      assert.equal(page.active(), 'easy', 'a page that is not being shown left the block with no slide: the slides are the page, and the block is on one of them whatever the browser is doing')
+      assert.equal(page.pending().length, 0, 'a page that is not being shown armed the clock: the block would have moved on by the time the reader came back to it')
+      page.reveal()
+      assert.ok(page.pending().some((timer) => timer.ms === CLOCK_MS), 'the clock did not start when the page was shown again: a reader who comes back to the tab is a reader who wants the slider')
+    },
+    plant: ['over || inside || !pageShown() || calm()', 'over || inside || calm()'],
+  },
+  {
+    name: 'a reader who asked for less motion gets no clock, and every control still works',
+    options: { calm: true },
+    check(page) {
+      assert.ok(page.queries.includes(CALM_QUERY), `the block never asked the browser whether the reader had asked for less motion: it asked ${JSON.stringify(page.queries)}`)
+      assert.equal(page.pending().length, 0, 'a reader who asked their system for less motion got a block that moves on its own')
+      page.click(page.dots[2])
+      assert.equal(page.active(), 'see', 'less motion took the dots with it: what the reader asked for is that nothing move on its own, not that the block stop working')
+      page.click(page.on)
+      assert.equal(page.active(), 'easy', 'less motion took the step controls with it')
+    },
+    plant: ['over || inside || !pageShown() || calm()', 'over || inside || !pageShown()'],
+  },
+  {
+    name: 'a reader who turns less motion on without reloading gets no more of the clock',
+    options: {},
+    check(page) {
+      assert.ok(
+        page.media.some((one) => one.query === CALM_QUERY && one.listeners.length > 0),
+        'the block never subscribed to the reduced-motion answer: a visitor can turn the setting on under a page that has already loaded, and a query read once and never watched only ever answers about the load',
+      )
+      assert.ok(page.pending().some((timer) => timer.ms === CLOCK_MS), 'the block armed no clock to stop: this case is about a running slider settling, and there is nothing running to settle')
+      page.setCalm(true)
+      assert.equal(page.pending().length, 0, 'the reader turned reduced motion on and the block kept its clock: the slide it was standing on moves on anyway, which is the one thing they asked it not to do')
+      page.click(page.dots[2])
+      assert.equal(page.active(), 'see', 'the block stopped working rather than stopping moving on its own')
+      assert.equal(page.pending().length, 0, 'a reader who asked for less motion got the clock back the moment they chose a slide themselves')
+      page.setCalm(false)
+      assert.ok(page.pending().some((timer) => timer.ms === CLOCK_MS), 'the reader turned reduced motion off again and the block stayed still: a slider that never resumes is a slider that stopped')
+    },
+    // The subscription and not the reading of the answer: with the block never watching the
+    // query, `calm()` still answers about the load and every other assertion in this case — the
+    // clock it gets back when the reader chooses a slide themselves — still holds.
+    // Both names of the subscription: the stub answers `addListener` as well as
+    // `addEventListener`, so a plant that silenced only the first would leave the case standing.
+    plant: [
+      "      if (motion.addEventListener) motion.addEventListener('change', arm)\n      else if (motion.addListener) motion.addListener(arm)\n",
+      "      if (false) motion.addEventListener('change', arm)\n      else if (false) motion.addListener(arm)\n",
+    ],
+  },
+  {
+    name: 'the dots, the two step controls and the arrow keys move the block, and the address is left alone',
+    options: {},
+    check(page) {
+      const clicked = page.click(page.dots[1])
+      assert.equal(page.active(), 'benefits', 'clicking the second dot did not show the second slide')
+      assert.equal(clicked.defaultPrevented, true, 'the dot followed its link: with the script running, the block’s state is its own, and an address that kept the fragment would send the reader back to it on a reload')
+      assert.deepEqual(page.hashWrites, [], `the script wrote to the address (${JSON.stringify(page.hashWrites)}): the fragment is the no-script state, and a script that moves it is a script that leaves the browser's own history behind it`)
+      page.click(page.back)
+      assert.equal(page.active(), 'easy', 'the previous-slide control did not step back')
+      page.click(page.back)
+      assert.equal(page.active(), 'see', 'the previous-slide control did not wrap from the first slide to the last')
+      page.click(page.on)
+      assert.equal(page.active(), 'easy', 'the next-slide control did not wrap from the last slide to the first')
+      const right = page.key(page.dots[0], 'ArrowRight')
+      assert.equal(page.active(), 'benefits', 'the right arrow key did not step the block on')
+      assert.equal(right.defaultPrevented, true, 'the right arrow key was left to the browser: a control that steps a block is the one place the key means that')
+      page.key(page.dots[0], 'ArrowLeft')
+      assert.equal(page.active(), 'easy', 'the left arrow key did not step the block back')
+      const other = page.key(page.dots[0], 'Tab')
+      assert.equal(other.defaultPrevented, false, 'the block swallowed a key that is not one of its own: Tab has to reach the next control')
+      assert.equal(page.active(), 'easy', 'a key that is not an arrow moved the block')
+    },
+    plant: ["          if (event && typeof event.preventDefault === 'function') event.preventDefault()\n", ''],
+  },
+  {
+    name: 'a reader who arrives on a slide opens on that slide',
+    options: { hash: '#home-panel-see' },
+    check(page) {
+      assert.equal(page.active(), 'see', 'a reader who arrived on the third slide was shown the first: the dots are links, and a link into the block is a link to the slide it names')
+      assert.deepEqual(page.marked(), ['see'], 'the block opened on the third slide and marked another dot as the one on screen')
+    },
+    plant: ['      for (var h = 0; h < slides.length; h++) if (idOf(slides[h]) === hash) opening = slides[h]\n', ''],
+  },
+]
+
+for (const one of CASES) {
+  test(one.name, () => {
+    const { html } = built()
+    one.check(stubPage(html, one.options))
+  })
+}
+
+test('every behaviour case fails on the script with the line it reads taken out', () => {
+  const { html } = built()
+  for (const one of CASES) {
+    const [from, to] = one.plant
+    const planted = SCRIPT_SOURCE.replace(from, to)
+    assert.notEqual(planted, SCRIPT_SOURCE, `${one.name}: the plant changed nothing in the script, so this case proves nothing`)
+    assert.doesNotThrow(() => new vm.Script(planted), `${one.name}: the plant broke the script rather than the behaviour`)
+    assert.throws(
+      () => one.check(stubPage(html, { ...one.options, script: planted })),
+      `${one.name}: the case passes against the script with the line it reads taken out, so it is a case that cannot fail`,
+    )
+  }
+})
+
+// ---- the plants -----------------------------------------------------------------------------
 //
 // Each case below is one of the refusals above, planted: the built page with one thing about it
 // changed to the defect the sentence names, and the reading held to that sentence. A check that
@@ -474,93 +1138,229 @@ test('every refusal the slider reading makes fires on the defect it names', () =
   const { html, css } = built()
   const cases = [
     [
-      'a panel that is not in the HTML',
+      'a homepage with no slider on it',
+      css,
+      html.replace('<section class="home-slider" data-slot="home-slider" data-slider ', '<section class="home-slides" data-slot="home-slider" data-slider '),
+      /the homepage carries 0 sliders/,
+    ],
+    [
+      'a block the script cannot find',
+      css,
+      html.replace('<section class="home-slider" data-slot="home-slider" data-slider ', '<section class="home-slider" data-slot="home-slider" '),
+      /carries no `data-slider` attribute/,
+    ],
+    [
+      'a slide that is not in the HTML',
       css,
       html.replace(/<div class="panel panel-see"[\s\S]*?<\/div><\/div><\/section>/, '</div></section>'),
-      /carries 2 panels/,
+      /carries 2 slides/,
     ],
     [
-      'a tab whose fragment names no element',
+      'a dot that is not there',
+      css,
+      html.replace(/<li class="slider-dot-item"[^>]*><a class="slider-dot" href="#home-panel-see"[^>]*><\/a><\/li>/, ''),
+      /carries 2 dots/,
+    ],
+    [
+      'a panel whose id is not the slide it carries',
+      css,
+      html.replace('id="home-panel-benefits"', 'id="home-panel-why"'),
+      /is named "benefits" and carries the id "home-panel-why"/,
+    ],
+    [
+      'a dot named after another slide',
+      css,
+      html.replace('data-slider-dot="benefits"', 'data-slider-dot="see"'),
+      /dot 2 carries "see" where the slide it opens is named "benefits"/,
+    ],
+    [
+      'a dot whose href is not a fragment',
+      css,
+      html.replace('href="#home-panel-benefits"', 'href="home-panel-benefits"'),
+      /a dot is a fragment link to the panel it shows/,
+    ],
+    [
+      'a panel with nothing in it',
+      css,
+      html.replace(/<h2 class="panel-title"[^>]*>Easy to use<\/h2><ol class="easy-steps"[\s\S]*?<\/ol>/, ''),
+      /carries no text, so the dot opens an empty box/,
+    ],
+    [
+      'a step control that is not there',
+      css,
+      html.replace(/<button type="button" class="slider-step" data-slider-next[\s\S]*?<\/button>/, ''),
+      /carries 0 next-slide controls/,
+    ],
+    [
+      'a step control that is a link',
+      css,
+      html.replace(
+        /<button type="button" class="slider-step" data-slider-prev([\s\S]*?)<\/button>/,
+        '<a href="#home-panel-easy" class="slider-step" data-slider-prev$1</a>',
+      ),
+      /the previous-slide control is a <a> of type ""/,
+    ],
+    [
+      'a step control with no name',
+      css,
+      html.replace(' aria-label="Previous slide"', ''),
+      /the previous-slide control carries no name/,
+    ],
+    [
+      'a dot the tab key skips',
+      css,
+      html.replace('<a class="slider-dot" href="#home-panel-easy"', '<a class="slider-dot" tabindex="-1" href="#home-panel-easy"'),
+      /a dot carries tabindex="-1"/,
+    ],
+    [
+      'a dot whose fragment names no element',
       css,
       html.replace('href="#home-panel-benefits"', 'href="#home-panel-benefts"'),
-      /links to #home-panel-benefts where the panel beside it is #home-panel-benefits/,
+      /links to #home-panel-benefts where the slide beside it is #home-panel-benefits/,
     ],
     [
-      'a panel whose heading is not the tab that opens it',
+      'a dot that is not a link',
       css,
-      html.replace('<h2 class="panel-title" data-astro-cid-d3mmljir>See it</h2>', '<h2 class="panel-title" data-astro-cid-d3mmljir>Watch it</h2>'),
-      /is headed "Watch it" where its tab reads "See it"/,
+      html
+        .replace('<a class="slider-dot" href="#home-panel-easy"', '<button type="button" class="slider-dot" href="#home-panel-easy"')
+        .replace(/(<button type="button" class="slider-dot"[^>]*>)<\/a>/, '$1</button>'),
+      /dot 1 is a <button>/,
+    ],
+    [
+      'a panel whose heading is not the slide it is',
+      css,
+      html.replace('>See it</h2>', '>Watch it</h2>'),
+      /is headed "Watch it" where its dot reads "See it"/,
+    ],
+    [
+      'a dot with no name for a screen reader',
+      css,
+      html.replace(' aria-label="Slide 1 of 3: Easy to use"', ''),
+      /dot 1 is announced as ""/,
+    ],
+    [
+      'a step control emitted visible',
+      css,
+      html.replace(' aria-label="Next slide" hidden', ' aria-label="Next slide"'),
+      /the next-slide control is not emitted `hidden`/,
     ],
     [
       'a script in the block',
       css,
-      html.replace('<ul class="tab-bar"', '<script>document.querySelectorAll(".tab")[0].click()</script><ul class="tab-bar"'),
+      html.replace('<div class="slider-controls"', '<script>document.querySelectorAll("[data-slider-dot]")[0].click()</script><div class="slider-controls"'),
       /carries a script/,
     ],
     [
       'the roles of a scripted tab widget',
       css,
-      html.replace('<a class="tab" href="#home-panel-easy"', '<a class="tab" role="tab" aria-selected="true" href="#home-panel-easy"'),
+      html.replace('<a class="slider-dot" href="#home-panel-easy"', '<a class="slider-dot" role="tab" aria-selected="true" href="#home-panel-easy"'),
       /role="tab" \/ aria-selected/,
     ],
     [
+      'a panel marked hidden in the markup',
+      css,
+      html.replace('<div class="panel panel-benefits" id="home-panel-benefits"', '<div class="panel panel-benefits" id="home-panel-benefits" hidden'),
+      /is marked hidden in the markup/,
+    ],
+    [
       'no rule hiding the panels',
-      css.replace(/\.panel\[data-astro-cid-\w+\]\{display:none\}/, '.panel[data-astro-cid-d3mmljir]{display:grid}'),
+      css.replace(/(\.panel\[data-astro-cid-\w+\]\{display:)none/, '$1grid'),
       html,
       /no rule hides the panels/,
     ],
     [
       'no rule showing a targeted panel',
-      css.replace(/\.panel\[data-astro-cid-\w+\]:target,/, ''),
+      css.replace(/,\s*\.home-slider\[data-astro-cid-\w+\]:not\(\[data-active\]\) \.panel\[data-astro-cid-\w+\]:target/, ''),
       html,
       /no rule shows a targeted panel/,
     ],
     [
-      'no rule showing the panel the page opens on',
-      css.replace(/,\s*\.home-slider\[data-astro-cid-\w+\]:not\(:has\(\.panel:target\)\) #home-panel-easy\[data-astro-cid-\w+\]/, ''),
+      'a rule showing the panel the address names without standing down for the script',
+      css.replace(/(:not\(\[data-active\]\)) (\.panel\[data-astro-cid-\w+\]:target)/, '$2'),
+      html,
+      /does not stand down while the script is driving/,
+    ],
+    [
+      'no rule showing the slide the page opens on',
+      // The panel's own `@supports` rule, named in full: the block has two of them, and taking
+      // the first would edit the dot's mark and leave this rule standing.
+      css.replace(
+        /@supports selector\(:has\(\*\)\)\{\.home-slider\[data-astro-cid-\w+\]:not\(\[data-active\]\):not\(:has\(\.panel:target\)\) #home-panel-easy\[data-astro-cid-\w+\]\{display:block\}\}/,
+        '',
+      ),
       html,
       /no rule shows #home-panel-easy while no panel is targeted/,
     ],
     [
-      'a tab the stylesheet never marks as selected',
-      css.replace(/,\s*\.home-slider\[data-astro-cid-\w+\]:has\(#home-panel-see:target\) \.tab\[data-astro-cid-\w+\]\[href=\\#home-panel-see\]/, ''),
+      'no rule showing the panel the script names',
+      css.replace(/\.home-slider\[data-astro-cid-\w+\]\[data-active=see\] #home-panel-see\[data-astro-cid-\w+\],/, ''),
       html,
-      /no rule marks the tab for #home-panel-see/,
+      /no rule shows #home-panel-see while the block is on the slide "see"/,
     ],
     [
-      'a rule pairing one panel with another tab',
-      css.replace(/(:has\(#home-panel-see:target\) \.tab\[data-astro-cid-\w+\]\[href=\\#)home-panel-see\]/, '$1home-panel-easy]'),
+      'a dot the stylesheet never marks as the slide on screen',
+      css.replace(/,\s*\.home-slider\[data-astro-cid-\w+\]:not\(\[data-active\]\):has\(#home-panel-see:target\) \.slider-dot\[data-astro-cid-\w+\]\[href=\\#home-panel-see\]:before/, ''),
       html,
-      /marks a tab for #home-panel-see but names #home-panel-easy/,
+      /no rule marks the dot for #home-panel-see/,
     ],
     [
-      'a tab below the 44 px target',
-      css.replace(/(\.tab\[data-astro-cid-\w+\]\{[^}]*?)min-height:44px/, '$1min-height:20px'),
+      'a rule marking one panel with another dot',
+      css.replace(/(:has\(#home-panel-see:target\) \.slider-dot\[data-astro-cid-\w+\]\[href=\\#)home-panel-see\]/, '$1home-panel-easy]'),
       html,
-      /the owner's brief asks a control for a 44 px target/,
+      /marks a dot for #home-panel-see but names #home-panel-easy/,
     ],
     [
-      'a tab that is 44 px only on a phone',
-      `${css.replace(/(\.tab\[data-astro-cid-\w+\]\{[^}]*?)min-height:44px/, '$1min-height:20px')}
-@media (width<=30rem){.tab[data-astro-cid-d3mmljir]{min-height:44px}}`,
+      'no rule marking the dot the script calls current',
+      css.replace(/\.slider-dot\[data-astro-cid-\w+\]\[aria-current=true\]:before\{[^}]*\}/, ''),
       html,
-      /at 1280 px the tabs declare `min-height: 20px`/,
+      /no rule marks the dot the script calls the current one/,
     ],
     [
-      'a tab row that cannot wrap',
-      css.replace(/(\.tab-bar\[data-astro-cid-\w+\]\{[^}]*?)flex-wrap:wrap;/, '$1'),
+      'a dot below the 44 px target',
+      css.replace(/(\.slider-dot\[data-astro-cid-\w+\]\{[^}]*?)min-height:44px/, '$1min-height:20px'),
       html,
-      /a row that cannot wrap is a page the phone scrolls sideways/,
+      /at 1280 px the dots declare `min-height: 20px`/,
     ],
     [
-      'a tab that removes the focus ring',
-      css.replace(/(\.tab\[data-astro-cid-\w+\]\{)/, '$1outline:none;'),
+      'a dot that is 44 px only on a phone',
+      `${css.replace(/(\.slider-dot\[data-astro-cid-\w+\]\{[^}]*?)min-height:44px/, '$1min-height:20px')}
+@media (width<=30rem){.slider-dot[data-astro-cid-d3mmljir]{min-height:44px}}`,
+      html,
+      /at 1280 px the dots declare `min-height: 20px`/,
+    ],
+    [
+      'a step control below the 44 px target',
+      css.replace(/(\.slider-step\[data-astro-cid-\w+\]\{[^}]*?)min-height:44px/, '$1min-height:20px'),
+      html,
+      /at 1280 px the step controls declare `min-height: 20px`/,
+    ],
+    [
+      'a control row that cannot wrap',
+      css.replace(/(\.slider-controls\[data-astro-cid-\w+\]\{[^}]*?)flex-wrap:wrap;/, '$1'),
+      html,
+      /the control row declare `flex-wrap: \(nothing\)`/,
+    ],
+    [
+      'a row of dots that cannot wrap',
+      css.replace(/(\.slider-dots\[data-astro-cid-\w+\]\{[^}]*?)flex-wrap:wrap;/, '$1'),
+      html,
+      /the dots declare `flex-wrap: \(nothing\)`/,
+    ],
+    [
+      'a page with no focus ring at all',
+      css.replace(':focus-visible{outline:var(--focus-ring-width) solid var(--accent);outline-offset:var(--focus-ring-offset)}', ''),
+      html,
+      /carries no `:focus-visible` rule drawing an outline/,
+    ],
+    [
+      'a dot that removes the focus ring',
+      css.replace(/(\.slider-dot\[data-astro-cid-\w+\]\{)/, '$1outline:none;'),
       html,
       /removes the focus outline/,
     ],
     [
-      'a panel wider than the phone',
-      css.replace(/(\.panel\[data-astro-cid-\w+\]\{display:none)/, '$1;min-width:420px'),
+      'a dot wider than the phone',
+      `${css}\n.slider-dot[data-astro-cid-d3mmljir]{min-width:420px}`,
       html,
       /a box wider than the phone is a page the phone scrolls sideways/,
     ],
@@ -571,10 +1371,10 @@ test('every refusal the slider reading makes fires on the defect it names', () =
       /a line that cannot break/,
     ],
     [
-      'a panel marked hidden in the markup',
-      css,
-      html.replace('<div class="panel panel-benefits" id="home-panel-benefits"', '<div class="panel panel-benefits" id="home-panel-benefits" hidden'),
-      /is marked hidden in the markup/,
+      'a `:has()` selector standing in a list beside selectors that have none',
+      `${css}\n.home-slider[data-astro-cid-d3mmljir]:not([data-active]) .panel[data-astro-cid-d3mmljir]:target,.home-slider[data-astro-cid-d3mmljir]:not([data-active]):not(:has(.panel:target)) #home-panel-easy[data-astro-cid-d3mmljir]{display:block}`,
+      html,
+      /a browser too old to answer `:has\(\)` drops the whole rule/,
     ],
   ]
   for (const [what, plantedCss, plantedHtml, expected] of cases) {
@@ -633,6 +1433,21 @@ test('every refusal the steps reading makes fires on the defect it names', () =>
       'a step with no icon',
       html.replace(/<svg class="step-icon"[\s\S]*?<\/svg>/, ''),
       /'s icon is missing/,
+    ],
+    [
+      'a step with no name',
+      html.replace(/<h3 class="step-name"[^>]*>Tell your agent<\/h3>/, ''),
+      /step 1 has no name/,
+    ],
+    [
+      'a step whose icon draws nothing',
+      html.replace('<path d="M4 5h16v11H9l-5 4V5Z"/>', ''),
+      /holds no shape, so the step renders an empty <svg> nothing can see/,
+    ],
+    [
+      'a step citing no section of a document',
+      html.replace('data-source="README.md#Getting started"', 'data-source="README.md"'),
+      /which names no section of a document of this repository/,
     ],
     [
       'a step numbered by hand out of order',

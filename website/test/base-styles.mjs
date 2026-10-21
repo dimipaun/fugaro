@@ -136,7 +136,13 @@ function mediaBlocks(css) {
 //     wordmark and the labels is the phone's 8 px rather than the wide layout's 32 px. Those
 //     two are what the row measures against at 320 px, and neither is decoration: with the
 //     text drawn, or with the wide gap, the row is wider than the header's content box and
-//     the page gets a sideways scroll. Out of the row is not out of the page, though: the mark
+//     the page gets a sideways scroll. **The row carries the Home link as well since the
+//     owner's feedback of 2026-10-21 put it in the menu** — a fourth item, about 45 px at
+//     this size — so the breakpoint is the wider one that item needs (the text leaves the row
+//     from about 432 px down, where the three-item row left it from 390 px down) and the row's
+//     own spacing below it is where the fourth item is paid for: the phone block takes the
+//     8 px between the wordmark and the menu to 4 and the items' own 4 px gap to none. Out of
+//     the row is not out of the page, though: the mark
 //     beside the text is decoration with an empty `alt`, so the text is the home link's only
 //     name and no `.site-wordmark-name` rule — in the phone block **or in the base rule above
 //     it**, which is where a `display:none` would hide it at every width — may hide it from a
@@ -191,7 +197,7 @@ export function navLayoutFailures(css, rel = '') {
     fail("the header's gap between the wordmark and the labels is the wide layout's 32 px at 320 px, where the row has none to spare")
   }
 
-  const phone = mediaBlocks(css).filter((block) => /24\.375rem/.test(block.query))
+  const phone = mediaBlocks(css).filter((block) => /27rem/.test(block.query))
   if (phone.length === 0) {
     fail("the stylesheet has no phone breakpoint, so the wordmark's text is drawn beside the labels at 375 px")
   }
@@ -199,6 +205,18 @@ export function navLayoutFailures(css, rel = '') {
   if (phone.length && !hidden) fail("the wordmark's text is drawn beside the labels at 375 px, where the row has no room for it")
   if (hidden && !/position:absolute/.test(hidden)) {
     fail("the wordmark's text is taken out of the row without being taken out of the flow, so the row is still as wide as the word")
+  }
+  // And the row's own spacing below the breakpoint, which is where the fourth item — the Home
+  // link the owner's feedback of 2026-10-21 put in the menu — is paid for on the narrowest
+  // phones. A phone block that leaves the base gap between the wordmark and the menu, and the
+  // items' own 4 px, standing is the three-item row's spacing with a fourth item in it: 16 px
+  // wider than the row the three-item measurement left room for.
+  const phoneRule = (selector) => phone.map((block) => new RegExp(`\\${selector}\\{([^}]*)\\}`).exec(block.body)).find(Boolean)?.[1]
+  if (phone.length && phoneRule('.site-header') === undefined) {
+    fail("the phone block leaves the header's row at the gap it has above the breakpoint, where the row carries four items (Home, since the owner's feedback of 2026-10-21) and a 320 px phone's content box has none to spare")
+  }
+  if (phone.length && phoneRule('.site-nav-groups') === undefined) {
+    fail("the phone block leaves the menu's items 4 px apart, where the row carries four of them and a 320 px phone's content box has none to spare")
   }
   // **Every** `.site-wordmark-name` rule, not only the phone block's: the base rule is the one
   // that is in force at 1280 px, so a `display:none` there takes the name away at every width
@@ -244,6 +262,52 @@ export function navLayoutFailures(css, rel = '') {
   // scroll on a laptop for opening a menu.
   if (!has('.site-nav-group ul', /^right:0$/)) {
     fail("a group's dropdown opens from its group's left edge, so the last group's list runs past the viewport between the breakpoint and the page's maximum width and gives the page a sideways scroll")
+  }
+
+  // The menu's Home link carries the inline padding of the labels it shares the header's row
+  // with, at both widths — and the wide declaration is read **after** the phone's. Both halves
+  // are load-bearing, and the second is the one that is easy to get wrong: `.site-nav a` sets the
+  // whole `padding` shorthand on every link in the menu, and `.site-nav-home > a` is one class
+  // and one type, the same specificity, so the last rule read wins. A `padding-inline` written
+  // into the wide block *above* the base rule — which is where the three labels' own wide
+  // padding lives — is read first and then overwritten by that shorthand, and the link keeps its
+  // phone padding at every width while the labels beside it open to 8 px. That is exactly what
+  // this rule did until the review of 2026-10-21 caught it, and nothing held either declaration.
+  const inlinePadding = (body) => {
+    const own = /(?:^|;)padding-inline:([^;]+)/.exec(`;${body}`)
+    if (own) return own[1].trim()
+    const all = /(?:^|;)padding:([^;]+)/.exec(`;${body}`)
+    if (!all) return null
+    const parts = all[1].trim().split(/\s+/)
+    return parts.length === 1 ? parts[0] : parts[1]
+  }
+  const homeRules = cssRules(css)
+    .map((one, at) => ({ at, wide: (one.conditions ?? []).some((c) => /48rem/.test(c)), body: one.body ?? '', selector: one.selector }))
+    .filter((one) => one.selector === '.site-nav-home>a')
+  const summaryRules = cssRules(css)
+    .map((one) => ({ wide: (one.conditions ?? []).some((c) => /48rem/.test(c)), body: one.body ?? '', selector: one.selector }))
+    .filter((one) => one.selector === '.site-nav-group>details>summary')
+  const labelAt = (isWide) => inlinePadding(summaryRules.find((one) => one.wide === isWide)?.body ?? '')
+  if (homeRules.length === 0) {
+    fail("the stylesheet gives the menu's Home link no padding of its own, so it is drawn with the 8 px a link inside a group's list gets and stands wider than the labels beside it in the header's row")
+  }
+  for (const isWide of [false, true]) {
+    const where = isWide ? 'at a wide viewport' : 'at a phone'
+    const home = homeRules.filter((one) => one.wide === isWide).at(-1)
+    if (home === undefined) {
+      fail(`the menu's Home link carries no inline padding ${where}, so it falls back to the whole \`padding\` shorthand \`.site-nav a\` sets and stands at a different width from the labels beside it in the header's row`)
+      continue
+    }
+    const mine = inlinePadding(home.body)
+    const label = labelAt(isWide)
+    if (mine !== label) {
+      fail(`the menu's Home link is drawn with an inline padding of ${JSON.stringify(mine)} ${where} where the three labels beside it in the header's row get ${JSON.stringify(label)}: the row is measured as one row of four items at one spacing, and a link that disagrees with the labels it shares it with is the fourth item at a width nobody measured`)
+    }
+  }
+  const homeBase = homeRules.find((one) => !one.wide)
+  const homeWide = homeRules.find((one) => one.wide)
+  if (homeBase !== undefined && homeWide !== undefined && homeWide.at < homeBase.at) {
+    fail("the wide viewport's inline padding for the menu's Home link is declared before the phone's, and `.site-nav a` above both sets the whole `padding` shorthand: at one class and one type the last rule read wins, so the wide declaration is dead code and the link keeps its phone padding at every width while the labels beside it open to 8 px")
   }
   return out
 }
@@ -363,8 +427,22 @@ test('every layout refusal fires on the defect it names', () => {
     // The phone's row: the text out of it, and the text out of the eye only.
     [
       'no phone breakpoint at all',
-      TODAY().replaceAll('(width<=24.375rem)', '(width<=99rem)'),
+      TODAY().replaceAll('(width<=27rem)', '(width<=99rem)'),
       /no phone breakpoint/,
+    ],
+    // The fourth item the owner's feedback of 2026-10-21 put in the row (Home) is paid for out
+    // of the row's own spacing below the breakpoint, so both halves of that are held: the rule
+    // that takes the gap between the wordmark and the menu to the phone's 4 px, and the one
+    // that takes the items' own 4 px gap to none.
+    [
+      "the row's spacing left at the gap the breakpoint found",
+      plant('.site-header{gap:var(--space-3xs)}', ''),
+      /leaves the header's row at the gap it has above the breakpoint/,
+    ],
+    [
+      "the menu's items left 4 px apart below the breakpoint",
+      plant('.site-nav-groups{gap:0}', ''),
+      /leaves the menu's items 4 px apart/,
     ],
     [
       "a phone breakpoint that leaves the wordmark's text in the row",
@@ -2106,6 +2184,16 @@ const ABOUT_WIDTH = /(?:min-width|max-width|width\s*[<>]=?)\s*:?\s*[\d.]+(?:rem|
     if (!/\.panel(?![\w-])|#home-panel-/.test(rule.selector)) continue
     const display = declarations(rule)['display']
     if (display === undefined || !rule.query) continue
+    // **One at-rule is let through, and it is not a band.** `@supports selector(:has(*))` is not
+    // a question about the viewport or about the reader's settings: it asks the browser whether
+    // it can read the one selector that says "while no panel is targeted", and the rule inside it
+    // is the block's own no-script state — the first panel, which is what the tabs and the
+    // fragment already show. It is written that way because a selector list is not forgiving: a
+    // browser that cannot answer `:has()` would drop a list carrying it, and take the panels the
+    // other selectors in that list show down with it (the review of 2026-10-21). Every other
+    // at-rule — a width, `prefers-reduced-motion`, anything else — is still refused below, in
+    // both of the two shapes this read has always refused.
+    if (rule.query === '@supports selector(:has(*))') continue
     out.push(
       ABOUT_WIDTH.test(rule.query)
         ? `the slider's panels are given \`display: ${display}\` inside \`${rule.query}\`, a query about the viewport's width, and the panel a reader is shown is the one the fragment names at every width: a query here is a band in which a tab does nothing, or a panel appears without the reader asking for it (the retired band gate, review round 3 item 3e; the owner's ruling of 2026-10-20)`
@@ -2574,12 +2662,15 @@ test('every command-block refusal fires on the defect it names', () => {
 // can be proved by a fixture below rather than only observed on today's markup. It is the
 // contract RF4 names, rewritten twice: once for the two-level menu (the nav is a labelled
 // landmark, its top-level items are `<details>` disclosures, every link in it is keyboard
-// reachable, and the page carries exactly one `aria-current="page"` — on the wordmark when the
-// page being read is the home page, D182 having made the logo the link home, on the menu link
-// otherwise), and once for the owner's brief of 2026-10-19 (item 1), which took the single
+// reachable, and the page carries exactly one `aria-current="page"` — on the menu link to the
+// route being read, which since the owner's feedback of 2026-10-21 is the menu's own Home link
+// on the home page and never the wordmark, which links the same route and carries no mark of
+// its own), and once for the owner's brief of 2026-10-19 (item 1), which took the single
 // "Menu" toggle away: the three group labels are the menu, nothing stands in front of them,
 // and a group's list of links is the `<details>`'s own child, because a closed `<details>` is
-// the one thing that hides it.
+// the one thing that hides it. **The feedback of 2026-10-21 (item 2) put Home in front of the
+// three groups** — "I think we need a 'Home' as the first menu" — so the menu's list opens
+// with a link to `/` named `Home`, on every viewport, and the three groups follow it.
 //
 // The wordmark's text is checked here too, beside the menu it has to share a row with: the
 // phone breakpoint takes `.site-wordmark-name` out of that row, so a wordmark whose text is
@@ -2630,9 +2721,37 @@ export function navFailures(html, rel) {
     }
   }
 
-  // The menu itself: the three groups, as a list directly in the nav. Nothing between the nav
-  // and the groups is what there is to say about a narrow viewport — the labels are the menu.
+  // The menu itself: the way home and then the three groups, as a list directly in the nav.
+  // Nothing between the nav and the items is what there is to say about a narrow viewport — the
+  // items are the menu.
+  //
+  // **Home is the first item** (the owner's feedback of 2026-10-21: "I think we need a 'Home'
+  // as the first menu"), and it is a link rather than a group: home is one page and has nothing
+  // under it, so a disclosure in front of it would be a control that opens nothing. It is read
+  // off the list's own children and not off the whole nav, because "first" is a fact about the
+  // order a reader meets them in, which is the order they are drawn in.
+  const items = [...walk(nav)]
+    .filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-groups'))
+    .flatMap((list) => list.children.filter((child) => child.name !== undefined))
+  const [home] = items
+  const homeLink = (home?.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-home')
+    ? home.children.find((child) => child.name === 'a')
+    : undefined
+  if (homeLink === undefined) {
+    fail("the menu does not open with a Home link (a .site-nav-home item holding an <a>): the owner's feedback of 2026-10-21 asks for Home as the first item of the menu, on a phone and on a wide viewport alike")
+  } else {
+    const href = homeLink.attrs.get('href') ?? ''
+    if (href !== '/') fail(`the menu's Home link points at ${JSON.stringify(href)}, and the way home is "/" (the owner's feedback of 2026-10-21)`)
+    const name = textOf(homeLink).trim()
+    if (name !== 'Home') fail(`the menu's first item is named ${JSON.stringify(name)}, and the owner's feedback of 2026-10-21 names it "Home"`)
+    if (home.children.some((child) => child.name === 'ul' || child.name === 'details')) {
+      fail('the menu\'s Home item holds a list or a disclosure: home is one page, and the item in front of the three groups is a link')
+    }
+  }
   const groups = [...walk(nav)].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-group'))
+  if (items.length !== groups.length + 1) {
+    fail(`the menu's list carries ${items.length} item(s): the Home link and then one item per group, which is ${groups.length + 1} for the ${groups.length} group(s) the menu draws — an item that is neither Home nor a group is a section the menu does not have (D182; the owner's feedback of 2026-10-21)`)
+  }
   if (groups.length !== 3) fail(`the menu carries ${groups.length} groups: the nav is three groups of three (D182)`)
   // One `name` across the groups makes them an exclusive set, without script: opening one
   // dropdown closes the one already open, so two never hang over each other on a wide row.
@@ -2715,14 +2834,19 @@ const FIXTURE_GROUPS = [
 const FIXTURE_WORDMARK =
   '<a class="site-wordmark" href="/" rel="home"><img src="/logo.png" alt="" width="47" height="32" /><span class="site-wordmark-name">Fugaro</span></a>'
 
-function fixtureNav({ label = 'Sections', current = '/docs/' } = {}) {
+function fixtureNav({ label = 'Sections', current = '/docs/', home = { href: '/', name: 'Home' }, homeFirst = true } = {}) {
   const groups = FIXTURE_GROUPS.map(([group, items]) => {
     const links = items
       .map(([href, text]) => `<li><a href="${href}"${href === current ? ' aria-current="page"' : ''}>${text}</a></li>`)
       .join('')
     return `<li class="site-nav-group"><details name="site-nav-group"><summary>${group}</summary><ul>${links}</ul></details></li>`
   }).join('')
-  return `<nav class="site-nav" aria-label="${label}"><ul class="site-nav-groups">${groups}</ul></nav>`
+  // The menu's first item is the way home (the owner's feedback of 2026-10-21), and it is the
+  // item marked current on the home page: `current: '/'` marks the Home link, which is the one
+  // link on the page to the route being read.
+  const wayHome =
+    home === null ? '' : `<li class="site-nav-home"><a href="${home.href}"${current === '/' ? ' aria-current="page"' : ''}>${home.name}</a></li>`
+  return `<nav class="site-nav" aria-label="${label}"><ul class="site-nav-groups">${homeFirst ? wayHome + groups : groups + wayHome}</ul></nav>`
 }
 
 function fixturePage({ nav = fixtureNav(), wordmark = FIXTURE_WORDMARK } = {}) {
@@ -2735,17 +2859,9 @@ function navRefusals(html, rel = 'docs/index.html') {
 
 test('the menu passes its own rule, so each refusal below is the one thing it breaks', () => {
   assert.deepEqual(navRefusals(fixturePage()), [])
-  // The home page: the wordmark is the link home and the one element marked current.
-  assert.deepEqual(
-    navRefusals(
-      fixturePage({
-        nav: fixtureNav({ current: '' }),
-        wordmark: FIXTURE_WORDMARK.replace('rel="home"', 'rel="home" aria-current="page"'),
-      }),
-      'index.html',
-    ),
-    [],
-  )
+  // The home page: the menu's own Home link is the one element marked current, and the wordmark
+  // — the other link to `/` — carries no mark of its own (the owner's feedback of 2026-10-21).
+  assert.deepEqual(navRefusals(fixturePage({ nav: fixtureNav({ current: '/' }) }), 'index.html'), [])
 })
 
 test('every menu refusal fires on the defect it names', () => {
@@ -2769,6 +2885,23 @@ test('every menu refusal fires on the defect it names', () => {
       'a control naming a region outside itself',
       fixturePage({ nav: fixtureNav().replace('<summary>Product</summary>', '<summary aria-controls="site-nav-panel">Product</summary>') }),
       /names "site-nav-panel" with aria-controls/,
+    ],
+    // The menu's first item: the owner's feedback of 2026-10-21 asks for Home at the front of
+    // it, so a menu without it, a menu that has it last, a Home link pointing somewhere else and
+    // a Home link named something else are each refused.
+    ['a menu with no Home item at all', fixturePage({ nav: fixtureNav({ home: null }) }), /does not open with a Home link/],
+    ['the Home item left at the end of the menu', fixturePage({ nav: fixtureNav({ homeFirst: false }) }), /does not open with a Home link/],
+    ['a Home link that points elsewhere', fixturePage({ nav: fixtureNav({ home: { href: '/docs/', name: 'Home' } }) }), /Home link points at "\/docs\/"/],
+    ['a first item named something else', fixturePage({ nav: fixtureNav({ home: { href: '/', name: 'Start' } }) }), /first item is named "Start"/],
+    [
+      'a Home item holding a list of its own',
+      fixturePage({ nav: fixtureNav().replace('<a href="/">Home</a>', '<a href="/">Home</a><ul><li><a href="/faq/">FAQ</a></li></ul>') }),
+      /holds a list or a disclosure/,
+    ],
+    [
+      'a fourth item that is neither Home nor a group',
+      fixturePage({ nav: fixtureNav().replace('</ul></nav>', '<li class="site-nav-extra"><a href="/privacy/">Privacy</a></li></ul></nav>') }),
+      /the menu's list carries 5 item\(s\)/,
     ],
     ['a group with no summary', fixturePage({ nav: fixtureNav().replace('<summary>Product</summary>', '') }), /no <summary> with words on it/],
     ['groups that are not one exclusive set', fixturePage({ nav: fixtureNav().replace('<details name="site-nav-group"><summary>Product', '<details><summary>Product') }), /share one non-empty name/],
@@ -2801,9 +2934,10 @@ test('every menu refusal fires on the defect it names', () => {
   }
 })
 
-test('the menu rule holds the home page to the wordmark as its one current mark', () => {
-  // The home page lists no `/` link, so the rule reads the wordmark: with no mark at all, and
-  // with the mark on something else, it refuses.
+test('the menu rule holds the home page to its Home link as the one current mark', () => {
+  // The home page's `/` link is the menu's first item since the owner's feedback of 2026-10-21,
+  // so that link is what the rule marks: with no mark on the page at all, and with the mark on
+  // something else, it refuses.
   assert.ok(navRefusals(fixturePage({ nav: fixtureNav({ current: '' }) }), 'index.html').some((f) => /marks 0 elements/.test(f)))
   assert.ok(
     navRefusals(
@@ -2813,6 +2947,17 @@ test('the menu rule holds the home page to the wordmark as its one current mark'
       }),
       'index.html',
     ).some((f) => /its own route is "\/"/.test(f)),
+  )
+  // And the wordmark may not carry the mark as well: two links to `/` marked current is two
+  // claims about which page is being read, which is the refusal the plant below names.
+  assert.ok(
+    navRefusals(
+      fixturePage({
+        nav: fixtureNav({ current: '/' }),
+        wordmark: FIXTURE_WORDMARK.replace('rel="home"', 'rel="home" aria-current="page"'),
+      }),
+      'index.html',
+    ).some((f) => /marks 2 elements/.test(f)),
   )
 })
 

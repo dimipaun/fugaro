@@ -1223,7 +1223,7 @@ in the commit that made it.
 ## The owner's ruling of 2026-10-20: the benefits section is headed "Why Fugaro?"
 
 The owner's ruling of 2026-10-20 renames the homepage's "Benefits" heading to exactly `Why
-Fugaro?` — capital W and F, question mark — and the slider's middle tab with it. Nothing else
+Fugaro?` — capital W and F, question mark — and the slider's middle slide with it. Nothing else
 about the section moves.
 
 - **What the ruling settles.** The section renders README.md's `## Why Fugaro`: the four names
@@ -1234,8 +1234,10 @@ about the section moves.
   carried: `data-source="README.md#Why Fugaro"` has cited that heading since the section
   landed.
 - **What changed, and what did not.** `src/components/Benefits.astro`'s `<h2>` reads "Why
-  Fugaro?", and `src/components/HomeSlider.astro`'s `TABS` middle entry carries the same
-  string as its label. The component's and the file's names, the section's `id`
+  Fugaro?", and `src/components/HomeSlider.astro`'s `SLIDES` middle entry carries the same
+  string as its label. (The entry was `TABS` when the ruling was written; the owner's feedback
+  of 2026-10-21, item 3, turned the tabs into the slider, and the list is `SLIDES` now. The
+  string it carries is where it was.) The component's and the file's names, the section's `id`
   (`benefits-title`), its `class` (`home-benefits`), the panel's `id`
   (`home-panel-benefits`) and the `aria-labelledby` that ties the heading to the section are
   all where they were: they are the element's name in the markup, which the stylesheet and the
@@ -1247,16 +1249,16 @@ about the section moves.
   reads the built page's `benefits-title` and refuses anything but the exact string, so the
   question mark is held as well as the words: its case plants the owner's own phrase without
   the question mark, and a second plants the label the section carried before the ruling.
-  `website/test/slider.mjs` already held each panel's own `h2` equal to the label of the tab
-  that opens it — a reader who arrives on a panel reads the label of the tab that opens it —
-  so the tab and the heading are one name by construction, and a rename that reached only one
+  `website/test/slider.mjs` already held each panel's own `h2` equal to the label of the dot
+  that opens it — a reader who arrives on a panel reads the label of the slide it is — so the
+  dot's name and the heading are one name by construction, and a rename that reached only one
   of the two stops the build. The other gates named in the brief pin no string of this
   section: `a11y.mjs` reads the section as a named landmark and its `h3`s as headings under
   one `h2` and never the words; `copy.mjs` reads no heading of the homepage; and
   `stacking.mjs` reads the blocks' order and their rule, not their text. Nothing there moved.
 - **The figures, re-derived rather than argued.** The site figure moved by the **6 bytes** the
   longer string costs in the built page — "Why Fugaro?" is three characters longer than
-  "Benefits" and the string is written twice, once in the `<h2>` and once in the tab — so
+  "Benefits" and the string is written twice, once in the `<h2>` and once in the dot's own name — so
   `website/README.md`'s byte budget is re-derived in the same commit, 988,253 → **988,259**
   bytes across the same 23 files, with the whole-site ceiling following it, 3,705,951 →
   **3,705,972**. One more byte lands on the same branch after it, from the second item of the
@@ -1334,3 +1336,226 @@ the FAQ page and from the file that fed it; nothing else on the page moved.
   from the gates' own measurement — with `(cd website && npm run check)` green over all of the
   gates. **Whether the page looks right without the section is the owner's check at the
   preview** (70a–70c, P9, D190).
+
+## The owner's 2026-10-21 feedback, items 1 and 2: the spark's drawing, and Home in the menu
+
+The owner's feedback of **2026-10-21** is three readings of the live site (fugaro.dev) in one
+message: the icon under the homepage's fourth benefit, a `Home` item at the front of the menu,
+and the homepage's tab strip, which becomes a slider (the section below). This section is items
+1 and 2. As every round here, the readings the feedback does not spell out are recorded, so a
+later reader does not have to guess them from the markup.
+
+- **The spark is drawn symmetric (item 1: "icon for 'The newest tools and models, ready to
+  use' is asymmetrical").** `Benefits.astro` draws the four benefit glyphs as inline SVG in one
+  24 × 24 box with a 2-unit `currentColor` stroke, and the fourth — the four-point star that
+  means the newest tools and models — was drawn as one closed outline of straight edges with
+  the north-west notch left out: `M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11Z` runs from
+  the west point straight to the north one, so six of its seven corners had a corner opposite
+  them and the seventh had none, and the mark was drawn about y = 11 in a box whose middle is
+  y = 12. Both are what a reader sees as the star leaning. The drawing is now
+  `M12 4l2.2 5.8L20 12l-5.8 2.2L12 20l-2.2-5.8L4 12l5.8-2.2Z`: the same four points, the same
+  four notches, the same 16-unit span, the same stroke, and the mark centred on (12, 12) like
+  every other glyph of the set. **The meaning is untouched** — a spark, the newest tools and
+  models, ready to use — and so are the set's size and stroke.
+- **The rule that would have caught it, and its two plants.** `website/test/home.mjs`'s
+  `benefitFailures` now holds a glyph that is *drawn as one closed outline of straight edges*
+  to being symmetric about both of the lines through its own middle, and to that middle being
+  the middle of the box. The rule is written over the drawing and not over the star by name —
+  `outlineOf` reads the path's own commands — so it is a fact about the shape a glyph is rather
+  than a description of today's markup, and a glyph drawn with curves or in several strokes (the
+  shield, the arrows, the team) is not a mark it has anything to say about. Two defects are
+  planted beside the fixture section: **the star as it shipped** (refused twice for the missing
+  corner, at (9.8, 8.8), and once for the middle at (12, 11)) and **a symmetric star a unit off
+  the box's middle** (refused for the middle alone). Both were also proved by hand against the
+  real page: with the old drawing in `Benefits.astro` and the artifact rebuilt, the case that
+  reads the built homepage fails naming the corner; with the fix in place it passes.
+- **Home is the menu's first item (item 2: "I think we need a 'Home' as the first menu").**
+  D182 took Home out of the menu and left the wordmark as the one link to `/`; the item is back
+  as a plain `<li class="site-nav-home"><a href="/">Home</a></li>` in front of the three groups,
+  in the same list, at every width — the "first menu" is the first item of the one menu the site
+  has, and the phone shows that menu rather than a collapsed version of it (the 2026-10-19
+  amendment). **The wordmark stays the way home it has always been**, so `/` is listed twice and
+  the two links say the same thing; what moves is the current-page mark, which is now the menu's
+  Home link on the home page and never the wordmark, because a page carries exactly one
+  `aria-current="page"` (RF4) and the mark belongs on the link a reader looks for in a menu.
+  Home is a link and not a group: home is one page and has nothing under it, so a disclosure in
+  front of it would be a control that opens nothing, and it needs no script at all.
+- **The phone row carries four items, and the fourth one moves the breakpoint and the row's
+  spacing.** The 2026-10-19 round measured the row rather than estimating it: at 381 px the
+  wordmark's text plus the three labels was a few pixels wider than the header's content box in
+  the font the built site falls back to, so the text left the row below **390 px**. The Home
+  link and its gap are about 45 px at that size, and the same arithmetic puts the cut at
+  **432 px (27 rem)**, rounded up from the 426 px the three-item figure implies. Below the cut
+  the row's own spacing is what the fourth item is paid for: the 8 px between the wordmark and
+  the menu becomes 4, and the items stand with no gap between them — their own 4 px padding
+  either side is what separates them, which is the 8 px a phone's labels have always been drawn
+  with. That is 16 px of the 45 px back, and it is the part of the row that is neither the mark
+  (the 2026-10-19 ruling keeps it) nor the labels (their 44 px height is the brief's tap
+  target).
+- **The gates, and what the live check has to settle.** `website/test/base-styles.mjs`'s
+  `navFailures` holds the item's position (read off the list's own children, because "first" is
+  the order a reader meets them in), its route and its name, refuses a Home item that holds a
+  list or a disclosure, and refuses an item that is neither Home nor a group; `navLayoutFailures`
+  holds the phone block's two rules, because a phone block that leaves the row's spacing standing
+  is the three-item row's spacing with a fourth item in it. Each rule keeps a plant: a menu with
+  no Home item, one with Home last, a Home link pointing elsewhere, a first item named something
+  else, a Home item holding a list, a fifth item that is neither, and the two spacing rules
+  removed. **Whether the row fits a 320 px phone's content box is a rendered measurement no
+  hermetic test can take**: it is the owner's check 70a, exactly as the three-item row's fit was,
+  and the arithmetic above says the row needs about 12 px more than a 320 px content box has on
+  the label widths the 2026-10-19 round measured in a browser (65, 83.5 and 59.3 px at 375 px).
+  If that check shows a sideways scroll, the levers are named in the code: the mark, the labels'
+  own 4 px padding, and the breakpoint.
+- **The bytes, re-derived in the commits that moved them.** The spark's drawing is 8 bytes onto
+  the homepage's markup and so onto the site figure, and it was re-derived in its own commit —
+  which also paid 12,799 bytes the stated figure had drifted by, the `cli-reference` rewrites of
+  the CLI rounds (#789, #832) landing after the screenshots round re-derived (the running list in
+  `website/README.md` records both, and D192's exact derivation runs only under
+  `FUGARO_DERIVE_BUDGETS=1`, which CI does not set). The Home item is markup **and** stylesheet
+  inlined into every page, so its move is uniform and large for one link: 170 bytes onto each of
+  the 11 pages (119 of stylesheet, 51 of markup — the homepage's own current-page mark moves from
+  the wordmark to the new link, which is why its markup moves by the same 51), 1,870 onto the
+  site figure and 170 onto the page weight, all re-derived in its own commit. The script is
+  untouched by both, and the count of files in `dist/` stays 28.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round and this run cannot see a picture. What was read is the built
+  artifact and the stylesheet, through the gates above, with `(cd website && npm run check)`
+  green over all 415 cases. **Whether the star now reads as symmetric and whether the phone's
+  header row fits at 320 px are the owner's check at the preview** (70a–70c, P9, D190).
+
+## The owner's 2026-10-21 feedback, item 3: the tabs become a slider
+
+The third reading of the owner's feedback of 2026-10-21 is the homepage's middle block:
+"**'Say it. Get pull requests.': can we auto-rotate between tabs every few seconds? Like a
+slider? Maybe a slider would work better than tabs?**" The 2026-10-19 draft approved the block as
+a strip of three tabs; this section is what changed, why, and what the gates now read instead.
+The draft's own section above still describes the shape the block was approved in — the three
+slides, the three panels, the fragment links and the no-script switching are all still exactly
+what it says — and the strip of tabs is the one part of it that is gone.
+
+- **The controls are a row of dots and two step controls.** `HomeSlider.astro` renders
+  `.slider-controls` — a previous button, a list of three dots, a next button — above the
+  panels. Each dot is `<a class="slider-dot" href="#home-panel-…">` with an empty body and its
+  own `aria-label` ("Slide 2 of 3: Why Fugaro?"): the circle a reader taps is a drawing, so the
+  name a screen reader reads is the whole of what the dot says, and it says both the slide and
+  the reader's place in the three. **The dots are fragment links and not buttons**, which is the
+  2026-10-19 section's own decision kept: the block switches with no JavaScript at all, every
+  panel's text is in the HTML a reader receives, and the no-script state of the block is a
+  stylesheet rule rather than a script. **The two step controls are buttons**, because they step
+  a block rather than going anywhere, and the markup emits them `hidden` — a control rendered
+  visible by the markup is a button that does nothing for a reader whose browser runs no script
+  (D183's "no broken control"), so the site's one script is what reveals them.
+- **The script drives the block, and the stylesheet stands the no-script state down while it
+  does.** `public/scripts/site.js` gains a `panels()` section (it is `panels(block)` since the
+  console page's slider took the name `slider()` in the feedback-B round; see the note on the two
+  sliders being one file): it finds the block by `[data-slider]`, writes the name of the slide on
+  screen to the block's `data-active`, and the stylesheet's
+  `.home-slider[data-active='easy'] #home-panel-easy`-style rules are what show the panel it
+  belongs to. The no-script rules — the `:target` one and the one that shows the first panel
+  while nothing is targeted — are scoped `.home-slider:not([data-active])`, and that scoping is
+  load-bearing rather than tidiness: a reader who arrived on `#home-panel-see` and then let the
+  block advance would otherwise have **two** panels shown at once. The reason is not the order
+  the two rules are written in — the `:target` selector is (0,4,0), one class and three
+  class-level parts, where the script's own rule is (1,2,0), and it wins on the id whatever the
+  order — it is that both rules would be in force at once, each naming a different panel and each
+  saying `display: block`. The script also marks the dot of the slide on screen with
+  `aria-current="true"`, which the stylesheet draws in the accent — the mark a reader has instead
+  of a text label.
+- **The clock, and the four things that stop it.** The block advances every six seconds
+  (`AUTO_MS = 6000`, the six seconds both of the site's sliders stand a slide for, declared once
+  with the console page's slider) and wraps from the third slide back to the first. It is held
+  while the pointer is over the block or the keyboard's focus is inside it (a reader who is
+  reading must not have the slide move under them) — **two holds and not one**, because a pointer
+  leaving the block and a focus leaving it are different readers: one flag for both would let a
+  resting pointer's drifting off the block start the clock under a reader who is tabbing through
+  the dots, and let the focus's leaving start it under a reader whose pointer is resting on a
+  control. It does not run while the page is not being shown at all (`document.hidden`), and it
+  does not run for a reader whose system asks for less motion (`prefers-reduced-motion: reduce`)
+  — for that reader the dots, the two controls and the arrow keys all still work, because what
+  they asked for is that nothing move **on its own**. That query is asked once and **watched**,
+  the way the console slider's and the menu's own queries are, because a visitor can turn the
+  setting on without reloading: a query read only at load would give that reader one more
+  advance before the block settled. A click
+  on a dot is `preventDefault`ed: with the script running the block's state is its own, and an
+  address that kept the fragment would send the reader back to that slide on a reload. The script
+  never writes to the address. Arrow keys work on the dots and on the two controls, and every
+  other key is left to the browser, because Tab has to reach the next control.
+- **The stub DOMs the whole file runs in, and why the clock is behind a short circuit.**
+  `website/test/copy.mjs`, `website/test/consent.mjs` and `website/test/nav-hover.mjs` each run
+  the real `site.js` against the built homepage, and none of them is a browser: they have no
+  `document.hidden` and two of them have no `matchMedia`. So `still()` reads
+  `over || inside || !pageShown() || calm()`, and `pageShown()` is `document.hidden === false` —
+  a document that cannot answer is a document no clock is started in, which is both the correct
+  reading of a browser that does not answer and the reason those three gates keep their timer and
+  query assertions unchanged. `website/test/consent.mjs`'s two selector maps did have to learn the
+  block: that stub refuses a selector it does not read rather than matching nothing, so the five
+  `data-slider` attributes are written into it, and the file's own comment says why.
+- **What the gates read now.** `website/test/slider.mjs` is rewritten around the slider, and its
+  six rules are: the three slides and the three dots paired (each dot a fragment link to the
+  panel it opens, named after it, announced with its place in the three, and the panel headed
+  with the same label); the stylesheet read in **both** states, one selector at a time so a rule
+  that marks one dot for another dot's panel is refused rather than counted as a pair present;
+  the block held to carrying no script and the script to naming no id and no class of the block
+  (the two files are joined by the `data-` attributes alone); the 44 px targets, the wrapping
+  rows, the focus ring and the 360 px content box; **the behaviour, run** — the file the site
+  ships, against the built homepage, in a fourth stub DOM written for this gate, with seven
+  cases (the first slide and both controls revealed; the clock stepping and wrapping; the hold
+  under the pointer and under the keyboard's focus; a page nobody is shown; less motion; the
+  dots, the controls and the arrow keys, and the address left alone; a reader arriving on a
+  fragment) and each one planted against the line of the script it reads, with the plant
+  asserted to parse; and the steps' provenance, unchanged. `website/test/home.mjs`'s gate over
+  the block reads dots where it read tabs, `fold.mjs`'s fixture and `stacking.mjs`'s class list
+  follow the new markup, and `website/test/budget.mjs`'s ceilings are re-derived in the commit
+  that moved the bytes.
+- **The bytes.** The block is only on the homepage, so its own bytes land there and nowhere
+  else: **2,186 onto the homepage's HTML** — 1,054 of stylesheet and 1,132 of markup — and
+  **13,211 onto the script**, which every page loads once. The page weight (the console page,
+  still the heaviest) moves by the script alone and by the fourth item Home put in the header's
+  row, 411,896 → **425,277**; the site figure by those and by the star's 8 and Home's 1,870,
+  1,412,642 → **1,429,917**; and all three of the README's byte budgets are re-derived in the
+  commit that ships the script (D192). The figures are the merged round's: the console page's
+  slider (#841) landed on `main` while this round was open, and the two rounds' bytes are one
+  build. The count of files in `dist/` stays **28** and the count of pages **11**, and the
+  homepage's own words go 468 → **461**, because a dot is a circle with no text in it: the three
+  labels the tabs showed are now the dots' names, which a screen reader reads and the page does
+  not draw.
+- **The review round's bytes.** The block's review (2026-10-21) moved the three figures again and
+  again by the block's own bytes alone: `site.js` 63,925 → **66,189** (+2,264), the page weight
+  425,277 → **427,596** and the site figure 1,429,917 → **1,432,910** — the script's 2,264 once
+  each, plus **55 bytes of stylesheet onto every one of the 11 pages** (605 in all), of which the
+  homepage's own stylesheet is 124 more. No page's markup was rewritten and no page's words
+  moved, so the count of files in `dist/` stays **28** and the count of pages **11**. The five
+  corrections are in `website/README.md`'s round above this one; two of them changed what this
+  record itself says, and both are corrected in place here: the clock's holds are two and not
+  one, and the specificity the `:not([data-active])` scoping is defended by.
+- **The two sliders are one script file, and they share four names and nothing else.** The
+  console page's slider (#841) landed on `main` while this round was open, so
+  `public/scripts/site.js` carries both: **one query** for `[data-slider]` in `start()`, and every
+  block it finds handed to both drivers — the console's `slider(section)`, which returns at once
+  from a block with no `.screens-track` in it, and this round's `panels(block)`, which returns at
+  once from a block with no panels. What the two share is what the two blocks have to agree on:
+  the block's attribute, the two step-control attributes, the six seconds a slide stands
+  (`AUTO_MS`) and the reduced-motion query (`LESS_MOTION`), declared once with the console's
+  section, with `calm()` reading that one query for this slider. **Their clocks stay their own**,
+  because what they drive is not the same thing: the console's is a snapping scroll container
+  whose position is read back from `scrollLeft`, and this one is a set of panels the block names
+  in `data-active`. Two of this round's names had to move: its `slider()` is the console's
+  function, so it is `panels(block)`, and its page-visibility reading is `pageShown()` because
+  the console's section already has a `shown()` of its own — the slide its track is on.
+- **The live check, and the one line of it that had to change with the page.**
+  `docs/gcp-live-checklist.md`'s check 70b reads the block, so its Method now reads `SLIDES` out
+  of the component and the clock out of the script, and its step 2 reads dots rather than tabs.
+  **The step also tells the owner to put the pointer over the block before reading a panel**:
+  the block moves on by itself six seconds after the page lands, and a slide that is being read
+  stays where it is only while the pointer or the focus is inside it — a live check that took
+  longer than six seconds to read a panel would otherwise be reading a different panel than the
+  one it chose.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round and this run cannot see a picture. What was read is the built
+  artifact, the stylesheet and the script, through the gates above, with `(cd website && npm run
+  check)` green over all 430 cases — 429 pass and one skipped. That is the round as merged with
+  the console page's slider (#841): the two sliders are one script file now, and the merge's own
+  run is what the count is. **Whether the slider reads as a slider — the look of the dots, the
+  feel of the six seconds, whether the motion is too fast or too slow — is the owner's check**
+  (70a–70c, P9, D190), and the number to move first if it is wrong is `AUTO_MS` in
+  `public/scripts/site.js`.

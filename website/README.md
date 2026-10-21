@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,412,642 bytes in a checkout with no tags** and to **1,412,642 bytes with the
+  commit builds to **1,432,910 bytes in a checkout with no tags** and to **1,432,910 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -768,23 +768,138 @@ added or removed without this sentence moving fails there:
     read those two numbers against each other and against nothing else, so a pair that agreed
     with itself and disagreed with the site passed the case that exists to catch exactly it.
 
-  - **JavaScript per page:** 190,179 bytes. Three times 63,393: the one script the site ships,
-    `public/scripts/site.js` (50,714 bytes), plus 25 %. What the file carries is the copy
-    control, the menu, the consent gate and the console page's slider. **The slider's half is
-    the feedback-B round's, and it is the only JavaScript the site has gained since the menu**
-    (the owner's feedback of 2026-10-21): the bar the markup emits `hidden` — a Previous arrow,
-    the count and
-    a Next arrow — is revealed and driven here, the count (`n / N`) and the dot the reader is on
-    are written from the track's own scroll position (so a trackpad swipe reads the same as a
-    press), an arrow or a dot press moves the track round its ends, and a slide advances every
-    six seconds while nobody is reading — stopping for a pointer over the slider, a focus inside
-    it, a tab in the background, and a visitor whose system asks for less motion
-    (`prefers-reduced-motion: reduce`, read at load and watched after it). **The review round
-    above is the file's last 1,153 bytes**: a move the browser may not animate (`behavior:
-    'instant'`, since `'auto'` is the track's own `scroll-behavior: smooth`) and a first reading
-    taken from the track rather than from the first slide.
-    `test/console-screens.mjs` runs the file in `test/lib/dom.mjs`'s stub browser to hold that
-    half, and refuses a planted defect in each part of it. What the file carries of the menu, in
+  - **The four-point star under "The newest tools and models, ready to use" is drawn symmetric**
+    (the owner's feedback of 2026-10-21: "icon for 'The newest tools and models, ready to use' is
+    asymmetrical"). The glyph is the same four points, the same four notches, the same 16-unit
+    span and the same 2-unit `currentColor` stroke: the drawing gains the north-west notch it was
+    missing — a `l5.8-2.2` where the outline ran straight from the west point to the north one,
+    which is the whole of why a reader saw a star leaning — and moves onto the middle of its
+    24×24 box, where every other glyph of the set sits. That is **8 bytes** onto the homepage's
+    markup and so onto the site figure, with the page weight and the script where they were and no
+    page's words moved, and the count of files in `dist/` stays **28**. `test/home.mjs` carries the
+    rule the drawing is now held to — a glyph drawn as one closed outline of straight edges is
+    symmetric about both of the lines through its own middle and that middle is the middle of the
+    box — planted against the star as it shipped, so the fix and the check that would have caught
+    it arrive together.
+  - **Home is the menu's first item** (the owner's feedback of 2026-10-21: "I think we need a
+    'Home' as the first menu"). The item is a link in the menu's own list, in front of the three
+    groups, on every page and at every width, and the phone block's two rules are what pay for a
+    fourth item in the header's row — the gap between the wordmark and the menu goes to the
+    phone's 4 px and the items stand with no gap between them — with the wordmark's text leaving
+    that row from 432 px down rather than from 390 px down, which is the same arithmetic with one
+    more item in it. **Both halves are inlined into every page**, so the move is uniform and large
+    for a single link: **170 bytes onto each of the 11 pages** — 119 of stylesheet and 51 of
+    markup — which is **1,870 bytes** onto the site figure and **170** onto the page weight (the
+    homepage's own `aria-current="page"` moves from the wordmark to the new link, which is why its
+    markup moves by the same 51 as every other page's). The script is untouched — the menu still
+    opens and closes with JavaScript off, and Home is a link, so it needs none — and the count of
+    files in `dist/` stays **28**. `test/base-styles.mjs` holds the item's position, its route and
+    its name and refuses a Home item that holds a list, and holds the phone block's two rules to
+    the row the fourth item was measured into.
+  - **"Say it. Get pull requests." is a slider** (the owner's feedback of 2026-10-21: "can we
+    auto-rotate between tabs every few seconds? Like a slider? Maybe a slider would work better
+    than tabs?"). The same three slides and the same three panels, with the strip of tabs
+    replaced by a row of three dots — each one a fragment link to the panel it opens, so the
+    block still switches with no script — and a pair of step controls the markup emits `hidden`
+    and the site's script reveals. The script gains the clock (six seconds a slide), the wrap,
+    the hold while a pointer or the keyboard's focus is in the block, the stop while the page is
+    not being shown and the stop for a reader who has asked their system for less motion, and it
+    writes the slide on screen to the block's `data-active` for the stylesheet to draw. **The
+    block is only on the homepage, so its own bytes land there and nowhere else**: **2,186 bytes**
+    onto the homepage's HTML — **1,054** of stylesheet and **1,132** of markup — and **13,211**
+    onto the script, which every page loads once, so the page weight moves by the script alone and
+    the site figure by both. The count of files in `dist/` stays **28**, the count of pages
+    **11**, and the homepage's own words go 468 → **461** — a dot is a circle with no text in it,
+    and the three labels the tabs showed are now the dots' own names, which a screen reader reads
+    and the page does not draw. **All three figures are re-derived here**, from the gates' own
+    build, in the commit that moves those bytes (D192), and **this round's three parts are the
+    whole of the move**: the script 50,714 → **63,925 bytes**, the page weight 411,896 →
+    **425,277**, and the site figure 1,412,642 → **1,429,917** — the 8 of the star, the 1,870 of
+    Home, the 2,186 of this block's own markup, and the 13,211 of the script it added.
+    `test/slider.mjs` holds the block's shape, the two states of the stylesheet, the target size
+    of a dot and of a step control, and the behaviour itself — the file the site ships, run
+    against the built homepage in a stub DOM — with each case planted against the line of the
+    script it reads.
+
+  - **The homepage slider's review round** (the review of the round above, 2026-10-21) is five
+    corrections to that one block, and **the whole move is the block's own**: the script's bytes
+    and the stylesheet's, with no page's markup rewritten and no page's words moved. `site.js`
+    goes 63,925 → **66,189 bytes** (+2,264); the page weight 425,277 → **427,596** and the site
+    figure 1,429,917 → **1,432,910** — the script's 2,264 once each, plus **55 bytes of
+    stylesheet onto every one of the 11 pages** (605 in all), so the console page's HTML goes
+    31,819 → **31,874** and the homepage's 50,629 → **50,808**, its own extra 124 being the
+    block's own stylesheet. No file was added or removed, so the count of files in `dist/` stays
+    **28** and the count of pages **11**. The five are:
+    - **The Home link's padding at the wide width.** The rule setting the link's inline padding
+      stood *below* the wide block at the same specificity, so the wide block's 8 px was dead
+      code and Home kept its phone 4 px at every width while the three labels beside it in the
+      same row opened to 8 — the opposite of what the rule's own comment said. The 8 px is in a
+      media block after the base rule now, and `test/base-styles.mjs` holds the link's inline
+      padding to the labels' own at both widths **and** the order of the two declarations, so a
+      wide rule written back above the base one is refused rather than counted as present.
+    - **The pointer's hold and the keyboard's hold are two flags, not one.** A single `held`
+      boolean meant `pointerleave` re-armed the clock while the focus was still inside the block,
+      and `focusout` did the same under a resting pointer: a reader who clicked a dot and moved
+      the pointer off the block lost the panel they chose after six seconds. They are `over` and
+      `inside` now, each releasing its own hold and no other, and a focus that moves from one dot
+      to the next never leaves the block at all. `test/slider.mjs` gained the mixed ordering —
+      pointer away under a focus, focus away under a pointer — which the round it replaces tested
+      each hold in isolation and could not see.
+    - **The reduced-motion query is watched, not sampled.** `calm()` re-read the query on every
+      `arm()` but never subscribed to `change`, so a reader who turned less motion on while the
+      block sat idle got one more advance before it settled — where the console slider and the
+      menu both watch their queries already. Each block subscribes once, on its first arm, and
+      only where the page is being shown, which is what keeps a stub that cannot answer
+      `document.hidden` from being asked anything. `test/slider.mjs`'s stub answers a query's
+      listeners now, and the new case turns less motion on and off under a running clock.
+    - **A `:has()` selector no longer stands in a list beside plain ones.** The no-script
+      first-panel rule listed a `:target` selector beside a `:has()` selector, and a selector
+      list is not forgiving: a browser too old to answer `:has()` drops the whole rule — and
+      because the build merges rules that carry identical declarations, the three *scripted*
+      panel rules had been merged into that same rule, so such a browser lost the working slider
+      too and not only the no-script state. The `:has()` selectors are in
+      `@supports selector(:has(*))` rules of their own; **a plain split in the source is not
+      enough**, because the minifier merges the two halves straight back, which is why the
+      at-rule boundary is the fix. The same defect stood in the rule that marks the current dot,
+      found by the new gate rather than by the review. `test/slider.mjs` now refuses any rule
+      whose selector list mixes the two.
+    - **The design record's specificity.** `docs/website/redesign/README.md` claimed the
+      `:target` selector and the script's own rule were both (1,2,0) and the earlier would win.
+      They are (0,4,0) and (1,2,0): the script's rule wins on the id whatever the order, and the
+      `:not([data-active])` scoping is load-bearing for the reason the record gave — without it a
+      still-targeted panel and the script's panel would both be displayed — rather than because
+      of the order. The record's clock bullet and its `still()` reading are rewritten with it.
+    `test/base-styles.mjs`'s band gate reads the new `@supports` rule through one narrow
+    exemption, for that query string alone: a capability gate is not a width band, and every
+    other at-rule is refused there as before.
+
+  - **JavaScript per page:** 248,211 bytes. Three times 82,737: the one script the site ships,
+    `public/scripts/site.js` (66,189 bytes), plus 25 %. What the file carries is the copy
+    control, the menu, the consent gate and **both of the site's sliders** — the console page's,
+    which the feedback-B round above added, and the homepage's, which the feedback-A round above
+    it added.
+    The console's half is the feedback-B round's, and it was the first JavaScript the site had
+    gained since the menu (the owner's feedback of 2026-10-21): the bar the markup emits
+    `hidden` — a Previous arrow, the count and a Next arrow — is revealed and driven here, the
+    count (`n / N`) and the dot the reader is on are written from the track's own scroll
+    position (so a trackpad swipe reads the same as a press), an arrow or a dot press moves the
+    track round its ends, and a slide advances every six seconds while nobody is reading —
+    stopping for a pointer over the slider, a focus inside it, a tab in the background, and a
+    visitor whose system asks for less motion (`prefers-reduced-motion: reduce`, read at load
+    and watched after it). **The review round above is that half's last 1,153 bytes**: a move the
+    browser may not animate (`behavior: 'instant'`, since `'auto'` is the track's own
+    `scroll-behavior: smooth`) and a first reading taken from the track rather than from the
+    first slide. `test/console-screens.mjs` runs the file in `test/lib/dom.mjs`'s stub browser
+    to hold that half, and refuses a planted defect in each part of it. **The homepage's half is
+    the feedback-A round's 13,211 bytes, and the review round below is the last this file has
+    gained**:
+    `test/slider.mjs` runs the same file against the built homepage in a stub DOM of its own, to
+    hold the clock, the wrap, the two holds and the mark on the dot, each case planted against
+    the line of the script it reads. **The two halves share the four names they have to agree on
+    and nothing else** — the block's attribute, the two step controls, the six seconds and the
+    motion query are declared once, with the console's section, and each half drives its own kind
+    of block: a scroll container whose position is read back, and a set of panels the block names.
+    What the file carries of the menu, in
     the detail `test/nav-hover.mjs` holds it
     to: the hover behaviour is bound only where `matchMedia` says the device's pointer hovers
     and only for a pointer that says it is a mouse or a pen — a tap sends a pointer of its
@@ -806,10 +921,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,544,610 bytes. Three times 514,870: the heaviest page, the
-    console page, at 411,896 bytes (its HTML, the four screenshots it renders, and the files
+  - **Page weight per page:** 1,603,485 bytes. Three times 534,495: the heaviest page, the
+    console page, at 427,596 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,297,409 bytes. Three times 1,765,803 (every file in `dist/`, 1,412,642
+  - **Whole site:** 5,373,414 bytes. Three times 1,791,138 (every file in `dist/`, 1,432,910
     bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 

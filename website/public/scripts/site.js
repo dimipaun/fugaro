@@ -40,6 +40,19 @@
  *     the markup emits `hidden`, and an advance every six seconds that stops while somebody is
  *     reading. With no script the bar is never drawn, the four screenshots are the page, and
  *     the four dots are four links.
+ *   - **The homepage's slider (the owner's feedback of 2026-10-21, item 3).** The block's three
+ *     slides are three panels that are all in the markup, and the three dots that choose
+ *     between them are fragment links the stylesheet's `:target` rules answer — so a reader
+ *     whose browser runs no script has the whole block and every slide in it. What this adds is
+ *     the clock: the block advances every six seconds, stops while the reader is in it (a
+ *     pointer over it or the keyboard's focus inside it) and while the page is not being shown,
+ *     steps back and forward on the two buttons the markup emits `hidden`, answers the arrow
+ *     keys, and marks the dot of the slide on screen with `aria-current`. A reader who has
+ *     asked their system for less motion gets none of the clock at all — the slides, the dots
+ *     and the two buttons still work, and nothing moves on its own. The two sliders share the
+ *     four names they have to agree on and no more (the section below), because what each one
+ *     drives is different: this one moves panels the block names, and the console's moves a
+ *     scroll container the block reads back.
  *   - **The consent banner, and the analytics gate behind it (W1.12, W3.2; D93, D106).** The
  *     banner's two buttons write one decision to `localStorage`; this file reveals the banner
  *     when no decision is stored, and — only when that decision is `granted` — loads Google's
@@ -67,8 +80,10 @@
  *
  * Nothing here is load-bearing: the commands are in the markup in full, and every one of
  * them is readable, selectable and copyable by hand without this file ever arriving; the
- * menu is a `<details>` at both levels and needs none of this to work; and with no script the
- * banner is not shown at all, so a reader who runs none is measured by nothing.
+ * menu is a `<details>` at both levels and needs none of this to work; the slider's three
+ * slides are in the markup and the dots that open them are links, so the block works with no
+ * script and only its clock is lost; and with no script the banner is not shown at all, so a
+ * reader who runs none is measured by nothing.
  *
  * It is loaded with `defer` from the base layout, so it runs once the document has been
  * parsed and every block and banner it looks for is in the tree. The only thing it stores is
@@ -504,25 +519,38 @@
   // write any of it: with no script the pictures are all in the document, in order, with their
   // captions, and the four dots are four links.
 
+  // The four names **both** of the site's sliders are found and driven by, declared once here
+  // because the two blocks are the same two blocks to whoever reads the markup: `[data-slider]`
+  // is the one attribute a page marks a slider with, the two step-control attributes are the two
+  // controls a slider's markup emits `hidden`, and the six seconds and the motion query are what
+  // the owner asked of both. What the two do with them is not shared, and the two sections say
+  // why: this one moves a scroll container and reads its position back, and the homepage's below
+  // moves panels the block names.
   var SLIDER = '[data-slider]'
-  var SLIDER_BAR = '[data-slider-bar]'
-  var SLIDER_TRACK = '.screens-track'
-  var SLIDER_SLIDE = '.screen'
-  var SLIDER_DOT = '.screen-dot'
   var SLIDER_PREV = '[data-slider-prev]'
   var SLIDER_NEXT = '[data-slider-next]'
-  var SLIDER_COUNT = '[data-slider-counter]'
 
   // How long a slide stands before the next one. Six seconds: long enough to look at a
   // screenshot the size of a page, short enough that a reader who is watching can see that the
-  // slider is a slider (the owner's "~6s").
+  // slider is a slider (the owner's "~6s"). The homepage's slider stands each of its slides for
+  // the same six seconds, which is why this is one constant and not two.
   var AUTO_MS = 6000
 
   // The query a visitor's system answers when it has asked for less motion. `base.css` is where
   // the site honours that for the stylesheet's own motion (D105); a carousel is motion no
   // stylesheet can switch off, so it is honoured here — and watched after load, the way the
   // menu watches its own query, because a visitor can turn the setting on without reloading.
+  // The homepage's slider reads the same query through `calm()` below, and neither slider moves
+  // on its own for a reader who answered it.
   var LESS_MOTION = '(prefers-reduced-motion: reduce)'
+
+  // The console slider's own three, and the two the bar is drawn from: the track it scrolls,
+  // the slides it counts, the dots it marks, the bar itself and the count in it.
+  var SLIDER_BAR = '[data-slider-bar]'
+  var SLIDER_TRACK = '.screens-track'
+  var SLIDER_SLIDE = '.screen'
+  var SLIDER_DOT = '.screen-dot'
+  var SLIDER_COUNT = '[data-slider-counter]'
 
   function slider(section) {
     var track = section.querySelector(SLIDER_TRACK)
@@ -947,14 +975,284 @@
     analytics(banner)
   }
 
+  // ---- the homepage's slider (the owner's feedback of 2026-10-21, item 3) -------------------
+
+  // The block, and the three things in it this file drives that are this slider's own: the
+  // slides (the panels, each carrying its own name), the dots (fragment links, one per slide),
+  // and the name the slide on screen is written under. Every one of them is a presence-only
+  // attribute selector, because the three hand-written stub DOMs `website/test/copy.mjs`,
+  // `website/test/consent.mjs` and `website/test/nav-hover.mjs` run this whole file and read
+  // selectors of that shape and no other (`website/test/slider.mjs` runs it against the built
+  // homepage and reads the behaviour out of it).
+  //
+  // The block itself, the two step controls, the six seconds a slide stands and the motion
+  // query are **not** declared here: they are the four names this slider and the console's agree
+  // on, and they are declared once, with the console's section above.
+  var SLIDE = '[data-slider-slide]'
+  var DOT = '[data-slider-dot]'
+
+  // The name the slide on screen is written under, on the block itself: the stylesheet shows
+  // the panel whose name matches it, and it is what stands the no-script `:target` rules down
+  // once this file is driving.
+  var ACTIVE = 'data-active'
+
+  /**
+   * Whether the page is in front of the reader. A tab nobody is looking at is a tab nobody is
+   * reading, and a block that advanced behind the reader's back would have moved on by the time
+   * they came back — so the clock runs only while the page is shown, and a document that cannot
+   * answer is not one this file starts a clock in. Every browser that runs this file answers
+   * (`document.hidden` has been a boolean everywhere since 2013), and a browser that does not
+   * loses the clock and keeps the slides, the dots and the two step controls.
+   *
+   * The console slider above asks the same question directly (`!document.hidden`), which is the
+   * same answer in a browser that has one; the name here is the homepage's own, and the
+   * `shown()` in the console's section is a different reading of a different thing — the slide
+   * its track is on — which is why this one is called what it is.
+   */
+  function pageShown() {
+    return document.hidden === false
+  }
+
+  // The reader's own answer on less motion, where the browser can be asked at all: the query is
+  // the console slider's own `LESS_MOTION`, which both sliders read. It is asked by the first
+  // block that is in a position to consult it — `watchMotion()` below is what asks, and it asks
+  // only of a page that is being shown — and it is kept here rather than per block, because the
+  // answer is the page's and not a block's. A browser with no `matchMedia` to ask cannot answer,
+  // and no answer reads as "no": the block moves, as it does everywhere else in this file, and no
+  // clock is held back by a question nobody could put.
+  var motion = null
+
+  /** Whether the reader has asked for less motion, as that query last answered. The block still
+   *  slides when the reader chooses a slide — that is motion they asked for by clicking — and
+   *  nothing moves on its own. */
+  function calm() {
+    return !!(motion && motion.matches)
+  }
+
+  /**
+   * One block, driven. The slides are the panels in the order they are written, the dots are
+   * the links to them, and the two step controls move one slide either way and wrap.
+   *
+   * Nothing here is required for a slide to be reachable: with the file absent, the dots are
+   * links that open the panel each one names, and the first panel is the one the stylesheet
+   * shows. This is the clock, the two controls and the mark on the current dot.
+   *
+   * The block is handed in by `start()`, which found every `[data-slider]` on the page once and
+   * gave each one to both of this file's sliders. A block with no panels in it — the console
+   * page's, whose slider is a scroll container — is one this function returns from at once.
+   */
+  function panels(block) {
+    var slides = block.querySelectorAll(SLIDE)
+    // One slide is not a slider, and no slide is a block this file has nothing to say about.
+    // A block that grew a second panel gets the whole behaviour from the same markup.
+    if (slides.length < 2) return
+
+    var dots = block.querySelectorAll(DOT)
+    var back = block.querySelector(SLIDER_PREV)
+    var on = block.querySelector(SLIDER_NEXT)
+    var at = 0
+    var timer = null
+    // The two ways a reader is in the block, and they are two flags rather than one: a pointer
+    // over the block and the keyboard's focus inside it are different readers, and one flag for
+    // both would let the pointer's leaving release a hold the focus is still keeping — a reader
+    // tabbing through the dots would have the slide move under them the moment a resting pointer
+    // drifted off the block — and the focus's leaving release the pointer's.
+    var over = false
+    var inside = false
+
+    /** A slide's own name: the panel's `data-slider-slide` and the dot's, one name. */
+    function nameOf(slide) {
+      return slide.getAttribute('data-slider-slide') || ''
+    }
+
+    function idOf(slide) {
+      return slide.getAttribute('id') || ''
+    }
+
+    function stop() {
+      if (timer === null) return
+      // Guarded rather than assumed: `window.clearTimeout` is not in the two stub DOMs that run
+      // this file without a clock, and a timer id they never gave out is not one to hand back.
+      if (typeof window.clearTimeout === 'function') window.clearTimeout(timer)
+      timer = null
+    }
+
+    /** Whether the block should be still. Either hold first and the page's own visibility
+     *  second, so a reader standing in the block — and a page nobody is shown — cost no media
+     *  query and no timer at all. */
+    function still() {
+      return over || inside || !pageShown() || calm()
+    }
+
+    // Whether this block has subscribed to the reduced-motion answer yet.
+    var watching = false
+
+    /** Ask the reader's system about less motion, once for the page and once for this block, and
+     *  subscribe this block's clock to the answer — a visitor can turn the setting on without
+     *  reloading, and a query read at load alone would give them one more advance before the
+     *  block settled.
+     *
+     *  **It asks nothing of a page that is not being shown**, which is why it is called from
+     *  `arm()` and not from the wiring below: a document that cannot answer whether it is shown —
+     *  the stub DOMs that run this file without a `document.hidden` — is a document this asks
+     *  nothing of, and those gates keep the one query they were written for. A block on a tab
+     *  that starts hidden subscribes the moment the tab comes back, because `visibilitychange`
+     *  arms the clock again and this runs first. */
+    function watchMotion() {
+      if (watching || !pageShown()) return
+      watching = true
+      if (!motion && typeof window.matchMedia === 'function') motion = window.matchMedia(LESS_MOTION)
+      if (!motion) return
+      if (motion.addEventListener) motion.addEventListener('change', arm)
+      else if (motion.addListener) motion.addListener(arm)
+    }
+
+    /** Put the clock back, from whatever the block's state is now. Called after every change:
+     *  the reader's own step restarts the six seconds rather than racing them. */
+    function arm() {
+      stop()
+      watchMotion()
+      if (still()) return
+      timer = window.setTimeout(function () {
+        timer = null
+        step(1)
+      }, AUTO_MS)
+    }
+
+    /** Show one slide: the block's name for it, and the mark on the dot that opens it. The
+     *  mark is written as `true` or `false` rather than added and removed, because `false` is
+     *  what a link that is not current should say and the two stub DOMs that run this file
+     *  have no `removeAttribute`. */
+    function show(slide) {
+      for (var i = 0; i < slides.length; i++) if (slides[i] === slide) at = i
+      block.setAttribute(ACTIVE, nameOf(slide))
+      for (var j = 0; j < dots.length; j++) {
+        dots[j].setAttribute('aria-current', dots[j].getAttribute('data-slider-dot') === nameOf(slide) ? 'true' : 'false')
+      }
+    }
+
+    function step(by) {
+      at = (at + by + slides.length) % slides.length
+      show(slides[at])
+      arm()
+    }
+
+    /** The slide a dot opens, read out of the link itself: the fragment it carries is the
+     *  panel's own id, which is the pairing the stylesheet's no-script rules are built on, and
+     *  reading it here keeps one name for the link, the panel and this file's state. */
+    function slideFor(dot) {
+      var href = dot.getAttribute('href') || ''
+      if (href.charAt(0) !== '#') return null
+      for (var i = 0; i < slides.length; i++) if (idOf(slides[i]) === href.slice(1)) return slides[i]
+      return null
+    }
+
+    /** The arrow keys, on a control of this block: the keys a reader presses to step a slider,
+     *  and the keys a link or a button has no other use for. */
+    function keys(control) {
+      control.addEventListener('keydown', function (event) {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+        if (typeof event.preventDefault === 'function') event.preventDefault()
+        step(event.key === 'ArrowLeft' ? -1 : 1)
+      })
+    }
+
+    for (var d = 0; d < dots.length; d++) {
+      ;(function (dot) {
+        dot.addEventListener('click', function (event) {
+          var slide = slideFor(dot)
+          if (!slide) return
+          // Shown in place rather than followed: with this file running, the state is the
+          // block's own name for the slide, and an address that kept a fragment would be a
+          // second state to keep in step — and one the browser would jump back to on a reload.
+          if (event && typeof event.preventDefault === 'function') event.preventDefault()
+          show(slide)
+          arm()
+        })
+        keys(dot)
+      })(dots[d])
+    }
+
+    if (back) {
+      // The markup emits both controls `hidden`, so a reader whose browser runs no script is
+      // shown no control that steps nowhere (D183). This is what reveals them.
+      back.hidden = false
+      back.addEventListener('click', function () {
+        step(-1)
+      })
+      keys(back)
+    }
+    if (on) {
+      on.hidden = false
+      on.addEventListener('click', function () {
+        step(1)
+      })
+      keys(on)
+    }
+
+    // The reader is in the block: the pointer is over it, or the keyboard's focus is inside it.
+    // Each holds the clock and each lets go of its own hold and no other — a pointer that leaves
+    // while the focus is still in the block leaves the block held, and a focus that leaves under
+    // a resting pointer does the same — and a focus that moves from one dot to the next never
+    // leaves the block at all, which is what `contains` answers.
+    block.addEventListener('pointerenter', function () {
+      over = true
+      arm()
+    })
+    block.addEventListener('pointerleave', function () {
+      over = false
+      arm()
+    })
+    block.addEventListener('focusin', function () {
+      inside = true
+      arm()
+    })
+    block.addEventListener('focusout', function (event) {
+      if (event && event.relatedTarget && typeof block.contains === 'function' && block.contains(event.relatedTarget)) return
+      inside = false
+      arm()
+    })
+
+    // A tab that goes away stops the clock and a tab that comes back starts it again, from the
+    // six seconds rather than from wherever the clock had got to.
+    if (typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', function () {
+        arm()
+      })
+    }
+
+    // Where the block opens. A reader who arrived on one of the slides — the dots are links,
+    // and a link whose fragment is a slide's own id is a link to that slide — opens on that
+    // one; a reader who arrived on the page opens on the first, which is the panel the
+    // stylesheet shows while no fragment is targeted, so the mark and the panel agree from the
+    // first frame. The address is read defensively: the stub DOMs that run this file have no
+    // `location`, and a block that threw on one would take the copy controls down with it.
+    var opening = slides[0]
+    var hash = window.location && window.location.hash ? window.location.hash.slice(1) : ''
+    if (hash) {
+      for (var h = 0; h < slides.length; h++) if (idOf(slides[h]) === hash) opening = slides[h]
+    }
+    show(opening)
+    arm()
+  }
+
   function start() {
     menu()
     consent()
-    // The sliders first, and unconditionally: the slider's control is not a convenience the
-    // page can do without — the arrows and the count are the owner's feedback of 2026-10-21 —
-    // so it is not behind the clipboard gate the copy controls stand behind below.
+    // The sliders first, and unconditionally: a slider's controls are not a convenience the
+    // page can do without — the arrows, the count and the dots are the owner's feedback of
+    // 2026-10-21 — so neither is behind the clipboard gate the copy controls stand behind below.
+    //
+    // One query, for the one attribute a slider's block is marked with, and each of the two
+    // drivers below is handed every block: the console's slider returns at once from a block
+    // with no `.screens-track` in it and this file's homepage slider at once from a block with
+    // no panels, so a page carrying one of the two blocks takes the same path as a page
+    // carrying the other, and a page carrying both would get both.
     var sliders = document.querySelectorAll(SLIDER)
-    for (var s = 0; s < sliders.length; s++) slider(sliders[s])
+    for (var s = 0; s < sliders.length; s++) {
+      slider(sliders[s])
+      panels(sliders[s])
+    }
     var blocks = document.querySelectorAll('[data-copy]')
     if (blocks.length === 0) return
     if (!canCopy()) return
