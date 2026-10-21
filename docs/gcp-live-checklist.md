@@ -523,7 +523,7 @@ probe account carries predefined grants only).
 | 57 | The compute-instance Docker backend (design `compute-backend.md` §7). **57a, the pre-build probe, needs no Fugaro change and is the go/no-go:** a Docker-capable run on Compute Engine VMs from a committed job JSON (`gcloud` only), the cold start with a plain pull, image streaming and a preloaded boot image, `docker run` and a small Postgres container inside a run, the cost of one run, the socket's permission path in four committed variants (no `options`, `--group-add <gid>`, `--user 0`, `--privileged`, each running `docker version` and a real container against the host socket), teardown on success/failure/cancel/a crashed runner, the raw IAM bindings, and the raw log entry's job label. **57b, the post-build acceptance run, needs the backend enabled — except its step 7 (the preload image *family*'s rebuild), which needs only the compute root:** `fugaro run`/`logs`/`cancel` on `cloud-batch`, the reaper, the recorded cost against the bill, the fail-closed marker, and **the largest `computeResource` a task can ask for on `e2-standard-4` and still leave `QUEUED`** (the built shares are Check 57a's own 2000m/4096MiB submission, a floor known to work rather than a measured maximum — the built-in headroom for the OS, the Batch agent and the Docker daemon is what that step pins), and — step 1 and step 7 — the two UNVERIFIEDs the compute module ships with (whether a run's VM reports to the Batch agent under the module's deny-all ingress rule, and whether the family handover leaves the runs' boot reference serving while the delete of a superseded generation is refused or accepted). | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a Check-43-shaped hard-coded project guard (`P` hard-coded, `${P:?}` on gcloud, `--project fugaro --gcp-project "$P"` on fugaro, `fugaro doctor` and the checkout's git origin as hard stops). Its Restore deletes only what the check created — the `fugaro-chk57` account (and its IAM bindings first, since deleting an account leaves them behind), the probe jobs carrying `fugaro_chk=57`, the 57b runs **by the job names 57b recorded** (a 57b job is created by the launcher and Batch v1 cannot add a label to it afterwards, and a filter on the installation's own labels would also match runs this check never started) **and their VMs by the `fugaro_run` label values it read back off those jobs** (a job's name never reaches its VMs, and the label value cannot be derived from the name), the preload image (the check's own 57a-3b artefact, `${SA}-preload`; the compute module's preload **family** is the installation's and is never this check's to delete), the `${SA}-*` router and NAT it created only if the project had none **on the probe's own network and region covering the subnet** (a NAT on another network, one whose rules cannot be read, or one that lists its subnets by name, is not borrowed — the check makes its own pair instead of editing the project's), and the `containerfilesystem.googleapis.com` API only if it was this check that enabled it; never the installation's account — and ends in an assertion whose every line must read `0` (counts, not an empty-looking line, and the probe account's leftover IAM bindings are one of them, since deleting an account does not remove them). It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **57a RUN 2026-10-15: see the RESULTS block above; 57b USER-RUN, NOT RUN.** |
 | 58 | Artifact runs (design `artifact-runs.md` §3–§9 and §11; plan `2026-10-15-artifact-runs.md`): a `mode: artifact` recipe rendered on a real image (ffmpeg through `image.apt`, one Cloud Build), three attached PNGs in and a video out, the `render` record and the model-against-compute counters, **no branch pushed and no pull request opened**, the probe's verdict through `commands.probe` beside an independent local `ffprobe`, the recorded content type against the object's own (U5), retrieval with a sha256 match and the upload's wall clock inside `finalize_reserve` — at the set's own size, and in 6b for two files written at exactly `outputs.max_bytes` (U6) — and the failure direction in three halves — a probe that demands an impossible duration and must fail the run with nothing uploaded, a set over `outputs.max_total_bytes` that must refuse with the cap named and the container alive, and a render driven past the job's memory, whose FACT is what was seen (U3) | See "Check 58" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs one hard-coded project guard (`P` hard-coded and never read from `gcloud`, `${VAR:?}` on every argument, the three hard stops, the workflow name checked against the checkout), every launch is guarded per step and records its run id, its commit and the image and base HEAD step 1 found in a per-attempt record file (`/tmp/chk58-records/<batch>.env`), and the Restore reverts only the commits that record holds and that are not already reverted — it refuses to guess at one it does not. | One Cloud Build (the image that carries ffmpeg) and five tiny sandbox runs — two of them carrying the same three attached PNGs (step 2 and 7a; 7b may too), one render-only and therefore at model $0, and one driven past its memory limit. **USER-RUN, NOT RUN.** |
 | 60 | The sealed budget token (design `budget-token-channel.md` §7 and "The check outline"): a sealed run works end to end; the `tokens/` object is ciphertext with no claim readable and nothing is left under `runs/`; where the key is and is not (the job's environment, the execution record — U2 as found — and the RunJob audit entry, recorded by length, never by value); a wrong key, a plaintext object and a sideways copy all refuse; a peer job account cannot delete a queued token; the launchers' widened `runs/`+`tokens/` condition and the job's read-only `tokens/<slug>/` grant read off the live policy | See "Check 60" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only, with Check 43's guard block re-run at every step; Restore puts back the two objects the check overwrote, removes its probe file and scratch dir, and diffs the bucket policy against step 8's. | Three or four tiny sandbox runs and executions. **USER-RUN, NOT RUN.** |
-| 68 | The managed deployer's fenced prefix, measured live (design `managed-deployer-fence.md`; the 0.10.0 redesign of D75's deployer, `deploy/terraform/gcp/modules/installation/deployer.tf`): whether GCP **accepts** the seven conditioned bindings the redesign writes — one role per service, one binding each, three logical operators at the most (Cloud Storage's two clauses and the `||` between them) where the 0.8.6 shape had 17 and a `resource.name.contains()` IAM does not support (F1, C1) — whether `resource.name` is **honoured per type** for a Secret, an IAM service account, an API key, an Artifact Registry repository, a Cloud Run job and a Cloud Scheduler job (C3, UNVERIFIED in the design), against a prefixed `fmgd-chk68-*` resource (expect the action) and against a resource **the check creates itself** under a name the fence does not admit — `chk68-neg-*`, expect a denial that names the condition, not the role; the runs bucket is the one the check does not create, and it is read rather than written — plus a near miss that contains the prefix without starting with it. **C7 (does a name that misses an `extract` template fail closed) is NOT this check's question, and no step of this check can answer it**: the design records the reading as **UNVERIFIED** — a name the template does not match extracts the empty string, and `"".startsWith("fmgd-")` is false — and no live step can construct the non-match, so what the check adds is the one direction a live read can add, the near miss, which tests the prefix and not the template | See "Check 68" below; **you** run it, on a **sandbox project only** — and the sandbox is pinned: **installation `fugaro` in project `fugaro-dev` and nowhere else** (never `belong`, EdgeWeb's and EdgeServer's, and never a production project: both are refused by name), with `P` typed by you and never read from `gcloud`'s ambient configuration, `${VAR:?}` on every argument, nine hard stops, the config's own `gcp_project` required to be `$P`, the region, the Scheduler region and the runs bucket read out of that config rather than the environment, an owner-typed `CHK68_OWNER_RUN=yes` required before anything is read, every `gcloud` command carrying `--project="${P:?}"`, and every action taken **as the deployer account** (`--impersonate-service-account`) because a denial for your own identity would prove nothing. **Check 67 — the transitive-reach half — is the managed-projects plan's Task 5.3 and is not written here.** | One owner-run `terraform apply` of the sandbox installation's root with `managed_deployer_scoped = true` (seven roles, seven conditioned bindings), sixteen throwaway resources named `fmgd-chk68-*`, `xfmgd-chk68-*` and `chk68-neg-*` — the seven per-service probes of step 4, the three near misses and the six negative probes of step 5 — a guard trap that deletes them on shell exit, and the Restore that deletes them again and closes the gate. **Nothing here is run by an agent** (`agentMarker` refuses a live apply inside one), **no credential or secret value is created or read** (the check's secret carries a throwaway string), and **the gate stays closed until every FACT is a pass**. **USER-RUN, NOT RUN.** |
+| 68 | The managed deployer's fenced prefix, measured live (design `managed-deployer-fence.md`; the 0.10.0 redesign of D75's deployer, `deploy/terraform/gcp/modules/installation/deployer.tf`): whether GCP **accepts** the seven conditioned bindings the redesign writes — one role per service, one binding each, three logical operators at the most (Cloud Storage's two clauses and the `||` between them) where the 0.8.6 shape had 17 and a `resource.name.contains()` IAM does not support (F1, C1) — whether `resource.name` is **honoured per type** for a Secret, an IAM service account, an API key, an Artifact Registry repository, a Cloud Run job and a Cloud Scheduler job (C3, UNVERIFIED in the design), against a prefixed `fmgd-chk68-*` resource (expect the action) and against a resource **the check creates itself** under a name the fence does not admit — `chk68-neg-*`, expect a denial that names the condition, not the role; the runs bucket is the one the check does not create, and it is read rather than written — plus a near miss that contains the prefix without starting with it. **C7 (does a name that misses an `extract` template fail closed) is NOT this check's question, and no step of this check can answer it**: the design records the reading as **UNVERIFIED** — a name the template does not match extracts the empty string, and `"".startsWith("fmgd-")` is false — and no live step can construct the non-match, so what the check adds is the one direction a live read can add, the near miss, which tests the prefix and not the template | See "Check 68" below; **you** run it, on a **sandbox project only** — and the sandbox is pinned: **installation `fugaro` in project `fugaro-dev` and nowhere else** (never `belong`, EdgeWeb's and EdgeServer's, and never a production project: both are refused by name), with `P` typed by you and never read from `gcloud`'s ambient configuration, `${VAR:?}` on every argument, eleven hard stops, the config's own `gcp_project` required to be `$P`, the region, the Scheduler region and the runs bucket read out of that config rather than the environment, an owner-typed `CHK68_OWNER_RUN=yes` required before anything is read, every `gcloud` command carrying `--project="${P:?}"`, and every action taken **as the deployer account** (`--impersonate-service-account`) because a denial for your own identity would prove nothing. **Check 67 — the transitive-reach half — is the managed-projects plan's Task 5.3 and is not written here.** | One owner-run `terraform apply` of the sandbox installation's root with `managed_deployer_scoped = true` (seven roles, seven conditioned bindings), sixteen throwaway resources named `fmgd-chk68-*`, `xfmgd-chk68-*` and `chk68-neg-*` — the seven per-service probes of step 4, the three near misses and the six negative probes of step 5 — a guard trap that deletes them on shell exit, and the Restore that deletes them again and closes the gate. **Nothing here is run by an agent** (`agentMarker` refuses a live apply inside one), **no credential or secret value is created or read** (the check's secret carries a throwaway string), and **the gate stays closed until every FACT is a pass**. **USER-RUN, NOT RUN.** |
 | 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no player for the video, which does not exist (`features.video` is false), and every console download it offers resolving to an asset of the release its own facts name (`features.console_downloads` is true, and the console moved to `console-v0.9.0`) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). The canonical origin is read out of `website/data/site.yaml` by the guard block, so it is not typed from memory, and it is the only host this check fetches: there is no second domain (owner ruling 2026-10-17), so no step here observes one. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; the deployed home page's sha256 equal to the local build's; the greps for a player printing nothing; and every console download URL the pages carry answering 200 (or a redirect to the release's own storage) with the checksum the page printed beside it. **USER-RUN, NOT RUN.** |
 | 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Google Analytics behind the consent banner and **W3.2 has turned it on** — the measurement id is `website/data/site.yaml`'s, the gate is the site's own file, and the pass is therefore a pass about the post-consent request, not about analytics being absent) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
 | 70a | The mobile header fits one row, and the three group labels are the phone's menu (website redesign plan `docs/website/redesign/implementation-plan.md` §3, part P3; D182 and the amendment of 2026-10-19, RF3): at **390 × 844** — and at 375, 320 and 391 — the header is **one row** of about 77 px, with the wordmark's mark kept and its text out of the row below the breakpoint, nothing wrapped under them and no sideways scroll; the three labels are the whole menu there (**Product**, **Reference**, **Project**, each at least 44 px tall, **no `Menu` control on the page**), each opens its own panel **by tap and by keyboard**, Escape and a click outside close it, the focus goes back to the label that opened it, the three are exclusive, **an open panel is drawn above the page's blocks and not under them** (the owner's reading of 2026-10-19), the menu reaches every link with **JavaScript disabled**, and on a device whose **pointer hovers** a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it (the owner's brief of 2026-10-18, item 1) | See "Check 70a" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | The header's measured height at each width is one row's (about 77 px, not the 177 px of three rows RF3 measured), `document.documentElement.scrollWidth` is not wider than the viewport, the wordmark's text is out of the row below its breakpoint and the mark is in it, the three labels are on the one row and each is at least 44 px tall, a label is focusable and opens its panel, Escape closes it and returns the focus, opening a second label closes the first, the open panel is drawn above a page's block rather than under it (`/how-it-works/`, where the flow's steps are positioned), every link in the three groups is reachable and follows with JavaScript off, **and on a device whose pointer hovers a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it** (the owner's brief of 2026-10-18, item 1), and at 1280 × 900 the three group labels are **drawn** in the header's one row as the three dropdowns D182 asks for, with no `Menu` control and no overlay panel, and opening a group showing its links **without changing the header's height**. **USER-RUN, NOT RUN.** |
@@ -4248,7 +4248,7 @@ It settles the three things no test in the tree can, because Global Constraint 1
 
 ```bash
 # === Check 68: setup + guard. RE-RUN THE WHOLE BLOCK at the start of every step. ===
-# It is idempotent, and nothing below the nine hard stops runs.
+# It is idempotent, and nothing below the eleven hard stops runs.
 #
 # THE INSTALLATION IS PINNED, and it is the sandbox one this tree records:
 # installation `fugaro` in GCP project `fugaro-dev` (docs/dogfooding.md:3,11).
@@ -4353,11 +4353,34 @@ RUNS_BUCKET=$(sed -n 's/^runs_bucket: *//p' "$C")
   || { echo "Check 68 stopped: ${C} carries no scheduler_region (region='${L}'). Cloud Scheduler is not offered in every region — this installation's region us-east5 gives us-east4 — and every Scheduler command below needs the Scheduler location rather than the region. fugaro init records it (gcp.SchedulerRegion) and --scheduler-region overrides it; do not type it here, and do not read it from the environment." >&2; exit 1; }
 [ -d "$W/gcp/roots/installation" ] && [ -e "$W/terraformrc" ] \
   || { echo "Check 68 stopped: $W/gcp/roots/installation or $W/terraformrc does not exist. This check edits the workdir's terraform.tfvars.json and plans the workdir's root, so the sandbox installation must already have been inited on this machine (fugaro init --project $I, converged to 'No changes')." >&2; exit 1; }
-gcloud projects describe "${P:?}" --format='value(projectId)' >/dev/null 2>&1 \
+# The project is read once, and what is kept is its NUMBER: a bucket reports the
+# project it belongs to as a number, and `chk68_rm_bucket` below compares the two
+# before it deletes a bucket. That check exists because a bucket name is GLOBAL:
+# `gcloud storage rm` takes a bucket URL rather than a project-scoped resource,
+# so `--project` does not confine it, and the check's own bucket names are the
+# only names in this check that another project could already hold.
+PROJECT_NUMBER=$(gcloud projects describe "${P:?}" --format='value(projectNumber)' 2>/dev/null) \
   || { echo "Check 68 stopped: '${P:?}' is not a project you can read" >&2; exit 1; }
+[ -n "$PROJECT_NUMBER" ] \
+  || { echo "Check 68 stopped: '${P:?}' reports no project number, and the bucket deletes below compare a bucket's own project against it before removing anything" >&2; exit 1; }
 gcloud iam service-accounts describe "${DEPLOYER:?}" --project="${P:?}" >/dev/null 2>&1 \
   || { echo "Check 68 stopped: ${DEPLOYER:?} does not exist in ${P:?}: the deployer account is created by the installation root, and this check fences an account that exists" >&2; exit 1; }
 mkdir -p "$CHK68_TMP"; chmod 700 "$CHK68_TMP"
+# The two throwaway BUCKETS are the one pair of names in this check that has to
+# be unique across all of GCS: a bucket name is global, and `gcloud storage rm`
+# takes a bucket URL rather than a project-scoped resource, so `--project` does
+# not confine a delete. They carry a random suffix, drawn ONCE per run and kept
+# in $CHK68_TMP — this block is re-run at the start of every step, and a fresh
+# suffix each time would name a bucket the check never created. The Restore's
+# `rm -rf "$CHK68_TMP"` is what ends the run's suffix, and `chk68_rm_bucket`
+# below proves a bucket is this project's before deleting it — the suffix makes
+# a collision unlikely, the proof makes it harmless.
+CHK68_RAND=$(cat "$CHK68_TMP/rand" 2>/dev/null) \
+  || { CHK68_RAND=$(LC_ALL=C tr -dc 'a-f0-9' < /dev/urandom | head -c 8); printf '%s' "$CHK68_RAND" > "$CHK68_TMP/rand"; }
+[ -n "$CHK68_RAND" ] \
+  || { echo "Check 68 stopped: could not draw the random suffix the two throwaway buckets carry (${CHK68_TMP}/rand)" >&2; exit 1; }
+BUCKET_MAIN="fmgd-chk68-bucket-${CHK68_RAND}"    # the positive direction's bucket
+BUCKET_MISS="xfmgd-chk68-bucket-${CHK68_RAND}"   # the near miss: contains the prefix, does not start with it
 # The check's own throwaway resources, deleted when this shell exits. A probe
 # that fails, or a step that stops the check, must not leave a bucket, a secret,
 # a job or a service account behind for the next reader to account for — and
@@ -4381,8 +4404,48 @@ CHK68_OWNED='(^|/)(fmgd-chk68-|xfmgd-chk68-|chk68-neg-)'
 # stopped halfway would leave most of its sixteen resources behind while the
 # trap looked as though it had cleaned up.
 chk68_try() { "$@" || echo "Check 68 cleanup: '$*' failed — that resource is still in ${P:?}" >&2; }
+# A stop that does NOT close the owner's shell. Every other stop in this check is
+# `{ echo …; exit 1; }`, which is right where nothing may run after it — and it
+# is wrong for the Restore, whose stop fires with the gate still OPEN and whose
+# message is the only thing that says so: `exit 1` in an interactive shell closes
+# the window and takes the message with it, and the owner's next move is exactly
+# what the message asks for. So the Restore's assertion calls this and returns
+# from the function it lives in; the function's caller is what stops the block,
+# and `chk68_stop` itself never ends the shell.
+chk68_stop() {
+  echo "Check 68 plan stop: $*" >&2
+  return 1
+}
+# Delete one of the check's own two buckets — and only after proving the bucket
+# is THIS project's. A bucket name is global across all of GCS and
+# `gcloud storage rm` takes a bucket URL rather than a project-scoped resource,
+# so `--project` does not confine the delete: a bucket of the same name in
+# another project would be the one removed. The names carry a random suffix
+# (drawn once per run, above), which makes that collision unlikely; this makes it
+# harmless, comparing the bucket's own project with ${P:?}'s number before
+# anything is deleted. A bucket that is not there is reported as such rather than
+# treated as a failure: the trap runs on every exit, and the Restore deletes what
+# the trap may already have deleted. A bucket that IS there and reports another
+# project (or none) is refused and printed, never deleted.
+chk68_rm_bucket() {   # $1 = the bucket's name, without gs://
+  local owner
+  if ! owner=$(gcloud storage buckets describe "gs://$1" --project="${P:?}" --format='value(project)' 2>/dev/null); then
+    echo "Check 68: gs://$1 is not there — nothing to delete" >&2
+    return 0
+  fi
+  case "$owner" in
+    "$PROJECT_NUMBER") chk68_try gcloud storage rm -r "gs://$1" --project="${P:?}" ;;
+    "") echo "Check 68 REFUSED to delete gs://$1: the bucket exists and reports no project, so it cannot be shown to be ${P:?}'s (${PROJECT_NUMBER}). Bucket names are global and 'gcloud storage rm' ignores --project, so it is not deleted here; delete it by hand if it is this check's." >&2 ;;
+    *) echo "Check 68 REFUSED to delete gs://$1: the bucket belongs to project ${owner}, and this check's project is ${P:?} (${PROJECT_NUMBER}). Bucket names are global and 'gcloud storage rm' ignores --project, so that bucket is not this check's to delete." >&2 ;;
+  esac
+}
 cleanup_chk68() {
-  chk68_try gcloud storage rm -r "gs://fmgd-chk68-bucket" "gs://xfmgd-chk68-bucket" --project="${P:?}"
+  # The two buckets go through chk68_rm_bucket, which proves each one is this
+  # project's before removing it (see the guard above): a bucket name is global
+  # and `gcloud storage rm` ignores --project, so the delete is not confined to
+  # ${P:?} by the flag.
+  chk68_rm_bucket "${BUCKET_MAIN:?}"
+  chk68_rm_bucket "${BUCKET_MISS:?}"
   chk68_try gcloud secrets delete fmgd-chk68-secret --project="${P:?}" --quiet
   chk68_try gcloud secrets delete xfmgd-chk68-secret --project="${P:?}" --quiet
   chk68_try gcloud secrets delete chk68-neg-secret --project="${P:?}" --quiet
@@ -4472,9 +4535,21 @@ terraform show -json "$CHK68_TMP/chk68.tfplan" > "$CHK68_TMP/plan.json"
 ADD=$(jq '[.resource_changes[] | select(.change.actions == ["create"])] | length' "$CHK68_TMP/plan.json")
 CHG=$(jq '[.resource_changes[] | select(.change.actions == ["update"])] | length' "$CHK68_TMP/plan.json")
 DEL=$(jq '[.resource_changes[] | select(.change.actions == ["delete"])] | length' "$CHK68_TMP/plan.json")
-echo "plan: ${ADD} to add, ${CHG} to change, ${DEL} to destroy"
-[ "$ADD" = 14 ] && [ "$CHG" = 0 ] && [ "$DEL" = 0 ] \
-  || { echo "Check 68 plan stop: the plan is ${ADD} to add, ${CHG} to change, ${DEL} to destroy, and opening the gate on a converged installation adds exactly the gate's fourteen addresses (seven roles, seven bindings) and changes or destroys nothing. Read the plan's own lines above; if the installation was not converged, re-run step 1." >&2; exit 1; }
+# The three counts above cannot see a REPLACEMENT. Terraform plans one as
+# ["delete","create"], which is neither an exact ["create"] nor an exact
+# ["delete"], so a plan that replaces a resource outside the gate — destroying
+# the live object as it does — counts 14/0/0 and would be applied. The two
+# filters below are what see it, and they are the Restore's own (step 7): the
+# address filter is the check's expectation of what opening the gate may touch
+# (the gate's fourteen addresses and nothing else), and the action filter names
+# the replacement and the forget so the stop says which one it was rather than
+# only that the shape is wrong.
+OTHER=$(jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | .address' "$CHK68_TMP/plan.json" \
+  | grep -cvE '^(module\.[A-Za-z0-9_-]+\.)?google_project_iam_(custom_role|member)\.fugaro_deployer_(storage|secret|account|apikey|repository|run_job|scheduler_job)\[')
+SWAP=$(jq -r '.resource_changes[] | select(.change.actions == ["delete","create"] or .change.actions == ["create","delete"] or .change.actions == ["forget"]) | .address' "$CHK68_TMP/plan.json" | wc -l | tr -d ' ')
+echo "plan: ${ADD} to add, ${CHG} to change, ${DEL} to destroy, ${OTHER} outside the gate, ${SWAP} to replace or forget"
+{ [ "$ADD" = 14 ] && [ "$CHG" = 0 ] && [ "$DEL" = 0 ] && [ "$OTHER" = 0 ] && [ "$SWAP" = 0 ]; } \
+  || { echo "Check 68 plan stop: the plan is ${ADD} to add, ${CHG} to change, ${DEL} to destroy, with ${OTHER} address(es) outside the gate's own fourteen and ${SWAP} to replace or forget. Opening the gate on a converged installation adds exactly the gate's fourteen addresses (seven roles, seven bindings) and changes, destroys or replaces nothing; a replacement counts as neither an add nor a destroy, so the counts alone would let one through. Read the plan's own lines above; if the installation was not converged, re-run step 1." >&2; exit 1; }
 ```
 
 ```bash
@@ -4529,9 +4604,9 @@ Seven tiny throwaway resources, one per service, each named `fmgd-chk68-*` — c
 
 ```bash
 set -x
-gcloud storage buckets create "gs://fmgd-chk68-bucket" --project="${P:?}" --location="${L:?}"
+gcloud storage buckets create "gs://${BUCKET_MAIN:?}" --project="${P:?}" --location="${L:?}"
 printf 'chk68\n' > "$CHK68_TMP/probe.txt"
-gcloud storage cp "$CHK68_TMP/probe.txt" "gs://fmgd-chk68-bucket/probe.txt" --project="${P:?}" --impersonate-service-account="${DEPLOYER:?}"
+gcloud storage cp "$CHK68_TMP/probe.txt" "gs://${BUCKET_MAIN:?}/probe.txt" --project="${P:?}" --impersonate-service-account="${DEPLOYER:?}"
 gcloud secrets create fmgd-chk68-secret --project="${P:?}" --replication-policy=automatic --data-file="$CHK68_TMP/probe.txt"
 gcloud secrets update fmgd-chk68-secret --project="${P:?}" --update-labels=chk68=1 --impersonate-service-account="${DEPLOYER:?}"
 gcloud iam service-accounts create fmgd-chk68-sa --project="${P:?}" --display-name="chk68 throwaway"
@@ -4597,8 +4672,8 @@ set +x
 **Then the near miss, which is the sharper half of the same fact** — a name that **contains** the prefix without **starting** with it, created for a service whose form is a whole-name `startsWith` (a bucket), for one whose form is `extract` (a secret), and for the one whose update carries a second permission in the way (a Cloud Run job). **What it tests is the new prefix test, not a hole in the old condition**: the 0.8.6 clauses were anchored at the collection segment too (`resource.name.contains("/secrets/fmgd-")`, `"/jobs/fmgd-"`, …), so `xfmgd-chk68-secret` is denied by that form as well. What a near miss shows is that each condition tests the **front** of the resource's own name — the whole name where the form is `startsWith`, the extracted segment where it is `extract` — and not the name *containing* the prefix, which is what the fence would degrade to if the anchor moved:
 
 ```bash
-gcloud storage buckets create "gs://xfmgd-chk68-bucket" --project="${P:?}" --location="${L:?}"
-gcloud storage cp "$CHK68_TMP/probe.txt" "gs://xfmgd-chk68-bucket/probe.txt" --project="${P:?}" --impersonate-service-account="${DEPLOYER:?}"
+gcloud storage buckets create "gs://${BUCKET_MISS:?}" --project="${P:?}" --location="${L:?}"
+gcloud storage cp "$CHK68_TMP/probe.txt" "gs://${BUCKET_MISS:?}/probe.txt" --project="${P:?}" --impersonate-service-account="${DEPLOYER:?}"
 gcloud secrets create xfmgd-chk68-secret --project="${P:?}" --replication-policy=automatic --data-file="$CHK68_TMP/probe.txt"
 gcloud secrets update xfmgd-chk68-secret --project="${P:?}" --update-labels=chk68=1 --impersonate-service-account="${DEPLOYER:?}"
 # The Cloud Run near miss, and it is the unambiguous one for that service: a job
@@ -4636,9 +4711,13 @@ Put the sandbox back the way the gate found it: delete everything the check crea
 # bucket, the secret and the Cloud Run job) and the negative direction's own six
 # — the same list the guard's cleanup_chk68 trap carries, run again here so the
 # Restore does not depend on the trap having fired. ONE command per resource:
-# each delete below takes exactly one positional name (only `gcloud storage rm
-# -r` takes several URLs), so a line carrying three names deletes none of them.
-gcloud storage rm -r "gs://fmgd-chk68-bucket" "gs://xfmgd-chk68-bucket" --project="${P:?}"
+# every gcloud delete below takes exactly one positional name, so a line
+# carrying three names deletes none of them. The two buckets go through
+# chk68_rm_bucket, which proves each one is this project's before removing it —
+# a bucket name is global and `gcloud storage rm` ignores --project — and takes
+# one name like the rest.
+chk68_rm_bucket "${BUCKET_MAIN:?}"
+chk68_rm_bucket "${BUCKET_MISS:?}"
 gcloud secrets delete fmgd-chk68-secret --project="${P:?}" --quiet
 gcloud secrets delete xfmgd-chk68-secret --project="${P:?}" --quiet
 gcloud secrets delete chk68-neg-secret --project="${P:?}" --quiet
@@ -4667,17 +4746,31 @@ export TF_DATA_DIR="$W/.terraform" TF_CLI_CONFIG_FILE="$W/terraformrc"
 # plan carrying anything more is a change this check did not make and must not
 # apply. `-auto-approve` on its own would apply whatever the plan turned out to
 # be, and the restore is the one apply nobody reads.
-terraform plan -input=false -out="$CHK68_TMP/restore.tfplan" | tee "$CHK68_TMP/restore-plan.txt"
-terraform show -json "$CHK68_TMP/restore.tfplan" > "$CHK68_TMP/restore.json"
-ADD=$(jq '[.resource_changes[] | select(.change.actions == ["create"])] | length' "$CHK68_TMP/restore.json")
-CHG=$(jq '[.resource_changes[] | select(.change.actions == ["update"])] | length' "$CHK68_TMP/restore.json")
-DEL=$(jq '[.resource_changes[] | select(.change.actions == ["delete"])] | length' "$CHK68_TMP/restore.json")
-OTHER=$(jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | .address' "$CHK68_TMP/restore.json" \
-  | grep -cvE '^(module\.[A-Za-z0-9_-]+\.)?google_project_iam_(custom_role|member)\.fugaro_deployer_(storage|secret|account|apikey|repository|run_job|scheduler_job)\[')
-echo "restore plan: ${ADD} to add, ${CHG} to change, ${DEL} to destroy, ${OTHER} outside the gate"
-{ [ "$ADD" = 0 ] && [ "$CHG" = 0 ] && [ "$DEL" = 14 ] && [ "$OTHER" = 0 ]; } \
-  || { echo "Check 68 plan stop: the restore plan is ${ADD} to add, ${CHG} to change, ${DEL} to destroy with ${OTHER} address(es) outside the gate's own fourteen. Closing the gate destroys the seven conditioned roles and the seven bindings and nothing else; read the plan's own lines above rather than apply it. THE GATE IS STILL OPEN: those seven roles and their bindings are live in ${P:?} until a restore that destroys them is applied, so this is not a state to leave the check in — find out what the plan carries that it should not, fix that, and run this step again." >&2; exit 1; }
-terraform apply -input=false "$CHK68_TMP/restore.tfplan"
+#
+# The plan, the assertion and the apply live in a FUNCTION because of the stop:
+# every other stop in this check is `{ echo …; exit 1; }`, which is right where
+# nothing may run after it — and this one fires with the gate still OPEN, so the
+# message IS the point, and `exit 1` in an interactive shell closes the window
+# and takes it with it. `chk68_stop` prints and returns instead, this function
+# returns with it, and the `if` below is what stops the block: the shell you are
+# typing in survives, the apply does not run, and nothing after it does either.
+chk68_restore() {
+  terraform plan -input=false -out="$CHK68_TMP/restore.tfplan" | tee "$CHK68_TMP/restore-plan.txt"
+  terraform show -json "$CHK68_TMP/restore.tfplan" > "$CHK68_TMP/restore.json"
+  ADD=$(jq '[.resource_changes[] | select(.change.actions == ["create"])] | length' "$CHK68_TMP/restore.json")
+  CHG=$(jq '[.resource_changes[] | select(.change.actions == ["update"])] | length' "$CHK68_TMP/restore.json")
+  DEL=$(jq '[.resource_changes[] | select(.change.actions == ["delete"])] | length' "$CHK68_TMP/restore.json")
+  OTHER=$(jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | .address' "$CHK68_TMP/restore.json" \
+    | grep -cvE '^(module\.[A-Za-z0-9_-]+\.)?google_project_iam_(custom_role|member)\.fugaro_deployer_(storage|secret|account|apikey|repository|run_job|scheduler_job)\[')
+  echo "restore plan: ${ADD} to add, ${CHG} to change, ${DEL} to destroy, ${OTHER} outside the gate"
+  { [ "$ADD" = 0 ] && [ "$CHG" = 0 ] && [ "$DEL" = 14 ] && [ "$OTHER" = 0 ]; } \
+    || { chk68_stop "the restore plan is ${ADD} to add, ${CHG} to change, ${DEL} to destroy with ${OTHER} address(es) outside the gate's own fourteen. Closing the gate destroys the seven conditioned roles and the seven bindings and nothing else; read the plan's own lines above rather than apply it. THE GATE IS STILL OPEN: those seven roles and their bindings are live in ${P:?} until a restore that destroys them is applied, so this is not a state to leave the check in — find out what the plan carries that it should not, fix that, and run this step again."; return 1; }
+  terraform apply -input=false "$CHK68_TMP/restore.tfplan"
+}
+if chk68_restore; then
+# The body below is not indented: it is the same commands the Restore always
+# ran, kept at the margin so the block reads as one script, and the `if` is only
+# what stops them when the plan was refused.
 gcloud projects get-iam-policy "${P:?}" --format=json \
   | jq -r '[.bindings[] | select(.members[]? == "serviceAccount:'"${DEPLOYER:?}"'")] | length'
 rm -rf "$CHK68_TMP"
@@ -4701,6 +4794,12 @@ CHK68_LEFT=$( {
 [ -z "$CHK68_LEFT" ] \
   || { printf 'Check 68 stop: these are still in %s after the restore:\n%s\n' "${P:?}" "$CHK68_LEFT" >&2; exit 1; }
 echo "Check 68: no leftover of this check's own in the six listings"
+else
+  echo "Check 68: the Restore did NOT finish — the plan was refused above and nothing after the assertion ran. The throwaway resources are as they were and the guard's trap cleans them when this shell exits; it does NOT close the gate. THE GATE IS STILL OPEN: the seven conditioned roles and their seven bindings are live in ${P:?} until a restore that destroys them is applied. Fix what the plan carried and run this step again." >&2
+  # Non-zero, so a script that runs this block exits non-zero; an interactive
+  # shell is untouched by it (there is no `exit` anywhere on this path).
+  false
+fi
 ```
 
 **FACT (on `${P:?}`):** the binding count after the restore — **one**, the unconditioned role's, with the seven conditioned ones gone — the tfvars file back to what it was, and the filtered look over the six listings printing nothing of the check's own. A restore that leaves a conditioned binding behind leaves a fence in place that nothing tests and nothing reads, and one that leaves a throwaway resource behind leaves it for the next reader to account for.

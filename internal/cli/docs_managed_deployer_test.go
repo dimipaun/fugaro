@@ -917,7 +917,12 @@ func TestReleaseManagedDeployerBulletStatesTheCurrentReason(t *testing.T) {
 // to installation `fugaro` / project `fugaro-dev`, the owner-typed variable, and
 // the config's own project, region and runs bucket — so the number was eight,
 // and the Scheduler region's own stop (Cloud Scheduler is not offered in every
-// region, and the region is not its location) makes it nine.
+// region, and the region is not its location) makes it nine. The 2026-10-21
+// review added two more, both in the guard: the project's number, which the
+// bucket deletes compare a bucket's own project against (a bucket name is
+// global and `gcloud storage rm` ignores --project), and the random suffix the
+// check's two throwaway buckets carry, which has to be drawn rather than left
+// empty — so the number is eleven.
 // Three places state the same fact, so this reads all three and requires one
 // number — a guard whose count is stated in prose is exactly the kind of claim
 // that survives a silent edit.
@@ -930,6 +935,7 @@ func TestChecklistCheck68HardStopCountsAgree(t *testing.T) {
 	numbers := map[string]int{
 		"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
 		"six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+		"eleven": 11,
 	}
 	// 1. The index row, the checklist's own summary of the check.
 	row := ""
@@ -970,8 +976,8 @@ func TestChecklistCheck68HardStopCountsAgree(t *testing.T) {
 	if rowN != sectionN || rowN != stops {
 		t.Errorf("Check 68's hard stops are counted three ways and disagree: the index row says %d, the guard comment says %d, and the guard carries %d `Check 68 stopped:` refusals", rowN, sectionN, stops)
 	}
-	if stops < 9 {
-		t.Errorf("Check 68's guard carries %d `Check 68 stopped:` refusals, and this check's belong stop and its pin to the sandbox installation are among them: the guard is what keeps a live IAM check off an installation it must never write in", stops)
+	if stops < 11 {
+		t.Errorf("Check 68's guard carries %d `Check 68 stopped:` refusals, and this check's belong stop, its pin to the sandbox installation, the project number its bucket deletes compare against and the random suffix its two buckets carry are among them: the guard is what keeps a live IAM check off an installation it must never write in", stops)
 	}
 }
 
@@ -1203,11 +1209,20 @@ func TestChecklistCheck68AssertsThePlanShape(t *testing.T) {
 		`select(.change.actions == ["create"])`,
 		`select(.change.actions == ["update"])`,
 		`select(.change.actions == ["delete"])`,
-		`[ "$ADD" = 14 ] && [ "$CHG" = 0 ] && [ "$DEL" = 0 ]`,
+		// A REPLACEMENT is planned as ["delete","create"], which none of the
+		// three counts above sees, so the three of them together report 14/0/0
+		// for a plan that destroys a live object outside the gate. The stop has
+		// to carry the two filters that do see it: the address filter (nothing
+		// outside the gate's fourteen may be touched) and the action filter
+		// (nothing may be replaced or forgotten).
+		`select(.change.actions != ["no-op"]) | .address`,
+		`google_project_iam_(custom_role|member)\.fugaro_deployer_(storage|secret|account|apikey|repository|run_job|scheduler_job)\[`,
+		`select(.change.actions == ["delete","create"] or .change.actions == ["create","delete"] or .change.actions == ["forget"])`,
+		`[ "$ADD" = 14 ] && [ "$CHG" = 0 ] && [ "$DEL" = 0 ] && [ "$OTHER" = 0 ] && [ "$SWAP" = 0 ]`,
 		"Check 68 plan stop:",
 	} {
 		if !strings.Contains(step2, want) {
-			t.Errorf("Check 68's step 2 does not carry %q: opening the gate on a converged installation adds the gate's fourteen addresses and changes or destroys nothing, and a plan of any other shape is a reason to stop rather than apply", want)
+			t.Errorf("Check 68's step 2 does not carry %q: opening the gate on a converged installation adds the gate's fourteen addresses and changes, destroys, replaces or forgets nothing, and a plan of any other shape is a reason to stop rather than apply", want)
 		}
 	}
 	apply := strings.Index(step2, `terraform apply -input=false "$CHK68_TMP/chk68.tfplan"`)
@@ -1233,7 +1248,7 @@ func TestChecklistCheck68AssertsThePlanShape(t *testing.T) {
 		`terraform apply -input=false "$CHK68_TMP/restore.tfplan"`,
 		`[ "$ADD" = 0 ] && [ "$CHG" = 0 ] && [ "$DEL" = 14 ] && [ "$OTHER" = 0 ]`,
 		`google_project_iam_(custom_role|member)\.fugaro_deployer_(storage|secret|account|apikey|repository|run_job|scheduler_job)\[`,
-		"Check 68 plan stop:",
+		`chk68_stop "`,
 	} {
 		if !strings.Contains(restore, want) {
 			t.Errorf("Check 68's Restore does not carry %q: closing the gate destroys the seven roles and the seven bindings and nothing else, and the plan is where that is checked", want)
@@ -1241,12 +1256,22 @@ func TestChecklistCheck68AssertsThePlanShape(t *testing.T) {
 	}
 	planned := strings.Index(restore, `terraform plan -input=false -out="$CHK68_TMP/restore.tfplan"`)
 	restoreApply := strings.Index(restore, `terraform apply -input=false "$CHK68_TMP/restore.tfplan"`)
-	restoreAsserted := strings.Index(restore, "Check 68 plan stop:")
+	restoreAsserted := strings.Index(restore, `chk68_stop "`)
 	if planned < 0 || restoreApply < 0 {
 		t.Fatal("Check 68's Restore no longer plans and applies that plan")
 	}
 	if restoreAsserted < 0 || restoreAsserted > restoreApply {
 		t.Error("Check 68's Restore asserts the plan's shape after applying it")
+	}
+	// The stop here fires with the gate still OPEN, and it is the one stop in the
+	// check whose message is the point: `exit 1` in the interactive shell the
+	// owner is typing in closes the window and takes the message with it, so this
+	// stop returns instead, and the `if chk68_restore` below is what stops the
+	// commands that follow.
+	for _, want := range []string{"chk68_stop() {", "return 1", "if chk68_restore; then", "THE GATE IS STILL OPEN"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 68 does not carry %q: the restore's stop fires with the gate open, so it prints and returns rather than exiting, and the `if` around the commands that follow it is what keeps them from running", want)
+		}
 	}
 }
 
@@ -1333,18 +1358,29 @@ func runChk68Shell(t *testing.T, script string, env []string) (int, string, stri
 // in-process as well, so the case that matters — a module-prefixed gate address
 // — is checked even where jq is not installed.
 //
+// The section's stop does not end the shell (see the guard's `chk68_stop`): it
+// returns from `chk68_restore()`, which is where the assertion lives. So the
+// harness declares the section's own `chk68_stop` and runs the lifted lines
+// inside a function of the same shape, and the function's exit status is what
+// decides each case.
+//
 // Mutations (verified, run and restored): the filter anchored back at
 // `^google_project_iam_…` → every module-prefixed case fails, in the ERE check
 // and in the run; the `OTHER = 0` clause dropped from the stop → the
-// extra-address cases pass; the stop's `exit 1` turned into a no-op → the
+// extra-address cases pass; the stop's `return 1` turned into a no-op → the
 // extra-address cases pass; the jq `select` on `["no-op"]` dropped → the no-op
 // case fails; `set -e` added above the counts → the passing cases fail, because
-// `grep -cv` exits 1 when it excludes nothing.
+// `grep -cv` exits 1 when it excludes nothing; `chk68_stop` replaced by a bare
+// `echo` → the stop no longer returns non-zero and the extra-address cases pass.
 func TestChecklistCheck68RestorePlanFilterIsRun(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
 	section := docSection(t, path, doc, "## Check 68:")
 	restore := docSection(t, path, section, "### 7. Restore")
+	// The stop the assertion calls is the section's own: it is lifted from the
+	// guard block rather than restated here. chk68FuncBody returns the body up to
+	// the newline before the closing brace, so the brace is put back here.
+	stopFn := chk68FuncBody(t, chk68GuardBlock(t), "chk68_stop") + "\n}"
 
 	// The assertion, as the section writes it: from the first count to the line
 	// carrying the stop.
@@ -1355,7 +1391,7 @@ func TestChecklistCheck68RestorePlanFilterIsRun(t *testing.T) {
 		if start < 0 && strings.HasPrefix(s, "ADD=$(jq") {
 			start = i
 		}
-		if start >= 0 && strings.Contains(l, "Check 68 plan stop:") {
+		if start >= 0 && strings.Contains(l, `chk68_stop "`) {
 			stop = i
 			break
 		}
@@ -1367,8 +1403,18 @@ func TestChecklistCheck68RestorePlanFilterIsRun(t *testing.T) {
 		t.Fatal("Check 68's Restore counts the plan and never stops on it: the counts have to be asserted rather than printed")
 	}
 	assertion := strings.Join(lines[start:stop+1], "\n")
-	if !strings.Contains(assertion, "exit 1") {
+	if !strings.Contains(assertion, "chk68_stop") {
+		t.Fatal("Check 68's restore assertion stops with something other than the check's own chk68_stop")
+	}
+	if !strings.Contains(assertion, "return 1") {
 		t.Fatal("Check 68's restore assertion does not refuse: the stop prints its message and carries on, which is not a stop")
+	}
+	// This is the one stop in the check whose message is the point — it fires
+	// with the gate still open — and `exit 1` in the interactive shell the owner
+	// is typing in closes the window and takes the message with it. So it returns
+	// instead, and nothing on this path may exit the shell.
+	if strings.Contains(assertion, "exit ") {
+		t.Error("Check 68's restore assertion exits the shell: it fires with the gate still OPEN, so an `exit` closes the window the message is printed in and the owner never reads it. The stop returns from the function it lives in, and the `if` around the commands that follow is what stops them.")
 	}
 	// The stop leaves the gate open — the roles and bindings the restore was
 	// about to destroy are still live — and the one state the section forbids is
@@ -1438,21 +1484,7 @@ func TestChecklistCheck68RestorePlanFilterIsRun(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq is not on PATH: the filter's own ERE is checked above")
 	}
-	type change struct {
-		address string
-		actions []string
-	}
-	planJSON := func(changes []change) string {
-		parts := make([]string, 0, len(changes))
-		for _, c := range changes {
-			quoted := make([]string, 0, len(c.actions))
-			for _, a := range c.actions {
-				quoted = append(quoted, `"`+a+`"`)
-			}
-			parts = append(parts, fmt.Sprintf(`{"address":%q,"change":{"actions":[%s]}}`, c.address, strings.Join(quoted, ",")))
-		}
-		return `{"resource_changes":[` + strings.Join(parts, ",") + `]}`
-	}
+	type change = chk68Change
 	destroys := func(addrs []string) []change {
 		out := make([]change, 0, len(addrs))
 		for _, a := range addrs {
@@ -1509,10 +1541,15 @@ func TestChecklistCheck68RestorePlanFilterIsRun(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "restore.json"), []byte(planJSON(tc.changes)), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "restore.json"), []byte(chk68PlanJSON(tc.changes)), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			script := "set -u\nCHK68_TMP='" + dir + "'\nP=fugaro-dev\n" + assertion + "\necho CHK68-ASSERTED\n"
+			// The assertion lives inside chk68_restore() in the section, because
+			// its stop RETURNS rather than exits: `return` only leaves a function,
+			// so the harness runs the lifted lines in one too, with the section's
+			// own chk68_stop, and the function's exit status is what the caller
+			// sees.
+			script := "set -u\nCHK68_TMP='" + dir + "'\nP=fugaro-dev\n" + stopFn + "\nchk68_restore() {\n" + assertion + "\necho CHK68-ASSERTED\n}\nchk68_restore\n"
 			code, out, errOut := runChk68Shell(t, script, []string{"PATH=" + os.Getenv("PATH")})
 			if tc.passes {
 				if code != 0 {
@@ -1771,7 +1808,8 @@ gcloud() {
 // Mutations (verified, run and restored): two names put back on one
 // `gcloud run jobs delete` line → FAIL; a name dropped from the trap → FAIL; a
 // name dropped from the Restore → FAIL; `2>/dev/null` put on a delete → FAIL; a
-// delete taken out of `chk68_try` → FAIL.
+// delete taken out of `chk68_try` → FAIL; a bucket deleted with a bare
+// `gcloud storage rm` instead of `chk68_rm_bucket` → FAIL.
 func TestChecklistCheck68DeletesOneResourcePerCommand(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
@@ -1793,7 +1831,29 @@ func TestChecklistCheck68DeletesOneResourcePerCommand(t *testing.T) {
 	}
 
 	trapNames := chk68DeleteNames(t, strings.Split(cleanup, "\n"), "Check 68's cleanup_chk68 trap")
-	restoreNames := chk68DeleteNames(t, bashBlocks(docSection(t, path, section, "### 7. Restore"))[0], "Check 68's Restore")
+	restoreBlock := bashBlocks(docSection(t, path, section, "### 7. Restore"))[0]
+	restoreNames := chk68DeleteNames(t, restoreBlock, "Check 68's Restore")
+
+	// The check's two buckets are the only resources it deletes whose NAME is
+	// global: `gcloud storage rm` takes a bucket URL rather than a project-scoped
+	// resource, so `--project` does not confine it, and a bucket of the same name
+	// in another project would be the one removed. Both cleanups therefore delete
+	// them through chk68_rm_bucket, which asks the bucket which project it
+	// belongs to first, and neither carries a bare `gcloud storage rm`.
+	for _, tc := range []struct {
+		label string
+		block []string
+	}{
+		{"Check 68's cleanup_chk68 trap", strings.Split(cleanup, "\n")},
+		{"Check 68's Restore", restoreBlock},
+	} {
+		for _, line := range tc.block {
+			cmd := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "chk68_try "))
+			if strings.HasPrefix(cmd, "gcloud storage rm ") {
+				t.Errorf("%s runs %q: a bucket name is global and `gcloud storage rm` ignores --project, so this line can delete a bucket of the same name that belongs to somebody else — the check's own two buckets go through chk68_rm_bucket, which proves the bucket's project first", tc.label, cmd)
+			}
+		}
+	}
 
 	// The check creates sixteen throwaway resources (step 4's seven, step 5's
 	// three near misses and its six negative probes), and the two cleanups are
@@ -1827,6 +1887,21 @@ func chk68DeleteNames(t *testing.T, block []string, label string) map[string]int
 	for _, line := range block {
 		cmd := strings.TrimSpace(line)
 		cmd = strings.TrimPrefix(cmd, "chk68_try ")
+		// The check's two buckets are deleted through chk68_rm_bucket, which
+		// proves the bucket is this project's before removing it: a bucket name
+		// is global across all of GCS and `gcloud storage rm` takes a bucket URL
+		// rather than a project-scoped resource, so `--project` does not confine
+		// the delete. It takes exactly one name, like every other delete here.
+		if strings.HasPrefix(cmd, "chk68_rm_bucket ") {
+			commands++
+			args := strings.Fields(strings.TrimPrefix(cmd, "chk68_rm_bucket "))
+			if len(args) != 1 {
+				t.Errorf("%s runs %q with %d bucket names: chk68_rm_bucket takes exactly ONE, and a line carrying two would delete neither", label, cmd, len(args))
+				continue
+			}
+			names[strings.Trim(args[0], `"'`)]++
+			continue
+		}
 		if !strings.HasPrefix(cmd, "gcloud ") {
 			continue
 		}
@@ -1879,6 +1954,394 @@ func chk68DeleteNames(t *testing.T, block []string, label string) map[string]int
 		t.Fatalf("%s has no gcloud delete at all: the check's resources are deleted there", label)
 	}
 	return names
+}
+
+// chk68Change is one entry of a plan's `resource_changes`, in the shape the
+// tests that RUN Check 68's assertions feed them: an address and the action list
+// terraform plans for it.
+type chk68Change struct {
+	address string
+	actions []string
+}
+
+// chk68PlanJSON renders changes as the `terraform show -json` document the
+// assertions read.
+func chk68PlanJSON(changes []chk68Change) string {
+	parts := make([]string, 0, len(changes))
+	for _, c := range changes {
+		quoted := make([]string, 0, len(c.actions))
+		for _, a := range c.actions {
+			quoted = append(quoted, `"`+a+`"`)
+		}
+		parts = append(parts, fmt.Sprintf(`{"address":%q,"change":{"actions":[%s]}}`, c.address, strings.Join(quoted, ",")))
+	}
+	return `{"resource_changes":[` + strings.Join(parts, ",") + `]}`
+}
+
+// chk68GateAddresses returns the gate's fourteen addresses, the ones opening it
+// creates and the restore destroys: seven conditioned roles and the seven
+// bindings that carry them.
+func chk68GateAddresses() []string {
+	services := []string{"storage", "secret", "account", "apikey", "repository", "run_job", "scheduler_job"}
+	kinds := []string{"google_project_iam_custom_role", "google_project_iam_member"}
+	var gate []string
+	for _, k := range kinds {
+		for _, s := range services {
+			gate = append(gate, "module.installation."+k+".fugaro_deployer_"+s+"[0]")
+		}
+	}
+	return gate
+}
+
+// TestChecklistCheck68Step2PlanShapeIsRun executes the assertion Check 68 makes
+// over the plan it is about to apply (step 2), instead of pinning its text.
+//
+// Step 2 is the opening half's only live write, and the assertion is what makes
+// it safe: on a converged installation opening the gate adds exactly the gate's
+// fourteen addresses and changes, destroys, replaces or forgets nothing. The
+// three counts alone cannot see a REPLACEMENT — terraform plans one as
+// `["delete","create"]`, which is neither an exact `["create"]` nor an exact
+// `["delete"]` — so a plan that replaces a resource outside the gate reports
+// 14/0/0 and would be applied. Nor can they see a plan that creates fourteen
+// things of which one is NOT one of the gate's addresses: that is 14 adds too.
+// The two filters the assertion carries are what see both, and this test feeds
+// it both, plus the shapes it has to let through.
+//
+// Mutations (verified, run and restored): the `[ "$OTHER" = 0 ]` clause dropped
+// from the stop → the case that creates fourteen addresses one of which is
+// outside the gate passes; the `[ "$SWAP" = 0 ]` clause dropped → the forget of
+// a gate address passes; the `select(.change.actions != ["no-op"])` filter
+// narrowed to something that drops the gate's own addresses → the passing case
+// is refused; the address filter anchored back at `^google_project_iam_…` → the
+// passing case is refused, because a root plan's addresses carry the root's
+// module name.
+func TestChecklistCheck68Step2PlanShapeIsRun(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+	block := chk68Block(t, section, `terraform show -json "$CHK68_TMP/chk68.tfplan"`)
+
+	start, stop := -1, -1
+	for i, l := range block {
+		s := strings.TrimSpace(l)
+		if start < 0 && strings.HasPrefix(s, "ADD=$(jq") {
+			start = i
+		}
+		if start >= 0 && strings.Contains(l, "Check 68 plan stop:") {
+			stop = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatal("Check 68's step 2 no longer counts the plan's adds, changes and destroys (there is no `ADD=$(jq` line): the apply is the opening half's only live write, and the counts are what stop it")
+	}
+	if stop < 0 {
+		t.Fatal("Check 68's step 2 counts the plan and never stops on it: the counts have to be asserted rather than printed")
+	}
+	assertion := strings.Join(block[start:stop+1], "\n")
+	if !strings.Contains(assertion, "exit 1") {
+		t.Fatal("Check 68's step-2 assertion does not refuse: the stop prints its message and carries on, which is not a stop")
+	}
+	// The two filters, and the two clauses of the stop that read them. A count
+	// without its clause is a count that is printed and ignored.
+	for _, want := range []string{
+		`select(.change.actions != ["no-op"]) | .address`,
+		`select(.change.actions == ["delete","create"] or .change.actions == ["create","delete"] or .change.actions == ["forget"])`,
+		`[ "$OTHER" = 0 ]`,
+		`[ "$SWAP" = 0 ]`,
+	} {
+		if !strings.Contains(assertion, want) {
+			t.Fatalf("Check 68's step-2 assertion does not carry %q: the three counts cannot see a replacement or a fourteenth add that is not one of the gate's addresses, so a plan of either shape would be applied to the pinned project", want)
+		}
+	}
+
+	gate := chk68GateAddresses()
+	if len(gate) != 14 {
+		t.Fatalf("the gate is seven roles and seven bindings, and this test built %d addresses", len(gate))
+	}
+	creates := func(addrs []string) []chk68Change {
+		out := make([]chk68Change, 0, len(addrs))
+		for _, a := range addrs {
+			out = append(out, chk68Change{a, []string{"create"}})
+		}
+		return out
+	}
+	// A resource of the installation's own that opening the gate neither touches
+	// nor creates: the plan is full of these, and they are no-ops.
+	own := chk68Change{"module.installation.google_service_account.fugaro_deployer", []string{"no-op"}}
+
+	cases := []struct {
+		name    string
+		changes []chk68Change
+		passes  bool
+		want    string
+	}{
+		{"the gate's own fourteen",
+			append(creates(gate), own), true,
+			"plan: 14 to add, 0 to change, 0 to destroy, 0 outside the gate, 0 to replace or forget"},
+		{"the gate's own fourteen, unprefixed",
+			append(creates(func() []string {
+				out := make([]string, 0, len(gate))
+				for _, a := range gate {
+					out = append(out, strings.TrimPrefix(a, "module.installation."))
+				}
+				return out
+			}()), own), true,
+			"plan: 14 to add, 0 to change, 0 to destroy, 0 outside the gate, 0 to replace or forget"},
+		// Fourteen adds, one of which is not one of the gate's addresses: every
+		// count is what it should be, and only the address filter refuses it.
+		{"fourteen adds, one of them outside the gate",
+			append(creates(gate[:13]), chk68Change{"module.installation.google_storage_bucket.runs[0]", []string{"create"}}), false,
+			"1 address(es) outside the gate"},
+		// A replacement outside the gate: ADD, CHG and DEL all count nothing for
+		// it, so the three counts report 14/0/0 and the plan would be applied.
+		{"a replace outside the gate, which the three counts cannot see",
+			append(creates(gate), chk68Change{"module.installation.google_service_account.runs", []string{"delete", "create"}}), false,
+			"1 to replace or forget"},
+		// A replacement OF a gate address: the address filter knows it (it is one
+		// of the fourteen), so only the action filter refuses this one.
+		{"a forget of one of the gate's own addresses",
+			append(creates(gate), chk68Change{gate[0], []string{"forget"}}), false,
+			"0 address(es) outside the gate's own fourteen and 1 to replace or forget"},
+		{"a destroy of one of the gate's own addresses",
+			append(creates(gate[:13]), chk68Change{gate[13], []string{"delete"}}), false,
+			"13 to add"},
+		{"an update of a resource of the installation's own",
+			append(append(creates(gate), own), chk68Change{"module.installation.google_service_account.runs", []string{"update"}}), false,
+			"1 to change"},
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is not on PATH")
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "plan.json"), []byte(chk68PlanJSON(tc.changes)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			script := "set -u\nCHK68_TMP='" + dir + "'\n" + assertion + "\necho CHK68-ASSERTED\n"
+			code, out, errOut := runChk68Shell(t, script, []string{"PATH=" + os.Getenv("PATH")})
+			if tc.passes {
+				if code != 0 {
+					t.Fatalf("Check 68's step-2 assertion refused the plan opening the gate produces (exit %d):\nstdout:\n%s\nstderr:\n%s", code, out, errOut)
+				}
+				if !strings.Contains(out, "CHK68-ASSERTED") {
+					t.Fatalf("the assertion did not reach the end of the block, so it stopped somewhere it should not have:\nstdout:\n%s\nstderr:\n%s", out, errOut)
+				}
+				if !strings.Contains(out, tc.want) {
+					t.Errorf("Check 68's step-2 assertion ran but did not print %q:\n%s", tc.want, out)
+				}
+				return
+			}
+			if code == 0 {
+				t.Fatalf("Check 68's step-2 assertion passed a plan it must refuse, and the next command in step 2 applies that plan to the pinned project:\n%s", out)
+			}
+			if !strings.Contains(errOut, "Check 68 plan stop:") {
+				t.Errorf("the assertion refused the plan without a `Check 68 plan stop:` line:\nstderr:\n%s", errOut)
+			}
+			if !strings.Contains(errOut, tc.want) {
+				t.Errorf("the assertion's stop does not carry %q:\nstderr:\n%s", tc.want, errOut)
+			}
+		})
+	}
+}
+
+// TestChecklistCheck68BucketDeleteProvesTheProject runs the guard's
+// `chk68_rm_bucket` against a stubbed `gcloud`.
+//
+// The two throwaway buckets are the one pair of names in the check that is not
+// confined to the project by anything gcloud does: a bucket name is global
+// across all of GCS and `gcloud storage rm` takes a bucket URL rather than a
+// project-scoped resource, so `--project` does not stop it deleting a bucket of
+// the same name that belongs to somebody else. The guard's answer is to ask the
+// bucket which project it belongs to and delete only on a match. This test
+// stubs that answer three ways — this project, another project, and a bucket
+// that is not there — and holds the function to deleting in exactly the first
+// case.
+//
+// Mutations (verified, run and restored): the `"$PROJECT_NUMBER")` match arm
+// replaced by `*)` (delete whatever the bucket says it belongs to) → the
+// other-project case and the empty-answer case fail; the describe's failure
+// branch dropped → the absent case fails, because the function then asks the
+// case what to do with an empty answer; the `chk68_try` around the `rm` dropped
+// → the static assertion fails, because a delete whose failure is silent is the
+// one thing the trap exists to avoid.
+func TestChecklistCheck68BucketDeleteProvesTheProject(t *testing.T) {
+	guard := chk68GuardBlock(t)
+	rmFn := chk68FuncBody(t, guard, "chk68_rm_bucket") + "\n}"
+	// The one-liner the delete goes through, taken from the guard too: the
+	// harness runs the check's own functions and not a restatement of them.
+	tryFn := ""
+	for _, l := range strings.Split(guard, "\n") {
+		if s := strings.TrimSpace(l); strings.HasPrefix(s, "chk68_try() {") {
+			tryFn = s
+		}
+	}
+	if tryFn == "" {
+		t.Fatal("Check 68's guard block no longer declares chk68_try")
+	}
+	if !strings.Contains(rmFn, `gcloud storage buckets describe`) {
+		t.Fatal("Check 68's chk68_rm_bucket no longer asks the bucket which project it belongs to: a bucket name is global and `gcloud storage rm` ignores --project, so without that question the delete is not confined to this project at all")
+	}
+	if !strings.Contains(rmFn, `--format='value(project)'`) {
+		t.Error("Check 68's chk68_rm_bucket does not read the bucket's own project: the comparison has nothing to compare")
+	}
+	if !strings.Contains(rmFn, "chk68_try gcloud storage rm -r") {
+		t.Error("Check 68's chk68_rm_bucket removes the bucket outside chk68_try: a delete that failed would be silent, and the trap's own line would then read as though the bucket were gone")
+	}
+
+	const stub = `
+gcloud() {
+  case "$*" in
+    "storage buckets describe "*)
+      if [ "$STUB_STATE" = absent ]; then echo "stub: no such bucket" >&2; return 1; fi
+      printf '%s\n' "$STUB_OWNER" ;;
+    "storage rm -r "*) echo "STUB-RM $*" ;;
+    *) echo "stub gcloud: unexpected call: $*" >&2; return 1 ;;
+  esac
+}
+`
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	const (
+		bucket = "fmgd-chk68-bucket-0123abcd"
+		mine   = "123456789"
+		theirs = "987654321"
+	)
+	for _, tc := range []struct {
+		name    string
+		state   string
+		owner   string
+		deletes bool
+		want    string
+	}{
+		{"the bucket is this project's", "there", mine, true, ""},
+		{"the bucket belongs to another project", "there", theirs, false, "the bucket belongs to project " + theirs},
+		{"the bucket reports no project at all", "there", "", false, "reports no project"},
+		{"the bucket is not there", "absent", "", false, "is not there — nothing to delete"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := "set -u\nP=fugaro-dev\nPROJECT_NUMBER='" + mine + "'\nSTUB_STATE='" + tc.state + "'\nSTUB_OWNER='" + tc.owner + "'\n" +
+				stub + "\n" + tryFn + "\n" + rmFn + "\nchk68_rm_bucket " + bucket + "\necho CHK68-RETURNED\n"
+			code, out, errOut := runChk68Shell(t, script, []string{"PATH=" + os.Getenv("PATH")})
+			if code != 0 {
+				t.Fatalf("chk68_rm_bucket exited %d:\nstdout:\n%s\nstderr:\n%s", code, out, errOut)
+			}
+			if strings.Contains(errOut, "stub gcloud") {
+				t.Fatalf("chk68_rm_bucket calls gcloud in a way this stub does not know: %s", errOut)
+			}
+			if !strings.Contains(out, "CHK68-RETURNED") {
+				t.Fatalf("chk68_rm_bucket did not return to its caller, so it left the shell:\nstdout:\n%s\nstderr:\n%s", out, errOut)
+			}
+			deleted := strings.Contains(out, "STUB-RM") && strings.Contains(out, "gs://"+bucket)
+			if deleted != tc.deletes {
+				t.Errorf("chk68_rm_bucket deleted the bucket: %v, and it must delete it only when the bucket reports this project's number:\nstdout:\n%s\nstderr:\n%s", deleted, out, errOut)
+			}
+			if !tc.deletes {
+				if !strings.Contains(errOut, "REFUSED to delete gs://"+bucket) && !strings.Contains(errOut, "gs://"+bucket+" is not there") {
+					t.Errorf("chk68_rm_bucket neither deleted nor said why not:\nstderr:\n%s", errOut)
+				}
+				if tc.want != "" && !strings.Contains(errOut, tc.want) {
+					t.Errorf("chk68_rm_bucket's refusal does not say %q:\nstderr:\n%s", tc.want, errOut)
+				}
+			}
+		})
+	}
+}
+
+// TestChecklistCheck68BucketSuffixIsDrawnOnce: the two throwaway buckets carry a
+// random suffix, and the guard block is re-run at the start of every step — so
+// the suffix has to be drawn once per run and kept, or each step would name a
+// bucket the check never created: step 4 would create a second bucket and the
+// trap and the Restore would delete neither.
+//
+// The block is run twice in the same $CHK68_TMP, the way two steps run it, and
+// the second draw has to be the first. The two names are also held to the
+// leftover filter, which is what has to see them at the end of the Restore.
+//
+// Mutations (verified, run and restored): the `$(cat "$CHK68_TMP/rand")` read
+// dropped, so the suffix is drawn fresh every time → the second run differs;
+// the `printf … > "$CHK68_TMP/rand"` write dropped → the second run differs;
+// the suffix dropped from BUCKET_MISS → the two names collide with the near
+// miss's own prefix.
+func TestChecklistCheck68BucketSuffixIsDrawnOnce(t *testing.T) {
+	guard := chk68GuardBlock(t)
+
+	var suffix []string
+	seen := false
+	for _, l := range strings.Split(guard, "\n") {
+		s := strings.TrimSpace(l)
+		if strings.HasPrefix(s, "CHK68_RAND=$(cat") {
+			seen = true
+		}
+		if !seen {
+			continue
+		}
+		suffix = append(suffix, l)
+		if strings.HasPrefix(s, "BUCKET_MISS=") {
+			break
+		}
+	}
+	if len(suffix) == 0 {
+		t.Fatal("Check 68's guard block no longer draws the random suffix its two bucket names carry: the names are global, and two runs of the check would collide")
+	}
+	owned := ""
+	for _, l := range strings.Split(guard, "\n") {
+		if s := strings.TrimSpace(l); strings.HasPrefix(s, "CHK68_OWNED=") {
+			owned = s
+		}
+	}
+	if owned == "" {
+		t.Fatal("Check 68's guard block no longer defines CHK68_OWNED")
+	}
+	re, err := regexp.Compile(strings.Trim(strings.TrimPrefix(owned, "CHK68_OWNED="), "'"))
+	if err != nil {
+		t.Fatalf("Check 68's leftover filter is not an ERE grep -E can run: %v", err)
+	}
+
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	dir := t.TempDir()
+	block := strings.Join(suffix, "\n")
+	script := "set -u\nCHK68_TMP='" + dir + "'\nmkdir -p \"$CHK68_TMP\"\n" + block +
+		"\necho \"first ${CHK68_RAND} ${BUCKET_MAIN} ${BUCKET_MISS}\"\n" + block +
+		"\necho \"second ${CHK68_RAND} ${BUCKET_MAIN} ${BUCKET_MISS}\"\nprintf 'file %s\\n' \"$(cat \"$CHK68_TMP/rand\")\"\n"
+	code, out, errOut := runChk68Shell(t, script, []string{"PATH=" + os.Getenv("PATH")})
+	if code != 0 {
+		t.Fatalf("Check 68's suffix block exited %d:\nstdout:\n%s\nstderr:\n%s", code, out, errOut)
+	}
+	fields := map[string][]string{}
+	for _, l := range strings.Split(out, "\n") {
+		if f := strings.Fields(l); len(f) == 4 && (f[0] == "first" || f[0] == "second") {
+			fields[f[0]] = f[1:]
+		}
+	}
+	if len(fields["first"]) != 3 || len(fields["second"]) != 3 {
+		t.Fatalf("the suffix block did not print its two runs:\n%s", out)
+	}
+	rand, main, miss := fields["first"][0], fields["first"][1], fields["first"][2]
+	if !regexp.MustCompile(`^[a-f0-9]{8}$`).MatchString(rand) {
+		t.Errorf("Check 68's bucket suffix is %q, which is not the eight hex characters the guard draws", rand)
+	}
+	if main != "fmgd-chk68-bucket-"+rand {
+		t.Errorf("Check 68's positive bucket is %q, and it has to be fmgd-chk68-bucket-%s: the check's leftover look keys on the fmgd-chk68- prefix", main, rand)
+	}
+	if miss != "xfmgd-chk68-bucket-"+rand {
+		t.Errorf("Check 68's near-miss bucket is %q, and it has to be xfmgd-chk68-bucket-%s: it is the near miss because it contains the prefix without starting with it, and a suffix of its own would make it a name the check never created", miss, rand)
+	}
+	for _, n := range []string{main, miss} {
+		if !re.MatchString(n) {
+			t.Errorf("Check 68's leftover filter does not match %q, one of the two buckets the check creates: the look at the end of the Restore would report a clean project with the bucket still in it", n)
+		}
+	}
+	if fields["second"][0] != rand {
+		t.Errorf("Check 68 drew a different suffix the second time the guard block ran (%s, then %s): the block is re-run at the start of every step, and a fresh suffix each time names a bucket the check never created — step 4 would create a second bucket and the trap and the Restore would delete neither", rand, fields["second"][0])
+	}
+	if !strings.Contains(out, "file "+rand) {
+		t.Errorf("Check 68's suffix is not kept in $CHK68_TMP/rand, so the next step cannot draw the same one:\n%s", out)
+	}
 }
 
 // TestChecklistCheck68SchedulerRegionComesFromTheConfig: every Cloud Scheduler
