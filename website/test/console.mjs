@@ -448,6 +448,7 @@ const CONSOLE_CONTROLS = [
   ['console-cta-quiet', "the hero's quiet link"],
   ['download-link', 'a download link'],
   ['screen-dot', 'a dot in the screenshot slider'],
+  ['screen-arrow', "an arrow in the screenshot slider's bar"],
 ]
 
 /** The console page's own stylesheet, as the 44 px reading takes it: every `<style>` it ships. */

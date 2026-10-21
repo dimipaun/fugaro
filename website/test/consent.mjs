@@ -134,7 +134,18 @@ const DOCUMENT_SELECTORS = new Map([
   // this is the query that proves the keyboard's half is not behind the pointer's: the stub
   // answers no `matchMedia`, so nothing hover-bound is ever bound here, and the groups are.
   ['.site-nav-group details', (el) => el.name === 'details'],
+  // The console page's screenshot slider (the owner's feedback of 2026-10-21): the same one
+  // `site.js` asks for on every page it starts on, and the pages these cases run are the built
+  // ones, which include the console. Nothing below reads it — a slider has nothing to do with
+  // consent — but the query is made on every page, and the stub's rule is that a selector is
+  // taught here rather than answered with nothing.
+  ['[data-slider]', (el) => el.attrs.has('data-slider')],
 ])
+
+/** Whether a stub element carries a class, by token (`screen` is not `screens-track`). */
+function hasClass(name) {
+  return (el) => (el.attrs.get('class') ?? '').split(/\s+/).includes(name)
+}
 
 // The selectors the site's one script file asks an *element* for, on the same terms as the
 // document's map above: refused rather than matched to nothing. The menu's keyboard half reads
@@ -142,6 +153,16 @@ const DOCUMENT_SELECTORS = new Map([
 const ELEMENT_SELECTORS = new Map([
   ['[data-consent]', (el) => el.attrs.has('data-consent')],
   ['summary', (el) => el.name === 'summary'],
+  // The slider's own hooks, read inside the section the script finds it by: the track it
+  // scrolls, the slides it counts, the dots it marks, and the bar it reveals. Every one of
+  // them is asked for on a page that carries a slider, so every one of them is taught here.
+  ['.screens-track', hasClass('screens-track')],
+  ['.screen', hasClass('screen')],
+  ['.screen-dot', hasClass('screen-dot')],
+  ['[data-slider-bar]', (el) => el.attrs.has('data-slider-bar')],
+  ['[data-slider-counter]', (el) => el.attrs.has('data-slider-counter')],
+  ['[data-slider-prev]', (el) => el.attrs.has('data-slider-prev')],
+  ['[data-slider-next]', (el) => el.attrs.has('data-slider-next')],
 ])
 
 // The address a stubbed page is "at", and the page it was reached from: both carry a query

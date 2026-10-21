@@ -711,18 +711,53 @@ added or removed without this sentence moving fails there:
     can lag the build it names (the redesign's README records that ruling, and the drift it
     allows was 1,035,806 against the stated site figure in the round that wrote it down). Those
     90,041 bytes are bytes the site grew before this round and are absorbed here, the way the
-    `--repo` round's 1,126 bytes were paid in the logo round above. The script is untouched — the
-    slider ships no JavaScript and needs none — and the count of files in `dist/` goes 23 →
+    `--repo` round's 1,126 bytes were paid in the logo round above. The script is untouched in
+    this round — the slider as it stood then shipped no JavaScript and needed none (the
+    feedback-B round below is where that changed) — and the count of files in `dist/` goes 23 →
     **28**. The page's own words go
     211 → **303**, well inside D188's 500 and the derived ceiling: a row's `alt` is text a reader
     gets when the picture does not arrive, and the four of them are the whole of the move.
     `test/console-screens.mjs` holds the four rows to the files' own headers and to the
     manifest's `alt` texts, and the two figures above are re-derived in this commit, from the
     gate's own build.
+  - **The console page's feedback-B round** (the owner's feedback of 2026-10-21: the slider's
+    count, its own controls and an autoplay; the three download cards in one row; and the struck
+    `shasum` command) re-derived **all three** figures, from the gate's own build. **The script's
+    figure is this round's alone**, and this is the first JavaScript the slider has ever cost the
+    site: `site.js` goes 39,888 → **49,561 bytes** (+9,673), which is the whole of the slider's
+    half — the bar the markup emits `hidden` revealed and driven, the count and the current dot
+    read from the track's own scroll position, the arrows and the dot presses with their wrap,
+    and the six-second autoplay with its four stops — and none of it is needed to read the page
+    (the fallback is the markup and it did not change: the four pictures are in the document and
+    the four dots are links). The page weight and the site figure move 399,732 → **410,743** and
+    1,387,679 → **1,411,489**, which is **11,011 bytes**, and **the per-file comparison of the two
+    builds shows that is the whole of the move**: `dist/scripts/site.js` (+9,673) and
+    `dist/console/index.html` (30,311 → **31,649**, +1,338) are the only two files in `dist/` that
+    moved a byte. What the page's own 1,338 are is this round's three parts — the control bar and
+    its rules, the slider's stylesheet, the cards' one-row rules and the `word-break` on the
+    checksum line — less the command block the owner struck.
+    **The other 12,799 bytes are what rounds merged from `main` left un-derived** — 12,746 of them
+    already inside the build the screenshots round's figure was taken from, and 53 from the
+    `fugaro init` round's CLI strings reaching the reference page — and this round pays them by
+    re-deriving rather than carrying them forward, the way the screenshots round paid the 90,041
+    before it. The console page's words go 303 → **299**: the struck command was four of them, and
+    the bar the script drives adds none (an arrow's name is an `aria-label`, which is not text a
+    reader reads). No file was added or removed, so the count of files in `dist/` stays 28.
 
-  - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
-    `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
-    control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
+  - **JavaScript per page:** 185,856 bytes. Three times 61,952: the one script the site ships,
+    `public/scripts/site.js` (49,561 bytes), plus 25 %. What the file carries is the copy
+    control, the menu, the consent gate and the console page's slider. **The slider's half is
+    this round's, and it is the only JavaScript the site has gained since the menu** (the owner's
+    feedback of 2026-10-21): the bar the markup emits `hidden` — a Previous arrow, the count and
+    a Next arrow — is revealed and driven here, the count (`n / N`) and the dot the reader is on
+    are written from the track's own scroll position (so a trackpad swipe reads the same as a
+    press), an arrow or a dot press moves the track round its ends, and a slide advances every
+    six seconds while nobody is reading — stopping for a pointer over the slider, a focus inside
+    it, a tab in the background, and a visitor whose system asks for less motion
+    (`prefers-reduced-motion: reduce`, read at load and watched after it).
+    `test/console-screens.mjs` runs the file in `test/lib/dom.mjs`'s stub browser to hold that
+    half, and refuses a planted defect in each part of it. What the file carries of the menu, in
+    the detail `test/nav-hover.mjs` holds it
     to: the hover behaviour is bound only where `matchMedia` says the device's pointer hovers
     and only for a pointer that says it is a mouse or a pen — a tap sends a pointer of its
     own, and a finger never hovers, so a touch screen keeps the tap it has always had — and
@@ -743,10 +778,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,498,995 bytes. Three times 499,665: the heaviest page, the
-    console page, at 399,732 bytes (its HTML, the four screenshots it renders, and the files
+  - **Page weight per page:** 1,540,287 bytes. Three times 513,429: the heaviest page, the
+    console page, at 410,743 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,203,797 bytes. Three times 1,734,599 (every file in `dist/`, 1,387,679
+  - **Whole site:** 5,293,086 bytes. Three times 1,764,362 (every file in `dist/`, 1,411,489
     bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -1325,6 +1360,18 @@ release's own documentation (`console/README.md`) and to the workflow that cuts 
 than to a URL the test composed the way the build does. What the commit *did* add under `data/`
 is the release's sums file, because a checksum is the one fact the release's names cannot imply.
 
+**The section's look is the owner's feedback of 2026-10-21, and one thing came out of it.** The
+three cards the board draws — macOS, which the release ships for, and the Windows and Linux ones
+it does not — stand in **one row** on a desktop, equal in height, and the `sha256` under a link
+wraps inside its line (`word-break`, in the mono face at the caption's size) rather than running
+out of the card; a narrow screen is the only thing that wraps the row, and `test/console.mjs`
+reads the built rules for all three of those, rule by rule, with plants. **And the verification command is
+gone**: the section used to print `shasum -a 256 Fugaro.Console-*` under the checksums and the owner
+struck it, so `src/lib/console-downloads.mjs` no longer accepts a `verify` key at all — its
+`released` block is the sentence a page renders and the source of it, and a key beyond those two
+stops the build. The checksums themselves stay: they are the release's own values and
+`data/console-sha256sums.txt` is still what they are held to.
+
 The console is built for macOS and nothing else (`console/README.md`,
 `.github/workflows/console-release.yml`: one universal `.dmg` and one `.zip`), which is why the
 platform, and not an invented second one, is the word each button carries. Its release is a
@@ -1413,10 +1460,10 @@ nothing else, so adding, replacing or removing a screenshot is a data-file edit 
   that ceiling and asks for the figure to be re-derived in the commit that adds the file.
 - **The console page's weight:** the pictures a page renders are part of its weight, so **a page
   that carries the heaviest set of pictures can become the page the page-weight ceiling is
-  derived from** — the console page is that page today, at 399,732 bytes with the four captures
+  derived from** — the console page is that page today, at 410,743 bytes with the four captures
   in it, where the docs hub (292,469) was every earlier derivation's subject. A round that adds
   pictures re-derives both figures, and this one did.
-- **The page's words.** The console page stands at **303 words** against the ceiling above, and
+- **The page's words.** The console page stands at **299 words** against the ceiling above, and
   a row's words all count: the caption is text under the picture, and the `alt` is counted too,
   because it is the text a reader gets when the picture does not arrive (`test/budget.mjs`'s
   `visibleText` reads an `img`'s `alt`). The four rows' `alt` texts are 148 of those words, and a
@@ -1424,17 +1471,52 @@ nothing else, so adding, replacing or removing a screenshot is a data-file edit 
   own rule: the number moves where the need is, and a build that needs more fails until it moves.
 
 The slider's own bytes move with the page's markup and not with a script: the component's
-stylesheet is inlined into the console page whether or not the slider renders, and the slider
-ships no JavaScript at all — the track scrolls, the dots are anchors and the first picture is in
-the page, so it works with JavaScript off.
+stylesheet is inlined into the console page whether or not the slider renders.
+
+**The slider reads the page with no JavaScript at all, and the owner's second reading of it
+(2026-10-21) is about the half a stylesheet cannot write.** The markup is the fallback and it did
+not change for this: the track is a focusable, labelled scroll container with snap points, every
+dot is an `<a href="#…">` into its own slide, the first picture is in the page and the other three
+are `loading="lazy"`, so a reader who runs no script scrolls, taps a dot and reads every one of
+the four. What the owner asked for and got is *"the slider should show how many screenshots there
+are (dots or "1 / 4" counter), and I should be able to click to select them (right now only the
+keyboard works: add clickable dots/thumbnails and previous/next buttons); also we should
+auto-slide every few seconds (~6s; pause on hover/focus and when the tab is hidden; off for
+prefers-reduced-motion)"* — and all of that is `public/scripts/site.js`:
+
+- **The bar**, which the markup emits `hidden` and only while there is more than one slide: a
+  Previous arrow, the count and a Next arrow, each arrow a `<button type="button">` with its name
+  in an `aria-label` (the chevron is drawn with a border and a rotation, so the bar adds no
+  drawing and no second file to the page). A reader with no script sees the pictures and the dots
+  and no button that does nothing — the rule `test/copy.mjs` holds the copy control to, and the
+  reason the bar is `hidden` in the markup rather than by a class.
+- **The count and the current dot**, both written from the track's own scroll position: `n / N`
+  into a polite live region, and `aria-current="true"` on the dot the reader is on (every other
+  dot carrying `"false"`, so no attribute has to be taken off anything). The track is the source
+  of truth, so a reader's own swipe moves the reading exactly as an arrow press does.
+- **The presses**: an arrow moves one slide, wrapping at either end, and a dot press is taken over
+  from its anchor and made the same move — one slide at a time, with the count and the mark
+  following. The move is not animated: the count is the scroll position, and a move the browser
+  animated would be a move during which the two disagree.
+- **The autoplay**: one slide every six seconds, stopped while the pointer is over the slider,
+  while the focus is inside it, while the tab is hidden, and never started at all for a visitor
+  whose system answers `prefers-reduced-motion: reduce` — a setting read at load and watched
+  after, because a visitor can turn it on without reloading.
 
 `website/test/console-screens.mjs` holds the shipped state — the four rows against the files'
 own headers and the manifest's `alt` texts, the page against the rows, and the loading of each
 slide — and the states beside it: a two-row fixture build, a one-slide build (which renders no
-dots at all), an empty data file (which renders no slider), and the refusals above. The fixture
-builds write no image bytes at all, because a test may not commit a picture either: they assert
-the `src` the loader derives from the row's file name, and the `alt`, the caption, the size and
-the dot that each row produces.
+dots and no bar at all), an empty data file (which renders no slider), and the refusals above. The
+fixture builds write no image bytes at all, because a test may not commit a picture either: they
+assert the `src` the loader derives from the row's file name, and the `alt`, the caption, the size
+and the dot that each row produces. **The script's half is held by running the script**, in a stub
+browser: `test/lib/dom.mjs` — the harness `test/copy.mjs` used to keep to itself, moved out of that
+file so that the two gates that run `site.js` run it in the one stub — is driven through every move
+above (the arrows, a dot press, a reader's own scroll, the pointer, the focus, the tab and the
+motion preference), and then through eleven planted defects, one per part of the half: a bar nobody
+reveals, a count never written, an autoplay of the wrong interval or none at all, each of the four
+stops removed, an arrow that goes past the end instead of round it, a dot press the script does not
+take over, and a count that ignores the reader's own scrolling — each one refused by name.
 
 ## The rule this directory is written to
 
