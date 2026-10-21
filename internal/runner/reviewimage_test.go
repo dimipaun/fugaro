@@ -98,7 +98,7 @@ func TestReviewInputIsRebuiltForEveryRound(t *testing.T) {
 	if len(prompts) != 2 {
 		t.Fatalf("the run made %d review calls, want 2", len(prompts))
 	}
-	marker := fmt.Sprintf("binary file mobile/assets/icon.png changed, %d bytes", len(pngFixture))
+	marker := fmt.Sprintf(`binary file "mobile/assets/icon.png" changed, %d bytes`, len(pngFixture))
 	if strings.Contains(prompts[0], marker) {
 		t.Fatalf("the first round's prompt names a file the branch did not have yet:\n%s", prompts[0])
 	}
@@ -119,6 +119,28 @@ func postPrompt(t *testing.T, req agent.Request, model string, maxTokens int64) 
 	}
 	body := fmt.Sprintf(`{"model":%q,"max_tokens":%d,"messages":[{"role":"user","content":%s}]}`, model, maxTokens, content)
 	return postBody(t, base+"/v1/messages", key, body)
+}
+
+// sentText is what a request body actually asks the model: its user
+// messages' content, decoded. A body that carries a file's bytes keeps them
+// — NULs and all — only in here: the JSON around them escapes every byte
+// that would end a string, so an assertion made on the encoded body cannot
+// see them.
+func sentText(t *testing.T, body []byte) string {
+	t.Helper()
+	var req struct {
+		Messages []struct {
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatalf("the request body is not a Messages body: %v\n%s", err, body)
+	}
+	var b strings.Builder
+	for _, m := range req.Messages {
+		b.WriteString(m.Content)
+	}
+	return b.String()
 }
 
 // reviewThePrompt is a review step that makes the call Claude Code would make
@@ -178,26 +200,38 @@ func TestReviewOfAPullRequestThatAddsAPngSendsNoImage(t *testing.T) {
 		t.Fatalf("the provider saw %d calls, want 1", n)
 	}
 	sent := string(g.compat.Body(0))
-	marker := fmt.Sprintf("binary file mobile/assets/icon.png changed, %d bytes", len(pngFixture))
-	if !strings.Contains(sent, marker) {
-		t.Errorf("the request does not name the PNG in one line (%q):\n%s", marker, sent)
+	text := sentText(t, g.compat.Body(0))
+	marker := fmt.Sprintf(`binary file "mobile/assets/icon.png" changed, %d bytes`, len(pngFixture))
+	if !strings.Contains(text, marker) {
+		t.Errorf("the request does not name the PNG in one line (%q):\n%s", marker, text)
 	}
 	for _, bad := range []struct{ what, needle string }{
 		{"an image block", `"type":"image"`},
 		{"a media type", "media_type"},
 		{"the PNG's bytes, base64", base64.StdEncoding.EncodeToString([]byte(pngFixture))},
-		{"the PNG's bytes, raw", pngFixture},
-		{"a NUL byte", "\x00"},
 		{"git's own binary notice", "Binary files"},
 	} {
 		if strings.Contains(sent, bad.needle) {
 			t.Errorf("the request carries %s:\n%s", bad.what, sent)
 		}
 	}
-	if !strings.Contains(sent, "Fugaro built the changes under review into this prompt") {
-		t.Errorf("the request carries no built input:\n%s", sent)
+	// The raw bytes and the NUL are asserted on what the model is actually
+	// asked, not on the body's JSON: JSON escapes both (a NUL becomes
+	// \u0000), so a body carrying the PNG's bytes verbatim passes a
+	// strings.Contains on the encoded body and says nothing. Decoded, the
+	// assertion is one that can fail.
+	for _, bad := range []struct{ what, needle string }{
+		{"the PNG's bytes, raw", pngFixture},
+		{"a NUL byte", "\x00"},
+	} {
+		if strings.Contains(text, bad.needle) {
+			t.Errorf("the request carries %s:\n%s", bad.what, sent)
+		}
 	}
-	if !strings.Contains(sent, "+The app icon is in assets/.") {
-		t.Errorf("the request carries no text diff:\n%s", sent)
+	if !strings.Contains(text, "Fugaro built the changes under review into this prompt") {
+		t.Errorf("the request carries no built input:\n%s", text)
+	}
+	if !strings.Contains(text, "+The app icon is in assets/.") {
+		t.Errorf("the request carries no text diff:\n%s", text)
 	}
 }

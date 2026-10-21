@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -115,7 +116,7 @@ func TestManagedSettingsBeforeEveryStage(t *testing.T) {
 			if strings.Contains(raw, plantedKey) {
 				t.Errorf("the real key is in the managed settings: %s", raw)
 			}
-			if len(deny) != 2 {
+			if !slices.Contains(deny, "WebSearch") || !slices.Contains(deny, "WebFetch") {
 				t.Errorf("the web tools are not denied: %s", raw)
 			}
 			return inner(t, ctx, req)
@@ -135,6 +136,57 @@ func TestManagedSettingsBeforeEveryStage(t *testing.T) {
 		}
 		if !strings.Contains(env["NO_PROXY"], "127.0.0.1") {
 			t.Errorf("stage %d: NO_PROXY = %q", i, env["NO_PROXY"])
+		}
+	}
+}
+
+// TestManagedSettingsDenyBinaryReadsInReviewStages: both review stages'
+// settings deny a Read of every binary kind, and the stages that are not
+// reviews carry the web tools alone. The prompt already tells the reviewer
+// not to read a binary file (reviewinput.go's binaryRule), but a prompt is
+// not a permission: the reviewer runs with --dangerously-skip-permissions
+// and a full Read tool, and one Read of a changed PNG puts a base64 image
+// block in the next request, which the gateway refuses for a model with no
+// image rate — `stage review: images aren't priced for model ...` (run
+// 20261021-002046-31cc).
+//
+// Mutation (pass a constant review=false to agent.DenyRules): every stage
+// carries the web tools alone and the review assertions fail. Mutation (a
+// constant review=true): the implement and fix assertions fail.
+func TestManagedSettingsDenyBinaryReadsInReviewStages(t *testing.T) {
+	g := newGW(t, gwConfig(t, "  first_line_review: on\n"), "observe", "")
+	h := g.harness
+	var denies [][]string
+	read := func(inner step) step {
+		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			_, deny, _ := settingsEnv(t, h)
+			denies = append(denies, deny)
+			return inner(t, ctx, req)
+		}
+	}
+	rec, err := h.run(t, read(implement("feature")), read(review("changes", 1)), read(idle), read(review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	names := stageNames(rec)
+	if !eq(names, "implement", "review_first", "fix", "review") || len(denies) != len(names) {
+		t.Fatalf("stages = %v, with %d settings read", names, len(denies))
+	}
+	for i, name := range names {
+		want := name == "review" || name == "review_first"
+		for _, ext := range []string{"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "pdf", "heic", "tiff"} {
+			rule := "Read(**/*." + ext + ")"
+			if got := slices.Contains(denies[i], rule); got != want {
+				t.Errorf("stage %s: %s is denied = %v, want %v: %v", name, rule, got, want, denies[i])
+			}
+		}
+		for _, rule := range denies[i] {
+			if !strings.HasPrefix(rule, "Read(") && !slices.Contains([]string{"WebSearch", "WebFetch"}, rule) {
+				t.Errorf("stage %s: unexpected rule %q: %v", name, rule, denies[i])
+			}
+		}
+		if !slices.Contains(denies[i], "WebSearch") {
+			t.Errorf("stage %s: the web tools are not denied: %v", name, denies[i])
 		}
 	}
 }
