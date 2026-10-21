@@ -660,6 +660,23 @@ export function runDiagramFailures(html, css, docs = sources()) {
     out.push('the page carries no second list, and the facts the picture does not carry — how a run starts, when the draft appears, what a run syncs, what outlives the container, where the boundary is — are what that list is for (the owner\'s draft of 2026-10-19)')
   }
 
+  // And that list is a bulleted list, one bullet to an item (the owner's feedback of
+  // 2026-10-21). The owner read the five facts as one run-on paragraph, because the panel drew
+  // the rows the board draws and every one of them was set with `list-style: none` — a list
+  // whose items carry no marker is a list a reader meets as prose. What a reader sees is the
+  // marker, so the reading is the declaration the page's own stylesheet makes for the list: a
+  // marker named by `list-style`/`list-style-type`, whichever of the two the page writes, and
+  // no `none` among what it names. `base.css` gives every marker on the site its colour
+  // (`:where(li)::marker`), so the marker's tone is the site's and not this page's, and its
+  // place is the row's own padding — neither is a declaration to read here.
+  const marker = declaredFor(css, 'run-also', 'list-style') ?? declaredFor(css, 'run-also', 'list-style-type')
+  const markerWords = marker === undefined ? [] : marker.value.trim().split(/\s+/)
+  if (marker === undefined) {
+    out.push('the list of the facts beside the picture declares no `list-style`, and the page draws no bullet of its own: the items of that list carry a bullet point each (the owner\'s feedback of 2026-10-21), so the marker is the stylesheet\'s to name and a list nothing declares one for falls back to the browser\'s own, which is a marker the page has not chosen')
+  } else if (markerWords.every((word) => word === 'none')) {
+    out.push(`the list of the facts beside the picture is \`list-style: ${marker.value}\`, and the owner's feedback of 2026-10-21 asks for a bullet point on each of its items: a list drawn with \`none\` is the run-on paragraph the owner read — the rows the board draws, with nothing in front of them`)
+  }
+
   // The drawings scale to the column and never scroll sideways.
   for (const drawing of diagram.drawings) {
     const box = drawing.viewBox.trim().split(/\s+/).map(Number)
@@ -1810,6 +1827,20 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       'a tall drawing with no ceiling of its own',
       rewrite('run-tall', 'max-width:22.5rem;', ''),
       /declares `max-width: \(nothing\)`.*declares no ceiling at all/,
+    ],
+    // The list of facts beside the picture, drawn with no marker on its items: the run-on
+    // paragraph the owner read (their feedback of 2026-10-21), and the defect every gate in
+    // this file passed over while the list was the page's own `<ul>` with `list-style: none`.
+    [
+      'a list of facts with no bullet on its items',
+      // The declaration is **added** to the page's own rule rather than swapped into it: the
+      // build's CSS minifier rewrites the shorthand it was written as (`list-style: disc` is
+      // built as `list-style: outside`, since `disc` is `list-style-type`'s initial value), so
+      // a fixture that typed the source's own value in would stop landing the moment the
+      // minifier changed its mind. The added declaration is the last one in the rule's body,
+      // which is the one in force.
+      declare('run-also', 'list-style:none'),
+      /asks for a bullet point on each of its items/,
     ],
     // A ceiling under the phone's own column: the drawing is scaled down rather than up, and
     // the phone's label size is taken in that box.
