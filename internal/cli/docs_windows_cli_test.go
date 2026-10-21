@@ -73,11 +73,16 @@ const (
 	// free to wrap.
 	windowsCLIDecisionsAnswered = "**The owner answered D1–D6 and D16 on 2026-10-20 and approved Slice 0 and Slice 1 only**"
 
-	// windowsCLIPOSIXChange is the index's record of the one POSIX path this
-	// slice changes (a relative $XDG_CONFIG_HOME or $XDG_CACHE_HOME used to
-	// decide the config and the two caches): it is written down where a reader
-	// looks rather than claimed away as parity.
-	windowsCLIPOSIXChange = "**The one POSIX behaviour this slice changes is that a relative `$XDG_CONFIG_HOME` or `$XDG_CACHE_HOME` stops deciding where the config and the two caches go.**"
+	// windowsCLIPOSIXChange is the index's record of the POSIX paths this slice
+	// changes: a relative $XDG_CONFIG_HOME, $XDG_CACHE_HOME or $XDG_STATE_HOME
+	// used to decide the config, the two caches and the acks file; the ADC
+	// lookup used to consult $XDG_CONFIG_HOME; and the acks file's no-home
+	// fallback moved. It is written down where a reader looks rather than
+	// claimed away as parity. The count is in the sentence and round 2's review
+	// is why: it read "the one POSIX behaviour" and named only the first of the
+	// three, so an edit that drops one is red here rather than found by a
+	// reader.
+	windowsCLIPOSIXChange = "**Three POSIX behaviours change in this slice: a relative `$XDG_CONFIG_HOME`, `$XDG_CACHE_HOME` or `$XDG_STATE_HOME` stops deciding where fugaro writes, the ADC lookup stops consulting `$XDG_CONFIG_HOME` at all, and the watch acks file's fallback for a machine that names no usable home directory moves.**"
 
 	// windowsCLIPermsDeferral is the index's record of the one security
 	// question this slice leaves open: the operator's refresh-token file

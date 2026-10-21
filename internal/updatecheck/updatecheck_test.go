@@ -739,13 +739,15 @@ func TestWarnNothingToSay(t *testing.T) {
 	})
 }
 
-// TestARelativeXDGCacheHomeIsIgnoredOnPOSIX pins this package's half of the one
-// POSIX behaviour this port changes: main's cachePath here took any non-empty
-// $XDG_CACHE_HOME, so a relative one decided where the update check was
-// written, joined onto the process's working directory; localcfg.UserDir now
-// ignores it — the XDG spec's own rule — and the fallback decides. An absolute
-// value is unchanged. HOME is read rather than the platform's own cache
-// variable on purpose, so this row says the same thing on every platform.
+// TestARelativeXDGCacheHomeIsIgnoredOnPOSIX pins this package's half of the
+// first POSIX behaviour the index records this port changing — the ADC lookup
+// and the watch acks file's no-home fallback are the other two: main's
+// cachePath here took any non-empty $XDG_CACHE_HOME, so a relative one was
+// joined onto the process's working directory and decided where the update
+// check was written; localcfg.UserDir now ignores it — the XDG spec's own rule
+// — and the fallback decides. An absolute value is unchanged. HOME is read
+// rather than the platform's own cache variable on purpose, so this row says
+// the same thing on every platform.
 //
 // Mutation: cachePath back to `if dir := getenv("XDG_CACHE_HOME"); dir != ""`
 // makes the path "rel-cache/fugaro/update-check.json" and fails this test.

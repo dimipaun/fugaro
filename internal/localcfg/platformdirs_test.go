@@ -207,14 +207,18 @@ func TestConfigDirFollowsThePlatform(t *testing.T) {
 
 // TestARelativeXDGVariableIsIgnoredOnPOSIX is the same rule at the callers
 // rather than in the helper, because a *relative* $XDG_CONFIG_HOME or
-// $XDG_CACHE_HOME is the one POSIX behaviour this port changes and the change
-// has to be pinned where it happens: on main, configDir and cachePath took any
-// non-empty value, so a relative one was joined onto the process's working
-// directory and decided where the project config, the name check and the update
-// check were written (internal/updatecheck's cachePath the same — its own test
-// pins its half). Now localcfg.UserDir's IsAbs rule ignores it and the
-// fallback decides, which is what the XDG spec asks for and what the state
-// path already did. An absolute value is unchanged.
+// $XDG_CACHE_HOME is one of the POSIX behaviours this port changes — the
+// index's "The POSIX behaviour this slice changes" names this one first, the
+// ADC lookup and the acks file's no-home fallback being the other two — and
+// the change has to be pinned where it happens: on main, configDir and
+// cachePath took any non-empty value, so a relative one was joined onto the
+// process's working directory and decided where the project config, the name
+// check and the update check were written (internal/updatecheck's cachePath the
+// same — its own test pins its half). Now localcfg.UserDir's IsAbs rule ignores
+// it and the fallback decides, which is what the XDG spec asks for and what the
+// state path already did. An absolute value is unchanged, and so is the rule
+// applied to the home directory itself: a relative one is refused by name
+// rather than joined (the rows for that are in TestConfigDirFollowsThePlatform).
 //
 // Mutation: dropping the filepath.IsAbs check from UserDir (any non-empty value
 // decides, as main did) makes both paths below relative to the test's working

@@ -94,27 +94,69 @@ there would make every contributor's `fugaro verify build` cross-compile, which
 is Slice 6's decision and costs every Linux build a Windows build's worth of
 time (T1.5).
 
-## The one POSIX behaviour this slice changes
+## The POSIX behaviour this slice changes
 
-**The one POSIX behaviour this slice changes is that a relative `$XDG_CONFIG_HOME` or `$XDG_CACHE_HOME` stops deciding where the config and the two caches go.**
-The XDG spec's own rule is that such a path "should be considered invalid and
-ignored", and the state path already did that — `internal/infra/workdir.go`'s
-lookup required an absolute value before this port touched it. The config
-directory and the two cache paths did not: `internal/localcfg`'s `configDir`
-and `cachePath`, and `internal/updatecheck`'s `cachePath`, took any non-empty
-value, so a *relative* one was joined onto the process's working directory and
-decided where the project config, the name check and the update check were
-written. All three now go through one place, `localcfg.UserDir`, which ignores
-a relative value and falls back to `~/.config`, `~/.cache` and `~/.local/state`
-— `%APPDATA%` and `%LOCALAPPDATA%` on Windows — exactly as the state path
-already did. An **absolute** value is untouched, so the escape hatch every
-POSIX user has, and every spec-abiding environment, sees the same paths as
-before; what changes is a setting the spec calls invalid. It is recorded here
-rather than left to a comment because the plan's hardest constraint is that no
-slice changes a POSIX code path, and this is the one that does. The pins are
-`TestARelativeXDGVariableIsIgnoredOnPOSIX` in `internal/localcfg` (with the
-relative rows of `TestConfigDirFollowsThePlatform`) and
-`TestARelativeXDGCacheHomeIsIgnoredOnPOSIX` in `internal/updatecheck`.
+**Three POSIX behaviours change in this slice: a relative `$XDG_CONFIG_HOME`, `$XDG_CACHE_HOME` or `$XDG_STATE_HOME` stops deciding where fugaro writes, the ADC lookup stops consulting `$XDG_CONFIG_HOME` at all, and the watch acks file's fallback for a machine that names no usable home directory moves.**
+**(1) A relative XDG variable is ignored.** The XDG spec's own rule is that
+such a path "should be considered invalid and ignored", and one of the state
+paths already did that — `internal/infra/workdir.go`'s lookup required an
+absolute value before this port touched it. The others did not:
+`internal/localcfg`'s `configDir` and `cachePath`, `internal/updatecheck`'s
+`cachePath` and `internal/watch`'s `AckPath` took any non-empty value, so a
+*relative* one was joined onto the process's working directory and decided
+where the project config, the name check, the update check and the watch acks
+were written. All of them now go through one place, `localcfg.UserDir`, which
+ignores a relative value and falls back to `~/.config`, `~/.cache` and
+`~/.local/state` — `%APPDATA%` and `%LOCALAPPDATA%` on Windows — exactly as the
+workdir state path already did. The same rule now applies to the home directory
+the fallback is built from, and there it is a refusal rather than a fallback:
+main joined a relative `$HOME` and wrote the result under the working directory
+(`rel/.config/fugaro`), where `UserDir` refuses it by name instead. An
+**absolute** value is untouched, so the escape hatch every POSIX user has, and
+every spec-abiding environment, sees the same paths as before; what changes is
+a setting the spec calls invalid.
+
+**(2) The ADC lookup no longer consults `$XDG_CONFIG_HOME`.** `init`'s
+`adcInfo` and `managed apply`'s `adcFile` tried `$CLOUDSDK_CONFIG`, then
+`$XDG_CONFIG_HOME/gcloud`, then `~/.config/gcloud`, so with an **absolute**
+`$XDG_CONFIG_HOME` set, fugaro looked for
+`application_default_credentials.json` there. The one builder
+(`internal/cli/adcpath.go`) is gcloud's own rule instead: `$CLOUDSDK_CONFIG`
+verbatim, else `%APPDATA%\gcloud` on Windows and `~/.config/gcloud` elsewhere
+(F29, T1.4), because gcloud reads `$CLOUDSDK_CONFIG` and no XDG variable — the
+directory the old step named is one gcloud never writes. A POSIX user who
+keeps an ADC file under `$XDG_CONFIG_HOME/gcloud` by hand finds gcloud's file
+consulted now and not hers; `$GOOGLE_APPLICATION_CREDENTIALS`, which names any
+path at all, is how to point one that is not gcloud's. This is the change that
+is a fix on Windows, where all three copies of the rule put the file under
+`.config` — and it is still a POSIX path that moves, which is why it is here.
+The relative-home refusal of (1) reaches this builder too: `os.UserHomeDir`'s
+answer was used verbatim, and only an absolute `$HOME` (or `%USERPROFILE%`) is
+now.
+
+**(3) The acks file's no-home fallback moves.** `internal/watch`'s `AckPath`
+read `$XDG_STATE_HOME` and `os.UserHomeDir()` itself and fell back to `.` when
+there was no home at all, so a machine with `$HOME` unset wrote
+`./.local/state/fugaro/watch-acks.json` and a relative `$HOME` was taken at
+face value (`rel/.local/state/…`). Through `localcfg`'s state rule both end at
+`./fugaro/watch-acks.json`. Both are relative to the working directory, and
+both are the best-effort case — acks are local, and losing the file only shows
+those failures again — but they are not the same file, so such a machine shows
+the acknowledged failures once more. This is also where the last copy of the
+directory rule went (F5, F29): the acks file was the one piece of state still
+computed by hand, and on Windows it was the wrong answer
+(`%USERPROFILE%\.local\state` beside `%LOCALAPPDATA%` for everything else).
+
+It is recorded here rather than left to a comment because the plan's hardest
+constraint is that no slice changes a POSIX code path, and these are the three
+that do. The pins are `TestARelativeXDGVariableIsIgnoredOnPOSIX` in
+`internal/localcfg` (with the relative rows of
+`TestConfigDirFollowsThePlatform`, which carry a relative `$HOME` too),
+`TestARelativeXDGCacheHomeIsIgnoredOnPOSIX` in `internal/updatecheck`,
+`TestAckPathFollowsThePlatformStateDirectory` in `internal/watch` (its relative
+row and the row for a machine that names no state directory) and
+`TestADCPathFollowsThePlatform` in `internal/cli` (the two rows saying an
+`$XDG_CONFIG_HOME` does not move gcloud's file).
 
 ## The one security deferral this slice leaves open
 
