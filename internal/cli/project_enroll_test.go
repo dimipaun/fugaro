@@ -1210,7 +1210,11 @@ func TestProjectShowNeverAdvertisesAPatternAsTheRemedy(t *testing.T) {
 // "/"-segments (drop the alphabet check) — red on `github/*/*`, `github/acme/app
 // b`, `github/acme/app;id` and the uppercase provider; drop the "-"/"."/".."
 // segment rule — red on `-x/y/z`, `github/acme/-app` and `github/acme/..`;
-// drop the length bound — red on the name one byte over safetext.FieldMax.
+// drop the length bound — red on the name one byte over safetext.FieldMax;
+// hold the provider kind to task.ValidProvider instead of config.Providers (the
+// check this test was widened for) — red on `githubb/acme/app` and
+// `gitlab/acme/app`, which `repos add` refuses (projectpolicy.ValidPattern) and
+// which the listing advised until it was fixed.
 func TestEnrollableArgHoldsTheRemedyToARepository(t *testing.T) {
 	for _, ok := range []string{
 		"github/acme/app",
@@ -1229,12 +1233,19 @@ func TestEnrollableArgHoldsTheRemedyToARepository(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{
-		"",                    // nothing
-		"*",                   // the allow-list's own entry: admits every repository
-		"github/*/*",          // a pattern a run wrote
-		"acme/app",            // two segments: `repos add` resolves its provider through a config these listings do not have
-		"github/acme",         // no repository name
-		"GitHub/acme/app",     // not a provider kind (task.ValidProvider is lower-case)
+		"",                // nothing
+		"*",               // the allow-list's own entry: admits every repository
+		"github/*/*",      // a pattern a run wrote
+		"acme/app",        // two segments: `repos add` resolves its provider through a config these listings do not have
+		"github/acme",     // no repository name
+		"GitHub/acme/app", // not a provider kind (the kinds are lower-case)
+		// A word a slug could be built from but no repository can carry: it is
+		// not in config.Providers, so `repos add githubb/acme/app` is refused
+		// (projectpolicy.ValidPattern) and advising it would invite the operator
+		// to run a command that cannot be run (the review finding on this
+		// change). Every kind a repository may have is in that list.
+		"githubb/acme/app",
+		"gitlab/acme/app",
 		"-x/y/z",              // a shell word opening with a dash reads as an option
 		"github/acme/-app",    // the same, one segment in
 		"github/acme/..",      // a directory, not a repository

@@ -477,6 +477,30 @@ func IsProviderKeyEnv(name string) bool {
 	return strings.HasPrefix(strings.ToUpper(name), ProviderKeyEnvPrefix)
 }
 
+// ModelSecretEnvs are the job variables a model credential is mounted as
+// (D145): the Claude OAuth token's and the Anthropic key's, each the value
+// ReservedSecrets maps its logical name to. A provider's key is the third —
+// IsProviderKeyEnv's namespace, which ReservedEnvPrefixes keeps out of every
+// workflow secret's reach — so IsModelSecretEnv is the whole predicate.
+//
+// The git credential's two variables are deliberately not here: D145 leaves
+// Bitbucket untouched and moves the GitHub App key only in C2.3, so both keep
+// the job accessor they have today.
+var ModelSecretEnvs = []string{ReservedSecrets[ClaudeOAuthToken], ReservedSecrets[AnthropicSecret]}
+
+// IsModelSecretEnv reports whether the job variable name carries a model
+// credential: one of ModelSecretEnvs, or a provider key's variable.
+//
+// The credentials service (D146) is what makes the question matter: once an
+// installation opts in, a job's account keeps no secretAccessor on these
+// (modules/workflow/sa.tf) because the service holds them (C1.11), and C1.20
+// drops the mount. Terraform cannot ask Go, so the same three names are
+// literals in that module's locals, held to this function by
+// deploy/terraform's TestModelSecretEnvsMatchTheCredentialsService.
+func IsModelSecretEnv(name string) bool {
+	return slices.Contains(ModelSecretEnvs, name) || IsProviderKeyEnv(name)
+}
+
 // ProviderBySecret is the provider whose key is the secret named secret.
 // Provider secrets are the owner's, in the local config, so a workflow's own
 // secrets cannot be checked against them by Validate: the places that hold
@@ -752,6 +776,15 @@ func checkProviderURL(s string) error {
 // agent.auth api-key. oauth is a subscription credential that cannot leave
 // Anthropic, and vertex is Claude on Vertex; neither can carry a provider
 // key, and a run does not mix credentials.
+//
+// cascade is refused a provider pin for oauth's reason, from the other side: a
+// cascade run's calls are carried by whatever credential the cascade chose, and
+// its tier A is a shared subscription OAuth token (docs/credentials-service, D133)
+// — such a token is never sent to another provider. Config time cannot know
+// which credential a run will be on (tier A is chosen from the repository's
+// admitted accounts, which live in the published policy and not in this file),
+// so a pin a provider serves is refused outright rather than assumed to land on
+// tier B: the run that names a provider model is an api-key run.
 func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 	var ps []Problem
 	if a.Auth == "api-key" {
@@ -767,8 +800,11 @@ func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 			continue
 		}
 		why := "vertex serves Claude only and a run does not mix credentials"
-		if a.Auth == "oauth" {
+		switch a.Auth {
+		case "oauth":
 			why = "an oauth token is a Claude subscription credential and is never sent to another provider"
+		case AuthCascade:
+			why = "a cascade run's tier A is a shared subscription OAuth token, and such a token is never sent to another provider"
 		}
 		ps = append(ps, Problem{Path: r.path, Message: fmt.Sprintf("%s is served by provider %s, which needs agent.auth: api-key (agent.auth is %s: %s)", CodeSpan(r.model), name, a.Auth, why)})
 	}

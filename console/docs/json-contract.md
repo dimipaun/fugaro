@@ -606,23 +606,184 @@ and one entry of `installations`:
 | `region` | string | never | never | `""` when the config could not be read |
 | `shared_merged` | bool | never | never | whether this machine holds the installation's published shared config |
 | `shared_checked_at` | string | never | **yes** | RFC 3339 UTC; null exactly when `shared_merged` is false |
+| `checkouts` | array | **yes** (an older CLI) | never | the repositories of this project this machine remembers a checkout of, one entry per path; `[]` when none is remembered |
+
+and one entry of `installations[].checkouts`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `repository` | string | never | never | `<provider>/<owner>/<name>`, the identity the path was recorded under |
+| `path` | string | never | never | the absolute path, made printable and bounded (control and format characters escaped, at most 200 runes) |
+| `enrolled` | bool | never | never | whether the installation's project config enrolls `repository` in its own `repos:` map — **a local fact**, false when that config could not be read |
+| `valid` | bool | never | never | whether the path is still a checkout of this project and this repository **and that repository is enrolled**, as of this read |
+| `reason` | string | **yes** | never | why it is not, one of `missing`, `not_a_checkout`, `unreadable`, `other_project`, `other_repository`, `not_enrolled`, `not_representable`; **absent exactly when `valid` is true** |
+
+`enrolled` is reported separately from `valid` on purpose: it is the one part of
+the verdict that is a fact of a **local file** rather than of the directory the
+path names, it is the only part that is meaningful when the path itself is gone,
+and a reader that wants to explain "this project does not own this repository"
+must be able to say that without also claiming the directory is not a checkout.
+It is **not** a cloud fact: it is the operator's own `repos:` map in
+`projects/<name>.yaml`, read locally. The published allow-list is the cloud's
+copy of the same decision (project policy publish seeds it from this map) and is
+**not** read here — this command opens no bucket and needs no credentials.
+
+**`checkouts` is what makes the first run zero-configuration** (v1 design D13
+and §3.4 rule 7; console v2 plan V2.1.1): the installation list and the local
+checkouts of each installation arrive in one document, so the picker and the
+checkouts cannot disagree about which installation is which. The rows are
+**local state and nothing else** — the paths are never published to the runs
+bucket, never merged into the shared config, and never printed by any other
+command. They come from a machine-local state file
+(`$XDG_CONFIG_HOME/fugaro/state/checkouts.json`, in a directory of its own
+beside the project configs and not among them: the `state` directory is created
+0700 and the file 0600, and the operator's config home itself is never
+chmodded), written best effort by the commands that resolve a checkout's
+project and are **not** reads the console spawns — `fugaro validate`,
+`fugaro run`, `fugaro init --repo` and the rest — bounded to 20 repositories
+per project and 5 paths per repository, **and to 1000 rows across the whole
+document**. A repository the project config does not enroll is **not
+recorded at all**: an un-enrolled clone must not push a real repository out of
+the per-project bound, and a row for it could only ever be `not_enrolled`. The
+bounds are kept on the write and **applied again on this read**, because the
+state file is one this process did not write: a hand-edited one, or one written
+by a machine that has since cloned far more, is trimmed to the newest rows and
+the trimming is named in `warnings` rather than presented as the whole file. **The reads §5.1 allows never record,
+by the console's hand or the operator's**: `fugaro doctor` and
+`fugaro accounts ls` resolve a checkout too, but a read writes nothing, and
+the CLI cannot tell who spawned it, so the rule is by command path
+(`consoleReadPaths`, `internal/cli/project.go`). A checkout only ever used
+with `fugaro doctor` or `fugaro runs ls` is therefore never remembered, and
+the console's list is shorter than the machine's directories: it is what the
+write path has seen, not an inventory of the disk.
+
+**Every path is re-validated on this read, and the read never writes.** A path
+that has moved or been deleted, that is no longer a git checkout's own root,
+whose `fugaro.yaml` names another project, or whose origin is another
+repository is reported with `valid: false` and its `reason` — never dropped,
+because the write path is what prunes and a directory that comes back is a
+checkout again. A repository the project config does not enroll is
+`not_enrolled`; a path that had to be escaped or truncated for printing, or
+that is not absolute or does not carry a well-formed identity, is
+`not_representable` — **the printed string names a different directory than the
+stored one, so it must never be presented as a path that works**. A state file
+that cannot be read (not JSON, another version, over its size bound, not a
+regular file) is a warning naming it and `checkouts: []` for every
+installation — never a silent "there are none", and never a listing that fails.
+
+**One row carries one reason, and which one it is is fixed.** In order:
+
+1. `not_representable` — decided from the row's own strings, **before anything
+   touches the disk**: the path as printed is not the path as stored, the path
+   is not absolute, or the identity is not a provider and an `owner/name`. A
+   row that fails here is never examined further, so a relative path that
+   happens to exist under the reader's working directory is still
+   `not_representable` and not a valid checkout.
+2. `missing` — the path is not a directory that exists.
+3. `unreadable` — it is there, and its `fugaro.yaml` cannot be read.
+4. `not_a_checkout` — it is not a git checkout's own root.
+5. `other_project` — its `fugaro.yaml` names another project (or none).
+6. `other_repository` — its origin is another repository than the row's, or an
+   origin git config rewrites.
+7. `not_enrolled` — everything above holds and the project does not enroll the
+   repository.
+
+The order is part of the contract because the console renders the reason: a row
+is reported as the *first* thing wrong with it, and `not_enrolled` — the last
+of the seven — is therefore what a row gets when nothing else is.
+
+**What a reader may do with a row — one rule, and the whole rule.** A row
+carrying `valid: true` is a string from this document and the absolute path of
+a git checkout this machine has, of this project and this repository, which the
+project enrolls. The console may use such a path for exactly one thing: **as
+the working directory of a read-only CLI command from §5.1's exact-argv
+allow-list**, spawned with the path as a directory and nothing else. It may
+show it to the operator, and it may offer it as a pre-fill the operator
+confirms. It may **not** join, open, stat, copy, delete or execute anything at
+that path itself, may not pass the string as a flag or an argument to any other
+command, and may not treat it as a working directory for anything that writes.
+**A row with `valid: false` — whatever its `reason` — is never used for
+anything, not even as a working directory**: it is where a checkout was, or a
+path this document cannot spell, not where work can be done. This is §3.4 rule
+7, and it is what the two halves above mean together: the CLI re-validates
+because it, and not the app, is the thing allowed to look at the disk.
+
+**`<provider>` in `repository` is the one the origin's host gives, never the
+one the checkout's own `fugaro.yaml` claims.** A checkout is remembered and
+re-validated under the provider whose host its git origin is on (`github.com` →
+`github`, `bitbucket.org` → `bitbucket`), so a `fugaro.yaml` that says
+`bitbucket` over a `github.com` origin appears as `github/owner/name` — a
+copied config or a re-pointed checkout is not a `bitbucket/...` repository that
+no provider serves. **The file's `git.provider` is never used to name a row,
+not even for a host no provider lives on** — a GitHub Enterprise or
+self-hosted Bitbucket box — because that file is written by the checkout: a
+clone on an arbitrary host (`https://git.evil.example/acme/app.git`, with
+`git.provider: github` and `project: aurora` in its `fugaro.yaml`) would
+otherwise be recorded, and re-validated, as the enrolled `github/acme/app`,
+handing the console a valid path for a repository it does not own. **A host no
+provider lives on is therefore recorded as nothing at all**, and a row an older
+fugaro left for one is reported `other_repository` rather than valid. This is the rule a repository is *known* by (a provider
+knows a repository only when that provider's host is its origin's host), and it
+is what makes the pair safe to build a provider-host link from (design §5.1
+rule 2): a link built from the file's claim would point at the wrong host, on a
+name the operator does not own. The run path holds the two sources to agreement
+and fails the run when they disagree (`docs/git-providers.md`); a checkout is
+remembered best effort, where the origin is the source that decides.
+
+**The rows are strings off this machine's disk**, so every one of them is
+escaped and bounded like the rest of this contract: a repository identity or a
+path carrying a control character, a bidi override or 400 bytes of padding
+arrives escaped and marked. **Such a row is `not_representable` and `valid:
+false`**: the escaping and the truncation are for printing, and the string that
+prints is not the string the checkpoint was recorded at, so it names a
+different directory than the one on disk. A reader renders every row as text
+and nothing else; what it may *use* is the single rule above, and it applies to
+`valid: true` rows only (§3.4 rule 7).
 
 **An installation whose config cannot be read is still listed, by name, with a
 warning** — a picker that offered a name and then failed silently is worse than
-one that says what it could not read.
+one that says what it could not read. **Its `checkouts` are listed anyway, and
+every one of them is `enrolled: false` and `valid: false`** — enrolment is a
+fact of that very file, and a file that cannot be read enrolls nothing — **but
+the `reason` is the row's own, not `not_enrolled`**: the reason is the first
+thing the read finds wrong with the row, in the fixed order above, so a path
+that is gone is `missing` and a row whose path is sound is `not_enrolled`. The
+two fields answer two questions,
+and a reader that wants "this project does not own this repository" reads
+`enrolled: false` — which is true of every row here — rather than the reason.
+Which directory holds this project's checkout is a fact of this machine, not of
+the file that could not be parsed, so the row — the repository and the path —
+is still there to show the operator. The reader fails closed: no row of such an
+installation may be used for anything.
+
+**Two writers racing lose one of the two updates.** The state file is written
+by a load-modify-write that is not locked, under a rename: a reader therefore
+never sees half a file — the file is whole or it is the previous one — but a
+pair of concurrent writes can lose one of them. Nothing is corrupted and
+nothing is corrupted by it: the loser's checkout is recorded again the next
+time a command runs in it. This is why the field is a convenience for the first
+run and not an inventory: **a reader must not treat a missing row as "this
+machine does not have that checkout"**.
 
 **The document is a named set of fields and it is deliberately not a marshalled
 `localcfg.Config`.** That struct carries the operator's providers and their base
 URLs, the named Claude accounts, the reserved project secrets, the Terraform
 block and the whole repository list — none of which the picker needs, and all of
 which would join this document the day a field is added to the struct. A test
-fails if a field outside the five above reaches the output, and if either type
+fails if a field outside the six above reaches the output, and if either type
 ever becomes (or embeds) `localcfg.Config`.
 
 **Version skew.** The command is new, so an older CLI does not have it at all:
 the spawn fails and the console shows its "this CLI cannot list installations"
 state, which is the form D13 accepted for v1. The handshake (§6.7) is what tells
-the console which case it is in.
+the console which case it is in. **`checkouts` is newer than the command**: a
+CLI that lists installations and emits no `checkouts` key at all is a CLI that
+does not know about checkouts, and the console shows the installation without
+them (its checkout directory stays whatever the operator stored in D13's
+form) — an empty array means this CLI knows, and this machine remembers none.
+The two are not the same state and the reader must not conflate them. There is
+no version field to bump: this document is read whole, and the key's absence is
+the signal.
 
 ### 6.9 `fugaro plan graph --json`
 
@@ -793,8 +954,10 @@ the closing here.
 | 6 | **No PR field on a run that has not finished** | `JSONRun` carries `repo` and no `pr_url`/`pr_number`; they exist only on `JSONFinished`; `runview.Row` spells the pair `pr_url` + `pr` | A live row shows no link; the detail screen takes it from `diagnose RUN --json`'s `row` |
 | 7 | **No provider a console can build a link from** | `runview.Row` and `diagnose`'s row carry no provider, and `doctor --json`'s `doctorOutput` reports none. `JSONRun` and `JSONFinished` now do carry `provider` (phase 3, Task 3.5), and it is the right answer for the runs that have one — a shared project job's profile pins the provider its runs clone from — but it is **absent on every per-repository job**, which in phase 3 is every Bitbucket repository and every baked workflow. The kinds are `github`/`bitbucket`/`fake` (`internal/task/task.go`'s `Slug`, which hashes provider and repository together **one way**, so a slug cannot be inverted) | **No PR link at all** (design §5.1 rule 2): repository, number and `pr_url` shown as text, never handed to `openExternal`. A GitHub-shaped guess is wrong for `edgeappinc/fugarosandbox`, which is Bitbucket — and that run is exactly one of the runs whose `provider` is absent |
 
-**And no shape anywhere has a `repository` field** — the repository is `repo`
-on every one of them. **`watch --json`'s run and finished rows carry a
+**And no shape that describes a run has a `repository` field** — the repository
+is `repo` on every one of them. (§6.8's `checkouts` rows are the one place this
+contract spells the word: there it names a repository identity, not a run's
+repository, and nothing builds a link from it.) **`watch --json`'s run and finished rows carry a
 `provider`; nothing else does, and it is the job profile's, not a stamp for
 every repository.** So a link rebuilt as `https://github.com/<repo>/pull/<n>`
 is still not merely useless but wrong (design §5.1 rule 2), and **gap 7 stays

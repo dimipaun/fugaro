@@ -114,7 +114,7 @@ git:
   provider: github            # github | bitbucket
   base_branch: main
 agent:
-  auth: oauth                 # oauth | api-key | vertex
+  auth: oauth                 # oauth | api-key | vertex | cascade
   review_rounds: 2            # review and fix rounds before the PR is marked ready
   max_budget_usd: 25          # per stage
 workflows:
@@ -166,7 +166,7 @@ A run's coder can be a non-Anthropic model served by OpenRouter — one key for 
 
    ```yaml
    agent:
-     auth: api-key                     # oauth and vertex are refused with a provider model
+     auth: api-key                     # oauth, vertex and cascade are refused with a provider model
      models:
        coder: deepseek/deepseek-v4.1-flash
        reviewer: deepseek/deepseek-v4.1-flash

@@ -148,8 +148,9 @@ func TestImageRenderReadsTheCopyAndChecksItsSum(t *testing.T) {
 
 // Review fix (1), security (decision L16): fugaro init's first builds are a
 // billable Cloud Build submission, never lenient like the repository and
-// anchor stages' own earlier read (loadCheckoutConfigAt, read with lc==nil,
-// before lc itself is even loaded). A bucket that cannot be read, with
+// anchor stages' own earlier read (the lenient, lc==nil
+// loadCheckoutResolved(ctx, dir, nil, layerOptions{Lenient: true}) repoEngine
+// makes, before lc itself is even loaded). A bucket that cannot be read, with
 // nothing cached, must refuse resolveForBuild outright, before
 // r.offerBuilds (and buildImages, and submitAndWait, and Submit) is ever
 // reached — the same contract fugaro run's own
@@ -159,10 +160,10 @@ func TestImageRenderReadsTheCopyAndChecksItsSum(t *testing.T) {
 //
 // resolveForBuild always takes a real, non-nil lc (its one caller,
 // repoEngine, already has one by the time it calls it): unlike the
-// repository stage's own loadCheckoutConfigAt(ctx, dir) call, it can never
-// be starved into findLayer's lc==nil, cache-only mode, so a stale cached
-// layer cannot satisfy it while the bucket is reachable either (that class
-// of bug is covered for fugaro image refresh's own refreshReload by
+// repository stage's own lenient, lc==nil read of the same checkout, it can
+// never be starved into findLayer's lc==nil, cache-only mode, so a stale
+// cached layer cannot satisfy it while the bucket is reachable either (that
+// class of bug is covered for fugaro image refresh's own refreshReload by
 // TestRefreshReloadIgnoresAStaleCachedLayer, which uses the identical
 // mechanism, loadCheckoutResolved with a strict layerOptions{}).
 //

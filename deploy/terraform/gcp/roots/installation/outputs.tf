@@ -56,3 +56,7 @@ output "history_service_account" {
 output "history_job" {
   value = module.installation.history_job
 }
+
+output "credentials_service" {
+  value = module.installation.credentials_service
+}

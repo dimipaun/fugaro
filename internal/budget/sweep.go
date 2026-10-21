@@ -274,10 +274,32 @@ func (s *Sweeper) remove(ctx context.Context, slug, run string, e AgentEntry, no
 		return err
 	}
 	// The outcome's day is the entry's last heartbeat when that is plausible
-	// (so it does not move between sweeps), else today.
-	day := Day(now)
+	// (so it does not move between sweeps), else today — and never before the
+	// run id's own launch day. The heartbeat is run-written (the rules' AMOUNT
+	// && RBOK allows any non-negative number), so a run can date it before it
+	// launched and land its outcome on a day no liveness scan reads, which
+	// would keep it admitted until its fx: W2, reached through the sweeper.
+	// The launch day is the run id's, which no run token writes.
+	//
+	// A run id dated ahead of this clock is the one branch where the launch
+	// day cannot be the day: no scan reads a future day (the rules' DAYOK
+	// refuses one, and checkLive looks at today and yesterday), so the outcome
+	// goes on today rather than falling back to the older, run-written
+	// heartbeat day — otherwise a run id dated ahead of the clock and a
+	// heartbeat days old would put the outcome outside the window again, from
+	// the far side.
+	today := Day(now)
+	day := today
 	if hb := time.UnixMilli(e.UpdatedAt); e.UpdatedAt > 0 && hb.Before(now) && now.Sub(hb) < 8*24*time.Hour {
 		day = Day(hb)
+	}
+	if launch := runIDTime(run); !launch.IsZero() {
+		switch ld := Day(launch); {
+		case ld > today:
+			day = today
+		case ld > day:
+			day = ld
+		}
 	}
 	oc := PathOutcome(day, slug, run)
 	var existing json.RawMessage

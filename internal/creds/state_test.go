@@ -687,6 +687,14 @@ func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
 		db.put(PathCurrent(Run{Slug: "acme", ID: id}), a1.Name)
 	}
 	st := &RTDBStore{DB: db}
+	// The fixture holds leases and no placements, so the oldest lapsed run is
+	// placed here first: the sweep deletes leases, not placements (a lapsed
+	// run's placement is the service's to remove when the run ends), and this
+	// node is what makes the assertion below an assertion at all — with no
+	// PathCurrent in the fixture, Current answers absent whether or not the
+	// sweep ran, whatever the node's message claims.
+	swept := Run{Slug: "acme", ID: "gone-0"}
+	db.put(PathCurrent(swept), a1.Name)
 
 	leases, err := st.Leases(ctx, now)
 	if err != nil {
@@ -715,7 +723,12 @@ func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
 		}
 	}
 	// The oldest went, the newest lapsed stayed, and the live hold was never a
-	// candidate.
+	// candidate. The swept run's placement is still there: the sweep's subtree
+	// is creds/leases, and reading a change into it would be a delete the
+	// service owns.
+	if name, found, err := st.Current(ctx, swept); err != nil || !found || name != a1.Name {
+		t.Fatalf("the placement of the swept run = (%q, %v, %v); want %q — the sweep deletes leases, and a placement is not its to delete", name, found, err, a1.Name)
+	}
 	for _, r := range []Run{{Slug: "acme", ID: "gone-0"}, {Slug: "acme", ID: "gone-5"}} {
 		if _, ok := db.nodes[PathLease(r)]; ok {
 			t.Fatalf("the sweep left %+v: it deletes the oldest lapsed leases first", r)

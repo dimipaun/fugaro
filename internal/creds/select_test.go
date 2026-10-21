@@ -35,13 +35,15 @@ type fakeStore struct {
 	// what a selection does when the decision it made cannot be recorded.
 	placeErr error
 
-	// readErr is the failure each of the four reads answers with — one field per
-	// read, because a single fault would be reported by whichever read runs
-	// first and the other three returns would stay unproved: Marks, Leases and
-	// Current are all read before the decision, and RoundRobin only in a tie.
-	readErr struct {
-		marks, leases, current, roundRobin error
-	}
+	// fail makes one read method answer an error, keyed by the method's name
+	// ("Marks", "Leases", "Current", "RoundRobin"): the state a store cannot
+	// read is the case Select's fail-closed contract is about, and a fake that
+	// can never fail leaves every one of those branches unreachable in the
+	// suite (review finding). One entry per read, because a single fault would
+	// be reported by whichever read runs first and the other three returns
+	// would stay unproved: Marks, Leases and Current are all read before the
+	// decision, and RoundRobin only in a tie.
+	fail map[string]error
 }
 
 func newFakeStore() *fakeStore {
@@ -53,6 +55,25 @@ func newFakeStore() *fakeStore {
 }
 
 func key(r Run) string { return r.Slug + "\x00" + r.ID }
+
+// setFail makes one read method answer err, so a test can state the store a
+// caller cannot read rather than only the store that answers.
+func (f *fakeStore) setFail(method string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail == nil {
+		f.fail = map[string]error{}
+	}
+	f.fail[method] = err
+}
+
+// failed is the error this method was given, if any: read under the lock, so a
+// method's own body stays as short as it was.
+func (f *fakeStore) failed(method string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fail[method]
+}
 
 func (f *fakeStore) setMark(name string, m Mark) {
 	f.mu.Lock()
@@ -98,14 +119,14 @@ func (f *fakeStore) currentOf(r Run) (string, bool) {
 }
 
 func (f *fakeStore) Marks(context.Context) (map[string]Mark, error) {
+	// The error and NOT the map: a caller that ignores the error must not be
+	// handed the state anyway, which is what a real database cannot do either —
+	// an unreadable state is not an empty one.
+	if err := f.failed("Marks"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.readErr.marks != nil {
-		// The error and NOT the map: a caller that ignores the error must not be
-		// handed the state anyway, which is what a real database cannot do
-		// either — an unreadable state is not an empty one.
-		return nil, f.readErr.marks
-	}
 	out := make(map[string]Mark, len(f.marks))
 	for k, v := range f.marks {
 		out[k] = v
@@ -127,11 +148,11 @@ func (f *fakeStore) UpdateMark(_ context.Context, name string, fn func(prev Mark
 }
 
 func (f *fakeStore) Leases(context.Context, time.Time) ([]Lease, error) {
+	if err := f.failed("Leases"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.readErr.leases != nil {
-		return nil, f.readErr.leases
-	}
 	out := make([]Lease, 0, len(f.leases))
 	for _, l := range f.leases {
 		out = append(out, l)
@@ -158,8 +179,8 @@ func (f *fakeStore) SetPlacement(_ context.Context, r Run, name string, l Lease)
 }
 
 func (f *fakeStore) Current(_ context.Context, r Run) (string, bool, error) {
-	if f.readErr.current != nil {
-		return "", false, f.readErr.current
+	if err := f.failed("Current"); err != nil {
+		return "", false, err
 	}
 	n, ok := f.currentOf(r)
 	return n, ok, nil
@@ -174,14 +195,14 @@ func (f *fakeStore) setRoundRobin(n int64) {
 }
 
 func (f *fakeStore) RoundRobin(context.Context) (int64, error) {
+	// Nothing is counted: a read the database refused did not advance the
+	// counter, and a caller that ignored the error must not be able to spread
+	// runs on the strength of a value that was never read.
+	if err := f.failed("RoundRobin"); err != nil {
+		return 0, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.readErr.roundRobin != nil {
-		// Nothing is counted: a read the database refused did not advance the
-		// counter, and a caller that ignored the error must not be able to
-		// spread runs on the strength of a value that was never read.
-		return 0, f.readErr.roundRobin
-	}
 	used := f.rr
 	f.rr++
 	return used, nil
@@ -773,13 +794,14 @@ func TestWaitAnswersTheEarliestOfTheCandidates(t *testing.T) {
 	if at, ok := SlotFrees(leases, a1.Name, now, run, 2); !ok || !at.Equal(now.Add(5*time.Minute)) {
 		t.Fatalf("SlotFrees under a cap of two = %s, %v; want the earlier expiry", at, ok)
 	}
-	// The worked example in SlotFrees' doc, pinned: a limit of 3 with five
-	// holders frees room for a sixth on the THIRD lapse, not the second. Free
-	// asks for strictly fewer than limit holders, so two lapses leave three
-	// holders — still full, and a caller woken then waits again. The count is
-	// `holders - limit + 1`, and the doc said two before the re-review of C1.9;
-	// this is the case that disagrees with the old sentence, so the sentence and
-	// the code cannot drift apart again.
+	// The worked example in SlotFrees' own doc, asserted rather than only
+	// described: a cap of three with five holders waits for the THIRD lapse
+	// (holders - limit + 1), because five, four and three holders are all "not
+	// fewer than limit" and only the third lapse leaves two. The doc said "two
+	// lapses" until the reviews of C1.9, which is the error a reader would have
+	// reasoned from — a run told to come back at the second lapse returns to a
+	// credential that is still full — and a maintainer who made the code match
+	// that sentence would reintroduce m10 for every cap above two.
 	five := make([]Lease, 0, 5)
 	for i := 1; i <= 5; i++ {
 		five = append(five, Lease{Slug: run.Slug, Run: fmt.Sprintf("h%d", i), Credential: a1.Name, Until: now.Add(time.Duration(i) * time.Minute)})
@@ -789,6 +811,16 @@ func TestWaitAnswersTheEarliestOfTheCandidates(t *testing.T) {
 	}
 	if at, ok := SlotFrees(five, a1.Name, now, run, 5); !ok || !at.Equal(now.Add(time.Minute)) {
 		t.Fatalf("SlotFrees under a cap of five with five holders = %s, %v; want the first expiry, 1m", at, ok)
+	}
+	// And the answer is the one Free agrees with, which is what makes it the
+	// lapse that matters: three holders are still live an instant before it, and
+	// the instant SlotFrees names is the first at which Free admits the run
+	// (Live is a strict After, so the lease ending at that instant is over).
+	if Free(five, a1.Name, now.Add(3*time.Minute-time.Second), run, 3) {
+		t.Error("Free admitted the run an instant before the lapse SlotFrees names, while three holders were still live")
+	}
+	if !Free(five, a1.Name, now.Add(3*time.Minute), run, 3) {
+		t.Error("Free refused the run at the lapse SlotFrees names, so the time it answers is not when the run may come back")
 	}
 	// A lapsed lease is nobody's hold, and one run's own expired hold is not a
 	// wait either.
@@ -1240,7 +1272,7 @@ func TestAnUnreadableMarkSetFailsTheSelection(t *testing.T) {
 	failed := errors.New("the database refused the read")
 	st := newFakeStore()
 	st.setMark(a1.Name, Mark{State: StateExhausted, Until: now.Add(time.Hour)})
-	st.readErr.marks = failed
+	st.setFail("Marks", failed)
 
 	// a1 is the only candidate and its own mark holds it, so a selection that
 	// ignored the error would have to see the mark to refuse it — and reading
@@ -1260,7 +1292,7 @@ func TestAnUnreadableLeaseSetFailsTheSelection(t *testing.T) {
 	// Another run holds a1's only slot, so this run is only refused at all
 	// because the leases were read: an empty set in their place answers a1.
 	st.setLease(Run{Slug: run.Slug, ID: "other"}, Lease{Credential: a1.Name, Until: now.Add(time.Minute)})
-	st.readErr.leases = failed
+	st.setFail("Leases", failed)
 
 	_, _, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
 	if !errors.Is(err, failed) {
@@ -1274,7 +1306,7 @@ func TestAnUnreadableLeaseSetFailsTheSelection(t *testing.T) {
 func TestAnUnreadablePlacementFailsTheSelection(t *testing.T) {
 	failed := errors.New("the database refused the read")
 	st := newFakeStore()
-	st.readErr.current = failed
+	st.setFail("Current", failed)
 
 	c, _, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
 	if !errors.Is(err, failed) {
@@ -1292,7 +1324,7 @@ func TestAnUnreadableTieBreakCounterFailsTheSelection(t *testing.T) {
 	// counter — a fault here alone would never be reached.
 	set := noWindow()
 	set.ConcurrencyPerToken = ptr(0)
-	st.readErr.roundRobin = failed
+	st.setFail("RoundRobin", failed)
 
 	c, _, err := selector(st, set).Select(ctx, run, []Credential{a1, a2})
 	if !errors.Is(err, failed) {
@@ -1519,5 +1551,73 @@ func TestTheStickyPathRefreshesTheLease(t *testing.T) {
 	}
 	if cur, _, err := st.Current(ctx, run); err != nil || cur != a1.Name {
 		t.Fatalf("the sticky selection left the run on %q, %v; want %q", cur, err, a1.Name)
+	}
+}
+
+// Select's fail-closed contract: a state that cannot be READ is not a state
+// that is EMPTY. Each of the three reads is a fact the answer is built on — the
+// marks say what is held, the leases say what is taken, the placement says what
+// the run is already on — and answering "nothing there" for a read that failed
+// is not a smaller answer, it is a different one: a credential the state says is
+// held is selected, and the call goes to a token the service has already been
+// told to leave alone.
+//
+// The seeded exhausted mark is what makes that difference visible rather than
+// only the shape of the error: with the state read as empty the only candidate
+// looks free, so a test that asserted "an error came back" would still pass on
+// a mutation that answered an empty map and then failed later for an unrelated
+// reason. Here the credential the state holds is the one the mutation selects.
+//
+// Mutation (read a failed Marks as map[string]Mark{}, a failed Leases as none,
+// or a failed Current as "not placed"): the corresponding case stops returning
+// the read's error.
+func TestSelectFailsClosedOnAStateItCannotRead(t *testing.T) {
+	for _, tc := range []struct{ name, method string }{
+		{"the marks cannot be read", "Marks"},
+		{"the leases cannot be read", "Leases"},
+		{"the run's placement cannot be read", "Current"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			// The only candidate is held (its reset is an hour out) and the run is
+			// placed on it, so every arm below is a read the answer needs.
+			st.setMark(a1.Name, Mark{State: StateExhausted, Since: now.Add(-time.Hour), Until: now.Add(time.Hour)})
+			st.setPlacement(run, a1.Name, Lease{Credential: a1.Name, Until: now.Add(time.Hour)})
+			boom := errors.New("the state is unreachable")
+			st.setFail(tc.method, boom)
+
+			c, wait, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
+			if !errors.Is(err, boom) {
+				t.Fatalf("Select with %s = %q, %v, %v; want the read's own error: an unreadable state is not an empty one (C1.10's state is the answer, not a cache of it)",
+					tc.method, c.Name, wait, err)
+			}
+			if c.Name != "" {
+				t.Errorf("Select returned %q alongside the error", c.Name)
+			}
+			if st.updates != 0 {
+				t.Errorf("a refused selection wrote to the store %d times", st.updates)
+			}
+		})
+	}
+}
+
+// Record refuses a nil change the way Mark does. The guard is not redundant
+// even though Mark has the same one: Record wraps f in a closure to carry the
+// settings, so the function Mark receives is never nil and its check cannot
+// fire — the nil call would land inside the store's compare-and-set callback as
+// a nil-pointer panic, one frame below the error a caller can act on.
+//
+// Mutation (drop the guard): the call panics instead of returning.
+func TestRecordRefusesANilChange(t *testing.T) {
+	st := newFakeStore()
+	_, err := selector(st, noWindow()).Record(ctx, a1.Name, nil)
+	if err == nil {
+		t.Fatal("Record with no change = nil error; want a refusal naming the credential")
+	}
+	if !strings.Contains(err.Error(), a1.Name) || !strings.Contains(err.Error(), "no change") {
+		t.Errorf("the refusal = %q; want it to name %q and say what was missing", err, a1.Name)
+	}
+	if st.updates != 0 {
+		t.Errorf("the refused record wrote to the store %d times", st.updates)
 	}
 }

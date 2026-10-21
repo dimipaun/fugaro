@@ -672,16 +672,20 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	// delete, and the entry here is the strongest one there is: it names this
 	// plan's own address and the identity this plan's own before view carries
 	// (identityOf reads it back through the plan, so the two cannot drift).
-	// Every part the identity needs is in that view, the per-instance one
-	// included — google_storage_bucket's time_created, without which
-	// Identifies is false and tf.Approves refuses the removal for its own
-	// reason (see the positive control below). A list that matched is the only
-	// way this row says anything — an object whose before view identified
-	// nothing, or a version-1 object a reader takes for no entries at all,
-	// would be refused whatever init did with the list — and what it says is
-	// the SCOPING: fugaro init's guard is the address half over fugaro's own
-	// roots (tf.Guard with the command line's own --allow-delete, D72/D74), and
-	// the owner's entries are read by a managed apply of the project's
+	// The before view carries time_created because the gate binds it: a
+	// bucket's identity includes its per-instance attribute
+	// (tf.removalInstanceAttributes), and a view without it identifies
+	// nothing — Identifies is false, and tf.Approves refuses the removal for
+	// its own reason (see the positive control below) — so an entry built from
+	// it would match nothing and this case would pass even with an init that
+	// honoured the owner's list. Every part the identity needs is in that
+	// view, the per-instance one included. A list that matched is the only way
+	// this row says anything — an object whose before view identified nothing,
+	// or a version-1 object a reader takes for no entries at all, would be
+	// refused whatever init did with the list — and what it says is the
+	// SCOPING: fugaro init's guard is the address half over fugaro's own roots
+	// (tf.Guard with the command line's own --allow-delete, D72/D74), and the
+	// owner's entries are read by a managed apply of the project's
 	// agent-authored root alone.
 	const bucket = "module.installation.google_storage_bucket.runs"
 	r := newInitRig(t)
@@ -692,13 +696,17 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 				"time_created": "2026-01-02T03:04:05.678Z"},
 			"after": nil}}
 	entry := tf.DeleteEntry{Address: bucket, Before: identityOf(t, ch)}
-	// The positive control: this entry really would clear this removal under
-	// the entries rule, so init's refusal of the same plan is a refusal to
-	// consult the owner's list and not an entry that could never have matched.
-	// Without it the row passes for the wrong reason — the fixture above once
-	// left time_created out, Identifies was false, and tf.GuardEntries refuses
-	// an unidentified removal with a sentence of its own, so no guard change
+	// The positive control, in both the halves the gate asks for: the entry
+	// this row records is one that really would clear this removal under the
+	// entries rule, so init's refusal of the same plan is a refusal to consult
+	// the owner's list and not an entry that could never have matched. Without
+	// it the row passes for the wrong reason — the fixture above once left
+	// time_created out, Identifies was false, and tf.GuardEntries refuses an
+	// unidentified removal with a sentence of its own, so no guard change
 	// could have made this row fail.
+	if !identifies(t, ch) {
+		t.Fatalf("the fixture's before view identifies nothing (%q): an entry built from it approves nothing, so this case could not tell an init that honours the owner's list from one that does not", entry.Before)
+	}
 	var plan tf.Plan
 	if err := json.Unmarshal([]byte(planJSON(t, ch)), &plan); err != nil {
 		t.Fatal(err)
@@ -754,6 +762,19 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 // what the gate compares.
 func identityOf(t *testing.T, ch planChange) string {
 	t.Helper()
+	return removedIdentityOf(t, ch).String()
+}
+
+// identifies is whether that identity is one the gate can approve at all
+// (tf.RemovalIdentity.Identifies): a before view that lacks its type's
+// per-instance attribute identifies nothing, and no entry approves it.
+func identifies(t *testing.T, ch planChange) bool {
+	t.Helper()
+	return removedIdentityOf(t, ch).Identifies()
+}
+
+func removedIdentityOf(t *testing.T, ch planChange) tf.RemovalIdentity {
+	t.Helper()
 	var p tf.Plan
 	if err := json.Unmarshal([]byte(planJSON(t, ch)), &p); err != nil {
 		t.Fatal(err)
@@ -761,7 +782,7 @@ func identityOf(t *testing.T, ch planChange) string {
 	if len(p.ResourceChanges) != 1 {
 		t.Fatalf("the change is %d resource changes, want 1", len(p.ResourceChanges))
 	}
-	return tf.RemovedIdentity(p.ResourceChanges[0]).String()
+	return tf.RemovedIdentity(p.ResourceChanges[0])
 }
 
 // Task 3.2's review, finding 5: a managed refusal made only of what no
