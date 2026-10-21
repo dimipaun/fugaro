@@ -800,8 +800,8 @@ func TestSetupSkillOffersClone(t *testing.T) {
 	// gate is open — the state a reader has to be able to check against the
 	// constant. It does not name the two commands the gate used to refuse:
 	// the plugin lint (skills_lint_test.go, ownerViolation) rejects an
-	// applying `fugaro init` in skill prose, and the claim is the gate's
-	// state, not the command line it is read on.
+	// applying `fugaro setup` or `fugaro update` in skill prose, and the
+	// claim is the gate's state, not the command line it is read on.
 	for _, want := range []string{"cloneShipped", "internal/cli/recipes_skew.go", "is open"} {
 		if !strings.Contains(topic, want) {
 			t.Errorf("decisions.md's checkout topic never says %q", want)

@@ -25,7 +25,8 @@ func readRepoFile(t *testing.T, rel string) string {
 // TestReadmeGettingStartedIsTwoSteps: the section has exactly two numbered
 // steps, `fugaro setup` and `/fugaro:setup`; the third step the skill carries
 // is one sentence, and the plugin note says where the run wires it. Step 1 is
-// the wizard (W1.2 split the retired `fugaro init` into setup and update), and
+// the wizard (W1.2 retired the one command that was both doors into setup
+// and update), and
 // the sentence after the skill's pull request names the step that follows it:
 // `fugaro setup` again, the run that D5 makes the one that enrols a repository
 // (its first image build is billable and typed).

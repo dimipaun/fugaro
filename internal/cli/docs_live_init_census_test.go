@@ -188,7 +188,7 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 59 files -- 19 test files, 35 markdown files, and the
+// command, sorted. It is 31 files -- 8 test files, 18 markdown files, and the
 // five that fall in none of those groups: the website's install data
 // (website/data/install.yaml), its two files that print the command
 // (website/src/pages/getting-started.astro and
@@ -295,26 +295,46 @@ const censusRoot = "../.."
 // to a string no task has written; that file is the one place the order of the
 // two L2 tasks is visible.
 //
+// **W2.3 moved the list 28 files down: the live prose, and the pins that read
+// it.** Seventeen are the pages and skills a person reads -- README.md,
+// CONTRIBUTING.md, SECURITY.md, the fourteen live pages under docs/
+// (backends, base-image, base-image-migration, checkout, dogfooding,
+// gcp-setup, git-providers, multi-model, project-claude-accounts,
+// project-layer, recipes, release) plus docs/releases/README.md, the releases
+// *index* (the dated records beside it are `docs/releases/v*`, which the dated
+// roots exempt), and .claude/skills/new-release/SKILL.md -- and eleven are
+// tests whose pinned sentences moved with them: nine files in internal/cli --
+// docs_base_test.go (the translation bridge, retired here),
+// docs_checkout_test.go, docs_managed_label_test.go,
+// docs_mobile_checks_review_test.go, docs_project_layer_test.go,
+// docs_project_named_oauth_tokens_test.go, docs_project_wide_git_test.go,
+// docs_providers_test.go and docs_recipes_test.go, the ones of this task's own
+// twelve-file command whose pinned document it renamed -- and
+// plugin/readme_test.go and plugin/setup_skill_test.go, whose assertions name
+// the wizard's first step and the skill's own opening line.
+//
+// **What stays is the residue the later tasks own, and it is not this task's
+// to rename.** Seven are still here because every mention they carry pins a
+// *dated* document or a page whose own rewrite is another task's:
+// docs_release_notes_test.go quotes the 0.9.0 notes,
+// docs_compute_backend_test.go the 0.8.6 notes and design/compute-backend.md,
+// and docs_clone_workflows_test.go, docs_mobile_checks_test.go,
+// docs_mobile_checks_review_test.go, docs_project_centric_test.go and
+// docs_setup_wizard_checks_test.go quote docs/gcp-live-checklist.md, the live
+// page W2.6 rewrites. doctor_bucket_test.go and restore_test.go carry one
+// mention each -- a comment, and a must-not-contain guard whose subject is the
+// retired word -- and stay with them. docs/gcp-live-checklist.md itself is on
+// the list for the same reason.
+//
 // Each task that renames a string takes the file off this list in the same
 // commit, and W2.6 empties it.
 var pendingRename = []string{
-	".claude/skills/new-release/SKILL.md",
-	"CONTRIBUTING.md",
-	"README.md",
-	"SECURITY.md",
-	"docs/backends.md",
-	"docs/base-image-migration.md",
-	"docs/base-image.md",
 	"docs/central-orchestrator/README.md",
 	"docs/central-orchestrator/implementation-plan.md",
-	"docs/checkout.md",
 	"docs/coordinator/README.md",
 	"docs/coordinator/implementation-plan.md",
 	"docs/coordinator/reconciliation.md",
-	"docs/dogfooding.md",
 	"docs/gcp-live-checklist.md",
-	"docs/gcp-setup.md",
-	"docs/git-providers.md",
 	"docs/in-job-review/reconciliation.md",
 	"docs/mobile-auth/implementation-plan.md",
 	"docs/mobile-auth/reconciliation.md",
@@ -322,34 +342,17 @@ var pendingRename = []string{
 	"docs/mobile/functional-spec-reconciliation.md",
 	"docs/mobile/implementation-plan.md",
 	"docs/mobile/reconciliation.md",
-	"docs/multi-model.md",
-	"docs/project-claude-accounts.md",
-	"docs/project-layer.md",
-	"docs/recipes.md",
-	"docs/release.md",
-	"docs/releases/README.md",
 	"docs/rigor-modes/implementation-plan.md",
 	"docs/rigor-modes/reconciliation.md",
 	"docs/windows-cli/reconciliation.md",
-	"internal/cli/docs_base_test.go",
-	"internal/cli/docs_checkout_test.go",
 	"internal/cli/docs_clone_workflows_test.go",
 	"internal/cli/docs_compute_backend_test.go",
-	"internal/cli/docs_managed_label_test.go",
-	"internal/cli/docs_mobile_checks_review_test.go",
 	"internal/cli/docs_mobile_checks_test.go",
 	"internal/cli/docs_project_centric_test.go",
-	"internal/cli/docs_project_layer_test.go",
-	"internal/cli/docs_project_named_oauth_tokens_test.go",
-	"internal/cli/docs_project_wide_git_test.go",
-	"internal/cli/docs_providers_test.go",
-	"internal/cli/docs_recipes_test.go",
 	"internal/cli/docs_release_notes_test.go",
 	"internal/cli/docs_setup_wizard_checks_test.go",
 	"internal/cli/doctor_bucket_test.go",
 	"internal/cli/restore_test.go",
-	"plugin/readme_test.go",
-	"plugin/setup_skill_test.go",
 	"website/README.md",
 	"website/content/security.md",
 	"website/data/install.yaml",
