@@ -161,10 +161,11 @@ Two things the table cannot express, said here so they are not lost:
   configuration and two things to keep in step.
 - **The gate's passing is not a permission to start P7 and P8.** They still wait — on the
   **front-door design review** (§7 asks for an independent review of each, and the service's own
-  design is what that review has to see), and on the owner's **U2** and **U3** checks (§9: the
-  App's actual `pull_requests: read` grant, and whether an installation token may omit
-  `repositories`). **No part waits on the central orchestrator plan**, which was the other half of
-  P7's and P8's block before 2026-10-21.
+  design is what that review has to see), and on nothing else. The owner's **U2** and **U3**
+  checks stay open beside them (§9: the App's actual `pull_requests: read` grant, which P2's
+  credential turns on, and whether an installation token may omit `repositories`, which is what
+  D193 leaves the project-wide token waiting for). **No part waits on the central orchestrator
+  plan**, which was the other half of P7's and P8's block before 2026-10-21.
 
 ## 5. The parts
 
@@ -179,8 +180,8 @@ asks for Opus — with its own paragraph in the pull request body saying what wa
 was not).
 
 **P0–P6 are approved to build**, on the answers of 2026-10-19 and 2026-10-21, and P1 is the part
-to start with. **P7 and P8 still wait** — on the front-door design review §7 asks for and on the
-owner's U2/U3 checks (§9), and on nothing else.
+to start with. **P7 and P8 still wait** — on the front-door design review §7 asks for, and on
+nothing else; the owner's U2/U3 checks (§9) stay open beside them.
 
 ---
 

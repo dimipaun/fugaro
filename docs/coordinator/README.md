@@ -21,13 +21,13 @@ them moves under the sentence it was written for without anything looking wrong.
 **All sixteen questions are answered, and none is approved.** The owner answered Q1–Q16 on
 **2026-10-19**, each by taking **option (A)**, the recommended one; each answer is recorded
 under its question in the reconciliation's §3, with what it means for the spec.
-**An answer is not an approval**: an answer picks an option and approves no work. The five decisions the planning afterwards found — **D193–D197** ([reconciliation.md](reconciliation.md) §6) — are **answered 2026-10-21**: four took the recommendation and **D196 ruled the other way**, and the plan's owner gate is **passed for the parts that need only those decisions (P0–P6)**, on the long-lived branch **`coordinator`**, target **0.11.0**. **P7 and P8 do not start yet**: they wait on the front-door design review and on the owner's two checks below.
+**An answer is not an approval**: an answer picks an option and approves no work. The five decisions the planning afterwards found — **D193–D197** ([reconciliation.md](reconciliation.md) §6) — are **answered 2026-10-21**: four took the recommendation and **D196 ruled the other way**, and the plan's owner gate is **passed for the parts that need only those decisions (P0–P6)**, on the long-lived branch **`coordinator`**, target **0.11.0**. **P7 and P8 do not start yet**: they wait on the front-door design review, and on nothing else — the two owner checks below stay open beside them.
 The options that were not taken are left in place, unedited, so the answer can be
 read against what it was choosing between. Two things the answers do not settle: **U2 stays
 an owner check** (whether the GitHub App already has `pull_requests: read`, which Q3's answer
-asks it for), and **U3 stays an owner check** (whether an installation token may omit
-`repositories`, which D193's answer leaves the project-wide token waiting on). **U6/U7 are still
-drafts** in open pull requests.
+asks it for — P2's credential turns on it), and **U3 stays an owner check** (whether an
+installation token may omit `repositories`, which D193's answer leaves the project-wide token
+waiting on). **U6/U7 are still drafts** in open pull requests.
 
 A coordinator is a **per-project service** that aggregates what every local orchestrator is
 doing, owns project-level state, detects conflicts early and suggests sequencing — advisory,
