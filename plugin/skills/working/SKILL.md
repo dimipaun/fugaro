@@ -37,7 +37,7 @@ A long-lived branch (`integration-0.9.x`) is a base of its own: launch the run w
 
 Review cost scales with the diff of the pull request against its base, so a branch that has drifted far from main makes every run onto it expensive. Keep the branch merged forward into main often, and keep each pull request small; a wide batch onto one branch pays for that branch's divergence from main once per run (the `parallelism` skill). A run that halted at its cap with `run_cap` usually means its review read too much, not that the work was large.
 
-To see what a run cost, and where: `fugaro runs ls` for its row, and `fugaro diagnose RUN` for the breakdown — its review stage is where a base that is too far from main shows up. On a pull request that was retargeted, check that `fugaro diagnose RUN` shows the base the pull request really has before launching a fix round.
+To see what a run cost, and where: `fugaro runs ls` for its row, and `fugaro diagnose RUN` for the breakdown — its review stage is where a base that is too far from main shows up. On a pull request that was retargeted, check the base its runs recorded before launching a fix round: the plain listing does not print it, `fugaro diagnose RUN --json` does, as `base_branch`.
 
 ## Monitor
 
