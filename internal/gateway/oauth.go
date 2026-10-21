@@ -79,6 +79,16 @@ var errOAuthOnRoute = errors.New("an OAuth credential is never sent to a provide
 // check dropped it, was droppable. A header not in this list -- the
 // client's own credentials, its session and agent IDs, cookies, SDK
 // telemetry the check never saw -- is dropped.
+//
+// The eight X-Stainless-* names are forwarded beyond the set Check 90
+// proved optional. Check 90's own working swap call carried them (FACT
+// headers-observed lists all eight), but it dropped only the first eight
+// optional headers it saw and so never proved these droppable (FACT
+// header-drop-skipped). They are passive client telemetry -- the SDK's
+// arch, runtime and retry count -- so forwarding them matches the call the
+// check actually made, and dropping an unproven header is the change that
+// could break the real client. The owner may still rule them out; if so,
+// delete them here and the allow-list test follows.
 var oauthRequestHeaders = []string{
 	"Anthropic-Version",
 	"Accept",
@@ -112,9 +122,17 @@ var oauthRequestHeaders = []string{
 var oauthResponseHeaderTimeout = 10 * time.Minute
 
 // oauthUpstreamClient is the client an OAuth upstream uses: the caller's,
-// with the response-header bound set on its transport. A client whose
-// transport is not the standard one keeps it as it is: the bound is not
-// ours to set on a RoundTripper we don't know.
+// with the response-header bound set on its transport, and a redirect
+// policy set here rather than inherited. A client whose transport is not the
+// standard one keeps it as it is: the bound is not ours to set on a
+// RoundTripper we don't know.
+//
+// The redirect refusal is written out even though the caller's client
+// already carries one (upstreamClient sets the same): following a redirect
+// would resend the subscription token to whatever host the Location named,
+// which is exactly the D133 invariant. Inheriting it would make that
+// guarantee a fact about the order Start happens to build its client in;
+// stating it here makes it a fact about this function.
 func oauthUpstreamClient(c *http.Client) *http.Client {
 	out := *c
 	tr := c.Transport
@@ -126,23 +144,42 @@ func oauthUpstreamClient(c *http.Client) *http.Client {
 		nt.ResponseHeaderTimeout = oauthResponseHeaderTimeout
 		out.Transport = nt
 	}
+	out.Jar = nil
+	out.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &out
 }
 
+// oauthAllowLoopback widens oauthHostOK to loopback hosts over plain http.
+// It exists only for the test stand-in: httptest puts the fake Anthropic on
+// 127.0.0.1, and no test can reach it otherwise. It is false in every built
+// binary -- the package's TestMain turns it on, and nothing else in the tree
+// writes it -- so a deployment can never point this upstream at a local
+// server. TestOAuthProductionRefusesALoopbackBase asserts that posture.
+var oauthAllowLoopback = false
+
 // oauthHostOK reports whether a destination host is one an OAuth credential
-// may go to: Anthropic's own endpoint over https, or a loopback address,
-// which is the test stand-in where no credential leaves the machine.
+// may go to: Anthropic's own endpoint over https, and nothing else. The one
+// exception is the loopback test stand-in, and only while oauthAllowLoopback
+// is on. This is the D133 rule at its narrowest: the only host a
+// subscription token is ever sent to is Anthropic's own.
 func oauthHostOK(scheme, host string) bool {
 	if scheme == "https" && host == "api.anthropic.com" {
 		return true
+	}
+	if !oauthAllowLoopback {
+		return false
 	}
 	return host == "localhost" || isLoopback(host)
 }
 
 // checkOAuthBaseURL: an OAuth credential goes to Anthropic's own endpoint
-// and nowhere else (D133). "" is https://api.anthropic.com, which is what
-// a deployment uses. Any other host is refused, so an OAuth upstream cannot
-// be pointed at somebody else's server.
+// and nowhere else (D133). "" is https://api.anthropic.com, which is what a
+// deployment uses and the only value the credentials service (C1.11) ever
+// sets: this upstream's base is not a config key and not an environment
+// variable, and TestOAuthBaseURLIsNeverFromConfigOrEnv is where a second
+// way of setting it is noticed. Any other host is refused, so an OAuth
+// upstream cannot be pointed at somebody else's server -- a loopback base
+// included, unless a test has turned the stand-in on.
 func checkOAuthBaseURL(s string) error {
 	if s == "" {
 		return nil
