@@ -614,11 +614,18 @@ func TestInitPublishFromACodingAgentSession(t *testing.T) {
 			if hint := strings.Contains(err.Error(), "you can unset "+initflow.IDEMarker); hint != (marker == initflow.IDEMarker) {
 				t.Errorf("IDE hint present = %v for %s: %v", hint, marker, err)
 			}
-			var buf strings.Builder
-			(&initRun{w: &buf}).publishSharedConfig(t.Context(), publishable(t))
-			want := "note: the shared config was not published: " + refusal + "; run fugaro update --publish-config in your own terminal\n"
-			if buf.String() != want {
-				t.Errorf("note:\n%q\nwant:\n%q", buf.String(), want)
+			// The note is printed by a run of one of the two doors, and it
+			// names the door the reader is at: --publish-config is neither
+			// door's alone (it is in neither foreign list), so both doors
+			// reach this line, and a hardcoded one would send half of them to
+			// the command they are not running (task W2.1).
+			for _, door := range []string{"setup", "update"} {
+				var buf strings.Builder
+				(&initRun{w: &buf, o: &initOptions{door: door}}).publishSharedConfig(t.Context(), publishable(t))
+				want := "note: the shared config was not published: " + refusal + "; run fugaro " + door + " --publish-config in your own terminal\n"
+				if buf.String() != want {
+					t.Errorf("note (%s):\n%q\nwant:\n%q", door, buf.String(), want)
+				}
 			}
 			if _, err := os.Stat(sharedObjectPath(dir)); !os.IsNotExist(err) {
 				t.Errorf("published from an agent's session: %v", err)

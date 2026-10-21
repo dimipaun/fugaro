@@ -1378,6 +1378,11 @@ func TestInitRepoBuildNeedsConfirmation(t *testing.T) {
 		if !strings.Contains(res.stdout+res.stderr, "the first image build of acme/sandbox/web is billable and was not confirmed") || !strings.Contains(res.stderr, "type the project's name") {
 			t.Errorf("%v: no warning or typed route:\n%s", args, res)
 		}
+		// The rerun the warning names is the door this run is at (the rig runs
+		// `fugaro update`, convergeCmd), not a hardcoded one (task W2.1).
+		if !strings.Contains(res.stdout+res.stderr, "then fugaro "+convergeCmd+" --repo") {
+			t.Errorf("%v: the warning does not name the door this run is at:\n%s", args, res)
+		}
 		if strings.Contains(res.stdout+res.stderr, "pass --yes") {
 			t.Errorf("%v: --yes is suggested:\n%s", args, res)
 		}

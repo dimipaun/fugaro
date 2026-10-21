@@ -175,7 +175,7 @@ func (r *initRun) gateRepo(ctx context.Context, root string, lc *localcfg.Config
 		}
 		return userErr("not confirmed (%s was not typed); nothing was changed", pluginwire.Printable(oi.typed()))
 	}
-	how := "in your own terminal window, not through a coding agent or a pipe, run " + selfCommand() + " update --repo and type " + pluginwire.Printable(oi.typed()) + " at the prompt"
+	how := "in your own terminal window, not through a coding agent or a pipe, run " + selfCommand() + " " + e.r.o.doorName() + " --repo and type " + pluginwire.Printable(oi.typed()) + " at the prompt"
 	if lf := onboardLeft(oi, e.r.o.doorName()); lf.Kind == initflow.LeftCommand {
 		how = "pass --onboard-repo " + quoteWord(oi.Repo) + ", or " + how
 	}

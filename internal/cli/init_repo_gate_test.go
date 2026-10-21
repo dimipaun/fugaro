@@ -72,6 +72,38 @@ func TestInitRepoAloneIsBehindTheHostileGate(t *testing.T) {
 	}
 }
 
+// The gate's typed route names the door the reader is at. The route is a
+// command line the reader is asked to run in their own terminal, and it is
+// reached from either door: a `fugaro setup --repo` run in an agent's session
+// (or any run that cannot ask) was told to run `fugaro update --repo`, the one
+// command it is not running. Task W2.1: the reader's own door, and nothing
+// else, appears in the line.
+func TestTheHostileGatesTypedRouteNamesTheReadersDoor(t *testing.T) {
+	for _, door := range []string{"setup", "update"} {
+		t.Run(door, func(t *testing.T) {
+			_, dir := hostileRepoRig(t, "https://github.com/acme/hostile.git")
+			t.Setenv("CLAUDECODE", "1")
+			out, errOut, err := executeStdin(t, "", door, "--repo", "--github-app-id", "42", "--yes", dir)
+			all := out + errOut + ErrorText(err)
+			if !strings.Contains(all, " "+door+" --repo and type ") {
+				t.Errorf("the typed route does not name fugaro %s --repo, the door this run is:\n%s", door, all)
+			}
+			if strings.Contains(all, "run fugaro "+otherDoorName(door)+" --repo") {
+				t.Errorf("the typed route names the other door:\n%s", all)
+			}
+		})
+	}
+}
+
+// otherDoorName is the door that is not this one, for the tests that hold a
+// line to the reader's own door by name.
+func otherDoorName(door string) string {
+	if door == "setup" {
+		return "update"
+	}
+	return "setup"
+}
+
 // pastGate: the engine went on beyond the gate to its own first check (this
 // rig's local config has no base image for the repository's workflow, which it
 // refuses before any cloud call).

@@ -205,6 +205,46 @@ func TestNoDoorsHelpOffersAFlagItRefuses(t *testing.T) {
 	}
 }
 
+// TestNoDoorsFlagHelpNamesTheOtherDoor: W2.1's rule — a line names the door
+// the reader is at — on the *flag help* of both doors, which nothing else
+// reads. A usage string is printed by both doors from the one flag set, so a
+// sentence inside it that names a command has to name the door the reader is
+// at, or it tells half its readers to switch commands for no reason.
+//
+// `--yes` is where this went wrong: one sentence interpolated the door for its
+// first half ("fugaro setup applies nothing, --yes included") and hardcoded
+// "update" for the second ("except update --anchor"), so setup's own help
+// contradicted setup's Long two paragraphs above it, on the same screen. Both
+// doors accept --anchor and run it through the same door-independent path
+// (runAnchor, before any door-specific step), so the exception is the reader's
+// own door, not update's.
+func TestNoDoorsFlagHelpNamesTheOtherDoor(t *testing.T) {
+	other := map[string]string{"setup": "update", "update": "setup"}
+	for door, build := range doorCommands {
+		cmd := build()
+		cmd.Flags().VisitAll(func(f *pflag.Flag) {
+			if f.Hidden {
+				// A hidden flag is the other door's, and its usage text is
+				// never printed: the refusal that names it is the door's own
+				// sentence, not this.
+				return
+			}
+			for _, pattern := range []string{"fugaro " + other[door], other[door] + " --"} {
+				if strings.Contains(f.Usage, pattern) {
+					t.Errorf("fugaro %s's --%s help names the other door (%q), and the reader is at %s:\n%s", door, f.Name, pattern, door, f.Usage)
+				}
+			}
+		})
+		// The positive half, on the clause that was wrong: the exception names
+		// this door, and the test above only says the other one is absent.
+		if f := cmd.Flags().Lookup("yes"); f == nil {
+			t.Errorf("fugaro %s has no --yes to hold to its own door", door)
+		} else if !strings.Contains(f.Usage, door+" --anchor") {
+			t.Errorf("fugaro %s's --yes help does not name its own door in the --anchor exception, which both doors accept:\n%s", door, f.Usage)
+		}
+	}
+}
+
 // TestSetupRefusesAnUpdateOnlyFlag: a flag that only makes sense once an
 // installation exists is `fugaro update`'s, and `fugaro setup` — the first
 // run — refuses it by name rather than ignoring it. `--forget` is that flag:

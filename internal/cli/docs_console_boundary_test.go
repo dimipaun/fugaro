@@ -712,7 +712,7 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 		}
 	})
 
-	t.Run("the_allow_list_has_exactly_one_entry", func(t *testing.T) {
+	t.Run("the_allow_list_has_exactly_two_entries", func(t *testing.T) {
 		if len(consoleBoundaryAllowList) != 2 {
 			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it is a TWO-entry exception -- the console contract's docs test, which reads console/docs/json-contract.md as bytes, and the live-init census, which writes two console/ paths down as the files its walk found naming the retired `init` (W2.1, argued at the entry). A third entry is a deliberate widening of the boundary and must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
 		}

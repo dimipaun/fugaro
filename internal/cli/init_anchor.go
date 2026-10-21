@@ -35,7 +35,7 @@ func (r *initRun) runAnchor(ctx context.Context) error {
 	r.res.Anchor = res
 	root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
 	if err != nil {
-		return userErr("fugaro update --anchor writes the gcp_project line of a repository's fugaro.yaml, and this directory is not in a git checkout: run it in the repository's checkout")
+		return userErr("%s --anchor writes the gcp_project line of a repository's fugaro.yaml, and this directory is not in a git checkout: run it in the repository's checkout", r.o.doorProgram())
 	}
 	co, err := checkoutProject(ctx, "")
 	if err != nil {
@@ -85,7 +85,7 @@ func (r *initRun) runAnchor(ctx context.Context) error {
 	}
 	repo := pluginwire.Printable(oi.Repo)
 	if !repoKnown(lc, oi) {
-		return userErr("%s is not one of project %s's repositories in the local config: run fugaro update --repo in this checkout to onboard it (it also writes the gcp_project line)", repo, lc.Name)
+		return userErr("%s is not one of project %s's repositories in the local config: run %s --repo in this checkout to onboard it (it also writes the gcp_project line)", repo, lc.Name, r.o.doorProgram())
 	}
 	var listed []string // the workflows the local config records
 	for name, rr := range lc.Repos {

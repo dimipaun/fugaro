@@ -50,7 +50,7 @@ import (
 // And the apply that reads it is built: `fugaro managed apply` takes the
 // addresses from this object through managed.GuardAllowList and registers no
 // flag of its own for them (internal/cli/managed_apply.go), so an applying
-// command cannot overrule the owner. the converge still honours --allow-delete
+// command cannot overrule the owner. The converge still honours --allow-delete
 // on its own command line, where the addresses go to tf.Guard directly.
 
 // newAllowDeleteCmd is `fugaro allow-delete [ADDRESS...]`.

@@ -411,18 +411,49 @@ func TestInitAnchorCustomBucket(t *testing.T) {
 // (j) Outside a checkout, and in a checkout of a repository the project does
 // not list: clear refusals.
 func TestInitAnchorRefusals(t *testing.T) {
-	r := newAnchorModeRig(t, anchorModeYAML(), false)
-	_, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme/app is not one of project aurora's repositories") || !strings.Contains(err.Error(), "run fugaro update --repo in this checkout to onboard it") {
-		t.Errorf("not onboarded: exit %d, err %v", ExitCode(err), err)
+	// Both doors: --anchor is neither door's own (it is in neither foreign
+	// list), and the refusal tells the reader to onboard with the door they
+	// are at — a `setup --anchor` run is sent to `setup --repo`, not to the
+	// other door's command (task W2.1).
+	for _, door := range []string{"setup", "update"} {
+		r := newAnchorModeRig(t, anchorModeYAML(), false)
+		_, _, err := anchorExec(t, "", door, "--anchor", "--yes")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme/app is not one of project aurora's repositories") || !strings.Contains(err.Error(), "run fugaro "+door+" --repo in this checkout to onboard it") {
+			t.Errorf("%s --anchor, not onboarded: exit %d, err %v", door, ExitCode(err), err)
+		}
+		r.check(t, r.yaml)
 	}
-	r.check(t, r.yaml)
 
 	newAnchorModeRig(t, anchorModeYAML(), true)
 	t.Chdir(t.TempDir())
-	_, _, err = anchorExec(t, "", "setup", "--anchor", "--yes")
+	_, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not in a git checkout") {
 		t.Errorf("no checkout: exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+// The --anchor and --repo refusal names the door the reader is at, for the
+// same reason the gate's typed route does: --anchor is accepted by both doors
+// and runs through one door-independent path (runAnchor, before any
+// door-specific step), so a `fugaro setup --repo --anchor` run is sent to
+// `setup --anchor`, not to the other door's command (task W2.1).
+func TestTheAnchorAndRepoRefusalNamesTheReadersDoor(t *testing.T) {
+	for _, door := range []string{"setup", "update"} {
+		t.Run(door, func(t *testing.T) {
+			err := (&initOptions{door: door, anchor: true}).checkRepo()
+			if err == nil {
+				t.Fatal("--anchor with --repo was accepted")
+			}
+			got := err.Error()
+			for _, want := range []string{"run fugaro " + door + " --anchor there", " " + door + " --repo does not write it"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("the refusal does not say %q:\n%s", want, got)
+				}
+			}
+			if strings.Contains(got, otherDoorName(door)) {
+				t.Errorf("the refusal names the other door:\n%s", got)
+			}
+		})
 	}
 }
 

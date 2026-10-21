@@ -157,7 +157,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 		r.warn("not a budget admin (owners and editors who are users or groups are; a service account can be added with --budget-admin): " + s)
 	}
 	if fp == lc.GCPProject && len(risks) > 0 {
-		r.warn(fmt.Sprintf("the Firebase project is the installation's own project, and its default service account(s) hold a primitive role: %s. Anything that runs as one of them (a Cloud Build build submitted without a serviceAccount, a job or function deployed without one) can reach the database, Firestore and Identity Toolkit, which a project of its own would keep out of reach. Remove the role (gcloud projects remove-iam-policy-binding %s --member=serviceAccount:<account> --role=roles/editor) and set the organization policy iam.automaticIamGrantsForDefaultServiceAccounts, or use a Firebase project of its own. the converge changes nothing here", strings.Join(risks, ", "), lc.GCPProject))
+		r.warn(fmt.Sprintf("the Firebase project is the installation's own project, and its default service account(s) hold a primitive role: %s. Anything that runs as one of them (a Cloud Build build submitted without a serviceAccount, a job or function deployed without one) can reach the database, Firestore and Identity Toolkit, which a project of its own would keep out of reach. Remove the role (gcloud projects remove-iam-policy-binding %s --member=serviceAccount:<account> --role=roles/editor) and set the organization policy iam.automaticIamGrantsForDefaultServiceAccounts, or use a Firebase project of its own. The converge changes nothing here", strings.Join(risks, ", "), lc.GCPProject))
 	}
 	if len(admins) == 0 && len(r.budgetAdmins(lc)) == 0 {
 		return userErr("project %s has no user or group with roles/owner or roles/editor, and no --budget-admin: nobody could change a cap or a kill switch", lc.GCPProject)
@@ -636,5 +636,5 @@ func refusePublicSignUp(raw []byte, fp string) error {
 	if len(public) == 0 {
 		return nil
 	}
-	return userErr("Identity Platform in Firebase project %s has public sign-up enabled (%s). The web API key is public, so only custom tokens signed by Fugaro's signer may work: disable these in the Firebase console (Authentication, Sign-in method) or with the Identity Toolkit config API, then rerun. the converge never changes an existing configuration", fp, strings.Join(public, "; "))
+	return userErr("Identity Platform in Firebase project %s has public sign-up enabled (%s). The web API key is public, so only custom tokens signed by Fugaro's signer may work: disable these in the Firebase console (Authentication, Sign-in method) or with the Identity Toolkit config API, then rerun. The converge never changes an existing configuration", fp, strings.Join(public, "; "))
 }

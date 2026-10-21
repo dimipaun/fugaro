@@ -47,7 +47,7 @@ Still missing for acme/sandbox:
   claude-oauth-token: fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201
     claude setup-token
     fugaro secrets set claude-oauth-token --repo acme/sandbox
-  Then rerun fugaro update --repo when they are stored.
+  Then rerun fugaro setup --repo when they are stored.
 deleted the orphaned Cloud Run job fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0])
 The local config <tmp> changes:
   + base_images:
