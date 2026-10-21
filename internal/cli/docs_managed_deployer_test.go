@@ -985,7 +985,7 @@ func TestChecklistCheck68HardStopCountsAgree(t *testing.T) {
 // note carried the pre-redesign reason — the deployer's scoped role "is not an
 // IAM condition GCP accepts yet", with the redesign still ahead ("after the
 // fence is redesigned") — while the paragraph two above it, docs/release.md's
-// bullet and docs/design/managed-projects.md's 0.10.0 note all state the reason
+// bullet and docs/design/managed-projects.md's 0.9.6 note all state the reason
 // this tree actually has: the redesign is written and in the tree, and what is
 // missing is the live measurement (Check 68, written and NOT RUN). An operator
 // reading the note is deciding whether the gate can be opened, so a reason the
@@ -1009,7 +1009,7 @@ func TestGcpSetupSaysWhyTheManagedGateIsClosed(t *testing.T) {
 		"measured live",
 		"Check 68",
 		"NOT RUN",
-		"0.10.0",
+		"0.9.6",
 	} {
 		if !strings.Contains(note, want) {
 			t.Errorf("%s's disabled note does not say %q: the gate is closed because the redesigned fence has not been measured live (Check 68 is written and NOT RUN), and the note is where an operator reads that", path, want)
@@ -1578,14 +1578,14 @@ func TestChecklistCheck68RestorePlanFilterIsRun(t *testing.T) {
 
 // TestChecklistCheck68LeftoverFilterIsRun: Check 68's own guarantee is that it
 // leaves nothing behind, and the two places that check the guarantee — step 0's
-// read-only look and the end of the Restore — filter the six listings with
+// read-only look and the end of the Restore — filter the seven listings with
 // `$CHK68_OWNED`. The filter has to match the name inside a line rather than at
-// the start of it: five of the six listings print a FULL RESOURCE PATH
+// the start of it: five of the seven listings print a FULL RESOURCE PATH
 // (`projects/<P>/secrets/<name>`, `…/locations/<L>/repositories/<name>`), so an
 // anchored `^fmgd-chk68-` matches no line any of them prints, and the check
 // reports "no leftover" with all sixteen resources still in the project.
 //
-// This runs both blocks against a stubbed `gcloud` — the six listings print a
+// This runs both blocks against a stubbed `gcloud` — the seven listings print a
 // synthetic project, once with a leftover of the check's own and once without —
 // so what decides is the section's own filter, stop and messages. The filter's
 // ERE is also applied in-process, so the anchoring is checked even where bash is
@@ -1598,7 +1598,12 @@ func TestChecklistCheck68RestorePlanFilterIsRun(t *testing.T) {
 // nothing of the check's own; a listing dropped from either look → the leftover
 // that listing carries is not seen, and the case fails on the line it is missing
 // (the scheduler listing, for the one leftover only it prints); a listing added
-// → the stub reports the unexpected call and the block fails.
+// → the stub reports the unexpected call and the block fails. **The bucket
+// listing is the one the review of 2026-10-21 asked for**: without it, a bucket
+// delete that silently did nothing — which is what the fieldless
+// `--format='value(project)'` made of every one of them — left both throwaway
+// buckets in the project and the look still reported clean. Dropping the bucket
+// listing → the bucket leftover is not seen and the leftover case fails on it.
 func TestChecklistCheck68LeftoverFilterIsRun(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
@@ -1617,7 +1622,7 @@ func TestChecklistCheck68LeftoverFilterIsRun(t *testing.T) {
 	ere := strings.Trim(strings.TrimPrefix(owned, "CHK68_OWNED="), "'")
 	for _, anchor := range []string{"^fmgd-", "^xfmgd-", "^chk68-"} {
 		if strings.HasPrefix(ere, anchor) {
-			t.Errorf("Check 68's leftover filter is %s, anchored at the start of the line: five of the six listings print a full resource path, so an anchored prefix matches none of the check's own names and the look reports an empty project", ere)
+			t.Errorf("Check 68's leftover filter is %s, anchored at the start of the line: five of the seven listings print a full resource path, so an anchored prefix matches none of the check's own names and the look reports an empty project", ere)
 		}
 	}
 	re, err := regexp.Compile(ere)
@@ -1634,6 +1639,11 @@ func TestChecklistCheck68LeftoverFilterIsRun(t *testing.T) {
 		"projects/fugaro-dev/locations/global/keys/fmgd-chk68-key",
 		"fmgd-chk68-sa@fugaro-dev.iam.gserviceaccount.com",
 		"chk68-neg-sa@fugaro-dev.iam.gserviceaccount.com",
+		// A bucket's line is the bucket's own name: `storage buckets list`
+		// prints no path, which is the shape the delete that proves the
+		// bucket's project is about.
+		"fmgd-chk68-bucket-0123abcd",
+		"xfmgd-chk68-bucket-0123abcd",
 	}
 	// The installation's own, which the filter must leave alone: a look that
 	// reports these is a look that sends the operator deleting the sandbox.
@@ -1645,10 +1655,13 @@ func TestChecklistCheck68LeftoverFilterIsRun(t *testing.T) {
 		"projects/fugaro-dev/locations/global/keys/abc123",
 		"fugaro-deployer@fugaro-dev.iam.gserviceaccount.com",
 		"fugaro-history@fugaro-dev.iam.gserviceaccount.com",
+		// The installation's runs bucket: a bucket listing is in the look now,
+		// and this is the name in it that must never be reported.
+		"fugaro-dev-runs",
 	}
 	for _, l := range leftovers {
 		if !re.MatchString(l) {
-			t.Errorf("Check 68's leftover filter does not match %q, a line one of the six listings prints for a resource the check created: the look would report nothing left behind while the resource was there", l)
+			t.Errorf("Check 68's leftover filter does not match %q, a line one of the seven listings prints for a resource the check created: the look would report nothing left behind while the resource was there", l)
 		}
 	}
 	for _, l := range ownLines {
@@ -1669,18 +1682,18 @@ func TestChecklistCheck68LeftoverFilterIsRun(t *testing.T) {
 		if restoreStart >= 0 && strings.Contains(l, "Check 68 stop: these are still in") {
 			restoreStop = i
 		}
-		if restoreStart >= 0 && strings.Contains(l, "no leftover of this check's own in the six listings") {
+		if restoreStart >= 0 && strings.Contains(l, "no leftover of this check's own in the seven listings") {
 			restoreStop = i
 			break
 		}
 	}
 	if restoreStart < 0 || restoreStop < restoreStart {
-		t.Fatal("Check 68's Restore no longer re-runs the filtered look over the six listings: the check's guarantee that it leaves nothing behind is checked there, not assumed")
+		t.Fatal("Check 68's Restore no longer re-runs the filtered look over the seven listings: the check's guarantee that it leaves nothing behind is checked there, not assumed")
 	}
 	restoreLook := strings.Join(restoreBlock[restoreStart:restoreStop+1], "\n")
 
 	// A stubbed gcloud, because what is run here is the section's filtering and
-	// not gcloud: each of the six listings prints its variable, and any other
+	// not gcloud: each of the seven listings prints its variable, and any other
 	// call is reported so a listing added to the block cannot pass unnoticed.
 	const stub = `
 gcloud() {
@@ -1691,25 +1704,29 @@ gcloud() {
     "scheduler jobs list"*)        printf '%s\n' "$STUB_SCHEDULER" ;;
     "services api-keys list"*)     printf '%s\n' "$STUB_KEYS" ;;
     "iam service-accounts list"*)  printf '%s\n' "$STUB_ACCOUNTS" ;;
+    "storage buckets list"*)       printf '%s\n' "$STUB_BUCKETS" ;;
     *) echo "stub gcloud: unexpected call: $*" >&2; return 1 ;;
   esac
 }
 `
-	listings := func(secret, repo, job, sched, key, account string) string {
+	listings := func(secret, repo, job, sched, key, account, bucket string) string {
 		return "STUB_SECRETS='" + secret + "'\nSTUB_REPOSITORIES='" + repo + "'\nSTUB_JOBS='" + job +
-			"'\nSTUB_SCHEDULER='" + sched + "'\nSTUB_KEYS='" + key + "'\nSTUB_ACCOUNTS='" + account + "'\n"
+			"'\nSTUB_SCHEDULER='" + sched + "'\nSTUB_KEYS='" + key + "'\nSTUB_ACCOUNTS='" + account +
+			"'\nSTUB_BUCKETS='" + bucket + "'\n"
 	}
 	clean := listings(
-		ownLines[0], ownLines[1], ownLines[2], ownLines[3], ownLines[4], ownLines[5]+"\n"+ownLines[6])
-	// One leftover per listing that prints a path, and one service account:
-	// every shape of line the filter has to see through.
+		ownLines[0], ownLines[1], ownLines[2], ownLines[3], ownLines[4],
+		ownLines[5]+"\n"+ownLines[6], ownLines[7])
+	// One leftover per listing that prints a path, one service account, and one
+	// bucket: every shape of line the filter has to see through.
 	dirty := listings(
 		ownLines[0]+"\n"+leftovers[0]+"\n"+leftovers[1],
 		ownLines[1]+"\n"+leftovers[2],
 		ownLines[2]+"\n"+leftovers[3],
 		ownLines[3]+"\n"+leftovers[4],
 		ownLines[4]+"\n"+leftovers[5],
-		ownLines[5]+"\n"+ownLines[6]+"\n"+leftovers[6]+"\n"+leftovers[7])
+		ownLines[5]+"\n"+ownLines[6]+"\n"+leftovers[6]+"\n"+leftovers[7],
+		ownLines[7]+"\n"+leftovers[8]+"\n"+leftovers[9])
 
 	prefix := "set -u\n" + owned + "\nP=fugaro-dev\nL=us-east5\nSREGION=us-east4\n" + stub
 	if _, err := exec.LookPath("bash"); err != nil {
@@ -1735,13 +1752,13 @@ gcloud() {
 				t.Fatalf("Check 68's step-0 look calls gcloud in a way this stub does not know: %s", errOut)
 			}
 			if !tc.left {
-				if !strings.Contains(out, "no leftover of this check's own in the six listings") {
+				if !strings.Contains(out, "no leftover of this check's own in the seven listings") {
 					t.Errorf("Check 68's step-0 look did not say the project is clean:\n%s", out)
 				}
 				return
 			}
-			if strings.Contains(out, "no leftover of this check's own in the six listings") {
-				t.Errorf("Check 68's step-0 look reported no leftover while the listings carried eight of the check's own names:\n%s", out)
+			if strings.Contains(out, "no leftover of this check's own in the seven listings") {
+				t.Errorf("Check 68's step-0 look reported no leftover while the listings carried ten of the check's own names:\n%s", out)
 			}
 			for _, l := range leftovers {
 				if !strings.Contains(out, l) {
@@ -1770,7 +1787,7 @@ gcloud() {
 				if code != 0 {
 					t.Fatalf("Check 68's Restore stopped on a project with nothing of the check's own left in it (exit %d):\nstderr:\n%s", code, errOut)
 				}
-				if !strings.Contains(out, "no leftover of this check's own in the six listings") {
+				if !strings.Contains(out, "no leftover of this check's own in the seven listings") {
 					t.Errorf("Check 68's Restore did not say the project is clean:\n%s", out)
 				}
 				return
@@ -2159,13 +2176,26 @@ func TestChecklistCheck68Step2PlanShapeIsRun(t *testing.T) {
 // that is not there — and holds the function to deleting in exactly the first
 // case.
 //
+// The stub is faithful to the command, not to the function's expectations:
+// `gcloud storage buckets describe` STANDARDIZES the API's metadata and the
+// standardized resource has no project field at all, so a stub that answered
+// `$STUB_OWNER` to any `--format` would pass while the real command printed an
+// empty line and exited 0 for every bucket — every delete refused as "reports
+// no project", both buckets leaked, and this test the only thing that said the
+// guard was fine. So the stub answers the number only to the form that has it
+// (`--raw`, the resource as the API returns it, plus projectNumber) and prints
+// the empty line and exit 0 the real command prints for anything else.
+//
 // Mutations (verified, run and restored): the `"$PROJECT_NUMBER")` match arm
 // replaced by `*)` (delete whatever the bucket says it belongs to) → the
 // other-project case and the empty-answer case fail; the describe's failure
 // branch dropped → the absent case fails, because the function then asks the
 // case what to do with an empty answer; the `chk68_try` around the `rm` dropped
 // → the static assertion fails, because a delete whose failure is silent is the
-// one thing the trap exists to avoid.
+// one thing the trap exists to avoid; `--raw` dropped from the describe → the
+// first case fails, because the stub then answers the standardized empty line
+// and nothing is deleted; the field changed back to `value(project)` → the
+// static assertion fails.
 func TestChecklistCheck68BucketDeleteProvesTheProject(t *testing.T) {
 	guard := chk68GuardBlock(t)
 	rmFn := chk68FuncBody(t, guard, "chk68_rm_bucket") + "\n}"
@@ -2183,8 +2213,18 @@ func TestChecklistCheck68BucketDeleteProvesTheProject(t *testing.T) {
 	if !strings.Contains(rmFn, `gcloud storage buckets describe`) {
 		t.Fatal("Check 68's chk68_rm_bucket no longer asks the bucket which project it belongs to: a bucket name is global and `gcloud storage rm` ignores --project, so without that question the delete is not confined to this project at all")
 	}
-	if !strings.Contains(rmFn, `--format='value(project)'`) {
-		t.Error("Check 68's chk68_rm_bucket does not read the bucket's own project: the comparison has nothing to compare")
+	// The field has to be one the command PRINTS. `gcloud storage buckets
+	// describe` standardizes the API's metadata, and the standardized resource
+	// has no project field (creation_time, location, name, storage_url, …): the
+	// fieldless `value(project)` prints an empty line and exits 0 for every
+	// bucket, so the function would refuse every delete as "reports no project"
+	// and the two throwaway buckets would stay in the sandbox project. The
+	// number is only in the raw resource, so both halves are required.
+	if !strings.Contains(rmFn, "--raw") || !strings.Contains(rmFn, "value(projectNumber)") {
+		t.Error("Check 68's chk68_rm_bucket does not read the bucket's own project with `--raw --format='value(projectNumber)'`: the standardized resource carries no project field, so any other form answers nothing and the comparison has nothing to compare")
+	}
+	if strings.Contains(rmFn, "value(project)'") {
+		t.Error("Check 68's chk68_rm_bucket asks for `value(project)`, a field `gcloud storage buckets describe` does not print: it answers an empty line with exit 0 for every bucket, so every delete is refused as 'reports no project' and the check's two buckets leak")
 	}
 	if !strings.Contains(rmFn, "chk68_try gcloud storage rm -r") {
 		t.Error("Check 68's chk68_rm_bucket removes the bucket outside chk68_try: a delete that failed would be silent, and the trap's own line would then read as though the bucket were gone")
@@ -2195,7 +2235,18 @@ gcloud() {
   case "$*" in
     "storage buckets describe "*)
       if [ "$STUB_STATE" = absent ]; then echo "stub: no such bucket" >&2; return 1; fi
-      printf '%s\n' "$STUB_OWNER" ;;
+      # The real command, faithfully: the number is in the RAW resource only.
+      # Any other form asks the STANDARDIZED resource for a field it does not
+      # have, and the real gcloud prints an empty line and exits 0 — which is
+      # how a wrong field turns into a silent refusal to delete anything.
+      case "$*" in
+        *--raw*)
+          case "$*" in
+            *projectNumber*) printf '%s\n' "$STUB_OWNER"; return 0 ;;
+          esac ;;
+      esac
+      echo "stub: the standardized bucket resource has no such field, so this prints an empty line and exits 0" >&2
+      printf '\n' ;;
     "storage rm -r "*) echo "STUB-RM $*" ;;
     *) echo "stub gcloud: unexpected call: $*" >&2; return 1 ;;
   esac
