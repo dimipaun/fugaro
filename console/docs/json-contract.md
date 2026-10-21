@@ -592,7 +592,11 @@ spawn it. It writes exactly one node, `creds/marks/NAME`, with
 `creds.Cleared()`, acting as the person (ADC, an admin of the database), and
 the write is conditional (`creds.RTDBStore.UpdateMark` → `PutIfMatch`) so a
 mark the service changed at the same moment is re-read rather than
-overwritten. Flags: `--yes` (skips the typed confirmation of the project's
+overwritten: the callback clears the mark only while its state is still the one
+the confirmation named, so a `broken` mark the service recorded while the
+operator was reading the confirmation of an `exhausted` one is refused rather
+than cleared (both are clearable, but they are two different holds). Flags:
+`--yes` (skips the typed confirmation of the project's
 name), plus the cloud flags. It prints one line naming the account and the
 state it cleared, and **no value of any kind**. A `broken` or `exhausted` mark
 is clearable; a `backed_off` one is refused (a probe clears it, C1.12) and a

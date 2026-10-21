@@ -789,3 +789,37 @@ func TestAccountsClearReDecidesUnderTheWrite(t *testing.T) {
 		t.Fatalf("mark = %v, want the service's own write untouched", m)
 	}
 }
+
+// The state the write lands on must be the state the operator CONFIRMED, and
+// not merely one of the two an operator may clear. Exhausted and broken are
+// different holds — one ends at a reset time by itself, the other is a 401 only
+// an operator ends — and the service writes either over either (creds.Exhaust
+// takes a broken mark to exhausted, creds.Break takes an exhausted one to
+// broken, and the cascade's own record path calls both). A clear confirmed for
+// "exhausted until 14:00" that lands on a broken mark the service recorded
+// meanwhile would take off the newer hold and put a refused token back in the
+// cascade's rotation: the same failure the test above covers, one state over,
+// and the one the confirmation's own words ("clear the exhausted mark of …")
+// do not cover.
+func TestAccountsClearRefusesTheOtherClearableState(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.appendConfig(t, claudeAccountsConfig)
+	now := time.Now().UTC().Truncate(time.Second)
+	f.db.Set(credsMarkPath("acme-personal"), map[string]any{
+		"state": "exhausted", "until": now.Add(time.Hour).Format(time.RFC3339Nano)})
+	typed(t)
+
+	// The 401 the service saw while the operator was reading the confirmation.
+	broken := map[string]any{"state": "broken", "since": now.Format(time.RFC3339Nano)}
+	in := &markFlip{db: f.db, path: credsMarkPath("acme-personal"), mark: broken, line: "aurora\n"}
+	if _, _, err := executeStdinReader(t, in, "accounts", "clear", "acme-personal"); err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: the mark became broken while the operator confirmed an exhausted one", err)
+	}
+	if !in.done {
+		t.Fatal("the command never read the confirmation, so the mark was never changed under it")
+	}
+	m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any)
+	if m["state"] != "broken" || m["since"] != broken["since"] {
+		t.Fatalf("mark = %v, want the service's own broken mark untouched", m)
+	}
+}

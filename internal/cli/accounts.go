@@ -394,7 +394,10 @@ could take off a hold a newer release placed.
 
 The write is one node — creds/marks/NAME, in this installation's own database —
 and it is conditional on the value read (PutIfMatch), so a mark the service
-changed at the same moment is not lost.
+changed at the same moment is not lost: the write re-reads the mark and clears
+it only while its state is still the one the confirmation named, so a 401 the
+service recorded while you were reading is left for its own decision rather
+than taken off with the hold you confirmed.
 
 NAME is "default" (the repository's own unnamed claude-oauth-token secret), a
 claude_accounts name of the selected project config, or an account the database
@@ -514,10 +517,24 @@ func accountsClear(cmd *cobra.Command, o accountsClearOptions, name string) erro
 		// conditional on: the read above is only what the confirmation said,
 		// and a service that marked the credential between the two must not
 		// have its change overwritten by a clear meant for another state.
-		switch cur.State {
-		case creds.StateBroken, creds.StateExhausted:
+		//
+		// "Another state" includes the other clearable one. Broken and
+		// exhausted are two different holds — one ends by itself at the reset
+		// time the upstream gave, the other is a 401 only an operator ends —
+		// and the service writes either over either (creds.Exhaust takes a
+		// broken mark to exhausted, creds.Break takes an exhausted one to
+		// broken, and the cascade's record path calls both). Clearing "one of
+		// the two" here would let a clear the operator confirmed for an
+		// exhausted mark wipe a broken one recorded meanwhile, putting a
+		// refused token back in the cascade's rotation — which is the failure
+		// this re-decision exists to prevent, and the confirmation's own words
+		// ("clear the exhausted mark of …") are what it must be held to.
+		switch {
+		case cur.State == prev.State:
 			return creds.Cleared(), nil
-		case "", creds.StateAvailable:
+		case cur.State == creds.StateBroken || cur.State == creds.StateExhausted:
+			return creds.Mark{}, userErr("account %q is %s while this ran, and this clear was confirmed for its %s mark: the service recorded that hold after the read above, and taking it off is its own decision; nothing was written", name, stateText(accountStateOf(cur)), stateText(accountStateOf(prev)))
+		case cur.State == "" || cur.State == creds.StateAvailable:
 			return creds.Mark{}, userErr("account %q became available while this ran, so there is nothing to clear; nothing was written", name)
 		default:
 			return creds.Mark{}, userErr("account %q became %q while this ran, which this Fugaro does not clear; nothing was written", name, oneLine(string(cur.State)))
