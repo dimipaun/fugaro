@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -86,9 +87,14 @@ func TestStageWaitsAndResumes(t *testing.T) {
 		if req.Prompt != h.agent.calls[0].Prompt {
 			t.Errorf("the resumed stage's prompt changed: %q, was %q", req.Prompt, h.agent.calls[0].Prompt)
 		}
+		// --resume is the local file Claude Code wrote, not the copy the run
+		// uploads at writeback: the wait must leave it where it was.
+		if _, err := os.Stat(sessionPath(t, req, req.SessionID)); err != nil {
+			t.Errorf("the session file the resumed stage needs: %v", err)
+		}
 		return implement("feature")(t, ctx, req)
 	}
-	rec, err := h.run(t, exhaustedStage(t, handle, reset), resumed, review("ship", 0))
+	rec, err := h.run(t, withSession(exhaustedStage(t, handle, reset), "", "interrupted\n"), resumed, review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady || rec.Reason != "" {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
