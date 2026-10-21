@@ -271,6 +271,23 @@ func TestExportedHelpersMatchInternal(t *testing.T) {
 		if rh.Get("X-Claude-Code-Session-Id") != "" {
 			t.Error("the caller's own token reached a provider")
 		}
+		// And the tier-A path with no caller token at all: the allow-list
+		// comes through whole -- Anthropic-Version, the one header Check 90
+		// proved mandatory, among it -- and the credential is still attached.
+		// An empty scrub must not be read as "the value every value contains"
+		// here either, or this call reaches Anthropic with nothing but
+		// Authorization and Anthropic refuses it.
+		ta := tierAUpstream(t)
+		oa, key, err := OAuthHeaders(ta, AnthropicBase(ta)+"/v1/messages", in, "")
+		if err != nil {
+			t.Fatalf("OAuthHeaders with no caller token: %v", err)
+		}
+		if oa.Get("Anthropic-Version") != "2023-06-01" || oa.Get("Accept-Encoding") != "identity" {
+			t.Errorf("an empty scrub dropped the tier-A allow-list: %v", oa)
+		}
+		if oa.Get("Authorization") != "Bearer "+ta.APIKey || key != ta.APIKey {
+			t.Error("the tier-A credential was not attached with no caller token")
+		}
 	})
 
 	t.Run("stream", func(t *testing.T) {

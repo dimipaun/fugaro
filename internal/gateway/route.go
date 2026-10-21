@@ -221,7 +221,18 @@ func (s *Server) upstreamQuery(r *http.Request) string {
 
 // carriesToken: v holds the gateway token in any case, or percent-encoded
 // (a bad escape is left as it is, so it cannot hide one).
+//
+// A server with no token carries no token anywhere: "" is a substring of
+// every value, so reading an empty token as one would drop every header and
+// every query it is asked about (scrubToken, upstreamQuery), which is the
+// opposite of what a caller that holds no token means. The rule is stated
+// here, where the token is read, rather than at each caller: a Server Start
+// builds always has one (64 hex characters), and the exported helpers
+// (export.go) are the callers that can hold none.
 func (s *Server) carriesToken(v string) bool {
+	if s.token == "" {
+		return false
+	}
 	tok := strings.ToLower(s.token)
 	lv := strings.ToLower(v)
 	return strings.Contains(lv, tok) || strings.Contains(strings.ToLower(lenientUnescape(lv)), tok)

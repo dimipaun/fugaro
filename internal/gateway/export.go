@@ -86,10 +86,11 @@ func AnthropicBase(u Upstream) string { return anthropicBase(u) }
 //
 // scrub is the caller's own token -- the one it presented on the call it is
 // forwarding -- which is never sent upstream (the gateway scrubs the run's
-// token; the service scrubs the run identity it verified). "" scrubs nothing:
-// scrubToken's rule is "a value that contains the token", and every value
-// contains the empty string, so passing one through would delete the whole
-// header set, which is not what a caller holding no token means.
+// token; the service scrubs the run identity it verified). "" scrubs
+// nothing: carriesToken's rule is that a Server with no token carries no
+// token anywhere, so an empty scrub leaves the header set whole. Reading ""
+// as a token would be the opposite -- every value contains it -- and the
+// tier-A path below would go out with nothing but Authorization.
 func UpstreamHeaders(u Upstream, dest string, in http.Header, scrub string) (http.Header, string, error) {
 	h := forwardHeaders(in)
 	scrubOwn(scrub, h)
@@ -133,6 +134,10 @@ func UpstreamHeaders(u Upstream, dest string, in http.Header, scrub string) (htt
 // u carries the credential in APIKey; BaseURL is Anthropic's real address when
 // it is "", and a test's stand-in otherwise (the only other base the check
 // accepts, and only while the package's tests have it on).
+//
+// scrub is the caller's own token, as in UpstreamHeaders, and "" scrubs
+// nothing for the same reason: the allow-list comes through whole, with
+// Anthropic-Version -- the one header Check 90 proved mandatory -- in it.
 func OAuthHeaders(u Upstream, dest string, in http.Header, scrub string) (http.Header, string, error) {
 	s := &Server{o: Options{Upstream: u}, token: scrub}
 	h, err := s.oauthUpstream(route{path: destPath(dest), upstream: dest}, in)
@@ -188,12 +193,10 @@ func NewRedactWriter(w io.Writer, key string) io.WriteCloser { return newRedactW
 
 // scrubOwn scrubs the caller's own token out of a header set the way the
 // gateway scrubs the run's token from a forwarded call (Server.scrubToken).
-// An empty token scrubs nothing -- see UpstreamHeaders, where the reason is
-// written down once.
+// An empty token scrubs nothing -- the rule is carriesToken's ("a Server
+// with no token carries no token anywhere"), which is also what the tier-A
+// path below relies on.
 func scrubOwn(token string, h http.Header) {
-	if token == "" {
-		return
-	}
 	(&Server{token: token}).scrubToken(h)
 }
 
