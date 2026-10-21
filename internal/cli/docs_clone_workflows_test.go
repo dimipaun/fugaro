@@ -233,7 +233,7 @@ func TestChecklistHasCheck38(t *testing.T) {
 		"**(a)** take the recorded state",
 		"**(b)** edit the sandbox workflow",
 		"**(c)** step 0's local build",
-		"**(d)** `fugaro update --repo .`",
+		"**(d)** `fugaro init --repo .`",
 		"**(e)** step 1's run",
 	} {
 		if !strings.Contains(section, want) {
@@ -252,7 +252,7 @@ func TestChecklistHasCheck38(t *testing.T) {
 	// judged against cloneSince, and fixed with the release binary if it is
 	// older. The fix path is the one billable thing in the section, and says
 	// so, because `fugaro image refresh` rebuilds what is stale.
-	for _, want := range []string{"base_images.base", "cloneSince", "fugaro update --base", "fugaro image refresh"} {
+	for _, want := range []string{"base_images.base", "cloneSince", "fugaro init --base", "fugaro image refresh"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the Check 38 section's base-image step does not name %q", want)
 		}

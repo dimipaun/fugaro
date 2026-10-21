@@ -105,12 +105,15 @@ var datedRecords = []string{
 // is the string. W2.6 asserts that the files naming the command are exactly
 // `datedRecords` plus these three.
 //
-// internal/cli/testdata/init_retire.golden is deliberately NOT here, although
-// it names the command four times today: it is a transcript, not a retirement
-// statement, and all four are strings W2.1 renames, so W1.2/W2.1 regenerate it
-// with TestInitRepoRetireTranscriptGolden -update-retire exactly like the other
-// two goldens. An exemption for a file the rename empties is the "wrong in one
-// direction" case Global Constraint 7 forbids.
+// internal/cli/testdata/init_retire.golden is deliberately NOT here. As W0.2
+// read it, it named the command four times -- the deprecation warning's prose
+// and the three command lines the retirement transcript prints -- and it is a
+// transcript, not a retirement statement: every one of the four was a string
+// the rename reaches, so W2.1 regenerated it with
+// TestInitRepoRetireTranscriptGolden -update-retire exactly like the other two
+// goldens and took it off `pendingRename` in that commit. An exemption for a
+// file the rename empties is the "wrong in one direction" case Global
+// Constraint 7 forbids.
 var retirementText = []string{
 	// W1.2's tombstone: one message, two names, non-zero exit.
 	"internal/cli/retired.go",
@@ -165,12 +168,14 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 174 files -- 68 non-test Go files, 61 test files,
-// 37 markdown files, the two goldens, and the six that fall in none of those
-// groups: the website's four (its install data, its two pages and its test
-// script), the getting-started design board the redesign was approved from,
+// command, sorted. It is 182 files -- 68 non-test Go files, 71 test files,
+// 37 markdown files, and the six that fall in none of those groups: the
+// website's four (its install data, its two pages and its test script), the
+// getting-started design board the redesign was approved from,
 // website/design-ref/GettingStartedV4.dc.html, and console/test/unit/ipc.test.ts
-// (console/README.md is markdown and counted with the 37). Read on main at
+// (console/README.md is markdown and counted with the 37). No golden is on it
+// any more: W2.1's rename emptied all three, and the walk refuses a listed file
+// that stopped naming the command. Read on main at
 // `1d325928`, this
 // branch's base, it was **312** files -- 118 non-test Go files, 117 test files,
 // 34 markdown files, 29 Terraform files, the four `.tftest.hcl` fixtures beside
@@ -235,6 +240,21 @@ const censusRoot = "../.."
 // console/test/unit/ipc.test.ts, which is why the second test below now finds
 // console/ a live root -- it names the command, so the walk covers it.
 //
+// The package's own test run then handed ten files back, and that is the honest
+// shape of a rename this size: those ten are not files whose prose the rename
+// missed. Each one asserts a string some OTHER package still prints -- the five
+// docs_*_test.go here read the pages W2.2/W2.3 rename (docs_clone_workflows,
+// docs_compute_backend, docs_managed_label, docs_mobile_checks, docs_providers),
+// internal/cli/init_test.go quotes internal/infra/readiness.go's own refusal,
+// managed_apply_test.go internal/managed/budget.go's, project_test.go and
+// project_shared_test.go internal/localcfg/select.go's, and run_oauth_test.go
+// internal/backend/gcp/run.go's -- so renaming the expectation here would leave
+// a test asserting a line its package no longer prints. They came off this list
+// in W2.1's first pass and the walk put them back the moment the expectations
+// were restored to the strings the tree actually emits: an assertion that pins
+// another package's text is a mention the other package's task takes off, not
+// this one's.
+//
 // Each task that renames a string takes the file off this list in the same
 // commit, and W2.6 empties it.
 var pendingRename = []string{
@@ -293,11 +313,16 @@ var pendingRename = []string{
 	"internal/budget/session_test.go",
 	"internal/cli/docs_base_test.go",
 	"internal/cli/docs_checkout_test.go",
+	"internal/cli/docs_clone_workflows_test.go",
+	"internal/cli/docs_compute_backend_test.go",
+	"internal/cli/docs_managed_label_test.go",
 	"internal/cli/docs_mobile_checks_review_test.go",
+	"internal/cli/docs_mobile_checks_test.go",
 	"internal/cli/docs_project_centric_test.go",
 	"internal/cli/docs_project_layer_test.go",
 	"internal/cli/docs_project_named_oauth_tokens_test.go",
 	"internal/cli/docs_project_wide_git_test.go",
+	"internal/cli/docs_providers_test.go",
 	"internal/cli/docs_recipes_test.go",
 	"internal/cli/docs_release_notes_test.go",
 	"internal/cli/docs_setup_wizard_checks_test.go",
@@ -306,11 +331,14 @@ var pendingRename = []string{
 	"internal/cli/image_refresh_steps_test.go",
 	"internal/cli/init.go",
 	"internal/cli/init_firebase_test.go",
+	"internal/cli/init_test.go",
 	"internal/cli/managed_apply.go",
+	"internal/cli/managed_apply_test.go",
 	"internal/cli/project_job.go",
+	"internal/cli/project_shared_test.go",
+	"internal/cli/project_test.go",
+	"internal/cli/run_oauth_test.go",
 	"internal/cli/sharedcfg_validate_test.go",
-	"internal/cli/testdata/init_commands.golden",
-	"internal/cli/testdata/init_retire.golden",
 	"internal/config/config.go",
 	"internal/config/project_secrets.go",
 	"internal/config/providers.go",

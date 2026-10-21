@@ -256,7 +256,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 		"**And there is nothing to restore on the Bitbucket side.**",
 		"there is no scratch repository to delete, no project to remove and no token to revoke",
 		// The evidence is the plan-only run, not the template diff alone.
-		`fugaro update --repo . --plan-only --project fugaro`,
+		`fugaro init --repo . --plan-only --project fugaro`,
 		"**FACT:** that the second diff is empty **and** that the plan-only run reports nothing to change",
 	})
 	// The Restore's job check happens twice: once against the drift U2(b)
@@ -591,7 +591,7 @@ func commandLines(section string, verbs ...string) []string {
 //   - the plan names `fugaro upgrade --cloud`, which does not exist (there is
 //     no --cloud flag; `cloud` is one of upgrade's steps), so the section must
 //     name the real command;
-//   - finding 15: only `fugaro update --repo` writes a job's environment, so the
+//   - finding 15: only `fugaro init --repo` writes a job's environment, so the
 //     runner rollout is two steps and not one;
 //   - step 6 cannot point "the sandbox's fugaro.yaml at a repository": no key
 //     of fugaro.yaml names a repository (internal/config/config.go), so the
@@ -616,7 +616,7 @@ func commandLines(section string, verbs ...string) []string {
 //     environment already carries, and record that the seeded allow-list still
 //     admits github/dimipaun/fugaro;
 //   - the Restore must put the operator's project config back BEFORE
-//     `fugaro update --repo` reads the job environment out of it, must not run
+//     `fugaro init --repo` reads the job environment out of it, must not run
 //     `fugaro budget set` (no step changes the caps node), and must check the
 //     .claude/settings.json `fugaro upgrade`'s pin step rewrites;
 //   - the step 3 environment read prints NAMES and value LENGTHS, and values
@@ -729,10 +729,10 @@ func TestChecklistHasCheck49(t *testing.T) {
 	// command the plan named does not exist.
 	chk49MustContain(t, section, "section", []string{
 		"finding 15",
-		"the only path that writes a job's environment is `fugaro update --repo`",
+		"the only path that writes a job's environment is `fugaro init --repo`",
 		"`fugaro upgrade`",
 		"`fugaro image refresh`",
-		"fugaro update --repo . --project fugaro",
+		"fugaro init --repo . --project fugaro",
 	})
 	for _, dead := range []string{
 		"fugaro upgrade --cloud", // no such flag: `cloud` is one of upgrade's steps
@@ -876,7 +876,7 @@ func TestChecklistHasCheck49(t *testing.T) {
 		// The order, and the file it puts back first.
 		"the operator's project config: back first, because the next line reads it",
 		`cp "$C.before-49" "$C"`,
-		"fugaro update --repo . --project fugaro",
+		"fugaro init --repo . --project fugaro",
 		"git diff -- fugaro.yaml",
 		"git diff -- .claude/settings.json",
 		"fugaro budget show --json --project fugaro",
@@ -889,7 +889,7 @@ func TestChecklistHasCheck49(t *testing.T) {
 	// lines — comments and blanks dropped, in the order the shell runs them —
 	// and the two commands the step's whole ordering argument rests on are
 	// checked by INDEX, not by presence. Deleting the two json-show lines, or
-	// swapping `fugaro update --repo` above the `cp`, both fail here.
+	// swapping `fugaro init --repo` above the `cp`, both fail here.
 	restore := chk49FencedBlocks(chk49Step(t, section, "### 8."))[0]
 	var restoreLines []string
 	for _, l := range strings.Split(restore, "\n") {
@@ -912,19 +912,19 @@ func TestChecklistHasCheck49(t *testing.T) {
 	}
 	const (
 		restoreConfig = `cp "$C.before-49" "$C"`
-		writeEnv      = "fugaro update --repo . --project fugaro"
+		writeEnv      = "fugaro init --repo . --project fugaro"
 	)
 	if i := at(restoreConfig); i != 0 {
 		t.Errorf("step 8's restore block has %q at command %d of its own block, want 0: the operator's config goes back before anything reads it, and the step's FACT prose repeats the string so only the block's own order can be checked", restoreConfig, i)
 	}
 	if i := at(writeEnv); i != 1 {
-		t.Errorf("step 8's restore block has %q at command %d, want 1 — immediately after the config restore: `update --repo` writes the job environment out of that file (`internal/infra/spec.go:753`), so running it first writes whatever the config says now into the job, which is the inversion the step calls out", writeEnv, i)
+		t.Errorf("step 8's restore block has %q at command %d, want 1 — immediately after the config restore: `init --repo` writes the job environment out of that file (`internal/infra/spec.go:753`), so running it first writes whatever the config says now into the job, which is the inversion the step calls out", writeEnv, i)
 	}
 	for _, want := range []string{
 		"git diff -- fugaro.yaml",
 		"git diff -- .claude/settings.json",
 		// The revert of the one edit the check can make to the sandbox's own
-		// file: step 3's answer to `update --repo`'s gcp_project: prompt is `n`,
+		// file: step 3's answer to `init --repo`'s gcp_project: prompt is `n`,
 		// and this is what handles the run that did not give it.
 		"if ! git diff --quiet -- fugaro.yaml; then",
 		"git checkout -- fugaro.yaml",
@@ -1042,19 +1042,19 @@ func TestChecklistHasCheck49(t *testing.T) {
 	}
 
 	// Step 3 is not the job environment alone, and step 8's `git diff --
-	// fugaro.yaml` FACT rests on knowing that. `fugaro update --repo`'s
+	// fugaro.yaml` FACT rests on knowing that. `fugaro init --repo`'s
 	// repository stage ends by OFFERING the checkout's gcp_project: line —
 	// init_repo_stage.go:163, Apply's `s.anchor(ctx, env, s.e.r.o.planOnly)`,
 	// where the --plan-only run plans the same line and writes nothing (:143) —
 	// through the anchor at init_fugaroyaml.go:243, the [y/N] prompt at :220
 	// and the write at :230; --yes takes that prompt without asking. The check
-	// runs `update --repo` in that checkout TWICE (step 3 and step 8), so the
+	// runs `init --repo` in that checkout TWICE (step 3 and step 8), so the
 	// section has to say which answer it wants and step 8 has to have a revert:
 	// without both, "this is a confirmation that it is unchanged" is a
 	// confirmation of an edit the check itself made, and the FACT above fails
 	// on the operator's own checkout.
 	chk49MustContain(t, chk49Step(t, section, "### 3."), "step 3", []string{
-		"`update --repo` also offers the checkout's own `gcp_project:` line",
+		"`init --repo` also offers the checkout's own `gcp_project:` line",
 		"`internal/cli/init_repo_stage.go` → `internal/cli/init_fugaroyaml.go`",
 		"Write this to <path>? [y/N]:",
 		"asks `Write this to <path>? [y/N]:` (`internal/cli/init_fugaroyaml.go`)",
@@ -1150,7 +1150,7 @@ func TestChecklistHasCheck49(t *testing.T) {
 	// The review found the first pass breaking exactly this: step 1 assigned
 	// `C` and step 8 — a later shell, where step 1's shell is gone — used it,
 	// so `cp "$C.before-49" "$C"` expanded to `cp ".before-49" ""`, the
-	// operator's config was never put back, and the `fugaro update --repo` that
+	// operator's config was never put back, and the `fugaro init --repo` that
 	// follows read the job environment out of a file that was still edited.
 	block := chk49FencedBlocks(section)[0]
 	assigned := map[string]bool{}

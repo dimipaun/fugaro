@@ -128,7 +128,7 @@ func TestDocsMobileChecklistHasCheck81And82And89(t *testing.T) {
 				"NOT RUN",
 				"never `belong`",
 				"fugaro-dev",
-				"fugaro update --firebase",
+				"fugaro init --firebase",
 				"config/limits/policyRules",
 				"projectpolicy.RulesVersion",
 				"policy-rules-skew",

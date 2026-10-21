@@ -162,7 +162,7 @@ func TestDocsStateTheProjectScopeDefaultWhereASecretIsStored(t *testing.T) {
 		{"../../docs/multi-model.md", []string{
 			"One key for the whole project, and it is the default.",
 			"`--project-wide` is still accepted as a synonym",
-			"a project-scope copy created or deleted after a job's apply changes what that job mounts only on the next `fugaro update --repo`",
+			"a project-scope copy created or deleted after a job's apply changes what that job mounts only on the next `fugaro init --repo`",
 		}},
 		{"../../docs/dogfooding.md", []string{
 			"Both are stored once for the project",
@@ -189,7 +189,7 @@ func TestDocsStateTheProjectScopeDefaultWhereASecretIsStored(t *testing.T) {
 
 // TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository: the two
 // sentences the code review of this PR found wrong (item 1), corrected once
-// more in the second review round. `fugaro update --repo`'s secrets stage has no
+// more in the second review round. `fugaro init --repo`'s secrets stage has no
 // --repo of its own to pass (internal/cli/initsecrets.go, the prompt's own
 // "press Ctrl-C here" text is the way out), so a page that tells a reader to
 // pass one at the prompt describes a flag that does not exist; and

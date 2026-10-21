@@ -5,7 +5,8 @@ package cli
 // testdata/init_commands.golden is every left this package hands a user who
 // has to finish something by hand -- the prompt to type the project's name, the
 // one-line opt-in, the secrets to set -- pinned so a change to any of them is
-// reviewed. What it could not say while `fugaro init` was live is whether the
+// reviewed. What it could not say while the retired `init` was still the front
+// door is whether the
 // command still exists: a rename that missed one row would leave a row the
 // matrix happily pins and a user who types a command that refuses (W1.2's
 // tombstone exits 1, which is the failure this file exists to make loud), and
@@ -69,7 +70,7 @@ func TestEveryLeftForYouNamesACommandThatExists(t *testing.T) {
 		verb := strings.Fields(c)[1] // the golden's commands are `fugaro <verb> ...`
 		switch {
 		case verb == "init":
-			t.Errorf("%s: the matrix hands the user `fugaro init`, which is the retired tombstone (it exits 1); name `fugaro setup` or `fugaro update`, whichever the reader is doing", c)
+			t.Errorf("%s: the matrix hands the user the retired `init` tombstone, which exits 1; name `fugaro setup` or `fugaro update`, whichever the reader is doing", c)
 		case !known[verb]:
 			t.Errorf("%s: `fugaro %s` is not a command of this build", c, verb)
 		}

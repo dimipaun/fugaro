@@ -524,7 +524,7 @@ func TestGcpSetupDatabaseStepOrderIsTheCodes(t *testing.T) {
 }
 
 // TestDocsCheck82PrintVarsKeys: check 82 step 2 tells the owner to read the
-// resolved Firebase project and the region out of `update --firebase
+// resolved Firebase project and the region out of `init --firebase
 // --print-vars`. That output is one JSON object, `{"installation": ...,
 // "firebase": ...}` (`init_firebase.go`'s firebaseVars), where the project is
 // `firebase.project` and the region `installation.region`; the name
