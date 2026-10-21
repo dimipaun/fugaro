@@ -71,7 +71,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
-import { builtPages, find, parse, textOf, walk } from './lib/html.mjs'
+import { builtPages, cssDeclarations, cssRules, find, parse, textOf, walk } from './lib/html.mjs'
 import {
   CONSOLE_README,
   DOWNLOADS_JSON,
@@ -372,6 +372,69 @@ test('the downloads section carries no link and no download URL while the flag i
   assert.ok(
     section.includes(downloadsData().not_released.text),
     'the downloads section does not render the data file\'s unreleased sentence while the flag is false',
+  )
+})
+
+/**
+ * The controls the console page asks a reader to tap, and what each one is: the classes the
+ * redesign gave them. The home page's own case reads the same declaration out of its own
+ * stylesheet (`website/test/home.mjs`'s `controlTargetFailures`); this page's reading is
+ * written here rather than shared, because sharing it would mean moving that helper into
+ * `test/lib/` and editing another page's test file, which this run does not do.
+ */
+const CONSOLE_CONTROLS = [
+  ['console-cta', "the hero's filled action"],
+  ['console-cta-quiet', "the hero's quiet link"],
+  ['download-link', 'a download link'],
+  ['screen-dot', 'a dot in the screenshot slider'],
+]
+
+test('every control the console page asks a reader to tap is at least 44 px tall', async (t) => {
+  // The owner's brief of 2026-10-19 measures every control the site asks a reader to tap
+  // against 44 px, and a rendered measurement is not one this repository can take: the rule
+  // declares the minimum and this reading looks for the declaration. A rule inside a media
+  // query does not count — the minimum has to hold at every width, so the rule it is declared
+  // in is one with no condition over it — and the token a `var()` names is resolved, because
+  // a minimum written as a step of the spacing scale is the same minimum.
+  const built = buildWith(t, () => {})
+  const doc = parse(decode(builtPage(built)))
+  const css = [...walk(doc)]
+    .filter((el) => el.name === 'style')
+    .map((el) => el.raw ?? '')
+    .join('\n')
+  assert.ok(
+    css.includes('.console-cta'),
+    'the built page ships no stylesheet of its own, so this case would be reading nothing',
+  )
+
+  const tokens = new Map([...css.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;}]+)/g)].map((m) => [m[1], m[2].trim()]))
+  const px = (value) => {
+    const named = /^var\((--[a-z0-9-]+)\)$/.exec((value ?? '').trim())
+    const resolved = (named ? (tokens.get(named[1]) ?? '') : (value ?? '')).trim()
+    const m = /^([\d.]+)px$/.exec(resolved)
+    return m ? Number(m[1]) : null
+  }
+
+  const failures = []
+  for (const [klass, what] of CONSOLE_CONTROLS) {
+    const heights = []
+    for (const rule of cssRules(css)) {
+      if (rule.conditions.length > 0) continue
+      if (!new RegExp(`\\.${klass}(?![\\w-])`).test(rule.selector)) continue
+      const declared = cssDeclarations(rule.body).find(([property]) => property === 'min-height' || property === 'height')
+      const height = declared ? px(declared[1]) : null
+      if (height !== null) heights.push(height)
+    }
+    if (!heights.some((height) => height >= 44)) {
+      failures.push(
+        `${what} is ${heights.length ? `a ${Math.max(...heights)} px target` : 'no declared target'}, and the owner's brief of 2026-10-19 measures every control the page asks a reader to tap against 44 px`,
+      )
+    }
+  }
+  assert.deepEqual(
+    failures,
+    [],
+    `a control on the console page is under the 44 px target the owner's brief of 2026-10-19 measures every control against:\n  ${failures.join('\n  ')}`,
   )
 })
 
