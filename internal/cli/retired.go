@@ -41,6 +41,16 @@ const retirementSentence = "`fugaro init` is now `fugaro setup` (first run) and 
 // old line reaches RunE and reads the same sentence. The exit code is a user
 // error's (1), the same as any other refusal, so a script that ran the old
 // name fails loudly rather than continuing with nothing converged.
+//
+// One consequence is worth naming, because a reader will ask: `fugaro init
+// --json` prints that same plain sentence, not a JSON document. W1.2 gives the
+// tombstone no flags of its own and parses none, so `--json` cannot be read
+// here; and there is nothing to serialize — `--json` on the two doors prints
+// `initflow.Result.JSON()`, and a command that runs no converge has no Result.
+// A caller that needs to branch has the exit code. If the owner ever wants a
+// JSON refusal it is a change to D2's contract, not a bug in this one
+// (retired_test.go's TestRetiredInitRefusalIsPlainText pins today's answer so
+// that the change is deliberate).
 func newRetiredInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "init",
