@@ -47,7 +47,8 @@
       "checksums": {
         "electron-v44.7.2-darwin-arm64.zip": "07d73d3d6dd0b8679c2f1849e30df179ea50c1d6b17630fcc398ae05221f0bd2",
         "electron-v44.7.2-darwin-x64.zip": "915cb638692e3595926fa64903ee0562c3c0c5a1febb84724175756ca2f0f3b7",
-        "electron-v44.7.2-linux-x64.zip": "777b26a64aee3d185acb9f93c04782bb51eae7c2c61c793963ef24374e5a1539"
+        "electron-v44.7.2-linux-x64.zip": "777b26a64aee3d185acb9f93c04782bb51eae7c2c61c793963ef24374e5a1539",
+        "electron-v44.7.2-win32-x64.zip": "10a89447ef64ac5cb9f782af48ffd83734a40ae91681259d1048ca3c9e6c5da4"
       }
     },
     "mac": {

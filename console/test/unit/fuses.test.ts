@@ -823,6 +823,7 @@ describe('the packaging configuration the fuses belong to', () => {
         `electron-v${version}-darwin-arm64.zip`,
         `electron-v${version}-darwin-x64.zip`,
         `electron-v${version}-linux-x64.zip`,
+        `electron-v${version}-win32-x64.zip`,
       ].toSorted(),
     )
     for (const hash of Object.values(checksums)) expect(hash).toMatch(/^[0-9a-f]{64}$/)
