@@ -57,9 +57,10 @@ feature's own use of those services would then have to be reconsidered (§8 poin
 ## 1. The problem, as the tree records it
 
 **F1 — the fence is off because it cannot be applied.** `deploy/terraform/gcp/
-modules/installation/deployer.tf:46-53` records the owner's 2026-10-18 ruling
-("Gate it off by default; redesign for 0.9.0"), and `deployer.tf:25-30` records
-the three defects:
+modules/installation/deployer.tf`'s "GATED OFF since 0.8.6" comment records the
+owner's 2026-10-18 ruling ("Gate it off by default; redesign for 0.9.0"), and
+its "ONE BINDING PER SERVICE (0.10.0 redesign)" comment records the three
+defects:
 
 1. the expression joins 9 clauses with **17 logical operators** where IAM allows
    **12**;
@@ -74,7 +75,8 @@ would reject the binding and stop every fugaro init."* A defect in a conditioned
 binding is not a quiet loss of a fence — it is a failure of the owner-run apply
 that creates the whole installation.
 
-**F2 — the same role cannot be bound twice.** `deployer.tf:19-21`: *"a binding
+**F2 — the same role cannot be bound twice.** `deployer.tf`'s "Two halves and
+not one role bound twice" comment: *"a binding
 grants its whole role, so a condition on one binding cannot fence permissions an
 unconditioned binding of the same role already grants project-wide."* The two
 roles exist because of this, and it is also why the redesign cannot be "put the
@@ -82,14 +84,15 @@ condition on one binding and leave the rest alone": every permission must sit in
 exactly one role, and every role that holds a permission the fence is supposed
 to limit must be bound only under a condition that limits it.
 
-**F3 — what the fence must achieve** (`deployer.tf:9-17`): the account can
+**F3 — what the fence must achieve** (`deployer.tf`'s header comment, "The
+deployer account of D75"): the account can
 create/update/delete **only resources it owns** (names carrying the managed
 prefix `fmgd-`, `tf.ManagedPrefix`, `internal/infra/tf/managed_cover.go:52`) and
 can **never** reach, **on the project**, the installation's runs bucket (where
 the marker and the owner's delete list are), Fugaro's own accounts, jobs,
 scheduler jobs, secrets, repositories, API key or state buckets, or the
 project's default compute account — which holds Editor by default. **The one
-reach it has that is not on the project is named in F4, and F3 does not cover
+reach it has that is not on the project is named in F4a, and F3 does not cover
 it**: the account can write objects in **D77's managed state bucket**, by a
 bucket-level binding of its own.
 
@@ -158,7 +161,9 @@ R4. **The shape is pinned by the tree**: the Terraform module and
      refuse any other expression rather than accept a plan that has been
      loosened.
 R5. **A service that does not honour the name form is dropped, not unfenced.**
-     `deployer.tf:120-123`: "If a service does not honour its form, the
+     `deployer.tf`'s "The conditions, one per service" comment, the "If a
+     service does not honour its form" paragraph: "If a service does not honour
+     its form, the
      permission that needs it cannot be fenced, so the matching type is dropped;
      none of these permissions is ever moved into fugaroDeployer (the
      unconditioned role) or into a binding with no condition."
@@ -174,16 +179,16 @@ cannot test it and this run makes no live call.
 
 | # | fact | source | status |
 | --- | --- | --- | --- |
-| C1 | a condition expression allows at most 12 logical operators | recorded in `deployer.tf:25-26` (the 0.8.6 defect) and `docs/plans/2026-10-16-managed-projects.md` Task 1.5 | recorded, not measured here |
-| C2 | the supported `resource.name` functions are `startsWith`, `endsWith`, `extract`, `==`, `!=`; `contains` is not one | `deployer.tf:26-28` | recorded |
-| C3 | `resource.name` is unsupported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, IAM service accounts and API keys | `deployer.tf:28-30` | recorded; **UNVERIFIED** — it is one of the things Check 68 measures (the other is the Secret Manager name form, so six of the seven services are measured) |
-| C4 | an unconditioned binding of a role defeats a conditioned binding of the same role; effective grant = union over bindings of (role's permissions ∩ resources the condition matches) | `deployer.tf:19-21`; enforced by `internal/infra/tf`'s `deployerGrant`/`unconditionedDeployerViolations` | **established in-tree** (the cover refuses the plan) |
-| C5 | `resource.type` for the nine types D75 names, and the name shapes (`projects/_/buckets/<b>`, `projects/<n>/secrets/<s>`, …) | `deployer.tf:69-107` (the conditions' comment: the two forms and the name shapes); `internal/infra/tf/cover.go`'s clause model | recorded, and the storage form is proved (Check 32) |
+| C1 | a condition expression allows at most 12 logical operators | recorded in `deployer.tf`'s "ONE BINDING PER SERVICE (0.10.0 redesign)" comment (the 0.8.6 defect: 17 operators where IAM allows 12) and `docs/plans/2026-10-16-managed-projects.md` Task 1.5 | recorded, not measured here |
+| C2 | the supported `resource.name` functions are `startsWith`, `endsWith`, `extract`, `==`, `!=`; `contains` is not one | the same "ONE BINDING PER SERVICE" comment (the functions it lists) | recorded |
+| C3 | `resource.name` is unsupported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, IAM service accounts and API keys | the same "ONE BINDING PER SERVICE" comment (the five types it names) | recorded; **UNVERIFIED** — it is one of the things Check 68 measures (the other is the Secret Manager name form, so six of the seven services are measured) |
+| C4 | an unconditioned binding of a role defeats a conditioned binding of the same role; effective grant = union over bindings of (role's permissions ∩ resources the condition matches) | `deployer.tf`'s "Two halves and not one role bound twice" comment; enforced by `internal/infra/tf`'s `deployerGrant`/`unconditionedDeployerViolations` | **established in-tree** (the cover refuses the plan) |
+| C5 | `resource.type` for the nine types D75 names, and the name shapes (`projects/_/buckets/<b>`, `projects/<n>/secrets/<s>`, …) | `deployer.tf`'s "The conditions, one per service" comment (the two forms and the name shapes); `internal/infra/tf/cover.go`'s clause model | recorded, and the storage form is proved (Check 32) |
 | C6 | `resource.name.extract("<template>")` takes a template of literal text around **one** `{identifier}` placeholder and returns the text that placeholder matched — **read here as** the reference defining that by **occurrence**: with a prefix-only template, the characters after the **first** occurrence of the literal prefix (to the end of the name), and with a suffix as well, the characters between that first occurrence of the prefix and the **first subsequent** occurrence of the suffix. A template with more than one placeholder is not the form these templates use, and not the form this design reads as documented | **uncited** — no source in this tree quotes the reference's text. `deployer.tf`'s header states the rule without naming a document, and Task 1.5 (`docs/plans/2026-10-16-managed-projects.md:454`) cites the reference for the services' *name shapes*, never for this grammar | **UNVERIFIED — recorded, not cited.** The fence's templates are written in that form and only that form, pinned by `TestDeployerExtractTemplatesAreTheRecordedForm`, and the first cut of this fence wrote `extract("projects/{project}/secrets/{secret}")`, two placeholders in the shape of a resource name, which is not that form — and the form the other four services carried, `extract("projects/{project}/locations/{location}/keys/{key}")`, is the three-placeholder one: either `setIamPolicy` refuses the expression (F1's failure, the 0.8.6 outage again) or the call extracts nothing and the role grants nothing. What is UNVERIFIED is the grammar and the **first**-occurrence rule above: they are this repository's reading, and the review that reclassified them as settled could point at no source — so the templates stand as the reading's form, and remain the reason to quote the reference's text before the fence is trusted |
 | C7 | a name that does not carry the template's literal text matches nothing, so `extract` returns the empty string, and `"".startsWith("fmgd-")` is false — a non-match denies, so the fence is **fail-closed** in this direction | the same reading, taken with C2 (`startsWith` is the function applied to the result); **the tree is cited for the direction, no source is cited for Google's behaviour** — `extractSegment` (`internal/infra/tf/cover_test.go`) models the reading and `TestExtractSegmentModelsTheRecordedReading` pins the model, and the fail-closed rows of `TestDeployerConditionFencesOnlyTheManagedPrefix` assert that a name which does not match is denied | **UNVERIFIED for Google, established in-tree for this repository**, and unmeasurable live. What the tree establishes is what *this* code does with the reading — the model and its pins are the citation for the fail-closed direction — while whether `extract` on Google's side returns the empty string for a non-match is uncited, like C6. **No step of §9 can falsify it**: every conditioned type's real names carry their own clause's anchor, so no probe can construct the non-match, and the near miss tests the prefix, not the template. The two readings of the grammar differ only in which half of the fence grants nothing — a whole-name template extracts the project number or the location and never matches the prefix, and an anchored mid-name template cannot match at all — and both are fail-closed. So the residual is not a measured fact but a risk about the reference itself, **including the one direction that is not fail-closed**: a non-matching name making the condition TRUE would invert the fence rather than close it, and this check cannot reach that either. Until the reference's text is quoted in §3, C7 is in the same class as C3 and C9 |
 | C8 | a project-level binding of a custom role reaches only that project's resources | IAM's resource hierarchy; also how every other Fugaro grant is written | recorded |
 | C9 | `resource.matchTag` exists and can test a tag on a resource, but tag *values* are per-project and a tag key has to be created in the organisation/project first | Task 1.5's option list; no Fugaro code uses tags today | **UNVERIFIED** |
-| C10 | `cloudscheduler.jobs.resume` does not exist; resume is `cloudscheduler.jobs.enable` | `deployer.tf:334` (the second 0.8.6 defect, already fixed) | recorded |
+| C10 | `cloudscheduler.jobs.resume` does not exist; resume is `cloudscheduler.jobs.enable` | `deployer.tf`'s `fugaro_deployer_scheduler_job` role, the comment on its `cloudscheduler.jobs.enable` permission (the second 0.8.6 defect, already fixed) | recorded |
 
 ## 4. Options
 
@@ -262,19 +267,25 @@ the literal is not always knowable:
 - **Cloud Storage** — fine. `projects/_/buckets/fmgd-` carries no project.
 - **IAM service accounts** — fine *if* the condition may name the project:
   `resource.name.startsWith("projects/${var.project}/serviceAccounts/fmgd-")`.
-  `var.project` is known at plan time (`deployer.tf:348`, and the clause itself at `deployer.tf:152`).
+  `var.project` is known at plan time (`deployer.tf`'s "Binding (1)" comment,
+  and the clause itself, the `deployer_condition_account` local).
 - **Secret Manager** — the name carries the project **number**, which the module
   does not have at plan time; a `startsWith` would have to omit the front, and
   `"/secrets/fmgd-"` cannot be a `startsWith` (the name does not start with it).
   So Secret Manager needs either `extract` or the project number as an input.
-- **Artifact Registry, Cloud Run jobs, Cloud Scheduler jobs, API keys** — the
-  name carries `locations/<location>` before the resource's own segment, and the
-  location is a plan-time value the *managed plan* chooses, not the module. A
-  condition that pins the installation's own region would be wrong for a managed
-  project that deploys elsewhere, and the installation itself already uses two
-  scheduler regions (`scheduler_region` us-east4 against region us-east5 in the
-  golden tfvars), which shows the location is not a constant even inside one
+- **Artifact Registry, Cloud Run jobs, Cloud Scheduler jobs** — the name carries
+  `locations/<location>` before the resource's own segment, and the location is a
+  plan-time value the *managed plan* chooses, not the module. A condition that
+  pins the installation's own region would be wrong for a managed project that
+  deploys elsewhere, and the installation itself already uses two scheduler
+  regions (`scheduler_region` us-east4 against region us-east5 in the golden
+  tfvars), which shows the location is not a constant even inside one
   installation.
+- **API keys** — the location is not the unknown here: an API key's name carries
+  `locations/global/keys/<key>` (`internal/gcpfake/apikeys.go`'s `AddKey`), so
+  its location is the constant `global` and a location allow-list buys nothing
+  for it. What a whole-name form would have to spell is the segment before
+  `/keys/`, which is what the `extract` anchor steps over.
 
 **Failure modes.** Correct where it can be written; the cost is that for five of
 the seven services it *cannot* be written without either `extract` or new
@@ -312,7 +323,8 @@ something even where the deployer is the only actor.
 **What it needs from the owner at creation.** A per-managed-project bootstrap
 step (the grant in the managed project), and a decision on the question above.
 Also a decision on who may create the managed project: today the account cannot
-(`resourcemanager.projects.*` is deliberately absent, `deployer.tf:37-39`).
+(`resourcemanager.projects.*` is deliberately absent, `deployer.tf`'s "What none
+of them holds, and why" comment).
 
 **Failure modes.** No name-based failure mode. The exposure is exactly the
 project: an agent-authored plan that deletes the wrong resource in its own
@@ -413,14 +425,18 @@ Reasoning, in the order the requirements are numbered:
 **Why not 1b.** It is option 1 with a smaller dependency, and it stays the
 recorded fallback: for Cloud Storage and IAM service accounts the `startsWith`
 form is available today, and §6's implementation uses it for both. It is not the
-design because five of the seven services have a middle segment the module
-cannot know at plan time — Secret Manager's project **number**, and the
-**location** Artifact Registry, Cloud Run and Cloud Scheduler carry — and the
-two ways to make it knowable are a project-number input the module does not have
-or a location allow-list, which is a fence with the allow-list's width as a
-hole. The `extract` anchor form needs neither: `"/secrets/{secret}"` steps over
-the unknown project number and `"/jobs/{job}"` over the location, and both are
-in the one-placeholder form C6 records (UNVERIFIED there: the grammar is this
+design because five of the seven services take the anchor form rather than a
+whole-name one, and for each of them a whole-name form would have to spell
+something the module does not have at plan time — Secret Manager's project
+**number**, the **location** Artifact Registry, Cloud Run and Cloud Scheduler
+carry, and, for API keys, the segment before `/keys/` (their location is the
+constant `global`, so it is not a location the plan chooses —
+`internal/gcpfake/apikeys.go`'s `AddKey`). The two ways to make the first four
+knowable are a project-number input the module does not have or a location
+allow-list, which is a fence with the allow-list's width as a hole. The `extract`
+anchor form needs neither: `"/secrets/{secret}"` steps over the unknown project
+number and `"/jobs/{job}"` over the location, and both are in the
+one-placeholder form C6 records (UNVERIFIED there: the grammar is this
 repository's reading of the reference, and nothing in this tree quotes it).
 
 **Why not 2.** It is a smaller change and a *stronger* fence against the
@@ -549,7 +565,7 @@ review catches.
 ## 7. What this changes about D75
 
 D75 (`docs/design/managed-projects.md` §5) says the deployer holds **two**
-custom roles and that `fugaroDeployerScoped` is *"bound exactly once under the
+custom roles and that `fugaroDeployerScoped` is *"bound only under the
 name-prefix condition"*. The redesign makes that **eight** roles and **nine**
 bindings (one unconditioned project binding, seven conditioned, and F4a's
 bucket-level one on D77's managed state bucket), for the reason in F1: the

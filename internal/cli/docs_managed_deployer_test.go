@@ -1097,6 +1097,237 @@ func TestChecklistCheck68MethodRunsAsAScript(t *testing.T) {
 	}
 }
 
+// TestChecklistCheck68FailsWhenScopesTheDropsToStepFour: Check 68's "Fails when"
+// paragraph applies the fix per failure, and it applied the step-4 rule to the
+// wrong branch — a condition IAM refuses to store (step 2 or 3) was "the drop
+// ... open only for the services §8 point 3 rules acceptable". The paragraph
+// above it and the design's §5 both draw the line the other way: a refused
+// condition is a STOP and the option-2 fallback whatever service it belongs to,
+// and §8 point 3's drops are what a *step-4* denial gets, for the services it
+// names. An owner reading the old sentence on the check's most important branch
+// would drop a service the ruling says is a fallback, which is the difference
+// between a smaller feature and a broken apply.
+//
+// Mutation (verified, run and restored): the old clause "and the drop is open
+// only for the services §8 point 3 rules acceptable" put back — this fails.
+func TestChecklistCheck68FailsWhenScopesTheDropsToStepFour(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := flattenDoc(readDoc(t, path))
+	const lead = "**Fails when:** any of those is not what you saw."
+	i := strings.Index(doc, lead)
+	if i < 0 {
+		t.Fatalf("%s's Check 68 no longer has its %q paragraph; update this test's marker", path, lead)
+	}
+	para := doc[i:]
+	if end := strings.Index(para, "**Paste back:**"); end >= 0 {
+		para = para[:end]
+	}
+	for _, want := range []string{
+		"the fallback whatever service it belongs to, never a drop",
+		"whether that is the fallback or one of §8 point 3's acceptable drops is the step-4 question, not this one",
+		"§8 point 3 rules acceptable for API keys, Cloud Scheduler jobs, Artifact Registry repositories and Secret Manager secrets only",
+	} {
+		if !strings.Contains(para, want) {
+			t.Errorf("%s's Check 68 \"Fails when\" paragraph does not say %q: a condition IAM refuses to store is the fallback for every service, and the drops §8 point 3 rules acceptable are what a step-4 denial gets — the paragraph above it and the design's §5 draw that line, so this one has to draw it the same way", path, want)
+		}
+	}
+	if strings.Contains(para, "the drop is open only for the services §8 point 3 rules acceptable") {
+		t.Errorf("%s's Check 68 \"Fails when\" paragraph still applies the step-4 drop rule to a refused condition: steps 2 and 3 are the fallback whatever service they belong to, and an owner reading this on the check's main branch drops a service the ruling says is a fallback", path)
+	}
+}
+
+// TestChecklistCheck68IndexRowKeepsC3AndSecretManagerApart: the index row for
+// Check 68 folded Secret Manager into the set C3 covers — "for a Secret, an IAM
+// service account, ... (C3, UNVERIFIED in the design)" — while the design's C3
+// is the five services the reference does not list `resource.name` for, and the
+// section's own item 3 says Secret Manager is "a sixth service, and a different
+// fact about it" (the `extract` form, C6/C7). The row is the index a reader
+// scans, so a row that puts a sixth service under C3 misstates what the check
+// measures and what a C3 failure would drop.
+//
+// Mutations (verified, run and restored): "for a Secret, an IAM service account"
+// put back in the row — this fails; and the row's "a **sixth** service measured
+// for a different fact" dropped — this fails.
+func TestChecklistCheck68IndexRowKeepsC3AndSecretManagerApart(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	var row string
+	for _, line := range strings.Split(readDoc(t, path), "\n") {
+		if strings.HasPrefix(line, "| 68 | ") {
+			row = flattenDoc(line)
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s no longer carries an index row for Check 68; update this test's marker", path)
+	}
+	for _, want := range []string{
+		"for an IAM service account, an API key, an Artifact Registry repository, a Cloud Run job and a Cloud Scheduler job (C3, UNVERIFIED in the design, and it covers those **five**)",
+		"a **sixth** service measured for a different fact",
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s's Check 68 index row does not say %q: C3 is the five services the reference does not list `resource.name` for, and Secret Manager is the sixth the check measures for a different fact (the `extract` form, C6/C7)", path, want)
+		}
+	}
+	if strings.Contains(row, "for a Secret, an IAM service account") {
+		t.Errorf("%s's Check 68 index row still puts Secret Manager under C3: the design's C3 covers five services, and the section's item 3 says Secret Manager is a sixth service measured for a different fact", path)
+	}
+}
+
+// TestManagedDeployerCitationsNameThePlaceNotTheLine: the redesign's documents
+// point a reader at places in `deployer.tf`, `cover.go` and the design, and the
+// convention this repository records (docs/plans/2026-10-19-compute-backend.md,
+// the release fact: "a citation by line is a second fact that an edit anywhere
+// above it falsifies, while the anchor a reader finds the place by does not
+// move") is to cite them by the anchor rather than by a line number. The
+// design's R5 pointed at `deployer.tf:120-123` for a paragraph at 125-128, C10
+// at `:334` for the note at 339, the account clause at `:348` and `:152` for
+// the local at 156, and C5 at `:69-107` for a comment running 73-116; the
+// register pointed at `managed-deployer-fence.md:145` for §3's C7 row (183) and
+// `:248` for Option 2's heading (287); and the managed-projects plan at
+// `cover.go:434` for `accountClause` (1284 here, 1089 on the base). Every one of
+// them now names the place, and this test holds both halves of that: the anchor
+// is in the document that cites it, and the place it names is in the file it
+// points at.
+//
+// Mutations (verified, run and restored): a `deployer.tf:<line>` citation put
+// back in the design → FAIL; the "GATED OFF since 0.8.6" heading renamed in
+// `deployer.tf` → FAIL; the §3 `| C7 |` row renamed in the design → FAIL; the
+// register's "### Option 2" heading renamed → FAIL.
+func TestManagedDeployerCitationsNameThePlaceNotTheLine(t *testing.T) {
+	cites := []struct {
+		doc, file, anchor string
+	}{
+		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "GATED OFF since 0.8.6"},
+		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "ONE BINDING PER SERVICE"},
+		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "Two halves and not one role bound twice"},
+		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "The deployer account of D75"},
+		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "The conditions, one per service"},
+		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "What none of them holds, and why"},
+		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "deployer_condition_account"},
+		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "Binding (1)"},
+		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "fugaro_deployer_scheduler_job"},
+		{"docs/gcp-live-checklist.md", "docs/design/managed-deployer-fence.md", "### Option 2 — fence by project, not by name"},
+		{"docs/gcp-live-checklist.md", "docs/design/managed-deployer-fence.md", "| C7 |"},
+		{"docs/plans/2026-10-16-managed-projects.md", "internal/infra/tf/cover.go", "accountClause"},
+	}
+	docs := map[string]string{}
+	for _, c := range cites {
+		if _, ok := docs[c.doc]; !ok {
+			docs[c.doc] = flattenDoc(readDoc(t, c.doc))
+		}
+		if !strings.Contains(docs[c.doc], c.anchor) {
+			t.Errorf("%s does not name the anchor %q: a citation has to be the place a reader finds it by, and the anchor is what survives an edit above it", c.doc, c.anchor)
+		}
+		if !strings.Contains(readDoc(t, c.file), c.anchor) {
+			t.Errorf("%s no longer carries %q, the anchor %s cites: the anchor and the citation move together", c.file, c.anchor, c.doc)
+		}
+	}
+	// And the line-number form those citations replaced is gone from the two
+	// documents this branch rewrote, not merely joined by an anchor.
+	for _, wrong := range []struct{ doc, citation string }{
+		{"docs/design/managed-deployer-fence.md", "deployer.tf:"},
+		{"docs/gcp-live-checklist.md", "managed-deployer-fence.md:"},
+	} {
+		if m := regexp.MustCompile(regexp.QuoteMeta(wrong.citation) + `\d`).FindString(readDoc(t, wrong.doc)); m != "" {
+			t.Errorf("%s still cites by line (%q): a line citation is a second fact that an edit anywhere above it falsifies, and the anchor is what a reader finds the place by", wrong.doc, m)
+		}
+	}
+}
+
+// TestManagedDeployerD75QuoteIsD75sWords: §7 quoted D75 as saying
+// `fugaroDeployerScoped` is "bound exactly once under the name-prefix
+// condition", and D75 does not say that — it says "bound only under the
+// name-prefix condition" (docs/design/managed-projects.md §5), and "bound
+// exactly once" is this redesign's own banner for the seven roles it writes. A
+// quotation that attributes wording to a decision the owner answered is how a
+// reader comes to believe D75 ruled something it did not.
+//
+// Mutations (verified, run and restored): the design's quote changed back to
+// "bound exactly once under the name-prefix condition" → FAIL; D75's own words
+// changed in docs/design/managed-projects.md → FAIL (this test's own marker).
+func TestManagedDeployerD75QuoteIsD75sWords(t *testing.T) {
+	const quote = "bound only under the name-prefix condition"
+	d75 := flattenDoc(readDoc(t, "docs/design/managed-projects.md"))
+	if !strings.Contains(d75, quote) {
+		t.Fatalf("D75 no longer says %q; update this test's marker", quote)
+	}
+	design := flattenDoc(readDoc(t, "docs/design/managed-deployer-fence.md"))
+	if !strings.Contains(design, quote) {
+		t.Errorf("the design's §7 does not quote D75's own words (%q): the quotation has to be what D75 says, and \"bound exactly once\" is this redesign's banner for the seven roles it writes rather than D75's", quote)
+	}
+	if strings.Contains(design, "bound exactly once under the name-prefix condition") {
+		t.Errorf("the design's §7 still attributes \"bound exactly once under the name-prefix condition\" to D75: D75 says \"bound only under the name-prefix condition\", and the words a quotation puts in a decision's mouth are the ones a reader takes as the ruling")
+	}
+}
+
+// TestManagedDeployerFactsCountTheirServicesRight: three small facts in the
+// design had drifted from the shape they describe. F3 said the one reach off the
+// project "is named in F4", and it is F4a's bucket-level binding that names it —
+// F4 is the prefix-is-the-only-key fact and never mentions the bucket. §4's "why
+// not 1b" said "five of the seven services have a middle segment the module
+// cannot know at plan time" and then named four, leaving API keys out, and §4's
+// option-1b bullet put API keys among the services whose `locations/<location>`
+// is a plan-time value the managed plan chooses, while an API key's location is
+// the constant `global` (`internal/gcpfake/apikeys.go`'s `AddKey`). A reader
+// counting the services, or looking for the bucket binding under F4, is led to
+// the wrong place by each of them.
+//
+// Mutations (verified, run and restored): "named in F4, and F3 does not cover
+// it" put back → FAIL; API keys dropped from the "why not 1b" sentence → FAIL;
+// API keys put back into the option-1b location bullet → FAIL.
+func TestManagedDeployerFactsCountTheirServicesRight(t *testing.T) {
+	doc := flattenDoc(readDoc(t, "docs/design/managed-deployer-fence.md"))
+	for _, want := range []string{
+		"named in F4a, and F3 does not cover it",
+		"five of the seven services take the anchor form rather than a whole-name one",
+		"for API keys, the segment before `/keys/` (their location is the constant `global`",
+		"- **API keys** — the location is not the unknown here",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/design/managed-deployer-fence.md does not say %q: F3's off-project reach is F4a's, and the five services the anchor form is for include API keys, whose location is the constant `global` and not a value the plan chooses", want)
+		}
+	}
+	if strings.Contains(doc, "Cloud Scheduler jobs, API keys**") {
+		t.Errorf("docs/design/managed-deployer-fence.md's option-1b bullet still groups API keys with the services whose location the managed plan chooses: an API key's location is the constant `global` (`internal/gcpfake/apikeys.go`'s `AddKey`), so the location is not what is unknown for it")
+	}
+}
+
+// TestManagedProjectsTaskOneFiveRecordsCheck52U3AsRun: Task 1.5's condition
+// paragraph said a Secret Manager name-prefix condition "is Check 52's U3 —
+// which docs/gcp-live-checklist.md on main still records as NOT RUN (its row,
+// "USER-RUN, NOT RUN"): its results are in the owner's records and not yet in
+// the docs, so nothing on main is evidence for it". That was true when the task
+// was written and is not now: the register's Check 52 index row and its section
+// record U3 as RUN 2026-10-16 and honoured, and the design's own F5 table reads
+// it as measured. The row the sentence quoted does not exist any more, so the
+// one surviving copy of the claim has to go with the rest.
+//
+// Mutations (verified, run and restored): the old sentence put back → FAIL; the
+// register's "U3 honoured" removed → FAIL (the two are held together).
+func TestManagedProjectsTaskOneFiveRecordsCheck52U3AsRun(t *testing.T) {
+	const path = "docs/plans/2026-10-16-managed-projects.md"
+	plan := flattenDoc(readDoc(t, path))
+	for _, want := range []string{
+		"Check 52's U3 — **which the checklist now records as RUN 2026-10-16",
+		"so that half is evidence in the tree today",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s's Task 1.5 does not say %q: the register records Check 52's U3 as RUN 2026-10-16 and honoured, so the claim that nothing on main is evidence for it is stale", path, want)
+		}
+	}
+	for _, wrong := range []string{
+		"on `main` still records as NOT RUN",
+		"so nothing on `main` is evidence for it",
+	} {
+		if strings.Contains(plan, wrong) {
+			t.Errorf("%s's Task 1.5 still says %q: the register's Check 52 row and its section now record U3 as RUN 2026-10-16 (honoured), and the row the sentence quoted no longer exists", path, wrong)
+		}
+	}
+	if checklist := flattenDoc(readDoc(t, "docs/gcp-live-checklist.md")); !strings.Contains(checklist, "U3 honoured") {
+		t.Fatalf("docs/gcp-live-checklist.md no longer records Check 52's U3 as honoured; update this test's marker")
+	}
+}
+
 // TestChecklistCheck68NegativeDirectionNamesAgree: the negative direction acted
 // on the sandbox installation's own resources — its secret, its service account,
 // its repository, its API key, its Cloud Run job, its scheduler job, and a write
