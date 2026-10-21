@@ -115,6 +115,39 @@ func TestParseAcceptsEachFiledInShape(t *testing.T) {
 	}
 }
 
+// TestParseAcceptsAClosedItemAndItsClosingHeading: D31 says a `closed` item
+// carries a `## Closed by` line, so the heading has to be one the format
+// accepts — a parser that refused it would make the closing D31 describes
+// unrepresentable, and the first item closed as FORMAT.md documents it would
+// take the whole folder down with it, since Load returns on the first error.
+// It is accepted and not required: requiring it of a `closed` item is the
+// closing sweep's rule (plan T4.7).
+//
+// Mutation (verified, run and restored): drop `## Closed by` from Headings —
+// this fails naming the heading.
+func TestParseAcceptsAClosedItemAndItsClosingHeading(t *testing.T) {
+	doc := item(func(d *string) {
+		*d = strings.Replace(*d, "status: open", "status: closed", 1)
+		*d += "\n## Closed by\n\npull request #812.\n"
+	})
+	it, err := Parse(itemPath, []byte(doc))
+	if err != nil {
+		t.Fatalf("Parse refused a closed item carrying D31's `## Closed by` heading: %v", err)
+	}
+	if it.Status != "closed" || !strings.Contains(it.Body, "## Closed by") {
+		t.Errorf("Parse read %+v, want the item's own status and body", it)
+	}
+
+	// The first two headings stay required: the closing heading does not stand
+	// in for the text an item has to carry.
+	without := item(func(d *string) {
+		*d = strings.Replace(*d, "## Why\n\nbecause.\n", "## Closed by\n\npull request #812.\n", 1)
+	})
+	if _, err := Parse(itemPath, []byte(without)); err == nil || !strings.Contains(err.Error(), "## Why") {
+		t.Errorf("Parse accepted an item whose body carries `## Closed by` instead of `## Why`: err = %v", err)
+	}
+}
+
 // TestLoadDirReadsTheItemsAndNothingElse: the index and the format document
 // are not items; every other .md file in the folder is one; the result is
 // sorted by id; and a folder holding two items with one id is refused, which

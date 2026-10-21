@@ -55,14 +55,22 @@ var Statuses = []string{"open", "closed", "dropped"}
 // loud rather than spelled as a run id nobody minted.
 var FiledInKinds = []string{"run", "pr", "hand"}
 
-// Headings are the body headings D27 names. The first two are required, so an
-// item cannot be a title with no text; a heading outside this set is refused,
-// because the body's shape is the format and not a preference.
+// Headings are the body headings the format names: D27's four, and D31's
+// `## Closed by`, which a `closed` item carries and no other item does. The
+// first two are required, so an item cannot be a title with no text; a heading
+// outside this set is refused, because the body's shape is the format and not a
+// preference.
+//
+// `## Closed by` is accepted here rather than required: what a `closed` item
+// must carry is the closing sweep's rule (plan T4.7), and a parser that refused
+// the heading would make the closing D31 describes unrepresentable. The order
+// below is the order the format document lists them in.
 var Headings = []string{
 	"## What was left open",
 	"## Why",
 	"## What done looks like",
 	"## Links",
+	"## Closed by",
 }
 
 // requiredHeadings is the prefix of Headings that an item's body must carry.
@@ -195,8 +203,9 @@ func parseFrontMatter(path, doc string) (Item, string, error) {
 	return item, strings.Join(lines[closed+1:], "\n"), nil
 }
 
-// checkBody holds the body to D27's headings: the first two are required, and
-// a heading outside the four the format names is a shape nobody decided.
+// checkBody holds the body to the headings the format names: the first two are
+// required, and a heading outside Headings — D27's four and D31's `## Closed
+// by` — is a shape nobody decided.
 func checkBody(path, body string) error {
 	have := map[string]bool{}
 	for _, line := range strings.Split(body, "\n") {
@@ -205,7 +214,7 @@ func checkBody(path, body string) error {
 			continue
 		}
 		if !contains(Headings, line) {
-			return fmt.Errorf("%s: the body carries the heading %q, which is not one of the four the format names (D27)", path, line)
+			return fmt.Errorf("%s: the body carries the heading %q, which is not one of the headings the format names (D27, D31)", path, line)
 		}
 		have[line] = true
 	}

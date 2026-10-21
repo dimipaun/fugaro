@@ -101,8 +101,8 @@ func TestBacklogListPrintsTheIndexAndWritesNothing(t *testing.T) {
 
 // TestBacklogListJSONCarriesTheIndexRows: the document is the index's rows as
 // data, in the index's order, with the count line's three figures (D28,
-// the console's JSON contract's backlog section). The rows are what a screen shows, so
-// the fields are read off the wire rather than from the struct.
+// the console's JSON contract's backlog section). The rows are what a screen
+// shows, so the fields are read off the wire rather than from the struct.
 //
 // Mutation (verified, run and restored): report the counts of the whole
 // document under `open` — this fails naming the figure.
@@ -155,6 +155,54 @@ func TestBacklogListJSONCarriesTheIndexRows(t *testing.T) {
 	}
 	if doc.Items[1].Status != "closed" {
 		t.Errorf("the second row's status is %q, want closed: the rows are the index's own order", doc.Items[1].Status)
+	}
+}
+
+// TestBacklogListJSONOnAnEmptyFolderSaysSoWithAnEmptyList: an empty folder is a
+// document with an empty list and three zeros, not a document with an absent
+// key and not a `null`. The contract's own rule is that a list is `[]` rather
+// than missing, so a screen can render the folder without a second guess, and
+// the difference is invisible on any fixture that has an item in it.
+//
+// Mutation (verified, run and restored): build the rows with `var rows
+// []backlogRow` instead of a made slice — this fails, because the document then
+// carries `"items": null`.
+func TestBacklogListJSONOnAnEmptyFolderSaysSoWithAnEmptyList(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), backlog.Dir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "backlog", "list", "--dir", dir, "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"items": []`) {
+		t.Errorf("an empty folder's document does not carry `\"items\": []`:\n%s", out)
+	}
+	if strings.Contains(out, "null") {
+		t.Errorf("an empty folder's document carries a null, which a reader cannot tell from a key the command forgot to emit:\n%s", out)
+	}
+	var doc struct {
+		Dir     string `json:"dir"`
+		Items   []any  `json:"items"`
+		Open    int    `json:"open"`
+		Closed  int    `json:"closed"`
+		Dropped int    `json:"dropped"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("fugaro backlog list --json printed no document: %v\n%s", err, out)
+	}
+	if doc.Dir != dir || len(doc.Items) != 0 || doc.Open != 0 || doc.Closed != 0 || doc.Dropped != 0 {
+		t.Errorf("an empty folder's document is %+v, want the folder it read and four zeros", doc)
+	}
+	// The human half says the same thing, so the two spellings of "no items"
+	// cannot drift: the count line states the zero the empty list states.
+	plain, _, err := execute(t, "backlog", "list", "--dir", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plain, "0 items: 0 open, 0 closed, 0 dropped.") || !strings.Contains(plain, "No items yet.") {
+		t.Errorf("an empty folder's index does not state its own zero:\n%s", plain)
 	}
 }
 

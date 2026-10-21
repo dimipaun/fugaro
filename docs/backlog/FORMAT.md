@@ -48,8 +48,9 @@ request the run opened), and an item a person files has neither behind it.
 
 ## The body
 
-Four headings. The **first two are required**, so an item cannot be a title
-with no text; a fifth heading is a shape nobody decided, and is refused.
+Five headings. The **first two are required**, so an item cannot be a title
+with no text; a heading outside these five is a shape nobody decided, and is
+refused.
 
 ```markdown
 ## What was left open
@@ -59,7 +60,14 @@ with no text; a fifth heading is a shape nobody decided, and is refused.
 ## What done looks like
 
 ## Links
+
+## Closed by
 ```
+
+`## Closed by` is D31's, and only a `closed` item carries it. It is listed here
+because the body's headings are a closed set — the parser accepts it and refuses
+anything else — while *requiring* it of a `closed` item is the closing sweep's
+rule (plan T4.7), not this format's.
 
 ## Closing an item
 
@@ -70,8 +78,12 @@ holds rather than a sentence here: an item flipped without the index being
 regenerated is red.
 
 - A closed item's file is **never deleted**. Its id stays resolvable forever,
-  because older pull requests cite it, and it carries a `## Closed by` line
-  naming the pull request that closed it.
+  because older pull requests cite it, and it carries a `## Closed by` line —
+  the fifth heading above — naming the pull request that closed it. Nothing in
+  the tree requires that line of a `closed` item yet: the closing sweep
+  (plan T4.7) is the task that makes a `closed` item without one red. The
+  parser accepts the heading today so that the closing D31 describes is
+  representable at all.
 - An item that is dropped rather than fixed sets `status: dropped` and records
   its reason in the body.
 - A run may not close an item it did not fix. That is a review rule rather than

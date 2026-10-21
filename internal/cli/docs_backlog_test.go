@@ -216,7 +216,7 @@ func TestDocsBacklogItemsFollowTheFormat(t *testing.T) {
 		for _, h := range headings {
 			have[h] = true
 			if !slices.Contains(backlog.Headings, h) {
-				t.Errorf("%s: the body carries the heading %q, which is not one of the four the format names (D27)", path, h)
+				t.Errorf("%s: the body carries the heading %q, which is not one of the headings the format names (D27, D31)", path, h)
 			}
 		}
 		for _, want := range backlog.Headings[:2] {

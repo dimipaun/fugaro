@@ -25,7 +25,6 @@ type backlogOptions struct {
 // beside them, README.md.
 //
 // The pair is read-only in the sense that matters for a review: nothing here
-// The pair is read-only in the sense that matters for a review: nothing here
 // touches a network, a credential, a cloud project or an installation. `index`
 // writes exactly one file, the folder's own index, from the item files beside
 // it; `list` writes nothing at all and prints what the index would say.
