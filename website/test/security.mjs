@@ -20,7 +20,7 @@
 // request you merge": `SECURITY.md` makes neither claim, and a label the policy does not state
 // is the defect this gate exists for (D99).
 //
-// Seven things are checked, and each one is the mechanical form of a sentence in the brief:
+// Eight things are checked, and each one is the mechanical form of a sentence in the brief:
 //
 //   1. **The page carries its four regions and no other text** (the brief: "Nothing else").
 //      Everything a reader sees inside the page's own `<article>` is its `h1`, the diagram,
@@ -34,7 +34,9 @@
 //   2. **The diagram is one named picture, and its labels are the document's own words** (the
 //      brief: "ONE inline-SVG diagram (`role="img"` with an `aria-label`, plus the same facts
 //      as a short list under it)", and "EVERY label must follow SECURITY.md's 'In short'
-//      section"). One `<svg>`, named, carrying the drawing's labels; the facts as one list
+//      section"). One named picture — two `<svg>`s carrying the same words in the same order,
+//      one per layout, which is one picture drawn twice (item 8 below) — with the facts as one
+//      list
 //      under it and the two limit lines below that; every label of the picture present in the
 //      document's "In short" section or in the words the region carries beside the picture —
 //      its heading, those facts and those lines, and not the rest of the page; every word the
@@ -83,6 +85,20 @@
 //      dropped the shared classes would leave every one of them green. **The visual match to
 //      the owner's boards is the owner's check at the preview** (the redesign's 70a–70c, P9):
 //      what this holds is that the page wears the site's shapes, not that it wears them well.
+//   8. **The drawing is one picture at two layouts, and the wide one fits the first screen**
+//      (the owner's feedback of 2026-10-21: "The image is tall (works well in mobile) but on
+//      desktop doesn't fit above the fold, can we do it more horizontally for desktop?"). The
+//      tall drawing is the phone's and the wide one is the desktop's: the stylesheet is read to
+//      find which of the two it renders outside every media query (the tall one is `display:
+//      none`, falling back to the shared class's own rule the way a browser resolves it), the
+//      `hidden` attribute has to sit on the drawing the stylesheet turns off, the changeover
+//      has to be one width with the tall drawing block below it and the wide one above it, the
+//      wide drawing's smallest label has to stay legible in the column it is shown in at that
+//      width, and the headline plus the whole wide drawing has to fit 1440 × 800. **The fold
+//      itself is the owner's live-browser check** (D187, the redesign's 70b): nothing here can
+//      see a viewport, so what this holds is the arithmetic the layout rests on — the column
+//      the drawing is given, the drawing's own aspect ratio, and the room above it, each read
+//      from the built page's own stylesheet and the drawing's own `viewBox`.
 //
 // **Two readers, and why the text is read the hard way** (round 3 of the review, findings 3 and
 // 4). The text of the page is read with `test/lib/html.mjs`'s `verbatimText`, which invents
