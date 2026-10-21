@@ -2119,3 +2119,583 @@ test('the stages the page draws are the stages the repository names', () => {
   assert.ok(names.includes(LOOP), `the loop the diagram draws is not a stage of the chain docs/design/v1.md draws (${JSON.stringify(line)})`)
   assert.ok(new RegExp('`verify`').test(loggedStages()), 'plugin/skills/working/reference/logs.md no longer names `verify` among the stages a run reaches, and that list is where the page\'s fifth stage comes from')
 })
+
+// ---- the four levels (Part 4; ZF36–ZF43, D237, D244, D245) --------------------------------
+
+/**
+ * The zoom section of a built page, as everything the four levels are read through: the one
+ * `<defs>`, the `<symbol>`s it holds, the four `<figure>`s with the `<use>` references and the
+ * words each one draws, and the markers of the level `<nav>`.
+ *
+ * The levels are read from the page rather than from the component, because the defect this
+ * whole reading exists for is a level that drew an entity itself: a test that asked the
+ * component what it draws would be asking the thing under suspicion.
+ */
+function zoomLevelsOf(html) {
+  const sections = findAll(parse(html), (el) => el.name === 'section' && has(el, 'zoom'))
+  const section = sections[0] ?? null
+  const zoom = { sections: sections.length, section, defs: [], symbols: [], levels: [], markers: [] }
+  if (section === null) return zoom
+
+  zoom.defs = findAll(section, (el) => el.name === 'defs')
+  for (const symbol of findAll(section, (el) => el.name === 'symbol')) {
+    const id = symbol.attrs.get('id') ?? ''
+    zoom.symbols.push({
+      id,
+      // A `<symbol>` is a shape of the one `<defs>` when the `<defs>` is one of its ancestors:
+      // a symbol written beside a level is a shape no level draws through `<use>`.
+      inDefs: zoom.defs.some((defs) => ancestorsOf(symbol).includes(defs)),
+      node: symbol,
+    })
+  }
+
+  const nav = findAll(section, (el) => el.name === 'nav')[0]
+  if (nav !== undefined) {
+    for (const marker of findAll(nav, (el) => el.name === 'a')) {
+      zoom.markers.push({
+        href: marker.attrs.get('href') ?? '',
+        name: (marker.attrs.get('aria-label') ?? '').trim(),
+        text: textOf(marker).trim(),
+        node: marker,
+      })
+    }
+  }
+
+  for (const figure of findAll(section, (el) => el.name === 'figure' && has(el, 'zoom-figure'))) {
+    const svg = [...walk(figure)].find((el) => el.name === 'svg')
+    const inside = svg === undefined ? [] : [...walk(svg)]
+    zoom.levels.push({
+      id: figure.attrs.get('id') ?? '',
+      svg,
+      kinds: inside.map((el) => el.name),
+      uses: inside.filter((el) => el.name === 'use').map((el) => el.attrs.get('href') ?? ''),
+      texts: inside.filter((el) => el.name === 'text').map((el) => textOf(el).trim()),
+      // The level's name and its caption, read from the two spans the `<figcaption>` writes:
+      // they are two rows of the data file, so a reading that joined them into one line could
+      // not tell which of the two a level had changed.
+      name: findAll(figure, (el) => has(el, 'zoom-level-name')).map((el) => textOf(el).trim()).join(' ').trim(),
+      caption: findAll(figure, (el) => has(el, 'zoom-level-caption')).map((el) => textOf(el).trim()).join(' ').trim(),
+    })
+  }
+  return zoom
+}
+
+/** The kinds a level may hold: the reference that draws an entity, the words that name it, the
+ *  plain lines that join two parts, and the containers they sit in. */
+const ZOOM_REFERENCE = new Set(['use'])
+const ZOOM_WORDS = new Set(['text', 'line'])
+const ZOOM_CONTAINERS = new Set(['svg', 'g', 'title', 'desc'])
+
+/** The kinds that ARE an entity's geometry: a level holding one of these has drawn a copy of a
+ *  shape the one `<defs>` exists to hold (D244). */
+const ZOOM_GEOMETRY = new Set(['rect', 'circle', 'ellipse', 'path', 'polygon', 'polyline', 'marker', 'symbol', 'image', 'foreignObject'])
+
+/**
+ * Every way the four levels break the same-shape rule (D244), as the lines a reader of the
+ * failure gets: a `<use>` that resolves to nothing, a `<symbol>` no level draws, and a level
+ * that holds a shape of its own.
+ *
+ * **Why this is the rule and not a nicety.** The four levels are one sequence because a job is
+ * the same tile at every level; that is what makes the zoom legible, and no gate can see an
+ * image. `<use>` turns "the same shape" into a text assertion, and this is the assertion.
+ */
+export function zoomShapeFailures(html) {
+  const out = []
+  const zoom = zoomLevelsOf(html)
+  if (zoom.sections === 0) {
+    return ['the page renders no zoom section, and the four levels are a section on How It Works under "The run, end to end" (D237)']
+  }
+  if (zoom.sections > 1) {
+    out.push(`the page renders ${zoom.sections} zoom sections, and the four levels are one section under "The run, end to end" (D237)`)
+  }
+  if (zoom.defs.length !== 1) {
+    out.push(
+      `the zoom section holds ${zoom.defs.length} <defs> blocks, and the four levels share exactly one: one <symbol> per entity, each drawn once, and every level drawing it through <use href="#…"> (D244)`,
+    )
+  }
+  const ids = zoom.symbols.map((symbol) => symbol.id)
+  if (ids.some((id) => id === '')) out.push('a <symbol> of the zoom drawing carries no id, and an entity with no id is an entity no level can draw through <use> (D244)')
+  if (new Set(ids).size !== ids.length) {
+    out.push(`the zoom drawing holds two <symbol>s with the same id (${ids.join(', ')}): a second <use> for one id draws whichever the browser resolves first, which is a shape that changes with the markup order`)
+  }
+  for (const symbol of zoom.symbols) {
+    if (!symbol.inDefs) {
+      out.push(
+        `the <symbol> ${JSON.stringify(symbol.id)} is not inside the zoom section's one <defs>, and the entities of the four levels are one <defs> of <symbol>s (D244): a shape written anywhere else is a second place the geometry lives`,
+      )
+    }
+  }
+
+  const drawn = new Set()
+  for (const level of zoom.levels) {
+    const where = `the level ${JSON.stringify(level.id)}`
+    for (const href of level.uses) {
+      const id = href.startsWith('#') ? href.slice(1) : ''
+      if (id === '' || !ids.includes(id)) {
+        out.push(
+          `${where} draws \`<use href="${href}">\`, and the zoom section's one <defs> holds no such <symbol>: a reference that resolves to nothing draws nothing at all, and the level would be a caption with an empty picture (D244)`,
+        )
+        continue
+      }
+      drawn.add(id)
+    }
+    for (const kind of [...new Set(level.kinds)].sort()) {
+      if (ZOOM_REFERENCE.has(kind) || ZOOM_WORDS.has(kind) || ZOOM_CONTAINERS.has(kind)) continue
+      if (ZOOM_GEOMETRY.has(kind)) {
+        out.push(
+          `${where} holds a \`<${kind}>\` of its own, and a level draws an entity only through \`<use href="#…">\` (D244): a shape written into the level is a second copy of an entity's geometry, and the first edit to one copy is the drift the four levels exist not to have`,
+        )
+        continue
+      }
+      out.push(
+        `${where} holds a \`<${kind}>\`, and this reading knows a level's \`<use>\`, \`<text>\`, \`<line>\` and its own groups and nothing else: an element it cannot read is an element whose geometry nothing holds, and the way this drawing grows is a level that draws its own shapes again (D244, ZF41)`,
+      )
+    }
+  }
+  for (const symbol of zoom.symbols) {
+    if (symbol.id !== '' && !drawn.has(symbol.id)) {
+      out.push(
+        `the one <defs> holds the <symbol> ${JSON.stringify(symbol.id)} and no level draws it: an entity no level uses is a shape nothing in the drawing holds, and it drifts from the levels that were meant to share it (D244)`,
+      )
+    }
+  }
+  return out
+}
+
+/**
+ * The surface a level's label is drawn on: the `background` the page's stylesheet gives the
+ * `<svg>` the label is inside, or the nearest ancestor that declares one. A label's ground is
+ * read from the page's own rules the way the paint is, so the pair the contrast reading computes
+ * is a pair the site decided.
+ */
+function zoomGround(text, css, palette, values) {
+  for (const el of [text, ...ancestorsOf(text)]) {
+    for (const rule of cssRules(css)) {
+      const selector = (rule.selector ?? '').trim()
+      if (selector.startsWith('@') || (rule.conditions ?? []).length > 0) continue
+      if (!ruleReaches(selector, el)) continue
+      for (const [property, value] of cssDeclarations(rule.body ?? '')) {
+        if (property !== 'background' && property !== 'background-color') continue
+        const colour = painted({ value: value.trim(), from: `\`${selector}\``, source: 'rule' }, palette, values)
+        if (colour !== null) return { colour, why: null }
+      }
+    }
+  }
+  return {
+    colour: null,
+    why: 'no rule of the page states a surface under it: a level\'s labels are drawn on the panel its `<svg>` carries (`background` in the page\'s stylesheet), and a label whose ground no rule names is a label no contrast pair can be computed from — which is a contrast check that is not running',
+  }
+}
+
+/**
+ * Every way the four levels' paint is not the site's, as the lines a reader of the failure gets:
+ * a shape no rule reaches, a shape painted with something the palette does not hold, a `var()` in
+ * a presentation attribute (where it is not a colour at all), and a label whose colour against
+ * the surface it is drawn on is under the ratio the site's text is held to.
+ *
+ * The shapes of the one `<defs>` are read where they stand, which is what a `<use>` draws: a
+ * `<symbol>` whose shapes are unpainted is four empty levels, and reading the reference instead
+ * of the shape would find a `<use>` that is painted by nothing and say nothing about it.
+ */
+export function zoomPaintFailures(html, css, palette = paletteTokensInForce()) {
+  const out = []
+  const values = new Set([...palette.values()].map((value) => value.toLowerCase()))
+  const zoom = zoomLevelsOf(html)
+  if (zoom.section === null) {
+    return ['the page renders no zoom section, and the four levels are the section on How It Works under "The run, end to end" (D237)']
+  }
+
+  // One line per kind of shape rather than one per shape: a level draws the same tile several
+  // times, and a reader of the failure wants the rule to fix.
+  const groups = new Map()
+  const note = (el, line) => {
+    const key = `<${el.name} class="${classes(el).join(' ')}">`
+    if (!groups.has(key)) groups.set(key, { count: 0, lines: new Set() })
+    const group = groups.get(key)
+    group.count += 1
+    group.lines.add(line)
+  }
+
+  for (const svg of findAll(zoom.section, (el) => el.name === 'svg')) {
+    for (const shape of walk(svg)) {
+      for (const line of paintRefusals(shape, css, palette, values)) note(shape, line)
+    }
+    for (const text of [...walk(svg)].filter((el) => el.name === 'text')) {
+      const fill = painted(paintInForce(css, text, 'fill'), palette, values)
+      if (fill === null) continue // its paint is refused above, where every shape is read
+      const ground = zoomGround(text, css, palette, values)
+      if (ground.colour === null) {
+        note(text, ground.why)
+        continue
+      }
+      const ratio = contrastRatio(fill.rgb, ground.colour.rgb)
+      if (ratio >= LABEL_CONTRAST) continue
+      note(
+        text,
+        `it is drawn in ${named(fill)} on ${named(ground.colour)}, which is ${ratio.toFixed(1)}:1 — under the ${LABEL_CONTRAST}:1 the site's own text is held to (WCAG 2.1 AA, \`website/test/a11y.mjs\`), and a label a reader cannot read is a label the level does not say`,
+      )
+    }
+  }
+
+  for (const [key, group] of groups) {
+    out.push(`the zoom drawing draws ${group.count} ${key} ${group.count === 1 ? 'shape' : 'shapes'}, and ${[...group.lines].join('; ')}`)
+  }
+  return out
+}
+
+/**
+ * The zoom drawing's rows, read out of `website/data/zoom-levels.yaml` the way the file writes
+ * them: a level's `name` and `caption`, and the `labels` of each of its parts, every one with
+ * the `source:` line under it. A row with no source is refused here as well as by the reader the
+ * build uses, because this is the file a label the page renders has to be a row of.
+ *
+ * The rows are read structurally rather than by matching text against the page, which is the
+ * point: a reading that took its rows from the page could not see a row the page dropped.
+ */
+function zoomRows() {
+  const file = 'website/data/zoom-levels.yaml'
+  const lines = repoFile(file).split('\n')
+  const byLevel = new Map()
+  const levels = []
+  let level = null
+  let field = null
+  lines.forEach((line, index) => {
+    const id = /^\s*- id: (level-[0-9]+)\s*$/.exec(line)
+    if (id) {
+      level = id[1]
+      levels.push(level)
+      byLevel.set(level, { name: null, caption: null, labels: [] })
+      field = null
+    }
+    if (level === null) return
+    const key = /^\s*(name|caption):\s*$/.exec(line)
+    if (key) {
+      field = key[1]
+      return
+    }
+    if (/^\s*- entity: /.test(line)) {
+      field = null
+      return
+    }
+    const text = /^(\s*)(- )?text: (.+)$/.exec(line)
+    if (!text) return
+    const source = /^\s*source: (.+)$/.exec(lines[index + 1] ?? '')
+    assert.ok(
+      source,
+      `${file}:${index + 1} carries the text ${JSON.stringify(text[3].trim())} with no \`source:\` line under it, and every line the zoom drawing prints cites the document it is quoted from (Global Constraint 6)`,
+    )
+    const row = { text: text[3].trim(), source: source[1].trim(), level }
+    const at = byLevel.get(level)
+    if (text[2] !== undefined) at.labels.push(row)
+    else if (field === 'name') at.name = row
+    else if (field === 'caption') at.caption = row
+    else assert.fail(`${file}:${index + 1} carries the text ${JSON.stringify(row.text)} under no \`name:\`, \`caption:\` or part of a level, and every row of this file is one of a level's words`)
+  })
+  return { file, levels, byLevel }
+}
+
+/**
+ * A line of the drawing with its whitespace collapsed: the drawing wraps a row onto the lines a
+ * column can hold, so a row and the lines it was drawn as are the same words and not the same
+ * bytes. Nothing else is normalized — a word changed, added or dropped is what the reading below
+ * is looking for, and `comparable` is the looser reading the documents are held with.
+ */
+const flat = (text) => text.replace(/\s+/g, ' ').trim()
+
+/** The documents a row of the zoom data file may cite, by the name the row uses. */
+function zoomSources() {
+  return {
+    'README.md': repoFile('README.md'),
+    'README.md#How it works': section('README.md', 'How it works'),
+    'README.md#Safety and cost controls': section('README.md', 'Safety and cost controls'),
+    'README.md#Getting started': section('README.md', 'Getting started'),
+    'README.md#Why Fugaro': section('README.md', 'Why Fugaro'),
+    'docs/recipes.md': repoFile('docs/recipes.md'),
+    'docs/SPEC.md': repoFile('docs/SPEC.md'),
+    'docs/website/zoom-diagrams/spec.md': repoFile('docs/website/zoom-diagrams/spec.md'),
+  }
+}
+
+/**
+ * Every way the four levels' words are not the data file's, as the lines a reader of the failure
+ * gets: a line the page draws that is not a row, a row nothing draws, a row attributed to a
+ * document that does not carry it, and a level whose drawing says a row's words in a different
+ * order than the file writes them.
+ *
+ * **Why the file and the page are read against each other.** The plan asks for the levels'
+ * labels as data so that the drawing and its words cannot drift. A test that read only the page
+ * would hold the page's lines to their documents and say nothing about a row nobody renders; a
+ * test that read only the file would say nothing about a word the component wrote for itself.
+ * Both halves are here, and both are exact: the drawing's words are stripped of the rows in the
+ * order the file writes them, so a wrapped row is one row (the wrapping is the drawing's own
+ * business) and anything left over is a line no row holds.
+ */
+export function zoomLabelFailures(html, rows, docs = zoomSources()) {
+  const out = []
+  const zoom = zoomLevelsOf(html)
+  if (zoom.section === null) {
+    return ['the page renders no zoom section, and the four levels are the section on How It Works under "The run, end to end" (D237)']
+  }
+  const held = (row, where) => {
+    const doc = docs[row.source]
+    if (doc === undefined) {
+      out.push(`${where} is the row citing ${JSON.stringify(row.source)}, and no such document is in this reading's list: a label is quoted from a document of this repository (Global Constraint 6)`)
+      return
+    }
+    if (!comparable(doc).includes(comparable(row.text))) {
+      out.push(
+        `${where} reads ${JSON.stringify(row.text)}, which is not a line of ${row.source}: every line this drawing prints is the repository's own words rather than a sentence written for the picture (Global Constraint 6, D102)`,
+      )
+    }
+  }
+
+  for (const level of zoom.levels) {
+    const at = rows.byLevel.get(level.id)
+    if (at === undefined) {
+      out.push(`the page draws the level ${JSON.stringify(level.id)} and website/data/zoom-levels.yaml writes no such level: a level of the drawing is a row of the data file (Part 4)`)
+      continue
+    }
+    // The drawing's own words, row by row: the file writes them in the order the level draws
+    // them, and a level that reordered them is a level that tells a different story.
+    let rest = flat(level.texts.join(' '))
+    for (const row of at.labels) {
+      const text = flat(row.text)
+      if (!rest.startsWith(text)) {
+        out.push(
+          rest.includes(text)
+            ? `the level ${JSON.stringify(level.id)} draws the row ${JSON.stringify(row.text)} out of the order website/data/zoom-levels.yaml writes: the rows are the level's own sequence, and a picture that reorders them says something the file does not`
+            : `${'the level ' + JSON.stringify(level.id)} draws ${JSON.stringify(rest)} where website/data/zoom-levels.yaml writes the row ${JSON.stringify(row.text)}: the levels' words are the data file's, so that the drawing and its text cannot drift — a line the component wrote for itself is a line no row holds, and a row the drawing dropped is a line the picture lost (Part 4)`,
+        )
+        break
+      }
+      // The row just stripped leaves the space the join put after it: the drawing's words are
+      // what is left, and what is left starts with the next row rather than with a space.
+      rest = rest.slice(text.length).trimStart()
+    }
+    if (rest !== '' && !out.some((line) => line.includes(`the level ${JSON.stringify(level.id)} draws`))) {
+      out.push(
+        `the level ${JSON.stringify(level.id)} draws ${JSON.stringify(rest)} beyond the rows website/data/zoom-levels.yaml writes for it: every word of the drawing is a row, and a line the component wrote for itself is a line no document of this repository holds (Part 4)`,
+      )
+    }
+    // The name and the caption, each against its own row.
+    for (const [what, drawn, row] of [
+      ['name', level.name, at.name],
+      ['caption', level.caption, at.caption],
+    ]) {
+      if (row === null) {
+        out.push(`the level ${JSON.stringify(level.id)} carries no \`${what}:\` row in website/data/zoom-levels.yaml, and every level is named and captioned by the file (Part 4)`)
+        continue
+      }
+      if (flat(drawn) !== flat(row.text)) {
+        out.push(
+          `the level ${JSON.stringify(level.id)}'s ${what} reads ${JSON.stringify(drawn)} where website/data/zoom-levels.yaml writes ${JSON.stringify(row.text)}: the level's ${what} is a row of that file, and the drawing and its words cannot drift (Part 4)`,
+        )
+        continue
+      }
+      held(row, `the level ${JSON.stringify(level.id)}'s ${what}`)
+    }
+    for (const row of at.labels) held(row, `the level ${JSON.stringify(level.id)}'s label`)
+  }
+
+  // And the other half: every level the file writes is a level the page draws, so a level
+  // dropped from the page is a section that lost a picture rather than one that lost a row.
+  for (const id of rows.levels) {
+    if (!zoom.levels.some((level) => level.id === id)) {
+      out.push(`website/data/zoom-levels.yaml writes the level ${JSON.stringify(id)} and the page draws no such figure: a level of the file is a picture of the page (Part 4)`)
+    }
+  }
+  return out
+}
+
+/**
+ * Every way the four levels are not still pictures a reader gets without a script, as the lines
+ * a reader of the failure gets: a `<script>` in the section, a level whose drawing or caption is
+ * hidden, a level that draws no words, and the levels not in the order the data file writes them.
+ *
+ * The built page is the whole of what this reads, which is the point: the site's one script is
+ * `website/public/scripts/site.js` and nothing in this section needs it, so the four levels are
+ * in the HTML a browser receives before any script runs.
+ */
+export function zoomStillFailures(html, levels = null) {
+  const out = []
+  const zoom = zoomLevelsOf(html)
+  if (zoom.section === null) {
+    return ['the page renders no zoom section, and the four levels are the section on How It Works under "The run, end to end" (D237)']
+  }
+  if (zoom.section !== null && findAll(zoom.section, (el) => el.name === 'script').length > 0) {
+    out.push('the zoom section carries a <script>, and the four levels are stills: the pinned, scroll-driven zoom between them is Part 5, and a section that needs a script to be read is a section a reader with no script is not given (D245, ZF39)')
+  }
+  const hidden = (el) => el.attrs.get('hidden') !== undefined || el.attrs.get('aria-hidden') === 'true'
+  for (const level of zoom.levels) {
+    const where = `the level ${JSON.stringify(level.id)}`
+    if (level.svg === undefined) {
+      out.push(`${where} holds no <svg>, and every level of the four is a drawing in the page rather than a picture the browser fetches (D244)`)
+      continue
+    }
+    if (hidden(level.svg)) out.push(`${where}'s drawing is hidden, and the four levels are all visible with no script (Part 4)`)
+    if (level.texts.length === 0) out.push(`${where} draws no words, and a level says what it is in the repository's own words beside its shapes (Part 4)`)
+  }
+  if (levels !== null && zoom.levels.map((level) => level.id).join(' | ') !== levels.join(' | ')) {
+    out.push(
+      `the page draws the levels ${JSON.stringify(zoom.levels.map((level) => level.id))}, and the data file writes them ${JSON.stringify(levels)}: the levels are in order — inside a job, the jobs fanned out, the developer's view, the whole project (the brief of 2026-10-21)`,
+    )
+  }
+  return out
+}
+
+// ---- the gate ----------------------------------------------------------------------------
+
+/** The built How It Works page, which is where the four levels are. */
+function howItWorks() {
+  const page = builtPages().find((entry) => entry.rel === 'how-it-works/index.html')
+  assert.ok(page, 'the built site has no How It Works page, and the four zoom levels are a section of it (D237)')
+  return page
+}
+
+test('the four levels draw one set of shapes, every one of them used, and no level draws its own', () => {
+  const page = howItWorks()
+  const failures = zoomShapeFailures(page.html)
+  assert.deepEqual(failures, [], `${page.rel}: the four levels do not share one set of shapes (D244):\n  ${failures.join('\n  ')}`)
+
+  // And the drawing is four levels of the five entities, which is what the section is: a
+  // reading that found no levels at all would pass every rule above without a word.
+  const zoom = zoomLevelsOf(page.html)
+  assert.equal(zoom.levels.length, 4, `the zoom section draws ${zoom.levels.length} levels, and the brief asks for four: inside a cloud job, the jobs fanned out, the developer's view, the whole project (D237)`)
+  assert.deepEqual(
+    zoom.levels.map((level) => level.id),
+    ['level-1', 'level-2', 'level-3', 'level-4'],
+    'the levels are not the four anchors the brief names, in order: `#level-1` … `#level-4` (D245)',
+  )
+  assert.equal(zoom.symbols.length, 5, `the one <defs> holds ${zoom.symbols.length} <symbol>s, and the drawing has five entities: the job tile, the orchestrator, the developer, the console and the project (D244)`)
+  assert.deepEqual(
+    zoom.symbols.map((symbol) => symbol.id).sort(),
+    ['zoom-console', 'zoom-developer', 'zoom-job', 'zoom-orchestrator', 'zoom-project'],
+    'the entities of the one <defs> are not the five the brief names (D244)',
+  )
+})
+
+test('the same-shape rule refuses a level that draws its own copy, a symbol nothing uses and a use that resolves to nothing', () => {
+  // The rule's own proof, one plant per refusal. Each plant is the built page with exactly one
+  // thing broken, so a failure that names the wrong thing is a failure a reader cannot act on.
+  const page = howItWorks().html
+  assert.deepEqual(zoomShapeFailures(page), [], 'the built page does not pass the reading its own plants are drawn from')
+
+  // 1. A level that draws the tile itself where it should draw `<use href="#zoom-job">`: the
+  //    defect D244 exists for, because the copy is what drifts from the other three levels.
+  const tile = /<use class="zoom-entity" href="#zoom-job"[^>]*\/>/
+  assert.ok(tile.test(page), 'the built page draws the job tile with no `<use href="#zoom-job">`, and the plant below replaces one')
+  const copied = page.replace(tile, '<rect class="zoom-tile" x="24" y="24" width="150" height="108" />')
+  const copyFailures = zoomShapeFailures(copied)
+  assert.equal(copyFailures.length, 1, `a level that draws its own copy of the tile is refused ${copyFailures.length} times: ${copyFailures.join(' | ')}`)
+  assert.match(copyFailures[0], /holds a `<rect>` of its own/, 'the refusal does not name the shape the level drew itself')
+  assert.match(copyFailures[0], /D244/, 'the refusal does not name the rule the level broke')
+
+  // 2. A `<symbol>` no level uses: a shape in the one `<defs>` that nothing in the drawing
+  //    holds, which is the half of the rule that keeps the defs honest.
+  const orchestrator = page.replaceAll('href="#zoom-orchestrator"', 'href="#zoom-project"')
+  assert.notEqual(orchestrator, page, 'the built page draws no `<use href="#zoom-orchestrator">`, and the plant below repoints one')
+  const unused = zoomShapeFailures(orchestrator)
+  assert.equal(unused.length, 1, `a symbol no level uses is refused ${unused.length} times: ${unused.join(' | ')}`)
+  assert.match(unused[0], /holds the <symbol> "zoom-orchestrator" and no level draws it/, 'the refusal does not name the symbol nothing draws')
+
+  // 3. A `<use>` pointing at an id that does not exist: a reference that resolves to nothing
+  //    draws nothing, and every gate over the shapes would pass while the level was empty.
+  const dangling = page.replace('<use class="zoom-entity" href="#zoom-job"', '<use class="zoom-entity" href="#zoom-job-tile"')
+  const danglingFailures = zoomShapeFailures(dangling)
+  assert.equal(danglingFailures.length, 1, `a use that resolves to nothing is refused ${danglingFailures.length} times: ${danglingFailures.join(' | ')}`)
+  assert.match(danglingFailures[0], /`<use href="#zoom-job-tile">`/, 'the refusal does not name the reference that resolves to nothing')
+  assert.match(danglingFailures[0], /holds no such <symbol>/, 'the refusal does not say what the reference was looking for')
+})
+
+test('every shape of the four levels is painted from the palette, and every label is legible where it is drawn', () => {
+  const page = howItWorks()
+  const failures = zoomPaintFailures(page.html, pageCss(page.html))
+  assert.deepEqual(failures, [], `${page.rel}: the zoom drawing is not painted the way the site paints:\n  ${failures.join('\n  ')}`)
+})
+
+test('the paint reading refuses an untaught element kind in the zoom drawing', () => {
+  // ZF42's rule, on the drawing it was written for: a level that grows an element this reading
+  // has not been taught is a level whose paint no check holds, and the failure names the element
+  // to teach rather than passing it over.
+  const page = howItWorks().html
+  const css = pageCss(page)
+  const tile = /<use class="zoom-entity" href="#zoom-job"[^>]*\/>/
+  const planted = page.replace(tile, '<ellipse class="zoom-tile" cx="100" cy="80" rx="70" ry="50" />')
+  assert.notEqual(planted, page, 'the built page draws no `<use href="#zoom-job">`, and the plant below replaces one')
+  const failures = zoomPaintFailures(planted, css)
+  assert.equal(failures.length, 1, `an untaught element kind is refused ${failures.length} times: ${failures.join(' | ')}`)
+  assert.match(failures[0], /<ellipse>/, 'the refusal does not name the element the reading has not been taught')
+  assert.match(failures[0], /teach this reading the element/, 'the refusal does not say what to do about it')
+})
+
+test('the levels\' words are the data file\'s rows, and every row is drawn', () => {
+  const page = howItWorks()
+  const rows = zoomRows()
+  assert.ok(rows.levels.length > 0, 'website/data/zoom-levels.yaml writes no levels, and the levels\' words are its rows (Part 4)')
+  const failures = zoomLabelFailures(page.html, rows)
+  assert.deepEqual(failures, [], `${page.rel}: the four levels' words are not the data file's:\n  ${failures.join('\n  ')}`)
+  assert.deepEqual(
+    zoomLevelsOf(page.html).levels.map((level) => level.id),
+    rows.levels,
+    'the levels the page draws are not the levels the data file writes, in order',
+  )
+})
+
+test('a label the page draws that is not a row of the data file is refused, and so is a row nothing draws', () => {
+  const page = howItWorks().html
+  const rows = zoomRows()
+  assert.deepEqual(zoomLabelFailures(page, rows), [], 'the built page does not pass the reading its own plants are drawn from')
+
+  // 1. A line the drawing wrote for itself: the picture and its words have drifted, which is
+  //    exactly what the data file exists to stop.
+  const invented = page.replace('<text class="zoom-label "', '<text class="zoom-label "')
+  const withLine = invented.replace(
+    /<text class="zoom-label "([^>]*)>([^<]*)<\/text>/,
+    '<text class="zoom-label "$1>an invented line of the picture</text>',
+  )
+  assert.notEqual(withLine, page, 'the built page draws no `<text class="zoom-label ">`, and the plant below rewrites one')
+  const inventedFailures = zoomLabelFailures(withLine, rows)
+  assert.equal(inventedFailures.length, 1, `a line that is not a row is refused ${inventedFailures.length} times: ${inventedFailures.join(' | ')}`)
+  assert.match(inventedFailures[0], /an invented line of the picture/, 'the refusal does not quote the line the page invented')
+  assert.match(inventedFailures[0], /website\/data\/zoom-levels\.yaml writes the row/, 'the refusal does not say where a level\'s words come from')
+
+  // 2. A row nothing draws: a fact the file states and the picture dropped.
+  const labelRows = [...rows.byLevel.values()].flatMap((at) => at.labels)
+  const dropped = {
+    ...rows,
+    byLevel: new Map([...rows.byLevel].map(([id, at]) => [id, { ...at, labels: at.labels.filter((row) => row.text !== 'marked ready only when the run passes') }])),
+  }
+  assert.equal(labelRows.length, [...dropped.byLevel.values()].flatMap((at) => at.labels).length + 1, 'the data file carries no row "marked ready only when the run passes", and the plant below drops it')
+  const droppedFailures = zoomLabelFailures(page, dropped)
+  assert.equal(droppedFailures.length, 1, `a row nothing draws is refused ${droppedFailures.length} times: ${droppedFailures.join(' | ')}`)
+  assert.match(droppedFailures[0], /beyond the rows website\/data\/zoom-levels\.yaml writes for it/, 'the refusal does not say the line is a row the file no longer writes')
+  assert.match(droppedFailures[0], /marked ready only when the run passes/, 'the refusal does not quote the undrawn row')
+
+  // 3. A row attributed to a document that does not carry the line, refused **by name**: the
+  //    reading the run diagram's labels are held to, on the levels' rows.
+  const misquoted = {
+    ...rows,
+    byLevel: new Map([...rows.byLevel].map(([id, at]) => [id, { ...at, labels: at.labels.map((row) => (row.text === 'marked ready only when the run passes' ? { ...row, source: 'docs/recipes.md' } : row)) }])),
+  }
+  const misquotedFailures = zoomLabelFailures(page, misquoted)
+  assert.equal(misquotedFailures.length, 1, `a row attributed to the wrong document is refused ${misquotedFailures.length} times: ${misquotedFailures.join(' | ')}`)
+  assert.match(misquotedFailures[0], /is not a line of docs\/recipes\.md/, 'the refusal does not name the document the row was attributed to')
+  assert.match(misquotedFailures[0], /marked ready only when the run passes/, 'the refusal does not quote the line that is not in that document')
+})
+
+test('all four levels are in the built HTML, in order, with no script', () => {
+  const page = howItWorks()
+  const { levels } = zoomRows()
+  const failures = zoomStillFailures(page.html, levels)
+  assert.deepEqual(failures, [], `${page.rel}: the four levels are not four stills in the page:\n  ${failures.join('\n  ')}`)
+
+  // The reading's own proof: a section that needs a script, and a level whose drawing is hidden,
+  // are each refused by name — the two ways a still stops being one.
+  const scripted = page.html.replace('<section class="zoom"', '<section class="zoom" data-zoom-scripted><script>window.zoom = 1</script>')
+  assert.match(zoomStillFailures(scripted, levels).join(' | '), /carries a <script>/, 'the reading passes a section that carries a script, and a still is what needs no script')
+  const hidden = page.html.replace('<svg class="zoom-svg"', '<svg class="zoom-svg" hidden')
+  assert.match(zoomStillFailures(hidden, levels).join(' | '), /drawing is hidden/, 'the reading passes a hidden drawing, and a level a reader cannot see is not a level')
+  // And the order: the levels are a sequence, so a page that drew them out of order is refused.
+  const reversed = levels.slice().reverse()
+  assert.match(zoomStillFailures(page.html, reversed).join(' | '), /the levels are in order/, 'the reading passes the levels in any order, and the four are one sequence')
+})
