@@ -355,3 +355,125 @@ func TestReviewPromptWarnsAboutAHugeDiff(t *testing.T) {
 // test's own fixture; the runner's own copy is pinned by
 // diffbase_internal_test.go.
 const hugeDiffLines = 8000
+
+// badBases are the values a provider could hand back as a pull request's
+// base that must never reach a git command or the reviewer's prompt: option
+// look-alikes, shell-ish and revision syntax, whitespace, and nothing at all.
+var badBases = map[string]string{
+	"upload-pack": "--upload-pack=x",
+	"dash":        "-x",
+	"backtick":    "a`b",
+	"dotdot":      "a..b",
+	"newline":     "a\nb",
+	"empty":       "",
+}
+
+// assertFellBack: the review prompt of a run whose pull request base was
+// refused or empty names the run's own fallback (origin/main), never the raw
+// value, and says in one line that the base could not be read.
+func assertFellBack(t *testing.T, prompt, raw string) {
+	t.Helper()
+	if raw != "" && strings.Contains(prompt, raw) {
+		t.Fatalf("the review prompt carries the refused base %q:\n%s", raw, prompt)
+	}
+	if !strings.Contains(prompt, "git diff origin/main...HEAD") {
+		t.Fatalf("the review prompt does not fall back to the run's own ref:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "base branch could not be read") ||
+		!strings.Contains(prompt, "git log origin/main..HEAD") {
+		t.Fatalf("the review prompt does not say the base could not be read:\n%s", prompt)
+	}
+}
+
+// TestFollowUpRefusesABadPRBase: a follow-up whose pull request base is not a
+// branch name falls back safely and loudly, and a good name (including one
+// with a slash) is used and carries no such line.
+//
+// Mutation (run, restore): make diffBase's `config.ValidBranchName(b)` check
+// `if true` — every refused case here finds the raw value in the prompt.
+func TestFollowUpRefusesABadPRBase(t *testing.T) {
+	for name, raw := range badBases {
+		t.Run(name, func(t *testing.T) {
+			h := followUpHarness(t, "", nil)
+			h.editState(t, func(st *fake.State) { st.PRs[0].Spec.Base = raw })
+			h.followUp(t, followID, runID, "Please continue.")
+			rec, err := h.run(t, implement("more"), review("ship", 0))
+			mustReady(t, rec, err)
+			assertFellBack(t, reviewPromptOf(t, h.agent.calls), raw)
+			if raw != "" && strings.Contains(followUpPromptOf(t, h.agent.calls), raw) {
+				t.Fatalf("the follow-up prompt carries the refused base %q", raw)
+			}
+		})
+	}
+	for _, good := range []string{integrationBranch, "feature/x"} {
+		t.Run("good "+good, func(t *testing.T) {
+			h := followUpHarness(t, "", func(h *harness) { addBaseBranch(t, h, good) })
+			h.editState(t, func(st *fake.State) { st.PRs[0].Spec.Base = good })
+			h.followUp(t, followID, runID, "Please continue.")
+			rec, err := h.run(t, implement("more"), review("ship", 0))
+			mustReady(t, rec, err)
+			prompt := reviewPromptOf(t, h.agent.calls)
+			if !strings.Contains(prompt, "git diff origin/"+good+"...HEAD") || strings.Contains(prompt, "could not be read") {
+				t.Fatalf("a valid base %q is not used plainly:\n%s", good, prompt)
+			}
+		})
+	}
+}
+
+// TestReviewModeRefusesABadPRBase is the same for review mode's per-head base
+// (reviewBase).
+//
+// Mutation (run, restore): make reviewBase's `config.ValidBranchName(b)`
+// check `if true` — every refused case finds the raw value in the prompt.
+func TestReviewModeRefusesABadPRBase(t *testing.T) {
+	for name, raw := range badBases {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+			pushReviewBranch(t, h, "someone-elses-change", func(dir string) {
+				testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+			})
+			addPR(h, 7, "someone-elses-change", "")
+			h.provider.State.PRs[0].Spec.Base = raw
+			rec, err := h.run(t, review("ship", 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReviewed {
+				t.Fatalf("rec = %+v", rec)
+			}
+			assertFellBack(t, reviewPromptOf(t, h.agent.calls), raw)
+		})
+	}
+}
+
+// twoCommits commits a.txt and b.txt as two commits: the first run of the
+// stat test, whose branch head has a parent a second base can sit at.
+func twoCommits(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	shell(t, req, "echo a > a.txt && git add -A && git commit -qm 'Add a' && echo b > b.txt && git add -A && git commit -qm 'Add b'")
+	return agent.Result{CostUSD: 1}, nil
+}
+
+// TestFollowUpDiffStatIsMeasuredAgainstThePRsBase: the stat itself, not the
+// label above it, is taken over the branch the pull request targets. The
+// base here sits at the branch's own first commit, so the stat against it
+// names b.txt alone, where the stat against main names a.txt and b.txt.
+//
+// Mutation (run, restore): `base := r.cfg.Git.BaseBranch` in freshContext
+// (followup.go) — the stat names a.txt and this test fails.
+func TestFollowUpDiffStatIsMeasuredAgainstThePRsBase(t *testing.T) {
+	h := followUpHarness(t, "", nil, twoCommits, review("ship", 0))
+	seed := filepath.Join(t.TempDir(), "seed-mid")
+	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", h.remote, seed)
+	testutil.Git(t, seed, "push", "--quiet", "origin", h.first.PushedHead+"~1:refs/heads/"+integrationBranch)
+	h.editState(t, func(st *fake.State) { st.PRs[0].Spec.Base = integrationBranch })
+	h.followUp(t, followID, runID, "Please continue.")
+	rec, err := h.run(t, implement("more"), review("ship", 0))
+	mustReady(t, rec, err)
+	impl := followUpPromptOf(t, h.agent.calls)
+	if !strings.Contains(impl, "b.txt |") {
+		t.Fatalf("the stat does not name the file only the branch's own commits changed:\n%s", impl)
+	}
+	if strings.Contains(impl, "a.txt |") {
+		t.Fatalf("the stat is measured against another base (it names a.txt, which the base already has):\n%s", impl)
+	}
+}

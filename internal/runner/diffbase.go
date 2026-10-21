@@ -58,6 +58,22 @@ func (r *run) diffBase() string {
 	return r.refBase()
 }
 
+// baseUnreadable reports that the pull request's own base could not be used
+// for this run's review diff: the provider returned none, or a value that is
+// not a branch name, so the diff fell back to the run's ref (refBase) — for a
+// follow-up usually the configuration's base, the old unbounded range. The
+// review prompt says so (ReviewPrompt), so the reviewer restricts itself to
+// the branch's own commits instead of trusting the range.
+func (r *run) baseUnreadable() bool {
+	switch {
+	case r.review && len(r.reviewHeads) == 1:
+		return !config.ValidBranchName(r.reviewHeads[0].Base)
+	case r.follow != nil:
+		return !config.ValidBranchName(r.follow.pr.Base)
+	}
+	return false
+}
+
 // refBase is diffBase's fallback: the run's own ref when it is a branch
 // name, else the configuration's base (the repository's default branch).
 // spec is nil in the unit tests that call a single method on a bare run.
