@@ -87,10 +87,14 @@ export type RunTheme = (typeof RUN_THEMES)[number]
 
 /**
  * PR_NO_LINK_REASON is the one line the screen puts beside a pull request's
- * number: the design's gap 7, in the console's own words.
+ * number: the design's gap 7, in the design's own words -- section 5.1 rule 2's
+ * sentence, verbatim. It was written here as a two-clause explanation of the
+ * same thing (what a rebuilt link would name, and which providers there are),
+ * and the owner read it as the long explanatory sentence under the panel
+ * (2026-10-21); the design already had the one line.
  */
 export const PR_NO_LINK_REASON =
-  'no document names the provider (GitHub or Bitbucket Cloud), so no link is offered: a link rebuilt from the repository and the number would name a repository this run does not use'
+  'this CLI does not say which provider this run’s repository is on, so the console will not build a link from it'
 
 /**
  * GitProvider is the set of providers Fugaro opens pull requests on
@@ -837,18 +841,34 @@ function stagePanel(factory: ScreenFactory, model: RunModel): ScreenElement {
 /** pullRequestPanel is the pull request as **text**: repository, number, URL,
  * and the reason no link is offered. There is no link element at all -- not an
  * inert one, and not one waiting for a provider -- because an element carrying a
- * destination the console will not offer is a control that does nothing. */
+ * destination the console will not offer is a control that does nothing.
+ *
+ * The three facts are one line and the cells between them are **between** them,
+ * not part of them: drawn side by side with nothing between, they read as one
+ * string -- `acme/platform-core#412https://github.com/acme/platform-core/pull/412`,
+ * the owner's report of 2026-10-21, where the URL is no longer a URL. A cell of
+ * its own rather than a leading or trailing space keeps every value exactly the
+ * document's string (`textCell` draws it) and keeps a panel missing a field free
+ * of a stray separator: separators go between what is drawn, whatever that is.
+ */
 function pullRequestPanel(factory: ScreenFactory, model: RunPullRequest): ScreenElement {
   const element = make(factory, 'section', 'run-pr')
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'pull request')
+  const facts: (() => void)[] = []
   if (model.repository !== null) {
-    textCell(element, factory, 'span', model.repository, 'repository', 'row.repo', 'run-pr-repo')
+    facts.push(() => void textCell(element, factory, 'span', model.repository, 'repository', 'row.repo', 'run-pr-repo'))
   }
   if (model.number !== null) {
     // A number an identifier: drawn as text, with no link and no reading.
-    literal(cell(element, factory, 'span', 'run-pr-number'), `#${String(model.number)}`)
+    facts.push(() => void literal(cell(element, factory, 'span', 'run-pr-number'), `#${String(model.number)}`))
   }
-  if (model.url !== null) textCell(element, factory, 'span', model.url, 'url', 'row.pr_url', 'run-pr-url')
+  if (model.url !== null) {
+    facts.push(() => void textCell(element, factory, 'span', model.url, 'url', 'row.pr_url', 'run-pr-url'))
+  }
+  for (const [index, fact] of facts.entries()) {
+    if (index > 0) literal(cell(element, factory, 'span', 'run-pr-sep'), ' · ')
+    fact()
+  }
   literal(cell(element, factory, 'p', 'run-pr-reason'), model.because)
   return element
 }
