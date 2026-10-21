@@ -31,10 +31,12 @@ func IsManagedSettingsTmp(name string) bool {
 var deniedWebTools = []string{"WebSearch", "WebFetch"}
 
 // deniedBinaryReads are denied in a review stage's managed settings: reads
-// of the file kinds the review input never carries as bytes, one rule per
-// extension rather than a brace pattern, since a rule's specifier is a path
-// pattern Claude Code matches and a list of plain extensions is what this
-// settings shape is known to take.
+// of the file kinds the review input never carries as bytes. One rule per
+// extension rather than one brace pattern (Read(**/*.{png,jpg}...)): a rule's
+// specifier is a path pattern Claude Code matches, and its own built-in rules
+// are spelled this way too (Read(**/*.pem), Read(**/*.key), Read(**/*.sqlite)
+// and Read(**/*.sqlite3) for one kind), so the list needs no assumption about
+// brace expansion the CLI's rule language does not make.
 //
 // The review stage's prompt already says so — reviewinput.go's binaryRule,
 // carried by the built input and by PickPrompt — but a prompt is not a
