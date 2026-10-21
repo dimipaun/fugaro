@@ -2120,6 +2120,11 @@ Where no project config is selected the pass reads the reaper job's own environm
 only inside the Cloud Run job that also sets FUGARO_REAPER_JOB: anywhere else that
 environment is a dry run, so an operator's shell never sweeps their project.
 
+Two GCP projects are refused by name wherever they are named from, and an installation
+may add its own to the list with FUGARO_REAPER_REFUSE_PROJECTS (comma-separated project
+ids): the pass refuses those before it opens a client, so nothing is read and nothing
+deleted.
+
 Usage: `fugaro reaper`
 
 Flags:

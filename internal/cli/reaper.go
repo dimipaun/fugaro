@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/batch"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -31,6 +32,23 @@ const (
 	// the marker (an environment a shell happened to export empty is not a
 	// reaper job), and neither is any other value.
 	reaperJobMarker = "1"
+	// envReaperRefuseProjects names further GCP projects this pass must never
+	// sweep, on top of the two the engine refuses by name (internal/backend/
+	// batch's outOfBoundsFloor): a comma-separated list of project ids, and
+	// empty or absent means none.
+	//
+	// It exists because "which projects an automated sweep must never touch" is
+	// a fact about an installation's projects and not about the reaper, and the
+	// engine holding a fixed pair of ids is the exception CONTRIBUTING.md
+	// records rather than the rule. It is ONE variable read by BOTH paths of
+	// this command -- the selected project config's pass and the reaper job's
+	// own environment -- because the two do not otherwise share a
+	// configuration file or a variable, and a list an installation has to write
+	// twice is a list with a gap in it. An entry that is not a project id is
+	// refused rather than dropped: a typo here would leave a project the
+	// operator believes is protected swept as usual, and the whole point of
+	// naming one is that it must never be.
+	envReaperRefuseProjects = "FUGARO_REAPER_REFUSE_PROJECTS"
 )
 
 // newReaperCmd is `fugaro reaper`: one pass of internal/backend/batch's
@@ -94,7 +112,11 @@ func newReaperCmd() *cobra.Command {
 			"Where no project config is selected the pass reads the reaper job's own environment\n" +
 			"(FUGARO_GCP_PROJECT and FUGARO_REGION, which Terraform sets on the job), and deletes\n" +
 			"only inside the Cloud Run job that also sets FUGARO_REAPER_JOB: anywhere else that\n" +
-			"environment is a dry run, so an operator's shell never sweeps their project.",
+			"environment is a dry run, so an operator's shell never sweeps their project.\n\n" +
+			"Two GCP projects are refused by name wherever they are named from, and an installation\n" +
+			"may add its own to the list with FUGARO_REAPER_REFUSE_PROJECTS (comma-separated project\n" +
+			"ids): the pass refuses those before it opens a client, so nothing is read and nothing\n" +
+			"deleted.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runReaper(cmd.Context(), cmd, o, dryRun)
@@ -181,12 +203,22 @@ func runReaper(ctx context.Context, cmd *cobra.Command, o cloudOptions, dryRun b
 // apply the flag to, and its own project and region are Terraform's. So the
 // combination is refused, with the two ways out named.
 func reaperPass(ctx context.Context, o cloudOptions, getenv func(string) string, dryRun bool) (batch.ReaperOptions, string, error) {
+	// The installation's own never-touch list, read once and handed to
+	// whichever path answers below: the two paths share no configuration file,
+	// so this variable is what keeps them from disagreeing about which
+	// projects a pass may sweep. A malformed entry refuses the pass here,
+	// before either path is chosen -- silently dropping it would sweep a
+	// project the operator believes is protected.
+	refuse, err := reaperRefuseProjects(getenv)
+	if err != nil {
+		return batch.ReaperOptions{}, "", err
+	}
 	_, lc, err := selectProject(ctx, o)
 	if err == nil {
 		if lc.Batch == nil {
 			return batch.ReaperOptions{}, "", userErr("project %s has no Batch configuration (its project config has no batch: block), and the reaper only sweeps an installation that runs Batch: its queue deadline and run budget are derived from that installation's own task timeouts, so there is nothing here for it to judge", lc.Name)
 		}
-		return reaperOptions(lc, dryRun), "", nil
+		return reaperOptions(lc, refuse, dryRun), "", nil
 	}
 	if o.config != "" || o.project != "" || getenv("FUGARO_CONFIG") != "" || getenv(envProject) != "" {
 		return batch.ReaperOptions{}, "", err
@@ -194,7 +226,7 @@ func reaperPass(ctx context.Context, o cloudOptions, getenv func(string) string,
 	if o.gcpProject != "" || o.region != "" {
 		return batch.ReaperOptions{}, "", userErr("%s cannot be honoured here: nothing selected a project config to apply it to (--gcp-project and --region override the selected config's own gcp_project and region), and on the reaper's job-environment path the project and the region come from %s and %s, which Terraform sets on the Cloud Run job. Name a project config -- --config, FUGARO_CONFIG, a checkout's fugaro.yaml, or the one project config -- to sweep a project, or drop the flag and use --dry-run to see what this job's own environment would sweep", strings.Join(reaperFlagNames(o), " and "), envGCPProject, envRegion)
 	}
-	opts, forced, envErr := reaperEnvOptions(getenv, dryRun)
+	opts, forced, envErr := reaperEnvOptions(getenv, refuse, dryRun)
 	if envErr != nil {
 		return batch.ReaperOptions{}, "", err
 	}
@@ -202,6 +234,41 @@ func reaperPass(ctx context.Context, o cloudOptions, getenv func(string) string,
 		return opts, fmt.Sprintf("fugaro: note: %s is not %s, so this is not the reaper's own job and the pass is a DRY RUN: it prints what it would delete and deletes nothing. The Cloud Run job sets %s=%s (the compute module's reaper.tf); add --dry-run to say so yourself.", envReaperJob, reaperJobMarker, envReaperJob, reaperJobMarker), nil
 	}
 	return opts, "", nil
+}
+
+// reaperRefuseProjects is the installation's own never-touch list, read from
+// envReaperRefuseProjects: a comma-separated list of GCP project ids, and
+// nothing at all (nil) when the variable is unset or holds only separators.
+//
+// An entry is trimmed, because a list written by hand has spaces after its
+// commas, and each entry must be a project id (internal/config's GCPProjectRE,
+// the same pattern localcfg checks a config's gcp_project against). An entry
+// that is not one is REFUSED and named: the list is a guarantee the operator is
+// asking for, and a typo in it would leave the project it names swept exactly
+// as if the list did not exist -- which is the one outcome naming it was meant
+// to prevent. The engine matches the entries itself (internal/backend/batch's
+// outOfBounds, which trims and folds case), so this function's job is only to
+// split, trim and check that each entry is a project id at all.
+func reaperRefuseProjects(getenv func(string) string) ([]string, error) {
+	raw := getenv(envReaperRefuseProjects)
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var out []string
+	for _, field := range strings.Split(raw, ",") {
+		p := strings.TrimSpace(field)
+		if p == "" {
+			// A trailing comma, or two in a row: an empty field is a
+			// separator, not a project id, and refusing the whole list for it
+			// would refuse a list that names exactly what the operator meant.
+			continue
+		}
+		if !config.GCPProjectRE.MatchString(p) {
+			return nil, userErr("%s names %q, which is not a GCP project ID: the list is the projects this pass must never sweep, and an entry it cannot read is one it cannot refuse, so the project the entry was meant to name would be swept as usual. Write it as a comma-separated list of project ids (letters, digits and hyphens, starting with a letter)", envReaperRefuseProjects, p)
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 // reaperFlagNames names the endpoint flags an operator actually passed, for
@@ -243,7 +310,12 @@ func reaperFlagNames(o cloudOptions) []string {
 // second return value reports that the forcing happened, so the caller can
 // tell the operator; --dry-run on the command line is never touched by any of
 // this (a dry run stays a dry run, marker or not).
-func reaperEnvOptions(getenv func(string) string, dryRun bool) (batch.ReaperOptions, bool, error) {
+//
+// refuse is the installation's own never-touch list, the same one the config
+// path carries (reaperRefuseProjects): this path has no project config to read
+// a list from, so it is handed the one the caller read from the environment,
+// and the two paths refuse the same projects.
+func reaperEnvOptions(getenv func(string) string, refuse []string, dryRun bool) (batch.ReaperOptions, bool, error) {
 	gcpProject, region := getenv(envGCPProject), getenv(envRegion)
 	if gcpProject == "" || region == "" {
 		return batch.ReaperOptions{}, false, userErr("the reaper job needs %s and %s in its environment (Terraform sets both on the job), and there is no project config here to read them from", envGCPProject, envRegion)
@@ -257,10 +329,11 @@ func reaperEnvOptions(getenv func(string) string, dryRun bool) (batch.ReaperOpti
 		w = *reaperEnvTest
 	}
 	return batch.ReaperOptions{
-		GCPProject: gcpProject,
-		Region:     region,
-		Timeouts:   reaperEnvTimeouts{},
-		DryRun:     dryRun,
+		GCPProject:          gcpProject,
+		Region:              region,
+		OutOfBoundsProjects: refuse,
+		Timeouts:            reaperEnvTimeouts{},
+		DryRun:              dryRun,
 		Endpoints: batch.Endpoints{
 			Batch:   w.batch,
 			Compute: reaperComputeRoot,
@@ -327,14 +400,21 @@ var reaperComputeRoot = "https://compute.googleapis.com/compute/v1/"
 // where both of the reaper's deadlines come from) and the endpoints its two
 // passes read.
 //
+// refuse is the installation's own never-touch list (reaperRefuseProjects),
+// which the caller reads once and hands to this path and to the environment
+// path alike: the two paths share no configuration file, so a list only one of
+// them carried would be a list a pass can walk around by being started the
+// other way.
+//
 // It is a separate function from the command because the two halves are
 // separately checked: this is a pure derivation a test can read without a
 // command tree, and the command above is then only selection, printing and
 // exit codes.
-func reaperOptions(lc *localcfg.Config, dryRun bool) batch.ReaperOptions {
+func reaperOptions(lc *localcfg.Config, refuse []string, dryRun bool) batch.ReaperOptions {
 	return batch.ReaperOptions{
-		GCPProject: lc.GCPProject,
-		Region:     lc.Region,
+		GCPProject:          lc.GCPProject,
+		Region:              lc.Region,
+		OutOfBoundsProjects: refuse,
 		// The same source the launched runs' timeouts come from
 		// (batchOptions): the installation's own bound, not a number this
 		// command invents, so an installation that lengthens a workflow

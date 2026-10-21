@@ -348,6 +348,108 @@ func TestReaperCommandPrintsTheWholeRefusalLine(t *testing.T) {
 	}
 }
 
+// TestReaperRefusesTheProjectsTheInstallationNames: the engine refuses two
+// project ids by name (internal/backend/batch's outOfBoundsFloor, the exception
+// CONTRIBUTING.md records beside its "no project specifics in the engine" rule),
+// and this is the half that makes it a rule rather than a constant -- an
+// installation names ITS never-touch projects in
+// FUGARO_REAPER_REFUSE_PROJECTS, and the pass refuses them the same way, before
+// any client is opened.
+//
+// Both paths are driven, because the point of reading the list from ONE
+// variable is that the two cannot disagree: the config path (a project config
+// selected with FUGARO_CONFIG) and the job's own environment path (no config at
+// all, the marker set). A list only the config path carried would be a list a
+// pass walks around by being started from the job's environment.
+//
+// The malformed-entry case is the other half of the guarantee: an entry the
+// pass cannot read as a project id is refused and named, never dropped. A
+// dropped entry leaves the project it was meant to name swept exactly as if the
+// list did not exist, which is the one outcome naming it was meant to prevent.
+func TestReaperRefusesTheProjectsTheInstallationNames(t *testing.T) {
+	for _, path := range []string{"config", "environment"} {
+		t.Run(path, func(t *testing.T) {
+			var rig *reaperRig
+			args := []string{"reaper"}
+			if path == "config" {
+				rig = newReaperRig(t, true)
+			} else {
+				rig = newReaperEnvRig(t)
+			}
+			// A job and a VM a pass that ignored the list would delete, so a
+			// command that got past the refusal is caught acting rather than
+			// passing quietly.
+			rig.addQueuedJob(t, theRun, reaperQueueDeadline()+time.Hour)
+			rig.addLeakedVM(t, otherRun, reaperMaxAge()+time.Hour)
+			t.Setenv(envReaperRefuseProjects, "proj-1234")
+
+			out, _, err := execute(t, args...)
+			if err == nil {
+				t.Fatalf("fugaro reaper swept %s, which the installation named in %s", "proj-1234", envReaperRefuseProjects)
+			}
+			if code := ExitCode(err); code != ExitUserError {
+				t.Errorf("exit code = %d, want %d (a user error: the list is configuration)", code, ExitUserError)
+			}
+			for _, want := range []string{"proj-1234", "out of bounds", "edge-devel-dimi"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal = %q, want it to say %q: the engine's own refusal, naming the floor as well as the caller's entry", err, want)
+				}
+			}
+			if out != "" {
+				t.Errorf("stdout = %q, want nothing: the refusal comes before the pass reads anything", out)
+			}
+			if len(rig.bf.Deletes()) != 0 || len(rig.cf.Deletes()) != 0 {
+				t.Errorf("the refused pass deleted %v and %v", rig.bf.Deletes(), rig.cf.Deletes())
+			}
+		})
+	}
+
+	// A project the list does NOT name is swept as usual: the list is the
+	// installation's, and an entry that does not match is not a filter.
+	t.Run("another project is still swept", func(t *testing.T) {
+		rig := newReaperRig(t, true)
+		job := rig.addQueuedJob(t, theRun, reaperQueueDeadline()+time.Hour)
+		t.Setenv(envReaperRefuseProjects, "some-other-project")
+		out, _, err := execute(t, "reaper")
+		if err != nil {
+			t.Fatalf("fugaro reaper: %v", err)
+		}
+		if !strings.Contains(out, "deleted job") || len(rig.bf.Deletes()) != 1 || rig.bf.Deletes()[0] != job {
+			t.Errorf("stdout = %q, deletes = %v, want the queued job deleted: the list names another project", out, rig.bf.Deletes())
+		}
+	})
+
+	// A malformed entry refuses the pass rather than being dropped.
+	t.Run("an entry that is not a project id", func(t *testing.T) {
+		rig := newReaperRig(t, true)
+		rig.addQueuedJob(t, theRun, reaperQueueDeadline()+time.Hour)
+		t.Setenv(envReaperRefuseProjects, "proj-1234,not a project")
+		out, _, err := execute(t, "reaper")
+		if err == nil {
+			t.Fatal("fugaro reaper ran with an entry of the never-touch list that is not a project id: dropping it would sweep the project it names")
+		}
+		if code := ExitCode(err); code != ExitUserError {
+			t.Errorf("exit code = %d, want %d", code, ExitUserError)
+		}
+		for _, want := range []string{envReaperRefuseProjects, "not a project", "not a GCP project ID"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("refusal = %q, want it to name %q", err, want)
+			}
+		}
+		if out != "" || len(rig.bf.Deletes()) != 0 {
+			t.Errorf("stdout = %q, deletes = %v, want nothing read and nothing deleted", out, rig.bf.Deletes())
+		}
+	})
+
+	// Separators and spaces are not entries: a list written by hand has them.
+	if got, err := reaperRefuseProjects(func(string) string { return " acme-prod , , acme-staging ," }); err != nil || len(got) != 2 || got[0] != "acme-prod" || got[1] != "acme-staging" {
+		t.Errorf("reaperRefuseProjects = %v, %v, want the two ids with the spaces and empty fields dropped", got, err)
+	}
+	if got, err := reaperRefuseProjects(func(string) string { return "" }); err != nil || got != nil {
+		t.Errorf("reaperRefuseProjects(unset) = %v, %v, want no list at all", got, err)
+	}
+}
+
 // TestReaperCommandFlags: `fugaro reaper` takes the cloud flags and --dry-run,
 // and nothing else -- it is not a command that grows a subcommand, and an
 // argument it does not understand must not be read as one.
@@ -387,7 +489,7 @@ func TestReaperOptionsFromTheProjectConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o := reaperOptions(lc, true)
+	o := reaperOptions(lc, nil, true)
 	if o.GCPProject != "proj-1234" || o.Region != "us-east5" {
 		t.Errorf("the pass's project and region = %s/%s, want the config's proj-1234/us-east5", o.GCPProject, o.Region)
 	}
@@ -476,7 +578,7 @@ func TestReaperCommandFromTheReaperJobsOwnEnvironment(t *testing.T) {
 func TestReaperEnvOptions(t *testing.T) {
 	env := map[string]string{envGCPProject: "proj-1234", envRegion: "us-east5"}
 	getenv := func(k string) string { return env[k] }
-	o, forced, err := reaperEnvOptions(getenv, true)
+	o, forced, err := reaperEnvOptions(getenv, nil, true)
 	if err != nil {
 		t.Fatalf("reaperEnvOptions: %v", err)
 	}
@@ -515,7 +617,7 @@ func TestReaperEnvOptions(t *testing.T) {
 	t.Cleanup(func() { reaperEnvTest = old })
 	// No marker: this environment is an operator's shell, not the reaper job,
 	// so a pass that asked to delete is forced to a dry run.
-	wired, forced, err := reaperEnvOptions(getenv, false)
+	wired, forced, err := reaperEnvOptions(getenv, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +634,7 @@ func TestReaperEnvOptions(t *testing.T) {
 		withMarker[k] = v
 	}
 	withMarker[envReaperJob] = reaperJobMarker
-	job, forced, err := reaperEnvOptions(func(k string) string { return withMarker[k] }, false)
+	job, forced, err := reaperEnvOptions(func(k string) string { return withMarker[k] }, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -549,7 +651,7 @@ func TestReaperEnvOptions(t *testing.T) {
 			part[k] = v
 		}
 		delete(part, missing)
-		if _, _, err := reaperEnvOptions(func(k string) string { return part[k] }, false); err == nil {
+		if _, _, err := reaperEnvOptions(func(k string) string { return part[k] }, nil, false); err == nil {
 			t.Errorf("reaperEnvOptions accepted an environment with no %s", missing)
 		}
 	}
