@@ -21,7 +21,22 @@ import (
 const (
 	ReasonBudgetUnavailable  Reason = "budget_unavailable"
 	ReasonBudgetTokenExpired Reason = "budget_token_expired"
+	// ReasonCredsRulesDenied is the rules downgrade C1.3's marker cannot
+	// catch: the deployed document predates the credentials cascade's
+	// children, so the run's own write of `credential` or `waiting_until`
+	// (or, for C1.16 and C1.19, of a by-tier counter) is refused. The run
+	// halts rather than dropping the write silently (C1.17). It must equal
+	// runstore.HaltCredsRulesDenied: the runner maps a session halt to a run
+	// record by the reason string alone (runner's onBudgetHalt), and
+	// TestDeniedCascadeWriteHaltsNamed pins the two together.
+	ReasonCredsRulesDenied Reason = "creds_rules_denied"
 )
+
+// credsRulesDeniedDetail is what an operator is told when the deployed rules
+// refuse the cascade's children: the redeploy that fixes it, named with the
+// release that writes them (C1.17). It holds no credential and no value from
+// any answer — a credential *name* is all a cascade run ever writes.
+const credsRulesDeniedDetail = "the database's rules refused this run's credential state: they predate the credentials cascade's fields, and the write is not retried. Re-run 'fugaro init --firebase <firebase-project-id>' with this release to deploy the rules that carry them"
 
 // Halt is a cause to stop the run that the session found by itself: a kill
 // switch, the grace running out, a revoked identity. Detail is shown to
@@ -115,20 +130,26 @@ type Session struct {
 
 	newKeysChecked bool // checkNewKeys has probed action/tokens once
 	newKeysRefused bool // the rules refused action/tokens; both are dropped
-	haltOnce       sync.Once
-	halted         bool
-	used           func() Micros
-	leased         map[int64]bool // days this run holds a lease on
-	granted        Micros         // everything the leases granted
-	released       Micros         // everything released
-	unrel          Micros         // a release that failed, to try again at Finish
-	pend           pending
-	started        bool
-	stopped        bool
-	exp            bool // exp written
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	caps           Caps // the last config read, for the heartbeat's limits
+	// credsKeysProbed is checkCascadeKeys's own once: the probe has a
+	// definite answer — the entry without the cascade's children was refused
+	// too — so it need not run again. An outage, a transient success or any
+	// other inconclusive result leaves it false, and the next refused
+	// heartbeat probes again.
+	credsKeysProbed bool
+	haltOnce        sync.Once
+	halted          bool
+	used            func() Micros
+	leased          map[int64]bool // days this run holds a lease on
+	granted         Micros         // everything the leases granted
+	released        Micros         // everything released
+	unrel           Micros         // a release that failed, to try again at Finish
+	pend            pending
+	started         bool
+	stopped         bool
+	exp             bool // exp written
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	caps            Caps // the last config read, for the heartbeat's limits
 
 	advised       map[Reason]bool // observe-mode advisories already logged
 	notionalTotal Micros          // an oauth run's notional so far

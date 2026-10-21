@@ -14,12 +14,11 @@
 # keeps that true.
 
 locals {
-  # The whole file is gated on the one opt-in: null creates nothing, and this
-  # one boolean keeps every resource in this file in step — each of them counts
-  # on it, so a resource added here without it is the finding
-  # TestCredentialsServiceGrantsAreTheOneBundle makes. The count is deliberately
-  # not written out: a number here is a second copy of what the file below
-  # holds, and it is the copy that goes stale.
+  # The whole file is gated on the one opt-in: null creates nothing, and a
+  # single boolean keeps the four resources of this file in step (the account,
+  # the bundle container, the accessor grant on it, and the service —
+  # TestCredentialsServiceResourcesAreCounted is what holds this number and the
+  # file's own resources together, in both directions).
   credentials_service_on = var.credentials_service != null
 }
 

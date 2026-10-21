@@ -3628,10 +3628,13 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 	}
 
 	// Every resource in the file is gated on the one boolean, which is what the
-	// header's "keeps every resource in this file in step" means: a resource
-	// added without it is created in an installation that never opted in. This
-	// is the count the header used to carry ("the five resources of this file",
-	// when the file had four) read as the property it was standing in for.
+	// header's "keeps the four resources of this file in step" means: a resource
+	// added without it is created in an installation that never opted in.
+	// TestCredentialsServiceResourcesAreCounted reads the same promise from the
+	// other end — the sentence's number against the file — and this sweep is
+	// kept beside it because it reads the gate itself, the exact expression and
+	// not the boolean's name, so a resource that mentions the boolean without
+	// counting on it is caught here and not there.
 	gated := 0
 	for _, m := range resourceHeader.FindAllStringSubmatchIndex(code, -1) {
 		end := matchBrace(code, m[1]-1)
@@ -3658,6 +3661,78 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 		t.Errorf("%s: the service must set invoker_iam_disabled = false explicitly, so a change of the provider's default cannot open it silently", path)
 	}
 }
+
+// TestCredentialsServiceResourcesAreCounted reads the sentence that counts
+// this file's own resources — locals' "a single boolean keeps the four
+// resources of this file in step" — against the file. It said five while the
+// file declared four, and nothing read it: a number a reader is meant to trust
+// is a claim, and this is where it is checked rather than believed.
+//
+// Both directions are the point. A resource added to the file without the
+// sentence is a resource the sentence no longer accounts for; a resource added
+// WITHOUT the opt-in's gate is worse — the file's first promise is that with
+// var.credentials_service null it creates nothing (D147) — so every resource in
+// it must be gated on the one boolean, and the count must be the whole file's.
+//
+// Mutation (run, restore): a fifth resource block in credentials.tf fails both
+// assertions ("declares 5 ... and says four", and the ungated one), and
+// reverting the word to "five" fails the count.
+func TestCredentialsServiceResourcesAreCounted(t *testing.T) {
+	const path = "gcp/modules/installation/credentials.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+
+	// The sentence, from the raw source: the number lives in a comment, which
+	// stripComments blanks out.
+	m := resourceCountSentence.FindStringSubmatch(string(b))
+	if m == nil {
+		t.Fatalf("%s no longer says how many resources the opt-in keeps in step; that sentence is what this test reads, so it stays:\n%s", path, code)
+	}
+	want, ok := numberWords[m[1]]
+	if !ok {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			want, ok = n, true
+		}
+	}
+	if !ok {
+		t.Fatalf("%s: the sentence counts the file's resources as %q, which this test cannot read as a number: spell it as a word (one..ten) or a decimal, and keep it true", path, m[1])
+	}
+
+	// Every resource the file declares, whatever its type: the sentence is
+	// about the file, not about one kind of thing in it.
+	all := resourceHeader.FindAllStringSubmatchIndex(code, -1)
+	if len(all) == 0 {
+		t.Fatalf("%s declares no resource at all, and this test's subject is gone:\n%s", path, code)
+	}
+	if len(all) != want {
+		t.Errorf("%s declares %d resources and its own sentence says %d (\"%s\"): the number a reader trusts is the file's count", path, len(all), want, m[0])
+	}
+	// And every one of them is behind the one boolean: "keeps the N resources
+	// of this file in step" is a statement about all N, and the file's first
+	// promise is that a null var.credentials_service creates nothing.
+	for _, r := range all {
+		name := code[r[2]:r[3]] + "." + code[r[4]:r[5]]
+		open := r[1] - 1
+		end := matchBrace(code, open)
+		if end < 0 {
+			t.Fatalf("%s: unbalanced braces in %s", path, name)
+		}
+		if body := code[open+1 : end]; !strings.Contains(body, "local.credentials_service_on") {
+			t.Errorf("%s: %s is not gated on local.credentials_service_on, so a null var.credentials_service does not leave the file creating nothing (D147):\n%s", path, name, squash(body))
+		}
+	}
+}
+
+// resourceCountSentence is the sentence in credentials.tf's locals block that
+// counts the file's own resources: the number is what the test above reads.
+var resourceCountSentence = regexp.MustCompile(`keeps\s+the\s+(\w+)\s+resources\s+of\s+this\s+file`)
+
+// numberWords are the spellings of a count this test reads in prose.
+var numberWords = map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+	"six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
 
 // TestServiceHeldSecretsMatchTheCredentialsService pins the four literals in
 // modules/workflow/sa.tf — the two model-credential variable names, the

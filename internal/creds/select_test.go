@@ -871,6 +871,12 @@ func TestWaitAnswersTheEarliestOfTheCandidates(t *testing.T) {
 	if !Free(five, a1.Name, now.Add(3*time.Minute), run, 3) {
 		t.Error("Free refused the run at the lapse SlotFrees names, so the time it answers is not when the run may come back")
 	}
+	// The same arithmetic one holder short: four holders under a cap of three
+	// wait for the SECOND expiry (4 - 3 + 1), not the first — the first leaves
+	// three, and three is still "not fewer than limit".
+	if at, ok := SlotFrees(five[1:], a1.Name, now, run, 3); !ok || !at.Equal(now.Add(3*time.Minute)) {
+		t.Fatalf("SlotFrees under a cap of three with four holders = %s, %v; want the second expiry, 3m", at, ok)
+	}
 	// A lapsed lease is nobody's hold, and one run's own expired hold is not a
 	// wait either.
 	lapsed := append(leases, Lease{Slug: run.Slug, Run: "gone", Credential: a1.Name, Until: now.Add(-time.Minute)})
