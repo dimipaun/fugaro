@@ -100,6 +100,18 @@ surface: the project-wide view, the PR records, the roadmap and the override log
 greenfield, all deterministic, and all buildable from the two stores and the one GitHub
 credential the repository already has.
 
+## How these documents are held
+
+Eleven tests pin everything above, and they are one command:
+`go test ./internal/cli/ -run TestDocsCoordinator`. They are the reason a claim in this folder
+can be trusted without re-reading the repository — the spec cannot stop being verbatim, a
+citation cannot drift to a path that has moved, the numbers table cannot stop agreeing with the
+documents it is read from, the plan cannot stop being an order rather than a list, and the five
+decisions a reader has to weigh cannot be renumbered or answered by accident.
+`TestDocsCoordinatorMutationRecordIsCounted` is the odd one out: it reads
+`internal/cli/docs_coordinator_test.go` itself and holds that file's record of its own planted
+mutations to the list under it.
+
 ## Related
 
 - [docs/design/v1.md](../design/v1.md) §1 — what a **Fugaro project** and an

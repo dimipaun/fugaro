@@ -52,7 +52,7 @@ since, and each one changes this plan rather than decorating it:
    requires it, and revocation is deleting the node — which is what makes Q15(A)'s read grant a
    question about a *subtree* and not about a new identity.
 5. **The rigor modes work is a plan in open PR #773 and is not on `main`.** It is named here
-   because the register's numbering turns on it (§7) and because its guard — the pinning test
+   because the register's numbering turns on it (§9) and because its guard — the pinning test
    this folder's own guard would copy from — is not in the tree to copy from. The models to
    follow are `internal/cli/docs_coordinator_test.go` and `internal/cli/docs_windows_cli_test.go`,
    both on `main`.
@@ -60,7 +60,7 @@ since, and each one changes this plan rather than decorating it:
 Two things the reconciliation recorded are **still true and still shape this plan**: the
 sibling's *"never a model credential in the resident service"* (its §6 rule 4, which is Q4(A) and
 is why §3 is short), and the register's rule that a check number is taken by the phase that ships
-it and never renumbered (which is why §7 proposes checks by name).
+it and never renumbered (which is why §9 proposes checks by name).
 
 ## 2. The order, and why it is this order
 
@@ -140,7 +140,7 @@ Two things the table cannot express, said here so they are not lost:
   posture rather than a worse default.
 - **Nothing in this plan says the coordinator's parts may start on the day the gate passes.**
   P7 and P8 also wait on the central orchestrator plan's P4 and P5, which are unapproved and
-  unbuilt, and §6 says which parts are security-sensitive and what an independent review of each
+  unbuilt, and §7 says which parts are security-sensitive and what an independent review of each
   must cover.
 
 ## 5. The parts
@@ -586,7 +586,7 @@ was not.
 ## 9. The owner-run live checks, proposed by name and not numbered
 
 The register's own rule is that **the phase that ships the check writes it** — a sentence of
-`docs/design/voice.md` §5.3, quoted by work after work and **not** in the register itself — so
+`docs/design/voice.md` §5, quoted by work after work and **not** in the register itself — so
 this plan proposes its checks **by name** and takes **no number**. The reading, name by name,
 against `docs/gcp-live-checklist.md` at `1e0953b7`:
 
