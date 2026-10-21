@@ -188,14 +188,16 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 166 files -- 50 non-test Go files, 73 test files,
-// 36 markdown files, the two `.golden` transcripts, and the five that fall in
-// none of those groups: the website's install data
+// command, sorted. It is 59 files -- 19 test files, 35 markdown files, and the
+// five that fall in none of those groups: the website's install data
 // (website/data/install.yaml), its two files that print the command
 // (website/src/pages/getting-started.astro and
 // website/src/components/Changelog.astro), its test script
 // (website/test/caps-and-costs.mjs), and the getting-started design board the
 // redesign was approved from, website/design-ref/GettingStartedV4.dc.html.
+// No non-test Go file and no golden is on it any more: W2.1's rename emptied
+// internal/cli and the retirement transcript, and the generated page left it
+// when its generator ran.
 // Read on main at `1d325928`, this
 // branch's base, it was **312** files -- 118 non-test Go files, 117 test files,
 // 34 markdown files, 29 Terraform files, the four `.tftest.hcl` fixtures beside
@@ -203,6 +205,19 @@ const censusRoot = "../.."
 // the two under images/ (a Dockerfile and a shell script), the published
 // schema, and internal/config/example.yaml, the sample config
 // internal/config/example.go embeds.
+//
+// **W2.1 moved the list 107 files down, and it is the last L2 sweep.** 104
+// were internal/cli's own -- the engine's lines, the refusals, the left-for-you
+// commands and the tests that assert them, renamed together in one task -- and
+// one was the generated website/content/cli-reference.md, which
+// `go run ./internal/clidoc` renders from the command tree and so left the
+// list by being regenerated, not edited. Two more emptied as that commit's
+// own consequences: internal/cli/testdata/init_retire.golden, rewritten by
+// TestInitRepoRetireTranscriptGolden -update-retire (the golden the two L2
+// tasks were split by), and internal/e2e/init_test.go, whose assertions read
+// internal/cli's own output -- the file W2.2 deliberately left on this list
+// because the strings it quotes did not exist yet, and which W5.2 renames to
+// update_test.go with the assertions it now holds.
 //
 // **The list moves in both directions, and each move is a merge a reader can
 // find.** Forty-four files left it because the rename reached them: #766 (W2.5)
@@ -316,13 +331,6 @@ var pendingRename = []string{
 	"docs/rigor-modes/implementation-plan.md",
 	"docs/rigor-modes/reconciliation.md",
 	"docs/windows-cli/reconciliation.md",
-	"internal/cli/allow_delete.go",
-	"internal/cli/budget.go",
-	"internal/cli/budget_preview.go",
-	"internal/cli/cloud.go",
-	"internal/cli/config_list.go",
-	"internal/cli/config_list_test.go",
-	"internal/cli/config_publish.go",
 	"internal/cli/docs_base_test.go",
 	"internal/cli/docs_checkout_test.go",
 	"internal/cli/docs_clone_workflows_test.go",
@@ -338,111 +346,11 @@ var pendingRename = []string{
 	"internal/cli/docs_recipes_test.go",
 	"internal/cli/docs_release_notes_test.go",
 	"internal/cli/docs_setup_wizard_checks_test.go",
-	"internal/cli/doctor.go",
-	"internal/cli/doctor_bucket.go",
 	"internal/cli/doctor_bucket_test.go",
-	"internal/cli/doctor_policy_test.go",
-	"internal/cli/doctor_shared_test.go",
-	"internal/cli/doctor_test.go",
-	"internal/cli/exec.go",
-	"internal/cli/exec_test.go",
-	"internal/cli/gitsecret.go",
-	"internal/cli/history_rollover.go",
-	"internal/cli/image.go",
-	"internal/cli/image_cloud_test.go",
-	"internal/cli/image_layer.go",
-	"internal/cli/image_layer_test.go",
-	"internal/cli/image_refresh.go",
-	"internal/cli/image_refresh_rules.go",
-	"internal/cli/image_refresh_steps.go",
-	"internal/cli/image_refresh_steps_test.go",
-	"internal/cli/image_refresh_test.go",
-	"internal/cli/image_refresh_upgrade_test.go",
-	"internal/cli/image_test.go",
-	"internal/cli/imagecheck.go",
-	"internal/cli/imagecheck_test.go",
-	"internal/cli/init.go",
-	"internal/cli/init_adopt.go",
-	"internal/cli/init_adopt_test.go",
-	"internal/cli/init_anchor.go",
-	"internal/cli/init_anchor_test.go",
-	"internal/cli/init_apis_test.go",
-	"internal/cli/init_budget_test.go",
-	"internal/cli/init_compute_test.go",
-	"internal/cli/init_firebase.go",
-	"internal/cli/init_firebase_test.go",
-	"internal/cli/init_fugaroyaml.go",
-	"internal/cli/init_fugaroyaml_test.go",
-	"internal/cli/init_gate_test.go",
-	"internal/cli/init_images.go",
-	"internal/cli/init_images_test.go",
-	"internal/cli/init_inputs.go",
-	"internal/cli/init_managed_test.go",
-	"internal/cli/init_plugin_stage.go",
-	"internal/cli/init_project.go",
-	"internal/cli/init_project_test.go",
-	"internal/cli/init_repo_gate.go",
-	"internal/cli/init_repo_gate_test.go",
-	"internal/cli/init_repo_stage.go",
-	"internal/cli/init_repo_stage_test.go",
-	"internal/cli/init_repo_target.go",
-	"internal/cli/init_retire.go",
-	"internal/cli/init_retire_test.go",
-	"internal/cli/init_review_test.go",
-	"internal/cli/init_stages.go",
-	"internal/cli/init_test.go",
-	"internal/cli/initsecrets.go",
-	"internal/cli/initsecrets_pty_test.go",
-	"internal/cli/launch_budget.go",
-	"internal/cli/launch_budget_test.go",
-	"internal/cli/layer_routes_overlap_test.go",
-	"internal/cli/layer_sites_test.go",
-	"internal/cli/lswarn.go",
-	"internal/cli/managed_apply.go",
-	"internal/cli/managed_flag.go",
-	"internal/cli/managed_test.go",
-	"internal/cli/operator_write.go",
-	"internal/cli/operator_write_test.go",
-	"internal/cli/project.go",
-	"internal/cli/project_check_test.go",
-	"internal/cli/project_cmd.go",
-	"internal/cli/project_enroll.go",
-	"internal/cli/project_job.go",
-	"internal/cli/project_job_test.go",
-	"internal/cli/project_policy_test.go",
-	"internal/cli/project_shared_test.go",
-	"internal/cli/project_test.go",
-	"internal/cli/recipes_skew.go",
-	"internal/cli/recipes_skew_test.go",
-	"internal/cli/report.go",
-	"internal/cli/restore.go",
 	"internal/cli/restore_test.go",
-	"internal/cli/roles.go",
-	"internal/cli/root_test.go",
-	"internal/cli/run_allowlist_test.go",
-	"internal/cli/run_oauth_test.go",
-	"internal/cli/run_recipe_test.go",
-	"internal/cli/runs_test.go",
-	"internal/cli/secrets.go",
-	"internal/cli/secrets_test.go",
-	"internal/cli/setup_refusals_test.go",
-	"internal/cli/sharedcfg.go",
-	"internal/cli/sharedcfg_fetch_test.go",
-	"internal/cli/sharedcfg_test.go",
-	"internal/cli/sharedcfg_validate_test.go",
-	"internal/cli/testdata/init_commands.golden",
-	"internal/cli/testdata/init_retire.golden",
-	"internal/cli/upgrade.go",
-	"internal/cli/upgrade_cloud.go",
-	"internal/cli/upgrade_cloud_step_test.go",
-	"internal/cli/upgrade_cloud_test.go",
-	"internal/cli/validate.go",
-	"internal/cli/validate_test.go",
-	"internal/e2e/init_test.go",
 	"plugin/readme_test.go",
 	"plugin/setup_skill_test.go",
 	"website/README.md",
-	"website/content/cli-reference.md",
 	"website/content/security.md",
 	"website/data/install.yaml",
 	"website/design-ref/GettingStartedV4.dc.html",
@@ -1090,11 +998,20 @@ func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
 	}
 
 	// W2.4 regenerates these two rather than editing them, and the census is
-	// where that is visible: they are on the list today, and they leave it when
-	// the generator runs, not when a hand edit does.
-	for _, generated := range []string{"website/content/cli-reference.md", "website/content/security.md"} {
-		if !slices.Contains(pendingRename, generated) {
-			t.Errorf("pendingRename does not list the generated %s: it names the command today, and W2.4 takes it off the list by regenerating it, not by editing it", generated)
+	// where that is visible: a page leaves the list when its generator runs,
+	// not when a hand edit removes a mention. cli-reference.md is rendered
+	// from the command tree (`go run ./internal/clidoc`), so W2.1's rename
+	// reached it and it has left; security.md is prose a person writes, so it
+	// stays until W2.4 regenerates it.
+	for _, tc := range []struct {
+		page   string
+		listed bool
+	}{
+		{"website/content/cli-reference.md", false},
+		{"website/content/security.md", true},
+	} {
+		if got := slices.Contains(pendingRename, tc.page); got != tc.listed {
+			t.Errorf("pendingRename lists the generated %s = %v, want %v: it is written by its generator, so it leaves the list by being regenerated, not edited", tc.page, got, tc.listed)
 		}
 	}
 

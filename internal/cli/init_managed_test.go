@@ -30,7 +30,7 @@ import (
 // created no project must write no marker, whatever else it did; the mutation
 // this exists to catch is dropping that check and marking the project the run
 // installs into (r.res.Created = r.gcpProject in markCreated), which in
-// production would mark every installation an ordinary `fugaro init` touches
+// production would mark every installation an ordinary converge touches
 // — fugaro's own, belong, the owner's — as managed, and turn the
 // confirmations off for them (design D73: adding Firebase to a project is
 // never what makes it managed).
@@ -51,9 +51,9 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		noMarker(t, r.gcs, initRunsBucket)
 	})
 
-	// (b) init --firebase: Firebase is added to a project that already
+	// (b) update --firebase: Firebase is added to a project that already
 	// exists, which this run did not create.
-	t.Run("init --firebase on an existing project", func(t *testing.T) {
+	t.Run("update --firebase on an existing project", func(t *testing.T) {
 		r := newFBRig(t)
 		r.markedRuns(t, initProjectName, initProject)
 		if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes"); err != nil {
@@ -379,7 +379,7 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 
 // createdFBRig is the rig of the one-project layout: the create rig (the
 // project, its billing and Firebase Management) with the Firebase engine's
-// own fakes on top, for `fugaro init --create-project --gcp-project P
+// own fakes on top, for `fugaro setup --create-project --gcp-project P
 // --firebase P`. The Firebase project is the one this run creates, so its
 // database, its admins and its billing exist as the run itself leaves them,
 // not as a rig seeds them.
@@ -621,7 +621,7 @@ func managedRefusal(t *testing.T, err error, address string, advice bool) {
 	}
 }
 
-// Task 3.2 at the call site: in a managed project `fugaro init`'s guard
+// Task 3.2 at the call site: in a managed project the converge's guard
 // refusal ends with the managed sentence — no flag, no DeleteHints line, the
 // owner as the one who decides — and in any project that is not managed it is
 // today's, byte for byte, hints and all. Only the text differs: what is

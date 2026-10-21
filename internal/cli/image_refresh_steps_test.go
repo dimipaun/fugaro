@@ -123,7 +123,7 @@ func TestRefreshBaseStepDeclined(t *testing.T) {
 
 // The base step never replaces a custom or hand-pushed base image, even
 // called directly with that kind: the images stage's own rule (D4) leaves it
-// alone, the same guard fugaro init --base has.
+// alone, the same guard fugaro update --base has.
 func TestRefreshBaseStepNeverReplacesCustomBase(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
 	t.Chdir(repoCheckout(t, githubOrigin, refreshYAML))
@@ -743,7 +743,7 @@ func TestRefreshBuildsDeclineStopsSubsequentBuilds(t *testing.T) {
 // The job has to be a clone job for that to be the right move at all —
 // infra.PlanWorkflowJob refuses one whose container does not carry
 // FUGARO_CHECKOUT=clone, since moving such a job's image would leave it
-// expecting a baked checkout — so the test deploys it the way `fugaro init
+// expecting a baked checkout — so the test deploys it the way `fugaro update
 // --repo` does, env included.
 //
 // Mutation (run, restore): set cloneShipped back to false in recipes_skew.go
@@ -1186,7 +1186,7 @@ func TestRefreshCheckJobApplyErrorStops(t *testing.T) {
 	}
 }
 
-// A missing job (404) is a not-found message naming init --repo when the
+// A missing job (404) is a not-found message naming update --repo when the
 // repository's spec has a check job, and "nothing to update" only when it has
 // none.
 // A missing job (404) is reported and the run continues, with or without
@@ -1212,7 +1212,7 @@ func testRefreshCheckJobMissing(t *testing.T, yes bool) {
 	if err := e.r.refreshCheckJob(t.Context(), tg); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "was not found") || !strings.Contains(out.String(), "fugaro init --repo") || strings.Contains(out.String(), "nothing to update") {
+	if !strings.Contains(out.String(), "was not found") || !strings.Contains(out.String(), "fugaro update --repo") || strings.Contains(out.String(), "nothing to update") {
 		t.Errorf("yes=%v, with a check in the spec:\n%s", yes, out.String())
 	}
 	tg.spec.Check = nil

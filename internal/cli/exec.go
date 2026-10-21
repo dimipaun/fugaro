@@ -254,9 +254,9 @@ func loopbackUpstream(s string) bool {
 // names every job carries since M9a.
 func oldJobEnvReason(missing string) string {
 	if missing == "FUGARO_GCP_PROJECT" {
-		return "job environment lacks FUGARO_GCP_PROJECT (it was set up before M9a): run fugaro init --repo from the repository's checkout; see docs/design/m9-budget-and-dashboard.md §13.1"
+		return "job environment lacks FUGARO_GCP_PROJECT (it was set up before M9a): run fugaro update --repo from the repository's checkout; see docs/design/m9-budget-and-dashboard.md §13.1"
 	}
-	return "job environment lacks " + missing + ": run fugaro init --repo from the repository's checkout; see docs/design/m9-budget-and-dashboard.md §13.1"
+	return "job environment lacks " + missing + ": run fugaro update --repo from the repository's checkout; see docs/design/m9-budget-and-dashboard.md §13.1"
 }
 
 // refuseOldJobEnv is nil unless this process is in the cloud and its job

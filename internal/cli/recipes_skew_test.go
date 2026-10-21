@@ -109,7 +109,7 @@ func TestCheckCloneImageSince(t *testing.T) {
 			if tc.wantErr != "" && err != nil {
 				for _, want := range []string{
 					"the project layer needs a job image whose runner knows the project layer (fugaro " + tc.since + " or later)",
-					"checkout: clone job image of acme/app workflow web", "fugaro init --base base",
+					"checkout: clone job image of acme/app workflow web", "fugaro update --base base",
 				} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("%v lacks %q", err, want)
@@ -151,7 +151,7 @@ func TestCheckCloneImageSinceAtCloneSince(t *testing.T) {
 		"this checkout: clone workflow needs a job image whose runner knows how to provision a blobless clone (FUGARO_CHECKOUT) (fugaro 0.7.5 or later)",
 		"acme/app workflow web",
 		"is ghcr.io/dimipaun/fugaro-base:0.7.0, release 0.7.0",
-		"fugaro init --base base",
+		"fugaro update --base base",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)
@@ -214,7 +214,7 @@ func TestCheckCloneRecipeImage(t *testing.T) {
 	}
 	for _, want := range []string{
 		"recipe mine needs a job image whose runner knows recipes (fugaro 0.5.0 or later)",
-		"is ghcr.io/dimipaun/fugaro-base:0.4.1, release 0.4.1", "--recipe default", "fugaro init --base base",
+		"is ghcr.io/dimipaun/fugaro-base:0.4.1, release 0.4.1", "--recipe default", "fugaro update --base base",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)
@@ -314,7 +314,7 @@ func TestCloneRecipeV07NeedsA07Image(t *testing.T) {
 // (internal/runner/providers.go) and a decode failure is a hard bootstrap
 // error, so a route that sets require_zdr or price_policy — at any value,
 // default or not: the omitempty tags write the key whenever the owner set it
-// — cannot be deployed while no release reads it. init --repo refuses it
+// — cannot be deployed while no release reads it. update --repo refuses it
 // before any cloud effect, naming the release that will read it and both ways
 // out (leave it unset, or price the model under model_prices); a route that
 // sets neither passes, and so does a repository with no provider at all.
@@ -364,7 +364,7 @@ func TestRefuseCatalogSwitches(t *testing.T) {
 				t.Fatalf("err = %v, want refused", err)
 			}
 			for _, want := range []string{
-				"fugaro init --repo refuses to deploy acme/app's provider openrouter",
+				"fugaro update --repo refuses to deploy acme/app's provider openrouter",
 				"require_zdr or price_policy",
 				"fugaro " + catalogSince,
 				"model_prices",
@@ -418,7 +418,7 @@ func TestRefuseCatalogSwitches(t *testing.T) {
 		"the provider openrouter of acme/app sets require_zdr or price_policy",
 		"fugaro " + catalogSince + " or later",
 		"ghcr.io/dimipaun/fugaro-base:0.7.0, release 0.7.0",
-		"fugaro init --base base",
+		"fugaro update --base base",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)

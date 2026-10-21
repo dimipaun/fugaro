@@ -693,7 +693,7 @@ func TestInitRepoFreshPrintsSecrets(t *testing.T) {
 	if !strings.Contains(res.stdout, "\n    claude setup-token\n") || strings.Contains(res.stdout, "claude setup-token;") {
 		t.Errorf("claude setup-token isn't the user's step:\n%s", res)
 	}
-	if !strings.Contains(res.stdout, " init --repo when they are stored") {
+	if !strings.Contains(res.stdout, "fugaro update --repo when they are stored") {
 		t.Errorf("no rerun hint:\n%s", res)
 	}
 }
@@ -753,8 +753,8 @@ func TestInitRepoBuildsThenDeploys(t *testing.T) {
 
 // A repository whose agent authenticates through Vertex AI is recorded as
 // such, so fugaro update enables the Vertex AI API; the first one says to
-// rerun `fugaro init`, the sentence internal/cli prints today and W2.1 renames
-// -- the assertion below quotes it as it stands.
+// rerun the door the run is at (W2.1: this rig runs `fugaro update`, and the
+// warning names it), which the assertion below quotes.
 func TestInitRepoRecordsVertex(t *testing.T) {
 	r := newInitRepoRig(t, "acme/sandbox", "https://bitbucket.org/acme/sandbox.git", func(y string) string {
 		return strings.Replace(y, "auth: oauth", "auth: vertex", 1)
@@ -766,7 +766,7 @@ func TestInitRepoRecordsVertex(t *testing.T) {
 	if got := r.localConfig(t).Repos["acme/sandbox"]; !got.Vertex {
 		t.Errorf("local config repo = %+v, want vertex", got)
 	}
-	if !strings.Contains(res.stdout, "warning: ") || !strings.Contains(res.stdout, "Vertex AI API") || !strings.Contains(res.stdout, "rerun fugaro init") {
+	if !strings.Contains(res.stdout, "warning: ") || !strings.Contains(res.stdout, "Vertex AI API") || !strings.Contains(res.stdout, "rerun fugaro update") {
 		t.Errorf("no warning to enable the Vertex AI API:\n%s", res)
 	}
 	// Recorded, it isn't repeated.
@@ -1013,7 +1013,7 @@ func TestInitRepoPrintVarsNoCalls(t *testing.T) {
 	}
 	// The values skip discovery and the readiness gates, which need cloud
 	// calls, so a team applying them itself is told what that means.
-	for _, want := range []string{"warning:", "ungated", "deploy_job", "image", "display name", "fugaro init --repo"} {
+	for _, want := range []string{"warning:", "ungated", "deploy_job", "image", "display name", "fugaro update --repo"} {
 		if !strings.Contains(res.stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, res.stderr)
 		}
@@ -1075,14 +1075,13 @@ func exists(t *testing.T, b *blobx.Bucket, key string) bool {
 }
 
 // After the installation's --forget (state rm), its state keeps its
-// outputs but manages nothing: fugaro update --repo refuses to plan against it,
-// and says to run `fugaro init` first -- the sentence internal/cli prints
-// today, which is W2.1's to rename; the assertion below quotes it as it stands.
+// outputs but manages nothing: update --repo refuses to plan against it,
+// and says to run fugaro setup first.
 func TestInitRepoRefusesForgottenInstallation(t *testing.T) {
 	r := sandboxRig(t)
 	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": installationOutputs(t)}, "show": map[string]any{"stdout": stateEmpty}})
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
-	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro init first") || !strings.Contains(res.stderr, "forgotten") {
+	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro setup first") || !strings.Contains(res.stderr, "forgotten") {
 		t.Fatalf("fugaro update --repo on a forgotten installation:\n%s", res)
 	}
 	if calls := r.calls(t); count(calls, "repo plan") != 0 || count(calls, "repo apply") != 0 {
@@ -1091,9 +1090,8 @@ func TestInitRepoRefusesForgottenInstallation(t *testing.T) {
 }
 
 // An installation applied before the tag mover role existed outputs no
-// role_ids.tag_mover: fugaro update --repo refuses to plan a grant of a role that
-// isn't there, and says to run `fugaro init` first -- W2.1's sentence, quoted
-// by the assertion below as internal/cli prints it today.
+// role_ids.tag_mover: update --repo refuses to plan a grant of a role that
+// isn't there, and says to run fugaro setup first.
 func TestInitRepoRefusesInstallationWithoutTagMover(t *testing.T) {
 	r := sandboxRig(t)
 	var outs map[string]map[string]any
@@ -1107,7 +1105,7 @@ func TestInitRepoRefusesInstallationWithoutTagMover(t *testing.T) {
 	}
 	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": string(b)}, "show": map[string]any{"stdout": installationStateManaged}})
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
-	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro init first") || !strings.Contains(res.stderr, "tag_mover") {
+	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro setup first") || !strings.Contains(res.stderr, "tag_mover") {
 		t.Fatalf("fugaro update --repo on an installation without the tag mover role:\n%s", res)
 	}
 	if calls := r.calls(t); count(calls, "repo plan") != 0 || count(calls, "repo apply") != 0 {
@@ -1130,7 +1128,7 @@ func TestInitRepoRefusesUnnamedInstallation(t *testing.T) {
 	}
 	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": string(b)}, "show": map[string]any{"stdout": installationStateManaged}})
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
-	if res.code != 1 || !strings.Contains(res.stderr, "the installation has no project name") || !strings.Contains(res.stderr, "fugaro init --name "+initRepoProjectName) {
+	if res.code != 1 || !strings.Contains(res.stderr, "the installation has no project name") || !strings.Contains(res.stderr, "fugaro setup --name "+initRepoProjectName) {
 		t.Fatalf("fugaro update --repo on an unnamed installation:\n%s", res)
 	}
 	if calls := r.calls(t); count(calls, "repo plan") != 0 || count(calls, "repo apply") != 0 {
@@ -1260,7 +1258,7 @@ func TestInitRepoForgetResumesAfterPartialFailure(t *testing.T) {
 	r, state, key := forgetRig(t)
 	r.gcs.FailObjectDeletes(1)
 	res := r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
-	if res.code != 2 || !strings.Contains(res.stderr, "rerun fugaro init --repo --forget") {
+	if res.code != 2 || !strings.Contains(res.stderr, "rerun fugaro update --repo --forget") {
 		t.Fatalf("want exit 2 asking for a rerun:\n%s", res)
 	}
 	if count(r.calls(t), "repo state rm module.repo") != 1 || !exists(t, state, key) {
@@ -1324,8 +1322,8 @@ func TestInitRepoNeedsInstallation(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
-	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro init first") {
-		t.Fatalf("want exit 1 with the no-installation refusal:\n%s", res)
+	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro setup first") {
+		t.Fatalf("want exit 1 with run fugaro setup first:\n%s", res)
 	}
 }
 
@@ -1381,6 +1379,11 @@ func TestInitRepoBuildNeedsConfirmation(t *testing.T) {
 		}
 		if !strings.Contains(res.stdout+res.stderr, "the first image build of acme/sandbox/web is billable and was not confirmed") || !strings.Contains(res.stderr, "type the project's name") {
 			t.Errorf("%v: no warning or typed route:\n%s", args, res)
+		}
+		// The rerun the warning names is the door this run is at (the rig runs
+		// `fugaro update`, convergeCmd), not a hardcoded one (task W2.1).
+		if !strings.Contains(res.stdout+res.stderr, "then fugaro "+convergeCmd+" --repo") {
+			t.Errorf("%v: the warning does not name the door this run is at:\n%s", args, res)
 		}
 		if strings.Contains(res.stdout+res.stderr, "pass --yes") {
 			t.Errorf("%v: --yes is suggested:\n%s", args, res)
@@ -1446,13 +1449,12 @@ func TestInitRepoEnablesResourceManager(t *testing.T) {
 }
 
 // fugaro update --repo with the Storage API disabled fails as a remote error
-// at the state bucket, not as the no-installation refusal ("run `fugaro init`
-// first" -- W2.1's sentence, and the assertion below quotes it as it stands).
+// at the state bucket, not as "no installation: run fugaro setup first".
 func TestInitRepoStorageDisabledIsRemote(t *testing.T) {
 	r := sandboxRig(t)
 	r.su.Disable("storage.googleapis.com", r.gcs.Server)
 	res := r.fugaroInit(t, "--repo", r.checkout, "--plan-only", "--yes")
-	if res.code != 2 || !strings.Contains(res.stderr, "state bucket") || strings.Contains(res.stderr, "run fugaro init first") {
+	if res.code != 2 || !strings.Contains(res.stderr, "state bucket") || strings.Contains(res.stderr, "run fugaro setup first") {
 		t.Fatalf("want exit 2 at the state bucket:\n%s", res)
 	}
 	if len(r.calls(t)) != 0 {

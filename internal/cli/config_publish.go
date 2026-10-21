@@ -338,7 +338,7 @@ func profileClause(name string) string {
 // local config does not set it, and this is not a checkout of that
 // repository) has no slug yet; its copy is not written, it counts as
 // failed (the same as any other fan-out failure: --allow-skip is not a
-// flag this takes), and its next image build or init --repo writes its
+// flag this takes), and its next image build or update --repo writes its
 // copy once the provider is known. Before each copy it re-reads
 // config.LayerKey's generation: if it is no longer gen
 // (another publisher replaced it while this fan-out ran), the remaining

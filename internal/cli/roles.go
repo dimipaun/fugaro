@@ -11,7 +11,7 @@ import (
 // the same two lists everywhere.
 //
 // The lists are `terraform.launchers` and `terraform.operators` in the local
-// config (localcfg.Terraform), the IAM members `fugaro init --launcher` and
+// config (localcfg.Terraform), the IAM members `fugaro setup --launcher` and
 // `--operator` write, hold and copy back from the installation's own outputs
 // (init_adopt.go). The 0.7.0 bucket hardening grants them their roles on the
 // runs bucket (docs/design/bucket-iam.md H9), and `fugaro doctor`'s

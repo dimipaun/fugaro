@@ -39,7 +39,7 @@ import (
 // The three things a restore is, and none of them is a shortcut around the
 // managed apply (Task 3.1, D76):
 //
-//   - It creates the project through the SAME path `fugaro init
+//   - It creates the project through the SAME path `fugaro setup
 //     --create-project --managed` uses. That is not a convenience: the
 //     creating run is also what writes the project's creation fact for the
 //     project it created (Task 0.1, and Task 4.2's amount) and what sets up
@@ -89,7 +89,7 @@ type restoreOptions struct {
 }
 
 // newRestoreCmd is `fugaro restore NEW_PROJECT_ID ROOT` (D68: a top-level
-// verb of its own, beside fugaro init --create-project --managed).
+// verb of its own, beside fugaro setup --create-project --managed).
 func newRestoreCmd() *cobra.Command {
 	var o restoreOptions
 	cmd := &cobra.Command{
@@ -102,7 +102,7 @@ delete list. When it is lost — deleted, or closed — its ID stays reserved fo
 about thirty days, so this is a restore into a new project:
 
   - NEW_PROJECT_ID is the GCP project the installation is rebuilt in. It is
-    created through the same path fugaro init --create-project --managed uses,
+    created through the same path fugaro setup --create-project --managed uses,
     which is also what re-marks the project as managed and re-creates the
     deployer account with the rest of the installation, so neither is a
     separate step here. The repository's gcp_project: line is moved to it, so
@@ -576,11 +576,11 @@ func restoreApplyCloud(o cloudOptions) cloudOptions {
 // file. A selection with no path is the config published to the runs bucket:
 // it is read from a bucket and nothing may write it, so an installation whose
 // only config is the shared one is not a restore's to move — that is a first
-// run for this machine, which is fugaro init's job and not a weaker second
+// run for this machine, which is fugaro setup's job and not a weaker second
 // one of this command's.
 func restoreConfigPath(sel localcfg.Selection, lc *localcfg.Config) (string, error) {
 	if sel.Path == "" {
-		return "", userErr("%s's project config was read from the shared config in gs://fugaro-runs-%s (selected by %s), and a bucket object cannot be moved: run fugaro init --name %s in the new project to write this machine's own project config, then restore into it", lc.Name, lc.GCPProject, sel.From, lc.Name)
+		return "", userErr("%s's project config was read from the shared config in gs://fugaro-runs-%s (selected by %s), and a bucket object cannot be moved: run fugaro setup --name %s in the new project to write this machine's own project config, then restore into it", lc.Name, lc.GCPProject, sel.From, lc.Name)
 	}
 	return sel.Path, nil
 }
@@ -749,7 +749,7 @@ func restoreOldReadable(ctx context.Context, c *infra.Clients, gcpProject string
 //     firebase_project, firebase_api_key, token_signer) go the same way, and
 //     the operator's own settings in that block — the mode, the caps, the
 //     token ceiling, the grace — stay. Where the new backend lives is the
-//     operator's decision (fugaro init --firebase), not the restore's, and it
+//     operator's decision (fugaro update --firebase), not the restore's, and it
 //     is named in what is returned.
 //   - Every base_images entry whose reference names the old project's
 //     registry goes, and the kinds it dropped are named in what is returned.
@@ -782,7 +782,7 @@ func restoreConfig(lc, onDisk *localcfg.Config, newID string) (*localcfg.Config,
 		return nil, nil, userErr("the project config names runs_bucket %s, and an installation whose runs bucket is not the default %s for %s cannot be moved by a restore: the marker, the delete list and the shared config are all read from the default name, so point the config at %s or move runs_bucket yourself", got, want, lc.GCPProject, want)
 	}
 	if s := lc.Terraform.StateBucket; s != "" && s != "fugaro-tfstate-"+lc.GCPProject {
-		return nil, nil, userErr("the project config names terraform.state_bucket %s, which is a bucket of its own rather than %s's default: a restore cannot know where that bucket's successor should be. Remove terraform.state_bucket from the config (fugaro init derives fugaro-tfstate-%s) or move it yourself", s, lc.GCPProject, newID)
+		return nil, nil, userErr("the project config names terraform.state_bucket %s, which is a bucket of its own rather than %s's default: a restore cannot know where that bucket's successor should be. Remove terraform.state_bucket from the config (fugaro setup derives fugaro-tfstate-%s) or move it yourself", s, lc.GCPProject, newID)
 	}
 	var strandedBases []string
 	next := *onDisk
@@ -800,13 +800,13 @@ func restoreConfig(lc, onDisk *localcfg.Config, newID string) (*localcfg.Config,
 
 	var left []string
 	if len(strandedBases) > 0 {
-		left = append(left, fmt.Sprintf("the base images of %s's registry (kinds: %s) did not come across: each reference named the registry of the project that was lost, and the creating run pins this release's base images again (fugaro init --base, or --base-image KIND=IMAGE to point a kind at an image of your own)", onDisk.GCPProject, strings.Join(strandedBases, ", ")))
+		left = append(left, fmt.Sprintf("the base images of %s's registry (kinds: %s) did not come across: each reference named the registry of the project that was lost, and the creating run pins this release's base images again (fugaro update --base, or --base-image KIND=IMAGE to point a kind at an image of your own)", onDisk.GCPProject, strings.Join(strandedBases, ", ")))
 	}
 	if b := onDisk.Budget; b != nil {
 		nb := *b
 		if nb.RTDBURL != "" || nb.FirebaseProject != "" || nb.FirebaseAPIKey != "" || nb.TokenSigner != "" {
 			nb.RTDBURL, nb.FirebaseProject, nb.FirebaseAPIKey, nb.TokenSigner = "", "", "", ""
-			left = append(left, fmt.Sprintf("the budget backend of %s — its Realtime Database, its Firestore database, its restricted web API key and its token signer — did not come across: where the new one lives is your decision, so build it again with fugaro init --firebase (the mode, the caps and the token ceiling in the config are kept as they were), or leave it off if you want none", onDisk.GCPProject))
+			left = append(left, fmt.Sprintf("the budget backend of %s — its Realtime Database, its Firestore database, its restricted web API key and its token signer — did not come across: where the new one lives is your decision, so build it again with fugaro update --firebase (the mode, the caps and the token ceiling in the config are kept as they were), or leave it off if you want none", onDisk.GCPProject))
 		}
 		next.Budget = &nb
 	}
@@ -983,7 +983,7 @@ func (rr *restoreRun) writeConfig() error {
 	return nil
 }
 
-// createArgs is the creating path's flags, and nothing else: `fugaro init
+// createArgs is the creating path's flags, and nothing else: `fugaro setup
 // --create-project --managed` with this run's inputs. It is a function of its
 // own so that what the restore delegates to is one thing a reader (and a
 // test) can see whole.
@@ -1014,7 +1014,7 @@ func (rr *restoreRun) createArgs() []string {
 	return args
 }
 
-// create is the creating path: literally `fugaro init --create-project
+// create is the creating path: literally `fugaro setup --create-project
 // --managed`, built by the same constructor the command tree uses and run
 // with this run's stdin, stdout and stderr.
 //
@@ -1100,7 +1100,7 @@ func (rr *restoreRun) anchor(cmd *cobra.Command) error {
 //
 //   - The file already names newID: nothing to do, and nothing written.
 //   - The file has no line at all (an installation onboarded before the
-//     field, or one that never ran init --anchor): init's own editor adds it
+//     field, or one that never ran update --anchor): init's own editor adds it
 //     (setGCPProjectLine), so the line lands where init puts it.
 //   - The file names oldID, which is the case a restore is for.
 //
@@ -1267,7 +1267,7 @@ func restoreNotRestored(old *localcfg.Config, newID string) []string {
 		fmt.Sprintf("the runs that were in flight, and their RTDB counters: they ended with %s, and nothing here starts them again", old.GCPProject),
 		fmt.Sprintf("the spend history and the kill switch state: they lived in %s's Firestore database and RTDB, and a restore carries neither across", old.GCPProject),
 		fmt.Sprintf("the Firestore and RTDB application data of %s: the usage, the counters and every document the project held are gone, and this restore does not copy them", old.GCPProject),
-		"the Firestore database's location: the new project's is chosen once, by fugaro init --firebase, and it can never be changed afterwards (a database of another location is never adopted)",
+		"the Firestore database's location: the new project's is chosen once, by fugaro update --firebase, and it can never be changed afterwards (a database of another location is never adopted)",
 		"every secret value: the secrets are in the old project's Secret Manager and are never carried across. Set them again in the new project with fugaro secrets set, and treat the old values as disclosed if the old project was not deleted for you alone",
 		fmt.Sprintf("the plan files that were never stored: nothing reads a plan out of %s's state, and nothing here reads prior state either — the root is applied from zero", old.GCPProject),
 		fmt.Sprintf("%s: the owner's delete list is NOT carried across, and nothing this restore runs re-creates it. Write it again with fugaro allow-delete, and until you do, every delete and every replacement in %s is refused (D74)", managed.AllowDeleteObject, newID),

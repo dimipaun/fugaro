@@ -138,7 +138,7 @@ func TestRunLaunchesTheVariantJob(t *testing.T) {
 }
 
 // TestRunTokenVariantJobMissingNeverFallsBackToDefault: a repository may
-// choose a named account whose job variant was never deployed (fugaro init
+// choose a named account whose job variant was never deployed (the converge
 // --repo not yet re-run); the launch must fail outright, never silently
 // reach the default account's job (carry-forward (b), Task 4/6 review).
 func TestRunTokenVariantJobMissingNeverFallsBackToDefault(t *testing.T) {
@@ -306,7 +306,7 @@ func TestFollowUpTokenOverrideRefusedWhenAuthNotOAuth(t *testing.T) {
 
 // TestFollowUpTokenOverrideRefusedWhenVariantJobMissing: the override never
 // falls back to the default job when the new account's variant was never
-// deployed (fugaro init --repo not yet re-run) — the same carry-forward
+// deployed (fugaro update --repo not yet re-run) — the same carry-forward
 // rule TestRunTokenVariantJobMissingNeverFallsBackToDefault pins for a
 // first run.
 func TestFollowUpTokenOverrideRefusedWhenVariantJobMissing(t *testing.T) {

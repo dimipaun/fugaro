@@ -49,7 +49,7 @@ func refreshBase(lc *localcfg.Config, kind, ver string) (ref string, current boo
 		return "", false, nil
 	}
 	if !isManaged(cur, host, kind, owner) {
-		return "", false, userErr("base_images.%s is %s: not a release image fugaro init pinned, and fugaro image refresh never replaces one", kind, pluginwire.Printable(cur))
+		return "", false, userErr("base_images.%s is %s: not a release image the converge pinned, and fugaro image refresh never replaces one", kind, pluginwire.Printable(cur))
 	}
 	if baseIsCurrent(cur, host, kind, owner, ver) {
 		return cur, true, nil

@@ -27,7 +27,7 @@ import (
 // whether the secret has a version yet, so this is a note for the owner and
 // never a refusal (design docs/design/project-centric.md §6.1; the gateway
 // refuses such a call, by name, when no key is stored).
-const anthropicKeyNeeded = "needs a stored Anthropic API key: a pinned model goes direct to Anthropic, and the job mounts the key whenever the anthropic-api-key secret has a version (store one with `fugaro secrets set anthropic-api-key` and rerun `fugaro init --repo` if none does), or route the model through a provider"
+const anthropicKeyNeeded = "needs a stored Anthropic API key: a pinned model goes direct to Anthropic, and the job mounts the key whenever the anthropic-api-key secret has a version (store one with `fugaro secrets set anthropic-api-key` and rerun `fugaro update --repo` if none does), or route the model through a provider"
 
 // anthropicKeyNoEnforce is the same note when the budget isn't enforcing.
 // Only enforce routes a call to a provider (config.CheckProviderGateway
@@ -36,11 +36,11 @@ const anthropicKeyNeeded = "needs a stored Anthropic API key: a pinned model goe
 // exists and accounts for the spend but never routes to a provider, and under
 // off there is no gateway at all. The sharper fix, too: with no route to a
 // provider there is nothing to route around.
-const anthropicKeyNoEnforce = "needs a stored Anthropic API key: the budget isn't enforcing, so nothing routes a call to a provider (observing only accounts for the spend, and off has no gateway at all), and every call goes to Anthropic whatever the pins are (store one with `fugaro secrets set anthropic-api-key` and rerun `fugaro init --repo`)"
+const anthropicKeyNoEnforce = "needs a stored Anthropic API key: the budget isn't enforcing, so nothing routes a call to a provider (observing only accounts for the spend, and off has no gateway at all), and every call goes to Anthropic whatever the pins are (store one with `fugaro secrets set anthropic-api-key` and rerun `fugaro update --repo`)"
 
 // needsAnthropicKey is config.AnthropicKeyNeeded over the effective mode --
 // the project's ceiling merged with the file, exactly as the runner reads it.
-// The one place the CLI decides it, so init's hidden prompt, init --repo's
+// The one place the CLI decides it, so init's hidden prompt, update --repo's
 // "still missing" list and validate's note cannot disagree.
 //
 // The routes are the run's own (layerRoutes, over the layer this file resolved
@@ -60,7 +60,7 @@ func needsAnthropicKey(lc *localcfg.Config, cfg *config.Config, repo string) boo
 }
 
 // ceilingLayer is the owner's ceiling as the runner builds it from the job
-// environment init --repo sets from the project config: an "off" mode is no
+// environment update --repo sets from the project config: an "off" mode is no
 // mode at all.
 func ceilingLayer(lc *localcfg.Config) policy.Layer {
 	var l policy.Layer
@@ -91,7 +91,7 @@ func clampWarning(ig policy.Ignored) config.Problem {
 	return config.Problem{Path: runner.PolicyKeyPath(ig.Key), Message: msg}
 }
 
-// ceilingText is the ceiling in one line, for init --repo.
+// ceilingText is the ceiling in one line, for update --repo.
 func ceilingText(l policy.Layer) string {
 	var parts []string
 	if l.PerRunUSD > 0 {
@@ -145,7 +145,7 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 	// The day cap is the runner's to enforce; the database never sees it.
 	if cfg.Budget != nil && cfg.Budget.PerDayUSD > 0 {
 		warnings = append(warnings, config.Problem{Path: "budget.per_day_usd",
-			Message: "per_day_usd is enforced by the runner against this repository's day counter only while the project has the shared budget (init --firebase, mode observe or enforce); on a project without it nothing enforces it. A lower RTDB cap wins"})
+			Message: "per_day_usd is enforced by the runner against this repository's day counter only while the project has the shared budget (update --firebase, mode observe or enforce); on a project without it nothing enforces it. A lower RTDB cap wins"})
 	}
 	if lc == nil || lc.Name != cfg.Project {
 		// No ceiling to compare with, but a committed enforce is the
@@ -1088,7 +1088,7 @@ func switchListFilteredClause(sw *config.RoutingClaude, model, repo string, own,
 		// filter dropped: there is nothing to point the operator at.
 		return ""
 	}
-	return fmt.Sprintf(". The entry that claims it is %s, which serves %s: this repository's run does not carry that entry, because its allow_data_to (%s) does not name %s — add %s to it in the project config and run fugaro init --repo for this repository (the list a run reads is built into its job at deploy time)", entry, sent, `"`+strings.Join(p.AllowDataTo, `", "`)+`"`, repo, repo)
+	return fmt.Sprintf(". The entry that claims it is %s, which serves %s: this repository's run does not carry that entry, because its allow_data_to (%s) does not name %s — add %s to it in the project config and run fugaro update --repo for this repository (the list a run reads is built into its job at deploy time)", entry, sent, `"`+strings.Join(p.AllowDataTo, `", "`)+`"`, repo, repo)
 }
 
 // switchListPrefix is config.CheckRouting's own path for one entry of the

@@ -137,7 +137,7 @@ func TestInitPublishConfigAsLauncherIsRefused(t *testing.T) {
 	}
 }
 
-// A plain `fugaro init` run (not --publish-config) only warns when the
+// A plain converge (not --publish-config) only warns when the
 // shared config publish is forbidden: the installation itself still
 // succeeds, exit 0 (initRun.publishSharedConfig, init.go).
 func TestInitWarnsWhenSharedConfigPublishIsForbidden(t *testing.T) {
@@ -204,7 +204,7 @@ func TestInitPublishFailureWarnsAndSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a publish failure must not fail init: %v", err)
 	}
-	if !strings.Contains(out, "warning: could not publish the shared config: ") || !strings.Contains(out, "teammates will need fugaro init until it is published") {
+	if !strings.Contains(out, "warning: could not publish the shared config: ") || !strings.Contains(out, "teammates will need fugaro setup until it is published") {
 		t.Errorf("no warning:\n%s", out)
 	}
 }
@@ -614,11 +614,18 @@ func TestInitPublishFromACodingAgentSession(t *testing.T) {
 			if hint := strings.Contains(err.Error(), "you can unset "+initflow.IDEMarker); hint != (marker == initflow.IDEMarker) {
 				t.Errorf("IDE hint present = %v for %s: %v", hint, marker, err)
 			}
-			var buf strings.Builder
-			(&initRun{w: &buf}).publishSharedConfig(t.Context(), publishable(t))
-			want := "note: the shared config was not published: " + refusal + "; run fugaro init --publish-config in your own terminal\n"
-			if buf.String() != want {
-				t.Errorf("note:\n%q\nwant:\n%q", buf.String(), want)
+			// The note is printed by a run of one of the two doors, and it
+			// names the door the reader is at: --publish-config is neither
+			// door's alone (it is in neither foreign list), so both doors
+			// reach this line, and a hardcoded one would send half of them to
+			// the command they are not running (task W2.1).
+			for _, door := range []string{"setup", "update"} {
+				var buf strings.Builder
+				(&initRun{w: &buf, o: &initOptions{door: door}}).publishSharedConfig(t.Context(), publishable(t))
+				want := "note: the shared config was not published: " + refusal + "; run fugaro " + door + " --publish-config in your own terminal\n"
+				if buf.String() != want {
+					t.Errorf("note (%s):\n%q\nwant:\n%q", door, buf.String(), want)
+				}
 			}
 			if _, err := os.Stat(sharedObjectPath(dir)); !os.IsNotExist(err) {
 				t.Errorf("published from an agent's session: %v", err)

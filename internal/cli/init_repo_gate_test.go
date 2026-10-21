@@ -27,7 +27,7 @@ func noCloudTouched(t *testing.T, r *initRig, what string) {
 	}
 }
 
-// init --repo on its own is the converge's hostile-checkout gate too: a
+// update --repo on its own is the converge's hostile-checkout gate too: a
 // repository the local config does not list is never onboarded by one
 // command with --yes, in a pipe, with --json or by an agent; it takes the
 // typed owner/name, or --onboard-repo in a terminal with no agent marker.
@@ -70,6 +70,38 @@ func TestInitRepoAloneIsBehindTheHostileGate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The gate's typed route names the door the reader is at. The route is a
+// command line the reader is asked to run in their own terminal, and it is
+// reached from either door: a `fugaro setup --repo` run in an agent's session
+// (or any run that cannot ask) was told to run `fugaro update --repo`, the one
+// command it is not running. Task W2.1: the reader's own door, and nothing
+// else, appears in the line.
+func TestTheHostileGatesTypedRouteNamesTheReadersDoor(t *testing.T) {
+	for _, door := range []string{"setup", "update"} {
+		t.Run(door, func(t *testing.T) {
+			_, dir := hostileRepoRig(t, "https://github.com/acme/hostile.git")
+			t.Setenv("CLAUDECODE", "1")
+			out, errOut, err := executeStdin(t, "", door, "--repo", "--github-app-id", "42", "--yes", dir)
+			all := out + errOut + ErrorText(err)
+			if !strings.Contains(all, " "+door+" --repo and type ") {
+				t.Errorf("the typed route does not name fugaro %s --repo, the door this run is:\n%s", door, all)
+			}
+			if strings.Contains(all, "run fugaro "+otherDoorName(door)+" --repo") {
+				t.Errorf("the typed route names the other door:\n%s", all)
+			}
+		})
+	}
+}
+
+// otherDoorName is the door that is not this one, for the tests that hold a
+// line to the reader's own door by name.
+func otherDoorName(door string) string {
+	if door == "setup" {
+		return "update"
+	}
+	return "setup"
 }
 
 // pastGate: the engine went on beyond the gate to its own first check (this
@@ -134,11 +166,11 @@ func TestOnboardRepoRefusedInAnAgentSession(t *testing.T) {
 	}
 	t.Setenv("CLAUDECODE", "")
 	oi := originInfo{Repo: "acme/app", Host: "github.com"}
-	if lf := onboardLeft(oi); !strings.Contains(strings.Join(lf.Commands, " ")+lf.Text, "init --onboard-repo") {
+	if lf := onboardLeft(oi, "setup"); !strings.Contains(strings.Join(lf.Commands, " ")+lf.Text, "setup --onboard-repo") {
 		t.Errorf("outside an agent session the flag line is the route: %+v", lf)
 	}
 	t.Setenv("CLAUDECODE", "1")
-	lf := onboardLeft(oi)
+	lf := onboardLeft(oi, "setup")
 	if strings.Contains(strings.Join(lf.Commands, " ")+lf.Text, "--onboard-repo") || !strings.Contains(lf.Text, "your own terminal window") || len(lf.Commands) != 1 {
 		t.Errorf("an agent session is handed the flag: %+v", lf)
 	}
@@ -155,7 +187,7 @@ func TestHostileOriginIsTruncatedInDetail(t *testing.T) {
 }
 
 // TestInitRepoRefusesCatalogSwitches (price-catalog plan Task 4 step 2): a
-// route that sets require_zdr or price_policy is refused by fugaro init
+// route that sets require_zdr or price_policy is refused at the converge
 // --repo before any cloud call, because the job it would deploy carries
 // FUGARO_MODEL_PROVIDERS with a key no release reads yet, and an older
 // runner fails the run at bootstrap on it. The same command with the switch
@@ -182,7 +214,7 @@ func TestInitRepoRefusesCatalogSwitches(t *testing.T) {
 	}
 	noCloudTouched(t, r, "a route with require_zdr set")
 	for _, want := range []string{
-		"fugaro init --repo refuses to deploy acme/sandbox's provider openrouter",
+		"fugaro update --repo refuses to deploy acme/sandbox's provider openrouter",
 		"require_zdr or price_policy",
 		"fugaro " + catalogSince,
 		"model_prices",

@@ -132,7 +132,7 @@ func TestInitResourceManagerNeverPropagates(t *testing.T) {
 	r.su.Propagation = 100
 	fakeTerminal(t)
 	_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only")
-	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "rerun fugaro init") {
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "rerun fugaro setup") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 }

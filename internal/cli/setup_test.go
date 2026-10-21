@@ -205,6 +205,107 @@ func TestNoDoorsHelpOffersAFlagItRefuses(t *testing.T) {
 	}
 }
 
+// TestNoDoorsFlagHelpNamesTheOtherDoor: W2.1's rule — a line names the door
+// the reader is at — on the *flag help* of both doors, which nothing else
+// reads. A usage string is printed by both doors from the one flag set, so a
+// sentence inside it that names a command has to name the door the reader is
+// at, or it tells half its readers to switch commands for no reason.
+//
+// `--yes` is where this went wrong: one sentence interpolated the door for its
+// first half ("fugaro setup applies nothing, --yes included") and hardcoded
+// "update" for the second ("except update --anchor"), so setup's own help
+// contradicted setup's Long two paragraphs above it, on the same screen. Both
+// doors accept --anchor and run it through the same door-independent path
+// (runAnchor, before any door-specific step), so the exception is the reader's
+// own door, not update's.
+func TestNoDoorsFlagHelpNamesTheOtherDoor(t *testing.T) {
+	other := map[string]string{"setup": "update", "update": "setup"}
+	for door, build := range doorCommands {
+		cmd := build()
+		cmd.Flags().VisitAll(func(f *pflag.Flag) {
+			if f.Hidden {
+				// A hidden flag is the other door's, and its usage text is
+				// never printed: the refusal that names it is the door's own
+				// sentence, not this.
+				return
+			}
+			for _, pattern := range []string{"fugaro " + other[door], other[door] + " --"} {
+				if strings.Contains(f.Usage, pattern) {
+					t.Errorf("fugaro %s's --%s help names the other door (%q), and the reader is at %s:\n%s", door, f.Name, pattern, door, f.Usage)
+				}
+			}
+		})
+		// The positive half, on the clause that was wrong: the exception names
+		// this door, and the test above only says the other one is absent.
+		if f := cmd.Flags().Lookup("yes"); f == nil {
+			t.Errorf("fugaro %s has no --yes to hold to its own door", door)
+		} else if !strings.Contains(f.Usage, door+" --anchor") {
+			t.Errorf("fugaro %s's --yes help does not name its own door in the --anchor exception, which both doors accept:\n%s", door, f.Usage)
+		}
+	}
+}
+
+// TestTheDoorIndependentRefusalsNameTheReadersDoor: two refusals in
+// initOptions.check live outside any door branch -- it runs for both doors, and
+// the flags they speak about are declared on both (setupDoor.foreign is
+// --forget alone). What those flags want is the --repo converge, or --firebase,
+// and both doors take those, so the sentence has to name the door the reader is
+// at: a first run told to type `fugaro update --repo` is sent to the other door
+// for a command its own would have run. This is the check() half of
+// TestNoDoorsFlagHelpNamesTheOtherDoor, on the strings rather than the help.
+//
+// check() is called directly, not through the command line: it is pure, it runs
+// before any input is gathered or any client built, so a regression here fails
+// as a wrong sentence rather than as a test that reaches for the cloud.
+func TestTheDoorIndependentRefusalsNameTheReadersDoor(t *testing.T) {
+	other := map[string]string{"setup": "update", "update": "setup"}
+	for _, tc := range []struct {
+		name string
+		flag string
+		o    *initOptions
+	}{{
+		name: "--no-build, --allow-job-delete and --retire",
+		flag: "--no-build",
+		o:    &initOptions{noBuild: true},
+	}, {
+		name: "--allow-job-delete",
+		flag: "--allow-job-delete",
+		o:    &initOptions{allowJobDelete: true},
+	}, {
+		name: "--retire",
+		flag: "--retire",
+		o:    &initOptions{retire: true},
+	}, {
+		name: "--budget-mode",
+		flag: "--budget-mode",
+		o:    &initOptions{budgetMode: "observe"},
+	}, {
+		name: "--budget-admin",
+		flag: "--budget-admin",
+		o:    &initOptions{budgetAdmins: []string{"user:someone@example.com"}, budgetAdminsChanged: true},
+	}} {
+		for door := range other {
+			o := *tc.o
+			o.door = door
+			err := o.check()
+			if err == nil {
+				t.Errorf("fugaro %s %s: check() accepted it, want a refusal naming the door", door, tc.flag)
+				continue
+			}
+			got := err.Error()
+			if !strings.Contains(got, tc.flag) {
+				t.Errorf("fugaro %s %s: the refusal does not name the flag:\n%s", door, tc.flag, got)
+			}
+			if !strings.Contains(got, "fugaro "+door+" ") {
+				t.Errorf("fugaro %s %s: the refusal does not name the reader's door:\n%s", door, tc.flag, got)
+			}
+			if strings.Contains(got, "fugaro "+other[door]+" ") {
+				t.Errorf("fugaro %s %s: the refusal names the other door:\n%s", door, tc.flag, got)
+			}
+		}
+	}
+}
+
 // TestSetupRefusesAnUpdateOnlyFlag: a flag that only makes sense once an
 // installation exists is `fugaro update`'s, and `fugaro setup` — the first
 // run — refuses it by name rather than ignoring it. `--forget` is that flag:

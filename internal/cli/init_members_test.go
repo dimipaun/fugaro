@@ -240,7 +240,7 @@ func TestDefaultUserLookupNeverRunsWithFakeAuth(t *testing.T) {
 	}
 }
 
-// init --firebase on a first run gets the same default (its first apply is
+// update --firebase on a first run gets the same default (its first apply is
 // the installation), unless the installation exists.
 func TestFirstFirebaseRunDefaultsMembers(t *testing.T) {
 	r := newFBRig(t)

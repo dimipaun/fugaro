@@ -102,14 +102,14 @@ func (e *initEngine) defaultMembers(ctx context.Context) error {
 	}
 	email, err := authenticatedUser(ctx, e.lc)
 	if err != nil {
-		why := "init cannot tell who you are (" + oneLineCLI(err.Error()) + ")"
+		why := "the converge cannot tell who you are (" + oneLineCLI(err.Error()) + ")"
 		if errors.Is(err, errServiceAccount) {
-			why = "init is running with a service account's credentials, which is not a person to launch runs"
+			why = "the converge is running with a service account's credentials, which is not a person to launch runs"
 		}
 		me := "user:<your-email>"
 		return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Installation, Kind: initflow.LeftCommand,
 			Text:     why + ": without a launcher and an operator nobody can run anything; name who holds those roles, then rerun",
-			Commands: []string{selfCommand() + " init --launcher " + me + " --operator " + me}}}
+			Commands: []string{selfCommand() + " " + e.r.o.doorName() + " --launcher " + me + " --operator " + me}}}
 	}
 	member := "user:" + email
 	o.launchers, o.operators = []string{member}, []string{member}
