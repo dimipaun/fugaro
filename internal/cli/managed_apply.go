@@ -536,7 +536,13 @@ func writeImpersonationFile(impersonationURL string) (string, func(), error) {
 	none := func() {}
 	path, err := adcFile()
 	if err != nil {
-		return "", none, err
+		// A user error (exit 1), as main's own copy of this lookup was: where
+		// the credentials are and whether they exist is the operator's
+		// environment, not a cloud failure. Without the wrap, this error
+		// reaches managedApplyErr's default arm, which reports exit 2 and the
+		// wrong reason (a terraform failure) for a machine that merely has no
+		// ADC on it.
+		return "", none, userErr("%v", safetext.FieldErr(err))
 	}
 	src, err := readBounded(path)
 	if err != nil {
@@ -559,6 +565,19 @@ func writeImpersonationFile(impersonationURL string) (string, func(), error) {
 	if err != nil {
 		return "", none, err
 	}
+	// The modes below are the POSIX half of what protects this file, and 0600
+	// and 0700 are deliberately not claimed to protect it anywhere else: on
+	// Windows there are no POSIX modes, Go's os.Chmod there sets the read-only
+	// attribute and nothing more, so what keeps another local user out of this
+	// file is the ACL %TEMP% carries and the fact that it is removed when the
+	// apply ends. That is weaker than the Linux answer, and it is not a
+	// weakening this branch may decide: **D12 (file modes) is open** in
+	// docs/windows-cli/reconciliation.md, the Windows CLI gets its release in
+	// **Slice 5**, and docs/windows-cli/README.md records that a Windows
+	// release must not ship without that decision. The file is the operator's
+	// refresh token wrapped for the deployer — the one secret this command
+	// writes — and no code path may grow a second copy of it on Windows before
+	// D12 is answered.
 	dir, err := os.MkdirTemp(credentialDir, "fugaro-deployer-")
 	if err != nil {
 		return "", none, userErr("making the credential file's directory: %v", safetext.FieldErr(err))
@@ -583,28 +602,6 @@ func writeImpersonationFile(impersonationURL string) (string, func(), error) {
 		return "", none, userErr("writing %s: %v", safetext.Field(out), safetext.FieldErr(err))
 	}
 	return out, remove, nil
-}
-
-// adcFile is the file Application Default Credentials come from: what
-// GOOGLE_APPLICATION_CREDENTIALS names, else gcloud's well-known one.
-// (init_project.go's adcInfo reads the same file for its type; this is the
-// path, which that one does not return.)
-func adcFile() (string, error) {
-	if p := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); p != "" {
-		return p, nil
-	}
-	dir := os.Getenv("CLOUDSDK_CONFIG")
-	if dir == "" {
-		if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
-			dir = filepath.Join(x, "gcloud")
-		} else if h, err := os.UserHomeDir(); err == nil {
-			dir = filepath.Join(h, ".config", "gcloud")
-		}
-	}
-	if dir == "" {
-		return "", userErr("no Application Default Credentials: GOOGLE_APPLICATION_CREDENTIALS is unset and there is no home directory to look in (run gcloud auth application-default login)")
-	}
-	return filepath.Join(dir, "application_default_credentials.json"), nil
 }
 
 // replaceEnv is parent with key set to value: the last one wins, as in exec,

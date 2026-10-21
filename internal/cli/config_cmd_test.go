@@ -795,3 +795,7 @@ func TestConfigInitDoesNotRefuseInAnAgentSession(t *testing.T) {
 		t.Fatalf("refused in an agent session: out %q, err %v", out, err)
 	}
 }
+
+// TestConfigInitWriteRefusesASymlinkedPath lives in config_init_unix_test.go:
+// it plants a symlink, which needs os.Symlink and the O_NOFOLLOW half of the
+// refusal, so it carries that file's unix build tag.

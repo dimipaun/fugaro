@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -338,19 +338,9 @@ func sanitized(s string) string {
 // and quota project. It reads the one file ADC would (GOOGLE_APPLICATION_CREDENTIALS,
 // else gcloud's well-known one) and never keeps or prints a path or a key.
 func adcInfo() (kind, quota string) {
-	path := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
-	if path == "" {
-		dir := os.Getenv("CLOUDSDK_CONFIG")
-		if dir == "" {
-			if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
-				dir = filepath.Join(x, "gcloud")
-			} else if h, err := os.UserHomeDir(); err == nil {
-				dir = filepath.Join(h, ".config", "gcloud")
-			}
-		}
-		if dir != "" {
-			path = filepath.Join(dir, "application_default_credentials.json")
-		}
+	path, err := adcFilePath(os.Getenv, runtime.GOOS)
+	if err != nil {
+		return "", ""
 	}
 	b, err := readBounded(path)
 	if err != nil {

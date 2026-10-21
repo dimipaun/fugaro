@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -144,10 +143,12 @@ func (r *run) readSessionFile(id string) ([]byte, error) {
 	if !li.Mode().IsRegular() {
 		return nil, fmt.Errorf("the session file is not a regular file (%s)", li.Mode().Type())
 	}
-	// O_NOFOLLOW and O_NONBLOCK: a symlink or FIFO swapped in after the
-	// Lstat fails the open, or at least never blocks it; SameFile below
-	// refuses anything that isn't the file Lstat saw.
-	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	// openRootNoFollow passes O_NOFOLLOW and O_NONBLOCK where the platform
+	// has them: a symlink or FIFO swapped in after the Lstat fails the open,
+	// or at least never blocks it; SameFile below refuses anything that
+	// isn't the file Lstat saw. (openfile_other.go states what the Windows
+	// half of that pair loses.)
+	f, err := openRootNoFollow(root, name)
 	if err != nil {
 		return nil, fmt.Errorf("opening the session file: %w", err)
 	}
@@ -283,6 +284,15 @@ func (r *run) restoreSession(ctx context.Context, prev *runstore.Store, head str
 // writeSessionFile writes data as session id's file through an os.Root on
 // HOME, creating the project directory 0700 and the file 0600, and never
 // replacing a file (or following a symlink) already there.
+//
+// The modes are the POSIX half of what keeps the transcript to its owner — it
+// is redacted, but it is still this run's own turns — and they are not claimed
+// to protect it on Windows: Go's os.Chmod there sets the read-only attribute
+// and nothing else, so what keeps another local user out is the ACL of HOME.
+// **D12 (file modes) is open** in docs/windows-cli/reconciliation.md, the
+// Windows CLI gets its release in **Slice 5**, and docs/windows-cli/README.md
+// records that a Windows release must not ship without that decision. The long
+// form of this note is at the deployer credential in internal/cli/managed_apply.go.
 func (r *run) writeSessionFile(id string, data []byte) error {
 	home, rel, err := r.sessionDir()
 	if err != nil {

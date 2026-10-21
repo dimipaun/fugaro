@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -86,22 +87,19 @@ func dirName(ctx context.Context) string {
 	return sanitiseName(filepath.Base(dir))
 }
 
-// adcPath is where the application default credentials are: the file
-// GOOGLE_APPLICATION_CREDENTIALS names, else gcloud's well-known one. Tests
+// adcPath is where the application default credentials are, through the one
+// builder the CLI shares (adcpath.go's adcFilePath: F29 — this copy had no
+// $XDG_CONFIG_HOME step where the other two had one, so the wizard and the
+// rest of the CLI disagreed whenever that variable was set; the step itself
+// was wrong on every platform, because gcloud reads $CLOUDSDK_CONFIG and no
+// XDG variable, and all three put the file under `.config` on Windows). Tests
 // replace it.
 var adcPath = func() string {
-	if p := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); p != "" {
-		return p
+	p, err := adcFilePath(os.Getenv, runtime.GOOS)
+	if err != nil {
+		return ""
 	}
-	dir := os.Getenv("CLOUDSDK_CONFIG")
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		dir = filepath.Join(home, ".config", "gcloud")
-	}
-	return filepath.Join(dir, "application_default_credentials.json")
+	return p
 }
 
 // adcQuotaProject is the quota project the application default credentials

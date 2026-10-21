@@ -30,3 +30,19 @@ func openNoFollow(path string) (*os.File, error) {
 	}
 	return os.NewFile(uintptr(fd), path), nil
 }
+
+// openRootNoFollow is openNoFollow for a path inside an os.Root (session.go's
+// readSessionFile). It passes the same flags, but the symlink half of them is
+// a pass-through rather than the guard here: Go's os.Root resolves the path
+// itself, refusing a link that leaves the root and following one that stays
+// inside it (os/root_unix.go's checkSymlink), whatever the caller passes — so
+// what refuses a swapped-in link at this call site is the caller's own Lstat,
+// and what this adds is O_NONBLOCK (a FIFO swapped in returns at once) plus
+// the fstat the caller makes on the handle. On Windows os.Root is the stricter
+// of the two: it opens with O_NOFOLLOW_ANY and reports any symlink as an error
+// (os/root_windows.go's openat). (The two helpers are twins by comment rather
+// than by call: the root form cannot be spelled with syscall.Open, which knows
+// nothing of the root.)
+func openRootNoFollow(rt *os.Root, name string) (*os.File, error) {
+	return rt.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+}
