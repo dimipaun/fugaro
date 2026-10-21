@@ -14,14 +14,20 @@ reconciliation is written to the decisions in §4.
 **Owner: Dimi Paun. Date: 2026-10-21.** The spec is the owner's own text of 2026-10-20, copied
 byte for byte into [spec.md](spec.md); it needed no typo fix (see [README.md](README.md)).
 
-**Revised 2026-10-21, before any review, and the revision is visible rather than folded in.** A
-second reading of the rules found that the device node's new fields **need no rules generation**
-(§F29, which is written at the end of §2 for that reason), and it corrected **F27**'s count of the
-pins that read `docs/mobile/`. The glossary's rules-generation entry, D235 and D236 read accordingly,
-and [implementation-plan.md](implementation-plan.md)'s **P2** is written against §F29 rather than
-against a generation bump. **No decision number moved**: D221–D236 are the same sixteen questions,
-and the correction is about what one part of the plan costs — a deploy the owner would otherwise
-have had to run on every installation.
+**Revised 2026-10-21, twice, and the revisions are visible rather than folded in.** A second reading
+of the rules found that the device node's new fields **need no rules generation** (§F29, which is
+written at the end of §2 for that reason), and it corrected **F27**'s count of the pins that read
+`docs/mobile/`. The glossary's rules-generation entry, D235 and D236 read accordingly, and
+[implementation-plan.md](implementation-plan.md)'s **P2** is written against §F29 rather than against
+a generation bump. **A review then found §0.4 still carrying the old counts** and two claims of its
+own that the tree contradicts — `docs/central-orchestrator/` *is* named by a `_test.go`
+(`internal/cli/docs_coordinator_test.go`, which names it as a string the coordinator's README must
+carry, not as a document it reads) — so §0.4 now says what is true and cites the same eight pins as
+§F27. The review's findings against the plan (§9's reading of check 110 and of 112, P4's reviewer
+tier against the plan's own counts, P0's citation rule) are fixed in place there, and none of them
+changes a finding, a decision or a part. **No decision number moved**: D221–D236 are the same sixteen
+questions, and the corrections are about what one part of the plan costs — a deploy the owner would
+otherwise have had to run on every installation — and about what the plan's citations actually say.
 
 **One thing this document is not.** It is not a second opinion about the mobile work. The app's
 pairing, its device node and its allowlist are **already answered by the owner** — D165, D166 and
@@ -71,13 +77,18 @@ than quietly worked around:
    `projectpolicy.Policy.AllowRepos`. `fugaro pair` is **planned and unbuilt**
    (`docs/mobile/implementation-plan.md` Task P6.6, approved 2026-10-18), as are its files
    `internal/cli/pair.go` and `internal/budget/token/device.go`.
-4. **`docs/central-orchestrator/` has no test at all.** No `_test.go` in the module names the
-   folder, which is why §0.1's provenance rests on the documents' own words. `docs/mobile/` **is**
-   pinned — five test files in `internal/cli/` read it, from
-   `internal/cli/docs_mobile_plan_test.go` to `internal/cli/docs_mobile_push_test.go` — and the
+4. **`docs/central-orchestrator/` has no test of its own.** **No test reads a file under it** —
+   `internal/cli/docs_coordinator_test.go` is the only `_test.go` that names the folder at all, and
+   what it names is the **string** `docs/central-orchestrator/README.md` as something the
+   *coordinator's* README has to carry, not a document it opens — which is why §0.1's provenance
+   rests on the documents' own words. `docs/mobile/` **is** pinned: **eight** tests in
+   `internal/cli`'s `docs_*_test.go` family name it, **four of them named for it**
+   (`docs_mobile_plan_test.go`, `docs_mobile_checks_review_test.go`, `docs_mobile_push_test.go`,
+   `docs_mobile_mailbox_plan_test.go`) and four quoting it beside their own folder's claims. The
    numbers register is pinned by `internal/cli/docs_coordinator_test.go` and
    `internal/cli/docs_voice_switch_test.go`. **`docs/mobile-auth/` has no pin yet**, and P0 of the
-   plan is the part that gives it one.
+   plan is the part that gives it one. (This paragraph and §F27 are the same count; the earlier
+   revision of both got the number wrong.)
 5. **The provider guidance cannot be read from here.** Expo SDK 58's options for Google (Credential
    Manager versus the Google Sign-In SDK), for Microsoft (browser OAuth) and for Apple
    (`expo-apple-authentication` or Sign in with Apple JS) are **platform facts this container

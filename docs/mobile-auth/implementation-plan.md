@@ -66,9 +66,10 @@ sentence they have to trust.
 Five dependencies force the order, and nothing else in it is arbitrary:
 
 1. **Nothing can be built on documents nobody has pinned.** Every plan folder in this tree guards
-   its own documents with a test — the coordinator's `internal/cli/docs_coordinator_test.go` is the
-   nearest model and says so about itself — and this folder has none (reconciliation §F27). That is
-   **P0**, and it is the only part that depends on nothing.
+   its own documents with a test — `docs/central-orchestrator/implementation-plan.md` names the two
+   models to follow, *"`internal/cli/docs_coordinator_test.go` and
+   `internal/cli/docs_windows_cli_test.go`, both on `main`"* — and this folder has none
+   (reconciliation §F27). That is **P0**, and it is the only part that depends on nothing.
 2. **Nothing can be written to the node until the entry's shape is decided.** The resolver (P1) is
    a pure function: no I/O, no credential, no database. It decides who is an admin, so it is the
    part that has to be right before anything calls it.
@@ -182,26 +183,63 @@ six section headings, and the absence of any decision number, any finding number
 folder's own vocabulary in it; **the four documents exist** and the index's status line says *"plan
 only; no code is implemented"*; **the decisions are D221–D236**, contiguous, each written as a
 `### D<n> — …` heading with its **Recommendation** first and its **Alternative**/cost after it;
-**the parts are P0–P6**, contiguous and in order; and **every path the reconciliation and the plan
-cite resolves on disk**, with the paths either marks **new** excused **by name and only while they
-do not exist**. **What the guard does not hold is stated rather than implied**: a symbol named
-beside a citation without the possessive form is outside it, exactly as the coordinator plan records
-of its own pair of checks; and the guard reads **this folder only** — it makes no claim about
-`docs/mobile/`, `docs/central-orchestrator/` or the register, which their own pins hold.
+**the parts are P0–P6**, contiguous and in order; and **the paths the reconciliation and the plan
+cite resolve on disk**, under the rule below. **What the guard does not hold is stated rather than
+implied**: a symbol named beside a citation without the possessive form is outside it, exactly as the
+coordinator plan records of its own pair of checks; and the guard reads **this folder only** — it
+makes no claim about `docs/mobile/`, `docs/central-orchestrator/` or the register, which their own
+pins hold.
 **One test is deliberately unusual**: a scan that no line of this folder carries a Firebase API key
 shape (`AIza…`), a PEM header, or a reverse-DNS identity literal — because this folder is *about*
 Firebase configuration and the next person to edit it is the one most likely to paste a real one in.
 
+**The citation rule, written out, because it cannot be "every path resolves".** Not everything that
+looks like a path is one: these documents cite **Realtime Database node paths** and an **IAM role**,
+which are not files at all, and a **dependency directory** the repository never carries. So the check
+has a **filter** and an **excuse list**, and both are part of the part:
+
+- **The filter: a citation is a path only if it is a backticked single token, contains `/`, and its
+  first segment is a directory of *this* repository** — and that list is **read from the top level of
+  the tree at run time** rather than written into the guard (`docs/`, `internal/`, `mobile/`,
+  `shared/`, `schemas/`, `deploy/` and their siblings, `.github/` among them), so a directory added
+  later is covered without an edit and a directory renamed breaks the check loudly. That is what
+  tells a file from the two things these documents cite constantly and no guard can open:
+  **Realtime Database node paths** (`config/admin`, `config/admin/devices`, `config/policy/shared`)
+  and **IAM roles** (`roles/firebasedatabase.admin`) — neither of which starts with a repository
+  directory. Anything with a space, a `|`, a `—` or a glob in it is prose, not a citation.
+- **The excuse list, by name, each entry with its reason, and each entry required to be *stale-able*.**
+  **Three** paths this work will create (`internal/cli/docs_mobile_auth_test.go` — this part;
+  `internal/mobileauth/` — P1; `docs/mobile-auth/provider-sign-in.md` — P6) and four that another
+  approved, unbuilt task owns (`internal/cli/pair.go` and `internal/budget/token/device.go` —
+  mobile Task **P6.6**; `mobile/src/pairing/` and `mobile/src/overview/` — Task **P6.8**) are
+  excused **only while they do not exist**. The guard **fails on an excused path that resolves**,
+  which is the property that makes the list self-cleaning: the pull request that lands P1 or Phase 6
+  deletes its entry in the same change, and a reader can see from the list alone what is still
+  missing. **`mobile/node_modules` is excused differently and permanently** — it is a dependency
+  directory the repository never carries, the app's manifest is the citation, and the guard says so
+  in its own line rather than folding it into the list above.
+- **The reconciliation marks no path `new`, and the plan marks only its own** — which is why the
+  excuse list comes from **both** documents rather than from a marker: the plan marks
+  `internal/cli/docs_mobile_auth_test.go`, `internal/mobileauth/` and
+  `docs/mobile-auth/provider-sign-in.md` **new**, and says of P6.6's two files that they are Phase 6's
+  and of `mobile/src/pairing/` that it is P6.8's; the reconciliation's §F23 names all four of the
+  borrowed ones at once — *"Task P6.6 … is `internal/cli/pair.go` + `internal/budget/token/device.go`;
+  Task P6.8 is `mobile/src/pairing/` and `mobile/src/overview/`"*. **The guard holds the list rather
+  than re-deriving it**, so an implementer who finds a fifth must add it visibly instead of loosening
+  the rule.
+
 **Files.** New `internal/cli/docs_mobile_auth_test.go`; `docs/mobile-auth/`'s four documents.
 
-**Red step.** Six mutations, each a different check. **Rename a path** one of the citations names —
+**Red step.** Seven mutations, each a different check. **Rename a path** one of the citations names —
 `internal/budget/rules/rules.go` moved to a name that does not exist in a scratch tree — and the
 citation check must fail, naming the path. **Add a line number** to a citation (`rules.go:433`) and
 the same check must fail. **Change one byte of `docs/mobile-auth/spec.md`** — insert a decision
 number, or reword a heading — and the verbatim check must fail. **Delete a part heading** and the
 parts check must fail. **Renumber one decision** (D236 to D237) and the decisions check must fail,
 naming the number and the position. **Paste an `AIza…`-shaped string** into the reconciliation and
-the secret-shape scan must fail, naming the file. Restore each before the next.
+the secret-shape scan must fail, naming the file. **Make an excuse stale** — create the file
+`internal/mobileauth/` in a scratch tree and leave its entry on the excuse list — and the check must
+fail, naming the entry and the pull request that owes its deletion. Restore each before the next.
 
 **Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./internal/cli/ -run
 TestDocsMobileAuth`; and the docs pins of the folders this work reads — `go test ./internal/cli/
@@ -232,14 +270,14 @@ one place and tested there.
 **Files.** New `internal/mobileauth/` (`Entry`, `Role`, `Resolve`, `NormalizeEmail`, the node-key
 encoding) and its test plus testdata; no other file.
 
-**Red step.** Four mutations. **A domain entry alone admits its member** — remove the domain branch
+**Red step.** Five mutations. **A domain entry alone admits its member** — remove the domain branch
 from the resolver and the test that pairs a person through a domain must fail. **An exact email does
 not override its domain's role** — reorder the two branches and the test that gives one address a
 different role from its domain must fail. **A role outside the closed set is accepted** — widen the
 set and the test that an unknown role is refused must fail. **Two spellings of one address resolve
 differently** — drop the normalisation and the test that case-folded domains compare equal must
-fail. Then a fifth, for the encoding: a key that cannot be read back as the address it was made
-from.
+fail. **A key cannot be read back as the address it was made from** — drop the encoding's inverse
+and the test that an entry's node key round-trips must fail.
 
 **Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./internal/mobileauth/...`. No
 emulator, no fake and no network: this part has nothing to fake.
@@ -395,11 +433,13 @@ above the demo entry and the test that the demo is reachable with no account mus
 carrying an identity is accepted** — remove the validator's refusal and the test that a payload
 with an email is refused must fail.
 
-**Verification.** The app's own runner (`npm test` in `mobile/`, the command
-`docs/mobile/implementation-plan.md` uses for its app tasks). **This container cannot run it** — no
-Node is installed (reconciliation §5's U7) — so this part's verification is the app's CI job and the
-owner's reading, and this plan says so rather than implying a green run. The Go half of this work
-touches no `mobile/` file.
+**Verification.** The app's own runner — **`npm test` in `mobile/`**, which
+`mobile/package.json`'s `test` script defines as `node --test "src/**/*.test.js"`. (The plan this
+work extends runs that command for its **`shared/`** tasks and calls the app's a *"trivial test"*
+beside the boundary test at P3.1; the command itself is the manifest's, not a citation from that
+document.) **This container cannot run it** — no Node is installed (reconciliation §5's U7) — so
+this part's verification is the app's CI job and the owner's reading, and this plan says so rather
+than implying a green run. The Go half of this work touches no `mobile/` file.
 
 **Depends on.** **Phase 6's P6.8 must exist** (`mobile/src/pairing/`, and the seam in
 `mobile/src/app/first-screen.js`); **D232, D233, D234.**
@@ -521,9 +561,13 @@ P6 (independent of all of them; needs only D221)
   declared. Everything a person can feel on the CLI is on this path.
 - **P0 and P1 can start the day the owner says so**, and P6 can too if D221 is answered; P0 and P1
   are deliberately the parts with no database, no credential and no app in them.
-- **Effort, in parts:** 7 parts; **4 SECURITY-SENSITIVE** (P1, P2, P3, P5 — §7 lists each); **3 that
-  wait on Phase 6** (P3 on P6.6, P4 on P6.8, P5 on P3 and so on P6.6); **2 that need no new
-  decision** (P0, P1 — P1 needs its decisions answered, and needs nothing built).
+- **Effort, in parts:** 7 parts; **5 SECURITY-SENSITIVE** (P1, P2, P3, P4 and P5 — §7 lists each,
+  and P4 is one of them because it is the fence around the app's credential boundary: it is the part
+  that would notice a provider SDK, a third secure-store item or an identity in a QR payload, and it
+  is the part whose own test runner **cannot be run here**, so a reviewer's reading is a larger share
+  of its evidence than of any other part's); **3 that wait on Phase 6** (P3 on P6.6, P4 on P6.8, P5 on
+  P3 and so on P6.6); **P0 needs no decision at all**, and **P1 needs its decisions answered but
+  nothing built**.
 - **The first cut a user can feel is P1 + P2 + P3**: an allowlist entry with an email and a role,
   written by a pairing that refuses an unverified address. Nothing in it can admit a person the
   admin did not name, and nothing in it spends a cent — which is the point.
@@ -535,6 +579,7 @@ P6 (independent of all of them; needs only D221)
 | **P1** | the resolution rule **is** the authorisation decision | the override order; the normalisation's failure modes; the closed role set and what an absent role resolves to; that no second place resolves a role |
 | **P2** | it is the proof that the fields change nothing for a client, on the node that decides who is in | that the deployed document's read and write predicates are unchanged; that `USER` still turns on the node's existence and that an entry written before the fields existed is still admitted; that the golden and `RulesVersion` are untouched, read against `internal/projectpolicy/version.go` and the template rather than taken on the part's word |
 | **P3** | it writes the record and it checks a person's email | the typed-code gate precedes every write; what the unverified-email refusal reads; that the resolved role is written; that no output carries a secret; that `revoke` is one deletion; the IAM role each half needs |
+| **P4** | it is the fence around the credential boundary on the device, and **its tests could not be run in this container** (`mobile/package.json`'s `"test"` is the app's only runner, and no Node is installed) | that each boundary test can fail (the four mutations of the red step shown red); that nothing in the new screen or the QR validator touches the network, the secure store or a credential; that the demo promise is unchanged and still tested; and that no provider dependency, secure-store item or identity literal enters `mobile/` through this part |
 | **P5** | it can grant, and it writes from a file | that it can only add; that removal stays one `revoke`; the ETag guard and a lost race; that the declaration never admits anyone the node does not carry; that a malformed entry is refused rather than defaulted |
 
 An independent review means **a reviewer who did not write the change, on a different model (this
@@ -572,25 +617,35 @@ not.
 ## 9. The owner-run live checks, proposed by name and not numbered
 
 The register's own rule is that **the phase that ships the check writes it**, so this plan proposes
-its checks **by name** and **takes no number**. The reading, against `docs/gcp-live-checklist.md` and the documents that
-name numbers in it:
+its checks **by name** and **takes no number**. The reading, taken against `docs/gcp-live-checklist.md`
+and the documents that name numbers in it:
 
 - **The highest written `## Check N` section is 111**, the setup wizard's — and the register's own
   numbering paragraph records what it read at `1d325928`: written sections to **89**, with **90–99
   the credentials service's** and **100–109 the mobile functional spec's**. Of those, **100–104**
-  are proposed by that plan's **P6.11** (approved 2026-10-18) and **105–109 reserved and unused**;
-  **80 and 83–88** are still unwritten and belong to the mobile plan's **Task P4.2**, which is why
-  the mobile app's own checks (81, 82, 89) are three of eight. **110** is named by
-  `docs/mobile/design/voice-evaluation-switch.md` and **claimed by nobody**.
-- **Above 111, every number is named or proposed by a document that has written no row**:
-  `docs/mobile/voice-session/README.md` takes **113–118** (its D219) and its reconciliation proposes
-  **112**; `docs/console-windows/implementation-plan.md` proposes **119** for the owner's manual
-  checklist and claims nothing.
-- **A claim is settled at its merge**, and three of the numbers above are proposals rather than
-  rows, so **the next free number depends on how they settle — and this plan takes none.** That is
-  the register's rule (the phase that ships a check writes it), and it is also the honest position
-  here: this work ships no check in its first parts, and the part that does takes the number free at
-  its own merge.
+  are proposed by that plan's **P6.11** (approved 2026-10-18) and **105–109 reserved and unused**.
+  The mobile block is **ten numbers, 80–89**: **81, 82 and 89 are written** and **80 and 83–88** are
+  still unwritten and belong to the mobile plan's **Task P4.2** — which is why three of the block's
+  ten are in the register, and why `docs/mobile/implementation-plan.md` says *"all ten are run by
+  the owner"* of a set only three of which exist as text. **110 is claimed, twice, and written by
+  nobody**: `docs/central-orchestrator/README.md` records the two claims — `docs/mobile/design/voice-evaluation-switch.md`
+  (P5.3) and the always-on orchestrator design in **PR #632** (§7) — and the register's paragraph
+  records the state rather than the claimants (*"110 is claimed by an open pull request"*). **A
+  reader must not treat 110 as free**: it is two unmerged claims, and the register's rule is that
+  whichever of two open claims merges second renumbers itself.
+- **Above 111, every number is named or proposed by a document that has written no row.**
+  `docs/mobile/voice-session/README.md` takes **113–118** and attributes **112** to another work —
+  `docs/windows-cli/` (*"merged to `main` as `58bd6b05`, PR #757"*, for its own owner-run Windows
+  check) — while that work's own reconciliation (F18, D219) records the
+  reading behind it: *"the register's next free number was **112**; it is claimed, so this work takes
+  **113–118**"*. `docs/console-windows/implementation-plan.md` proposes **119** for the owner's
+  manual checklist and claims nothing (its D12(a)).
+- **A claim is settled at its merge**, and above 111 not one number is a **written row**: 110 is
+  claimed twice and written by nobody, 112 is claimed by a work merged to `main` that this branch
+  does not carry, 113–118 are taken by documents that have written no row, and 119 is proposed. **So
+  the next free number depends on how they settle, and this plan takes none** — the register's rule
+  (the phase that ships a check writes it) applied honestly: this work ships no check in its first
+  parts, and the part that does takes whatever number is free at its own merge.
 
 | Proposed check, by name | Part | Kind | What it proves |
 | --- | --- | --- | --- |
@@ -644,7 +699,7 @@ there is no live action of any kind in this work, and no step of any check is ru
    shipped.
 
 **What this gate is not.** It is not an approval of any part: approving the plan answers §4's
-decisions, and each part is still reviewed on its own — four of them by an independent reviewer on
+decisions, and each part is still reviewed on its own — five of them by an independent reviewer on
 a different model. It is not a promise about ordering beyond §2's five dependencies. And it is not a
 substitute for the register's own rules about numbers: a decision number, once allocated, is never
 reused or renumbered, and a check number is taken by the phase that writes it.

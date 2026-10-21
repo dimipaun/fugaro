@@ -65,12 +65,17 @@ beside four sibling pins that quote it), the coordinator, the voice-session work
 `internal/cli`'s `docs_*_test.go` family, which is where this folder's own pin belongs. **P0 of the
 plan is the part that writes it**: `internal/cli/docs_mobile_auth_test.go`, holding the spec
 verbatim against the owner's text, the four documents, the decisions **D221–D236** contiguous and
-recommendation-first, the parts **P0–P6** in order, every cited path resolving on disk, and a scan
-that no line of these documents carries a credential-shaped literal — because a folder about
-Firebase configuration is exactly the folder where somebody eventually pastes a real key. **The
+recommendation-first, the parts **P0–P6** in order, the cited paths resolving on disk under a rule
+that says what counts as one (a backticked token whose first segment is a directory of this
+repository — so **Realtime Database node paths** like `config/admin/devices` and the **IAM role**
+`roles/firebasedatabase.admin` are not mistaken for files), and a scan that no line of these
+documents carries a credential-shaped literal — because a folder about Firebase configuration is
+exactly the folder where somebody eventually pastes a real key. **The
 guard will state what it does not hold**, as the neighbouring ones do: a symbol named beside a
 citation without the possessive form, and any claim about the folders this one reconciles, which
-their own pins hold. Until P0 lands, the honest statement is the one above: **these four documents
+their own pins hold. It also carries the **excuse list** — the three paths this work will create and
+the four the mobile Phase 6 tasks own, each excused **only while it does not exist**, with the guard
+failing on an entry that has become stale, so the list cleans itself as the work lands. Until P0 lands, the honest statement is the one above: **these four documents
 are unpinned**, and a reader who wants a pin before the plan is approved should say so.
 
 ## Related
