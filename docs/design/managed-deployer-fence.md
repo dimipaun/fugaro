@@ -85,16 +85,52 @@ to limit must be bound only under a condition that limits it.
 **F3 — what the fence must achieve** (`deployer.tf:9-17`): the account can
 create/update/delete **only resources it owns** (names carrying the managed
 prefix `fmgd-`, `tf.ManagedPrefix`, `internal/infra/tf/managed_cover.go:52`) and
-can **never** reach the installation's runs bucket (where the marker and the
-owner's delete list are), Fugaro's own accounts, jobs, scheduler jobs, secrets,
-repositories, API key or state buckets, or the project's default compute account
-— which holds Editor by default.
+can **never** reach, **on the project**, the installation's runs bucket (where
+the marker and the owner's delete list are), Fugaro's own accounts, jobs,
+scheduler jobs, secrets, repositories, API key or state buckets, or the
+project's default compute account — which holds Editor by default. **The one
+reach it has that is not on the project is named in F4, and F3 does not cover
+it**: the account can write objects in **D77's managed state bucket**, by a
+bucket-level binding of its own.
 
 **F4 — the prefix is the fence's only key.** The eight roles are the only thing
-the account holds (`tf.RolePermissions`: one unconditioned, seven conditioned —
-§7 lists the eight), and a condition is the only thing that narrows a role that
-holds a fence-limited permission. There is no second mechanism: no VPC-SC, no
-separate project, no deny policy.
+the account holds **on the project** (`tf.RolePermissions`: one unconditioned,
+seven conditioned — §7 lists the eight), and a condition is the only thing that
+narrows a project-level role that holds a fence-limited permission. There is no
+second mechanism: no VPC-SC, no separate project, no deny policy.
+
+**F4a — the ninth grant, which is not one of the eight and is not
+conditioned.** A design of record that stopped at "eight roles, and a condition
+is the only thing that narrows one" would be claiming a fence wider than the one
+in the tree, because the account holds a ninth grant that has no condition on
+it: **`roles/storage.objectAdmin` (`managed.DeployerStateRole`) on D77's managed
+state bucket, bound at the BUCKET level** — `internal/managed/statebucket.go`'s
+`EnsureManagedStateBucket` grants the deployer member on
+`gs://fugaro-managed-tfstate-<project>` when that bucket is created, beside the
+operators' read-only grant (`managed.OperatorStateRole`) that is theirs and not
+the account's. **Why it is there**: the managed root's state lives in that
+bucket and the deployer is the identity that applies that root, so without
+object write there no managed apply can run at all — the feature's own use, like
+the IAM service accounts and Cloud Run jobs of §8 point 3, and not a convenience.
+**Why it is not conditioned**: a condition would have to admit this bucket's own
+name, and the state bucket deliberately does not carry the `fmgd-` prefix the
+seven conditions admit — `managedStatePrefix` is `fugaro-managed-tfstate-`, and
+its own comment says why the two must not overlap (the seven project-level roles
+are fenced to `fmgd-` names, and the state bucket is reached by this binding
+alone, so a condition admitting the state bucket's name would put the state
+inside the fence around the seven). **What confines it instead is the scope of
+the binding**: it is bucket-level, on the one bucket the installation created for
+this purpose, where a project-level `roles/storage.objectAdmin` would reach every
+bucket in the project. **Where it comes from is not the installation module**:
+`internal/cli/init.go`'s D77 setup step writes it, on the operator's own
+credentials, for every project the creating run creates — it is not gated on
+`--managed` and not gated on `managed_deployer_scoped`, so it is there in a
+project whose fence is still off, `belong` included, and a `fugaro init` that
+creates no project writes nothing. **So R1 reads "every binding on the project
+that holds a fence-limited permission is conditioned"**, and this is the one
+binding that holds one (`storage.objects.*`) without a condition; it is why §7
+and §8 point 6 count **nine** bindings and not eight, and it is the reason this
+document names it rather than letting the count imply it.
 
 **F5 — what is proved live today, and what is not.**
 
@@ -106,9 +142,11 @@ separate project, no deny policy.
 
 ## 2. Requirements the redesign has to meet
 
-R1. **Every binding that holds a fence-limited permission is conditioned**, and
-     its condition admits only `fmgd-`-named resources of the types that
-     permission's role reaches.
+R1. **Every binding on the project that holds a fence-limited permission is
+     conditioned**, and its condition admits only `fmgd-`-named resources of the
+     types that permission's role reaches. The one binding that holds such a
+     permission without a condition is F4a's, on D77's managed state bucket: it
+     is bucket-level, and its scope is what confines it.
 R2. **Every condition is under IAM's 12-operator limit** and uses only supported
      functions, with a `resource.name` form the service honours.
 R3. **No permission is added, removed or moved between the conditioned and the
@@ -500,8 +538,9 @@ review catches.
 
 D75 (`docs/design/managed-projects.md` §5) says the deployer holds **two**
 custom roles and that `fugaroDeployerScoped` is *"bound exactly once under the
-name-prefix condition"*. The redesign makes that **eight** roles and **eight**
-bindings (one unconditioned, seven conditioned), for the reason in F1: the
+name-prefix condition"*. The redesign makes that **eight** roles and **nine**
+bindings (one unconditioned project binding, seven conditioned, and F4a's
+bucket-level one on D77's managed state bucket), for the reason in F1: the
 single-condition shape cannot be applied at all.
 
 The permissions, the prefix, the account, the impersonation grant, the
@@ -553,7 +592,8 @@ unchanged.
    permissions are dead (fail-closed, but dead).
 6. **Seven roles in every installation, `belong` included.** D75 accepted one
    service account per installation; the redesign makes that one account, eight
-   roles and eight bindings. Confirm the count is acceptable, or say that the
+   roles and nine bindings — the eight project-level ones F3/F4 describe and
+   F4a's on the managed state bucket. Confirm the count is acceptable, or say that the
    roles should be created only where `managed_deployer_scoped` is true (they
    already are) and that `belong` therefore keeps only the unconditioned role
    until someone flips the flag there.
