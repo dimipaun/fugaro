@@ -550,12 +550,12 @@ func (a *Authenticator) verifyRun(ctx context.Context, tok string, now time.Time
 	}, nil
 }
 
-// checkLive refuses a run whose write-once outcome exists on any day from its
-// launch day to the day after this service's today: the window is the
-// database's, whose clock may sit either side of this one, so both days an
-// outcome can be written on are read whatever the skew. It is not
-// agents/<slug>/<run>: the rules let the run's own token write there, so it is
-// not evidence (W2).
+// checkLive refuses a run whose write-once outcome exists on any day from the
+// day below its launch day to the day after this service's today: the window
+// is the database's, whose clock may sit either side of this one, so every day
+// an outcome can be written under is read whatever the skew (the two ends are
+// argued at the loop). It is not agents/<slug>/<run>: the rules let the run's
+// own token write there, so it is not evidence (W2).
 func (a *Authenticator) checkLive(ctx context.Context, slug, run string, now time.Time) error {
 	launch, ok := runDay(run)
 	if !ok {
@@ -588,7 +588,21 @@ func (a *Authenticator) checkLive(ctx context.Context, slug, run string, now tim
 	// Reading the extra day can only find an outcome that is there — it is
 	// written once and never removed — so it can never admit a live run, the
 	// same argument that widens the window at the launch end above.
-	for day := today + 1; day >= launch; day-- {
+	//
+	// The scan ends one day BELOW the launch day for the same reason read the
+	// other way: the launch day is the run id's, but the day the outcome
+	// carries is the database's, and DAYOK admits the database's today or its
+	// YESTERDAY — so a run launched today, whose outcome is written as the
+	// database's yesterday (the slot DAYOK keeps for a run that spans the
+	// database's midnight, and the day a clock behind this one puts a
+	// launch-day end on), lands on the day below its own launch day. The end
+	// itself is within a day of the launch (fx, and maxRunDays here), so the
+	// day below the launch day is the lowest day an outcome of this run can
+	// carry and the scan stops there. A scan that stopped at the launch day
+	// would admit that ended run, and the write-once revocation W2 rests on
+	// cannot have that hole. Reading the extra day can only find an outcome
+	// that is there, the argument above.
+	for day := today + 1; day >= launch-1; day-- {
 		exists, err := a.cfg.Outcomes.OutcomeExists(ctx, day, slug, run)
 		if err != nil {
 			return fmt.Errorf("%w: the run's outcome could not be read", ErrUnavailable)
