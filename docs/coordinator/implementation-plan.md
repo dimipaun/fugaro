@@ -47,10 +47,13 @@ since, and each one changes this plan rather than decorating it:
    Q4(A)'s "no model credential in v1" is therefore not a deferral this plan invented: it is the
    only option that does not depend on unbuilt work, and §3 below keeps the model half out.
 4. **The mobile work's pairing and allowlist landed** (D165/D166; Phase 6's P6.4 merged as #601
-   with the device node and the pairing nodes, P6.5 as #602). The allowlist this plan's read
-   grant must live beside is now `config/admin/devices/$uid`, the rules' `USER` macro already
-   requires it, and revocation is deleting the node — which is what makes Q15(A)'s read grant a
-   question about a *subtree* and not about a new identity.
+   with the device node and the pairing nodes, P6.5 as #602). The machine that authenticates the
+   people this plan grants a read to is `config/admin/devices/$uid`: `internal/budget/rules/rules.go`'s
+   `userClaim` makes the rules' `USER` macro require that node to exist, revocation is deleting
+   it, and **the node itself is unreadable to the person it names** (the template writes
+   `.read: false` on it). That last part is why the coordinator's state is a **separate** subtree
+   and not a child of the allowlist (D195): Q15(A)'s read grant is a question about a subtree,
+   and the identity behind it already exists and is already revocable.
 5. **The rigor modes work is a plan in open PR #773 and is not on `main`.** It is named here
    because the register's numbering turns on it (§9) and because its guard — the pinning test
    this folder's own guard would copy from — is not in the tree to copy from. The models to
