@@ -479,3 +479,44 @@ func TestZeroMarkIsAvailable(t *testing.T) {
 		}
 	}
 }
+
+// A reset the upstream reported is a fact about the token, and D142's window is
+// a floor under the hold rather than a ceiling over it: an exhaustion whose
+// reset is ten hours out is held for ten hours, and the control's window does
+// not shorten that to its own end. This is the direction no other test in the
+// package exercises -- they use noWindow(), or an Until equal to Since+Window --
+// and it is what Ready's `end.After(at)` guard exists for: with the comparison
+// read the other way (or dropped for the window), the mark would read usable
+// hours before the upstream said it was, which is the M3 fail-open this file's
+// comment forbids, with the reported reset as its subject.
+//
+// Mutation (replace the guard's condition with `true`, so the window always
+// wins): this fails, and every other test in the package still passes.
+func TestAWindowNeverShortensAReportedReset(t *testing.T) {
+	const window = time.Hour
+	set := Settings{Window: window, BackoffCap: window}
+	since := now.Add(-time.Minute)
+	reset := now.Add(10 * time.Hour)
+	m := Exhaust(Mark{}, since, reset, set)
+	if m.State != StateExhausted || !m.Until.Equal(reset) {
+		t.Fatalf("the exhaustion left %+v; want it held until the reset it reported, %s", m, reset)
+	}
+
+	at, ok := m.Ready(now, set)
+	if !ok || !at.Equal(reset) {
+		t.Fatalf("Ready = %s, %v; want the reported reset %s: the window (%s from %s) is a floor under the hold, not a ceiling over it", at, ok, reset, window, since)
+	}
+	if m.Usable(now, set) || m.Usable(reset.Add(-time.Second), set) {
+		t.Fatal("a token whose upstream said it was out for ten hours is usable before then")
+	}
+	if !m.Usable(reset, set) {
+		t.Fatal("the token is not usable at the reset its upstream reported")
+	}
+	// And a hold the window does reach is still the window's: the guard's two
+	// sides are both live, so this is not a test that passes because the window
+	// is ignored.
+	inside := Exhaust(Mark{}, since, now.Add(time.Minute), set)
+	if at, _ := inside.Ready(now, set); !at.Equal(since.Add(window)) {
+		t.Fatalf("a reset inside the window = %s; want the window's end %s", at, since.Add(window))
+	}
+}

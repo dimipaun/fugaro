@@ -133,9 +133,10 @@ export const VOCAB = {
   // are `r.rec.Stage` (the run record in result.json) and `provision` is the
   // name provisioning records its own time under, so none can appear here.
   stage: ['bootstrap', 'queued', 'plan', 'implement', 'review_first', 'review', 'fix'],
-  // internal/config/validate.go's allowed `agent.auth` values, plus the `-`
-  // internal/watch/build.go's `dash` writes for an empty one.
-  auth: ['vertex', 'api-key', 'oauth', '-'],
+  // internal/config/defaults.go's `AgentAuths` — the one list the validator,
+  // the layer's own auth key and the launcher's check of a run's spec all read
+  // — plus the `-` internal/watch/build.go's `dash` writes for an empty one.
+  auth: ['vertex', 'api-key', 'oauth', 'cascade', '-'],
   health: ['ok', 'silent', 'lost'],
   deadline: ['ok', 'near', 'over'],
   status: ['succeeded', 'failed', 'halted', 'cancelled', 'infra_error'],

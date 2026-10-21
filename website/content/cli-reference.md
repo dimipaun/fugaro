@@ -2997,7 +2997,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for validate |
 | `--json` | bool | `false` | no | print machine-readable output |
-| `--offline` | bool | `false` | no | never read the runs bucket: resolve against the cached project layer, if any |
+| `--offline` | bool | `false` | no | never read the runs bucket or the project's published policy: resolve against the cached project layer, if any; a cascade file is refused, not admitted unproven |
 | `--project-layer` | string | "" | no | resolve against this project layer file instead of the published one (also checks the file; for CI without bucket access, and before fugaro config publish) |
 
 Subcommands:

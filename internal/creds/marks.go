@@ -131,13 +131,11 @@ func (m Mark) Ready(now time.Time, set Settings) (time.Time, bool) {
 		// would succeed, and the token would be back in rotation inside the
 		// window, which is the control's whole point reversed. With the window in
 		// the answer, the earliest a backed-off mark can serve real work is the
-		// window's end — and that is not also the end of its being a probe
-		// target: whether a probe is owed is NeedsProbe's answer, taken from the
-		// mark's own wait, and `earliest` reports that beside this time rather
-		// than reading it out of this function. A backed-off mark whose wait has
-		// passed inside D142's window is therefore probed now and can serve work
-		// at the window's end (ExhaustedUntil.Probe, which the review's finding
-		// M3 comment there states in full).
+		// window's end. The probe C1.12 owes it is a separate fact and is not
+		// pushed later by this answer: it is due when the mark's own wait has
+		// passed (`earliest` decides Probe from NeedsProbe, before this time can
+		// move it later), which is what holdInForce's backed-off arm says below
+		// and what TestBackedOffMarkAsksForAProbeNotASleep asserts.
 		at := m.Until
 		if set.stops() && !m.Since.IsZero() {
 			if end := m.Since.Add(set.Window); end.After(at) {

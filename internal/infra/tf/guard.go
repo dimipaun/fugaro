@@ -143,6 +143,18 @@ func guardWith(p *Plan, advice string, admits admit) error {
 			// The list does not name this address: the item Guard has always
 			// written, with the actions and nothing beside them.
 			refused = append(refused, fmt.Sprintf("%s (%s)", addr, said))
+		case removesUnderAnotherAddress(rc):
+			// The list names this address, and the object the change removes
+			// is not the one it was bound to — and it was moved here from
+			// another address (or the plan says the move has no target). The
+			// item about that change is the moved-object one, exactly as the
+			// managed cover prints it (managed_cover.go), and not the list's
+			// own sentence about the identity it holds: the two items are
+			// about one change, and a reader who saw the cover's reason and
+			// this one would be reading two rules for it. Approves' sentence
+			// is still the refusal for a listed address whose entry was bound
+			// to another object and whose removal was not moved (below).
+			refused = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, movedRemovalReason(rc)))
 		default:
 			refused = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, why))
 		}

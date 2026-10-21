@@ -101,7 +101,7 @@ describe('the scrub: the CLI vocabulary it copies', () => {
   })
 
   it('accepts the config vocabulary auth can carry, vertex included, and the dash for none', () => {
-    for (const auth of ['vertex', 'api-key', 'oauth', '-']) {
+    for (const auth of ['vertex', 'api-key', 'oauth', 'cascade', '-']) {
       const doc = raw()
       at(doc, 'runs', 0)['auth'] = auth
       expect(at(scrubDocument(doc, 0), 'runs', 0)['auth']).toBe(auth)

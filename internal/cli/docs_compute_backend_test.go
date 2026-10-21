@@ -671,8 +671,8 @@ func TestDocsComputeBackendCheck57IsStillOnlyARow(t *testing.T) {
 // says the plan answers none of them, or the reversal — a section that looks
 // answered while the gate still refuses to let a task start. Both fail here.
 //
-// Both paragraphs also name the tasks that have landed — Task 14, Task 8's
-// first half and Task 9 — so a plan whose tasks are built while its prose still reads as
+// Both paragraphs also name the tasks that have landed — Task 14, Task 8 and
+// Task 9 — so a plan whose tasks are built while its prose still reads as
 // a proposal fails here too.
 func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
@@ -714,9 +714,10 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 		// Task 12 is the owner's alone, and the gate has to say so.
 		"**Task 12 is OWNER-RUN**",
 		// The gate and the Status line agree on what the approval has built:
-		// Task 14 and Task 8's first half, and nothing else.
+		// Task 14 and Task 8, whose second half this branch's commits are, and
+		// Task 9 -- and nothing else.
 		"Three tasks have been built since: Task 14",
-		"**Task 14 is built, and so are Task 8's first half and Task 9, and nothing else here is**",
+		"**Task 14 is built, and so are Task 8 and Task 9, and nothing else here is**",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Errorf("%s's OWNER APPROVAL GATE no longer says %q", computeBackendPlan, want)
@@ -772,10 +773,13 @@ func TestDocsComputeBackendStatusMatchesTheBranch(t *testing.T) {
 		"the owner APPROVED this plan on 2026-10-19",
 		// What the branch carries beyond the plan and its pin test.
 		"Task 8 is the one begun",
-		// And what that half does not include, which is the honest half of
-		// the account: a reader who reads only the Status knows the task is
-		// incomplete before opening its pull request.
-		"steps 4 (`fugaro validate`'s offline checks) and 5 (`fugaro doctor`'s live ones) not written",
+		// And what that half does not include and this branch's own commits
+		// do, which is the honest half of the account: a reader who reads only
+		// the Status knows which commits carry which steps, and which parts of
+		// step 4 are recorded rather than written.
+		"steps 4 (`fugaro validate`'s offline checks) and 5 (`fugaro doctor`'s live ones) not written by that half",
+		"**and written on this branch by its own commits, which is the rest of the task**",
+		"**The two parts of step 4 this tree has no surface for**",
 	} {
 		if !strings.Contains(status, want) {
 			t.Errorf("%s: the Status line no longer says %q", computeBackendPlan, want)
@@ -789,6 +793,10 @@ func TestDocsComputeBackendStatusMatchesTheBranch(t *testing.T) {
 		"no task's commit exists",
 		"this pull request builds none of it",
 		"no line of the work below has been written or run",
+		// The sentence this branch's own step-4/5 commits falsified: it said
+		// both steps were unwritten, full stop, and a reader who found it
+		// again would be told the task's second half does not exist.
+		"steps 4 (`fugaro validate`'s offline checks) and 5 (`fugaro doctor`'s live ones) not written, which that task's own pull request lists with the reason",
 	} {
 		if strings.Contains(doc, gone) {
 			t.Errorf("%s still says %q, and Task 8's first half is committed on this branch: the account a reader checks the diff against says nothing was built", computeBackendPlan, gone)
@@ -803,6 +811,10 @@ func TestDocsComputeBackendStatusMatchesTheBranch(t *testing.T) {
 		"internal/cli/cloud.go":         {"cloudOpeners", "batchOptions", "batchTimeouts"},
 		"internal/cli/backends.go":      {"newBackendsCmd", "selectableBackends", "backendsLs", "backendsListDoc"},
 		"internal/localcfg/localcfg.go": {"validateBatch", "BatchTaskTimeout"},
+		// The two halves of this branch's own commits, named by the Status
+		// line the same way: step 4's offline checks and step 5's live ones.
+		"internal/cli/validate_batch.go": {"batchValidateProblems", "artifactOnBatchMessage"},
+		"internal/cli/doctor_batch.go":   {"doctorBatchChecks"},
 	} {
 		data, err := os.ReadFile("../../" + file)
 		if err != nil {
@@ -1872,6 +1884,138 @@ func TestDocsComputeBackendTask10CarriesTheAccountRequirement(t *testing.T) {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s no longer carries %q: the artifact refusal and the enable's dependency on it are one fact and are stated on both sides", computeBackendPlan, want)
 		}
+	}
+}
+
+// TestDocsComputeBackendTask10CarriesTheArtifactGatesRefResidual: the launch's
+// arm of the artifact boundary (run.go's checkArtifactLaunch) judges a
+// repository recipe by the file in the launcher's working tree, and the runner
+// reads it at the task's ref -- the repository's base branch unless the launch
+// names another. The plan does not ask Task 8 for more than validate's offline
+// refusal (Global Constraint 13 and Task 8 step 4 name the mechanisms), the
+// name is refused until Task 10, and Task 10's step 5 is the inventory a review
+// of the enable reads it against -- so the residual is a requirement there,
+// with its own test case, and TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef
+// pins the code's side of the same sentence. A trim of either half fails here.
+func TestDocsComputeBackendTask10CarriesTheArtifactGatesRefResidual(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	task := section(t, doc, "### Task 10: The enable", "## Phase C")
+	for _, want := range []string{
+		"**And a sixth, of the artifact boundary's kind (Global Constraint 13): the launch's gate reads a repository recipe from the launcher's working tree, and the runner reads it at the task's ref.**",
+		"**A working-tree recipe may differ from the base branch's**",
+		"`TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef`",
+		"**This task closes it before the name is selectable**",
+		"**step 5's sixth entry as its own case**",
+	} {
+		if !strings.Contains(task, want) {
+			t.Errorf("%s's Task 10 no longer says %q: the review of Task 8's second half left the launch gate's working-tree read to the enable, and the enable's own text is where it has to be", computeBackendPlan, want)
+		}
+	}
+	// The code's comments claim only what the gate enforces: neither arm is
+	// described as knowing the recipe the run will actually use.
+	for _, path := range []string{"internal/cli/validate_batch.go", "internal/cli/run.go"} {
+		src := readDoc(t, path)
+		if strings.Contains(src, "recipe the run will actually use") {
+			t.Errorf("%s still says the launch gate knows the recipe the run will actually use: for a repository recipe it reads this launcher's working tree, and the runner reads the task's ref", path)
+		}
+		if !strings.Contains(src, "Task 10") || !strings.Contains(src, "working tree") {
+			t.Errorf("%s does not state the working-tree residual and the task that closes it", path)
+		}
+	}
+}
+
+// TestDocsComputeBackendTask10EnableIsTiedToTheArtifactGatesRefResidual: the
+// pin above says Task 10's step 5 carries the launch gate's residual, but
+// nothing tied that entry to the step that actually lifts the refusal — step 1,
+// which turns `TestCloudBatchIsRefused` into the acceptance. A later trim could
+// then leave Task 10 reading as "the name becomes selectable" with the closure
+// of entry 6 as one requirement among many, or drop `run.go` and `run_test.go`
+// from Task 10's Files line while the entry still named them. The tie is three
+// halves and all three are asserted: the entry says this task closes it **before
+// the name is selectable**, Task 10's Files name the files the closure lands in,
+// and the tree carries the mechanism and the cases the entry names — so the
+// enable's commit cannot claim the closure while the code it claims is absent.
+//
+// The closure itself is pinned too: the entry requires the runner's own
+// refusal of `mode: artifact` on cloud-batch, with the launcher's ref read as
+// defence in depth only, because that read uses this checkout's local
+// remote-tracking ref and never fetches.
+//
+// Mutation (drop `internal/cli/run.go` with `internal/cli/run_test.go` from
+// Task 10's Files, or drop the "before the name is selectable" sentence, or
+// rename `carriedRecipeAtRef`, or make the gate's ref read an alternative to
+// the runner's refusal again): the named assertion fails.
+func TestDocsComputeBackendTask10EnableIsTiedToTheArtifactGatesRefResidual(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	task := section(t, doc, "### Task 10: The enable", "## Phase C")
+	for _, want := range []string{
+		// The step that makes the name selectable, and the entry that says the
+		// closure comes first: read together they are the tie.
+		"**The refusal becomes an acceptance.**",
+		"**This task closes it before the name is selectable**",
+		// And where the closure lands, per the task's own Files line.
+		"`internal/cli/run.go` with `internal/cli/run_test.go` for step 5's sixth entry",
+		// The closure the entry requires is the runner's refusal: the gate
+		// reads a local remote-tracking ref and never fetches, so a push after
+		// the launcher's last fetch passes it, and a gate-only closure would
+		// leave that window open on the day the name becomes selectable.
+		"`internal/runner/recipe.go` and `internal/runner/recipe_test.go` for that entry's required closure",
+		"**the runner itself refuses a `mode: artifact` recipe when the platform it runs on is cloud-batch**",
+		"**A launcher-side read is defence in depth and never the closure on its own:**",
+		"**the runner refuses `mode: artifact` on cloud-batch, as its own runner case**",
+	} {
+		if !strings.Contains(task, want) {
+			t.Errorf("%s's Task 10 no longer says %q: the enable is the commit that makes backend: cloud-batch selectable, so the closure of the launch gate's residual has to be tied to it here rather than left as a nearby requirement", computeBackendPlan, want)
+		}
+	}
+	// The mechanism the entry names is in the tree, so the tie above is about
+	// code the enable inherits and not about a sentence: the gate's ref read and
+	// both of its cases (the carried text the ref shadows, and the ref this
+	// checkout cannot read).
+	for _, f := range []struct{ path, sym string }{
+		{"internal/cli/run.go", "func carriedRecipeAtRef("},
+		{"internal/cli/run.go", "func recipeAtRef("},
+		{"internal/cli/run_test.go", "func TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch("},
+		{"internal/cli/run_test.go", "func TestACarriedRecipeTheRefCannotBeReadForIsRefusedOnCloudBatch("},
+	} {
+		if !strings.Contains(readDoc(t, f.path), f.sym) {
+			t.Errorf("%s does not declare %q: Task 10's step 5 names this mechanism as the half Task 8 already landed, and a task whose enable inherits it has to find it here", f.path, f.sym)
+		}
+	}
+}
+
+// TestDocsComputeBackendNamesTheDefaultMachineType: §1.3 called an
+// `e2-standard-4`-class VM "the likely default" while `internal/backend/batch`'s
+// defaultMachineType is `e2-standard-8` — the smallest type whose task share
+// carries the config's default ask of 4 CPU / 8Gi, because an e2-standard-4's
+// share of 2000m/4096MiB is below it and every workflow that names no
+// `resources:` would then be refused (the constant's own comment argues the
+// change). Nothing held the sentence, so the design and the code could disagree
+// about what a run gets with no test failing, which is the drift this pins: the
+// design states what the 57a figures were measured on and names the type a
+// default installation actually gets.
+//
+// Mutation (call a type the likely default again in §1.3, or change the
+// constant without the design): one of the two assertions fails.
+func TestDocsComputeBackendNamesTheDefaultMachineType(t *testing.T) {
+	src := readDoc(t, "internal/backend/batch/batch.go")
+	const decl = `defaultMachineType = "`
+	i := strings.Index(src, decl)
+	if i < 0 {
+		t.Fatal("internal/backend/batch/batch.go declares no defaultMachineType")
+	}
+	rest := src[i+len(decl):]
+	j := strings.Index(rest, `"`)
+	if j < 0 {
+		t.Fatalf("the constant's value is not a quoted string: %q", rest[:min(len(rest), 40)])
+	}
+	name := rest[:j]
+	design := readDoc(t, "docs/design/compute-backend.md")
+	if !strings.Contains(design, "`"+name+"`") || !strings.Contains(design, "defaultMachineType") {
+		t.Errorf("docs/design/compute-backend.md does not name %s (nor the constant that sets it), the machine type a run gets when the installation names none: the design's §1.3 cost figures are one type's and the default is the code's answer", name)
+	}
+	if strings.Contains(design, "likely default") {
+		t.Error("the design calls a machine type the likely default again: §1.3 states which type the 57a figures were measured on and what a run gets by default, and the default is the code's own constant")
 	}
 }
 

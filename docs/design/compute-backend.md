@@ -374,12 +374,24 @@ for estimates:
 - **The machine type.** Batch container jobs use a machine type with enough
   vCPUs/memory for the task's `computeResource`; a Fugaro run's needs come
   from the workflow's `resources` (Cloud Run-shaped today, §4). An
-  `e2-standard-4`-class VM (4 vCPU / 16 GiB) is the likely default, and it is
-  the one 57a measured on: **0.13402284 USD/h in `us-east5`**, which is exactly
+  `e2-standard-4`-class VM (4 vCPU / 16 GiB) is the type 57a measured on:
+  **0.13402284 USD/h in `us-east5`**, which is exactly
   the figure the backend's own price table carries for the US group
   (`internal/backend/batch/prices.go`, §5.2) — so the run's hand estimate and
   the shipped table agree. The table's figures are still unconfirmed against a
   bill, which is 57b-5's job.
+- **The type a run gets by default is not that one**, and the figures above are
+  the measured type's rather than a default run's: `internal/backend/batch`'s
+  `defaultMachineType` is `e2-standard-8`, because a task gets half a machine's
+  vCPUs and a quarter of its memory (§5.2, `taskResources`) and the config's
+  default ask — 4 CPUs and 8Gi for a workflow that names no `resources:` (§4) —
+  does not fit in an `e2-standard-4`'s share of 2000m/4096MiB. A default
+  installation whose default type were `e2-standard-4` would refuse every
+  workflow that names no resources until the operator set
+  `batch.machine_type`, which is no default at all. This design's cost figures
+  are therefore the measured type's, and a run that wants them names it
+  (`batch.machine_type: e2-standard-4`); what the type is on a default
+  installation is the larger one the code sets.
 
 **Substrate verdict.** Identical: all three bill Compute Engine VMs. Batch
 does not add a charge.

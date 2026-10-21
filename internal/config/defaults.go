@@ -39,13 +39,24 @@ const (
 	// authenticates with a Vertex key. applyDefaults applies it, and
 	// AgentOf is the other reader of the rule.
 	DefaultAgentAuth = "vertex"
+	// AuthCascade is agent.auth's cascade value (docs/credentials-service,
+	// D133): the run's calls are made with whatever credential the project's
+	// credentials cascade settled on, through the gateway, instead of with a
+	// credential of the job's own. It is a value of the one list below, so
+	// every reader that places an auth places this one the same way.
+	AuthCascade = "cascade"
 )
 
 // AgentAuths are the values agent.auth may take: validate's check and every
 // reader that has to tell "an auth this Fugaro knows" from an arbitrary string
 // read one list, so a value the validator accepts is never one a reader
-// refuses as unknown.
-var AgentAuths = []string{"vertex", "api-key", "oauth"}
+// refuses as unknown. The values are spelled out here rather than named by
+// their constants because this literal is the list a reader reads: the desktop
+// console's scrub vocabulary is compared with it by name
+// (TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource, which parses
+// exactly this assignment), and TestValidateAcceptsCascade pins that every
+// constant above — AuthCascade today — is one of them.
+var AgentAuths = []string{"vertex", "api-key", "oauth", "cascade"}
 
 // KnownAgentAuth reports whether auth is one of AgentAuths.
 //
@@ -56,7 +67,7 @@ var AgentAuths = []string{"vertex", "api-key", "oauth"}
 // config), so an arbitrary string — a newline, an escape sequence — can arrive
 // from a committed file at a gate that both decides on the value and prints it.
 // A gate that cannot place the value says so rather than reading it as one of
-// the three.
+// them.
 func KnownAgentAuth(auth string) bool { return slices.Contains(AgentAuths, auth) }
 
 // applyDefaults fills in every field fugaro.yaml may omit. The per-base cache

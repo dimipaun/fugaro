@@ -323,6 +323,41 @@ func TestApprovesRefusesAnEntryThatIdentifiesNothing(t *testing.T) {
 	}
 }
 
+// TestApprovesRefusesAChangeWithNoType: the identity a refusal prints is what
+// `fugaro allow-delete` records, and that command refuses any identity that
+// does not begin with `type=` (internal/cli/allow_delete.go's parseIdentity),
+// so a change the plan gives no type is refused rather than printed as an
+// identity whose own fix cannot be recorded — the loop the printed identity
+// exists to close. Terraform 1.x always writes a type, so this is the
+// fail-closed answer for a hand-written plan.
+//
+// Mutation (drop the type from Identifies): the refusal below becomes the
+// entry's "another object" sentence, printing a `name=`-leading identity no
+// entry can hold.
+func TestApprovesRefusesAChangeWithNoType(t *testing.T) {
+	rc := removal("google_storage_bucket", bucketBefore("fmgd-b", "2026-01-02T03:04:05Z"))
+	typeless := rc
+	typeless.Type = ""
+	if RemovedIdentity(typeless).Identifies() {
+		t.Fatal("an identity with no type identifies an object")
+	}
+	// The entry that would approve this removal with its type: refused, because
+	// what is missing is the plan's own text and not a wrong entry.
+	ok, why := Approves([]DeleteEntry{ApprovalFor(rc)}, typeless)
+	if ok {
+		t.Fatal("an entry approved a change whose plan carries no type")
+	}
+	if !strings.Contains(why, "no resource type") {
+		t.Errorf("the refusal is %q, want it to name the missing type", why)
+	}
+	if text := RemoveIdentityText(typeless); strings.Contains(text, "name=") {
+		t.Errorf("the refusal prints %q, an identity no entry can hold", text)
+	}
+	if err := GuardEntries(&Plan{ResourceChanges: []ResourceChange{typeless}}, []DeleteEntry{ApprovalFor(rc)}, ""); err == nil || !strings.Contains(err.Error(), "no resource type") {
+		t.Errorf("the guard's item = %v, want the missing-type reason", err)
+	}
+}
+
 // TestGuardEntriesAdmitsAListedRemovalOfItsOwnObject and the two beside it are
 // the guard's own rule, at the item a person reads: a matching entry is
 // admitted, an entry bound to another object is refused at the address with
@@ -352,6 +387,51 @@ func TestGuardEntriesAdmitsAListedRemovalOfItsOwnObject(t *testing.T) {
 		t.Fatal("the guard admitted a removal no entry names")
 	} else if !strings.Contains(err.Error(), rc.Address+" (delete)") {
 		t.Errorf("the refusal of an unlisted removal is %q, want the address and its actions", err)
+	}
+}
+
+// TestGuardEntriesGivesAMovedRemovalTheMovedReason: both rules can apply to
+// one removal — its address is listed, the object it removes is not the one the
+// entry holds, and the object was moved under the address from another one —
+// and the item a person reads then has to be the move's reason, which is what
+// the managed cover writes for the same change (managed_cover.go). A guard
+// whose item said "the list approves this address for another object" while the
+// cover's said the object had moved would be two rules, or one rule in two
+// stories, about one change; nothing is admitted either way, and that is
+// exactly why the two items disagreeing is invisible until someone reads them.
+//
+// Mutation (test the move only when the list already admits the change, i.e.
+// keep the moved reason behind `ok`): the moved cases below print the entry's
+// identity sentence instead.
+func TestGuardEntriesGivesAMovedRemovalTheMovedReason(t *testing.T) {
+	own := removal("google_storage_bucket", bucketBefore("fmgd-b", "2026-01-02T03:04:05Z"))
+	other := removal("google_storage_bucket", bucketBefore("fmgd-other", "2026-06-07T08:09:10Z"))
+	for name, mut := range map[string]func(*ResourceChange){
+		"previous_address": func(rc *ResourceChange) { rc.PreviousAddress = "google_storage_bucket.old" },
+		"delete_because_no_move_target": func(rc *ResourceChange) {
+			rc.ActionReason = "delete_because_no_move_target"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			moved := other
+			mut(&moved)
+			err := GuardEntries(&Plan{ResourceChanges: []ResourceChange{moved}}, []DeleteEntry{ApprovalFor(own)}, "")
+			if err == nil {
+				t.Fatal("the guard admitted a moved removal at a listed address")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "moved here from") {
+				t.Errorf("the refusal is %q, want the moved-object reason", msg)
+			}
+			if strings.Contains(msg, "another object") {
+				t.Errorf("the refusal is %q, want the move's reason and not the entry's identity sentence for the same change", msg)
+			}
+		})
+	}
+	// And the entry's identity sentence is still what an unmoved mismatch gets:
+	// the rule the moved branch must not swallow.
+	if err := GuardEntries(&Plan{ResourceChanges: []ResourceChange{other}}, []DeleteEntry{ApprovalFor(own)}, ""); err == nil || !strings.Contains(err.Error(), "another object") {
+		t.Errorf("an unmoved removal under another object's entry = %v, want the identity refusal", err)
 	}
 }
 

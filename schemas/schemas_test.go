@@ -171,6 +171,97 @@ func TestProjectLayerSchemaClaudeModels(t *testing.T) {
 	}
 }
 
+// TestSchemasAgentAuthAgreesWithGo pins both schemas' agent.auth enum to
+// config.AgentAuths — the one list the validator (internal/config/validate.go),
+// the layer's own defaults.agent.auth (layer.go, KnownAgentAuth) and the
+// launcher (internal/cli/run.go) read. Each schema carries its own copy of that
+// list, and with additionalProperties: false and an enum, a copy that lags the
+// Go side refuses at authoring time — in an editor, before any command runs — a
+// file or layer the binary accepts. That is the drift the cascade value
+// introduced: fugaro.schema.json's auth gained it while
+// project-layer.schema.json's defaults.agent.auth kept the three older values,
+// even though config.ParseProjectLayer accepted it (TestLayerAcceptsCascade in
+// internal/config) and docs/project-layer.md lists agent.auth as a key a layer
+// may set.
+//
+// The layer's own round trip is the second half: the enum is compared here and
+// the node it lives on is exercised below, so a list that names the value while
+// the schema refuses the layer carrying it cannot pass. The file's half is
+// testdata/config/valid/agent-auth-cascade.yaml, which TestFugaroSchemaCorpus
+// validates against fugaro.schema.json.
+//
+// Mutation (run, restored): take "cascade" back out of either enum, or add a
+// value to config.AgentAuths, and the comparison fails naming the side that has
+// it.
+func TestSchemasAgentAuthAgreesWithGo(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		path []string
+	}{
+		{"fugaro.schema.json", []string{"properties", "agent", "properties", "auth"}},
+		{"project-layer.schema.json", []string{"properties", "defaults", "properties", "agent", "properties", "auth"}},
+	} {
+		data, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		var node any = doc
+		for _, key := range tc.path {
+			m, ok := node.(map[string]any)
+			if !ok {
+				t.Fatalf("%s: %v: not an object at %q", tc.file, tc.path, key)
+			}
+			if node, ok = m[key]; !ok {
+				t.Fatalf("%s: %v: missing %q", tc.file, tc.path, key)
+			}
+		}
+		m, ok := node.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: %v: not an object", tc.file, tc.path)
+		}
+		raw, ok := m["enum"].([]any)
+		if !ok {
+			t.Fatalf("%s: %v: no enum", tc.file, tc.path)
+		}
+		var got []string
+		for _, v := range raw {
+			s, ok := v.(string)
+			if !ok {
+				t.Fatalf("%s: %v: enum entry %v is not a string", tc.file, tc.path, v)
+			}
+			got = append(got, s)
+		}
+		if !sameStrings(got, config.AgentAuths) {
+			t.Errorf("%s: %v enum = %v, config.AgentAuths = %v", tc.file, tc.path, got, config.AgentAuths)
+		}
+	}
+
+	const layer = "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  agent:\n    auth: cascade\n"
+	if err := compile(t, "project-layer.schema.json").Validate(yamlInstance(t, []byte(layer))); err != nil {
+		t.Errorf("project-layer.schema.json rejects a layer whose defaults.agent.auth is cascade: %v", err)
+	}
+	anchor := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	if _, ps := config.ParseProjectLayer([]byte(layer), anchor); len(ps) > 0 {
+		t.Errorf("config.ParseProjectLayer rejects the same layer: %v", ps)
+	}
+}
+
+// sameStrings reports whether two string lists hold the same values, order
+// aside (an enum's order is the schema's business, not the Go list's).
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	as, bs := slices.Clone(a), slices.Clone(b)
+	slices.Sort(as)
+	slices.Sort(bs)
+	return slices.Equal(as, bs)
+}
+
 func TestFugaroSchemaCorpus(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	for _, f := range globAll(t, "../testdata/config/valid/*.yaml") {
