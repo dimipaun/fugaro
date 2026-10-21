@@ -733,28 +733,52 @@ func boundedMatch(max int, pattern string) string {
 //     writes a generation that is no longer the recorded one and is refused.
 //  3. **Takeover** of a seat that is nobody's (a released lease keeps its
 //     node, with an empty holder_uid) or stale — its holder has not renewed
-//     for the grace — moving the generation on by one. The staleness test is
+//     for the grace — moving the generation on by one and stamping the record
+//     the database's own `now`. The staleness test is
 //     `now - renewed_at >= LeaseGraceMs`, the database's own `now` and never a
 //     clock the writer brought with it; internal/lease's Record.Fresh applies
 //     the same comparison at the same boundary (`now < renewed_at + grace`),
 //     so the two never disagree about the instant a seat becomes takeable.
+//     The stamp is required here and not only on the field, because a
+//     `.validate` is read at the location written and its children and never
+//     at a sibling: a takeover sent as an atomic multi-path update touching
+//     `holder`, `holder_uid` and `generation` never brings the `renewed_at`
+//     field's clause into play, and the seat it leaves carries the *previous*
+//     holder's stamp — a seat that is stale the instant it is taken, which is
+//     takeable again at once and whose renewed_at names a write that is not the
+//     last one (measured on the emulator before this clause existed;
+//     TestLeaseATakeoverMustCarryTheDatabasesStamp holds it).
 //  4. **Release**: the holder gives the seat up, moving the generation on and
 //     emptying the holder. Only the recorded holder may, for renew's reason.
+//     It does not carry the stamp clause the takeover does, because the seat it
+//     leaves is free and nothing reads a free seat's stamp: the takeover branch
+//     takes a free seat whatever its age (`holder_uid == ”`), and
+//     internal/lease's Record.Fresh calls a free seat never fresh. The field
+//     still has to be there and still has to be a number (hasChildren, and the
+//     field's TIMESTAMP), so a release cannot take the stamp off the record.
 //
 // Every transition fixes the generation or moves it by exactly one, and every
 // one of them requires the writer to be the holder the record ends with — so a
 // write that changes no generation (a child write, a multi-path update that
 // rewrites `holder` alone) satisfies none of them unless the writer already
-// holds the seat. The stamp is required to be the database's own by the
+// holds the seat. The stamp of the record a create or a takeover leaves is the
+// database's own: both branches require `newData.renewed_at == now` beside the
 // renewed_at field's `.validate` (`NEW == now`), which is what a write can only
-// satisfy with rtdb.ServerTimestamp.
+// satisfy with rtdb.ServerTimestamp. A renewal is held to it by that field
+// clause when the record is written whole; a renewal that writes only the mode
+// leaves the stamp it had, which is a record that still ages from the last
+// heartbeat — a holder cannot keep a seat alive by writing anything but a
+// stamp, and a seat that expires under its holder is the grace working, not a
+// hole. TestLeaseATakeoverMustCarryTheDatabasesStamp measures that case beside
+// the two it pins.
 func leaseWrite() string {
 	uid, gen := "newData.child('holder_uid').val()", "newData.child('generation').val()"
 	oldUid, oldGen := "data.child('holder_uid').val()", "data.child('generation').val()"
+	stamp := "newData.child('renewed_at').val()"
 	create := "(!data.exists() && " + uid + " == auth.uid && " + gen + " == 1)"
 	renew := "(data.exists() && " + oldUid + " == auth.uid && " + uid + " == auth.uid && " + gen + " == " + oldGen + ")"
-	take := fmt.Sprintf("(data.exists() && %s == auth.uid && %s == %s + 1 && (%s == '' || now - data.child('renewed_at').val() >= %d))",
-		uid, gen, oldGen, oldUid, LeaseGraceMs)
+	take := fmt.Sprintf("(data.exists() && %s == auth.uid && %s == %s + 1 && %s == now && (%s == '' || now - data.child('renewed_at').val() >= %d))",
+		uid, gen, oldGen, stamp, oldUid, LeaseGraceMs)
 	release := "(data.exists() && " + oldUid + " == auth.uid && " + uid + " == '' && " + gen + " == " + oldGen + " + 1)"
 	return "(" + create + " || " + renew + " || " + take + " || " + release + ")"
 }
