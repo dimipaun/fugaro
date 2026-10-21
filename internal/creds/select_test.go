@@ -736,6 +736,25 @@ func TestWaitAnswersTheEarliestOfTheCandidates(t *testing.T) {
 	if at, ok := SlotFrees(leases, a1.Name, now, run, 2); !ok || !at.Equal(now.Add(5*time.Minute)) {
 		t.Fatalf("SlotFrees under a cap of two = %s, %v; want the earlier expiry", at, ok)
 	}
+	// The count the arithmetic is, at a number where one lapse is not enough
+	// and neither is two: Free asks for strictly FEWER than limit holders, so a
+	// cap of three under five holders is freed by the THIRD expiry (two holders
+	// left), not by the first or the second. SlotFrees' own comment had this
+	// pair as "two lapses" — one short of what the code does — and nothing
+	// pinned the count.
+	five := make([]Lease, 0, 5)
+	for i, until := range []time.Duration{60, 50, 40, 30, 20} {
+		five = append(five, Lease{Slug: run.Slug, Run: fmt.Sprintf("holder-%d", i), Credential: a1.Name, Until: now.Add(until * time.Minute)})
+	}
+	if at, ok := SlotFrees(five, a1.Name, now, run, 3); !ok || !at.Equal(now.Add(40*time.Minute)) {
+		t.Fatalf("SlotFrees under a cap of three with five holders = %s, %v; want the third expiry, 40m", at, ok)
+	}
+	// Four holders under the same cap need one lapse fewer, and the run asking
+	// is not one of them: asked as a sixth run, the four are all in its way.
+	four := five[1:]
+	if at, ok := SlotFrees(four, a1.Name, now, run, 3); !ok || !at.Equal(now.Add(30*time.Minute)) {
+		t.Fatalf("SlotFrees under a cap of three with four holders = %s, %v; want the second expiry, 30m", at, ok)
+	}
 	// A lapsed lease is nobody's hold, and one run's own expired hold is not a
 	// wait either.
 	lapsed := append(leases, Lease{Slug: run.Slug, Run: "gone", Credential: a1.Name, Until: now.Add(-time.Minute)})

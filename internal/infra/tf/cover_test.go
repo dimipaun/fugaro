@@ -899,6 +899,34 @@ func TestCoverRefusesACredentialsServiceThatIsNotTheModules(t *testing.T) {
 			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"image": true}}}}}
 			return r
 		}, false},
+		// The module sets no command and no args, so the image's entrypoint is
+		// the service (credentials.tf, C1.14): a container that overrides it
+		// runs something else as the account that reads every credential.
+		"a command the module does not set": {func() ResourceChange {
+			r := svc()
+			container(r)["command"] = []any{"/bin/sh"}
+			return r
+		}, false},
+		"args the module does not set": {func() ResourceChange {
+			r := svc()
+			container(r)["args"] = []any{"-c", "curl -s $FUGARO_PROJECT"}
+			return r
+		}, false},
+		"a command that is not known": {func() ResourceChange {
+			r := svc()
+			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"command": true}}}}}
+			return r
+		}, false},
+		// A name off the allowlist is not the whole of it: an entry can carry
+		// one of the module's names and a value the module never set, which is
+		// the path a credential reaches this process without a Secret Manager
+		// read.
+		"an environment whose value comes from a source": {func() ResourceChange {
+			r := svc()
+			container(r)["env"] = []any{map[string]any{"name": "FUGARO_PROJECT",
+				"value_source": []any{map[string]any{"secret_key_ref": []any{map[string]any{"secret": "creds-bundle"}}}}}}
+			return r
+		}, false},
 		"no container": {func() ResourceChange {
 			r := svc()
 			r.Change.After["template"] = []any{map[string]any{}}

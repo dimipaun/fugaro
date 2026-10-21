@@ -1148,6 +1148,27 @@ func TestVerifyBoundsTheLaunchDayScan(t *testing.T) {
 		}
 	})
 
+	// The same day, written a day early: a run id minted today whose outcome is
+	// under yesterday. That is what a launcher whose clock is ahead of the rules
+	// server's produces — the outcome is written under the *server's* day
+	// (DAYOK's today or yesterday), so an outcome can be a day behind the id
+	// that wrote it just as it can be a day ahead of it. A clamp that only
+	// widens when the launch day is ahead of ours reads one of those two days
+	// and admits a run that has ended.
+	t.Run("a launch day of today, an outcome yesterday", func(t *testing.T) {
+		f := newFixture(t)
+		today := budget.Day(f.now)
+		f.run = f.now.Format("20060102-150405") + "-ee55"
+		f.db.set(budget.PathOutcome(today-1, f.slug, f.run))
+		_, err := f.verify(f.runToken(), f.jobToken(), f.job)
+		if !errors.Is(err, ErrUnverified) {
+			t.Fatalf("err = %v, want a refusal: the run's outcome is written yesterday", err)
+		}
+		if days := f.db.daysAsked(); len(days) != 2 || days[0] != today || days[1] != today-1 {
+			t.Errorf("days scanned = %v, want today (%d) and yesterday (%d)", days, today, today-1)
+		}
+	})
+
 	// The other day of that window, which is the one a clamp to today loses
 	// (review finding m1): a run id dated ahead of our clock, whose outcome is
 	// on the day our clock calls yesterday. The run has ended, and a scan of

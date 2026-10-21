@@ -558,18 +558,19 @@ func (a *Authenticator) checkLive(ctx context.Context, slug, run string, now tim
 		return fmt.Errorf("%w: the run id names no launch time, so its outcome cannot be looked for", ErrUnverified)
 	}
 	today := budget.Day(now)
-	if launch > today {
-		// A launch day ahead of ours is this service's clock being behind the
-		// minter's, not evidence that the run has not started. The scan then
-		// starts a day earlier than today rather than at today: the day an
+	if launch >= today {
+		// The launch day is not the oldest day the outcome can be on: the day an
 		// outcome is written under is the *database's* (the rules' DAYOK allows
-		// today or yesterday, and todayExpr is the rules server's now), so a
-		// run id minted a day ahead of our clock can have its outcome on the
-		// day our clock calls yesterday — and a scan clamped to today alone
-		// would look at one of the two days an outcome can be written on and
-		// admit a run that has ended (review finding m1). Widening the window
-		// can only find an outcome that is there: the outcome is written once
-		// and never removed, so an extra day read can never admit a live run.
+		// today or yesterday, and todayExpr is the rules server's now), and that
+		// clock is not ours. Behind the minter's, it puts the outcome of a run
+		// whose id says today on the day we call yesterday; ahead of it, it puts
+		// the outcome of a launch day ahead of ours there too. So the scan starts
+		// a day before today whatever the launch day is — a launch day ahead of
+		// today being this service's clock behind the minter's rather than
+		// evidence that the run has not started, it is not scanned in the future
+		// either. Widening the window can only find an outcome that is there: the
+		// outcome is written once and never removed, so an extra day read can
+		// never admit a live run.
 		launch = today - 1
 	}
 	if today-launch > maxRunDays {

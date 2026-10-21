@@ -684,9 +684,24 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	r.managedRuns(t, initProjectName, initProject)
 	ch := planChange{"address": bucket, "type": "google_storage_bucket",
 		"change": map[string]any{"actions": []string{"delete"},
-			"before": map[string]any{"id": "fugaro-runs-" + initProject, "name": "fugaro-runs-" + initProject, "project": initProject},
-			"after":  nil}}
-	r.allowDeleteList(t, initProject, tf.DeleteEntry{Address: bucket, Before: identityOf(t, ch)})
+			"before": map[string]any{"id": "fugaro-runs-" + initProject, "name": "fugaro-runs-" + initProject, "project": initProject,
+				// google_storage_bucket's identity turns on its time_created
+				// (tf.removalInstanceAttributes): without it the plan identifies
+				// nothing, tf.Approves refuses the removal before it ever
+				// compares an entry, and the assertion below is what keeps that
+				// from making this row vacuous again.
+				"time_created": "2026-01-02T03:04:05.678Z"},
+			"after": nil}}
+	entry := tf.DeleteEntry{Address: bucket, Before: identityOf(t, ch)}
+	// The row's premise, asserted rather than assumed: the entry has to be one
+	// the gate WOULD match — tf.Approves' own answer for the plan's own change
+	// — or the refusal below would be the plan's identity being unreadable
+	// rather than init's scoping, which is what a before view without the
+	// per-instance attribute this type's identity turns on produced.
+	if ok, why := tf.Approves([]tf.DeleteEntry{entry}, planOf(t, ch).ResourceChanges[0]); !ok {
+		t.Fatalf("the owner's entry does not approve this plan's own removal, so this row says nothing about scoping: %s", why)
+	}
+	r.allowDeleteList(t, initProject, entry)
 	r.setPlan(t, ch)
 	_, _, err := executeStdin(t, "", "init", "--yes")
 	managedRefusal(t, err, bucket, true)
@@ -734,6 +749,14 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 // what the gate compares.
 func identityOf(t *testing.T, ch planChange) string {
 	t.Helper()
+	return tf.RemovedIdentity(planOf(t, ch).ResourceChanges[0]).String()
+}
+
+// planOf is the plan the fake would report for one change, read back through
+// tf.Plan, so what a test compares against is the plan the program reads rather
+// than a fixture's rendering of it.
+func planOf(t *testing.T, ch planChange) tf.Plan {
+	t.Helper()
 	var p tf.Plan
 	if err := json.Unmarshal([]byte(planJSON(t, ch)), &p); err != nil {
 		t.Fatal(err)
@@ -741,7 +764,7 @@ func identityOf(t *testing.T, ch planChange) string {
 	if len(p.ResourceChanges) != 1 {
 		t.Fatalf("the change is %d resource changes, want 1", len(p.ResourceChanges))
 	}
-	return tf.RemovedIdentity(p.ResourceChanges[0]).String()
+	return p
 }
 
 // Task 3.2's review, finding 5: a managed refusal made only of what no
