@@ -5,12 +5,16 @@
 // are checked here, and each one reads its source rather than the page's own copy of it
 // (Review Focus: "the test must read the source, not the generator's own output"):
 //
-//   1. **The FAQ's comparison section has provenance or it does not exist** (D103, F51–F52).
-//      A row about another tool is a claim the repository cannot verify, so a row carries a
-//      `source:` and a `date:` — and the page *refuses to build* without them, which is why
-//      the cases below mutate `website/data/faq.yaml` in a temp copy and require the build to
-//      stop with the row's own id in the message. The empty section is the honest state on
-//      day one, so the section renders no rows until the owner supplies sourced, dated ones.
+//   1. **The FAQ carries no comparison section** (the owner's feedback of 2026-10-21). The
+//      section headed "How Fugaro compares" was rendered from `website/data/faq.yaml`'s
+//      `comparison:` list, and that list never carried a row: D103's provenance rule — a row
+//      about another tool carries a `source:` and a `date:` or the build stops — is exactly
+//      what kept it empty, so what a reader met was a heading over a panel that said nothing.
+//      The owner had it removed: the section, the panel, the empty state and their styles are
+//      gone from the page, `faq.yaml` carries no `comparison:` key, and the two cases below
+//      hold both halves of that — the built page carries no leftover of the section, with a
+//      plant per shape a later edit would put back, and a `comparison:` key written into the
+//      file again stops the build rather than sitting in the tree with nothing rendering it.
 //   2. **The FAQ is owner-approved and says so by saying nothing** (D103; approved 2026-10-17).
 //      The built page carries no pending-review notice, and `faq.yaml` carries no review flag:
 //      a stale `review_pending:` key fails the build as a key the page does not read.
@@ -52,10 +56,12 @@
 // network-free: `npm ci` is not run here, and the only executable started is the site's own
 // installed Astro.
 //
-// W1.10's red step is kept as the first two cases: with a comparison row carrying no source
-// in `faq.yaml`, the check reports `comparison row "rival-probe" carries no source` — and the
-// build refuses the row rather than the test skipping it, so the refusal cannot rot into a
-// comment about a check that no longer refuses anything.
+// The removal of 2026-10-21 is held the way the rest of this file holds a rule: over the
+// artifact, with a plant per shape a later edit would put back — and the file half of it is a
+// build case, because the page refuses a `faq.yaml` key it does not render, so re-adding the
+// section's data fails the build naming the key rather than leaving a fact nothing reads. A
+// gate that only read the built page would pass on the day the file grew the key back and the
+// page grew the section back with it over some later edit; the two cases fail on either.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -71,11 +77,6 @@ const REPO = path.dirname(SITE)
 
 const FAQ_FILE = 'website/data/faq.yaml'
 const CI_FILE = '.github/workflows/ci.yml'
-
-// The row every provenance fixture below is built from: a synthetic tool, because the page is
-// where a *sourced* comparison would be published and a test fixture naming a real product
-// would be an unsourced, undated claim about it in the repository (F51, D103).
-const PROBE = 'rival-probe'
 
 // ---- reading the repository's own sources ---------------------------------------------
 
@@ -270,98 +271,157 @@ function rewrite(file, replace) {
   writeFileSync(file, after)
 }
 
-/** The comparison rows of `faq.yaml`, as the file writes them. */
-function withComparison(rows) {
-  return (text) => text.replace(/^comparison: \[\]$/m, `comparison:\n${rows}`)
+// ---- the comparison section is gone (the owner's feedback of 2026-10-21) ------------------
+
+/**
+ * What is left of the FAQ's comparison section, as the failure lines a reader sees. The
+ * section rendered `website/data/faq.yaml`'s `comparison:` list, the list never carried a row,
+ * and the owner had the section removed on 2026-10-21 — so the shapes below are what a later
+ * edit would put back, and each one is refused by name:
+ *
+ *   1. the section itself — a band of the page heading nothing;
+ *   2. its heading, "How Fugaro compares" — an empty promise even if the band is renamed;
+ *   3. **the word `comparison` anywhere in the artifact**, which is what the section was
+ *      written in: its anchor and its class (`comparison`), its panel, its empty state and its
+ *      row count (`comparison-panel`, `comparison-empty`, `data-comparison-rows`) and the
+ *      seven stylesheet rule blocks that were inlined into the page (`.comparison`,
+ *      `.comparison-title`, `.comparison-panel`, `.comparison-empty`, `.comparison table`,
+ *      `.comparison caption`, `.comparison th, .comparison td`). The word is the rule rather
+ *      than that list: the list a first cut of this check carried named the three shapes a
+ *      reader sees and left five of the seven rule blocks free to come back unnoticed, which
+ *      is the way a "removed" section returns — one selector at a time;
+ *   4. and the anchor a reader could link to, which `website/test/linkcheck.mjs` refuses when
+ *      another page links it and nothing on this one carries it.
+ *
+ * It reads the built artifact, like every other case in this file, and it is a rule about the
+ * page a reader gets rather than about the template: a section deleted from `faq.astro` and
+ * rebuilt from somewhere else still fails here.
+ */
+function comparisonLeftovers(html) {
+  const out = []
+  if (/<section[^>]*\bid="comparison"/.test(html)) {
+    out.push('the FAQ renders a comparison section again: the owner removed it on 2026-10-21, because the section a reader met was a heading over a panel that carried no row')
+  }
+  if (/\bHow Fugaro compares\b/.test(pageText(html))) {
+    out.push('the FAQ carries the heading "How Fugaro compares" again: the section it headed was removed on 2026-10-21, and a heading with nothing under it is an empty promise')
+  }
+  // The word, in whatever token carries it: the whole identifier around it is matched so that
+  // the failure line names the shape that came back (`comparison-panel`, `data-comparison-rows`)
+  // rather than only the word, and so that a selector the list above did not know about is
+  // still caught.
+  const word = [...html.matchAll(/[\w-]*comparison[\w-]*/gi)].map((m) => m[0])
+  if (word.length > 0) {
+    const shapes = [...new Set(word)].join(', ')
+    out.push(`the FAQ still carries the removed section's own word (${shapes}, ${word.length} time(s)): every shape of the section was written in it — its anchor and class, its panel, its empty state, its row count and all seven of its stylesheet rule blocks — so the word coming back is the section coming back`)
+  }
+  return out
 }
 
-/** One comparison row, indented as `faq.yaml` writes one. */
-function row(id, fields) {
-  return Object.entries({ id, ...fields })
-    .map(([key, value]) => `    ${key}: ${value}\n`)
-    .join('')
-    .replace(/\n$/, '')
-}
+test('the FAQ carries no comparison section, and faq.yaml carries no comparison data', () => {
+  const page = builtPage('faq')
+  assert.deepEqual(
+    comparisonLeftovers(page),
+    [],
+    `the FAQ still carries the comparison section the owner removed on 2026-10-21:\n  ${comparisonLeftovers(page).join('\n  ')}`,
+  )
 
-// ---- the provenance rule (D103) ----------------------------------------------------------
+  // The file half of the same removal, and the half a page-level check cannot see: a
+  // `comparison:` key written into `faq.yaml` again is refused by the build (the case below),
+  // and this reads the file so that the day the key comes back the reason is on the failure
+  // line rather than only in the build's own message.
+  const faq = readFileSync(path.join(REPO, FAQ_FILE), 'utf8')
+  assert.ok(
+    !/^comparison:/m.test(faq),
+    `${FAQ_FILE} carries a \`comparison:\` key again, and the page that rendered it was removed on 2026-10-21: a fact nobody renders is a fact nothing holds to its source (W1.10 step 2)`,
+  )
+})
 
-test('the FAQ refuses a comparison row that carries no source', async (t) => {
-  const rows = `  - ${row(PROBE, { name: 'A rival tool', claim: 'It runs agents somewhere.', date: '2026-10-01' })}`
-  const built = buildWith(t, (copy) => rewrite(path.join(copy.site, 'data', 'faq.yaml'), withComparison(rows)))
+test('the FAQ is approved, and says so by saying nothing', () => {
+  // D103, approved 2026-10-17: no review flag in the file, no notice on the page. This used to
+  // be asserted inside the comparison case, which the removal of 2026-10-21 took away; the
+  // rule is the page's own and is held here.
+  const page = builtPage('faq')
+  const faq = readFileSync(path.join(REPO, FAQ_FILE), 'utf8')
+  assert.ok(!/^review_pending:/m.test(faq), `${FAQ_FILE} carries a review_pending flag again, and the FAQ is approved (D103)`)
+  assert.ok(!page.includes('id="review-pending"'), 'the built FAQ carries the pending-review notice, and the owner approved it on 2026-10-17 (D103)')
+  assert.ok(!/pending review/i.test(page), 'the built FAQ says it is pending review, and the owner approved it on 2026-10-17 (D103)')
+})
+
+test('every leftover of the comparison section is refused by its own line', () => {
+  const page = builtPage('faq')
+  assert.deepEqual(comparisonLeftovers(page), [], 'the removal rule fails on the built page, so the plants below are not proving what they name')
+
+  // Each plant is the defect as the edit that would bring the section back writes it, on a
+  // string the built page really carries, so a page whose markup moved fails here loudly
+  // rather than leaving a case passing over nothing.
+  const cases = [
+    {
+      what: 'the section put back',
+      plant: page.replace('<div class="faq', '<section id="comparison" class="comparison"></section><div class="faq'),
+      expected: /renders a comparison section again/,
+    },
+    {
+      what: 'the heading put back',
+      plant: page.replace('<h1', '<h2 class="comparison-title display-lg">How Fugaro compares</h2><h1'),
+      expected: /carries the heading "How Fugaro compares"/,
+    },
+    {
+      what: 'the panel put back',
+      plant: page.replace('<div class="questions', '<div class="comparison-panel"></div><div class="questions'),
+      expected: /comparison-panel/,
+    },
+    {
+      what: 'the empty state put back',
+      plant: page.replace('<div class="questions', '<p class="comparison-empty" id="comparison-empty">No comparison is published.</p><div class="questions'),
+      expected: /comparison-empty/,
+    },
+    {
+      what: 'the row count put back',
+      plant: page.replace('<div class="questions', '<section id="rivals" data-comparison-rows="0"></section><div class="questions'),
+      expected: /data-comparison-rows/,
+    },
+    {
+      // All seven of the rule blocks the section was drawn with, and not only the two the
+      // shapes above are caught by: `.comparison`, `.comparison-title`, `.comparison table`,
+      // `.comparison caption` and `.comparison th, .comparison td` are five a rule reading
+      // three class tokens let through, which is why this plant carries them and not
+      // `.comparison-panel` again.
+      what: 'the section’s stylesheet left behind',
+      plant: page.replace(
+        '</style>',
+        '.comparison { display: flex; }\n.comparison-title { margin: 0; }\n.comparison table { border-collapse: collapse; }\n.comparison caption { text-align: left; }\n.comparison th, .comparison td { text-align: left; }\n</style>',
+      ),
+      expected: /removed section's own word/,
+    },
+  ]
+
+  for (const { what, plant, expected } of cases) {
+    assert.notEqual(plant, page, `${what}: the plant changed nothing, so the case below would prove nothing`)
+    const failures = comparisonLeftovers(plant)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what} was not refused (${expected}); the rule said:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
+})
+
+test('a comparison: key written into faq.yaml again stops the build', async (t) => {
+  // The file half of the removal, and the one thing the page cannot say about itself: the page
+  // reads `version` and `questions` and refuses every other key, so the data the removed
+  // section was rendered from cannot come back with nothing rendering it. The build names the
+  // key, which is what tells whoever added it why the page will not take it.
+  const built = buildWith(t, (copy) => rewrite(path.join(copy.site, 'data', 'faq.yaml'), (text) => `${text}\ncomparison: []\n`))
 
   assert.match(
     built.output,
-    new RegExp(`comparison row "${PROBE}" carries no source`),
-    `Expected: FAIL — comparison row "${PROBE}" carries no source. The build refused the row without naming it, so the author of a new row cannot find it (D103)`,
+    /the key "comparison" is not one this page reads/,
+    `Expected: FAIL — the key "comparison" is not one this page reads. The removed section's data came back and the build refused it without naming the key, so the failure line does not say what to remove (W1.10 step 2)`,
   )
   assert.notEqual(
     built.status,
     0,
-    `the build accepted a comparison row with no source, so a comparison can be added without provenance (D103, F51):\n${built.output}`,
+    `the build accepted a \`comparison:\` key in ${FAQ_FILE}, so the removed section's data can sit in the tree with nothing rendering it (the owner's feedback of 2026-10-21, W1.10 step 2):\n${built.output}`,
   )
-})
-
-test('the FAQ refuses a comparison row that carries no date', async (t) => {
-  const rows = `  - ${row(PROBE, { name: 'A rival tool', claim: 'It runs agents somewhere.', source: 'https://example.invalid/rival' })}`
-  const built = buildWith(t, (copy) => rewrite(path.join(copy.site, 'data', 'faq.yaml'), withComparison(rows)))
-
-  assert.match(
-    built.output,
-    new RegExp(`comparison row "${PROBE}" carries no date`),
-    `Expected: FAIL — comparison row "${PROBE}" carries no date: a claim about another tool without the date it was checked is a claim with no expiry (D103)`,
-  )
-  assert.notEqual(built.status, 0, `the build accepted a comparison row with no date:\n${built.output}`)
-})
-
-test('a comparison row with a source and a date is rendered, and the page carries no pending-review notice', async (t) => {
-  // The positive half of the same rule, in one build: a row that carries both fields is
-  // published, so the page is not merely refusing rows, it is rendering the sourced ones —
-  // and, with a row in it, the page still carries no pending-review notice.
-  const rows = `  - ${row(PROBE, {
-    name: 'A rival tool',
-    claim: 'It runs agents somewhere, according to its own documentation.',
-    source: 'https://example.invalid/rival',
-    date: '2026-10-01',
-  })}`
-  const built = buildWith(t, (copy) => {
-    rewrite(path.join(copy.site, 'data', 'faq.yaml'), withComparison(rows))
-  })
-
-  assert.equal(built.status, 0, `the build refused a sourced, dated comparison row:\n${built.output}`)
-  assert.ok(built.page, 'the build produced no page')
-  assert.ok(
-    built.page.includes('It runs agents somewhere, according to its own documentation.'),
-    'the sourced row is not on the page, so the section renders nothing even when faq.yaml carries a row',
-  )
-  assert.ok(built.page.includes('https://example.invalid/rival'), 'the row is rendered without its source')
-  assert.ok(built.page.includes('2026-10-01'), 'the row is rendered without its date')
-  assert.ok(
-    !built.page.includes('id="review-pending"') && !/pending review/i.test(built.page),
-    "the owner approved the FAQ on 2026-10-17 and the page still says it is pending the owner's review (D103)",
-  )
-})
-
-test('the comparison section renders no rows while faq.yaml carries none', async (t) => {
-  // The real file, as the owner has it: no rows. The section is empty and says so rather than
-  // rendering a table with nothing in it, and the two states are read from the same page:
-  // `data-comparison-rows` is the page's own count, and the empty state exists with it.
-  const page = builtPage('faq')
-  const faq = readFileSync(path.join(REPO, FAQ_FILE), 'utf8')
-  const empty = /^comparison:\s*\[\s*\]\s*$/m.test(faq)
-  const section = element(page, 'comparison')
-
-  if (empty) {
-    assert.equal(attribute(section, 'data-comparison-rows'), '0', 'faq.yaml carries no comparison row and the page counts a different number')
-    assert.ok(section.includes('id="comparison-empty"'), 'faq.yaml carries no comparison row and the section does not say so')
-  } else {
-    assert.notEqual(attribute(section, 'data-comparison-rows'), '0', 'faq.yaml carries comparison rows and the page renders none of them')
-    assert.ok(!section.includes('id="comparison-empty"'), 'faq.yaml carries comparison rows and the section still renders its empty state')
-  }
-
-  // The FAQ is approved (D103, 2026-10-17): no review flag in the file, no notice on the page.
-  assert.ok(!/^review_pending:/m.test(faq), `${FAQ_FILE} carries a review_pending flag again, and the FAQ is approved (D103)`)
-  assert.ok(!page.includes('id="review-pending"'), 'the built FAQ carries the pending-review notice, and the owner approved it on 2026-10-17 (D103)')
-  assert.ok(!/pending review/i.test(page), 'the built FAQ says it is pending review, and the owner approved it on 2026-10-17 (D103)')
 })
 
 // ---- the community page's facts -----------------------------------------------------------
@@ -779,13 +839,6 @@ test('the FAQ wears the site’s bold look, in the shapes the site writes once',
     answers.filter((answer) => !answer.card).map((answer) => answer.id),
     [],
     'these answers are not drawn as the site’s card (`base.css`’s `.card`): the redesign lays each answer on one, so the six read as a set a reader scans rather than as a document',
-  )
-
-  const section = element(page, 'comparison')
-  assert.match(
-    section,
-    /class="comparison-panel"/,
-    'the FAQ’s comparison section is not drawn in a panel, which is the box every raised block of the redesigned site stands in',
   )
 })
 

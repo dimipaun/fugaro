@@ -158,7 +158,7 @@ func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
 	typedThroughYes(t) // about the provisioning, not about who may confirm it
 	r := computeRig(t)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -236,7 +236,7 @@ func TestComputeStageFindsItsWorkdirThroughASymlink(t *testing.T) {
 	}
 	t.Setenv("XDG_STATE_HOME", filepath.Join(link, "xdg_state_home"))
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -276,7 +276,7 @@ func equalJSON(a, b any) bool {
 func TestComputeStageNeverTakesYes(t *testing.T) {
 	r := computeRig(t)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, "", "init", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--provision-batch")
 	if err == nil || !strings.Contains(err.Error(), "left for you") {
 		t.Fatalf("err = %v, want the step left for the owner\n%s", err, out)
 	}
@@ -306,7 +306,7 @@ func TestComputeStageNeverTakesYes(t *testing.T) {
 // this test exists.
 func TestComputeStageIsLeftUnenteredWithoutATerminal(t *testing.T) {
 	r := computeRig(t)
-	out, _, err := executeStdin(t, "", "init", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--provision-batch")
 	if err == nil || !strings.Contains(err.Error(), "left for you") {
 		t.Fatalf("err = %v, want the step left for the owner\n%s", err, out)
 	}
@@ -334,8 +334,8 @@ func TestComputeStageGuardsDeletes(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"the plan view", []string{"init", "--yes", "--plan-only", "--provision-batch"}},
-		{"the apply", []string{"init", "--yes", "--provision-batch"}},
+		{"the plan view", []string{"setup", "--yes", "--plan-only", "--provision-batch"}},
+		{"the apply", []string{"setup", "--yes", "--provision-batch"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := computeRig(t)
@@ -362,7 +362,7 @@ func TestComputeStageNoChanges(t *testing.T) {
 	r.script["plan"] = map[string]any{"exit": 0} // an empty plan, everywhere
 	r.save(t)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -390,7 +390,7 @@ func TestComputeStagePlanOnlyAppliesNothing(t *testing.T) {
 	// reason they did not name.
 	r.setPlanAt(t, "installation")
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, "", "init", "--yes", "--plan-only", "--provision-batch")
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--plan-only", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -412,7 +412,7 @@ func TestComputeStagePlanOnlyAppliesNothing(t *testing.T) {
 func TestComputeStageIsBehindItsFlag(t *testing.T) {
 	r := computeRig(t)
 	fakeTerminal(t)
-	if _, _, err := executeStdin(t, "", "init", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
 		t.Fatal(err)
 	}
 	if calls := computeCalls(t, r); len(calls) != 0 {
@@ -506,8 +506,8 @@ func TestComputeStageHoldsItsGrantsToTheCover(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"the plan view", []string{"init", "--yes", "--plan-only", "--provision-batch"}},
-		{"the apply", []string{"init", "--yes", "--provision-batch"}},
+		{"the plan view", []string{"setup", "--yes", "--plan-only", "--provision-batch"}},
+		{"the apply", []string{"setup", "--yes", "--provision-batch"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			typedThroughYes(t)
@@ -544,7 +544,7 @@ func TestComputeStageRetriesIAMPropagation(t *testing.T) {
 	r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
 	r.save(t)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -569,7 +569,7 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 		r.script["apply@compute"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded"}
 		r.save(t)
 		fakeTerminal(t)
-		_, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
 		if err == nil {
 			t.Fatal("a failed apply succeeded")
 		}
@@ -584,7 +584,7 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 		r.script["apply@compute"] = map[string]any{"exit": 1, "stderr": propagationStderr}
 		r.save(t)
 		fakeTerminal(t)
-		_, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
 		if err == nil || !strings.Contains(err.Error(), "does not exist") {
 			t.Fatalf("err = %v, want the last propagation error", err)
 		}
@@ -602,7 +602,7 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 		r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
 		r.save(t)
 		fakeTerminal(t)
-		_, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
 		if err == nil || !strings.Contains(err.Error(), "google_compute_firewall.extra") {
 			t.Fatalf("err = %v, want the retry refused for the change nobody confirmed", err)
 		}

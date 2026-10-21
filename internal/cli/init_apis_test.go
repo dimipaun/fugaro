@@ -34,7 +34,7 @@ func TestInitEnablesResourceManager(t *testing.T) {
 	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
 	r.su.Propagation = 2
 	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only")
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, errOut)
 	}
@@ -56,7 +56,7 @@ func TestInitEnablesResourceManager(t *testing.T) {
 	r = newInitRig(t)
 	r.stateBucket()
 	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
-	out, _, err = executeStdin(t, initProjectName+"\n", "init", "--plan-only", "--json")
+	out, _, err = executeStdin(t, initProjectName+"\n", "setup", "--plan-only", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestInitEnablesResourceManager(t *testing.T) {
 func TestInitResourceManagerEnabledAsksNothing(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
-	out, _, err := executeStdin(t, "", "init", "--plan-only", "--yes")
+	out, _, err := executeStdin(t, "", "setup", "--plan-only", "--yes")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestInitResourceManagerDisabledNeedsConfirmation(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
-	_, _, err := executeStdin(t, "", "init", "--plan-only")
+	_, _, err := executeStdin(t, "", "setup", "--plan-only")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), enableCommand) || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -97,11 +97,11 @@ func TestInitResourceManagerDisabledNeedsConfirmation(t *testing.T) {
 	}
 
 	fakeTerminal(t)
-	_, _, err = executeStdin(t, "yes\n", "init", "--plan-only")
+	_, _, err = executeStdin(t, "yes\n", "setup", "--plan-only")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), enableCommand) || len(r.su.Enables()) != 0 {
 		t.Fatalf("declined at a terminal: exit %d, err %v, enables %q", ExitCode(err), err, r.su.Enables())
 	}
-	if _, _, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only"); err != nil || len(r.su.Enables()) != 1 {
+	if _, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only"); err != nil || len(r.su.Enables()) != 1 {
 		t.Fatalf("typed project name: %v, enables %q", err, r.su.Enables())
 	}
 }
@@ -113,7 +113,7 @@ func TestInitResourceManagerEnableRefused(t *testing.T) {
 	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
 	r.su.Refuse(http.StatusForbidden, "PERMISSION_DENIED", "AUTH_PERMISSION_DENIED", "Permission denied to enable service [cloudresourcemanager.googleapis.com]")
 	fakeTerminal(t)
-	_, _, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only")
+	_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only")
 	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "Permission denied to enable service") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -131,7 +131,7 @@ func TestInitResourceManagerNeverPropagates(t *testing.T) {
 	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
 	r.su.Propagation = 100
 	fakeTerminal(t)
-	_, _, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only")
+	_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only")
 	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "rerun fugaro init") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -144,7 +144,7 @@ func TestInitDisabledLoggingPlansCreate(t *testing.T) {
 	r.stateBucket()
 	r.logs.AddBucket(initProject, "global", infra.LogBucket, "ACTIVE", infra.LogBucketDescription)
 	r.su.Disable("logging.googleapis.com", r.logs.Server)
-	if _, errOut, err := executeStdin(t, "", "init", "--plan-only"); err != nil {
+	if _, errOut, err := executeStdin(t, "", "setup", "--plan-only"); err != nil {
 		t.Fatalf("%v\n%s", err, errOut)
 	}
 	if len(r.su.Enables()) != 0 {
@@ -160,10 +160,10 @@ func TestInitDisabledLoggingPlansCreate(t *testing.T) {
 // the Terraform backend: exit 2, never a create offer or "no state".
 func TestInitStorageDisabledIsRemote(t *testing.T) {
 	for _, args := range [][]string{
-		{"init", "--yes"},
-		{"init", "--plan-only", "--yes"},
-		{"init", "--forget", "--yes"},
-		{"init", "--config-only", "--yes"},
+		{"setup", "--yes"},
+		{"setup", "--plan-only", "--yes"},
+		{"update", "--forget", "--yes"},
+		{"setup", "--config-only", "--yes"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			r := newInitRig(t)
@@ -197,7 +197,7 @@ func TestPlanOnlyYesChangesNothing(t *testing.T) {
 		r := newInitRig(t)
 		r.stateBucket()
 		r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
-		_, _, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only", "--yes")
+		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only", "--yes")
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), enableCommand) || strings.Contains(err.Error(), "or pass --yes") {
 			t.Fatalf("exit %d, err %v", ExitCode(err), err)
 		}
@@ -207,7 +207,7 @@ func TestPlanOnlyYesChangesNothing(t *testing.T) {
 	})
 	t.Run("no state bucket", func(t *testing.T) {
 		r := newInitRig(t) // no r.stateBucket()
-		_, _, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only", "--yes")
+		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only", "--yes")
 		if ExitCode(err) != ExitUserError || strings.Contains(err.Error(), "or pass --yes") {
 			t.Fatalf("exit %d, err %v", ExitCode(err), err)
 		}
@@ -225,12 +225,12 @@ func TestPlanOnlyYesChangesNothing(t *testing.T) {
 func TestPlanOnlyYesNeverConfirmsInAnyMode(t *testing.T) {
 	noEnableWait(t, 1)
 	for name, args := range map[string][]string{
-		"converge":                 {"init", "--plan-only", "--yes"},
-		"--json":                   {"init", "--plan-only", "--yes", "--json"},
-		"--non-interactive":        {"init", "--plan-only", "--yes", "--non-interactive"},
-		"--firebase":               {"init", "--plan-only", "--yes", "--firebase", initProject},
-		"--repo":                   {"init", "--repo", "--plan-only", "--yes"},
-		"--repo --non-interactive": {"init", "--repo", "--plan-only", "--yes", "--non-interactive", "--json"},
+		"converge":                 {"setup", "--plan-only", "--yes"},
+		"--json":                   {"setup", "--plan-only", "--yes", "--json"},
+		"--non-interactive":        {"setup", "--plan-only", "--yes", "--non-interactive"},
+		"--firebase":               {"setup", "--plan-only", "--yes", "--firebase", initProject},
+		"--repo":                   {"setup", "--repo", "--plan-only", "--yes"},
+		"--repo --non-interactive": {"setup", "--repo", "--plan-only", "--yes", "--non-interactive", "--json"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newInitRig(t)

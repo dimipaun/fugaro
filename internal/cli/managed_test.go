@@ -834,7 +834,7 @@ var initFlagCases = map[string]string{
 // flag added without a case fails here.
 func TestManagedEveryInitFlagHasACase(t *testing.T) {
 	seen := map[string]bool{}
-	newInitCmd().Flags().VisitAll(func(f *pflag.Flag) {
+	newSetupCmd().Flags().VisitAll(func(f *pflag.Flag) {
 		seen[f.Name] = true
 		if _, ok := initFlagCases[f.Name]; !ok {
 			t.Errorf("fugaro init --%s has no case in initFlagCases: say what it does to a confirmation, and add it to the table if it is a condition", f.Name)

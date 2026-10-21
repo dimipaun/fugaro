@@ -183,10 +183,10 @@ func asAgent(err error, target **initflow.AgentError) bool {
 // or without, whichever stage it reaches; the plan still runs.
 func TestInitInAnAgentSessionAppliesNothing(t *testing.T) {
 	for name, args := range map[string][]string{
-		"--yes":                   {"init", "--yes", "--json"},
-		"--yes --non-interactive": {"init", "--yes", "--non-interactive", "--json"},
-		"no flags":                {"init", "--json"},
-		"--config-only --yes":     {"init", "--config-only", "--yes", "--json"},
+		"--yes":                   {"setup", "--yes", "--json"},
+		"--yes --non-interactive": {"setup", "--yes", "--non-interactive", "--json"},
+		"no flags":                {"setup", "--json"},
+		"--config-only --yes":     {"setup", "--config-only", "--yes", "--json"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newInitRig(t)
@@ -212,7 +212,7 @@ func TestInitInAnAgentSessionAppliesNothing(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	t.Setenv("CLAUDECODE", "1")
-	out, _, err := executeStdin(t, "", "init", "--plan-only", "--json")
+	out, _, err := executeStdin(t, "", "setup", "--plan-only", "--json")
 	if err != nil || !strings.Contains(out, "will-do") || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("--plan-only in an agent session: %v\n%s", err, out)
 	}

@@ -375,14 +375,18 @@ product code.
   part of one cited beside its section, or a register this folder quotes by name;
   and no document cites a number the block does not have);
   `TestDocsRigorModesSpecIsTheOwners` (the spec's own sentences survive, and no
-  document in the folder puts a decision in the owner's mouth); and
+  document in the folder puts a decision in the owner's mouth);
+  `TestDocsRigorModesCensusSkipsGitOnlyWhereAShellRunsIt` (the census guard's own
+  skip rule, pinned in both directions: a command that runs `git` is skipped in a
+  tree without a repository, and a command that only reads a path with the three
+  letters in it is not); and
   `TestDocsRigorModesAnswersSayWhatTheyChange` (the sentences the answers of
   2026-10-20 displaced are the ones the documents carry: the one-line pin D19's
   answer owes a repository, every unchanged-behaviour claim scoped to Critical
   mode, no phrasing that puts a person in the ready path, D9's same-pull-request
   rule with T3.1 waiting for T4.5, T5.3's project-configured inputs, and D29's
   value still the owner's).
-- **Red step.** The test file does not exist; written first, each of the eight
+- **Red step.** The test file does not exist; written first, each of the nine
   fails on a folder that is missing the sentence it names. The task is not done
   until each is red once and green after, and what each one names becomes T0.1's fix.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'DocsRigorModes' -count=1 -timeout 40m`

@@ -370,7 +370,7 @@ func TestCheckGitHubAppRefusedInAgentSession(t *testing.T) {
 		t.Run(marker, func(t *testing.T) {
 			g := newGitHubRig(t)
 			t.Setenv(marker, "1")
-			for _, args := range [][]string{{"init", "--check-github-app", "--plan-only"}, {"init", "--repo", "--check-github-app", "--plan-only"}, {"doctor", "--check-github-app", "--json"}} {
+			for _, args := range [][]string{{"setup", "--check-github-app", "--plan-only"}, {"setup", "--repo", "--check-github-app", "--plan-only"}, {"doctor", "--check-github-app", "--json"}} {
 				_, _, err := execute(t, args...)
 				if err == nil || !strings.Contains(err.Error(), "refused in a coding agent's session") || ExitCode(err) != ExitUserError {
 					t.Errorf("%v: %v", args, err)

@@ -314,7 +314,7 @@ func TestMarkedProjectTakesOnePrompt(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "init")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -339,7 +339,7 @@ func TestMarkedProjectTakesOnePrompt(t *testing.T) {
 	// A rerun has nothing to do, and asks nothing.
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)
-	out, _, err = executeStdin(t, "", "init")
+	out, _, err = executeStdin(t, "", "setup")
 	if err != nil || strings.Contains(out, "Type aurora") {
 		t.Fatalf("rerun: %v\n%s", err, out)
 	}
@@ -354,7 +354,7 @@ func TestUnmarkedProjectKeepsPerStepPrompts(t *testing.T) {
 			r := newInitRig(t)
 			r.markedRuns(t, mark[0], mark[1])
 			fakeTerminal(t)
-			out, _, err := executeStdin(t, initProjectName+"\n"+initProjectName+"\n"+initProjectName+"\n", "init")
+			out, _, err := executeStdin(t, initProjectName+"\n"+initProjectName+"\n"+initProjectName+"\n", "setup")
 			if err != nil {
 				t.Fatalf("%v\n%s", err, out)
 			}
@@ -364,7 +364,7 @@ func TestUnmarkedProjectKeepsPerStepPrompts(t *testing.T) {
 			// One answer is one step: the next one is declined.
 			r2 := newInitRig(t)
 			r2.markedRuns(t, mark[0], mark[1])
-			_, _, err = executeStdin(t, initProjectName+"\n", "init")
+			_, _, err = executeStdin(t, initProjectName+"\n", "setup")
 			if err == nil || len(r2.ran(t, "apply")) != 0 {
 				t.Fatalf("one answer confirmed more than one step: %v", err)
 			}
@@ -378,7 +378,7 @@ func TestMarkedProjectWrongNameAppliesNothing(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, "nope\n"+initProjectName+"\n", "init")
+	out, _, err := executeStdin(t, "nope\n"+initProjectName+"\n", "setup")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -393,7 +393,7 @@ func TestMarkedProjectWrongNameAppliesNothing(t *testing.T) {
 // An agent's environment takes no confirmation and applies nothing, marked or
 // not, with a name waiting on stdin.
 func TestMarkedProjectInAnAgentSession(t *testing.T) {
-	for _, args := range [][]string{{"init"}, {"init", "--yes"}} {
+	for _, args := range [][]string{{"setup"}, {"setup", "--yes"}} {
 		r := newInitRig(t)
 		r.markedRuns(t, initProjectName, initProject)
 		fakeTerminal(t)
@@ -414,7 +414,7 @@ func TestMarkedProjectYesAsBefore(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes")
 	if err != nil || strings.Contains(out, "Review:") || strings.Contains(out, "Type aurora") || len(r.ran(t, "apply")) != 1 {
 		t.Fatalf("%v, calls %q\n%s", err, r.calls(t), out)
 	}
@@ -429,7 +429,7 @@ func TestMarkedProjectPlanOnlyShowsTheReview(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only", "--yes")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only", "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -444,7 +444,7 @@ func TestMarkedProjectPlanOnlyShowsTheReview(t *testing.T) {
 	// An unmarked project has no review to show.
 	r2 := newInitRig(t)
 	r2.markedRuns(t, "", "")
-	out, _, err = executeStdin(t, "", "init", "--plan-only")
+	out, _, err = executeStdin(t, "", "setup", "--plan-only")
 	if err != nil || strings.Contains(out, "Review:") {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -505,7 +505,7 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 			r.markedRuns(t, "", "")
 		}
 		fakeTerminal(t)
-		out, errOut, err := executeStdin(t, stdin, "init", "--firebase", fp, "--base", "base")
+		out, errOut, err := executeStdin(t, stdin, "setup", "--firebase", fp, "--base", "base")
 		return out + errOut, err, r
 	}
 	// One project for everything (the Firebase project is the installation's).
@@ -594,7 +594,7 @@ func TestMarkedProjectReplacePlanAsksItsOwn(t *testing.T) {
 			addr := "module.installation.google_storage_bucket.runs"
 			r.setPlan(t, change(addr, "delete", "create"))
 			fakeTerminal(t)
-			out, _, err := executeStdin(t, tc.stdin, "init", "--allow-delete", addr)
+			out, _, err := executeStdin(t, tc.stdin, "setup", "--allow-delete", addr)
 			if got := len(r.ran(t, "apply")); got != tc.apply {
 				t.Fatalf("%d applies, want %d (err %v)\n%s", got, tc.apply, err, out)
 			}
@@ -716,7 +716,7 @@ func TestMarkedProjectUnlistedGrantAsksItsOwn(t *testing.T) {
 	r.setPlan(t, planChange{"address": "module.installation.google_project_iam_member.x", "type": "google_project_iam_member",
 		"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{"member": "user:eve@example.com", "role": "roles/storage.objectUser"}, "after_unknown": map[string]any{}}})
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, names(1), "init")
+	out, _, err := executeStdin(t, names(1), "setup")
 	if err == nil || len(r.ran(t, "apply")) != 0 || !strings.Contains(out, "not covered by the run confirmation") {
 		t.Fatalf("err %v, calls %q\n%s", err, r.calls(t), out)
 	}

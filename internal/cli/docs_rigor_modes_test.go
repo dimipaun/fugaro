@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
@@ -376,7 +378,7 @@ func TestDocsRigorModesFindingsDecisionsAndItemsAreNumbered(t *testing.T) {
 // every row, and running that command reproduces the count the row states. A
 // count without its command is a figure a later reader cannot re-derive, and a
 // command that no longer produces its figure is worse than no command at all:
-// it is a claim that looks checked. The other 47 rows this repository's folders
+// it is a claim that looks checked. The other 51 rows this repository's folders
 // assert in prose; this one is the only place the figure can be re-derived by
 // the test itself, so it is re-derived.
 //
@@ -401,7 +403,20 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 	if j := strings.Index(body, "\n## 5."); j >= 0 {
 		body = body[:j]
 	}
-	rows, commands, checked := 0, 0, 0
+	rows, commands, checked, skipped := 0, 0, 0, 0
+	// Seven rows are `git grep`, and the census states its commands run from the
+	// repository root. A tree that is not the root of a git work tree is not
+	// that root, and `git grep` there fails -- exit 128, nothing on stdout --
+	// rather than printing a figure. That tree is not hypothetical: it is the
+	// copy docs_desktop_console_test.go's TestStagedLinuxFilesSurviveTheCopyIn
+	// makes and runs this family inside, a copy of the files deliberately
+	// without `.git` (the copy-in proof needs no repository, no branch and no
+	// index). So a row whose command reads the tree through git is skipped
+	// there and every row that reads the files directly still runs; the count
+	// is logged below rather than swallowed, because a skip is a row this run
+	// did not check.
+	_, statErr := os.Stat(filepath.Join(censusRoot, ".git"))
+	workTree := statErr == nil
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "|") {
@@ -436,8 +451,12 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 			t.Errorf("%s: census row %q carries no command inside its code span", rigorModesRecon, line)
 			continue
 		}
+		if !workTree && rigorModesCommandNeedsGit(cmd) {
+			skipped++
+			continue
+		}
 		c := exec.Command(sh, "-c", cmd)
-		c.Dir = "../.." // the census states its commands run from the repository root
+		c.Dir = censusRoot // the census states its commands run from the repository root
 		out, err := c.Output()
 		// `grep` and `git grep` exit 1 when they match nothing, which is what a
 		// row stating 0 legitimately does; the figure is the output, so only a
@@ -461,6 +480,61 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Errorf("%s: no census command was run: the figures are the point", rigorModesRecon)
+	}
+	if skipped > 0 {
+		t.Logf("%d of %d census rows were not run: their commands read the tree through git, and %s is not the root of a git work tree (the copy-in proof runs this family in a copy of the files, without a repository)", skipped, rows, censusRoot)
+	}
+}
+
+// rigorModesCommandNeedsGit reports whether a census command reads the tree
+// through git rather than reading its files directly. `git grep` is the only
+// such command in the census today, and its seven rows all spell it at the front
+// of a command or of a pipeline; the slack in matching the word rather than the
+// prefix is for the row that grows one further along -- inside a `{ …; }` group
+// or after a pipe -- so a `git` anywhere a shell would run it is covered.
+// "Anywhere a shell would run it" is the rule, not "anywhere the three letters
+// appear": `git` has to sit at the start of a command, after `|`, `;`, `&`, `(`
+// or `{`, and be followed by whitespace or the end. That is what keeps
+// `.gitignore`, `.gitattributes` and docs/git-providers.md out of it -- paths a
+// census command may perfectly well read without a repository, and a row that
+// reads one is not skipped in a tree that has none.
+var rigorModesNeedsGitRE = regexp.MustCompile(`(?:^\s*|[|;&({]\s*)git(?:\s|$)`)
+
+func rigorModesCommandNeedsGit(cmd string) bool {
+	return rigorModesNeedsGitRE.MatchString(cmd)
+}
+
+// TestDocsRigorModesCensusSkipsGitOnlyWhereAShellRunsIt pins the skip rule above,
+// because its two mistakes are not symmetric. A command that really runs `git`
+// and is not skipped fails in a tree without a repository rather than printing a
+// figure, which is the failure this rule exists to prevent; a command that only
+// reads a path with the three letters in it and *is* skipped loses a row the
+// copy-in tree could have checked. So both directions are pinned: the shapes the
+// census's own `git` rows have, and the paths a census row may read.
+func TestDocsRigorModesCensusSkipsGitOnlyWhereAShellRunsIt(t *testing.T) {
+	runsGit := []string{
+		`git grep -l 'Severity' -- internal/runner ':!*_test.go' | wc -l`,
+		`git ls-tree --name-only 1d325928:internal/cli | grep -c '^docs_.*_test\.go$'`,
+		`{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; git grep -c Path internal/recipe/recipe.go; } | wc -l`,
+		`sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go | git grep -c Path`,
+		`grep -c x docs/a.md && git grep -c y docs/b.md`,
+	}
+	for _, cmd := range runsGit {
+		if !rigorModesCommandNeedsGit(cmd) {
+			t.Errorf("rigorModesCommandNeedsGit(%q) = false: the command runs git, so in a tree without a repository it prints a failure instead of a figure, and the guard has to skip it there rather than fail on it", cmd)
+		}
+	}
+	readsFiles := []string{
+		`ls internal/cli/docs_*_test.go | wc -l`,
+		`sed -n 's/^const Version = //p' internal/projectpolicy/version.go`,
+		`grep -c gitignore .gitignore`,
+		`grep -c git docs/git-providers.md`,
+		`sed -n '/^## /p' .gitattributes | wc -l`,
+	}
+	for _, cmd := range readsFiles {
+		if rigorModesCommandNeedsGit(cmd) {
+			t.Errorf("rigorModesCommandNeedsGit(%q) = true: the command reads its files directly and needs no repository, so skipping it there would drop a row the copy-in tree can check", cmd)
+		}
 	}
 }
 

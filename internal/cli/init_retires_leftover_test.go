@@ -85,7 +85,7 @@ func assertResidue(t *testing.T, text string) {
 // is the one this step makes.
 func TestInitRepoRetireNamesTheStopAtTheSecretVersionsRead(t *testing.T) {
 	count := newRetireRig(t, retireOpts{protection: true})
-	if _, _, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build"); err != nil {
+	if _, _, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build"); err != nil {
 		t.Fatalf("the run to count the version reads failed: %v", err)
 	}
 	total := count.sm.VersionsListCalls()
@@ -95,7 +95,7 @@ func TestInitRepoRetireNamesTheStopAtTheSecretVersionsRead(t *testing.T) {
 
 	r := newRetireRig(t, retireOpts{protection: true})
 	r.sm.FailVersionsAfter = total - 1
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -116,7 +116,7 @@ func TestInitRepoRetireNamesTheStopAtTheBuiltRecordRead(t *testing.T) {
 	}
 	r.gcs.Put(initRunsBucket, imagecheck.RecordKey(slug, "app"), []byte("{}"))
 	r.gcs.FailObjectGetsAfter(initRunsBucket, imagecheck.RecordKey(slug, "app"), 1)
-	out, errOut, runErr := executeStdin(t, "aurora\naurora\naurora\n", "init", "--repo", "--retire")
+	out, errOut, runErr := executeStdin(t, "aurora\naurora\naurora\n", "setup", "--repo", "--retire")
 	if ExitCode(runErr) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(runErr), runErr, out, errOut)
 	}
@@ -132,7 +132,7 @@ func TestInitRepoRetireNamesTheStopAtTheBuiltRecordRead(t *testing.T) {
 func TestInitRepoRetireNamesTheStopAtTheFirstBuild(t *testing.T) {
 	r, fb := retireBuildRig(t, retireOpts{protection: true})
 	fb.waitErr = errors.New("the build failed")
-	out, errOut, runErr := executeStdin(t, "aurora\naurora\naurora\n", "init", "--repo", "--retire")
+	out, errOut, runErr := executeStdin(t, "aurora\naurora\naurora\n", "setup", "--repo", "--retire")
 	if ExitCode(runErr) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(runErr), runErr, out, errOut)
 	}
@@ -155,7 +155,7 @@ func TestInitRepoRetireNamesTheStopAtTheRePlan(t *testing.T) {
 		{"exit": 1, "stderr": "Error: the re-plan could not be made\n"},
 	}
 	r.save(t)
-	out, errOut, runErr := executeStdin(t, "aurora\naurora\naurora\n", "init", "--repo", "--retire")
+	out, errOut, runErr := executeStdin(t, "aurora\naurora\naurora\n", "setup", "--repo", "--retire")
 	if ExitCode(runErr) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(runErr), runErr, out, errOut)
 	}
