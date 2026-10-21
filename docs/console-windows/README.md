@@ -117,7 +117,8 @@ because they are about *these* documents rather than about the code:
   table's signing row and D10's row, and [console/README.md](../../console/README.md)'s Linux
   section — are still untouched and still say Windows stays out.** They are **Part H**'s (T-H3), and
   until Part H lands the two are the older, narrower sentence rather than a contradiction: the
-  ruling is a plan, the plan is not approved, and nothing on Windows has shipped (F43, C4).
+  ruling is a plan, the plan is **approved to build but unbuilt**, and nothing on Windows has shipped
+  (F43, C4).
 
 ## Related
 

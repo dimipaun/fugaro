@@ -8,21 +8,44 @@
 // the mutation it catches, and every one of them is asserted through the double
 // as a *process* -- spawned, and read back out of the report file -- because the
 // claim that matters is what the Linux side received.
+//
+// The double is also the seam Parts C to G drive their own subjects through, so
+// the four shapes they need are cases here rather than surprises there: the two
+// queries, a `wslpath` translation (T-D2), the `sh -c` wrapper the CLI runs
+// inside (T-F4), and a `wsl.exe` that fails outright (T-C4).
 
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs'
-import { spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { once } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
 import { CHILD_ENV_KEYS, FUGARO_BINARY_NAME } from '../../src/main/spawn'
-import { DISTRO_PATH, installWslStub } from './wslstub'
-import type { WslFixture, WslStub, WslStubOptions } from './wslstub'
+import { DISTRO_DIRECTORY, DISTRO_PATH, installWslStub } from './wslstub'
+import type { WslFixture, WslPathPair, WslStub, WslStubOptions } from './wslstub'
 
-/** WINDOWS_SRC is the path a test translates, spelled the way Windows spells
- * one: the table's key is the console's own `--cd` on the Windows side. */
+/** WINDOWS_SRC is a path spelled the way Windows spells one, and it is the
+ * `wslpath` table's key: the console asks `wslpath` for the Linux spelling
+ * rather than computing it, and it is a Windows spelling in `--cd` that the
+ * double refuses (T-C5, T-D3, T-D4). */
 const WINDOWS_SRC = 'C:\\Users\\dimi\\src'
+
+/** LINUX_SRC is the same path as the distribution spells it. */
+const LINUX_SRC = '/mnt/c/Users/dimi/src'
+
+/** UNC_SRC is the other direction's vector: the spelling Windows opens a path
+ * inside a distribution by (T-D2, T-D3). */
+const UNC_SRC = '\\\\wsl.localhost\\Ubuntu\\home\\dimi\\src'
+
+/** PATHS is the translation table, in both directions, and it is the test's own
+ * record: the double answers it and never derives one spelling from the other
+ * (D4(b)). */
+const PATHS: readonly WslPathPair[] = [
+  { windows: WINDOWS_SRC, linux: LINUX_SRC },
+  { windows: UNC_SRC, linux: '/home/dimi/src' },
+]
 
 /** WINDOWS_PATH is a Windows-shaped `PATH`, and it is the point of T-A2: the
  * host's separator and the distribution's are visible side by side in one spawn,
@@ -52,9 +75,9 @@ function freshDirectory(): string {
 }
 
 /** linuxDirectory is a directory the child can actually run in -- the fake
- * starts the stub `fugaro` *in* the translated path, so the path has to exist --
- * resolved, because the child's own report is `process.cwd()` and on macOS the
- * temporary directory has a second spelling. */
+ * starts the stub `fugaro` *in* the `--cd` directory, so the directory has to
+ * exist -- resolved, because the child's own report is `process.cwd()` and on
+ * macOS the temporary directory has a second spelling. */
 function linuxDirectory(root: string, ...segments: readonly string[]): string {
   const path = join(root, ...segments)
   mkdirSync(path, { recursive: true })
@@ -63,15 +86,15 @@ function linuxDirectory(root: string, ...segments: readonly string[]): string {
 
 /**
  * install is the arrangement every case below starts from: a fake `wsl.exe`, the
- * stub `fugaro` inside its distribution, and a translation table that carries
- * `C:\Users\dimi\src`.
+ * stub `fugaro` inside its distribution, a directory a `--cd` can name, and the
+ * translation table.
  */
 function install(root: string, options: Partial<WslStubOptions> = {}): { wsl: WslStub; linux: string } {
-  const linux = linuxDirectory(root, 'windows', 'distro', 'home', 'dimi', 'src')
+  const linux = linuxDirectory(root, 'windows', DISTRO_DIRECTORY, 'home', 'dimi', 'src')
   const wsl = installWslStub(join(root, 'windows'), {
     scenario: { commands: { version: { stdout: '1.4.2\n' } } },
     distros: FIXTURE,
-    paths: { [WINDOWS_SRC]: linux },
+    paths: PATHS,
     ...options,
   })
   return { wsl, linux }
@@ -101,6 +124,33 @@ function only<T>(entries: readonly T[]): T {
   return entry
 }
 
+/** waitFor polls until a condition holds, and throws with the sentence the case
+ * needs when it never does. The wrapper case is the one asynchronous one: the
+ * pid file is written *before* the CLI it `exec`s starts, so both have to be
+ * waited for rather than assumed. */
+async function waitFor(what: string, check: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    if (check()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`waited 3s and ${what} never happened`)
+}
+
+/** waitForNumber waits for a file to hold a number: the wrapper writes the pid
+ * it captured as its first act, and the test reads it while the CLI it `exec`ed
+ * is still alive. */
+async function waitForNumber(path: string): Promise<number> {
+  let found = 0
+  await waitFor(`${path} to hold a pid`, () => {
+    if (!existsSync(path)) return false
+    const value = Number.parseInt(readFileSync(path, 'utf8').trim(), 10)
+    if (!Number.isInteger(value) || value <= 0) return false
+    found = value
+    return true
+  })
+  return found
+}
+
 describe('the fake wsl.exe', () => {
   it('records its own argv, its distro and the child it started', () => {
     // T-A1's first case. The two hops are read apart: the fake's own account of
@@ -108,8 +158,8 @@ describe('the fake wsl.exe', () => {
     // the second one written by the stub `fugaro` itself, so a test that reads
     // it is reading the Linux side rather than the console's plan object.
     const { wsl, linux } = install(freshDirectory())
-    const argv = ['-d', 'Ubuntu', '--cd', WINDOWS_SRC, '--', FUGARO_BINARY_NAME, 'version']
-    const result = run(wsl, argv, { cwd: linux })
+    const argv = ['-d', 'Ubuntu', '--cd', linux, '--', FUGARO_BINARY_NAME, 'version']
+    const result = run(wsl, argv)
     expect(result.status).toBe(0)
 
     const hop = only(wsl.reports())
@@ -117,6 +167,9 @@ describe('the fake wsl.exe', () => {
     expect(hop.kind).toBe('spawn')
     expect(hop.argv).toEqual(argv)
     expect(hop.distro).toBe('Ubuntu')
+    expect(hop.cd).toBe(linux)
+    expect(hop.wrapper).toBeNull()
+    expect(hop.wslpath).toBeNull()
     expect(wsl.calls()).toBe(1)
 
     const child = only(wsl.children())
@@ -124,43 +177,36 @@ describe('the fake wsl.exe', () => {
     expect(wsl.childCalls()).toBe(1)
   })
 
-  it('starts the child in the translated directory, and the Linux side reports it', () => {
-    // The translation is a recorded table rather than a guess (T-A1 step 3), and
-    // the child's own `cwd` is the proof that it was *used* (T-A1 step 4).
-    // Mutations this catches: pass `--cd` through unchanged (the child's cwd and
-    // `linuxCwd` both go back to the Windows spelling), and drop the `cwd` from
-    // the spawn (the child reports the fake's own directory instead).
+  it('starts the child in the directory the console named, and the Linux side reports it', () => {
+    // `--cd` is the distribution's own spelling (T-C5, T-D4), so the fake uses it
+    // as it stands -- and the child's own `cwd` is the proof that it was *used*
+    // rather than merely recorded (T-A1 step 4). The mutation this catches: drop
+    // the `cwd` from the spawn, and the child reports the fake's own directory.
     const { wsl, linux } = install(freshDirectory())
-    const result = run(wsl, ['-d', 'Ubuntu', '--cd', WINDOWS_SRC, '--', FUGARO_BINARY_NAME, 'version'])
+    const result = run(wsl, ['-d', 'Ubuntu', '--cd', linux, '--', FUGARO_BINARY_NAME, 'version'])
     expect(result.status).toBe(0)
 
     const hop = only(wsl.reports())
-    expect(hop.cd).toBe(WINDOWS_SRC)
-    expect(hop.linuxCwd).toBe(linux)
-    expect(hop.untranslated).toBeNull()
+    expect(hop.cd).toBe(linux)
     expect(only(wsl.children()).cwd).toBe(linux)
     // And the fake's own directory is not where the child ran: the two are
     // different, so the assertion above cannot pass by accident.
     expect(hop.cwd).not.toBe(linux)
   })
 
-  it('reports a --cd its table does not carry as untranslated rather than guessing', () => {
-    // The other half of T-A1 step 3, and the reason the table exists at all: a
-    // path the table does not carry comes back *stated* as untranslated. A
-    // mapping computed by the double would be right for `C:\Users\X` and wrong
-    // for every custom mount, so the double refuses to compute one (D4(b)).
-    const root = freshDirectory()
-    const elsewhere = linuxDirectory(root, 'windows', 'distro', 'home', 'dimi', 'other')
-    const { wsl } = install(root)
-    const result = run(wsl, ['-d', 'Ubuntu', '--cd', elsewhere, '--', FUGARO_BINARY_NAME, 'version'])
-    expect(result.status).toBe(0)
-
-    const hop = only(wsl.reports())
-    expect(hop.linuxCwd).toBeNull()
-    expect(hop.untranslated).toBe(elsewhere)
-    // The child still ran, in the directory it was given: an untranslated path
-    // is a fact in the report, not a silent substitution.
-    expect(only(wsl.children()).cwd).toBe(elsewhere)
+  it('refuses a Windows spelling in --cd rather than starting a child in it', () => {
+    // The console translates with `wslpath` and sends the distribution's own
+    // spelling (T-C5, T-D3, T-D4), so a Windows path here is a Part C or D bug.
+    // The mutation this catches: accept it, and the child is started in a
+    // directory that does not exist -- an ENOENT that says nothing about which
+    // side spelled the path wrong.
+    const { wsl } = install(freshDirectory())
+    const result = run(wsl, ['-d', 'Ubuntu', '--cd', WINDOWS_SRC, '--', FUGARO_BINARY_NAME, 'version'])
+    expect(result.status).not.toBe(0)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain(WINDOWS_SRC)
+    expect(wsl.children()).toHaveLength(0)
+    expect(only(wsl.reports()).kind).toBe('refused')
   })
 
   it('gives the child the distribution’s PATH, not the host’s', () => {
@@ -169,9 +215,7 @@ describe('the fake wsl.exe', () => {
     // on the WSL leg the child is a Linux process. The mutation this catches is
     // the obvious one: forward our own `PATH`.
     const { wsl, linux } = install(freshDirectory())
-    const result = run(wsl, ['-d', 'Ubuntu', '--cd', WINDOWS_SRC, '--', FUGARO_BINARY_NAME, 'version'], {
-      cwd: linux,
-    })
+    const result = run(wsl, ['-d', 'Ubuntu', '--cd', linux, '--', FUGARO_BINARY_NAME, 'version'])
     expect(result.status).toBe(0)
 
     const hop = only(wsl.reports())
@@ -192,7 +236,7 @@ describe('the fake wsl.exe', () => {
     // every later assertion about the credential boundary a claim about a fake
     // that leaks.
     const { wsl, linux } = install(freshDirectory())
-    run(wsl, ['-d', 'Ubuntu', '--cd', WINDOWS_SRC, '--', FUGARO_BINARY_NAME, 'version'], { cwd: linux })
+    run(wsl, ['-d', 'Ubuntu', '--cd', linux, '--', FUGARO_BINARY_NAME, 'version'])
 
     const hop = only(wsl.reports())
     expect(hop.envKeys).toContain('NOT_A_CHILD_KEY')
@@ -205,10 +249,11 @@ describe('the fake wsl.exe', () => {
   })
 
   it('refuses to be a general-purpose shell', () => {
-    // T-A3. The child is the stub `fugaro` and nothing else, because a double
-    // that runs anything makes every assertion about *what was run* meaningless.
-    // The mutation this catches: drop the check and run whatever was asked for --
-    // the command's own output appears and the status goes to zero.
+    // T-A3. The children are the stub `fugaro`, the `wslpath` query and the
+    // `sh -c` wrapper the plan writes -- and nothing else, because a double that
+    // runs anything makes every assertion about *what was run* meaningless. The
+    // mutation this catches: drop the check and run whatever was asked for -- the
+    // command's own output appears and the status goes to zero.
     const { wsl } = install(freshDirectory())
 
     const other = run(wsl, ['-d', 'Ubuntu', '--', '/bin/echo', 'this-is-not-the-stub'])
@@ -218,6 +263,13 @@ describe('the fake wsl.exe', () => {
     expect(wsl.children()).toHaveLength(0)
     expect(only(wsl.reports()).kind).toBe('refused')
 
+    // A shell that is not the wrapper's own shape, and a wrapper with no script,
+    // are refused for the same reason: `sh -c <script>` is the one shape the plan
+    // writes (T-F4), and anything else is a console this double does not model.
+    expect(run(wsl, ['-d', 'Ubuntu', '--', 'bash', '-c', 'echo hi']).status).not.toBe(0)
+    expect(run(wsl, ['-d', 'Ubuntu', '--', 'sh', '-x', 'echo hi']).status).not.toBe(0)
+    expect(run(wsl, ['-d', 'Ubuntu', '--', 'sh', '-c']).status).not.toBe(0)
+
     // The flags it does not model, and the shapes it does not model, are refused
     // for the same reason: `--terminate` is refused outright by the design
     // (D6(b)), and a missing `--` or a missing `-d` is a console that did not say
@@ -226,7 +278,7 @@ describe('the fake wsl.exe', () => {
     expect(run(wsl, ['-d', 'Ubuntu', FUGARO_BINARY_NAME]).status).not.toBe(0)
     expect(run(wsl, ['--', FUGARO_BINARY_NAME]).status).not.toBe(0)
     expect(wsl.children()).toHaveLength(0)
-    expect(wsl.reports()).toHaveLength(4)
+    expect(wsl.reports()).toHaveLength(7)
   })
 
   it('answers --list --quiet and --status from the fixture, and starts no child', () => {
@@ -246,6 +298,111 @@ describe('the fake wsl.exe', () => {
     expect(run(wsl, ['--status', '--verbose']).status).not.toBe(0)
   })
 
+  it('models a wsl.exe that cannot answer at all', () => {
+    // T-C4's `absent` outcome: WSL is not installed, or the feature is off, and
+    // `wsl.exe` fails instead of listing nothing. A double that could only answer
+    // would leave that classification untestable -- and "no distributions" and
+    // "no WSL" are different states on the screen.
+    const failure = { status: 1, stderr: 'Windows Subsystem for Linux has no installed distributions.\r\n' }
+    const { wsl } = install(freshDirectory(), { distros: { ...FIXTURE, queryFailure: failure } })
+
+    const list = run(wsl, ['--list', '--quiet'])
+    expect(list.status).toBe(failure.status)
+    expect(list.stdout).toBe('')
+    expect(list.stderr).toBe(failure.stderr)
+    expect(run(wsl, ['--status']).status).toBe(failure.status)
+
+    // What the console asked for is a fact either way, so the argv is recorded
+    // and the failure is not a silent one.
+    expect(wsl.reports().map((hop) => hop.argv)).toEqual([['--list', '--quiet'], ['--status']])
+    expect(wsl.children()).toHaveLength(0)
+  })
+
+  it('answers wslpath in both directions from the table, and refuses a path it does not carry', () => {
+    // T-D2, and the reason the table is the test's own: the console asks
+    // `wslpath` rather than computing a mapping, because a computed one is right
+    // for a `C:` drive path and wrong for every custom mount (D4(b)). The
+    // mutation this catches: answer the Windows spelling back, or guess a
+    // `/mnt/c/...` prefix -- the round trip and the refusal both go wrong.
+    const { wsl } = install(freshDirectory())
+
+    const toLinux = run(wsl, ['-d', 'Ubuntu', '--', 'wslpath', '-a', '-u', WINDOWS_SRC])
+    expect(toLinux.status).toBe(0)
+    expect(toLinux.stdout).toBe(`${LINUX_SRC}\n`)
+
+    const toWindows = run(wsl, ['-d', 'Ubuntu', '--', 'wslpath', '-a', '-w', '/home/dimi/src'])
+    expect(toWindows.status).toBe(0)
+    expect(toWindows.stdout).toBe(`${UNC_SRC}\n`)
+
+    // A translation is a query inside the distribution: no CLI ran, and the
+    // report carries the *arguments* the console sent, not only the answer.
+    expect(wsl.children()).toHaveLength(0)
+    expect(wsl.childCalls()).toBe(0)
+    const [first, second] = wsl.reports()
+    expect(first?.kind).toBe('translate')
+    expect(first?.argv).toEqual(['-d', 'Ubuntu', '--', 'wslpath', '-a', '-u', WINDOWS_SRC])
+    expect(first?.wslpath).toEqual({ direction: 'toLinux', path: WINDOWS_SRC, answer: LINUX_SRC })
+    expect(second?.wslpath).toEqual({ direction: 'toWindows', path: '/home/dimi/src', answer: UNC_SRC })
+
+    // A path the table does not carry is refused, with the path named: the
+    // console has to state the miss rather than invent a mapping.
+    const miss = run(wsl, ['-d', 'Ubuntu', '--', 'wslpath', '-a', '-u', 'D:\\elsewhere'])
+    expect(miss.status).not.toBe(0)
+    expect(miss.stdout).toBe('')
+    expect(miss.stderr).toContain('D:\\elsewhere')
+    expect(wsl.reports()[2]?.wslpath?.answer).toBeNull()
+
+    // And the shapes it does not model are refused rather than guessed at: a
+    // translation whose direction it cannot tell is one it must not answer.
+    expect(run(wsl, ['-d', 'Ubuntu', '--', 'wslpath', '-a', '/home/dimi/src']).status).not.toBe(0)
+    expect(run(wsl, ['-d', 'Ubuntu', '--', 'wslpath', '-a', '-u', '-w', '/home/dimi/src']).status).not.toBe(0)
+    expect(run(wsl, ['-d', 'Ubuntu', '--', 'wslpath', '-a', '-u']).status).not.toBe(0)
+    expect(run(wsl, ['-d', 'Ubuntu', '--', 'wslpath', '-z', '-u', '/home/dimi/src']).status).not.toBe(0)
+  })
+
+  it('runs the sh -c wrapper the way the distribution would, pid and all', async () => {
+    // T-F4: the CLI runs inside `wsl.exe -d <d> -- sh -c 'echo $$ > <file>; exec
+    // fugaro …'`, which is how the pid inside the distribution is captured at
+    // all (D6(a)). The double's job is that the wrapper really runs and that the
+    // CLI inside it is the stub: the pid's *identity* is `exec`'s property, and
+    // whether a killed `wsl.exe` kills the Linux child is U5's, which no test on
+    // this machine settles.
+    const root = freshDirectory()
+    const pidFile = join(root, 'wrapper.pid')
+    const { wsl, linux } = install(root, { scenario: { commands: { version: { hold: true } } } })
+    const script = `echo $$ > ${pidFile}; exec ${FUGARO_BINARY_NAME} version`
+    const child = spawn(wsl.binary, ['-d', 'Ubuntu', '--cd', linux, '--', 'sh', '-c', script], {
+      cwd: wsl.directory,
+      env: HOST_ENV,
+      stdio: 'ignore',
+    })
+
+    const pid = await waitForNumber(pidFile)
+    await waitFor('the CLI inside the wrapper to start', () => wsl.children().length === 1)
+    // The pid the wrapper wrote is a *live* process -- the one that `exec`ed the
+    // CLI -- which is what makes it the pid the console has to kill.
+    expect(() => process.kill(pid, 0)).not.toThrow()
+
+    process.kill(pid, 'SIGKILL')
+    const [code, signal] = (await once(child, 'exit')) as [number | null, NodeJS.Signals | null]
+    // A killed child is a killed `wsl.exe` rather than a successful one (T-F1).
+    expect(signal).toBe('SIGKILL')
+    expect(code).toBeNull()
+
+    const hop = only(wsl.reports())
+    expect(hop.kind).toBe('spawn')
+    expect(hop.wrapper).toBe(script)
+    expect(hop.cd).toBe(linux)
+    // The wrapper's `PATH` is the distribution's, with the directory the double
+    // installed the stub in front of it -- a real distribution has the CLI on
+    // its own `PATH`, and `exec fugaro` inside the wrapper is what needs it.
+    expect(hop.childEnv['PATH']).toBe(`${join(wsl.directory, DISTRO_DIRECTORY)}:${DISTRO_PATH}`)
+
+    const grandchild = only(wsl.children())
+    expect(grandchild.argv).toEqual(['version'])
+    expect(grandchild.cwd).toBe(linux)
+  })
+
   it('writes the fixture in the encoding the test chose', () => {
     // U9, and the vector T-F2's decoder needs: some `wsl.exe` builds answer in
     // UTF-16LE with a BOM and `\r\n`, and the test says so rather than hoping.
@@ -261,18 +418,43 @@ describe('the fake wsl.exe', () => {
     expect(Buffer.from(result.stdout).toString('utf8')).not.toBe(utf16.list)
   })
 
+  it('reads the stub fugaro as the child hop, not the shared report file', () => {
+    // The two hops share one file, so the handle named after the child has to
+    // answer with the child's lines: a `stub.reports()` that returned the
+    // `wsl.exe` hop too would be the one place the separation this file is built
+    // around does not hold. The mutation this catches: hand back the raw stub.
+    const { wsl, linux } = install(freshDirectory())
+    run(wsl, ['-d', 'Ubuntu', '--cd', linux, '--', FUGARO_BINARY_NAME, 'version'])
+    run(wsl, ['--list', '--quiet'])
+
+    expect(wsl.reports()).toHaveLength(2)
+    expect(wsl.children()).toHaveLength(1)
+    expect(wsl.stub.reports()).toEqual(wsl.children())
+    expect(wsl.stub.calls()).toBe(1)
+    expect(wsl.stub.calls()).toBe(wsl.childCalls())
+    expect(wsl.stub.reports().every((line) => !('hop' in line))).toBe(true)
+    // Its `reportPath` is still the shared file: that is where its child writes.
+    expect(wsl.stub.reportPath).toBe(wsl.reportPath)
+  })
+
   it('carries its parsing into the double rather than a second copy', () => {
-    // The generated script is the double's whole program, and it runs the three
+    // The generated script is the double's whole program, and it runs the five
     // exported functions' own source (the arrangement `stub.ts` uses for
     // `commandKey`). A second, inlined copy of the rules is exactly the defect a
     // review found in the stub, so it is asserted against rather than trusted.
     const { wsl } = install(freshDirectory())
     const script = readFileSync(join(wsl.directory, 'wsl-stub.mjs'), 'utf8')
-    expect(script).toContain('function parseWslArgv(argv)')
-    expect(script).toContain('function translateCd(cd, table)')
-    expect(script).toContain('function childEnvironmentFor(env, keys, distroPath)')
+    for (const declaration of [
+      'function parseWslArgv(argv)',
+      'function isWindowsSpelling(path)',
+      'function parseWslpathArgv(argv)',
+      'function translatePath(direction, path, pairs)',
+      'function childEnvironmentFor(env, keys, distroPath)',
+    ]) {
+      expect(script).toContain(declaration)
+      const name = declaration.slice('function '.length, declaration.indexOf('('))
+      expect(script.match(new RegExp(`function ${name}\\(`, 'g')) ?? []).toHaveLength(1)
+    }
     expect(script).toContain('const parsed = parseWslArgv(argv)')
-    expect(script.match(/function parseWslArgv/g) ?? []).toHaveLength(1)
-    expect(script.match(/function childEnvironmentFor/g) ?? []).toHaveLength(1)
   })
 })

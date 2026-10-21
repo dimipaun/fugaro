@@ -146,18 +146,29 @@ executable named `wsl.exe` too — the name is data, not a platform fact) that:
 2. appends one JSON line to the same out-of-band report file `installStub` already uses
    (`console/test/unit/stub.ts:68` `StubReport`), carrying **its own** argv, its own `cwd`, its own
    environment **keys and values for the eleven `CHILD_ENV_KEYS`**, and the distro it was given;
-3. translates `--cd`'s Windows spelling to a Linux one with a **recorded** table rather than by
-   guessing (the table is the test's own, and a path not in it is reported as untranslated — which is
-   how a test proves the console asked for the translation rather than happening to pass a Linux
-   path);
-4. `exec`s the stub `fugaro` with the remaining argv and the translated cwd, so the `fugaro` report
-   line is written by the *second* hop and the test can read **what the Linux side received**;
+3. requires `--cd` to be the **distribution's** own spelling and refuses the Windows one, because the
+   console translates before it builds the plan (T-C5, T-D3, T-D4) — a Windows path here is a Part C
+   or D bug, and starting a child in it would report it as an `ENOENT` that says nothing about which
+   side spelled the path wrong;
+4. `exec`s the stub `fugaro` with the remaining argv and that cwd, so the `fugaro` report line is
+   written by the *second* hop and the test can read **what the Linux side received**;
 5. answers `--list --quiet` and `--status` from a fixture, in the encoding the test chooses, so that
-   T-F2's decoder has a vector (U9).
+   T-F2's decoder has a vector (U9) — and **fails** both when the fixture says `wsl.exe` cannot
+   answer, which is T-C4's `absent` outcome and not an empty list;
+6. answers `wslpath [-a] -u|-w <path>` from a **recorded** table in both directions, because
+   translating a path is a process the console calls rather than a mapping it computes (T-D2, D4(b)):
+   the table is the test's own, and a path it does not carry is refused with the path in the sentence
+   rather than guessed at;
+7. runs the `sh -c` wrapper the CLI goes inside (`sh -c 'echo $$ > <file>; exec fugaro …'`) as the
+   distribution's own shell would, which is what makes T-F4's pid capturable — the wrapper's `PATH`
+   is the distribution's with the directory the stub was installed in in front of it, the double's
+   stand-in for the `/usr/local/bin` a real distribution has the CLI in.
 
-Mutation proof: remove step 3's table lookup and pass `--cd` through unchanged — the translation test
-must fail by name. Remove step 4's cwd and the child's `cwd` in the report is the fake's own — the
-cwd test must fail.
+Mutation proof: accept a Windows spelling in `--cd` and the refusal case fails by name. Remove step
+4's cwd and the child's `cwd` in the report is the fake's own — the cwd test must fail. Answer a
+`wslpath` path the table does not carry with a `/mnt/c/…` prefix instead of refusing — the
+translation test must fail. Drop the wrapper's `PATH` and `exec fugaro` inside it never resolves —
+the wrapper test must fail.
 Verification: `[unit]`. Tier A. Depends on: nothing.
 
 **T-A2 — the fake's `PATH` is the distro's, not the host's.**
@@ -172,8 +183,11 @@ Verification: `[unit]`. Tier A. Depends on: T-A1.
 **T-A3 — the fake refuses to be the thing under test.**
 Files: `console/test/unit/wslstub.ts`, `console/test/unit/wslstub.test.ts`.
 Red step: a case asserting that the fake **fails** when a test asks it to run something other than the
-stub `fugaro` — the double must not become a general-purpose shell, because a fake that runs anything
-makes every assertion about *what was run* meaningless.
+three children the plan writes — the stub `fugaro`, the `wslpath` query (T-A1 step 6) and the `sh -c`
+wrapper (step 7) — the double must not become a general-purpose shell, because a fake that runs
+anything makes every assertion about *what was run* meaningless. A `bash -c`, a `sh -x`, a `sh -c`
+with no script, `/bin/echo`, `--terminate`, a missing `--` and a missing `-d` are each refused with a
+sentence and a non-zero status.
 Verification: `[unit]`. Tier A. Depends on: T-A1.
 Commit (A1–A3): `console/test: a fake wsl.exe that reports what the Linux side received`
 
@@ -304,7 +318,10 @@ Commit: `console: refuse an unknown platform instead of answering with Linux's d
 
 **T-C4 — the distro: enumerate, default, store (D2(a)).**
 Files: `console/src/main/wsl.ts` (new), `console/src/main/spawn.ts`,
-`console/test/unit/wsl.test.ts` (new), `console/test/unit/spawn.test.ts`.
+`console/test/unit/wsl.test.ts` (new), `console/test/unit/spawn.test.ts`, and
+`console/test/unit/wslstub.ts` — named because this task is the first to drive the fake's **failing
+query** (its `distros.queryFailure`, T-A1 step 5): a task that finds the double cannot model the state
+it must classify edits it here, in the file that owns the seam, rather than working around it.
 Red step: `wsl.test.ts` drives the fake `wsl.exe` (T-A1) through `wslDistributions()`: a fixture with
 two distributions and a default returns both, in the order `wsl.exe` gave them, with the default
 marked; a fixture where `--status` names no default returns both with **none** marked, and the caller
@@ -386,7 +403,11 @@ Verification: `[unit]`. Tier A. Depends on: T-C5.
 Commit: `console: a distro on a stored installation, read as host when it is absent`
 
 **T-D2 — `wslpath`, both directions, through the same spawner (D4(a)).**
-Files: `console/src/main/wsl.ts`, `console/src/main/spawn.ts`, `console/test/unit/wsl.test.ts`.
+Files: `console/src/main/wsl.ts`, `console/src/main/spawn.ts`, `console/test/unit/wsl.test.ts`, and
+`console/test/unit/wslstub.ts` — named because the fake is what answers the translation: its `paths`
+table is the fixture this task's four assertions are written against (T-A1 step 6), and the direction
+flags, the recorded arguments and the refusal for a path the table does not carry are all asserted
+through it.
 Red step: against the fake — `toLinux('C:\\Users\\dimi\\src')` returns the fixture's Linux path;
 `toWindows('/home/dimi/src')` returns the UNC form; a path the fixture's table does not carry comes
 back as a **stated refusal** rather than as a guess; and both calls are recorded in the report file so
@@ -535,7 +556,10 @@ Commit: `console: the feed is the same feed through the wrapper, asserted rather
 
 **T-F4 — cancellation reaches inside the distribution (F24, D6(a)).**
 Files: `console/src/main/spawn.ts`, `console/src/main/wsl.ts`,
-`console/test/unit/spawn.test.ts`, `console/test/unit/wsl.test.ts`.
+`console/test/unit/spawn.test.ts`, `console/test/unit/wsl.test.ts`, and
+`console/test/unit/wslstub.ts` — named because the wrapper is the fake's (T-A1 step 7): it runs the
+`sh -c` script the console writes, so the pid inside the distribution is a live process the test can
+find and signal, and the second call this task asserts is one more invocation the report carries.
 Red step: through the fake — `abandon` sends `SIGTERM` to the `wsl.exe` child and, when the fake
 reports that the child is still alive after `SHUTDOWN_GRACE_MS` (`spawn.ts:298`), issues **one** kill
 inside the distribution naming the pid the wrapper recorded; the fake's report shows the pid it was

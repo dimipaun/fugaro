@@ -297,20 +297,26 @@ func TestDocsWindowsConsolePlanIsReleaseTimeOnly(t *testing.T) {
 	}
 }
 
-// TestDocsWindowsConsoleReadmeStatusRecordsTheApproval pins the folder's front
-// door. The index's status line is the sentence a reader meets before any
-// document, and the same brief that asked for the plan's gate to record the
-// approval asked for this line to carry it too: a front door still saying the
-// build is unapproved, or one that lost the release or the branch, sends the
-// reader to the plan to check a claim the index has already got wrong.
+// TestDocsWindowsConsoleReadmeRecordsTheApproval pins the folder's front door.
+// The index's status line is the sentence a reader meets before any document,
+// and the same brief that asked for the plan's gate to record the approval asked
+// for this line to carry it too: a front door still saying the build is
+// unapproved, or one that lost the release or the branch, sends the reader to
+// the plan to check a claim the index has already got wrong.
 //
-// Read as its own paragraph, so the plan row in the table below cannot satisfy
-// it: that row is a summary of the plan, and this is the folder's status.
+// The status line is read as its own paragraph, so the plan row in the table
+// below cannot satisfy it: that row is a summary of the plan, and this is the
+// folder's status. **The rest of the index is read whole**, because the same
+// claim is made twice in a document this size and the second one is the one a
+// reader arrives at from the plan: a review found line 120 still saying "the
+// plan is not approved" under a status line that records the approval, which a
+// status-paragraph-only check cannot see.
 //
-// The mutations that prove it: take the approval's date off the line, change
-// 0.11.0 to the 0.10.0 the earlier ruling named, and drop the branch. Each
-// fails by naming what went missing.
-func TestDocsWindowsConsoleReadmeStatusRecordsTheApproval(t *testing.T) {
+// The mutations that prove it: take the approval's date off the status line,
+// change 0.11.0 to the 0.10.0 the earlier ruling named, drop the branch, and put
+// the present-tense "the plan is not approved" back anywhere in the file. Each
+// fails by naming what went missing or what came back.
+func TestDocsWindowsConsoleReadmeRecordsTheApproval(t *testing.T) {
 	const path = "docs/console-windows/README.md"
 	doc := readDoc(t, path)
 	status := flattenDoc(windowsConsoleBlock(t, path, doc, "**Status:", "\n\n"))
@@ -325,6 +331,24 @@ func TestDocsWindowsConsoleReadmeStatusRecordsTheApproval(t *testing.T) {
 	}
 	if strings.Contains(status, "not approved") {
 		t.Errorf("%s's status line says the build is not approved again: the owner passed the plan's OWNER APPROVAL GATE on 2026-10-21, and the index contradicting the plan is what this test is for", path)
+	}
+
+	// The whole index, not only the status paragraph: every sentence in it that
+	// describes this folder's plan is a claim about the same approval, and the
+	// present tense is what makes one false. The phrases are the exact ones a
+	// document reverts to -- "not approved", "no task is approved", "still not
+	// passed" -- rather than the bare word "approved", so a sentence about what
+	// the approval does *not* cover stays legal.
+	whole := flattenDoc(doc)
+	for _, forbidden := range []string{
+		"the plan is not approved",
+		"no task is approved",
+		"GATE is not passed",
+		"is still not passed",
+	} {
+		if strings.Contains(whole, forbidden) {
+			t.Errorf("%s says %q: the owner approved the build on 2026-10-21 for 0.11.0 on console-windows-wsl, and a document that says the plan is unapproved somewhere below a status line recording the approval is a claim that is false on main", path, forbidden)
+		}
 	}
 }
 
