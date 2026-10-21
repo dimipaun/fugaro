@@ -225,13 +225,14 @@ const PolicyRulesVersion = 1
 // its published policy for nothing. The lease is a **subtree that did not
 // exist**, and what matters is the write that must not be allowed before the
 // document is deployed. A takeover is a compare-and-set the database enforces
-// (internal/budget/rules' LEASETAKE: a seat is taken over only when it is free
-// or its holder has not renewed for the grace), and the seat the *holder*
-// relies on is only a seat because the rules say so: under a generation-3
-// document every lease call is refused — no grant reaches the path and the
-// root is `.write: false` — so there is no state in which two orchestrators
-// both believe they hold one. The generation is what makes that refusal the
-// documented one rather than a permission error an operator has to interpret.
+// (internal/budget/rules' LEASEWRITE, whose `take` clause admits one only when
+// the seat is free or its holder has not renewed for the grace), and the seat
+// the *holder* relies on is only a seat because the rules say so: under a
+// generation-3 document every lease call is refused — no grant reaches the
+// path and the root is `.write: false` — so there is no state in which two
+// orchestrators both believe they hold one. The generation is what makes that
+// refusal the documented one rather than a permission error an operator has to
+// interpret.
 //
 // What the bump does to an existing installation, plainly. The policy is
 // untouched: Read and the publish gate stay on PolicyRulesVersion (1), so no
@@ -250,6 +251,24 @@ const PolicyRulesVersion = 1
 // It is not Version: the policy schema and the rules that guard it move
 // independently.
 const RulesVersion = 4
+
+// MailboxRulesVersion and DeviceRulesVersion are the two generations between
+// the policy nodes (PolicyRulesVersion) and the document this release deploys
+// (RulesVersion): 2 is the mailbox — the subtree and the user-claim read grants
+// the mobile app reads — and 3 is the device node D166 binds that user claim to
+// (the generations' own account is in RulesVersion's doc above).
+//
+// They are named here, and not left as bare numbers in the one sentence that
+// needs them, because that sentence is doctor's between-generations body and it
+// has to tell an operator on *each* generation what the redeploy adds: a marker
+// of 2 is missing the device node and the lease, a marker of 3 only the lease,
+// and a sentence that lists all three to a marker of 3 describes a redeploy
+// that takes away what the operator already has. Which additions a generation
+// lacks is exactly what these two numbers say.
+const (
+	MailboxRulesVersion = 2
+	DeviceRulesVersion  = 3
+)
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own

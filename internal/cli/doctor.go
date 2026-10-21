@@ -2431,8 +2431,8 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// mailbox grant — the state the operator's app meets — unexplained.
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: rulesMarkerOlderText(gen),
-			Fix: fmt.Sprintf("re-run 'fugaro init --firebase' in your own terminal from a Fugaro that deploys generation %d or newer: it deploys this release's document — the rules a policy is read under, plus the mailbox — and records its generation in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
-				projectpolicy.RulesVersion)}}
+			Fix: fmt.Sprintf("re-run 'fugaro init --firebase' in your own terminal from a Fugaro that deploys generation %d or newer: it deploys this release's document — the one above, which adds what a marker of generation %d lacks — and records its generation in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
+				projectpolicy.RulesVersion, gen)}}
 	}
 	live, err := db.Rules(ctx)
 	if err != nil {

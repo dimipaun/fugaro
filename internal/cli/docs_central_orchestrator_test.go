@@ -103,6 +103,17 @@ const centralOrchAnsweredMarker = "**Answered 2026-10-20 — the recommendation,
 // service type and P3's lease, which landed after it.
 const centralOrchReadmeStatus = "**Status: plan only; three parts have landed — P0's guard test (`internal/cli/docs_central_orchestrator_test.go`, the one file that owns this folder), P1's admission of the Cloud Run service type (`internal/infra/tf/cover.go`) and P3's lease (`internal/lease`) — and P2 and P4–P9 are unbuilt.**"
 
+// centralOrchReadmeStaleStatus are the status sentences the index has carried and must not
+// carry again: the pre-P0 one, which said no code existed at all, and P0's own, which said the
+// guard test was the only code that did. Each is checked whole rather than by the phrase
+// "plan only; no code is implemented" on its own, because that phrase is a *prefix* of P0's
+// sentence: a Contains over it would fire on the wording P0 legitimately wrote and never on
+// the pre-P0 sentence it replaced, which is the regression this check is for.
+var centralOrchReadmeStaleStatus = []string{
+	"**Status: plan only; no code is implemented.**",
+	"**Status: plan only; no code is implemented, except the guard test P0 adds",
+}
+
 // centralOrchReadmeAnswered, centralOrchReadmeApproval, centralOrchReconciledAnswered and
 // centralOrchReconciledRegister are the sentences the owner's answers of 2026-10-20 put into
 // the two documents. Each is pinned whole, because each is a place a later edit can soften the
@@ -194,8 +205,14 @@ var centralOrchLineNumberRE = regexp.MustCompile("`[A-Za-z0-9_./*-]+\\.(?:go|md|
 // for modules. Both name the same file.
 var centralOrchCitationPrefixes = []string{"", "deploy/terraform/gcp/"}
 
-// centralOrchMarkdownLinkRE finds an inline markdown link's target, which is a citation too.
-var centralOrchMarkdownLinkRE = regexp.MustCompile(`\]\(\.\.?/[^)]+\)`)
+// centralOrchMarkdownLinkRE finds an inline markdown link's target, which is a citation too. It
+// matches a bare relative target as well as a ./ or ../ one: this folder links to its own
+// siblings by name -- the reconciliation links to implementation-plan.md, the plan to spec.md --
+// and a matcher that knew only the ./-prefixed form left those links, which are the ones a
+// reader follows most often, unread. What it deliberately does not match is a target carrying a
+// colon: an absolute URL (https:, mailto:) is not a file in this tree and is not this check's to
+// resolve, and a target that is only a fragment is skipped at the check rather than here.
+var centralOrchMarkdownLinkRE = regexp.MustCompile(`\]\(([^):]+)\)`)
 
 // centralOrchConsoleTail is how the anchor table names a citation into the console's directory:
 // by the tail of its token, with this marker in front, rather than by the path itself. No Go
@@ -320,8 +337,10 @@ func TestDocsCentralOrchestratorIsWritten(t *testing.T) {
 			t.Errorf("%s lacks %s: %q", centralOrchReadme, what, want)
 		}
 	}
-	if strings.Contains(readme, "Status: plan only; no feature code is implemented") {
-		t.Errorf("%s still carries the pre-P0 status wording: P0 has landed, so the sentence has to say which Go exists and which does not", centralOrchReadme)
+	for _, stale := range centralOrchReadmeStaleStatus {
+		if strings.Contains(readme, stale) {
+			t.Errorf("%s still carries a stale status wording: %q. P1 and P3 have landed since it was written, so the sentence has to say which Go exists and which does not", centralOrchReadme, stale)
+		}
 	}
 	reconciled := flattenDoc(readDoc(t, centralOrchReconciled))
 	for what, want := range map[string]string{
@@ -880,13 +899,13 @@ var centralOrchContentAnchors = []centralOrchContentAnchor{
 	{"internal/agent/settings.go", "internal/agent/settings.go", "U8 — Whether a job's agent can be given a *narrower* toolset than `internal/agent/settings.go`'s `deniedWebTools` allows, without `--dangerously-skip-permissions` becoming per-tool", "var deniedWebTools = []string{\"WebSearch\", \"WebFetch\"}", "", ""},
 	{"docs/design/project-centric.md", "docs/design/project-centric.md", "U10 — Whether an alert job on a dedicated profile actually narrows secrets as D4 assumes", "### 4.1 One job and one job service account per (profile, account), for clone workflows", "", ""},
 	{"internal/watch/source.go", "internal/watch/source.go", "U13 — Whether `fugaro watch`'s stream can carry the lease without a second stream or a rules change", "type Supervisor struct {", "", ""},
-	{"docs/design/v1.md", "docs/design/v1.md", "U13 — Whether `fugaro watch`'s stream can carry the lease without a second stream or a rules change", "## 1. Decisions at a glance", "", ""},
-	{"internal/runstore/launch.go", "internal/runstore/launch.go", "U13 — Whether `fugaro watch`'s stream can carry the lease without a second stream or a rules change", "type Claim struct {", "", ""},
-	{"internal/lock/lock.go", "internal/lock/lock.go", "U13 — Whether `fugaro watch`'s stream can carry the lease without a second stream or a rules change", "type Holder struct {", "", ""},
-	{"internal/budget/lease.go", "internal/budget/lease.go", "U13 — Whether `fugaro watch`'s stream can carry the lease without a second stream or a rules change", "type leaseSource struct{ s *Session }", "", ""},
-	{"docs/mobile/design/always-on-orchestrator.md", "docs/mobile/design/always-on-orchestrator.md", "U13 — Whether `fugaro watch`'s stream can carry the lease without a second stream or a rules change", "", "the design lives only in open PR #632 and is not on main, so there is no line here for an anchor to be held to", ""},
-	{"internal/mailbox/message.go", "internal/mailbox/message.go", "U13 — Whether `fugaro watch`'s stream can carry the lease without a second stream or a rules change", "// Kinds, Actions and Directions are the module's closed vocabularies, in the", "", ""},
-	{"internal/budget/kill.go", "internal/budget/kill.go", "U13 — Whether `fugaro watch`'s stream can carry the lease without a second stream or a rules change", "func SetKill(ctx context.Context, db KillDB, path string, on bool, by, reason string, h KillHooks) (SetResult, error) {", "", ""},
+	{"docs/design/v1.md", "docs/design/v1.md", "10. Glossary", "## 1. Decisions at a glance", "", ""},
+	{"internal/runstore/launch.go", "internal/runstore/launch.go", "10. Glossary", "type Claim struct {", "", ""},
+	{"internal/lock/lock.go", "internal/lock/lock.go", "10. Glossary", "type Holder struct {", "", ""},
+	{"internal/budget/lease.go", "internal/budget/lease.go", "10. Glossary", "type leaseSource struct{ s *Session }", "", ""},
+	{"docs/mobile/design/always-on-orchestrator.md", "docs/mobile/design/always-on-orchestrator.md", "10. Glossary", "", "the design lives only in open PR #632 and is not on main, so there is no line here for an anchor to be held to", ""},
+	{"internal/mailbox/message.go", "internal/mailbox/message.go", "10. Glossary", "// Kinds, Actions and Directions are the module's closed vocabularies, in the", "", ""},
+	{"internal/budget/kill.go", "internal/budget/kill.go", "10. Glossary", "func SetKill(ctx context.Context, db KillDB, path string, on bool, by, reason string, h KillHooks) (SetResult, error) {", "", ""},
 }
 
 // TestDocsCentralOrchestratorCitationsAreAnchoredByContent: every citation in the
@@ -976,6 +995,149 @@ func centralOrchCount(n int, one, many string) string {
 	return strconv.Itoa(n) + " " + many
 }
 
+// The four shapes the reconciliation labels a citation's position with, tried against the line
+// the citation sits on and then upwards: a section heading, a subsection heading, a finding's
+// own bold heading, and a decision or UNVERIFIED table row (whose label is its id and its first
+// cell, "D19 — Per installation or per project …").
+var (
+	centralOrchClaimSectionRE  = regexp.MustCompile(`^## (.+)$`)
+	centralOrchClaimSubheadRE  = regexp.MustCompile(`^### (.+)$`)
+	centralOrchClaimFindingRE  = regexp.MustCompile(`^\*\*#\d+ — .+\*\*$`)
+	centralOrchClaimTableRowRE = regexp.MustCompile(`^\| \*{0,2}([A-Z]{1,2}\d+)\*{0,2} \| ([^|]+)\|`)
+)
+
+// centralOrchStatusClaim is the claim an entry carries for a citation above the document's first
+// section: there is no heading to read, and the status block is where such a citation sits.
+const centralOrchStatusClaim = "the document's status block, above its first section"
+
+// centralOrchClaimAt reads the labels a citation at line at (0-based) can honestly be claimed
+// under: the innermost label at or above it, and the section it is in. Two, not one, because
+// this table's claims are written at both levels — a citation inside a finding is claimed by the
+// finding ("#17 — A run's lifecycle …") and one inside a section's prose by the section
+// ("7. The numbers this work would hold") — and both are true of it. When neither exists the
+// citation is in the status block.
+func centralOrchClaimAt(lines []string, at int) []string {
+	inner, section := "", ""
+	for i := at; i >= 0; i-- {
+		line := strings.TrimRight(lines[i], " \t")
+		if inner == "" {
+			switch {
+			case centralOrchClaimSubheadRE.MatchString(line):
+				inner = centralOrchClaimSubheadRE.FindStringSubmatch(line)[1]
+			case centralOrchClaimSectionRE.MatchString(line):
+				inner = centralOrchClaimSectionRE.FindStringSubmatch(line)[1]
+			case centralOrchClaimFindingRE.MatchString(line):
+				inner = strings.TrimSuffix(strings.TrimPrefix(line, "**"), "**")
+			case centralOrchClaimTableRowRE.MatchString(line):
+				m := centralOrchClaimTableRowRE.FindStringSubmatch(line)
+				inner = m[1] + " — " + strings.TrimSpace(strings.ReplaceAll(m[2], "**", ""))
+			}
+		}
+		if section == "" && centralOrchClaimSectionRE.MatchString(line) {
+			section = centralOrchClaimSectionRE.FindStringSubmatch(line)[1]
+		}
+		if inner != "" && section != "" {
+			break
+		}
+	}
+	claims := make([]string, 0, 2)
+	for _, c := range []string{inner, section} {
+		// The section is its own innermost label when the citation sits directly under it, and
+		// naming it twice in a failure message reads as two labels.
+		if c != "" && (len(claims) == 0 || claims[len(claims)-1] != c) {
+			claims = append(claims, c)
+		}
+	}
+	if len(claims) == 0 {
+		return []string{centralOrchStatusClaim}
+	}
+	return claims
+}
+
+// centralOrchClaimMatches reports whether a claim field can be read as the label it was written
+// from. A claim is often the label truncated with an ellipsis ("#1 — There is no Cloud Run
+// *service* in this repository, and the installation's own resource…"), so a claim that is a
+// prefix of the label is the same claim; emphasis is not part of either, and neither is the
+// ellipsis.
+func centralOrchClaimMatches(claim, label string) bool {
+	norm := func(s string) string { return strings.TrimSpace(strings.ReplaceAll(s, "**", "")) }
+	claim, label = norm(claim), norm(label)
+	if strings.HasSuffix(claim, "…") {
+		claim = strings.TrimSpace(strings.TrimSuffix(claim, "…"))
+	}
+	return label == claim || strings.HasPrefix(label, claim)
+}
+
+// TestDocsCentralOrchestratorClaimsMatchWhereTheySit: each entry's claim is the label the
+// citation is *actually under*, read from the document, and not a free-text note beside the
+// anchor.
+//
+// The other three assertions in this guard read the entry's token, its doc and its anchor, and
+// leave the claim as a comment: an entry can say it holds a citation inside finding #17 while
+// the citation sits in the glossary, and every one of them still passes. That is what the
+// generation-4 lease's entries did — seven of them, for the glossary's "Lease" bullet, each
+// claiming the U13 row three sections above, because they were written by copying the rows next
+// to them. The claim is the one field that says *why* the line behind the anchor is the right
+// one, so it is the field that has to be read.
+//
+// The pairing is per token and in document order: the table holds one entry per citation, so the
+// Nth citation of a token in the document is the Nth entry for it. (It is per token rather than
+// across the table because the table is not strictly in document order — a later edit inserted
+// entries beside the ones they were copied from.)
+func TestDocsCentralOrchestratorClaimsMatchWhereTheySit(t *testing.T) {
+	doc := readDoc(t, centralOrchReconciled)
+	lines := strings.Split(doc, "\n")
+	at := map[string][]int{}
+	cited := map[string]int{}
+	for _, m := range centralOrchCitationRE.FindAllStringSubmatchIndex(doc, -1) {
+		token := doc[m[2]:m[3]]
+		at[token] = append(at[token], strings.Count(doc[:m[2]], "\n"))
+		cited[token]++
+	}
+	anchors, _ := centralOrchResolve(t, centralOrchContentAnchors, cited)
+	byToken := map[string][]centralOrchContentAnchor{}
+	for _, a := range anchors {
+		byToken[a.token] = append(byToken[a.token], a)
+	}
+	checked := 0
+	for token, entries := range byToken {
+		sites := at[token]
+		if len(sites) != len(entries) {
+			// The count assertions in the test above are the ones that report this, in the
+			// terms the table's own rule is written in; here it only means the pairing cannot
+			// be made, so this check says nothing rather than guessing at one.
+			t.Logf("%s: %s is cited %s and held by %s, so the claim of each is not paired here", centralOrchReconciled, token, centralOrchCount(len(sites), "time", "times"), centralOrchCount(len(entries), "anchor", "anchors"))
+			continue
+		}
+		for i, a := range entries {
+			claims := centralOrchClaimAt(lines, sites[i])
+			ok := false
+			for _, c := range claims {
+				if centralOrchClaimMatches(a.claim, c) {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				t.Errorf("centralOrchContentAnchors claims the citation of %s at line %d of %s sits under %q, and the document labels it %s: a claim that is not where the citation sits is a note beside the anchor rather than the reason the line behind it is the right one, so either the claim is wrong or the anchor is holding a different citation than the entry means",
+					a.token, sites[i]+1, centralOrchReconciled, a.claim, strings.Join(quoteAll(claims), " or "))
+			}
+			checked++
+		}
+	}
+	t.Logf("%s: %d claims read against the label the citation is under", centralOrchReconciled, checked)
+}
+
+// quoteAll renders each label in quotes, for a failure message that names every label the
+// citation could honestly be claimed under.
+func quoteAll(ss []string) []string {
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		out = append(out, strconv.Quote(s))
+	}
+	return out
+}
+
 // TestDocsCentralOrchestratorCitationsExist: every repository path reconciliation.md cites
 // resolves on disk, and the check is measured against an independent count of the document's
 // path-looking tokens.
@@ -1037,15 +1199,34 @@ func TestDocsCentralOrchestratorCitationsExist(t *testing.T) {
 		t.Errorf("%s has %d path-looking tokens and the citation matcher claimed %d: a citation is written in a shape the matcher does not know, so nothing checks it -- teach the matcher the shape rather than leaving it unread", centralOrchReconciled, total, len(matches))
 	}
 	// A markdown link is a citation too, and its target is resolved against this document's
-	// own directory, the way the reader's browser resolves it.
-	for _, token := range centralOrchMarkdownLinkRE.FindAllString(doc, -1) {
-		target := strings.TrimSuffix(strings.TrimPrefix(token, "]("), ")")
-		if _, err := os.Stat(filepath.Join("../../docs/central-orchestrator", filepath.FromSlash(target))); err != nil {
-			t.Errorf("%s links to %s and no such file or directory is beside it in this tree: a markdown link is a citation too, and it is followed by a reader the same way, so a link that 404s is a citation no reader can check", centralOrchReconciled, target)
-		}
-	}
+	// own directory, the way the reader's browser resolves it. The check is the folder's, not
+	// this file's: TestDocsCentralOrchestratorLinksResolve runs it over all four documents,
+	// because the reconciliation is not the only one that links to its siblings.
 	t.Logf("%s: %d citations claimed by the matcher over %d path-looking tokens, %d markdown links",
 		centralOrchReconciled, len(matches), total, len(centralOrchMarkdownLinkRE.FindAllString(doc, -1)))
+}
+
+// TestDocsCentralOrchestratorLinksResolve: every inline markdown link in the folder resolves
+// against the directory it is written in. A link is a citation the reader follows by clicking,
+// so a target that is not there is a citation no reader can check -- and a bare sibling name
+// ("implementation-plan.md") is the shape this folder uses most, which is why the matcher reads
+// it and not only the ./-prefixed form. A target that is a fragment alone is an anchor into the
+// document it is written in, and a fragment on a file target is resolved by the browser after
+// the file loads: neither is a path to stat, so the fragment is cut before the file is.
+func TestDocsCentralOrchestratorLinksResolve(t *testing.T) {
+	for _, path := range []string{centralOrchReadme, centralOrchSpec, centralOrchReconciled, centralOrchPlan} {
+		doc := readDoc(t, path)
+		dir := filepath.Dir(filepath.Join("../../", path))
+		for _, m := range centralOrchMarkdownLinkRE.FindAllStringSubmatch(doc, -1) {
+			target := strings.TrimSpace(strings.SplitN(m[1], "#", 2)[0])
+			if target == "" {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(target))); err != nil {
+				t.Errorf("%s links to %s and no such file or directory is beside it in this tree: a markdown link is a citation too, and it is followed by a reader the same way, so a link that 404s is a citation no reader can check", path, target)
+			}
+		}
+	}
 }
 
 // centralOrchCitationsAbsent are the citations that name something this tree does not have,

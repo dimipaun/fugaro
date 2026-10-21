@@ -79,8 +79,11 @@ the reconciliation) — so the models it follows are
 
 **Files.** New `internal/cli/docs_central_orchestrator_test.go`, whose tests hold: (a)
 `docs/central-orchestrator/spec.md` byte-for-byte against the owner's text, the way the
-coordinator's guard holds its own spec; (b) the README's status line carrying *"plan only; no
-code is implemented"*; (c) the README's numbers table carrying the D-block it claims and the
+coordinator's guard holds its own spec; (b) the README's status line, pinned whole as the one
+sentence that names **part by part** what has landed and what has not, plus a refusal of the
+two stale wordings it has carried and must not carry again — the pre-P0 *"plan only; no code is
+implemented."* and P0's own *"…except the guard test P0 adds"*, which P1's and P3's arrivals
+made false; (c) the README's numbers table carrying the D-block it claims and the
 statement that no check number is claimed; (d) every citation in `reconciliation.md` that
 names a file in this repository anchored by **content** — the phrase the citation turns on,
 the convention `internal/cli/docs_coordinator_test.go`'s own comment describes — with the

@@ -778,6 +778,17 @@ version bumped. Why: `internal/rtdb` has no transaction (#8), the RTDB is where 
 identity and the rules that could fence a lease already live, and a lease in the runs bucket
 would inherit every launcher's reach (SECURITY.md).
 
+**Corrected 2026-10-21, by P3 — the shape the record ships with, and why it is not the one
+above.** The record is `{holder, holder_uid, generation, renewed_at, mode, pr}`, and the
+difference is two fields. It carries **no `expires_at`**, because D3's own answered
+recommendation has the writer store no absolute deadline it computes itself: the grace is
+applied by each reader to `renewed_at`, on the database's clock, so a stored deadline would be
+a second source of truth for the same question — and the one the writer's clock produced,
+which is the input D3 removes. It carries **`pr`**, which the shape above omits and D2's answered
+sub-question asks for: the lease is per job *with the PR recorded on the lease*. The
+generation, the renewed-at stamp and the mode are the fields written above, and the ETag
+compare-and-put is the one written above, never a whole-node put.
+
 ### D2 — One job, one shepherd: the invariant, the fencing token and the grace period
 **Recommendation: the lease is the invariant; a takeover is a compare-and-set on
 (`generation`, `expires_at`), the winner increments `generation`, and every later action the
@@ -803,6 +814,11 @@ the lease is **per job, with the PR recorded on the lease**; expiry is judged on
 both per project; and the **branch lock stays where it is**. Why: fencing is the generation
 field and not a clock (#10), `ServerNow` is the one clock this tree can trust (#9), and the
 stale-heartbeat sweeper that was the alternative hands work to nobody (#11).
+
+**Corrected 2026-10-21, by P3.** The compare-and-set the lease ships with is on the
+**generation** and the node's **ETag**, not on a stored `expires_at`: there is no such field
+(D1's correction above), the grace is read as `renewed_at + grace` on the database's clock, and
+the fencing token is the generation either way — which is the decision as answered.
 
 ### D3 — Clock skew, and who may hold a lease
 **Recommendation: the lease's expiry is judged on the database's clock; the writer's lease
