@@ -1,11 +1,12 @@
 # The coordinator agent
 
-**Status: approved to build on the branch `coordinator`, target 0.11.0; no code is implemented yet.** This directory holds the owner's spec for a **coordinator agent**, the
+**Status (2026-10-21, later): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0 and P1 are on `coordinator`, and P2–P8 are not started.** P1 is `fugaro coordinator status` over the view in `internal/coordinator/`: the one-repository read, and the first part of this work that produces something a person can look at. This directory holds the owner's spec for a **coordinator agent**, the
 reconciliation of that spec against the code at `origin/main` `c6009b5f` (`release:
 v0.8.6 (#637)`), the questions the reconciliation could not answer on its own, the
-owner's answers to them, and the plan that turns those answers into ordered parts. No Go,
-no TypeScript, no Terraform, no rules change and no live action follows from these
-documents. **Owner: Dimi Paun. Date: 2026-10-19.** The plan's own date is **2026-10-21**,
+owner's answers to them, and the plan that turns those answers into ordered parts. No
+TypeScript, no Terraform, no rules change and no live action follows from these
+documents: the Go that follows from them is the one read command above, on the
+long-lived branch and not on `main`. **Owner: Dimi Paun. Date: 2026-10-19.** The plan's own date is **2026-10-21**,
 written against `main` at `1e0953b7` (`docs(central-orchestrator): spec, reconciliation and plan
 for central orchestrators (#775)`). The reconciliation was run against
 `c6009b5f`, and every path and symbol in it was read at that commit; the citation check that

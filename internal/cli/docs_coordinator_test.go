@@ -6,8 +6,11 @@ package cli
 // (spec.md, verbatim), the reconciliation of that spec against the code
 // (reconciliation.md), the index (README.md), and -- since 2026-10-21 -- the
 // plan that turns the owner's answers into ordered parts
-// (implementation-plan.md). No Go, no TypeScript, no Terraform, no rules change
-// and no live action follows from any of them.
+// (implementation-plan.md). P1 is the exception, and the only one: it landed on
+// the long-lived `coordinator` branch as fugaro coordinator status
+// (internal/cli/coordinator.go over internal/coordinator), so the Go that
+// follows from these documents is that one read command. No TypeScript, no
+// Terraform, no rules change and no live action follows from any of them.
 //
 // The reconciliation's whole value is that every claim in it is checkable, and
 // the things a later edit can silently break are: the spec stops being verbatim,
@@ -54,8 +57,9 @@ package cli
 //    records the same answer in each decision's own row, and the plan's gate
 //    says it passed for P0-P6 while naming the parts it did not open.
 //  * TestDocsCoordinatorPlanIsWritten -- the plan exists, is at the status the
-//    index gives it ("approved to build on the branch `coordinator`, target
-//    0.11.0; no code is implemented yet"), carries its parts P0..P8 contiguously
+//    index gives it (approved to build on the branch `coordinator`, target
+//    0.11.0, partly implemented: P0 and P1 on the branch), carries P1's own
+//    "Status: built" in P1's section, carries its parts P0..P8 contiguously
 //    and in order, carries the one section heading the brief asked for by name,
 //    names every decision D193-D197 with the part it blocks, marks the paths it
 //    cites that do not exist yet as new, and carries no sentence saying the
@@ -501,14 +505,22 @@ const (
 // the document NAMES it, not that HEAD is it.
 const coordinatorBase = "1e0953b7"
 
-// coordinatorReadmeStatus is the index's status line after the owner answered
-// D193-D197 and passed the plan's gate for the parts that need only those
-// decisions. It replaces the "plan written; approval gate open" status this
-// package pinned before, and it is pinned whole: what a reader has to take from
-// it is that the work is APPROVED TO BUILD, on which branch, and for which
-// release -- and a rewrap that keeps the branch and drops the release is exactly
-// the edit this catches.
-const coordinatorReadmeStatus = "**Status: approved to build on the branch `coordinator`, target 0.11.0; no code is implemented yet.**"
+// coordinatorReadmeStatus is the index's status line after P1 landed on the
+// `coordinator` branch. It replaces the "approved to build ... no code is
+// implemented yet" status this package pinned while the plan was all there was,
+// and it is pinned whole: what a reader has to take from it is that the work is
+// APPROVED TO BUILD, on which branch, for which release, and HOW FAR IT HAS
+// GOTTEN -- which parts are in the tree and which are not -- and a rewrap that
+// keeps the branch and drops the release, or drops the parts, is exactly the
+// edit this catches.
+//
+// The move is the repository's convention, not a preference: a status line moves
+// in the commit that lands a part (docs/mobile/README.md, "partly implemented --
+// P0.1, P0.2, ... are merged"; docs/setup-wizard/README.md, "approved to build;
+// implementation in progress"), because the alternative is a folder whose
+// documents say no code exists while the code is on the branch, with a test
+// pinning the false sentence.
+const coordinatorReadmeStatus = "**Status (2026-10-21, later): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0 and P1 are on `coordinator`, and P2–P8 are not started.**"
 
 // coordinatorReadmeDecisionsAnswered is the index's own sentence about the
 // decisions the planning found, after the owner answered them on 2026-10-21.
@@ -541,11 +553,21 @@ const coordinatorPlanGateColumns = "| Decision | What it blocks | The recommenda
 
 // coordinatorPlanStatus is the plan's own status line, the same statement the
 // index makes, held separately because the plan is the document a builder reads
-// first and it must not be able to say something else. It moved with the index
-// when the owner answered D193-D197: the plan used to say its gate was open, and
-// a plan whose parts may start while its own status still says they may not is
-// the mismatch this pair of pins exists to catch.
-const coordinatorPlanStatus = "**Status: approved to build on the branch `coordinator`, target 0.11.0; no code is implemented yet.**"
+// first and it must not be able to say something else. It has moved twice: with
+// the index when the owner answered D193-D197, and again with the index when P1
+// landed -- a plan whose parts are being built while its own status still says
+// none is the mismatch this pair of pins exists to catch, and so is one that
+// says a part is built while the part's own section says otherwise (see
+// coordinatorPlanBuiltStatus).
+const coordinatorPlanStatus = "**Status (2026-10-21, later): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0 and P1 are on `coordinator`, and P2–P8 are not started.**"
+
+// coordinatorPlanBuiltStatus is P1's own status line in its section, in the shape
+// P0's carries ("**Status: written.**"): the status line above says how far the
+// plan has got, and each part says whether THAT part is in the tree, so that the
+// count in the status line and the parts it counts cannot drift apart. P1 is the
+// part this pair of pins moved for, and it is pinned whole for the same reason
+// the two above are.
+const coordinatorPlanBuiltStatus = "**Status: built.**"
 
 // coordinatorPlanParts are the plan's parts in order, as their headings are
 // written. Contiguity and order are the assertion: the plan's whole claim is
@@ -2536,6 +2558,11 @@ func TestDocsCoordinatorPlanIsWritten(t *testing.T) {
 		coordinatorPlanGateColumns,
 		coordinatorBase,
 		coordinatorCheckedAgainst,
+		// The part the status line counts as built says so itself, in its own
+		// section: a status line claiming a part is in the tree while the part's
+		// section still reads as unbuilt is the same class of mismatch as a
+		// status line claiming nothing is built while the code is on the branch.
+		coordinatorPlanBuiltStatus,
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s lacks %q", coordinatorPlan, want)
