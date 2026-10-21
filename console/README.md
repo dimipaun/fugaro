@@ -3858,10 +3858,15 @@ buys a certificate or takes a decision about one; signing on Windows is the
 owner's, exactly as signing on macOS is.
 
 The plan is [docs/console-windows/implementation-plan.md](../docs/console-windows/implementation-plan.md),
-approved by the owner on 2026-10-21; this is its **Part B (the packer and the
-fuse table)**, and it is the half that makes the CLI-inside-WSL route
-shippable. **Nothing about WSL is in this half**: the resolver, the paths and
-the credential boundary are Parts C–G.
+and this section describes its **Part B (the packer and the fuse table)** — the
+half that makes the CLI-inside-WSL route shippable. **Nothing about WSL is in
+this half**: the resolver, the paths and the credential boundary are Parts C–G.
+
+**Whether the plan may land is that plan's own §5 gate, and this file does not
+restate it.** `docs/console-windows/README.md` and §5 are the documents that
+record that state, and a second copy of it here would be a claim this file has
+no way to keep true — which is the same rule that keeps the fuse names in one
+table above rather than two.
 
 ### What the pack is, and the three edits that make it possible
 
@@ -3905,10 +3910,11 @@ pull-request one.
   `release/win-unpacked/Fugaro Console.exe` (245 MB), the packer logged
   `no code signing certificate configured, signing is skipped`, the fuse hook
   flipped that real Windows binary, and the wire read back out of it with the
-  pinned `@electron/fuses` is the six flips (`RunAsNode`,
-  `EnableCookieEncryption`, `EnableNodeOptionsEnvironmentVariable`,
-  `EnableNodeCliInspectArguments`, `EnableEmbeddedAsarIntegrityValidation`,
-  `OnlyLoadAppFromAsar`) and the two deliberate defaults.
+  pinned `@electron/fuses` is **the six flips and the two deliberate defaults
+  the fuse table above lists, in the same order** — the same six, in the same
+  state, on the third platform. (The names are deliberately not repeated here:
+  one list of them is in this file, and a second copy is a second thing to keep
+  in step.)
 - **Not verified here**: **the NSIS installer itself.** The same command
   without `--dir` names its artifact correctly
   (`release/Fugaro.Console-0.0.0-win-x64.exe`) and then fails with

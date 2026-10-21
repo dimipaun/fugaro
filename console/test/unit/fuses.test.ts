@@ -869,6 +869,44 @@ describe('the packaging configuration the fuses belong to', () => {
     }
   })
 
+  it('lists exactly the fuses the source decides, in the order it decides them', () => {
+    // console/README.md carries the fuse table, and nothing held it to
+    // `src/main/fuses.ts`. A hand-written list of six names in a document is a
+    // list that can name the wrong six -- a review of this work's first pass
+    // found exactly that, in a *second* prose list of the same six: a
+    // left-alone fuse named among the flips and a flipped one missing -- and no
+    // test noticed, because no test read the document's names at all.
+    //
+    // So the table's rows are compared, in order, with the three lists the hook
+    // is built from, and each row's value with the decision that list carries.
+    const readme = readFileSync(README, 'utf8')
+    const heading = '### The six fuses, and the two left alone'
+    const start = readme.indexOf(heading)
+    expect(start, `console/README.md must carry the section ${heading}`).toBeGreaterThanOrEqual(0)
+    const next = readme.indexOf('\n### ', start + heading.length)
+    const section = next < 0 ? readme.slice(start) : readme.slice(start, next)
+    const rows = section
+      .split('\n')
+      .filter((line) => line.startsWith('| `'))
+      .map((line) => line.split('|').map((cell) => cell.trim()).slice(1, -1))
+    const nameOf = (cells: readonly string[] | undefined): string =>
+      (cells?.[0] ?? '').replace(/`/g, '').replace(/ \(index \d+\)$/, '')
+    expect(rows.map(nameOf)).toEqual([
+      ...FLIPPED_FUSES.map((fuse) => fuse.name),
+      ...LEFT_ALONE_FUSES.map((fuse) => fuse.name),
+      ...BEYOND_PIN_FUSES.map((fuse) => fuse.name),
+    ])
+    const valueOf = (name: string): string => rows.find((cells) => nameOf(cells) === name)?.[1] ?? ''
+    for (const fuse of FLIPPED_FUSES) {
+      expect(valueOf(fuse.name), `console/README.md's row for ${fuse.name}`).toBe(
+        fuse.value ? '**enabled**' : '**disabled**',
+      )
+    }
+    for (const fuse of LEFT_ALONE_FUSES) {
+      expect(valueOf(fuse.name), `console/README.md's row for ${fuse.name}`).toBe('*left alone*')
+    }
+  })
+
   it('has no electron-builder.env, and could not ship one', () => {
     // electron-builder's CLI loads `electron-builder.env` from the working
     // directory into its environment before it builds (cli-util.js), which would
