@@ -79,8 +79,14 @@ var allowedTypes = map[string]bool{
 // docs/central-orchestrator/implementation-plan.md, which wires the service
 // into the installation root and is where the checks on what a service may say
 // (its image, the account it runs as, its ingress) belong, as the job's do in
-// attributes below. Until P4 lands the admission is inert: no module in this
-// tree declares the type, so no plan any stage of init produces can hold one.
+// attributes below. Until P4 lands the admission is NOT inert, and must not be
+// read as one: the type reaches attributes, whose service case refuses every
+// service outright — the checks are the module's, and a service covered with
+// none of them would be a service with ingress ALL, the invoker check off, an
+// image from outside this run's registry, the default compute account and any
+// scaling. No module in this tree declares the type, so no plan a stage of
+// init produces can hold one; a plan an owner or an agent wrote can, and that
+// is the plan the refusal is for.
 //
 // The invoker grant beside it, google_cloud_run_v2_service_iam_member, is
 // deliberately NOT admitted, here or in grantRules: that table is a role
@@ -88,7 +94,7 @@ var allowedTypes = map[string]bool{
 // (TestGrantRulesAreTheModules), so the type and the roles it may carry are one
 // decision, taken with the module that grants.
 var admittedAheadOfTheirModule = map[string]string{
-	"google_cloud_run_v2_service": "one Cloud Run service per installation, the central orchestrator's resident front door (docs/central-orchestrator, D19 answered 2026-10-20; the module that creates it is P4's). It is admitted here first so that plan is judged on what it says rather than refused for a type nobody had decided on",
+	"google_cloud_run_v2_service": "one Cloud Run service per installation, the central orchestrator's resident front door (docs/central-orchestrator, D19 answered 2026-10-20; the module that creates it is P4's). It is admitted here first so that a plan holding one is refused by the checks the type owes, and by name, rather than as a type nobody had decided on — and those checks are P4's, so until they land attributes refuses every service",
 }
 
 // who says what kind of principal a module grants a role to: People are the
@@ -1526,6 +1532,20 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 				return why
 			}
 		}
+	case "google_cloud_run_v2_service":
+		// P1 admits the type (allowedTypes), and this is what makes admitting
+		// it before its module safe: the checks a service owes — its image,
+		// its ingress, whether its invoker check is on, the account it runs
+		// as, its scaling — are the module's, and the module that writes one
+		// is P4 (docs/central-orchestrator/implementation-plan.md). Until it
+		// lands every service is refused here, whatever the plan says: a case
+		// that fell through this switch would cover ingress ALL, a service
+		// with the invoker check off, an image from outside this run's
+		// registry, the project's default compute account and any scaling at
+		// all, which is the opposite of what this function is for. The
+		// refusal is deliberately value-free: it names the type and the part
+		// that owes the checks, and nothing the plan says.
+		return "a Cloud Run service, whose checks arrive with the module that writes one (central-orchestrator part P4)"
 	case "google_cloud_scheduler_job":
 		ht := at(a["http_target"])
 		if at(rc.Change.AfterUnknown, "http_target", "uri") == true || unknown(rc.Change, "http_target") {

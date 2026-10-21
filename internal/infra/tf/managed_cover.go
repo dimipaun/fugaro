@@ -921,6 +921,28 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 		case !c.managedAccount("serviceAccount:" + email):
 			return "runs as " + email + ", which is not a service account of the managed project carrying the prefix " + ManagedPrefix
 		}
+		// The service's reach, which the job has no equivalent of: a managed
+		// service answers only from inside the managed project. Both settings
+		// are refused when they are not the ones that keep it there — an
+		// ingress of INGRESS_TRAFFIC_ALL is reachable from the internet, and
+		// invoker_iam_disabled = true turns the invoker check off, so anyone
+		// who can reach the service may call it, which is the allUsers refusal
+		// by another name (managedGrantRules). Unstated is refused with them
+		// rather than read as the safe default: the provider's own default
+		// ingress is INGRESS_TRAFFIC_ALL, and a value the plan does not state
+		// is not one this gate read.
+		if unknown(rc.Change, "invoker_iam_disabled") || a["invoker_iam_disabled"] == nil {
+			return "a service that does not state invoker_iam_disabled: write it out as false, the setting that keeps the invoker check on"
+		}
+		if a["invoker_iam_disabled"] != false {
+			return "a service with the invoker check off (invoker_iam_disabled), which answers anyone who can reach it"
+		}
+		switch ing := str(a["ingress"]); {
+		case unknown(rc.Change, "ingress") || ing == "":
+			return "a service with no ingress stated, which the provider defaults to INGRESS_TRAFFIC_ALL: state INGRESS_TRAFFIC_INTERNAL_ONLY or INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+		case ing != "INGRESS_TRAFFIC_INTERNAL_ONLY" && ing != "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER":
+			return fmt.Sprintf("a service with ingress %s, which is reachable from the internet: state INGRESS_TRAFFIC_INTERNAL_ONLY or INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER", safetext.Field(ing))
+		}
 	case "google_cloud_scheduler_job":
 		ht := at(a["http_target"])
 		if unknown(rc.Change, "http_target") ||

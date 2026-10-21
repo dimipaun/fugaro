@@ -657,16 +657,19 @@ func TestManagedCoverRefusesAnUnsetJobAccount(t *testing.T) {
 // own default ingress is ALL, and a value the plan does not state is not a
 // value this gate read.
 func TestManagedCoverRefusesAPublicService(t *testing.T) {
+	// invoker_iam_disabled and ingress are the service's own attributes, not
+	// the template's: they are what the resource says about who may reach it.
 	svc := func(m map[string]any, drop ...string) ResourceChange {
-		tmpl := map[string]any{"service_account": managedAccount,
-			"invoker_iam_disabled": false, "ingress": managedServiceIngress}
+		a := map[string]any{"name": ManagedPrefix + "svc",
+			"invoker_iam_disabled": false, "ingress": managedServiceIngress,
+			"template": []any{map[string]any{"service_account": managedAccount}}}
 		for k, v := range m {
-			tmpl[k] = v
+			a[k] = v
 		}
 		for _, k := range drop {
-			delete(tmpl, k)
+			delete(a, k)
 		}
-		return mrc("google_cloud_run_v2_service", map[string]any{"name": ManagedPrefix + "svc", "template": []any{tmpl}})
+		return mrc("google_cloud_run_v2_service", a)
 	}
 	for name, tc := range map[string]struct {
 		fixture ResourceChange
