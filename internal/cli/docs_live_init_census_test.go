@@ -106,20 +106,25 @@ var datedRecords = []string{
 // retirementText is the second exemption class, and it is not a judgement
 // call: each of these paths names `fugaro init` *as the retired verb*, which
 // is its whole job and which no rename can remove. It is a list of paths that
-// MAY name the command, so a path that does not exist yet contributes nothing
-// -- W1.2 adds the first two, and the third is this file, whose scan pattern
-// is the string. W2.6 asserts that the files naming the command are exactly
-// `datedRecords` plus these.
+// MAY name the command, so a path that does not exist yet contributes nothing.
+// W2.6 asserts that the files naming the command are exactly `datedRecords`
+// plus these four.
 //
-// The fourth is W1.2's too, and it is here for the same reason as the tombstone:
-// internal/agent/relay_test.go carries one case whose whole subject is that the
+// The entries are named here rather than counted, because the list is appended
+// to and an ordinal goes stale the moment it is: a sentence like "the third is
+// this file" is true only for as long as nothing is inserted above it. In the
+// order the slice holds them: internal/cli/retired.go and
+// internal/cli/retired_test.go, W1.2's tombstone and the test that asserts its
+// message; internal/cli/docs_live_init_census_test.go, this file, whose scan
+// pattern is the string; and internal/agent/relay_test.go, which is here for
+// the tombstone's reason -- it carries one case whose whole subject is that the
 // retired word is no longer a subcommand the run summary reports
 // (`TestRelayOnToolNeverRepeatsTheRawCommand`, "the retired init word is not a
-// subcommand any more" -- its input has to be the retired command line, so no
-// rename can take the mention out and renaming it would delete the assertion).
-// The plan counts this class as three because it was written before W1.2 existed
-// and before that case was added; the class's rule, not its old count, is what
-// decides, and this file fits the rule.
+// subcommand any more"), and its input has to be the retired command line, so
+// no rename can take the mention out and renaming it would delete the
+// assertion. The plan counts this class as three because it was written before
+// W1.2 existed and before that case was added; the class's rule, not its old
+// count, is what decides, and this file fits the rule.
 //
 // internal/cli/testdata/init_retire.golden is deliberately NOT here, although
 // it named the command four times before W2.2: it is a transcript, not a
@@ -849,7 +854,10 @@ func TestCensusOutputAndExemptArePinned(t *testing.T) {
 		path string
 		want bool
 	}{
-		// Every dated root, and the three retirement statements.
+		// Every dated root, and every path in retirementText -- named rather
+		// than counted, for the reason that list's own comment gives: it is
+		// appended to. The tombstone and its test, this file, and the relay
+		// case whose input is the retired command line.
 		{"docs/plans/setup-wizard/implementation-plan.md", true},
 		{"docs/releases/v0.9.0.md", true},
 		{"docs/design/x.md", true},
@@ -859,6 +867,7 @@ func TestCensusOutputAndExemptArePinned(t *testing.T) {
 		{"internal/cli/retired.go", true},
 		{"internal/cli/retired_test.go", true},
 		{"internal/cli/docs_live_init_census_test.go", true},
+		{"internal/agent/relay_test.go", true},
 		// The releases index beside the records stays live, and a prefix that
 		// stops at a slash is not a prefix that stops mid-word.
 		{"docs/releases/README.md", false},

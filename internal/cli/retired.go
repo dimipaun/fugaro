@@ -26,10 +26,11 @@ import (
 // It is not named `retirementText`, although that is the phrase this file's
 // own comment uses for it: `retirementText` is the census's
 // (internal/cli/docs_live_init_census_test.go, W0.2), where it is the list of
-// the four paths that may name the retired command. Two package-level
-// declarations of one name do not compile, so the tombstone's sentence and the
-// census's list cannot share it, and the census keeps it because the plan
-// names the exemption class, not this string.
+// the paths that may name the retired command -- four of them, this file and
+// its test among them. Two package-level declarations of one name do not
+// compile, so the tombstone's sentence and the census's list cannot share it,
+// and the census keeps it because the plan names the exemption class, not this
+// string.
 const retiredInitMessage = "`fugaro init` is now `fugaro setup` (first run) and `fugaro update` (after a CLI upgrade)"
 
 // newRetiredInitCmd is the hidden `init`: one message, two names, exit 1.
@@ -42,6 +43,16 @@ const retiredInitMessage = "`fugaro init` is now `fugaro setup` (first run) and 
 // old line reaches RunE and reads the same sentence. The exit code is a user
 // error's (1), the same as any other refusal, so a script that ran the old
 // name fails loudly rather than continuing with nothing converged.
+//
+// One consequence is worth naming, because a reader will ask: `fugaro init
+// --json` prints that same plain sentence, not a JSON document. W1.2 gives the
+// tombstone no flags of its own and parses none, so `--json` cannot be read
+// here; and there is nothing to serialize — `--json` on the two doors prints
+// `initflow.Result.JSON()`, and a command that runs no converge has no Result.
+// A caller that needs to branch has the exit code. If the owner ever wants a
+// JSON refusal it is a change to D2's contract, not a bug in this one
+// (retired_test.go's TestRetiredInitRefusalIsPlainText pins today's answer so
+// that the change is deliberate).
 func newRetiredInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "init",

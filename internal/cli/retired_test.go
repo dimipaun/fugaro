@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +30,7 @@ func TestInitIsRetiredAndSaysBothNames(t *testing.T) {
 		{"init", "--yes"},
 		{"init", "--repo", "."},
 		{"init", "--create-project", "--gcp-project", "acme-prod"},
+		{"init", "--json"},
 		{"init", "--help"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -49,6 +51,41 @@ func TestInitIsRetiredAndSaysBothNames(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRetiredInitRefusalIsPlainText: `fugaro init --json` prints the same
+// sentence as every other shape of the old line, and that is the plan's answer
+// rather than an oversight — recorded here so the next reader does not "fix" it
+// by accident.
+//
+// W1.2 gives the tombstone **no flags of its own** and turns flag parsing off
+// (DisableFlagParsing), so `--json` is not a flag it can read: it arrives as an
+// argument and the one sentence is the whole of the output. That is also the
+// only thing it could honestly do — `--json` on the two doors prints
+// `initflow.Result.JSON()`, and the tombstone has no Result, because it runs no
+// converge and reaches no stage. A script that branches on the old name still
+// gets what it needs to branch on, which is the exit code (1, a user error).
+//
+// If the owner ever wants a JSON refusal here it is a change to D2's contract
+// — a flag on the tombstone and a document of its own shape — not a bug.
+func TestRetiredInitRefusalIsPlainText(t *testing.T) {
+	firstRunEnv(t)
+	out, errOut, err := executeStdin(t, "", "init", "--json")
+	if err == nil {
+		t.Fatal("`fugaro init --json` exited 0")
+	}
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("`fugaro init --json` exits %d, want %d (a user error)", got, ExitUserError)
+	}
+	if got := errOut + ErrorText(err); !strings.Contains(got, retiredInitMessage) {
+		t.Errorf("`fugaro init --json` does not say %q:\n%s", retiredInitMessage, got)
+	}
+	if got := strings.TrimSpace(out); got != "" {
+		t.Errorf("`fugaro init --json` wrote %q to stdout, want nothing: the tombstone prints no Result", got)
+	}
+	if json.Valid([]byte(strings.TrimSpace(errOut + ErrorText(err)))) {
+		t.Errorf("`fugaro init --json` printed a JSON document:\n%s", errOut+ErrorText(err))
 	}
 }
 
@@ -111,6 +148,48 @@ func TestRetiredInitAppliesNothing(t *testing.T) {
 	_, _, err = executeStdin(t, "", "init", "--yes")
 	if err == nil || !strings.Contains(ErrorText(err), retiredInitMessage) {
 		t.Errorf("with no config: %v", err)
+	}
+}
+
+// TestRetiredInitConvergesNothing: the command line a user is most likely to
+// still type — bare `init --yes`, with a project config on this machine and a
+// Terraform whose every call the rig logs — is the one where a tombstone that
+// *forwarded* to `fugaro setup` (and then said its sentence anyway) would
+// converge the installation and still pass the two tests above: `--repo .`
+// outside a checkout and an absent config both stop the converge before the
+// first apply, so neither can tell "applies nothing" from "applies nothing
+// *here*". This one has a configured installation under it, so the only thing
+// that keeps Terraform from running is the tombstone's own body.
+//
+// The config's bytes and the rig's call log are both read: a forward that got
+// as far as the local config's write would show in the first, and one that got
+// as far as an apply in the second.
+func TestRetiredInitConvergesNothing(t *testing.T) {
+	r := newInitRig(t)
+	before, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--yes")
+	if err == nil {
+		t.Fatal("the tombstone exited 0")
+	}
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("exit %d, want %d", got, ExitUserError)
+	}
+	if !strings.Contains(out+errOut+ErrorText(err), retiredInitMessage) {
+		t.Errorf("the tombstone said something else:\n%s%s%s", out, errOut, ErrorText(err))
+	}
+	if calls := r.calls(t); len(calls) != 0 {
+		t.Errorf("terraform ran %v, want nothing: the tombstone converged the installation", calls)
+	}
+	after, rerr := os.ReadFile(r.cfg)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(after) != string(before) {
+		t.Errorf("the tombstone rewrote the local config:\n%s", after)
 	}
 }
 
