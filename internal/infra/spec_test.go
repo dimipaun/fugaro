@@ -2288,10 +2288,19 @@ func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
 // service holds, gone, and the job's invoker grant on the service, added — in
 // both shapes the modules distinguish: the oauth token (once per Claude
 // account, the default and the named one) and, for an api-key workflow, the
-// Anthropic key and a provider's key. The GitHub App's private key is a
-// credential of the second kind (C2.3): it is dropped by name, so it goes in
-// every shape, and the build account's own accessor on it is not the job's and
-// does not move (D148, F3).
+// Anthropic key and a provider's key. The build account's own accessor on the
+// App key is not the job's and does not move (D148, F3).
+//
+// The App key's rows are the gated half (review finding F1, 2026-10-21): with
+// the runner still reading the key — this branch, config.ServiceHeldSecretNames
+// empty — the opt-in takes only the model accessors away, because a job whose
+// account lost its accessor on a key its container still mounted is a job Cloud
+// Run refuses to create; and with the name in that list (the state C2.2's
+// release puts the tree in) the App key's accessor goes with them. Both states
+// are asserted against the same Run: the mirror and the module are held to each
+// other by deploy/terraform's TestServiceHeldSecretsMatchTheCredentialsService,
+// so a module that dropped the accessor while the list was empty would be a
+// plan Go's own address list disagrees with.
 //
 // It then runs the same two address lists through Retirements, both
 // directions, because that is what the drop is FOR: the state an installation
@@ -2302,21 +2311,28 @@ func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
 // implementation, m2), which is what this pins.
 func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
 	svc := &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	appKey := func(workflows ...string) []string {
+		var out []string
+		for _, key := range workflows {
+			out = append(out, `module.repo.module.workflow["`+key+`"].google_secret_manager_secret_iam_member.job["github-app-key"]`)
+		}
+		return out
+	}
 	for _, tc := range []struct {
-		name     string
-		in       Inputs
-		wantGone []string
-		wantAdd  []string
+		name       string
+		in         Inputs
+		wantGone   []string
+		wantAppKey []string
+		wantAdd    []string
 	}{
 		{
 			name: "oauth",
 			in:   repoRootInputs(t, repoRootOAuthAgent),
 			wantGone: []string{
 				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["claude-oauth-token"]`,
-				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["github-app-key"]`,
 				`module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.job["claude-oauth-token-bmb"]`,
-				`module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.job["github-app-key"]`,
 			},
+			wantAppKey: appKey("web", "web_bmb"),
 			wantAdd: []string{
 				`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`,
 				`module.repo.module.workflow["web_bmb"].google_cloud_run_v2_service_iam_member.credentials[0]`,
@@ -2327,9 +2343,9 @@ func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
 			in:   repoRootCredentialsAPIKeyInputs(t),
 			wantGone: []string{
 				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["anthropic-api-key"]`,
-				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["github-app-key"]`,
 				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["openrouter-api-key"]`,
 			},
+			wantAppKey: appKey("web"),
 			wantAdd: []string{
 				`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`,
 			},
@@ -2348,62 +2364,77 @@ func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// The fixture's own premises: the model credentials really are
-			// mounted with the service off, or the deltas below would pass
-			// vacuously.
-			for _, a := range tc.wantGone {
-				if !slices.Contains(offSpec.Addresses(), a) {
+			offAddrs := offSpec.Addresses()
+			// The fixture's own premises: the credentials really are mounted
+			// with the service off, or the deltas below would pass vacuously.
+			for _, a := range slices.Concat(tc.wantGone, tc.wantAppKey) {
+				if !slices.Contains(offAddrs, a) {
 					t.Fatalf("the fixture does not produce %s with the service off: the test would be vacuous", a)
 				}
 			}
-			offAddrs, onAddrs := offSpec.Addresses(), onSpec.Addresses()
-			var gone, added []string
-			for _, a := range offAddrs {
-				if !slices.Contains(onAddrs, a) {
-					gone = append(gone, a)
+
+			// check asserts the delta the opt-in makes in one state of the
+			// service-held list, and both retirement directions over it.
+			check := func(well string, wantGone, wantAdd []string) {
+				t.Helper()
+				onAddrs := onSpec.Addresses()
+				var gone, added []string
+				for _, a := range offAddrs {
+					if !slices.Contains(onAddrs, a) {
+						gone = append(gone, a)
+					}
+				}
+				for _, a := range onAddrs {
+					if !slices.Contains(offAddrs, a) {
+						added = append(added, a)
+					}
+				}
+				wantGone, wantAdd = slices.Clone(wantGone), slices.Clone(wantAdd)
+				slices.Sort(wantGone)
+				slices.Sort(wantAdd)
+				if !slices.Equal(gone, wantGone) {
+					t.Errorf("with the credentials service on (%s), Addresses() drops %v, want exactly %v: the credentials the service holds are its to hold (D145, C2.3), and nothing else moves", well, gone, wantGone)
+				}
+				if !slices.Equal(added, wantAdd) {
+					t.Errorf("with the credentials service on (%s), Addresses() adds %v, want exactly %v: the job's one invoker grant on the service (D135)", well, added, wantAdd)
+				}
+				// The retirement directions: what an installation that applied
+				// with the service off must be told to retire when it turns it
+				// on, and the other way round.
+				rets := Retirements(offAddrs, onSpec)
+				var retAddrs []string
+				for _, r := range rets {
+					retAddrs = append(retAddrs, r.Address)
+				}
+				slices.Sort(retAddrs)
+				if !slices.Equal(retAddrs, wantGone) {
+					t.Errorf("turning the service on (%s) retires %v, want exactly the service-held accessors %v: a retirement the mirror invents is a delete the operator is asked to allow", well, retAddrs, wantGone)
+				}
+				back := Retirements(onAddrs, offSpec)
+				retAddrs = retAddrs[:0]
+				for _, r := range back {
+					retAddrs = append(retAddrs, r.Address)
+				}
+				slices.Sort(retAddrs)
+				if !slices.Equal(retAddrs, wantAdd) {
+					t.Errorf("turning the service off (%s) retires %v, want exactly the invoker grants %v", well, retAddrs, wantAdd)
+				}
+				// And the grants that must never be a retirement candidate: the
+				// job itself and the secret containers.
+				for _, r := range slices.Concat(rets, back) {
+					if strings.Contains(r.Address, "google_cloud_run_v2_job.this") || strings.Contains(r.Address, "google_secret_manager_secret.") {
+						t.Errorf("the drop retires %s, which the service's arrival does not remove", r.Address)
+					}
 				}
 			}
-			for _, a := range onAddrs {
-				if !slices.Contains(offAddrs, a) {
-					added = append(added, a)
-				}
-			}
-			slices.Sort(tc.wantGone)
-			slices.Sort(tc.wantAdd)
-			if !slices.Equal(gone, tc.wantGone) {
-				t.Errorf("with the credentials service on, Addresses() drops %v, want exactly %v: the credentials the service holds are its to hold (D145, C2.3), and nothing else moves", gone, tc.wantGone)
-			}
-			if !slices.Equal(added, tc.wantAdd) {
-				t.Errorf("with the credentials service on, Addresses() adds %v, want exactly %v: the job's one invoker grant on the service (D135)", added, tc.wantAdd)
-			}
-			// The retirement directions: what an installation that applied
-			// with the service off must be told to retire when it turns it
-			// on, and the other way round.
-			rets := Retirements(offAddrs, onSpec)
-			var retAddrs []string
-			for _, r := range rets {
-				retAddrs = append(retAddrs, r.Address)
-			}
-			slices.Sort(retAddrs)
-			if !slices.Equal(retAddrs, tc.wantGone) {
-				t.Errorf("turning the service on retires %v, want exactly the service-held accessors %v: a retirement the mirror invents is a delete the operator is asked to allow", retAddrs, tc.wantGone)
-			}
-			back := Retirements(onAddrs, offSpec)
-			retAddrs = retAddrs[:0]
-			for _, r := range back {
-				retAddrs = append(retAddrs, r.Address)
-			}
-			slices.Sort(retAddrs)
-			if !slices.Equal(retAddrs, tc.wantAdd) {
-				t.Errorf("turning the service off retires %v, want exactly the invoker grants %v", retAddrs, tc.wantAdd)
-			}
-			// And the grants that must never be a retirement candidate: the
-			// job itself and the secret containers.
-			for _, r := range slices.Concat(rets, back) {
-				if strings.Contains(r.Address, "google_cloud_run_v2_job.this") || strings.Contains(r.Address, "google_secret_manager_secret.") {
-					t.Errorf("the drop retires %s, which the service's arrival does not remove", r.Address)
-				}
-			}
+
+			// This branch: the job reads the App key, so the opt-in takes only
+			// the model accessors away and the App key's stays (F1).
+			check("the job reads the key", tc.wantGone, tc.wantAdd)
+			// C2.2's release: the App key joins the list and its accessor goes
+			// with the model ones, in the same plan.
+			serviceHoldsTheAppKey(t)
+			check("C2.2's release", slices.Concat(tc.wantGone, tc.wantAppKey), tc.wantAdd)
 		})
 	}
 }

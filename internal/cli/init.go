@@ -2798,7 +2798,7 @@ func (r *initRun) appPreCheck(ctx context.Context, lc *localcfg.Config, spec inf
 	if spec.Provider != gitprov.KindGitHub || spec.GitHubAppID == "" {
 		return ""
 	}
-	keyID := spec.Secrets["github-app-key"]
+	keyID := spec.Secrets[config.GitHubAppKeySecret]
 	if r.o.checkApp {
 		id, err := gitSecretID(ctx, lc, spec, "the GitHub App pre-check of "+spec.Name)
 		if err != nil {

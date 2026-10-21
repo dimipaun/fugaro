@@ -76,6 +76,41 @@ func TestProjectJobTftestTitlesAreTheOnesInternalInfraWrites(t *testing.T) {
 	}
 }
 
+// TestProjectJobTftestAppKeyNameIsTheOneInternalInfraWrites: the tftest run
+// shared_job_mounting_the_app_key_keeps_the_accessor asserts the module's
+// secretAccessor member by the App key's project-wide container name, exactly
+// like the job names and condition titles above — and a name spelled here that
+// internal/infra never writes would make that assertion consistent with itself
+// and with nothing else. The installation's secrets map is where that name
+// comes from (internal/infra/testdata/installation-accounts.tfvars.json's
+// "github-app-key" entry), and internal/infra builds it with
+// gcp.ProjectSecretID from the Fugaro project name.
+//
+// Mutation (run, restore): change one hex digit of the name in the tftest and
+// this fails; change internal/infra's naming and the tftest's run fails at
+// terraform test time, since the module would grant the name the map holds
+// while the run asserts the literal.
+func TestProjectJobTftestAppKeyNameIsTheOneInternalInfraWrites(t *testing.T) {
+	const path = "gcp/roots/installation/tests/project_job.tftest.hcl"
+	data, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	// The run's own secrets map, so this pairs the literal with the run that
+	// asserts it rather than with any other name in the file.
+	re := regexp.MustCompile(`github-app-key\s*=\s*"([^"]+)"`)
+	matches := re.FindAllStringSubmatch(string(data), -1)
+	if len(matches) == 0 {
+		t.Fatalf("%s spells no github-app-key container: the run this test checks is gone or reworded, and the review's [low] item — the shared job account's retention, pinned by a run and not only by a plan paragraph — would be unguarded again", path)
+	}
+	want := gcp.ProjectSecretID("aurora", config.GitHubAppKeySecret)
+	for _, m := range matches {
+		if m[1] != want {
+			t.Errorf("%s: the App key's project-wide container is %q, want %q (gcp.ProjectSecretID for the tftest's fugaro_project and config.GitHubAppKeySecret): the installation's secrets map holds the latter, so a member asserted by the former is a grant the plan would never create", path, m[1], want)
+		}
+	}
+}
+
 // The embedded tree is what fugaro init writes into its workdir, so every
 // root, module and lock file it needs must be in it. Each task that adds a
 // root or module adds its paths here.
@@ -3736,11 +3771,11 @@ var numberWords = map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "fiv
 
 // TestServiceHeldSecretsMatchTheCredentialsService pins the four literals in
 // modules/workflow/sa.tf — the two model-credential variable names, the
-// provider-key prefix and the one service-held logical name — to
-// internal/config, and the drop they drive to the opt-in. Terraform cannot ask
-// Go, so the module spells the names out; this test is what keeps the two
-// spellings one rule (the TestLauncherConditionPreconditionMatchesGo
-// precedent).
+// provider-key prefix and the service-held logical names (empty on this branch,
+// the App key alone once C2.2's release fills them) — to internal/config, and
+// the drop they drive to the opt-in. Terraform cannot ask Go, so the module
+// spells the names out; this test is what keeps the two spellings one rule (the
+// TestLauncherConditionPreconditionMatchesGo precedent).
 //
 // The mutation is any one of the lists: rename a reserved key in Go and the
 // module's literal keeps dropping the accessor of a variable no job has, while
@@ -3750,6 +3785,21 @@ var numberWords = map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "fiv
 // a variable, so dropping it needs its own list, and a module that spells it
 // wrong leaves the job's account with the private key of the installation's
 // GitHub App.
+//
+// The accessor and the mount are one rule and are pinned as one (C2.3, review
+// finding F1): job_secret_names drops what the account may not read, and
+// job_mounts — the container's own env — drops what it may not mount, which is
+// the App key and only the App key, because C1.20 is the task that takes the
+// model credentials' mounts away with the runner's switch to the service.
+//
+// Both of those rules are keyed on service_held_secret_names, and the list is
+// EMPTY on this branch (review finding F1): the App key joins it in the release
+// that also stops the runner reading the key (C2.2), and until then the job
+// keeps the accessor and the mount it needs to run. The pin below is what keeps
+// the module's literal and config.ServiceHeldSecretNames one value, so that
+// release fills both in one commit — with the module's list filled and Go's
+// empty, the plan drops a grant the spec still produces (and the tftest run
+// credentials_service_on_github_app_key_stays fails).
 func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	const path = "gcp/modules/workflow/sa.tf"
 	b, err := os.ReadFile(path)
@@ -3833,6 +3883,28 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	}
 	if strings.Contains(grant, "condition") {
 		t.Errorf("%s: the job's invoker grant carries a condition; the service's own ID-token check is what decides which of the accounts IAM admits are served (Q6):\n%s", path, grant)
+	}
+
+	// And the other half of the same rule (C2.3, review finding F1): the
+	// MOUNT goes with the accessor. A container that still declares a secret
+	// its account may not read is not a job with one credential too many, it
+	// is a job Cloud Run refuses to create -- every GitHub run of an
+	// installation that opted in would fail. The two are one expression's
+	// halves here, and the tftest run credentials_service_on_github_app_key_
+	// stays plans the state this branch ships them in: neither moves, because
+	// the list is empty and the job still reads the key.
+	if !strings.Contains(squash(code), "env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical)") {
+		t.Errorf("%s: job_mounts must keep every mount while the credentials service is off and drop the service-held ones (the App key) once it is on, by logical name:\n%s", path, code)
+	}
+	// The container is the consumer of that local, and it is what a missing
+	// pass-down would leave out: iterating var.workflow.secret_env instead
+	// plans the App key's mount back into a job whose account cannot read it.
+	jb, err := fs.ReadFile(FS, "gcp/modules/workflow/job.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(squash(stripComments(string(jb))), `dynamic "env" { for_each = local.job_mounts`) {
+		t.Errorf("gcp/modules/workflow/job.tf: the container's secret env must iterate local.job_mounts rather than var.workflow.secret_env, or the App key's mount outlives its accessor (C2.3, F1):\n%s", jb)
 	}
 }
 

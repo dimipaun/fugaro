@@ -636,7 +636,7 @@ func doctorGitHubApps(ctx context.Context, lc *localcfg.Config, notice io.Writer
 		// grant naming a different ID means this check would read a key the
 		// build's clone would not, which makes the diagnostic misleading
 		// rather than wrong, so it is a warning with the apply that fixes it.
-		logical := "github-app-key"
+		logical := config.GitHubAppKeySecret
 		projectID, _ := infra.ProjectSecretCandidate(lc, logical, repo)
 		buildSA := buildAccountMember(gcp.BuildServiceAccountID(slug) + "@" + lc.GCPProject + ".iam.gserviceaccount.com")
 		keyID, err := resolveGitSecretID(ctx, lc, lc.GCPProject, repo, logical, gcp.SecretID(slug, logical), projectID, buildSA, "the GitHub App check of "+repo)

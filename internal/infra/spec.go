@@ -573,13 +573,25 @@ func Workflow(in Inputs, name string) (WorkflowSpec, error) {
 // Bitbucket's is the per-repository one of the two: a repository access token
 // is issued for one repository and works for no other, so it is never stored
 // project-wide (config.PerRepositorySecret, the owner's ruling of 2026-10-15).
-// GitHub's App key is a project's, mounted by every repository the App serves.
+// GitHub's App key is a project's, mounted by every repository the App serves,
+// and its logical name is config.GitHubAppKeySecret — the same constant
+// config.IsServiceHeldSecretEnv and the workflow module's
+// service_held_secret_names answer "is this the App key?" with. Review finding
+// F3: this function wrote both the App key's name and Bitbucket's out as
+// literals, so a rename in config would have left it returning a secret no job
+// mounts; the internal/cli code that spelled the App key out — doctor.go's
+// check, secrets.go's multilineSecret, githubapp.go's project-wide note,
+// init.go's App pre-check and project_enroll.go's --github-app-key read — now
+// names the constant too. What still spells the literal does so on purpose: the
+// flag's own name, the sentences a user reads ("fugaro secrets set
+// github-app-key …"), the tests that pin the name as the wire value, and
+// gcp/build.go's example of the ID this builds.
 func GitSecret(provider string) (string, bool) {
 	switch provider {
 	case gitprov.KindBitbucket:
-		return "bitbucket-token", true
+		return config.BitbucketSecret, true
 	case gitprov.KindGitHub:
-		return "github-app-key", true
+		return config.GitHubAppKeySecret, true
 	}
 	return "", false
 }
@@ -1284,12 +1296,16 @@ func (rs RepoSpec) Addresses() []string {
 		add(p + "google_storage_bucket_iam_member.job")
 		add(p + "google_storage_bucket_iam_member.job_tokens")
 		for _, logical := range uniqueSecrets(ws) {
-			// The credentials the service holds are its to hold once the
-			// installation has opted in (D145): modules/workflow/sa.tf drops
-			// the job's accessor on each — the model credentials by C1.18, the
-			// GitHub App's private key by C2.3 — and C1.20/C2.2 drop its
-			// mount, so the mirror must not name a grant the spec no longer
-			// produces — it would read as one that survives a retirement.
+			// The credentials the service holds and the job has given up are
+			// its to hold once the installation has opted in (D145):
+			// modules/workflow/sa.tf drops the job's accessor on each — the
+			// model credentials by C1.18, the GitHub App's private key by C2.3
+			// — and the job's mount goes with it (Readiness drops it, and the
+			// module's job_mounts repeats the rule), so the mirror must not
+			// name a grant the spec no longer produces — it would read as one
+			// that survives a retirement. The App key's half is inert until
+			// config.ServiceHeldSecretNames names it (C2.2's release, review
+			// finding F1).
 			if rs.Installation.CredentialsService != nil && mountsServiceHeldSecret(ws, logical) {
 				continue
 			}
@@ -1314,11 +1330,14 @@ func (rs RepoSpec) Addresses() []string {
 }
 
 // mountsServiceHeldSecret reports whether the logical secret name is one
-// whose credential the credentials service holds for ws: every secret_env
-// entry naming it carries such a credential (config.IsServiceHeldSecretEnv —
-// a model credential by its variable, the GitHub App's private key by its
-// name), so the service holds it once an installation opts in (D145, D146) and
-// the job's account keeps no accessor on it (C1.18, C2.3).
+// whose credential the credentials service holds and the job's own account has
+// given up for ws: every secret_env entry naming it carries such a credential
+// (config.IsServiceHeldSecretEnv — a model credential by its variable, a name
+// config.ServiceHeldSecretNames lists by its name), so the service holds it
+// once an installation opts in (D145, D146) and the job's account keeps no
+// accessor on it (C1.18, C2.3). The App key's half of that list is empty until
+// C2.2's release (review finding F1), so this answers false for it today and
+// the job keeps the accessor it needs to read the key.
 //
 // It is the same question modules/workflow/sa.tf's job_secret_names asks, one
 // mount at a time, and it is written the same way — a name survives if ANY
