@@ -177,7 +177,7 @@ type Policy struct {
 	// to it, and the account's list is the per-repository decision.
 	//
 	// It is derived, never hand-written: publish computes it from the
-	// project's local config (DeriveAccounts), and `fugaro init` validates the
+	// project's local config (DeriveAccounts), and `fugaro update` validates the
 	// profiles it deploys against the same block.
 	Accounts map[string]Account `json:"accounts,omitempty"`
 

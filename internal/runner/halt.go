@@ -223,7 +223,7 @@ func raiseAdvice(rec *runstore.Record, key, yamlName, nodeName string) string {
 	}
 	switch src {
 	case policy.SourceCeiling:
-		return fmt.Sprintf("raise %s in the project config and run `fugaro init --repo` (a raise in any fugaro.yaml is ignored: it can only tighten the ceiling)", nodeName)
+		return fmt.Sprintf("raise %s in the project config and run `fugaro update` (a raise in any fugaro.yaml is ignored: it can only tighten the ceiling)", nodeName)
 	case policy.SourcePolicy:
 		return fmt.Sprintf("raise %s in the project's policy at %s (a raise in any fugaro.yaml is ignored: it can only tighten the ceiling)", nodeName, projectpolicy.PathShared())
 	case policy.SourceDefaultBranch:
@@ -232,7 +232,7 @@ func raiseAdvice(rec *runstore.Record, key, yamlName, nodeName string) string {
 		return fmt.Sprintf("raise %s in `fugaro.yaml` on this run's branch (it cannot exceed the project config's ceiling or the default branch's value)", yamlName)
 	}
 	if key == policy.KeyPerRunUSD {
-		return fmt.Sprintf("raise %s in the project config and run `fugaro init --repo`", nodeName)
+		return fmt.Sprintf("raise %s in the project config and run `fugaro update`", nodeName)
 	}
 	return fmt.Sprintf("raise %s in `fugaro.yaml`", yamlName)
 }

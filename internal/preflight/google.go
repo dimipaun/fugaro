@@ -77,7 +77,7 @@ func quotaProjectIfDisabled(err error) (string, bool) {
 // IAMPolicy reads project's IAM policy once (every later stage needs the
 // same read) and reports two things from it: whether the caller could read
 // it at all (a missing role refuses every later stage, so the fix names
-// the role, design §3.1 "ask an owner to run fugaro init") and, in the
+// the role, design §3.1's "ask an owner to run the converge") and, in the
 // same-project layout (sameProjectFirebase: the Firebase project is the
 // installation's own), whether a default service account holds a
 // primitive role (friction log #5).
@@ -88,7 +88,7 @@ func IAMPolicy(ctx context.Context, c *crm.Service, project string, sameProjectF
 		return []Check{{
 			ID:      "iam-policy",
 			Problem: "can't read project " + project + "'s IAM policy: " + firstLine(err.Error()),
-			Fix:     "ask an owner to grant you roles/resourcemanager.projectIamAdmin (or roles/owner) on " + project + ", or ask them to run fugaro init",
+			Fix:     "ask an owner to grant you roles/resourcemanager.projectIamAdmin (or roles/owner) on " + project + ", or ask them to run fugaro setup",
 		}}
 	}
 	out := []Check{{ID: "iam-policy", OK: true}}

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// ServiceUsage is a fake of the Service Usage v1 calls fugaro init makes:
+// ServiceUsage is a fake of the Service Usage v1 calls fugaro update makes:
 // a service's enable, and the get of its operation. It also turns the
 // other fakes' APIs off: while Disable has a service disabled, every call
 // to the fakes serving it is answered as Google answers a call to a

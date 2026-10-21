@@ -117,7 +117,7 @@ type InstallationSpec struct {
 	EnableBudget bool         `json:"enable_budget,omitempty"`
 	History      *HistorySpec `json:"history,omitempty"`
 	// ProjectSecrets are the installation module's project-wide secret
-	// containers (logical name -> gcp.ProjectSecretID), which fugaro init
+	// containers (logical name -> gcp.ProjectSecretID), which fugaro update
 	// creates or adopts; their values are never set by Terraform (design
 	// docs/design/project-secrets.md §4). Installation() fills it from the
 	// local config's eligibility; DiscoverInstallation then unions in every

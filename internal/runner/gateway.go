@@ -23,7 +23,7 @@ import (
 
 // VertexBudgetRefusal is what a Vertex workflow under a budget in enforce
 // mode is told: the gateway can't yet be relied on to cap Vertex spend.
-// fugaro validate, fugaro init --repo and the runner's bootstrap all say it.
+// fugaro validate, fugaro update and the runner's bootstrap all say it.
 const VertexBudgetRefusal = "Vertex budgets are not supported yet: use budget.mode observe or off for this repository (see docs/gcp-live-checklist.md, check 20)"
 
 // haltGrace is how long a halted stage's agent gets to exit on its own
@@ -451,17 +451,17 @@ func (r *run) checkProviderModels() error {
 // ceiling asked for enforce, the cap belongs in the project config; where a
 // repository's fugaro.yaml escalated the mode, either place will do.
 func (r *run) noCapDetail() string {
-	const base = "budget.mode is enforce but no per-run cap is set: set budget.per_run_usd in the project config and run fugaro init --repo"
+	const base = "budget.mode is enforce but no per-run cap is set: set budget.per_run_usd in the project config and run fugaro update"
 	switch r.policy.Sources[policy.KeyMode] {
 	case policy.SourceCeiling:
 		return base
 	case policy.SourcePolicy:
-		// The ceiling is the project's published policy: init --repo copies
+		// The ceiling is the project's published policy: fugaro update copies
 		// the local config's value into the jobs, and would not change what
 		// this run read.
 		return "budget.mode is enforce but no per-run cap is set: set budget.per_run_usd in the project's policy (" + projectpolicy.PathShared() + "), which is what the run enforces"
 	}
-	return "budget.mode is enforce (set in fugaro.yaml) but no per-run cap is set: set budget.per_run_usd in fugaro.yaml on the default branch, or in the project config and run fugaro init --repo"
+	return "budget.mode is enforce (set in fugaro.yaml) but no per-run cap is set: set budget.per_run_usd in fugaro.yaml on the default branch, or in the project config and run fugaro update"
 }
 
 // ceilingAllowed is the owner's allow-list from the run's ceiling, nil when

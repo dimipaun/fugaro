@@ -44,10 +44,16 @@ package cli
 // Mentions are matched over flattened text -- line-comment markers dropped,
 // whitespace collapsed, the normalisation docs_base_test.go's flattenDoc
 // already uses -- so a mention wrapped across a line break or across a `//`
-// counts, and the four files in this tree that name the command only in a
-// wrapped spelling are on the list. W2.6's claim that the live tree names the
-// retired command nowhere is only worth making if the scan can see the
-// wrapped spellings it is claiming about.
+// counts, and the two files on the list that name the command nowhere else --
+// internal/cli/managed_apply.go and internal/cli/project_job.go -- are there
+// for that reason. W2.6's claim that the live tree names the retired command
+// nowhere is only worth making if the scan can see the wrapped spellings it is
+// claiming about, and W2.2's sweep is where that was cashed: the plan gives
+// that task's file list from a line-based `grep`, so three of its files
+// (internal/gcpfake/firebasemgmt.go, internal/infra/managed/untrusted_test.go
+// and internal/localcfg/localcfg.go) are on the list without being on that
+// command's output, exactly as the two above are on it without being on this
+// task's.
 //
 // W2.6 -- the task that empties the census -- flips this file's terminal
 // assertion from "the walk found something" to "`pendingRename` is empty", and
@@ -174,7 +180,7 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 274 files -- 114 non-test Go files, 117 test files,
+// command, sorted. It is 166 files -- 50 non-test Go files, 73 test files,
 // 36 markdown files, the two `.golden` transcripts, and the five that fall in
 // none of those groups: the website's install data
 // (website/data/install.yaml), its two files that print the command
@@ -243,6 +249,28 @@ const censusRoot = "../.."
 // checks still spells the command the retired way, which is W2.1's mention to
 // rename along with the doc itself; it goes on the list for the same reason.
 //
+// **W2.2 moved the list 108 files down, and that is the widest move it takes.**
+// Every file on it outside internal/cli that named the command is renamed
+// there: 64 non-test Go files (the 60 the census command names, the bare
+// `init --repo` of internal/backend/backend.go,
+// internal/config/project_secrets.go and internal/runner/policy.go, and the two
+// wrapped-only ones above) and 43 test files (the 37 the command names, the 5
+// the `init --repo` pattern adds, and
+// internal/infra/managed/untrusted_test.go, which only the walk sees). A
+// forty-fourth is internal/cli's own -- managed_apply_test.go asserts a
+// sentence internal/managed writes, so it leaves the list in this commit
+// although the file is W2.1's -- and the rename reaches seven more files in
+// that package that stay: a test in internal/cli that reads a string W2.2
+// renamed has to move with it, wherever it lives, which is the rule the two
+// L2 tasks are split by.
+//
+// One file it touches stays, and it is the exception to that rule:
+// internal/e2e/init_test.go, whose nine assertions read internal/cli's own
+// output -- W2.1's strings, which do not exist yet -- so they stay as they are
+// until W2.1 lands, and the file stays here with them. A test cannot be moved
+// to a string no task has written; that file is the one place the order of the
+// two L2 tasks is visible.
+//
 // Each task that renames a string takes the file off this list in the same
 // commit, and W2.6 empties it.
 var pendingRename = []string{
@@ -279,23 +307,6 @@ var pendingRename = []string{
 	"docs/rigor-modes/implementation-plan.md",
 	"docs/rigor-modes/reconciliation.md",
 	"docs/windows-cli/reconciliation.md",
-	"internal/agent/agent_test.go",
-	"internal/backend/backend.go",
-	"internal/backend/backendtest/backendtest.go",
-	"internal/backend/gcp/live_test.go",
-	"internal/backend/gcp/names.go",
-	"internal/backend/gcp/run.go",
-	"internal/backend/gcp/run_test.go",
-	"internal/basepin/basepin.go",
-	"internal/budget/fixture_test.go",
-	"internal/budget/registry.go",
-	"internal/budget/registry_test.go",
-	"internal/budget/rollover.go",
-	"internal/budget/rules/creds_emulator_test.go",
-	"internal/budget/rules/harness_test.go",
-	"internal/budget/rules/marker.go",
-	"internal/budget/session.go",
-	"internal/budget/session_test.go",
 	"internal/cli/allow_delete.go",
 	"internal/cli/budget.go",
 	"internal/cli/budget_preview.go",
@@ -379,7 +390,6 @@ var pendingRename = []string{
 	"internal/cli/layer_sites_test.go",
 	"internal/cli/lswarn.go",
 	"internal/cli/managed_apply.go",
-	"internal/cli/managed_apply_test.go",
 	"internal/cli/managed_flag.go",
 	"internal/cli/managed_test.go",
 	"internal/cli/operator_write.go",
@@ -419,97 +429,7 @@ var pendingRename = []string{
 	"internal/cli/upgrade_cloud_test.go",
 	"internal/cli/validate.go",
 	"internal/cli/validate_test.go",
-	"internal/config/config.go",
-	"internal/config/project_secrets.go",
-	"internal/config/providers.go",
-	"internal/config/routing.go",
 	"internal/e2e/init_test.go",
-	"internal/e2e/live_budget_test.go",
-	"internal/gateway/route.go",
-	"internal/gcpfake/firebasemgmt.go",
-	"internal/gcpfake/logging.go",
-	"internal/gcpfake/rtdb.go",
-	"internal/gcpfake/serviceusage.go",
-	"internal/imagecheck/check.go",
-	"internal/infra/apis.go",
-	"internal/infra/checkjob.go",
-	"internal/infra/checkjob_test.go",
-	"internal/infra/discover.go",
-	"internal/infra/discover_firebase.go",
-	"internal/infra/discover_firebase_test.go",
-	"internal/infra/discover_test.go",
-	"internal/infra/firebase.go",
-	"internal/infra/firebase_test.go",
-	"internal/infra/firebasedb.go",
-	"internal/infra/hardening.go",
-	"internal/infra/hardening_test.go",
-	"internal/infra/installation.go",
-	"internal/infra/installation_terraform_test.go",
-	"internal/infra/installation_test.go",
-	"internal/infra/managed/deletelist.go",
-	"internal/infra/managed/deletelist_test.go",
-	"internal/infra/managed/marker.go",
-	"internal/infra/managed/untrusted_test.go",
-	"internal/infra/project.go",
-	"internal/infra/projectcreate.go",
-	"internal/infra/projectjobs.go",
-	"internal/infra/projectjobs_test.go",
-	"internal/infra/readiness.go",
-	"internal/infra/readiness_optional_test.go",
-	"internal/infra/readiness_policy_test.go",
-	"internal/infra/repo.go",
-	"internal/infra/retire.go",
-	"internal/infra/spec.go",
-	"internal/infra/spec_test.go",
-	"internal/infra/statebucket.go",
-	"internal/infra/statebucket_test.go",
-	"internal/infra/tf/env.go",
-	"internal/infra/tf/managed_cover.go",
-	"internal/infra/tf/project_golden_test.go",
-	"internal/infra/tf/tf.go",
-	"internal/infra/tfvars.go",
-	"internal/infra/workdir.go",
-	"internal/infra/workdir_test.go",
-	"internal/localcfg/localcfg.go",
-	"internal/localcfg/localcfg_test.go",
-	"internal/localcfg/select.go",
-	"internal/localcfg/select_shared_test.go",
-	"internal/localcfg/select_test.go",
-	"internal/managed/apply.go",
-	"internal/managed/budget.go",
-	"internal/managed/budget_test.go",
-	"internal/managed/inventory.go",
-	"internal/managed/inventory_test.go",
-	"internal/mirror/ref.go",
-	"internal/preflight/google.go",
-	"internal/preflight/preflight.go",
-	"internal/projectpolicy/accounts.go",
-	"internal/projectpolicy/policy.go",
-	"internal/projectpolicy/profiles.go",
-	"internal/projectpolicy/profiles_test.go",
-	"internal/projectpolicy/read.go",
-	"internal/projectpolicy/read_test.go",
-	"internal/projectpolicy/version.go",
-	"internal/projectpolicy/version_test.go",
-	"internal/runner/backend_run_test.go",
-	"internal/runner/backend_test.go",
-	"internal/runner/budget_session.go",
-	"internal/runner/gateway.go",
-	"internal/runner/halt.go",
-	"internal/runner/halt_test.go",
-	"internal/runner/layer_claim_test.go",
-	"internal/runner/policy.go",
-	"internal/runner/policy_test.go",
-	"internal/runner/project.go",
-	"internal/runner/project_test.go",
-	"internal/runner/projectjob.go",
-	"internal/runner/projectjob_internal_test.go",
-	"internal/runner/projectpolicy.go",
-	"internal/runner/projectpolicy_test.go",
-	"internal/runner/provider_policy_test.go",
-	"internal/runner/providers.go",
-	"internal/runner/providers_test.go",
-	"internal/runner/spend.go",
 	"plugin/readme_test.go",
 	"plugin/setup_skill_test.go",
 	"website/README.md",

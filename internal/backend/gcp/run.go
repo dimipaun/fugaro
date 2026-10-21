@@ -199,15 +199,15 @@ const statusClientClosed = 499
 // Anything else, including timeouts and transport errors, is ambiguous.
 //
 // shared says the job was the spec's own (a shared project job), which has a
-// different fix from a repository's: no `fugaro init --repo` creates one.
+// different fix from a repository's: no `fugaro update` creates one.
 func launchError(job string, shared bool, err error) error {
 	var ge *googleapi.Error
 	if errors.As(err, &ge) {
 		switch {
 		case ge.Code == http.StatusNotFound && shared:
-			return fmt.Errorf("launching: the project job %s does not exist; the installation's shared project jobs are deployed by fugaro init, which also publishes the profiles the launcher selects them by (%v): %w: %w", job, err, backend.ErrNotFound, backend.ErrRejected)
+			return fmt.Errorf("launching: the project job %s does not exist; the installation's shared project jobs are deployed by fugaro update, which also publishes the profiles the launcher selects them by (%v): %w: %w", job, err, backend.ErrNotFound, backend.ErrRejected)
 		case ge.Code == http.StatusNotFound:
-			return fmt.Errorf("launching: job %s does not exist; create it with fugaro init --repo (%v): %w: %w", job, err, backend.ErrNotFound, backend.ErrRejected)
+			return fmt.Errorf("launching: job %s does not exist; create it with fugaro update (%v): %w: %w", job, err, backend.ErrNotFound, backend.ErrRejected)
 		case ge.Code >= 400 && ge.Code < 500 && ge.Code != http.StatusRequestTimeout && ge.Code != http.StatusTooManyRequests &&
 			ge.Code != statusClientClosed:
 			return fmt.Errorf("launching %s: %w: %w", job, backend.ErrRejected, err)

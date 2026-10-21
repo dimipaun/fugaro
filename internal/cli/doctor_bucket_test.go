@@ -57,7 +57,7 @@ func TestDoctorRunsBucketIAMOldGrantWarns(t *testing.T) {
 	o := r.runDoctorJSON(t)
 	var warned bool
 	for _, c := range o.Checks {
-		if strings.HasPrefix(c.ID, "runs-bucket-iam") && c.Severity == "warning" && strings.Contains(c.Fix, "fugaro init") {
+		if strings.HasPrefix(c.ID, "runs-bucket-iam") && c.Severity == "warning" && strings.Contains(c.Fix, "fugaro update") {
 			warned = true
 		}
 	}
@@ -143,7 +143,7 @@ func TestDoctorRunsBucketIAMProjectEditorWarns(t *testing.T) {
 	var warned bool
 	for _, c := range o.Checks {
 		if strings.HasPrefix(c.ID, "runs-bucket-iam") && c.Severity == "warning" &&
-			strings.Contains(c.Problem, "roles/editor") && strings.Contains(c.Fix, "fugaro init --operator") {
+			strings.Contains(c.Problem, "roles/editor") && strings.Contains(c.Fix, "fugaro update --operator") {
 			warned = true
 		}
 	}
@@ -229,7 +229,7 @@ func TestDoctorJobTokenGrant(t *testing.T) {
 		}
 		var named bool
 		for _, c := range o.Checks {
-			if strings.HasPrefix(c.ID, "job-token-grant-") && strings.Contains(c.Problem, sa) && strings.Contains(c.Problem, "tokens/") && strings.Contains(c.Fix, "fugaro init --repo") {
+			if strings.HasPrefix(c.ID, "job-token-grant-") && strings.Contains(c.Problem, sa) && strings.Contains(c.Problem, "tokens/") && strings.Contains(c.Fix, "fugaro update") {
 				named = true
 			}
 		}
@@ -302,7 +302,7 @@ func TestDoctorJobTokenGrantProjectJob(t *testing.T) {
 		if !ok || c.OK || c.Severity != "warning" {
 			t.Fatalf("finding = %+v (%v), want a warning", c, ok)
 		}
-		if !strings.Contains(c.Problem, "tokens/") || !strings.Contains(c.Fix, "fugaro init") || strings.Contains(c.Fix, "--repo") {
+		if !strings.Contains(c.Problem, "tokens/") || !strings.Contains(c.Fix, "fugaro update") || strings.Contains(c.Fix, "--repo") {
 			t.Fatalf("finding = %+v, want it to name tokens/ and the installation's fugaro init", c)
 		}
 		if s, _ := doctorCheckByID(o.Checks, "runs-bucket-iam"); !s.OK {

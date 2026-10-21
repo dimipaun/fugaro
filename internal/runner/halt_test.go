@@ -480,11 +480,11 @@ func TestHaltAdviceNamesLimitSource(t *testing.T) {
 		want    []string
 		notWant []string
 	}{
-		{"token ceiling", runstore.HaltTokenCap, "max_run_tokens", "ceiling", []string{"project config", "fugaro init --repo", "ignored", "`budget.max_run_tokens`"}, []string{"`agent.max_run_tokens`"}},
-		{"token policy", runstore.HaltTokenCap, "max_run_tokens", "policy", []string{"`budget.max_run_tokens`", "project's policy"}, []string{"`agent.max_run_tokens`", "fugaro init --repo"}},
+		{"token ceiling", runstore.HaltTokenCap, "max_run_tokens", "ceiling", []string{"project config", "fugaro update", "ignored", "`budget.max_run_tokens`"}, []string{"`agent.max_run_tokens`"}},
+		{"token policy", runstore.HaltTokenCap, "max_run_tokens", "policy", []string{"`budget.max_run_tokens`", "project's policy"}, []string{"`agent.max_run_tokens`", "fugaro update"}},
 		{"token default branch", runstore.HaltTokenCap, "max_run_tokens", "default-branch", []string{"default branch", "merge", "ignored", "`agent.max_run_tokens`"}, []string{"`budget.max_run_tokens`"}},
 		{"token branch", runstore.HaltTokenCap, "max_run_tokens", "branch", []string{"`agent.max_run_tokens`", "this run's branch"}, []string{"`budget.max_run_tokens`"}},
-		{"cap ceiling", runstore.HaltRunCap, "per_run_usd", "ceiling", []string{"project config", "fugaro init --repo", "ignored"}, nil},
+		{"cap ceiling", runstore.HaltRunCap, "per_run_usd", "ceiling", []string{"project config", "fugaro update", "ignored"}, nil},
 		{"cap default branch", runstore.HaltRunCap, "per_run_usd", "default-branch", []string{"default branch", "merge", "ignored"}, nil},
 		{"nocap default branch", runstore.HaltNoCap, "per_run_usd", "default-branch", []string{"default branch", "merge"}, nil},
 	}
@@ -503,8 +503,8 @@ func TestHaltAdviceNamesLimitSource(t *testing.T) {
 				t.Errorf("%s: report names %s, the spelling of another layer:\n%s", tc.name, w, got)
 			}
 		}
-		if tc.source != "ceiling" && strings.Contains(got, "fugaro init --repo") {
-			t.Errorf("%s: points at init --repo:\n%s", tc.name, got)
+		if tc.source != "ceiling" && strings.Contains(got, "fugaro update") {
+			t.Errorf("%s: points at fugaro update:\n%s", tc.name, got)
 		}
 	}
 }

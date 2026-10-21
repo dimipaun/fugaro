@@ -59,7 +59,7 @@ func TestTheProfileGateIsVersioned(t *testing.T) {
 // TestTheCLISkewRemediesStayApart: the two CLI directions carry different
 // advice because they have different fixes, and each one is wrong for the other
 // direction — `fugaro upgrade` when this binary is already the newer side does
-// nothing, and `fugaro init --firebase` at an older binary redeploys this
+// nothing, and `fugaro update --firebase` at an older binary redeploys this
 // release's rules template over rules a newer Fugaro wrote. internal/cli picks
 // between them by Found > Understood (cliSkewSentence), which is why the pair
 // is pinned here beside the sentence they share.
@@ -70,7 +70,7 @@ func TestTheCLISkewRemediesStayApart(t *testing.T) {
 	if !strings.Contains(CLISkewNewer, "fugaro project policy publish --delete") || !strings.Contains(CLISkewNewer, "publish it again") {
 		t.Errorf("CLISkewNewer = %q, want the delete-then-publish remedy for the older node", CLISkewNewer)
 	}
-	// And not the remedy that cannot be carried out: fugaro init --firebase
+	// And not the remedy that cannot be carried out: fugaro update --firebase
 	// deploys this release's rules template and marker and never writes
 	// config/policy/shared, while this release's publish refuses to overwrite
 	// a node of another version (internal/cli's publishedPolicyOf) — so an
