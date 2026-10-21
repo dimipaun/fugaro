@@ -664,13 +664,18 @@ read to answer it).
 
 Every count below is stated with the command that produces it, because a count
 without its command is a figure a later reader cannot re-derive. All commands are
-run from the repository root against the working tree of this folder's own commit,
-which differs from the base `1d325928` by this folder's four documents and its pin
-test and nothing else — so one row is the folder's own: the 48 pins are the 47
-that already exist plus `internal/cli/docs_rigor_modes_test.go`, and they are
-files rather than folders — 13 of them pin one of `docs/`'s folders and the rest
-pin a standalone document, which is why the row above counts the pins and not the
-folders they sit beside.
+run from the repository root against the working tree of this folder's own commit
+— **the tree this folder merged on**, which is the base `1d325928` plus what `main`
+landed in between. That is why one row is the folder's own, and why one figure here
+moved: the **51** pins are the 50 that stand at that tree without this folder plus
+`internal/cli/docs_rigor_modes_test.go`. The base carries **47**, so this folder
+adds the forty-eighth; the other three — `docs_gcp_setup_test.go`,
+`docs_setup_wizard_checks_test.go` and `docs_windows_console_test.go` — merged into
+`main` between the base and this folder's own merge, so the row read 48 while this
+folder was written off the base and reads 51 where it landed. They are **files**
+rather than folders — a pin guards one of `docs/`'s folders or a standalone
+document in it, and the file beside it is the same shape either way — which is why
+the row above counts the pins and not the folders they sit beside.
 
 | Construct | Count | Command |
 | --- | --- | --- |
@@ -686,7 +691,7 @@ folders they sit beside.
 | Files in `internal/runner` that mention `Severity` at all | 3 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 11 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 48 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 51 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 3 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
@@ -732,10 +737,11 @@ amendment's own claim about itself: it changes documents and nothing else. A lat
 slice that writes its own pin moves the pin-count row above in the same commit
 (the plan's T4.3 is the first that will).
 
-The **48** is the convention this folder follows: there is no registry test over
+The **51** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and
-this folder's is `internal/cli/docs_rigor_modes_test.go` — the forty-eighth, and
-the one row in this table that the folder's own commit moves.
+this folder's is `internal/cli/docs_rigor_modes_test.go` — the fifty-first at this
+folder's own tree, and the one row in this table that this folder's own merge
+moves.
 
 ## 5. Decisions for the owner
 
