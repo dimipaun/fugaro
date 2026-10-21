@@ -202,7 +202,7 @@
   // an element that is no longer rendered, so the control that opened it takes the focus
   // back — which is where a keyboard reader expects to be after dismissing a menu. The open
   // menus are read in document order and the first one that holds the focus and is still
-  // drawn takes it; the three groups are siblings and no level sits inside another, so there
+  // drawn takes it; the groups are siblings and no level sits inside another, so there
   // is only ever one open at a time and the search is a formality rather than a choice.
   function closeMenus() {
     var active = document.activeElement

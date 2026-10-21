@@ -18,7 +18,7 @@
 // corrections of that day and the next to it, named in the first bullet below), `main`'s
 // `fugaro watch` picture on the homepage (#655), and this branch's redesigned pages on top of
 // them (the homepage's order and run animation, P4, P7 and P8) together with its two changes
-// from the owner's brief of **2026-10-19**: the menu's drawer replaced by the three group
+// from the owner's brief of **2026-10-19**: the menu's drawer replaced by the group
 // labels in the header's row (item 1), and the console's link in the homepage's call to
 // action (item 6), which renders from the console's flag — and the console's release (W3.1),
 // which turned that flag on and so put the link, the console's downloads and Getting Started's
