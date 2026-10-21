@@ -2542,8 +2542,9 @@ var coordinatorPlanNewPaths = map[string]string{
 // checks cannot see, because a citation is matched by its file extension and a
 // directory has none. Without this the plan could cite a directory that is
 // neither there nor declared new and nothing would say so -- which is the state
-// `internal/coordinator/` was in, cited nine times as the package every part
-// after P0 writes into.
+// `internal/coordinator/` was in: cited seven times across the six parts after
+// P0 whose Files lines name it, not there, declared new by P1, and read by no
+// check at all.
 var coordinatorPlanNewDirs = map[string]string{
 	"internal/coordinator/":                     "P1's new package: the view's types, the join and the collision rule; P2-P7 add to it",
 	"internal/coordinator/testdata/":            "P1's fixtures for the join, written before the package they sit in exists",
@@ -2734,9 +2735,9 @@ func TestDocsCoordinatorPlanIsWritten(t *testing.T) {
 // (coordinatorCheckPlanDirectories). The directory half exists because the
 // other two are both written to find a file extension, and the plan's most
 // repeated citation of all -- the package every part after P0 writes into -- is
-// a directory: before it, `internal/coordinator/` was cited nine times, was not
-// there, was declared new by P1's own Files line, and was read by no check at
-// all.
+// a directory: before it, `internal/coordinator/` was cited seven times, was
+// not there, was declared new by P1's own Files line, and was read by no check
+// at all.
 func TestDocsCoordinatorPlanCitationsExist(t *testing.T) {
 	plan := readDoc(t, coordinatorPlan)
 	census := len(coordinatorPathCensusRE.FindAllString(plan, -1))
