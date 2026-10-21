@@ -484,10 +484,10 @@ const BitbucketSecret = "bitbucket-token"
 // mapped to the variable each one becomes. A workflow's secrets may not
 // reuse them (design §5.1, §6.1).
 var ReservedSecrets = map[string]string{
-	BitbucketSecret:  "FUGARO_BITBUCKET_TOKEN",
-	"github-app-key": "FUGARO_GITHUB_APP_PRIVATE_KEY",
-	ClaudeOAuthToken: "CLAUDE_CODE_OAUTH_TOKEN",
-	AnthropicSecret:  "ANTHROPIC_API_KEY",
+	BitbucketSecret:    "FUGARO_BITBUCKET_TOKEN",
+	GitHubAppKeySecret: "FUGARO_GITHUB_APP_PRIVATE_KEY",
+	ClaudeOAuthToken:   "CLAUDE_CODE_OAUTH_TOKEN",
+	AnthropicSecret:    "ANTHROPIC_API_KEY",
 }
 
 // CodexOAuthToken is reserved for the Codex harness's OAuth credential but is
