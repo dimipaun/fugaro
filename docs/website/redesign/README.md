@@ -1631,3 +1631,130 @@ rather than written over the decision**: the 2026-10-18 ruling, the 2026-10-19 b
   run check)` green. **Whether the two-group menu reads right — the labels' row at every width,
   the two groups' lengths, whether four and five is the split the owner wants — is the owner's
   check** (70a, P9, D190); `Base.astro`'s `NAV_GROUPS` is the one place a label would move.
+||||||| 15dd3f20
+
+## The owner's 2026-10-21 feedback on the security page and How It Works: one picture at two layouts, and a bullet per fact
+
+The owner's feedback on the preview of 2026-10-21 is two lines, one per page. On the security
+page: "The image is tall (works well in mobile) but on desktop doesn't fit above the fold, can
+we do it more horizontally for desktop?" On How It Works, under the run's picture: "'Also true
+of a run': can we have a bullet point for each of the items?" This round is those two lines and
+nothing else: the security page's boundary drawing now exists in two layouts, and the five facts
+under the run's picture are a real list.
+
+- **The drawing is one picture, drawn twice.** `website/src/pages/security.astro` carries two
+  inline `<svg>`s of the same drawing: the tall one the page already had (`viewBox="0 0 360
+  744"`, about 22.5 rem wide) and a new wide one (`viewBox="0 0 1180 400"`, 3:1) that lays the
+  same cards out in a row — the source card, the arrow, the boundary box with its two rows of
+  two cards, the pull request and the unrestricted egress below. Both carry the same
+  `aria-label` and there is still no raster image anywhere on the page: **the layout is markup
+  and CSS, and no screenshot was committed** (D190). The precedent is How It Works' own
+  `website/src/components/RunDiagram.astro` (`src/pages/how-it-works.astro`), which has drawn its
+  picture twice — a wide default and a tall twin with `hidden` — since the run's timeline came
+  out; this page follows it rather than inventing a second way to do the same thing.
+- **Which one a reader gets, and where the changeover sits.** The shared
+  `.boundary-drawing` rule renders the drawing block at the column's own width and no ceiling
+  (`width: 100%`, `max-width: 100%`, `height: auto`); `.boundary-drawing-tall`
+  adds `max-width: 22.5rem` and `display: none`, and one `@media (max-width: 70rem)` block swaps
+  them — the tall drawing for a phone and the wide one above the changeover. The stylesheet says
+  which is which in one place, and **the value of the changeover is not a taste: 70 rem is
+  exactly where the wide drawing's own labels stop being legible.** The wide drawing is 1180
+  units and the page's column is at most `--page-max` (72 rem) less the article's gutters and
+  the card's own padding, so at 70 rem the column is 1024 px and each unit is 0.868 px; the
+  drawing's smallest label is 14 units, which is 12.15 px there and 12.53 px at 1440 px — the
+  12 px floor a reader can still read, and the reason the changeover is not pushed lower to
+  catch one more desktop width. The drawing's own geometry is unchanged by this: every card,
+  inset and label position is the tall drawing's, laid out along the row.
+- **The fold, as arithmetic, and whose check it stays.** At 1440 × 800 the column is 1056 px, so
+  the wide drawing's 1180 units settle at about 0.895 px each and the picture is 358 px tall.
+  Above it sit the site header (77 px), the hero's own padding (72), the `display-xl` title
+  (103.68 px at `--leading-display`, 97.46), the hero's lower padding (16), the gap (48), the
+  card's top padding (32), the section heading (35.19) and its margin (24) — **401.65 px** — so
+  the headline and the whole drawing come to about 760 px inside a 800 px first screen. **The
+  fold itself is the owner's live-browser check** (D187, 70b): this repository's gates are
+  browser-free and nothing here can see a viewport, so what the tree holds is the arithmetic the
+  layout rests on, not a picture of the result.
+- **The gate that keeps both halves of that honest.** `website/test/security.mjs` gains an
+  eighth thing it checks, and it is written as the mechanical form of this feedback: the page
+  carries exactly two drawings, each with its own layout class, the same accessible name and
+  **the same words in the same order** (a layout that quietly dropped or reordered a fact is
+  refused); the stylesheet renders exactly one of them outside every media query — read through
+  the shared class's own rule the way a browser resolves it — and the `hidden` attribute has to
+  sit on the drawing the stylesheet turns off, so the two can never both be visible or both be
+  hidden; the changeover has to be one width, read from below, with the tall drawing block and
+  the wide one off; the wide drawing's smallest label has to stay at or above 12 px **in the box
+  the page actually draws it in** at that width; and the headline plus the whole drawing has to
+  fit 1440 × 800. The box is read, not assumed (the review of 2026-10-21): the shared
+  `.boundary-drawing` rule has to lay the drawing out in the column — `width: 100%` and no
+  ceiling of the site's own, `max-width: 100%`, the same pair How It Works' `.run-svg` is held to
+  — and a layout class may cap its own drawing under that (the tall one does, at 22.5 rem), so
+  the check reads the `width` and `max-width` in force for the wide layout's own class, takes the
+  smaller of it and the column in pixels, and takes both the label floor and the fold height **in
+  that box**. Without it a `max-width: 600px` on the wide drawing passed every rule while its
+  14-unit labels rendered at 7.12 px: the column was the wrong box to measure a drawing that is
+  not drawn in it. **Each refusal of the four rules has a plant that proves it fires**: a third
+  unclassed `<svg>`, a wide drawing stripped of its class, a mismatched label, a shared rule with
+  no `display` left on it (so neither layout has a value where no query holds), a tall drawing
+  left rendered, a drawing turned off with no `hidden` on it, a changeover read the wrong way
+  round, a `viewBox` made 900 units tall so the arithmetic stops fitting a first screen, a
+  `viewBox` with no readable width and another with no readable height, a page whose media query
+  is taken out and a page with a second one, the wide drawing left on below the changeover, a
+  label shrunk to 8 units, a `max-width: 600px` cap added to the wide drawing's own class, the
+  shared rule's `max-width` capped at 600 px and its `width` taken off, a cap written as
+  `max-width: thin` so nothing here can turn it into pixels, and the two values the arithmetic is
+  read through (`--page-max`, and `--leading-display` under the headline) made unreadable. The
+  reader-guard branches — a column, a `viewBox`, a cap and a room the check cannot turn into
+  pixels — are planted with those same unreadable values rather than left as branches nothing has
+  seen fire; disabling the box reading or the shared-rule pin makes the plants above fail, which
+  is how the two new rules were proved rather than asserted.
+- **The five facts are a list, and they always were one.** The "Also true of a run" panel on
+  How It Works is a `<ul>` of five `<li>`s drawn from the owner's board — the panel, the hairline
+  between two rows and the larger radius are the board's — but every row was set with
+  `list-style: none`, so a reader met five facts as one run-on paragraph. The panel's own
+  typography is unchanged and the marker is the list's own: `website/src/components/
+  RunDiagram.astro`'s `.run-also` now says `list-style: disc`, which draws the bullet outside
+  the item's content box at the room the row's own `padding-left` (`--space-lg`, 32 px) leaves,
+  so it sits inside the row rather than at the panel's edge, in the quieter tone `base.css` gives
+  every marker on the site. `website/test/how-it-works.mjs` holds it, and holds it in the two
+  halves a marker actually has: **the type the page's own stylesheet leaves in force** — the
+  `list-style` shorthand and the `list-style-type` longhand read together, in the stylesheet's
+  order, because the two are one answer in the cascade (`list-style: none inside`,
+  `list-style: outside none` and a `list-style-type: none` written after a shorthand all leave the
+  browser nothing to draw while the shorthand alone still names a marker) — and **the rows still
+  being list items**, since a marker is generated for a list item and the board draws these rows as
+  flex rows: `display: flex` on the item blockifies it and the bullet goes with it however the
+  list's own `list-style` reads, and `display: flex` on the list does the same to its children.
+  The cases that prove each refusal fires add the declaration back to the page's own rule —
+  `list-style: none`, `list-style-type: none`, `display: flex` on a row and on the list. Each
+  plant **adds** its declaration rather than swapping one in, because the build's CSS minifier
+  rewrites `list-style: disc` into `list-style: outside` — `disc` is `list-style-type`'s initial
+  value, so a plant that wrote `list-style: none` in one place and expected to read it back would
+  pass or fail on the minifier rather than on the rule; the shorthand plant is what caught the
+  first reading of this rule, which asked whether **every** word of the value was `none` and so
+  called `list-style: none inside` a bulleted list.
+- **The figures, and the numbers that did not move.** Nothing here is re-derived (D192: the
+  budgets move only when the owner asks). The built `/security/` page weighs **119,082 bytes**
+  (HTML 30,342, of which inline CSS 15,749; fetched files 88,740) inside the 1,603,485-byte page
+  budget — the 15 bytes the shared rule's `max-width: 100%` pin costs — and the whole site is
+  **1,436,585 bytes** inside the 5,373,414-byte one — the figures as
+  this branch reads them once `main`'s console page and slider (#841, #842) are merged in, since
+  both pages fetch the same one script and `main` re-derived the ceilings for it; `/security/` is
+  one of the three reference pages D188 exempts from the page word ceiling, with its lead measured
+  on every run like any other page's. Its word count is **553**, which is
+  the number it read before this round: the wide drawing's 76 words are the tall drawing's own
+  words in the tall drawing's own order — the gate above refuses any difference — and the tall
+  one is now `hidden`, so the page counts one drawing's words either way. The bullets half adds
+  no word to How It Works, because the five facts and their text are the board's and only their
+  marker changed.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round and this run cannot see a picture. What was read is the built
+  artifact — the page's own HTML for the two drawings, the layout classes, the `hidden`
+  attribute, the labels and their boxes, the built stylesheet for the changeover and the
+  marker, and the gates' own measurement for the bytes and the words — with `(cd website &&
+  npm run check)` green over all of the gates (432 cases, 431 pass, 1 skipped, on the merged
+  branch) and `node --test test/security.mjs` green over all ten of its cases. **Whether the wide
+  drawing reads as the
+  same picture the owner approved, and whether the headline and the whole drawing really fit a
+  1440 × 800 first screen, are the owner's checks at the preview** (70a–70c, P9, D187) — and no
+  word of `SECURITY.md` changed in this round, so the page's claims are the owner's text
+  verbatim, exactly as before.
