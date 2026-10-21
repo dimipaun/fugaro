@@ -101,6 +101,16 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   provider: 'label',
   account: 'person',
   launched_by: 'person',
+  // 0.10.0's key on the live run shape (credentials-service C1.21): the **name**
+  // -- never the value -- of the credential the run's cascade is spending on.
+  // A label, the class an identifier a policy or the service wrote carries
+  // (`job`, `profile`, `provider`), and not `person`: it names a token's
+  // account, not a person. It goes through the free-text rules like every other
+  // label, so a document that carried a *value* here instead of a name draws
+  // the token marker -- which is the direction the contract's "never a value"
+  // promise has to fail in. `waiting_until`, the other 0.10.0 key, is not here:
+  // it is a stamp, and it is in `NON_TEXT_STRING_KEYS`.
+  credential: 'label',
   branch: 'branch',
   log_url: 'url',
   // A pull request's URL. It is *text* -- design section 4.3's gap 7 is that
@@ -192,6 +202,14 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'pushed_head',
   'started_at',
   'pr_status_at',
+  // 0.10.0 (credentials-service C1.21): when a run waiting for a credential
+  // expects to resume at, RFC 3339 UTC. It is a stamp for the same reason the
+  // others are -- an instant a reader compares with `now`, and one whose
+  // **presence** is the state ("this run is held up rather than spending")
+  // rather than a string to draw. The scrub shifts it with the rest of the
+  // clock (`tools/scrub-fixture/scrub.ts`'s `instant` rule, beside `now` and a
+  // kill's `at`), so a fixture's copy is a reading and not the wire's own value.
+  'waiting_until',
 ])
 
 /**
@@ -680,6 +698,20 @@ export const REPO_KEYS = [
  * may carry is a string the sanitizer must have a class for the moment a screen
  * draws it.
  *
+ * **`credential` and `waiting_until` arrived with 0.10.0** (credentials-service
+ * C1.21, the cascade's current credential and a held-up run's resume instant),
+ * and they are `JSONRun`'s alone: a finished run is spending on nothing and
+ * waiting for nothing, which is why `FINISHED_KEYS` does not carry them and the
+ * test that pins both lists names them separately. They are accepted and not
+ * read for the same reason as the five above -- no Live-screen column draws
+ * them -- and classified the same way: `credential` as a label (a name an
+ * operator or the service gave a token, never a value) and `waiting_until` as a
+ * stamp in `NON_TEXT_STRING_KEYS`, an instant a reader compares with `now`.
+ * The drift is the same drift, and it is worth naming as such: this list went
+ * two keys short when the fields landed, both console jobs failed on it, and
+ * nothing in the committed fixture could have caught it, because the recording
+ * predates the fields.
+ *
  * Exported so `schema.test.ts` can pin it against the struct, as it pins
  * `RECORD_KEYS` and `REPO_KEYS`. */
 export const RUN_KEYS = [
@@ -708,6 +740,8 @@ export const RUN_KEYS = [
   'provider',
   'account',
   'launched_by',
+  'credential',
+  'waiting_until',
 ]
 /** FINISHED_KEYS is **every** JSON key of `JSONFinished`
  * (`internal/watch/json.go`), in the struct's own order -- `finished[]` and

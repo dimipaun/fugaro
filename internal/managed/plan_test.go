@@ -527,6 +527,69 @@ func TestPlanRefusalsCarryTheAddressAndTheRule(t *testing.T) {
 	}
 }
 
+// A cover item's content is a rule's own words, and one of those words carries
+// a "): " of its own: the managed list's reason for google_compute_router_nat
+// names the owner-run root in parentheses and goes on to say why
+// ("(modules/compute/network.tf): the NAT is the runs' egress path, ...").
+// The two shapes are told apart by the ACTIONS between the address's
+// parentheses and that ": " — the guard's, and only the guard's
+// (tf.ActionsText) — and not by the first "): " in the item, so this item's why
+// is its whole content. A reader that cut at the first "): " instead would take
+// "Fugaro's own compute-backend network (modules/compute/network.tf" for the
+// actions and hand the owner a rule with that parenthesis dropped: the verdict
+// the owner decides on would misquote the gate, and nothing else in the suite
+// would notice.
+//
+// The item, the content and the reason are all read off the real cover and its
+// real plan here rather than spelled out, so this test cannot drift from the
+// rule it is about — and the premise it rests on (the content really carries a
+// "): ") is asserted, so a reason reworded without one fails this test loudly
+// instead of leaving it vacuous.
+func TestPlanRefusalsReadACoverItemsContentWhole(t *testing.T) {
+	const addr = "module.managed.google_compute_router_nat.runs"
+	r := newRig(t)
+	r.managedShow(t, managedChange(addr, "google_compute_router_nat", []string{"delete", "create"},
+		map[string]any{"name": "managed-nat", "id": "managed-nat", "project": gcpProject},
+		map[string]any{"name": "managed-nat", "project": gcpProject}))
+
+	// The removal is one the owner's list approves, so the guard admits it and
+	// the refusal below is the cover's rule about the resource itself.
+	approved := r.approving(t, addr)
+	v := gate(t, r, spec(t, r, managedCover(), approved))
+	if v.OK {
+		t.Fatal("a type the managed list drops was admitted")
+	}
+
+	// The same cover the gate was handed, read for its own items.
+	c := managedCover()
+	c.AllowDelete = []tf.DeleteEntry{approved}
+	var item string
+	for _, it := range c.NotCovered(r.plan(t), nil) {
+		if strings.HasPrefix(it, addr+" (") && strings.HasSuffix(it, ")") {
+			item = it
+			break
+		}
+	}
+	if item == "" {
+		t.Fatalf("the cover's items carry nothing at %s: the fixture is not the one this test is about", addr)
+	}
+	content := item[len(addr)+2 : len(item)-1]
+	if !strings.Contains(content, "): ") {
+		t.Fatalf("this test is about a rule whose own words carry a \")): \" — a cover item with a parenthesis inside its content — and %s's reason no longer has one: %q", addr, content)
+	}
+
+	ref, ok := findRefusal(v.Refusals, coverGate, addr)
+	if !ok {
+		t.Fatalf("the cover refused %s with no refusal at its address: %+v", addr, v.Refusals)
+	}
+	if ref.Why != content {
+		t.Errorf("the cover refusal for %s carries\n%q\nwant the item's whole content\n%q", addr, ref.Why, content)
+	}
+	if got := refusals(coverGate, []string{item}); len(got) != 1 || got[0].Why != content || got[0].Address != addr {
+		t.Errorf("refusals(%q) = %+v; want one refusal at %s carrying the content whole", item, got, addr)
+	}
+}
+
 // The entries rule's refusal is rendered whole, and this is the test that pins
 // it: a guard item is "<address> (<actions>): <why>", and the why this rule
 // writes — the list's own entry and the object the plan removes, each in
@@ -720,18 +783,20 @@ func TestARefusalWhyPastItsBoundIsCut(t *testing.T) {
 	}
 }
 
-// The wider bound belongs to the gates whose rules print an identity, and not
-// to every gate (the review finding on Task 6.3: refusalWhy lifted the
-// safetext.Field cut to refusalWhyMax — some 22.5 kB — for the cost gate's whys
-// too). A cost finding is the plan's own values about what a change states
+// The wider bound belongs to the removal rules' own sentences and not to every
+// gate, and not to every line of the gates that write them (the review finding
+// on the Task 6.3 bound: refusalWhy lifted the safetext.Field cut to
+// refusalWhyMax — some 22.5 kB — for the cost gate's whys, and then for every
+// why of the two list-judging gates, most of which is the plan's own text). The
+// two directions of the sentence test are
+// TestACoverWhyThatIsNotARemovalRuleIsOneField and
+// TestACoverWhyThatIsARemovalRuleKeepsItsIdentityWhole; this is the gate that
+// never writes one of those sentences at all.
+//
+// A cost finding is the plan's own values about what a change states
 // (tf.ManagedCostFinding) and names an identity nowhere, so its why is one
-// Field, cut at FieldMax with Field's own marker; the same line through a gate
-// that judges a change against the owner's delete list is carried whole,
-// because for those the bound exists: the identity its reader has to copy out.
-// The whole journey of such an identity — the verdict, the apply's text, and
-// the entry read back out of it — is TestTheIdentityARefusalPrintsIsOneAnEntry
-// CanHold's, above.
-func TestOnlyTheListJudgingGatesGetTheIdentitysBound(t *testing.T) {
+// Field, cut at FieldMax with Field's own marker.
+func TestOnlyARemovalRulesSentenceGetsTheIdentitysBound(t *testing.T) {
 	long := strings.Repeat("a", safetext.FieldMax*3)
 	item := "module.managed.google_storage_bucket.x (machine_type: " + long + ")"
 
@@ -747,14 +812,6 @@ func TestOnlyTheListJudgingGatesGetTheIdentitysBound(t *testing.T) {
 	}
 	if strings.Contains(cost[0].Why, long) {
 		t.Errorf("the cost gate's why carries the plan's %d-rune value unbounded", len(long))
-	}
-
-	cover := refusals(coverGate, []string{item})
-	if len(cover) != 1 {
-		t.Fatalf("refusals %+v, want one refusal", cover)
-	}
-	if !strings.Contains(cover[0].Why, long) {
-		t.Errorf("the cover's why is cut to %d runes: the gate that judges a change against the owner's delete list is the one the wider bound is for:\n%q", utf8.RuneCountInString(cover[0].Why), cover[0].Why)
 	}
 }
 
@@ -1176,5 +1233,71 @@ func TestGateGuardCarriesNoAdviceOfItsOwn(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "allow-delete") || strings.Contains(err.Error(), tf.AllowDeleteAdvice) {
 		t.Errorf("the gate's guard carries tf.Guard's advice:\n%s", err)
+	}
+}
+
+// The bound belongs to the SENTENCE and not to the gate (the review finding on
+// the Task 6.3 bound): printsRemovalIdentity switched on the gate, so every why
+// of the guard and cover gates got refusalWhyMax — some 22.5 kB, unbounded in
+// the number of lines — although most of what those two gates write is not a
+// removal rule's sentence at all. The plan-authored ones are the cover's own:
+// its action_reason line (managed_cover.go), and the image and provider strings
+// internal/infra/tf writes beside it, all of which the plan wrote. A removal
+// rule's sentence prints the identity of the object the plan removes for its
+// reader to copy into fugaro allow-delete, and that is the whole reason the
+// bound is wide — so a line that is not one of those sentences is one
+// safetext.Field, whichever gate it came through.
+//
+// Mutation (decide the bound by the gate again): the cover assertion fails, and
+// the plan's own action_reason text is echoed whole.
+func TestACoverWhyThatIsNotARemovalRuleIsOneField(t *testing.T) {
+	long := strings.Repeat("a", safetext.FieldMax*3)
+	// The cover's own line, in the shape it reaches refusals in: the address,
+	// the actions, and the rule that refused it — this one the plan's
+	// action_reason, which no removal rule wrote.
+	item := "module.managed.google_storage_bucket.x (actions delete: action_reason " + long + ", which the managed delete rule does not know)"
+	got := refusals(coverGate, []string{item})
+	if len(got) != 1 {
+		t.Fatalf("refusals %+v, want one refusal", got)
+	}
+	if strings.Contains(got[0].Why, long) {
+		t.Errorf("the cover's why carries the plan's %d-rune action_reason whole: the wider bound is for the identity a removal rule prints, and this line is the plan's own text", len(long))
+	}
+	if n := utf8.RuneCountInString(got[0].Why); n > safetext.FieldMax {
+		t.Errorf("the cover's why is %d runes, past the %d one Field writes", n, safetext.FieldMax)
+	}
+	if !strings.HasSuffix(got[0].Why, "…") {
+		t.Errorf("the cover's why is not marked as cut: %q", got[0].Why)
+	}
+}
+
+// And the other direction, on the same gate: a why that IS one of those
+// sentences is carried whole, because the identity in it is what its reader
+// records. The sentence is tf.Approves' own, with the identity the plan shows
+// longer than one Field — the case refusalWhyMax exists for — and the
+// assertion is on the identity itself rather than on a length: a why cut
+// anywhere inside it is an approval of nothing.
+func TestACoverWhyThatIsARemovalRuleKeepsItsIdentityWhole(t *testing.T) {
+	name := strings.Repeat("b", safetext.FieldMax*3)
+	rc := tf.ResourceChange{Address: "module.managed.google_storage_bucket.x", Mode: "managed",
+		Type: "google_storage_bucket", ProviderName: "registry.terraform.io/hashicorp/google",
+		Change: tf.Change{Actions: []string{"delete"}, Before: map[string]any{"id": name, "name": name, "project": "proj-1", "time_created": "2026-01-02T03:04:05Z"}}}
+	id := tf.RemovedIdentity(rc)
+	if !id.Identifies() {
+		t.Fatalf("the fixture's before view identifies nothing: %v", id)
+	}
+	ok, why := tf.Approves([]tf.DeleteEntry{{Address: rc.Address, Before: "type=google_storage_bucket name=other"}}, rc)
+	if ok {
+		t.Fatal("the fixture's entry approved the removal, so there is no why to bound")
+	}
+	got := refusals(coverGate, []string{rc.Address + " (actions delete: " + why + ")"})
+	if len(got) != 1 {
+		t.Fatalf("refusals %+v, want one refusal", got)
+	}
+	if !strings.Contains(got[0].Why, id.String()) {
+		t.Errorf("the why does not carry the plan's identity whole, so the owner cannot record the entry it approves:\n%q", got[0].Why)
+	}
+	if n := utf8.RuneCountInString(got[0].Why); n > refusalWhyMax {
+		t.Errorf("the why is %d runes, past the %d a verdict carries", n, refusalWhyMax)
 	}
 }
