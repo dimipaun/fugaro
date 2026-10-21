@@ -60,11 +60,25 @@ func (r *run) diffBase() string {
 
 // refBase is diffBase's fallback: the run's own ref when it is a branch
 // name, else the configuration's base (the repository's default branch).
+// spec is nil in the unit tests that call a single method on a bare run.
 func (r *run) refBase() string {
-	if b := r.spec.Ref; config.ValidBranchName(b) {
-		return b
+	if r.spec != nil {
+		if b := r.spec.Ref; config.ValidBranchName(b) {
+			return b
+		}
 	}
 	return r.cfg.Git.BaseBranch
+}
+
+// reviewPromptBase is the base the review stage names, in the prompt and in
+// the input built for it (reviewinput.go): the one reviewed pull request's
+// own base for a single-pull-request review run — whose checkout holds that
+// head — and diffBase for every other run, which has one range of its own.
+func (r *run) reviewPromptBase() string {
+	if r.review && len(r.reviewHeads) == 1 {
+		return r.reviewBase(r.reviewHeads[0])
+	}
+	return r.diffBase()
 }
 
 // diffRange is one range the run's diffs are taken over: head, measured
@@ -122,17 +136,10 @@ func diffSize(ctx context.Context, repo *gitops.Repo, rng string) (DiffSize, err
 // A failure is a warning and an empty size (no note), never a failed run:
 // the reviewer reads the diff itself either way.
 func (r *run) reviewDiffSize(ctx context.Context) DiffSize {
-	if r.repo == nil {
+	if r.repo == nil || (r.review && len(r.reviewHeads) != 1) {
 		return DiffSize{}
 	}
-	rng := "origin/" + r.diffBase() + "...HEAD"
-	if r.review {
-		if len(r.reviewHeads) != 1 {
-			return DiffSize{}
-		}
-		rng = "origin/" + r.reviewBase(r.reviewHeads[0]) + "...HEAD"
-	}
-	size, err := diffSize(ctx, r.repo, rng)
+	size, err := diffSize(ctx, r.repo, "origin/"+r.reviewPromptBase()+"...HEAD")
 	if err != nil {
 		r.d.Log.Warn("measuring the diff under review failed; the review prompt carries no size", "err", r.redact(err.Error()))
 		return DiffSize{}

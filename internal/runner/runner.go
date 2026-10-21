@@ -1749,7 +1749,7 @@ func (r *run) agentLoop(ctx context.Context) {
 	// configuration came from (diffbase.go, diffBase): a run started from
 	// another ref must review its own change, not the whole of that ref's
 	// divergence from the default branch.
-	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.diffBase(), r.reviewDiffSize(ctx))
+	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewPromptBase(), r.reviewDiffSize(ctx))
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add

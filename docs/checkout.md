@@ -51,7 +51,7 @@ An on-demand fetch goes to `origin` with whatever credentials the caller's git h
 
 So the runner fetches, before any stage starts and with the credentials it holds, the file contents the agent is pointed at:
 
-- **the branch's diff against the base**: `git diff origin/<base>...HEAD`, the command the review prompt names — its base side, at the merge base, is what no checkout of the branch brings in;
+- **the branch's diff against the base**: `git diff origin/<base>...HEAD`, the command the review prompt names — its base side, at the merge base, is what no checkout of the branch brings in. `<base>` is the run's own base of work, not the repository's default branch: the ref a first run was cut from (`--ref`), the base branch the pull request targets *now* for a follow-up (read from the provider, so a retargeted pull request prefetches its new base), and each reviewed pull request's own base for a review run (`internal/runner/diffbase.go`, `diffBase`). A run started from another branch on a repository whose `git.base_branch` is still `main` therefore fetches — and reviews — the branch it was cut from, not the whole of `main`'s divergence from it;
 - **the branch's own commits**: `git log -p origin/<base>..HEAD`, `git show <a commit of the branch>`, `git diff HEAD~1`. Reading a pull request commit by commit is the other thing a reviewer does, and an earlier revision of a file the branch changed again is not in the branch's tip;
 - **the diff against the base tip**: `git diff origin/<base>`, for when the base branch has moved on since the merge base.
 
