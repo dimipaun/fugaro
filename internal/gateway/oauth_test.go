@@ -136,17 +136,11 @@ func TestOAuthUpstreamAttachesRecordedHeaders(t *testing.T) {
 	if seen.Get("Accept-Encoding") != "identity" {
 		t.Errorf("Accept-Encoding = %q, want identity", seen.Get("Accept-Encoding"))
 	}
-	// The credential reaches neither the client nor the log.
-	if strings.Contains(body, token) || strings.Contains(h.logs.String(), token) {
-		t.Error("the credential came back to the client or the log")
-	}
-	for k, vs := range resp.Header {
-		for _, v := range vs {
-			if strings.Contains(v, token) {
-				t.Errorf("response header %s carries the credential", k)
-			}
-		}
-	}
+	// The credential reaching neither the client nor the log is asserted in
+	// TestOAuthCredentialRedactedFromErrors, on an upstream that actually
+	// echoes it -- on both paths, a messages call and a token count. Here
+	// the fake answers a plain 200 that echoes nothing, so the same
+	// assertions would be true whatever the gateway did.
 }
 
 // TestOAuthAnthropicVersionIsPassedThroughNotInvented: anthropic-version is
@@ -221,36 +215,68 @@ func TestOAuthNeverSentToProviderRoute(t *testing.T) {
 	if _, err := s.oauthUpstream(route{provider: pr, upstream: psrv.URL + "/api/v1/messages", path: "/v1/messages"}, http.Header{}); err == nil {
 		t.Error("the OAuth upstream built a request for a provider route")
 	}
+
+	// 4. The destination itself, not only the route's shape: a route with no
+	//    provider and a real path but an off-host rt.upstream is refused in
+	//    the place the token would be written. A base URL that validated at
+	//    start-up says nothing about what the URL resolved to by then, so
+	//    the check has to be on the destination.
+	for _, dest := range []string{
+		psrv.URL + "/api/v1/messages",
+		"https://evil.example/v1/messages",
+		"https://api.anthropic.com.evil.example/v1/messages",
+		"http://169.254.169.254/v1/messages",
+		"",
+	} {
+		if _, err := s.oauthUpstream(route{upstream: dest, path: "/v1/messages"}, http.Header{}); err == nil {
+			t.Errorf("the OAuth upstream built a request for destination %q", dest)
+		}
+	}
+	// The control: the destination the kind actually serves is accepted, so
+	// the check above refuses the off-host ones and not everything.
+	if _, err := s.oauthUpstream(route{upstream: "https://api.anthropic.com/v1/messages", path: "/v1/messages"}, http.Header{}); err != nil {
+		t.Errorf("the OAuth upstream refused Anthropic's own endpoint: %v", err)
+	}
 }
 
 // TestOAuthCredentialRedactedFromErrors: an upstream answer that echoes
 // the credential -- in its body or in a header -- reaches the client and
-// the log with the credential scrubbed.
+// the log with the credential scrubbed, on both paths an OAuth call can
+// take. The token count path copies its answer through unread, so it needs
+// the same scrub a messages call gets; a test that only posted to
+// /v1/messages would never have seen that.
 func TestOAuthCredentialRedactedFromErrors(t *testing.T) {
-	token := oauthToken(t)
-	rep := anthropicfake.Error(http.StatusUnauthorized, "authentication_error", "invalid token "+token)
-	rep.Header = http.Header{"X-Echo": {"the credential was Bearer " + token}}
-	h := newOAuth(t, token, rep)
+	for _, tc := range []struct{ name, path, body string }{
+		{"messages", "/v1/messages", msg(sonnet, 100)},
+		{"count_tokens", "/v1/messages/count_tokens", `{"model":"` + sonnet + `","messages":[]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			token := oauthToken(t)
+			rep := anthropicfake.Error(http.StatusUnauthorized, "authentication_error", "invalid token "+token)
+			rep.Header = http.Header{"X-Echo": {"the credential was Bearer " + token}}
+			h := newOAuth(t, token, rep)
 
-	resp, body := h.post(msg(sonnet, 100))
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("%d %s", resp.StatusCode, body)
-	}
-	if strings.Contains(body, token) {
-		t.Errorf("the answer echoes the credential: %s", body)
-	}
-	if !strings.Contains(body, redacted) {
-		t.Errorf("the echoed credential wasn't redacted: %s", body)
-	}
-	for k, vs := range resp.Header {
-		for _, v := range vs {
-			if strings.Contains(v, token) {
-				t.Errorf("response header %s carries the credential", k)
+			resp, body := h.post2(tc.path, tc.body)
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("%d %s", resp.StatusCode, body)
 			}
-		}
-	}
-	if strings.Contains(h.logs.String(), token) {
-		t.Errorf("a log line carries the credential:\n%s", h.logs.String())
+			if strings.Contains(body, token) {
+				t.Errorf("the answer echoes the credential: %s", body)
+			}
+			if !strings.Contains(body, redacted) {
+				t.Errorf("the echoed credential wasn't redacted: %s", body)
+			}
+			for k, vs := range resp.Header {
+				for _, v := range vs {
+					if strings.Contains(v, token) {
+						t.Errorf("response header %s carries the credential", k)
+					}
+				}
+			}
+			if strings.Contains(h.logs.String(), token) {
+				t.Errorf("a log line carries the credential:\n%s", h.logs.String())
+			}
+		})
 	}
 }
 

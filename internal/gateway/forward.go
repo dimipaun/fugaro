@@ -1140,11 +1140,27 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 	src, closeSrc, decoded, _ := decodeBody(resp)
 	defer closeSrc()
 	copyResponseHeaders(w.Header(), resp.Header, decoded)
+	var out io.Writer = w
+	var rw *redactWriter
+	if s.o.Upstream.Kind == KindOAuth {
+		// Tier A (oauth.go): a token count goes to Anthropic with the
+		// subscription credential too, and this path copies the answer
+		// through unread -- so an answer that echoes the credential is
+		// scrubbed here exactly as a messages call's is. Without this a
+		// count_tokens call would hand the token to the agent.
+		key := keyFrom(up.Header)
+		redactHeaders(w.Header(), key)
+		rw = newRedactWriter(w, key)
+		out = rw
+	}
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)
 	_ = rc.Flush()
 	var n int64
-	pump(w, rc, src, func(b []byte) { n += int64(len(b)) })
+	pump(out, rc, src, func(b []byte) { n += int64(len(b)) })
+	if rw != nil {
+		_ = rw.Close()
+	}
 	s.log.Info("token count", "stage", s.stageName(), "status", resp.StatusCode, "request_bytes", len(body), "response_bytes", n)
 }
 

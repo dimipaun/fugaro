@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -128,11 +129,20 @@ func oauthUpstreamClient(c *http.Client) *http.Client {
 	return &out
 }
 
+// oauthHostOK reports whether a destination host is one an OAuth credential
+// may go to: Anthropic's own endpoint over https, or a loopback address,
+// which is the test stand-in where no credential leaves the machine.
+func oauthHostOK(scheme, host string) bool {
+	if scheme == "https" && host == "api.anthropic.com" {
+		return true
+	}
+	return host == "localhost" || isLoopback(host)
+}
+
 // checkOAuthBaseURL: an OAuth credential goes to Anthropic's own endpoint
 // and nowhere else (D133). "" is https://api.anthropic.com, which is what
-// a deployment uses; a loopback base is the test stand-in, where no
-// credential leaves the machine. Any other host is refused, so an OAuth
-// upstream cannot be pointed at somebody else's server.
+// a deployment uses. Any other host is refused, so an OAuth upstream cannot
+// be pointed at somebody else's server.
 func checkOAuthBaseURL(s string) error {
 	if s == "" {
 		return nil
@@ -141,13 +151,44 @@ func checkOAuthBaseURL(s string) error {
 	if err != nil || u.Hostname() == "" {
 		return fmt.Errorf("gateway: the OAuth upstream's base %q isn't a host", s)
 	}
-	if u.Scheme == "https" && u.Hostname() == "api.anthropic.com" {
-		return nil
+	if !oauthHostOK(u.Scheme, u.Hostname()) {
+		return fmt.Errorf("gateway: the OAuth upstream's base %q isn't Anthropic's own endpoint: an OAuth token is only ever sent there (D133)", s)
 	}
-	if u.Hostname() == "localhost" || isLoopback(u.Hostname()) {
-		return nil
+	return nil
+}
+
+// checkOAuthDest checks the URL the credential is about to be attached for:
+// the destination the request actually goes to, not the base the options
+// were validated with. A base that validates at start-up says nothing about
+// what rt.upstream holds by the time the token is written, so the last thing
+// done before the attach is to ask the destination itself.
+//
+// It is an origin-and-path-prefix test rather than a host test: the token
+// goes to the origin this upstream was configured with, and to a path under
+// it. Comparing hosts alone would let "https://api.anthropic.com.evil.example"
+// or a provider's loopback stand-in through -- a prefix test on the string
+// would too, for the first. Both ends must also be somewhere the credential
+// may go at all (oauthHostOK), since oauthUpstream can be reached on a Server
+// whose options were never validated.
+func checkOAuthDest(base, raw string) error {
+	bu, err := url.Parse(base)
+	if err != nil || bu.Hostname() == "" {
+		return fmt.Errorf("gateway: the OAuth upstream's base %q isn't a host", base)
 	}
-	return fmt.Errorf("gateway: the OAuth upstream's base %q isn't Anthropic's own endpoint: an OAuth token is only ever sent there (D133)", s)
+	ru, err := url.Parse(raw)
+	if err != nil || ru.Hostname() == "" {
+		return fmt.Errorf("gateway: the OAuth call's destination %q isn't a URL", raw)
+	}
+	if !oauthHostOK(ru.Scheme, ru.Hostname()) || !oauthHostOK(bu.Scheme, bu.Hostname()) {
+		return fmt.Errorf("gateway: the OAuth call's destination %q isn't Anthropic's own endpoint: an OAuth token is only ever sent there (D133)", raw)
+	}
+	if ru.Scheme != bu.Scheme || ru.Host != bu.Host {
+		return fmt.Errorf("gateway: the OAuth call's destination %q isn't the upstream's own %q: an OAuth token is only ever sent to Anthropic's own endpoint (D133)", raw, base)
+	}
+	if !strings.HasPrefix(ru.Path, strings.TrimSuffix(bu.Path, "/")) {
+		return fmt.Errorf("gateway: the OAuth call's destination %q isn't under the upstream's %q: an OAuth token is only ever sent to Anthropic's own endpoint (D133)", raw, base)
+	}
+	return nil
 }
 
 // oauthUpstream is an OAuth call's header set and credential: the
@@ -155,16 +196,22 @@ func checkOAuthBaseURL(s string) error {
 // the subscription token as `Authorization: Bearer`. The credential is
 // attached here and in no other place in the gateway.
 //
-// The invariant (D133) is checked here rather than trusted: rt is the
-// Anthropic route the kind serves -- rt.path is the /v1/messages path
-// anthropicBase was joined with, and rt.provider is nil because a route
-// with a provider base URL is never an OAuth target.
+// The invariant (D133) is checked here rather than trusted, on the route
+// *and* on the destination: rt.provider is nil because a route with a
+// provider base URL is never an OAuth target, rt.path is the /v1/messages
+// path anthropicBase was joined with, and rt.upstream -- the URL the
+// request will actually go to -- must itself be Anthropic's own endpoint.
+// The last check is what makes this a check rather than a comment: a route
+// handed in past validation still cannot carry the token off-host.
 func (s *Server) oauthUpstream(rt route, in http.Header) (http.Header, error) {
 	if rt.provider != nil {
 		return nil, errOAuthOnRoute
 	}
 	if rt.path == "" {
 		return nil, errors.New("an OAuth call is only ever sent to Anthropic's own endpoint")
+	}
+	if err := checkOAuthDest(anthropicBase(s.o.Upstream), rt.upstream); err != nil {
+		return nil, err
 	}
 	h := http.Header{}
 	for _, k := range oauthRequestHeaders {
