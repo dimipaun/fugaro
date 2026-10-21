@@ -465,10 +465,15 @@ import is erased, which is why the preload can still be typed against
 
 `NEVER_REACHABLE` names what the console must never reach, read off the code
 rather than off a paragraph — every `where` columns names the `internal/cli`
-file and line each entry was grepped from on 2026-10-16. It carries every
+file and line each entry was grepped from on 2026-10-16 (the three converge rows
+were re-read on 2026-10-21, after task W1.2 of
+`docs/setup-wizard/implementation-plan.md` split `fugaro init` into `fugaro
+setup` and `fugaro update`). It carries every
 command the CLI has that writes (including `verify`, which runs a workflow's own
 build/test/lint commands in the checkout, and `image build`/`gate`/`record`/
-`refresh`), the `secrets` commands, `init`, `upgrade` and the hidden `exec`, the
+`refresh`), the `secrets` commands, the converge — `setup`, which creates the
+project and the installation, and `update`, which applies Terraform over one —
+the retired `init` tombstone, `upgrade` and the hidden `exec`, the
 hidden `budget history` job, `image git-credential` (it prints a credential),
 the project-centric phase 1 commands that write or publish (which do not exist
 on this tree yet, and are listed anyway so that the day one appears the
