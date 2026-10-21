@@ -260,11 +260,26 @@ if args[:2] == ["artifacts", "docker"] and args[2:3] == ["images"]:
     sys.exit(0)
 
 if args[:1] == ["builds"]:
-    touch("image")
-    # The build uploads the source as a tar into the staging bucket before it
-    # runs, so an object is there from that moment on: that is what the
-    # Restore's staged-source removal has to clean up.
+    # The source is uploaded before the build runs, so an object is in the
+    # staging bucket from that moment on — that is what the Restore's
+    # staged-source removal has to clean up. A build that FAILED has uploaded
+    # its source too: the failure the owner hit (a build identity with no read
+    # grant on the object) happens after the upload, so the fake stages the
+    # source on both paths.
     touch("staged")
+    if os.environ.get("FAKE_GCLOUD_BUILD_FAIL") == "yes":
+        # What the real gcloud prints when the build cannot read its source,
+        # plus an authorization header, which is exactly the kind of run the
+        # block must not carry: the excerpt is filtered before it goes in.
+        print("Uploading tarball of [.) to [gs://fugaro-dev_cloudbuild/source/1.tgz]")
+        sys.stderr.write("ERROR: (gcloud.builds.submit) INVALID_ARGUMENT: could not resolve source: "
+                         "googleapi: Error 403: 49183284111-compute@developer.gserviceaccount.com does not "
+                         "have storage.objects.get access to the Google Cloud Storage object. "
+                         "Permission 'storage.objects.get' denied on resource "
+                         "(or it may not exist).\n")
+        sys.stderr.write("authorization: Bearer FAKE-NOT-A-REAL-CREDENTIAL-9d3f\n")
+        sys.exit(1)
+    touch("image")
     print("BUILD SUCCESS")
     sys.exit(0)
 
@@ -950,6 +965,14 @@ test_unreadable_staging_bucket_stops_before_the_build() {
   expect_contains "$out" "FACT build-staging: FAIL" "unreadable staging bucket: the fact says the build did not start"
   expect_contains "$err" "would CREATE it to stage this run's source" "unreadable staging bucket: the stop says what gcloud would do"
   expect_contains "$err" "Nothing was created, built or deployed by this run" "unreadable staging bucket: the stop says nothing was spent"
+  # The stop names the two things the OWNER can do, because neither is this
+  # check's to change: the bucket and the build identity are the installation's
+  # IAM. A stop that named only "create the bucket" would send the owner to
+  # create a project-level resource the installation's Terraform owns.
+  expect_contains "$err" "grant the identity a build runs as" "unreadable staging bucket: the stop names the grant that makes the build work"
+  expect_contains "$err" "<project-number>-compute@developer.gserviceaccount.com" "unreadable staging bucket: the stop names the identity Cloud Build runs a build as by default"
+  expect_contains "$err" "roles/storage.objectViewer" "unreadable staging bucket: the stop names the role that grants it"
+  expect_contains "$err" "run 'fugaro init'" "unreadable staging bucket: the stop names the installation's own remedy"
   local calls
   calls=$(cat "$dir/logs/gcloud.calls")
   expect_absent "$calls" "builds submit" "unreadable staging bucket: nothing is built"
@@ -961,6 +984,37 @@ test_unreadable_staging_bucket_stops_before_the_build() {
   expect_contains "$calls" "repositories delete fugaro-chk91" "unreadable staging bucket: the repository this run made is deleted"
   expect_contains "$out" "FACT restore: PASS" "unreadable staging bucket: the Restore ran"
   if [ -d "$scratch" ]; then fail "unreadable staging bucket: the scratch directory survived"; fi
+}
+
+# The build failed. Where the block is the only thing the owner keeps, a bare
+# "the build failed" cannot be told from a broken Dockerfile: gcloud's own
+# error is the one place the reason is, and on the run that prompted this (a
+# build identity with no read grant on the staged source) it was the whole
+# story. The row carries those words and the causes, and it carries no value
+# that must not be pasted.
+test_a_failed_build_records_what_it_said() {
+  local dir=$work/buildfail
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_BUILD_FAIL=yes
+  expect_status "$status" 1 "failed build: the run stops"
+  expect_contains "$out" "FACT build-error: FAIL — gcloud builds submit exited 1" "failed build: the row says which command failed"
+  expect_contains "$out" "INVALID_ARGUMENT" "failed build: gcloud's own error is in the block"
+  expect_contains "$out" "does not have storage.objects.get access" "failed build: the reason the source could not be read is in the block"
+  expect_contains "$out" "the identity the build ran as cannot read the source this run staged at gs://fugaro-dev_cloudbuild/chk91-source/" "failed build: the first likely cause names the staged source"
+  expect_contains "$out" "the Cloud Build API is not enabled" "failed build: the second cause is named"
+  expect_contains "$out" "a step of the Dockerfile failed" "failed build: the third cause is named"
+  # The excerpt is FILTERED, not trusted: an authorization header can appear in
+  # a build's error, and the block is pasted into a PR.
+  expect_contains "$out" "<redacted>" "failed build: what was filtered is marked"
+  expect_absent "$out" "FAKE-NOT-A-REAL-CREDENTIAL-9d3f" "failed build: an authorization header's value never reaches the block"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_absent "$calls" "run deploy" "failed build: nothing is deployed"
+  # A failed build is not a reason to leave things behind: the source it staged
+  # and the repository it made are still deleted.
+  expect_contains "$out" "FACT restore: PASS" "failed build: the Restore ran"
+  expect_contains "$out" "FACT restore-staged-source: PASS" "failed build: the staged source went with it"
+  expect_contains "$calls" "repositories delete fugaro-chk91" "failed build: the repository this run made is deleted"
 }
 
 # Every request carries a cap of its own. A curl with none is waited on for as
@@ -1500,6 +1554,7 @@ test_no_http2_curl
 test_xtrace_is_refused
 test_staged_source_is_removed
 test_unreadable_staging_bucket_stops_before_the_build
+test_a_failed_build_records_what_it_said
 test_every_curl_carries_a_cap
 test_second_interrupt_during_cleanup_does_not_kill_it
 test_identity_token_is_never_on_a_command_line

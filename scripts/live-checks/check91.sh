@@ -628,6 +628,34 @@ DOCKER_EOF
   say "wrote $SCRATCH/relay.py and $SCRATCH/Dockerfile"
 }
 
+# redact_secrets TEXT: TEXT with anything credential-shaped replaced. The build
+# error goes into the RESULT block, which is pasted into a PR: gcloud's and
+# Cloud Build's text names objects, accounts and paths — that is what makes it
+# worth reading — and it can also quote a signed URL, an authorization header
+# or a token, which is not. The text is filtered rather than trusted.
+redact_secrets() {
+  printf '%s' "$1" | sed -E \
+    -e 's/([Aa]uthorization|[Bb]earer|[Aa]ccess_token|access_token=)[: =]*[A-Za-z0-9._~+\/-]{8,}/\1 <redacted>/g' \
+    -e 's/([?&](X-Goog-Signature|X-Goog-Credential|Signature|sig|token)=)[^ &]+/\1<redacted>/g' \
+    -e 's/(ya29|eyJ|AIza|ghp_|gho_|github_pat_)[A-Za-z0-9._-]+/<redacted>/g'
+}
+
+# build_error_excerpt: what a FAILED build said, as the block can carry it. The
+# last 30 lines and no more: the reason is at the end of gcloud's output and the
+# beginning is progress noise. Reads $SCRATCH/build.err, which the build step
+# writes; a build that failed with nothing on stderr says so rather than
+# printing an empty row.
+build_error_excerpt() {
+  local file=$SCRATCH/build.err lines
+  if [ ! -s "$file" ]; then
+    printf 'it printed nothing on stderr'
+    return 0
+  fi
+  lines=$(tail -n 30 "$file" | wc -l | tr -d ' ')
+  printf 'the last %s line(s) of what it printed, with anything credential-shaped removed: %s' \
+    "$lines" "$(redact_secrets "$(tail -n 30 "$file" | tr -d '\r' | tr '\n' ' ')")"
+}
+
 # ------------------------------------------------------ step 3 build + deploy
 step_build_deploy() {
   [ "$(cat "$REPO_EXISTED" 2>/dev/null || true)" = no ] \
@@ -676,16 +704,26 @@ step_build_deploy() {
   # is that it creates only what it deletes.
   if ! gcloud storage ls "gs://${P}_cloudbuild/" >/dev/null 2>&1; then
     fact "build-staging" FAIL "gs://${P}_cloudbuild/ could not be listed here (it is not there, or this account cannot read it), so the build was NOT started: 'gcloud builds submit' would create that staging bucket for this run's source, and the bucket is the installation's — this check creates only what its own Restore deletes. Nothing was created, built or deployed"
-    stop "gs://${P}_cloudbuild/ cannot be listed, and 'gcloud builds submit' would CREATE it to stage this run's source: a bucket is the installation's own (Terraform-managed, not this check's), so this check never creates one and has no record by which to remove it. Create it as the installation's own, in the region Cloud Build uses for it (gcloud storage buckets create gs://${P}_cloudbuild --project=${P} --location=${L}), or give your account read access to it (gcloud storage buckets add-iam-policy-binding gs://${P}_cloudbuild --member=user:YOU --role=roles/storage.objectViewer), then run again. Nothing was created, built or deployed by this run"
+    stop "gs://${P}_cloudbuild/ cannot be listed, and 'gcloud builds submit' would CREATE it to stage this run's source: a bucket is the installation's own (Terraform-managed, not this check's), so this check never creates one and has no record by which to remove it. Two things YOU can do, both of them the installation's IAM and neither of them this check's to change: grant the identity a build runs as — Cloud Build runs one as the project's Compute Engine default service account, <project-number>-compute@developer.gserviceaccount.com, unless the request names another — objectViewer on that bucket (gcloud storage buckets add-iam-policy-binding gs://${P}_cloudbuild --member=serviceAccount:NUMBER-compute@developer.gserviceaccount.com --role=roles/storage.objectViewer), or run 'fugaro init', which is what puts the installation's own build identity and staging in place. Then run this check again. Nothing was created, built or deployed by this run"
   fi
   STAGING_ARG="--gcs-source-staging-dir=${STAGING_PREFIX}"
   fact "build-staging" PASS "this run stages the build's source under ${STAGING_PREFIX}, inside the installation's own staging bucket (which was listed before the build, so gcloud creates nothing), and its Restore deletes that prefix again"
   BUILD_ATTEMPTED=yes
+  # The build's own output: stdout stays on the owner's stderr (that is the
+  # progress line a slow build prints), and stderr is ALSO kept in a file, so a
+  # build that fails can be read back into the block. gcloud's error is where
+  # the reason is — on a project whose build identity cannot read the staged
+  # source object it is the ONLY place it is, and the run the owner hit ended
+  # with a bare stop and no way to tell that from a broken Dockerfile.
+  local build_rc=0
   # Unquoted on purpose: STAGING_ARG is one word or nothing, and an empty
   # argument must not reach gcloud as an empty string.
   # shellcheck disable=SC2086
-  gcloud builds submit --project="${P:?}" --tag="${IMG:?}" $STAGING_ARG "$SCRATCH" >&2 \
-    || stop "the build failed, so nothing was deployed; the repository, the image and the staged source are deleted by this run's Restore"
+  gcloud builds submit --project="${P:?}" --tag="${IMG:?}" $STAGING_ARG "$SCRATCH" >&2 2>"$SCRATCH/build.err" || build_rc=$?
+  if [ "$build_rc" != 0 ]; then
+    fact "build-error" FAIL "gcloud builds submit exited ${build_rc} and the build did not run: $(build_error_excerpt). Likely causes, most likely first: the identity the build ran as cannot read the source this run staged at ${STAGING_PREFIX} — Cloud Build runs a build as the project's Compute Engine default service account unless the request names another, and that account holds no read grant on the installation's staging bucket by default (the grant is the installation's IAM, not this check's to change); the Cloud Build API is not enabled in ${P}; or a step of the Dockerfile failed. Nothing was deployed, and the repository, the image and the staged source are deleted by this run's Restore"
+    stop "the build failed (exit ${build_rc}), so nothing was deployed: the block's build-error row carries what gcloud said and the likely causes"
+  fi
   # Same rule as the repository's record above: a deploy that is interrupted is
   # the ordinary way to be left with a service that bills, so the record that
   # says the service is this check's is on disk BEFORE the deploy starts, and a
@@ -979,8 +1017,10 @@ main() {
 
 # The block's shape does not depend on how far the run got: the keys below are
 # printed in this order whatever happened, one that was never reached reads
-# FAIL — not reached, and any other recorded key follows, sorted. That is what
-# makes the block safe to diff between two runs.
+# FAIL — not reached, and any other recorded key follows, in the order the run
+# recorded it (nothing here sorts them, and `aborted` is appended by the stop
+# that ended the run, so it comes after the keys recorded up to that point).
+# That is what makes the block safe to diff between two runs.
 BLOCK_KEYS=(fugaro-version project-region baseline scratch service-config
   unauthenticated-request cold-start stream-unbuffered stream-longest
   body-limit-http1 body-limit-http2-front-end http2-end-to-end relay restore
