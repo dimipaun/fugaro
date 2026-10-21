@@ -308,10 +308,6 @@ func TestFixResumesLatestSessionID(t *testing.T) {
 	}
 }
 
-// TestReviewSessionSaved: a review is a session of its own (agentLoop hands
-// each review a fresh ID) and it is usually the last thing a run did, so it
-// is the session the run saves (C1.17, D138) — a follow-up on the pull
-// request resumes the review, not the implement stage before it.
 // reviewSessionObjects reads the review session's meta and file from the
 // run's prefix, and fails the test when either is missing.
 func reviewSessionObjects(t *testing.T, h *harness) (runstore.SessionMeta, []byte) {

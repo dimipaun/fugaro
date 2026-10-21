@@ -22,15 +22,18 @@ import (
 )
 
 // Claude Code keeps each session as ~/.claude/projects/<escaped
-// workdir>/<id>.jsonl. Every run saves the session of its latest stage to
-// its prefix (session/<id>.jsonl, then session/session.json), so a
-// follow-up on its pull request can resume it, and so a stage the
-// credentials cascade interrupted can be resumed after its wait (C1.17,
-// D138). Review stages are sessions of their own — agentLoop gives each
-// review a fresh ID — and they are saved like the work stages: a review is
-// usually the last thing a run did. The session file is written by the
-// agent's own process, so it is read and written as a regular file only,
-// never through a symlink, and redacted before upload.
+// workdir>/<id>.jsonl. Every run saves the session of its work chain — the
+// implement or fix stage's, the conversation that built the branch — to its
+// prefix (session/<id>.jsonl, then session/session.json), so a follow-up on
+// its pull request can resume it. A review stage runs in a session of its
+// own (agentLoop gives each review a fresh ID) and its session is saved too,
+// but beside the work session rather than in its place: a follow-up must
+// continue the work, not the review of it (C1.17, D138). Nothing that
+// resumes a session reads these objects: --resume is given the local file,
+// which is why a stage the credentials cascade interrupted is resumed from
+// ~/.claude, not from the upload. The session file is written by the agent's
+// own process, so it is read and written as a regular file only, never
+// through a symlink, and redacted before upload.
 
 // sessionSaveTimeout bounds the save Run makes when finalize fails, on a
 // context of its own.
