@@ -54,7 +54,9 @@ func (e *exhaustedError) Error() string {
 // the only way a stage learns of it. C1.15's upstream calls it from the
 // gateway's request path, where the service's answer to a forwarded call is
 // read (ReadExhaustedUntil); a test drives it through
-// RunHandle.NoteExhausted.
+// RunHandle.NoteExhausted. Nothing in this release calls it outside tests:
+// C1.15 wires the gateway's answer to it and C1.19 adds the end-to-end test,
+// so until those land a wait can only be reached from a test's own call.
 //
 // It records nothing and writes nothing: it ends the stage in flight, which
 // is the whole of the runner's reaction, and the answer only ever arrives
