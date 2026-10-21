@@ -797,12 +797,27 @@ func TestCoverRefusesACheckSpecOutsideThePin(t *testing.T) {
 // (google_service_account.credentials[0]), and the resource a plan carries for
 // it: the service's template.service_account is held to this account of the
 // same module, so every plan below holds the pair.
+//
+// The address is the module's own, count index and all: the check reads the
+// resource rather than "an account this plan creates", because the same module
+// also creates the deployer, the history and the scheduler accounts
+// (credentialsSibling), and one of those running the service's image is what
+// the check exists to refuse.
 const credentialsAccountID = "fugaro-credentials"
 
 const credentialsAccountEmail = credentialsAccountID + "@proj-1.iam.gserviceaccount.com"
 
 func credentialsAccount(acts ...string) ResourceChange {
-	return rc("google_service_account", map[string]any{"account_id": credentialsAccountID}, map[string]any{}, acts...)
+	r := rc("google_service_account", map[string]any{"account_id": credentialsAccountID}, map[string]any{}, acts...)
+	r.Address = "module.m.google_service_account.credentials[0]"
+	return r
+}
+
+// credentialsSibling is another account of the same module — the deployer's,
+// in the fixtures' shape: a google_service_account the module creates, with an
+// address that is not the credentials service's resource.
+func credentialsSibling(id string, acts ...string) ResourceChange {
+	return rc("google_service_account", map[string]any{"account_id": id}, map[string]any{}, acts...)
 }
 
 // service is the credentials service as modules/installation/credentials.tf
@@ -1130,6 +1145,48 @@ func TestCoverRefusesACredentialsServiceThatIsNotTheModules(t *testing.T) {
 		r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"service_account": true}}}
 		if got := testCover.NotCovered(servicePlan(r), nil); len(got) != 0 {
 			t.Fatalf("NotCovered = %q, want covered: the plan creates the account the service runs as", got)
+		}
+	})
+	// The account is the plan's own google_service_account.credentials[0] and
+	// not "an account of this module": the same module also creates the
+	// deployer, the history and the scheduler accounts, and any of them runs
+	// the bundle-reading image just as well. Both shapes are planted — a known
+	// email of a sibling the plan really creates, and an unknown email with
+	// only a sibling created beside it — so a check that reads every account
+	// of the module, which both of these satisfied, fails here.
+	t.Run("a sibling account the module also creates", func(t *testing.T) {
+		r := svc()
+		template(r)["service_account"] = "fugaro-deployer@proj-1.iam.gserviceaccount.com"
+		p := &Plan{ResourceChanges: []ResourceChange{r, credentialsAccount("create"), credentialsSibling("fugaro-deployer", "create")}}
+		if got := testCover.NotCovered(p, nil); len(got) == 0 {
+			t.Fatal("a service running as the module's deployer account is covered")
+		}
+	})
+	t.Run("a sibling account of the same module, held and not created", func(t *testing.T) {
+		r := svc()
+		template(r)["service_account"] = "fugaro-history@proj-1.iam.gserviceaccount.com"
+		p := &Plan{ResourceChanges: []ResourceChange{r, credentialsAccount("create"), credentialsSibling("fugaro-history", "no-op")}}
+		if got := testCover.NotCovered(p, nil); len(got) == 0 {
+			t.Fatal("a service running as an account the module holds is covered")
+		}
+	})
+	t.Run("a service account that is not known, a sibling created with it", func(t *testing.T) {
+		r := svc()
+		template(r)["service_account"] = "computed later"
+		r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"service_account": true}}}
+		p := &Plan{ResourceChanges: []ResourceChange{r, credentialsSibling("fugaro-deployer", "create")}}
+		if got := testCover.NotCovered(p, nil); len(got) == 0 {
+			t.Fatal("a service whose account is not known is covered because a sibling account of the module is created")
+		}
+	})
+	// And the plan the module writes after the one that created the service:
+	// the account is a no-op there, and the service keeps naming it. The
+	// resource is read whether or not this plan changes it, or every later
+	// plan would be refused.
+	t.Run("the account unchanged and the service still naming it", func(t *testing.T) {
+		p := &Plan{ResourceChanges: []ResourceChange{svc(), credentialsAccount("no-op")}}
+		if got := testCover.NotCovered(p, nil); len(got) != 0 {
+			t.Fatalf("NotCovered = %q, want covered: the account is the plan's own, unchanged", got)
 		}
 	})
 }

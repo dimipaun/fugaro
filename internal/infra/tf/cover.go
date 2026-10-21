@@ -706,6 +706,7 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
 	creates := creates(p)
 	createdSAIDs, heldSAIDs := planAccounts(p)
+	creds := planCredentialsAccounts(p)
 	dep := planDeployer(p)
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
@@ -734,8 +735,8 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, "imports "+rc.Change.Importing.ID+", which is not in this run's projects")
 		case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
 			add(rc, "imports "+rc.Change.Importing.ID+", which this run's discovery did not find")
-		case c.attributes(rc, creates, createdSAIDs, heldSAIDs) != "":
-			add(rc, c.attributes(rc, creates, createdSAIDs, heldSAIDs))
+		case c.attributes(rc, creates, createdSAIDs, heldSAIDs, creds) != "":
+			add(rc, c.attributes(rc, creates, createdSAIDs, heldSAIDs, creds))
 		case strings.HasSuffix(t, "_iam_member"):
 			if why := c.grant(rc, creates, createdSAIDs, heldSAIDs, dep); why != "" {
 				add(rc, why)
@@ -783,6 +784,86 @@ func planAccounts(p *Plan) (created, held map[string]bool) {
 		}
 	}
 	return created, held
+}
+
+// credentialsAccountResource is the name of the installation module's own
+// service account for the credentials service: resource
+// "google_service_account" "credentials" in
+// modules/installation/credentials.tf. It is counted, so a plan's address for
+// it ends in google_service_account.credentials[0].
+const credentialsAccountResource = "credentials"
+
+// credentialsPlan is that account as a plan carries it, which the
+// credentials-service case reads: the account ID the module's own resource
+// holds, by module, and whether this plan creates it or leaves it in place.
+//
+// It is deliberately not planAccounts' wider pair. modules/installation also
+// creates the deployer, the history and the scheduler accounts, so a check
+// made against every account of the module admits a plan whose Cloud Run
+// template names one of those — the same image, the same bundle read, a
+// different identity — and a plan that creates any of them satisfies the
+// unknown-email arm vacuously (the review round that found this: the check was
+// weaker than the case comment, the plan paragraph and the commit message all
+// claimed).
+type credentialsPlan struct {
+	// id is the account ID of the module's google_service_account.credentials,
+	// by module: the local part the service's template.service_account must
+	// carry.
+	id map[string]string
+	// created is the modules whose credentials account this plan creates, held
+	// the modules it leaves in place (created, updated or unchanged, never
+	// deleted — planAccounts' rule). A replace is in both.
+	created map[string]bool
+	held    map[string]bool
+}
+
+// planCredentialsAccounts reads that account out of a plan. Every change
+// counts, a no-op included: an unchanged account is one the plan holds and the
+// service it runs keeps naming, which is the shape of every plan after the one
+// that created the service.
+func planCredentialsAccounts(p *Plan) credentialsPlan {
+	c := credentialsPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}}
+	for _, rc := range p.ResourceChanges {
+		id, ok := credentialsAccountOf(rc)
+		if !ok || id == "" {
+			continue
+		}
+		pre := modulePrefix(rc)
+		c.id[pre] = id
+		if len(rc.Change.Actions) > 0 && !slices.Contains(rc.Change.Actions, "delete") {
+			c.held[pre] = true
+		}
+		if slices.Contains(rc.Change.Actions, "create") {
+			c.created[pre] = true
+		}
+	}
+	return c
+}
+
+// credentialsAccountOf reads rc as the module's credentials account and
+// returns the account ID it carries. ok is false for every other resource,
+// the module's own siblings included: the resource name after the module
+// prefix must be exactly "credentials", counted or not.
+func credentialsAccountOf(rc ResourceChange) (id string, ok bool) {
+	if rc.Type != "google_service_account" {
+		return "", false
+	}
+	pre := modulePrefix(rc)
+	if pre == "" {
+		return "", false
+	}
+	rest, found := strings.CutPrefix(rc.Address, pre+"."+rc.Type+".")
+	if !found {
+		return "", false
+	}
+	// "credentials" or "credentials[0]": the name, then the count index when
+	// the address carries one. A different resource of the same module — the
+	// deployer's address ends in ...google_service_account.fugaro_deployer, and
+	// the fixtures' siblings in ...google_service_account.x — is not this one.
+	if name, _, _ := strings.Cut(rest, "["); name != credentialsAccountResource {
+		return "", false
+	}
+	return str(rc.Change.After["account_id"]), true
 }
 
 // deployerPlan is what a plan does about the deployer (D75, Task 1.5).
@@ -858,6 +939,7 @@ func (c Cover) GrantsNotCovered(p *Plan) []string {
 	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
 	made := creates(p)
 	createdSAIDs, heldSAIDs := planAccounts(p)
+	creds := planCredentialsAccounts(p)
 	dep := planDeployer(p)
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
@@ -871,7 +953,7 @@ func (c Cover) GrantsNotCovered(p *Plan) []string {
 		case t == "google_service_account_key":
 			add(rc, "a service account key")
 		case strings.HasSuffix(t, "_iam_member"):
-			if why := c.attributes(rc, made, createdSAIDs, heldSAIDs); why != "" {
+			if why := c.attributes(rc, made, createdSAIDs, heldSAIDs, creds); why != "" {
 				add(rc, why)
 			} else if why := c.grant(rc, made, createdSAIDs, heldSAIDs, dep); why != "" {
 				add(rc, why)
@@ -1649,7 +1731,7 @@ func objects(v any) []map[string]any {
 // this project, a private bucket, this run's projects and buckets, the
 // billing account the review showed, and the web key's two API targets. ""
 // when all is as the modules write it.
-func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[string]bool) string {
+func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[string]bool, creds credentialsPlan) string {
 	a := rc.Change.After
 	if a == nil {
 		a = map[string]any{}
@@ -1759,12 +1841,15 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 		//     (testdata/golden/*.plan.json), so a test on the key alone refuses
 		//     the module's own three literals; the check below reads the
 		//     contents, and the row pinned to that shape fails if it does not;
-		//   - the account it runs as is the one this plan creates (or holds)
-		//     for it in the same module: credentials.tf writes
-		//     google_service_account.credentials[0].email there, and an
-		//     unchecked template.service_account is a hand edit that runs the
-		//     service's image as somebody else's identity (independent security
-		//     review of this file).
+		//   - the account it runs as is the plan's own
+		//     google_service_account.credentials[0] — that resource, and not
+		//     any other account of the module: credentials.tf writes that
+		//     resource's email there, and an unchecked
+		//     template.service_account is a hand edit that runs the service's
+		//     image as somebody else's identity (independent security review of
+		//     this file; the review round found that the wider check, "an
+		//     account of this module", is satisfied by the siblings the module
+		//     also creates — serviceAccount, below).
 		if unknown(rc.Change, "invoker_iam_disabled") {
 			return "an IAM setting that is not known"
 		}
@@ -1779,7 +1864,7 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 		if len(cs) == 0 {
 			return "no container"
 		}
-		if why := c.serviceAccount(a, unk, pre, creates, createdSAIDs, heldSAIDs); why != "" {
+		if why := c.serviceAccount(a, unk, pre, creds); why != "" {
 			return why
 		}
 		for i, m := range cs {
@@ -2026,27 +2111,35 @@ func (c Cover) pinOK(ref, proj string) bool {
 	return ok && pinVersionRE.MatchString(version) && pinDigestRE.MatchString(digest)
 }
 
-// serviceAccount checks the account a covered run service's template names:
-// the service account this plan creates — or holds — for it in the same
-// module, in one of this run's projects. credentials.tf writes
-// google_service_account.credentials[0].email, which is computed while that
-// account is being created, so an unknown value is the module's own only
-// when the module creates the account with it; a known value must be an
-// account this plan holds there. Anything else is a hand edit that would run
+// serviceAccount checks the account a covered credentials-service template
+// names: the plan's own google_service_account.credentials[0], in this run's
+// project and in the service's module. credentials.tf writes that resource's
+// email there, and the email is computed while the account is being created,
+// so an unknown value is the module's own only when this plan creates that
+// resource; a known value must be that resource's account ID — the account the
+// plan creates or holds under it. Anything else is a hand edit that would run
 // the service's image — the one account that reads every model credential in
 // the bundle — as an identity of the editor's choosing (independent security
 // review of this file).
-func (c Cover) serviceAccount(a map[string]any, unk any, pre string, creates, created, held map[string]bool) string {
+//
+// The account is named by the resource and not by "an account of this module"
+// (the review round that found this): the module also creates the deployer,
+// the history and the scheduler accounts, and a template naming one of those
+// is not the module's plan — it runs the bundle-reading image as somebody
+// else's identity — while the unknown-email arm, which only required that the
+// module create *some* account, was satisfied by all three of them.
+func (c Cover) serviceAccount(a map[string]any, unk any, pre string, creds credentialsPlan) string {
 	if unknownAt(unk, "template", 0, "service_account") {
-		if !creates[pre+"|google_service_account"] {
-			return "runs as an account that is not known and none is created with it"
+		if !creds.created[pre] {
+			return "runs as an account that is not known and this plan creates none for it"
 		}
 		return ""
 	}
 	email := str(at(a["template"], "service_account"))
 	sm := saMember.FindStringSubmatch("serviceAccount:" + email)
-	if sm == nil || !slices.Contains(c.Projects, sm[2]) || !(created[pre+"|"+sm[1]] || held[pre+"|"+sm[1]]) {
-		return "runs as " + email + ", not the service account this plan creates for it in this module"
+	id, known := creds.id[pre]
+	if sm == nil || !slices.Contains(c.Projects, sm[2]) || !known || id != sm[1] || !(creds.created[pre] || creds.held[pre]) {
+		return "runs as " + email + ", not the account this module creates for the credentials service (google_service_account.credentials[0])"
 	}
 	return ""
 }
