@@ -729,11 +729,17 @@ added or removed without this sentence moving fails there:
     are inside the `h1`'s own container — on the homepage as it was, with its install
     commands and its chat between the hero and the flow's first step heading, they were 24
     words from that container and 134 from the plan's region, and the stricter one is the
-    one enforced). On the homepage today the first `h2` is the slider's first panel title,
-    *Easy to use*, and the region is the request the hero renders under the headline, the
-    promise, its three calls to action and the slider's three tab labels — the tabs sit above
-    the panel heading the region stops at, so the labels a reader chooses between are part of
-    what they read before the first section: 30 words. A
+    one enforced). On the homepage today the first `h2` is the slider's own line over its
+    control, *Say it. Get pull requests.*, and the region is the hero's lead paragraph and
+    its row of links: **16 words**. Two things between the two headings are taken out of the
+    count, and both are named: the hero's illustration — `figure.hero-shot`, the terminal
+    card the bold redesign draws beside the copy, which is a picture with a caption rather
+    than the page's opening prose, and which `test/fold.mjs`'s rule 1 takes out of the lead
+    region in the same way — and the block the first `h2` belongs to, which is how the
+    slider's tab labels stayed out of the region when the block's heading moved above them.
+    Before the bold redesign the same region held the request the hero printed under the
+    headline, the promise, its three calls to action and the slider's three tab labels: 30
+    words. A
     page that carries blocks between its `h1` and
     its first `h2` is a page whose lead those blocks are part of, so the fix for a long lead
     is a shorter lead or an earlier first `h2`, never a reader that looks somewhere else. A page
@@ -778,15 +784,22 @@ added or removed without this sentence moving fails there:
     `docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
     getting-started 431, privacy 277, community 268, every one of them over it — and the
     redesign brought every one of those pages but the privacy statement inside it.)
-    **D188's number was 250, and the owner's feedback of 2026-10-19 is what moved it to
-    300.** That brief asks the homepage for a benefits section, which is a fourth required
+    **D188's number was 250, the owner's feedback of 2026-10-19 moved it to 300, and the
+    bold redesign of 2026-10-20 moved it to 500.** The 2026-10-19 brief asks the homepage for
+    a benefits section, which is a fourth required
     block on the one page that already carried the three the briefs before it require — the
     promise, the chat (changes spec item 3) and the flow (item 4) — and the four together
-    measure 294 words. D188's number is therefore the smallest round ceiling above the page
-    that carries every block its briefs require, and it is still a ceiling rather than a
-    target: the highest of the pages that gained nothing from that brief is Getting Started at
-    250 words, and a page that wants the extra 50 has to carry a brief's own block for them.
-    That raise is recorded as a reading in `docs/website/redesign/README.md`, the way every
+    measure 294 words. The bold redesign then builds the owner's approved board
+    (`design-ref/HomeV3.dc.html`), whose homepage is five blocks — the hero, the slider, the
+    run band, the grid of what a run leaves behind, and the closing call to action with the
+    install command — and the five together measure **468 words**. D188's number is therefore
+    the smallest round ceiling above the page that carries every block its briefs and its
+    boards require, and it is still a ceiling rather than a
+    target: the highest of the pages that gained nothing from those briefs or that board is How
+    It Works at
+    279 words (Getting Started is 257), and a page that wants the extra room has to carry a
+    brief's own block for it.
+    Both raises are recorded as readings in `docs/website/redesign/README.md`, the way every
     number the briefs do not spell out is.
 - `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
@@ -998,7 +1011,7 @@ added or removed without this sentence moving fails there:
   secret, an endpoint pointed elsewhere, a source naming the host, a third contact route, an
   address, a `/terms` link — and watches the named refusal come back. The word ceiling's own derivation — the
   privacy statement's own count plus 25 %, the number `website/README.md` states, and every
-  other page of the site still inside D188's 250 — is `budget.mjs`'s, beside the reader that
+  other page of the site still inside D188's 500 — is `budget.mjs`'s, beside the reader that
   measures it and the byte figures it is a sibling of.
 - `test/stacking.mjs` — the header paints above the page's blocks (the owner's reading of
   2026-10-19: "How it works: menu hidden by the blocks on mobile"). `tokens.css` names the
@@ -1197,7 +1210,8 @@ Started to it in **both** states: the shipped one, read off the built page, and 
 one, read off a build of a copy with the flag flipped. That second case also runs the budget gate over the flag-on build
 (`FUGARO_GATES_DIST`), because rendering the console's block costs words and Getting Started
 was at the ceiling D188 set when the console shipped — 250 words then, 300 since the owner's feedback
-of 2026-10-19 moved it (above) — and the owner's flip has to be the whole change and may not be the
+of 2026-10-19 moved it, 500 since the bold redesign of 2026-10-20 moved it again (above) — and the
+owner's flip has to be the whole change and may not be the
 change that breaks the ceiling. A data file that says the console has shipped while the flag says it
 has not stops the build, naming both files: they are one fact.
 

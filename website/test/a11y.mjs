@@ -58,6 +58,7 @@ export const PALETTE_IN_FORCE = 'palette-logo.css'
 // requires every one of them.
 const COLOUR_TOKENS = [
   'ground',
+  'panel',
   'surface',
   'text',
   'text-muted',
@@ -65,6 +66,7 @@ const COLOUR_TOKENS = [
   'accent-on-dark',
   'border',
   'warn',
+  'ok',
   'gradient-from',
   'gradient-to',
 ]
@@ -196,38 +198,52 @@ const LARGE_OR_UI = 3
 // largest type sits, so exempting it would be exempting the one place a contrast failure is
 // most visible.
 export const PAIRS = [
-  // Body copy on the ground, on a card, and on each stop of the hero's gradient.
+  // Body copy on the ground, on a card, on the panel a card is drawn on, and on each stop of
+  // the hero's gradient.
   ['--text', '--ground', BODY_TEXT],
+  ['--text', '--panel', BODY_TEXT],
   ['--text', '--surface', BODY_TEXT],
   ['--text', '--gradient-from', BODY_TEXT],
   ['--text', '--gradient-to', BODY_TEXT],
 
   // The quieter tone beside it, which is still prose and still has to be readable.
   ['--text-muted', '--ground', BODY_TEXT],
+  ['--text-muted', '--panel', BODY_TEXT],
   ['--text-muted', '--surface', BODY_TEXT],
   ['--text-muted', '--gradient-from', BODY_TEXT],
   ['--text-muted', '--gradient-to', BODY_TEXT],
 
-  // The accent as text: every link, and every heading that carries the accent. This is the
-  // token whose whole job is to be the legible form of `--accent`.
+  // The accent as text: every link, every heading that carries the accent, and the eyebrow the
+  // redesign sets above a section — which is small text on the ground or on a panel.
   ['--accent-on-dark', '--ground', BODY_TEXT],
+  ['--accent-on-dark', '--panel', BODY_TEXT],
   ['--accent-on-dark', '--surface', BODY_TEXT],
   ['--accent-on-dark', '--gradient-from', BODY_TEXT],
   ['--accent-on-dark', '--gradient-to', BODY_TEXT],
 
-  // Warnings and cost figures, which are text on both grounds and on the hero — the
-  // caps-and-costs teaser sits over the gradient, which is why `--warn` is a pair there and
-  // not only on the flat grounds — and the dark label on a filled warning chip.
+  // Warnings and cost figures, which are text on both grounds, on the hero and on the panel —
+  // the caps-and-costs teaser sits over the gradient, which is why `--warn` is a pair there and
+  // not only on the flat grounds, and the hero illustration's status line is the warn tone on a
+  // panel — and the dark label on a filled warning chip.
   ['--warn', '--ground', BODY_TEXT],
+  ['--warn', '--panel', BODY_TEXT],
   ['--warn', '--surface', BODY_TEXT],
   ['--warn', '--gradient-from', BODY_TEXT],
   ['--warn', '--gradient-to', BODY_TEXT],
   ['--ground', '--warn', BODY_TEXT],
 
+  // The success tone, which the redesign made a token: it is the last step of a run — the
+  // ground as a label on its fill — and a mark on the ground, on a panel and on the surface.
+  ['--ground', '--ok', BODY_TEXT],
+  ['--ok', '--ground', LARGE_OR_UI],
+  ['--ok', '--panel', LARGE_OR_UI],
+  ['--ok', '--surface', LARGE_OR_UI],
+
   // The accent as a fill and as structure: a filled button's label is text on the accent,
   // and the accent itself is a focus ring and a rule against the ground and the surface.
   ['--ground', '--accent', BODY_TEXT],
   ['--accent', '--ground', LARGE_OR_UI],
+  ['--accent', '--panel', LARGE_OR_UI],
   ['--accent', '--surface', LARGE_OR_UI],
   ['--accent', '--gradient-from', LARGE_OR_UI],
   ['--accent', '--gradient-to', LARGE_OR_UI],
@@ -255,6 +271,13 @@ export const BASE_PAIRS = [
   // The focus ring, the current page's underline and the blockquote rule, as UI colours.
   ['--accent', '--ground', LARGE_OR_UI],
   ['--accent', '--surface', LARGE_OR_UI],
+  // The redesign's own panel, which the card, the pill and the command bar are drawn on: body
+  // copy inside a card, the quieter tone of a pill's label, and the eyebrow the accent sets.
+  ['--text', '--panel', BODY_TEXT],
+  ['--text-muted', '--panel', BODY_TEXT],
+  ['--accent-on-dark', '--panel', BODY_TEXT],
+  // The success tone as a step's fill, with the ground as its label.
+  ['--ground', '--ok', BODY_TEXT],
 ]
 
 // The pairs of a palette that are below their ratio, as the lines a reader sees. Exported
