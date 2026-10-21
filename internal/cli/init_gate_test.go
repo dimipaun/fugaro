@@ -52,7 +52,7 @@ func TestHostileCloneNeedsOwnConfirmation(t *testing.T) {
 		if stateOf(res, "plugin") != initflow.NeedsYou || stateOf(res, "repository") != initflow.Blocked || len(res.Left) != 1 {
 			t.Fatalf("%+v: stages %+v left %v", o, res.Stages, res.Left)
 		}
-		if l := res.Left[0].Text; !strings.HasSuffix(l, "init --onboard-repo acme/app") || strings.Contains(l, "\n") || strings.Contains(l, "&&") {
+		if l := res.Left[0].Text; !strings.HasSuffix(l, "setup --onboard-repo acme/app") || strings.Contains(l, "\n") || strings.Contains(l, "&&") {
 			t.Errorf("the opt-in line: %q", l)
 		}
 		if !strings.Contains(res.Stages[0].Detail, "repository stage was not reached") {
@@ -123,7 +123,7 @@ func TestOnboardRepoFlag(t *testing.T) {
 			}
 		}
 	}
-	// Its form is checked where it is given (init --repo takes it too).
+	// Its form is checked where it is given (update --repo takes it too).
 	for _, args := range [][]string{{"setup", "--onboard-repo", "nope"}, {"setup", "--onboard-repo", "a/b", "--config-only"}} {
 		if _, _, err := execute(t, args...); ExitCode(err) != ExitUserError || err == nil {
 			t.Errorf("%v: %v", args, err)
@@ -526,7 +526,7 @@ func TestUnknownRepoQuestionComesBeforeAnyPlan(t *testing.T) {
 // checkout also onboards its repository. Nothing else prints it, and the
 // guard itself is unchanged.
 func TestInstallationFlagNoteInUnonboardedCheckout(t *testing.T) {
-	const note = "this checkout's repository is not onboarded; init in a checkout also onboards its repository. To set up only the installation, run fugaro init from outside the checkout."
+	const note = "this checkout's repository is not onboarded; the converge in a checkout also onboards its repository. To set up only the installation, run fugaro setup from outside the checkout."
 	releaseBuild(t, "0.2.0")
 	checkout := func(t *testing.T) {
 		t.Chdir(repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", "")))

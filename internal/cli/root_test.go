@@ -30,7 +30,7 @@ func TestVersion(t *testing.T) {
 	}
 }
 
-// The M4 bootstrap's hidden `gcp job-spec` is gone: fugaro init computes
+// The M4 bootstrap's hidden `gcp job-spec` is gone: the converge computes
 // every name now.
 func TestNoGCPCommand(t *testing.T) {
 	if _, _, err := execute(t, "gcp", "--help"); err == nil || !strings.Contains(err.Error(), "unknown command") {

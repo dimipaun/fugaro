@@ -452,7 +452,7 @@ func TestDBLimitsKeepOwnerValues(t *testing.T) {
 // binary would put its own, older document over the newer installation's and
 // record generation RulesVersion in the marker over the newer number — the
 // downgrade `fugaro doctor` warns about and tells the owner not to cause
-// ("do not re-run 'fugaro init --firebase' with this binary", doctorRulesSkew).
+// ("do not re-run 'fugaro update --firebase' with this binary", doctorRulesSkew).
 // The deploy path refuses instead: nothing is planned, nothing is written, and
 // the rules and the marker are left exactly as the newer installation left
 // them.

@@ -77,7 +77,7 @@ func (s *computeStage) Check(context.Context) (initflow.Status, error) {
 }
 
 func (s *computeStage) Left() initflow.Left {
-	return promptLeft(initflow.Compute, "type the project's name at the provisioning confirmation", "init", "--provision-batch")
+	return promptLeft(initflow.Compute, "type the project's name at the provisioning confirmation", s.e.r.o.doorName(), "--provision-batch")
 }
 
 // Verify has nothing of its own to read back, and this is deliberately not a
@@ -241,7 +241,7 @@ func (s *computeStage) apply(ctx context.Context, confirmed *tf.Plan) error {
 			return err
 		}
 		if extra := unconfirmed(next, confirmed); len(extra) > 0 {
-			return userErr("the retry's plan holds changes the confirmed plan did not (%s); nothing more was applied: run init --provision-batch again to review and confirm them", strings.Join(extra, ", "))
+			return userErr("the retry's plan holds changes the confirmed plan did not (%s); nothing more was applied: run fugaro setup --provision-batch again to review and confirm them", strings.Join(extra, ", "))
 		}
 	}
 }

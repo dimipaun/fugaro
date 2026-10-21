@@ -12,14 +12,14 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
-// The converge (internal/initflow) over the engines fugaro init already
-// has. The stages here only call them: what init, init --firebase and the
+// The converge (internal/initflow) over the engines the converge already
+// has. The stages here only call them: what init, update --firebase and the
 // rest do, their flags, confirmations and messages, are the engines' own.
 // Stages that have no engine yet (project, services, images, the history
 // job's second pass, secrets, plugin wiring, repository) are registered
 // when the tasks that write them land.
 
-// initEngine is what the engines need, built in the order fugaro init has
+// initEngine is what the engines need, built in the order the converge has
 // always built it: the environment check, then the Terraform workdir, the
 // Google clients and the Cloud Resource Manager readiness.
 type initEngine struct {
@@ -148,7 +148,7 @@ func initStages(e *initEngine) []initflow.Stage {
 	return stages
 }
 
-// converge runs fugaro init's default and --firebase modes through the
+// converge runs the converge's default and --firebase modes through the
 // loop and maps its result to what init returns.
 func (e *initEngine) converge(ctx context.Context) error {
 	e.announceAlreadySetUp()
@@ -198,7 +198,7 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 		return err
 	}
 	if len(res.Left) > 0 && !o.planOnly {
-		return userErr("fugaro init is not finished: %d step(s) left for you, listed above", len(res.Left))
+		return userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))
 	}
 	return nil
 }
@@ -235,8 +235,8 @@ func (preflightStage) Apply(context.Context, initflow.Env) (initflow.Outcome, er
 	return initflow.Outcome{}, errors.New("the environment check changes nothing")
 }
 func (preflightStage) Verify(context.Context) error { return nil }
-func (preflightStage) Left() initflow.Left {
-	return initflow.Left{Stage: initflow.Preflight, Kind: initflow.LeftConsole, Text: "fix the environment problem named above, then rerun", Commands: []string{selfCommand() + " init"}}
+func (s preflightStage) Left() initflow.Left {
+	return initflow.Left{Stage: initflow.Preflight, Kind: initflow.LeftConsole, Text: "fix the environment problem named above, then rerun", Commands: []string{selfCommand() + " " + s.e.r.o.doorName()}}
 }
 
 // engineStage is a stage that calls one of init's engines. The engines read
@@ -361,11 +361,11 @@ func newInstallationStage(e *initEngine) *engineStage {
 			}
 			return e.r.install(ctx, e.c, e.t, e.wd, e.lc, e.spec, e.path, e.old)
 		},
-		left: promptLeft(initflow.Installation, "type the project's name to apply", "init"),
+		left: promptLeft(initflow.Installation, "type the project's name to apply", e.r.o.doorName()),
 	}
 }
 
-// newFirebaseStage is stage 4: init --firebase's engine, which is two
+// newFirebaseStage is stage 4: update --firebase's engine, which is two
 // confirmed applies (the installation's history account, the Firebase root)
 // and the database steps. The installation again, for the history job, is
 // the installation-2 stage, after the images stage has mirrored the image.
@@ -392,7 +392,7 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			}
 			return e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, e.spec, e.path, e.old)
 		},
-		left: promptLeft(initflow.Firebase, "type the project's name at each apply", "init", "--firebase", "<firebase-project-id>"),
+		left: promptLeft(initflow.Firebase, "type the project's name at each apply", e.r.o.doorName(), "--firebase", "<firebase-project-id>"),
 	}
 }
 
@@ -414,6 +414,6 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			}
 			return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 		},
-		left: promptLeft(initflow.Installation2, "type the project's name to apply the history job", "init", "--firebase", "<firebase-project-id>"),
+		left: promptLeft(initflow.Installation2, "type the project's name to apply the history job", e.r.o.doorName(), "--firebase", "<firebase-project-id>"),
 	}
 }

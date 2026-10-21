@@ -364,7 +364,7 @@ func TestInitBasePinsTheRemoteRepositoryAtTheVerifiedDigest(t *testing.T) {
 }
 
 // A release with no signed "-pinned" tag published yet (#318's release
-// side, a later task): fugaro init on a checkout whose workflow has no
+// side, a later task): the converge on a checkout whose workflow has no
 // base: (the implicit Fugaro base) must refuse with a clear error naming
 // the missing image, write NOTHING to the local config, and pin nothing.
 //
@@ -784,7 +784,7 @@ func TestReplaceImageUnusedKindIsAnError(t *testing.T) {
 	}
 }
 
-// init --base republishes the shared config after recording the base
+// update --base republishes the shared config after recording the base
 // images, like the other init paths, and not under --plan-only.
 func TestInitBaseRepublishesSharedConfig(t *testing.T) {
 	newImagesRig(t, "v1.2.3")
@@ -809,7 +809,7 @@ func TestInitBaseRepublishesSharedConfig(t *testing.T) {
 	// images exist) and exactly one from the images stage's record of them:
 	// the base-image write adds one republish, not a second.
 	if publishes != 2 {
-		t.Errorf("init --base published %d times, want 2 (installation stage, then images stage)", publishes)
+		t.Errorf("update --base published %d times, want 2 (installation stage, then images stage)", publishes)
 	}
 	data, err := os.ReadFile(sharedObjectPath(dir))
 	if err != nil {

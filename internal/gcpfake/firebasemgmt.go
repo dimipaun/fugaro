@@ -9,7 +9,7 @@ import (
 )
 
 // FirebaseMgmt is a fake of the Firebase Management v1beta1 calls fugaro
-// init makes to create a project: projects.get, projects.addFirebase and the
+// setup makes to create a project: projects.get, projects.addFirebase and the
 // get of its operation. A project that the Resource Manager fake (UseCRM)
 // does not know is refused with 403; one without Firebase answers a get 404.
 type FirebaseMgmt struct {

@@ -30,7 +30,7 @@ const projectViewerPrefix = "projectViewer:"
 
 // ProjectNumber is project's number, which its buckets carry. It is a
 // *ServiceDisabledError while the Cloud Resource Manager API is disabled
-// in the project, which fugaro init offers to fix.
+// in the project, which fugaro setup offers to fix.
 func ProjectNumber(ctx context.Context, c *Clients, project string) (uint64, error) {
 	p, err := c.CRM.Projects.Get(project).Context(ctx).Do()
 	if serviceDisabled(err, ServiceResourceManager, target{project: project}) {
@@ -163,7 +163,7 @@ func RemoveProjectViewers(ctx context.Context, c *Clients, bucket string, p *sto
 func isState(name string) bool { return strings.HasSuffix(name, ".tfstate") }
 
 // RepoStates lists the repository roots' state objects (*.tfstate) in the
-// state bucket: what init --repo --forget deletes, so a leftover lock
+// state bucket: what fugaro update --repo --forget deletes, so a leftover lock
 // doesn't count.
 func RepoStates(ctx context.Context, c *Clients, stateBucket string) ([]string, error) {
 	return StateObjects(ctx, c, stateBucket, StatePrefixRepos)

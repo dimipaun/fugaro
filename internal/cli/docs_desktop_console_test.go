@@ -6375,6 +6375,62 @@ func TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 		}
 	}
 
+	// The two pairs that section prints are the sentences the owner writes when
+	// they apply this file, one per state `mobile-release.yml` can be in, and
+	// until this test read them nothing did: the copy-in proof splices the Linux
+	// pair's, out of `## console-release-linux.yml`. A pair whose names or count
+	// have drifted from the state its label describes is a sentence that reddens
+	// the two checks below in the owner's commit -- this file replaced in the
+	// opening line, and a count and a set the directory does not hold -- so each
+	// is held here to the directory that state leaves.
+	//
+	// The set each pair describes is stated rather than observed, because one of
+	// the two states is not this tree's: the pending set with this file gone, and
+	// with `mobile-release.yml` in it or out of it. Both are read in every tree,
+	// so neither pair can rot while the other is the one the repository is in.
+	if docExists(t, consoleLinuxWorkflowPath) {
+		const what = "docs/pending-workflows/README.md's `console-linux.yml` section"
+		withMobile := pendingWorkflows(t)
+		if !slices.Contains(withMobile, filepath.Base(stagedMobileReleaseWorkflowPath)) {
+			withMobile = append(withMobile, filepath.Base(stagedMobileReleaseWorkflowPath))
+		}
+		slices.Sort(withMobile)
+		for _, c := range []struct {
+			name, label, to string
+			want            []string
+		}{
+			{
+				name:  "already applied",
+				label: consoleLinuxCopyInMobileAppliedLabel,
+				to:    consoleLinuxCopyInMobileStagedLabel,
+				want: slices.DeleteFunc(slices.Clone(withMobile), func(n string) bool {
+					return n == filepath.Base(consoleLinuxWorkflowPath) || n == filepath.Base(stagedMobileReleaseWorkflowPath)
+				}),
+			},
+			{
+				name:  "still staged",
+				label: consoleLinuxCopyInMobileStagedLabel,
+				to:    consoleLinuxCopyInOtherOrderLabel,
+				want:  slices.DeleteFunc(slices.Clone(withMobile), func(n string) bool { return n == filepath.Base(consoleLinuxWorkflowPath) }),
+			},
+		} {
+			pair := readmeSectionPart(t, what, build, c.label, c.to)
+			for _, p := range []struct{ what, block, pattern string }{
+				{"the opening line", fencedBlockContaining(t, what, pair, "files are pending"), consolePendingBoldPattern},
+				{"the site's last paragraph", fencedBlockContaining(t, what, pair, "now holds"), consolePendingPathsPattern},
+			} {
+				names, count := consolePendingSentence(t, "the pair in `"+what+"` for `mobile-release.yml` "+c.name+", "+p.what, p.block, p.pattern)
+				slices.Sort(names)
+				if !slices.Equal(names, c.want) {
+					t.Errorf("the pair `%s` hands the owner in `%s` names %q, and applying `console-linux.yml` with `mobile-release.yml` %s leaves the directory holding %q: the sentences are held to the directory, and one that named a file that is not pending would be red in the owner's commit", c.label, what, names, c.name, c.want)
+				}
+				if count != len(c.want) {
+					t.Errorf("the pair `%s` hands the owner in `%s` says %d pending workflow(s), and applying `console-linux.yml` with `mobile-release.yml` %s leaves %d (%q): the count and the names are one claim", c.label, what, count, c.name, len(c.want), c.want)
+				}
+			}
+		}
+	}
+
 	// The release file's section: the three commands, in order, and the reason
 	// there are three.
 	release := consoleReadmeSection(t, doc, "## `console-release-linux.yml`")
@@ -6448,6 +6504,69 @@ func TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 	}
 }
 
+// TestDocsPendingWorkflowsReadmeFencesCarryNoBlankLine: each of those sentences is handed
+// to the owner **inside a fenced block as the exact text to paste** -- one for
+// the opening line, one for the site's paragraph, in every state the two
+// copy-ins leave the directory in -- and a blank line inside such a block is a
+// paragraph break the owner's paste would carry into the sentence. It splits the
+// sentence in two when the README is read on GitHub, and nothing caught it: the
+// check above flattens whitespace before it reads a sentence, and
+// `website/test/readme.mjs` does the same, so a fence broken mid-sentence reads
+// exactly like an intact one to both. (One had: "(mobile plan Task" and "P4.3)"
+// were two paragraphs in the block for `console-release-linux.yml`'s copy-in.)
+//
+// A fence is one of these when its first line is one of the two sentence heads:
+// the opening line's `**N files are pending: …**`, or the site paragraph's
+// `\`docs/pending-workflows/\` now holds …`. The blocks of shell commands beside
+// them are left alone -- a blank line between two commands is ordinary, and the
+// rule would be about punctuation rather than about text a reader pastes.
+func TestDocsPendingWorkflowsReadmeFencesCarryNoBlankLine(t *testing.T) {
+	const path = "docs/pending-workflows/README.md"
+	doc := readDoc(t, path)
+
+	var blocks [][]string
+	var current []string
+	inFence := false
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			if inFence {
+				blocks = append(blocks, current)
+				current = nil
+			}
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			current = append(current, line)
+		}
+	}
+	if inFence {
+		t.Fatalf("%s has an unclosed fenced block: the sentences the owner pastes are read from these", path)
+	}
+
+	sentences := 0
+	for _, block := range blocks {
+		if len(block) == 0 {
+			continue
+		}
+		head := block[0]
+		if !consolePendingSentenceHeadRE.MatchString(head) && !strings.HasPrefix(head, "`docs/pending-workflows/` now holds") {
+			continue
+		}
+		sentences++
+		for i, line := range block {
+			if strings.TrimSpace(line) != "" {
+				continue
+			}
+			t.Errorf("%s: the sentence the owner pastes, starting %q, has a blank line at line %d of its fenced block: the block is the exact text, and a blank line is a paragraph break the paste carries into a sentence -- the whitespace-flattening checks above and in website/test/readme.mjs read a broken fence and an intact one the same", path, head, i+1)
+			break
+		}
+	}
+	if sentences == 0 {
+		t.Fatalf("%s hands the owner no fenced sentence: the copy-in sections carry the text to paste, and this test reads those blocks", path)
+	}
+}
+
 // pendingWorkflows is the workflows docs/pending-workflows/ still holds as
 // pending changes, sorted: every `.yml` in it except the two whose staged copies
 // are kept after their copy-in on purpose (`console-tests.yml` and
@@ -6507,7 +6626,7 @@ func consolePendingSentence(t *testing.T, what, text, namePattern string) ([]str
 	count := -1
 	for _, pattern := range []*regexp.Regexp{
 		// "**Three files are pending: `shared-tests.yml`** ..."
-		regexp.MustCompile(`\*\*(\w+) files? (?:is|are) pending`),
+		consolePendingSentenceHeadRE,
 		// "`docs/pending-workflows/` now holds three pending workflows,"
 		regexp.MustCompile(`\b(?:holds|names)\s+(\w+) pending`),
 	} {
@@ -6563,6 +6682,13 @@ const (
 	consolePendingPathsPattern = "`docs/pending-workflows/([\\w.-]+\\.ya?ml)`"
 	consolePendingBoldPattern  = "bold"
 )
+
+// consolePendingSentenceHeadRE matches the head of the opening-line sentence
+// ("**Three files are pending: `shared-tests.yml`** ..."), which is also how
+// TestDocsPendingWorkflowsReadmeFencesCarryNoBlankLine recognises a fenced block that holds
+// a sentence rather than a list of commands. The two share it deliberately: a
+// sentence the parser reads has to be a sentence whose fence is checked.
+var consolePendingSentenceHeadRE = regexp.MustCompile(`\*\*(\w+) files? (?:is|are) pending`)
 
 // TestConsoleReleaseLinuxStagedFileIsNotTheAppliedOne keeps the files this
 // change moves in the relation it claims for them, in both of the states the
@@ -6819,6 +6945,51 @@ type copyInSentences struct {
 	opening, site string
 }
 
+// The `## console-release-linux.yml` section prints two pairs of follow-up
+// sentences, each under the sentence that says when it is the one to write,
+// because the two copy-ins of 2026-10-20 can be made in either order: the third
+// file staged that day, `mobile-release.yml`, has a copy-in of its own, and the
+// pair a commit needs names what the directory is left holding.
+const (
+	consoleCopyInMobileStagedLabel  = "**If `mobile-release.yml` is still staged when you make this copy-in**"
+	consoleCopyInMobileAppliedLabel = "**If it has already been copied in**"
+)
+
+// The `## console-linux.yml` section prints a pair of its own for each of the
+// same two states, under labels of its own: applying that file leaves a
+// different directory than applying the release file does, so the sentences it
+// hands the owner cannot be the Linux pair's. Nothing else read those two pairs
+// until TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere did, and a pair that
+// has drifted from its state is a sentence the owner writes into a red tree --
+// the two sentences it replaces are what that test checks against this
+// directory. The third marker is the paragraph that follows the second pair, and
+// it is what tells the two parts apart when they are read one at a time.
+const (
+	consoleLinuxCopyInMobileStagedLabel  = "**If `mobile-release.yml` is still staged**, it leaves four"
+	consoleLinuxCopyInMobileAppliedLabel = "**If `mobile-release.yml` has already been copied in**, applying this file leaves"
+	consoleLinuxCopyInOtherOrderLabel    = "**If the console's other two have been applied first**"
+)
+
+// readmeSectionPart returns the part of text that runs from `from` to the start
+// of the first `to` after it, or to the end of text when `to` is empty. A pair
+// of follow-up sentences is read out of the part its own label introduces, so a
+// pair printed under the wrong label -- or a label that lost its pair -- fails
+// where it is read.
+func readmeSectionPart(t *testing.T, what, text, from, to string) string {
+	t.Helper()
+	start := strings.Index(text, from)
+	if start < 0 {
+		t.Fatalf("%s no longer prints %q, the sentence that says when its pair of follow-up sentences is the one to write", what, from)
+	}
+	rest := text[start+len(from):]
+	if to != "" {
+		if end := strings.Index(rest, to); end >= 0 {
+			rest = rest[:end]
+		}
+	}
+	return rest
+}
+
 // releaseLinuxCopyInSentences reads those two sentences out of
 // `## console-release-linux.yml`'s fenced blocks -- the section that describes
 // the commit both copy-ins land in -- and checks the four commands that commit
@@ -6826,8 +6997,14 @@ type copyInSentences struct {
 // both are the README's claim about the tree: a prescribed sentence that the
 // directory would contradict is not something this test should paper over by
 // writing its own.
+//
+// The section prints a pair for each of the two orders the copy-ins can be made
+// in, and this reads the pair for the tree it is run in: `mobile-release.yml`
+// staged beside this section's files means the console copy-in is the first of
+// the two, and the pair that names it is the one this copy-in leaves.
 func releaseLinuxCopyInSentences(t *testing.T) copyInSentences {
 	t.Helper()
+	const what = "docs/pending-workflows/README.md's `console-release-linux.yml` section"
 	doc := readDoc(t, "docs/pending-workflows/README.md")
 	section := consoleReadmeSection(t, doc, "## `console-release-linux.yml`")
 	for _, command := range []string{
@@ -6848,9 +7025,18 @@ func releaseLinuxCopyInSentences(t *testing.T) copyInSentences {
 			t.Fatalf("docs/pending-workflows/README.md's `console-linux.yml` section no longer prints %q, which is a command this test just ran", command)
 		}
 	}
+	pair := readmeSectionPart(t, what, section, consoleCopyInMobileStagedLabel, consoleCopyInMobileAppliedLabel)
+	if !docExists(t, stagedMobileReleaseWorkflowPath) {
+		pair = readmeSectionPart(t, what, section, consoleCopyInMobileAppliedLabel, "")
+	}
 	return copyInSentences{
-		opening: fencedBlockContaining(t, "docs/pending-workflows/README.md", section, "files are pending"),
-		site:    fencedBlockContaining(t, "docs/pending-workflows/README.md", section, "now holds"),
+		// The marker is the count-free head of the opening-line block rather
+		// than a whole phrase of it: the block states a count ("One file is
+		// pending", "Two files are pending", ...), and a marker that spelled the
+		// count would have to be edited every time a file is staged or applied
+		// -- which is the edit the block itself exists to make in one place.
+		opening: fencedBlockContaining(t, what, pair, "files are pending"),
+		site:    fencedBlockContaining(t, what, pair, "now holds"),
 	}
 }
 

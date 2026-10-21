@@ -64,7 +64,7 @@ func (r *projectRig) existing(billing bool) {
 	r.bill.SetBilling(newProj, billing)
 }
 
-// run is fugaro init with the flags and the stdin; terminal says whether
+// run is the converge with the flags and the stdin; terminal says whether
 // stdin is a terminal.
 func (r *projectRig) run(t *testing.T, terminal bool, stdin string, args ...string) (string, string, error) {
 	t.Helper()
@@ -711,5 +711,24 @@ func TestBillingLinkedWhileConfirmingIsNotReplaced(t *testing.T) {
 	}
 	if ExitCode(err) != ExitUserError || !strings.Contains(out.String(), "never replaces a link") {
 		t.Errorf("exit %d (%v)\n%s", ExitCode(err), err, out.String())
+	}
+}
+
+// The project stage's "nothing further was done" refusal tells the reader which
+// door to rerun, and the two doors are not interchangeable: `fugaro setup`
+// creates, `fugaro update` re-converges. The reader who typed the wrong name is
+// exactly the one who cannot tell them apart, so a run reached through update
+// must not be sent back to setup by the line that says nothing was done (task
+// W2.1).
+func TestTheDeclinedProjectPromptNamesTheDoorTheReaderIsAt(t *testing.T) {
+	for _, door := range []string{"setup", "update"} {
+		s := &projectStage{e: &initEngine{r: &initRun{o: &initOptions{door: door}}}}
+		var ny *initflow.NeedsYouError
+		if err := s.declined("the project's ID"); !asNeedsYou(err, &ny) {
+			t.Fatalf("%s: %v", door, err)
+		}
+		if !strings.Contains(ny.Left.Text, "rerun "+selfCommand()+" "+door+" in your own terminal window") {
+			t.Errorf("%s: the refusal does not name the door the reader is at: %q", door, ny.Left.Text)
+		}
 	}
 }

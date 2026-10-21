@@ -15,7 +15,7 @@ import (
 )
 
 // The job environment variables that carry the project's budget (the
-// ceiling), set by fugaro init --repo on every workflow job from whatever the
+// ceiling), set by fugaro update on every workflow job from whatever the
 // project config holds: the mode whenever a budget block is there, the cap,
 // the prices, the token cap and the allow-list whatever the mode.
 const (

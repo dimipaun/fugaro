@@ -23,8 +23,8 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
-// printVarsUngatedFirebase is init --firebase --print-vars's warning.
-const printVarsUngatedFirebase = "--print-vars is ungated and makes no cloud call, so the Firebase root's admins list holds only --budget-admin and the local config's terraform.budget_admins: the GCP project's owners and editors are read from its IAM policy when init runs, and the Firebase project is not checked"
+// printVarsUngatedFirebase is update --firebase --print-vars's warning.
+const printVarsUngatedFirebase = "--print-vars is ungated and makes no cloud call, so the Firebase root's admins list holds only --budget-admin and the local config's terraform.budget_admins: the GCP project's owners and editors are read from its IAM policy when the converge runs, and the Firebase project is not checked"
 
 // firebaseVars is the installation's and the Firebase root's tfvars as one
 // JSON object, for --print-vars.
@@ -71,7 +71,7 @@ func (r *initRun) historyJob(ctx context.Context, c *infra.Clients, lc *localcfg
 		h.DeployJob = ok
 		if !ok && !r.historyNoted {
 			r.historyNoted = true
-			r.warn(fmt.Sprintf("the history job (the sweeper of crashed runs) is not deployed, so crashed runs are not cleaned up and old run users are not deleted: its image %s does not exist, and nothing builds it for you (like the dev base image until M7). From a checkout of this repository run\n  sh images/build-base.sh history %s\n  docker push %s\nthen run fugaro init --firebase again (gcloud auth configure-docker %s lets docker push there)", h.Image, h.Image, h.Image, strings.SplitN(h.Image, "/", 2)[0]))
+			r.warn(fmt.Sprintf("the history job (the sweeper of crashed runs) is not deployed, so crashed runs are not cleaned up and old run users are not deleted: its image %s does not exist, and nothing builds it for you (like the dev base image until M7). From a checkout of this repository run\n  sh images/build-base.sh history %s\n  docker push %s\nthen run fugaro update --firebase again (gcloud auth configure-docker %s lets docker push there)", h.Image, h.Image, h.Image, strings.SplitN(h.Image, "/", 2)[0]))
 		}
 	}
 	spec.History = &h
@@ -115,7 +115,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 	return true, false, nil
 }
 
-// initFirebase is fugaro init --firebase <fp>: it adopts the project's own
+// initFirebase is fugaro update --firebase <fp>: it adopts the project's own
 // Firebase project and builds the budget backend in it.
 //
 //  0. checks, before anything is applied: the Firebase project exists, is
@@ -157,7 +157,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 		r.warn("not a budget admin (owners and editors who are users or groups are; a service account can be added with --budget-admin): " + s)
 	}
 	if fp == lc.GCPProject && len(risks) > 0 {
-		r.warn(fmt.Sprintf("the Firebase project is the installation's own project, and its default service account(s) hold a primitive role: %s. Anything that runs as one of them (a Cloud Build build submitted without a serviceAccount, a job or function deployed without one) can reach the database, Firestore and Identity Toolkit, which a project of its own would keep out of reach. Remove the role (gcloud projects remove-iam-policy-binding %s --member=serviceAccount:<account> --role=roles/editor) and set the organization policy iam.automaticIamGrantsForDefaultServiceAccounts, or use a Firebase project of its own. init changes nothing here", strings.Join(risks, ", "), lc.GCPProject))
+		r.warn(fmt.Sprintf("the Firebase project is the installation's own project, and its default service account(s) hold a primitive role: %s. Anything that runs as one of them (a Cloud Build build submitted without a serviceAccount, a job or function deployed without one) can reach the database, Firestore and Identity Toolkit, which a project of its own would keep out of reach. Remove the role (gcloud projects remove-iam-policy-binding %s --member=serviceAccount:<account> --role=roles/editor) and set the organization policy iam.automaticIamGrantsForDefaultServiceAccounts, or use a Firebase project of its own. The converge changes nothing here", strings.Join(risks, ", "), lc.GCPProject))
 	}
 	if len(admins) == 0 && len(r.budgetAdmins(lc)) == 0 {
 		return userErr("project %s has no user or group with roles/owner or roles/editor, and no --budget-admin: nobody could change a cap or a kill switch", lc.GCPProject)
@@ -346,7 +346,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 		return err
 	}
 	if lc.BudgetMode() == localcfg.BudgetOff && mode == "" {
-		r.warn("budget.mode is off in the project config, so jobs don't use the backend yet: fugaro init --firebase " + fp + " --budget-mode observe turns it on (then fugaro init --repo for each repository)")
+		r.warn("budget.mode is off in the project config, so jobs don't use the backend yet: fugaro update --firebase " + fp + " --budget-mode observe turns it on (then fugaro update --repo for each repository)")
 	}
 
 	return nil
@@ -410,7 +410,7 @@ func adoptOrder(name string) int {
 	return 3
 }
 
-// firebaseHistory is init --firebase's last step, the installation root
+// firebaseHistory is update --firebase's last step, the installation root
 // again: it deploys the history job with the Firebase outputs once the
 // history image exists (the images stage, before it, mirrors that image).
 // It is the installation-2 stage's engine, split out of initFirebase so the
@@ -425,7 +425,7 @@ func (r *initRun) firebaseHistory(ctx context.Context, c *infra.Clients, t *tf.T
 	if err != nil || stop {
 		return err
 	}
-	fmt.Fprintf(r.w, "The budget backend of project %s is in Firebase project %s. Each repository needs fugaro init --repo to pick up the jobs' environment.\n", lc.Name, r.o.firebase)
+	fmt.Fprintf(r.w, "The budget backend of project %s is in Firebase project %s. Each repository needs fugaro update --repo to pick up the jobs' environment.\n", lc.Name, r.o.firebase)
 	return nil
 }
 
@@ -529,7 +529,7 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 func (r *initRun) confirmLocation() error {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, infra.FirestoreLocation)
 	if !canConfirmTyped(initflow.Typed, r.conditions()) {
-		lf := promptLeft(initflow.Firebase, "type "+infra.FirestoreLocation+" to confirm the Firestore database's permanent location when asked, after running", "init", "--firebase", quoteWord(r.o.firebase))
+		lf := promptLeft(initflow.Firebase, "type "+infra.FirestoreLocation+" to confirm the Firestore database's permanent location when asked, after running", r.o.doorName(), "--firebase", quoteWord(r.o.firebase))
 		return &initflow.NeedsYouError{Left: lf}
 	}
 	fmt.Fprintf(r.w, "Type %s to create it there: ", infra.FirestoreLocation)
@@ -636,5 +636,5 @@ func refusePublicSignUp(raw []byte, fp string) error {
 	if len(public) == 0 {
 		return nil
 	}
-	return userErr("Identity Platform in Firebase project %s has public sign-up enabled (%s). The web API key is public, so only custom tokens signed by Fugaro's signer may work: disable these in the Firebase console (Authentication, Sign-in method) or with the Identity Toolkit config API, then rerun. fugaro init never changes an existing configuration", fp, strings.Join(public, "; "))
+	return userErr("Identity Platform in Firebase project %s has public sign-up enabled (%s). The web API key is public, so only custom tokens signed by Fugaro's signer may work: disable these in the Firebase console (Authentication, Sign-in method) or with the Identity Toolkit config API, then rerun. The converge never changes an existing configuration", fp, strings.Join(public, "; "))
 }

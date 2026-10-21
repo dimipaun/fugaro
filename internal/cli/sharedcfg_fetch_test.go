@@ -226,7 +226,7 @@ func TestFetchSharedMissingConfigObject(t *testing.T) {
 	r := newFetchRig(t)
 	r.marker(t, "belong", "fugaro-belong")
 	_, _, err := r.fetch(fetchT0)
-	if err == nil || !strings.Contains(err.Error(), "has not published a shared config; ask an operator to run fugaro init") {
+	if err == nil || !strings.Contains(err.Error(), "has not published a shared config; ask an operator to run fugaro update") {
 		t.Fatalf("err = %v", err)
 	}
 	if !strings.Contains(err.Error(), "belong") || ExitCode(err) != ExitUserError {

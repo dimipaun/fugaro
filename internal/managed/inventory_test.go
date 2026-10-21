@@ -314,7 +314,7 @@ func TestInventoryCloudAssetsListsTheProject(t *testing.T) {
 
 // A SERVICE_DISABLED for a service that is not the one this read goes through
 // is not this API being disabled: the answer names the other service, and
-// sending the operator to fugaro init for it would be a wrong sentence about
+// sending the operator to fugaro update for it would be a wrong sentence about
 // their project. It is the read failing, with the answer's own words in the
 // warning — the same reading internal/infra's serviceDisabled makes of the
 // detail's service.
@@ -381,7 +381,7 @@ func TestInventoryCloudAssetAPIAndGrantAreTheModules(t *testing.T) {
 	// And the gate admits the grant the module makes, which is the coupling
 	// that makes the grant real rather than decorative: internal/infra/tf's
 	// grantRules is an allowlist, so a module grant the table does not name
-	// makes fugaro init refuse the installation's own plan — and the identity
+	// makes fugaro update refuse the installation's own plan — and the identity
 	// the read needs would then never exist.
 	op := "user:operator@example.com"
 	plan := &tf.Plan{ResourceChanges: []tf.ResourceChange{{

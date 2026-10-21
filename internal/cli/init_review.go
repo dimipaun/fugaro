@@ -109,7 +109,7 @@ func (r *initRun) runCovers() (bool, error) {
 // declinedRun is the needs-you of a run whose one confirmation was not typed:
 // nothing is applied, here or in a later stage.
 func (r *initRun) declinedRun() error {
-	args := []string{"init"}
+	args := []string{r.o.doorName()}
 	if r.o.firebase != "" {
 		args = append(args, "--firebase", quoteWord(r.o.firebase))
 	}

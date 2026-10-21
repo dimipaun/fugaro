@@ -704,7 +704,7 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 
 	t.Run("the_allow_list_has_exactly_one_entry", func(t *testing.T) {
 		if len(consoleBoundaryAllowList) != 1 {
-			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it is a ONE-entry exception -- the console contract's docs test, which reads console/docs/json-contract.md as bytes. A second entry is a deliberate widening of the boundary and must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
+			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it is the ONE-entry exception the console contract's own docs test is, and a second entry is a deliberate widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
 		}
 	})
 

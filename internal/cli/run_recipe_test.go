@@ -233,7 +233,7 @@ func TestRunClonedWorkflowWithRecipeLaunchesWithNoBuildRecord(t *testing.T) {
 // published from an older release, or --image-source could mirror one.
 // cloneSince is 0.7.5, and 0.6.0 here is simply some release below it: the
 // refusal must name the release the runner side needs and send the reader to
-// `fugaro init --base base`, the ordinary *Since wording. It is the
+// `fugaro update --base base`, the ordinary *Since wording. It is the
 // enabled-state pin for this gate — with cloneShipped false the same launch
 // is refused with the not-released-yet wording instead, and this test fails.
 func TestRunClonedWorkflowRefusedBelowCloneSince(t *testing.T) {
@@ -251,7 +251,7 @@ func TestRunClonedWorkflowRefusedBelowCloneSince(t *testing.T) {
 	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "how to provision a blobless clone (FUGARO_CHECKOUT) (fugaro 0.7.5 or later)") ||
 		!strings.Contains(err.Error(), "is ghcr.io/dimipaun/fugaro-base:0.6.0, release 0.6.0") ||
-		!strings.Contains(err.Error(), "fugaro init --base base") {
+		!strings.Contains(err.Error(), "fugaro update --base base") {
 		t.Fatalf("err = %v", err)
 	}
 	// The disabled state's guidance is gone with the flip: an older image is

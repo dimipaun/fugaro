@@ -2193,7 +2193,7 @@ func TestInitRepoRetireRefusesAFailedLabelCall(t *testing.T) {
 // The same two calls degrade loudly on the ordinary run, and the run goes on
 // (design §3.1a, review round 3): discovery cannot union a container the
 // configuration no longer computes back into the plan, and it says so rather
-// than aborting the ordinary `fugaro init --repo` -- the same permission
+// than aborting the ordinary `fugaro update --repo` -- the same permission
 // answers the retirement's own label call, which the run reports the same
 // way. What is lost is the union, and the plan's own prevent_destroy refusal
 // is what catches the consequence.

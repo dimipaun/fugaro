@@ -205,7 +205,7 @@ func TestMultilinePEMAccepted(t *testing.T) {
 			}
 			// The project-scope prompt names the command that stores this
 			// repository's own copy instead (code review, low): the stage has
-			// no --repo flag of its own and `fugaro init --repo` never runs
+			// no --repo flag of its own and `fugaro update --repo` never runs
 			// it, so pointing at a flag of this command would send the person
 			// looking for one that does not exist.
 			if !strings.Contains(r.errOut.String(), "secrets set github-app-key --repo acme/app") {
@@ -336,7 +336,7 @@ func TestExistingSecretNotOverwritten(t *testing.T) {
 	t.Run("a container without a version is missing", func(t *testing.T) {
 		f := newTTY(t)
 		r := newSecretsRig(t, bitbucketOrigin, f.tty)
-		r.store.seed(bitbucketSlug, "bitbucket-token", "") // made by init --repo's Terraform, no value yet
+		r.store.seed(bitbucketSlug, "bitbucket-token", "") // made by update --repo's Terraform, no value yet
 		r.store.seed(bitbucketSlug, "claude-oauth-token", "stored-oauth-0001")
 		done := r.start(context.Background())
 		r.answer(t, f, "bitbucket-token (input hidden)", 1, "bb-secret-value-EXAMPLE\n")
@@ -383,7 +383,7 @@ func TestSecretNeverInErrors(t *testing.T) {
 }
 
 // Against the real client and the Secret Manager fake: a good store creates
-// the secret with the labels init --repo adopts; a server that echoes the
+// the secret with the labels update --repo adopts; a server that echoes the
 // payload (raw, or base64 as sent) in its error cannot make it reach an
 // output, and nothing is stored.
 func TestSecretsStageAgainstSecretManagerFake(t *testing.T) {

@@ -55,7 +55,7 @@ func TestApplyGateRefusesEveryReadThatAnsweredNoAmount(t *testing.T) {
 		{
 			what: "the marker is version 1: managed, and no amount recorded",
 			read: BudgetRead{Project: project, Managed: true, Reason: reason},
-			want: []string{"has no budget recorded", "fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC", "fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID", reason},
+			want: []string{"has no budget recorded", "fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC", "fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID", reason},
 		},
 		{
 			what: "the marker is absent",

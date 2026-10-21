@@ -62,7 +62,7 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 
 // checkoutNote is printed once before the gate when installation-only flags
 // are given in a checkout that the gate would ask about.
-const checkoutNote = "this checkout's repository is not onboarded; init in a checkout also onboards its repository. To set up only the installation, run fugaro init from outside the checkout."
+const checkoutNote = "this checkout's repository is not onboarded; the converge in a checkout also onboards its repository. To set up only the installation, run fugaro setup from outside the checkout."
 
 // gateEarly asks the unknown-repository question at the start of a converge,
 // before any stage plans: the installation's and Firebase's Terraform plans
@@ -109,11 +109,11 @@ func (e *initEngine) canConfirmRepo() bool {
 // flag for an ordinary origin, else a note to use a clean clone. For a coding
 // agent's session it is never the flag, which would be a line for the agent to
 // paste: only the typed route, in the user's own terminal.
-func onboardLeft(o originInfo) initflow.Left {
+func onboardLeft(o originInfo, door string) initflow.Left {
 	if o.standardHost() && !o.Rewritten && !agentEnv(os.Getenv) {
-		return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: selfCommand() + " init --onboard-repo " + quoteWord(o.Repo)}
+		return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: selfCommand() + " " + door + " --onboard-repo " + quoteWord(o.Repo)}
 	}
-	return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftConsole, Text: "in your own terminal window, or in a fresh clone of the real remote, type " + pluginwire.Printable(o.typed()) + " at the prompt of", Commands: []string{selfCommand() + " init"}}
+	return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftConsole, Text: "in your own terminal window, or in a fresh clone of the real remote, type " + pluginwire.Printable(o.typed()) + " at the prompt of", Commands: []string{selfCommand() + " " + door}}
 }
 
 // unknownDetail says why the stage waits for the user.
@@ -150,7 +150,7 @@ func (e *initEngine) confirmRepo(root string, o originInfo) (bool, error) {
 	return true, nil
 }
 
-// gateRepo is the same gate for init --repo run on its own, before its first
+// gateRepo is the same gate for update --repo run on its own, before its first
 // cloud call: a repository the local config does not list is onboarded only
 // after its owner/name is typed at the user's own terminal, or by
 // --onboard-repo (never from a coding agent's session). A known repository
@@ -175,8 +175,8 @@ func (r *initRun) gateRepo(ctx context.Context, root string, lc *localcfg.Config
 		}
 		return userErr("not confirmed (%s was not typed); nothing was changed", pluginwire.Printable(oi.typed()))
 	}
-	how := "in your own terminal window, not through a coding agent or a pipe, run " + selfCommand() + " init --repo and type " + pluginwire.Printable(oi.typed()) + " at the prompt"
-	if lf := onboardLeft(oi); lf.Kind == initflow.LeftCommand {
+	how := "in your own terminal window, not through a coding agent or a pipe, run " + selfCommand() + " " + e.r.o.doorName() + " --repo and type " + pluginwire.Printable(oi.typed()) + " at the prompt"
+	if lf := onboardLeft(oi, e.r.o.doorName()); lf.Kind == initflow.LeftCommand {
 		how = "pass --onboard-repo " + quoteWord(oi.Repo) + ", or " + how
 	}
 	return userErr("%s; onboarding it creates cloud resources, so it needs your own opt-in (not covered by --yes): %s", unknownDetail(lc.Name, oi), how)

@@ -846,7 +846,7 @@ func TestBuildEnvNoGatekeeperNeedsTheKeyActionably(t *testing.T) {
 	if err == nil {
 		t.Fatal("api-key with no gateway and no key started")
 	}
-	for _, want := range []string{"ANTHROPIC_API_KEY", "fugaro secrets set anthropic-api-key", "fugaro init --repo", "route the model through a provider"} {
+	for _, want := range []string{"ANTHROPIC_API_KEY", "fugaro secrets set anthropic-api-key", "fugaro update", "route the model through a provider"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}

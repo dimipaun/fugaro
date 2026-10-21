@@ -1008,7 +1008,7 @@ func TestStartDropsRecipeWhenRulesRefuse(t *testing.T) {
 }
 
 // A refusal of both writes is a bad credential, not old rules: the error
-// stands and the operator is not pointed at fugaro init.
+// stands and the operator is not pointed at fugaro update.
 func TestStartRecipeRefusedTwiceIsAnError(t *testing.T) {
 	f := newFixture(t)
 	logs := captureLog(f)

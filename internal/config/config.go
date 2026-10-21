@@ -471,9 +471,9 @@ const AnthropicSecret = "anthropic-api-key"
 // (the budget is off: there is no gateway, and every call goes to Anthropic).
 // One text, so
 // the two cannot say different things, and both name the fix that actually
-// works: store a key and rerun `fugaro init --repo` (the mount is planned at
+// works: store a key and rerun `fugaro update` (the mount is planned at
 // deploy), or route the model through a provider.
-const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro init --repo, or route the model through a provider"
+const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro update, or route the model through a provider"
 
 // BitbucketSecret is the logical secret that holds a Bitbucket credential: a
 // repository access token, issued for one repository and unusable for any
@@ -559,7 +559,7 @@ type JobProfile struct {
 	// that is the account's own allow_data_to in the local config, and the
 	// policy's accounts.<name>.allow_repos derived from it. A profile that
 	// names an account admits only repositories that account covers, which
-	// publish and `fugaro init` refuse to violate (§4.1's subset rule).
+	// publish and `fugaro update` refuse to violate (§4.1's subset rule).
 	ClaudeAccounts []string `yaml:"claude_accounts,omitempty" json:"claude_accounts,omitempty"`
 	// allowReposWritten records that the document gave allow_repos at all. It
 	// exists because a key written with nothing under it (`allow_repos:`, or

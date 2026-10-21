@@ -10,7 +10,7 @@ import (
 )
 
 // The repository stage (stage 9, design §3.6): onboards the checkout's
-// repository by running today's fugaro init --repo engine as the last step
+// repository by running today's fugaro update --repo engine as the last step
 // of the converge. It applies only when the checkout's default branch has a
 // valid fugaro.yaml naming this project (/fugaro:setup writes it, and its
 // pull request has to be merged first: the runs read fugaro.yaml from the
@@ -20,7 +20,7 @@ import (
 // build's typed, billable confirmation, --yes, --no-build): the stage only
 // asks for the GitHub App's ID first when the engine will need it.
 
-// repositoryStage is stage 9: the init --repo engine, run for the checkout.
+// repositoryStage is stage 9: the update --repo engine, run for the checkout.
 type repositoryStage struct {
 	*engineStage
 	tg     *repoTarget
@@ -38,7 +38,7 @@ func newRepositoryStage(e *initEngine) *repositoryStage {
 			}
 			return e.r.repoEngine(ctx, ".", e.bin, true)
 		},
-		left: promptLeft(initflow.Repository, "in the checkout, type the project's name at each apply", "init"),
+		left: promptLeft(initflow.Repository, "in the checkout, type the project's name at each apply", e.r.o.doorName()),
 	}
 	return s
 }
@@ -80,7 +80,7 @@ func (s *repositoryStage) Check(ctx context.Context) (initflow.Status, error) {
 	case a == authAsk:
 		return initflow.Status{State: initflow.Todo, Detail: "onboards " + repo + ", which is not the project's yet: asks you to type its name first"}, nil
 	case a == authNeeded:
-		lf := onboardLeft(s.tg.origin)
+		lf := onboardLeft(s.tg.origin, s.e.r.o.doorName())
 		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.tg.origin), Left: &lf}, nil
 	}
 	return initflow.Status{State: initflow.Todo, Detail: "onboards " + repo + "; plans when applied"}, nil
@@ -101,14 +101,14 @@ func (s *repositoryStage) authorize(ctx context.Context, env initflow.Env) error
 	case err != nil:
 		return err
 	case a == authNeeded || (a == authAsk && !env.Interactive):
-		return &initflow.NeedsYouError{Left: onboardLeft(s.tg.origin)}
+		return &initflow.NeedsYouError{Left: onboardLeft(s.tg.origin, s.e.r.o.doorName())}
 	case a == authAsk:
 		ok, err := e.confirmRepo(s.tg.root, s.tg.origin)
 		if err != nil {
 			return err
 		}
 		if !ok {
-			return &initflow.NeedsYouError{Left: onboardLeft(s.tg.origin)}
+			return &initflow.NeedsYouError{Left: onboardLeft(s.tg.origin, s.e.r.o.doorName())}
 		}
 	}
 	if !s.tg.needsAppID(e.lc, e.r.o) {
@@ -116,7 +116,7 @@ func (s *repositoryStage) authorize(ctx context.Context, env initflow.Env) error
 	}
 	if !env.Interactive || !e.r.canAsk() {
 		return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand,
-			Text: selfCommand() + " init --github-app-id <id>"}}
+			Text: selfCommand() + " " + e.r.o.doorName() + " --github-app-id <id>"}}
 	}
 	id, err := e.r.prompt("GitHub App ID for "+pluginwire.Printable(s.tg.repo)+" (a number, not a secret; on the App's settings page)", anyStoredAppID(e.lc), func(v string) error {
 		if !appIDRE.MatchString(v) {
@@ -161,7 +161,7 @@ func (s *repositoryStage) Apply(ctx context.Context, env initflow.Env) (initflow
 	// The engine has onboarded the repository (and may have built its first
 	// image, with this binary): now the checkout's gcp_project: line.
 	if err := s.anchor(ctx, env, s.e.r.o.planOnly); err != nil {
-		return initflow.Outcome{}, fmt.Errorf("the repository is onboarded; only the gcp_project line of fugaro.yaml was not written (%w): rerunning fugaro init is safe", err)
+		return initflow.Outcome{}, fmt.Errorf("the repository is onboarded; only the gcp_project line of fugaro.yaml was not written (%w): rerunning "+s.e.r.o.doorProgram()+" is safe", err)
 	}
 	return out, nil
 }

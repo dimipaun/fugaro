@@ -325,7 +325,7 @@ func TestSubmitRebuildFallsBackOnEmptyGitSecretID(t *testing.T) {
 	}
 }
 
-// layeredCheckInstalledYAML is what fugaro init --repo would have seen
+// layeredCheckInstalledYAML is what fugaro update --repo would have seen
 // when it installed the check job: same workflow name and base kind as
 // layeredCheckYAML (below), but with base and image.* given directly
 // instead of through a profile, so config.Parse (no layer) resolves it on
@@ -622,7 +622,7 @@ func TestCheckNotInstalledWorkflow(t *testing.T) {
 	for _, l := range lines {
 		byWorkflow[l.Workflow] = l
 	}
-	if l := byWorkflow["api"]; l.Decision != imagecheck.NotInstalled || !slices.Equal(l.Reasons, []string{"run fugaro init --repo"}) {
+	if l := byWorkflow["api"]; l.Decision != imagecheck.NotInstalled || !slices.Equal(l.Reasons, []string{"run fugaro update --repo"}) {
 		t.Fatalf("api = %+v", l)
 	}
 	if byWorkflow["app"].Decision != imagecheck.Skip {
@@ -633,7 +633,7 @@ func TestCheckNotInstalledWorkflow(t *testing.T) {
 	}
 
 	// Head turns app's check off: the installed schedule no longer
-	// matches, so nothing is built until init --repo runs.
+	// matches, so nothing is built until update --repo runs.
 	yaml := strings.Replace(files["fugaro.yaml"], "secrets:", "rebuild: { check: off }, secrets:", 1)
 	testutil.WriteFiles(t, f.work, map[string]string{"fugaro.yaml": yaml, "package-lock.json": `{"changed":true}`})
 	testutil.Git(t, f.work, "commit", "--quiet", "-am", "check off")
@@ -643,7 +643,7 @@ func TestCheckNotInstalledWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, l := range lines {
-		if l.Workflow == "app" && (l.Decision != imagecheck.NotInstalled || !slices.Equal(l.Reasons, []string{"run fugaro init --repo"})) {
+		if l.Workflow == "app" && (l.Decision != imagecheck.NotInstalled || !slices.Equal(l.Reasons, []string{"run fugaro update --repo"})) {
 			t.Fatalf("app = %+v", l)
 		}
 	}
@@ -906,7 +906,7 @@ func TestCheckJobRecordWriteFailureAfterSubmit(t *testing.T) {
 // as the build account, the only writer of check.json, so a check.json
 // write it is forbidden to make means that account's builds/ grant itself
 // is broken (an infrastructure fault for an operator to fix with Terraform,
-// not something "ask an operator to publish it" or fugaro init --operator
+// not something "ask an operator to publish it" or fugaro update --operator
 // addresses). The job's documented exit 2 for a failed check
 // (imagecheck.go's "It exits 2 when the check itself failed") holds; the
 // refusal text in the JSON log line names the build account's Terraform
@@ -929,7 +929,7 @@ func TestCheckJobForbiddenWriteStaysExitRemoteError(t *testing.T) {
 	// The real fix is the Terraform grant, not adding a person as an
 	// operator: the job never runs as a launcher asking to publish
 	// something.
-	if strings.Contains(lines[0].Error, "operator role") || strings.Contains(lines[0].Error, "fugaro init --operator") {
+	if strings.Contains(lines[0].Error, "operator role") || strings.Contains(lines[0].Error, "fugaro update --operator") {
 		t.Errorf("error points at the operator role, not the build account's Terraform grant: %s", lines[0].Error)
 	}
 	// "nothing was published" would be false here: the build did run.
@@ -1032,7 +1032,7 @@ func TestImageStatusReadsTheRunsBucket(t *testing.T) {
 
 // The check job reads the GCP project from FUGARO_GCP_PROJECT and the
 // project's name from FUGARO_PROJECT; the old shape (a GCP ID under
-// FUGARO_PROJECT alone) is refused, asking for init --repo.
+// FUGARO_PROJECT alone) is refused, asking for update --repo.
 func TestCheckJobReadsGCPProject(t *testing.T) {
 	newCheckJob(t, checkFiles(), bitbucketYAML)
 	e, err := readJobEnv()
@@ -1042,7 +1042,7 @@ func TestCheckJobReadsGCPProject(t *testing.T) {
 	t.Setenv("FUGARO_GCP_PROJECT", "")
 	t.Setenv("FUGARO_PROJECT", "proj-1234") // the pre-M9a job
 	_, _, err = executeJob(t, "image", "check", "--job")
-	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "FUGARO_GCP_PROJECT") || !strings.Contains(err.Error(), "fugaro init --repo") {
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "FUGARO_GCP_PROJECT") || !strings.Contains(err.Error(), "fugaro update --repo") {
 		t.Fatalf("exit %d, %v", ExitCode(err), err)
 	}
 	t.Setenv("FUGARO_GCP_PROJECT", "proj-1234")
@@ -1096,7 +1096,7 @@ func TestLocalCheckResolvesSpec(t *testing.T) {
 // a base_images.base entry, so repoSpec's backfill branch could never fire
 // for a real fugaro.yaml again. That reasoning missed the migration
 // window: a daily check job whose own installed FUGARO_CHECK_SPEC
-// predates the 0.7.0 cut (its fugaro image refresh or init --repo has not
+// predates the 0.7.0 cut (its fugaro image refresh or update --repo has not
 // run there since the cut) still names a removed kind, not "base", so the
 // backfill is exactly how that job keeps resolving instead of refusing
 // outright. TestCheckJobBackfillsFromAPreCutLegacySpec below restores a
