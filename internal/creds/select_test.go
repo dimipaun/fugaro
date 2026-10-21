@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // now is the instant every selection test states, so nothing depends on the
@@ -28,6 +30,20 @@ type fakeStore struct {
 	rr      int64
 
 	updates int // how many times UpdateMark called its function
+
+	// placeErr is the failure SetPlacement answers with, so a test can state
+	// what a selection does when the decision it made cannot be recorded.
+	placeErr error
+
+	// fail makes one read method answer an error, keyed by the method's name
+	// ("Marks", "Leases", "Current", "RoundRobin"): the state a store cannot
+	// read is the case Select's fail-closed contract is about, and a fake that
+	// can never fail leaves every one of those branches unreachable in the
+	// suite (review finding). One entry per read, because a single fault would
+	// be reported by whichever read runs first and the other three returns
+	// would stay unproved: Marks, Leases and Current are all read before the
+	// decision, and RoundRobin only in a tie.
+	fail map[string]error
 }
 
 func newFakeStore() *fakeStore {
@@ -39,6 +55,25 @@ func newFakeStore() *fakeStore {
 }
 
 func key(r Run) string { return r.Slug + "\x00" + r.ID }
+
+// setFail makes one read method answer err, so a test can state the store a
+// caller cannot read rather than only the store that answers.
+func (f *fakeStore) setFail(method string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail == nil {
+		f.fail = map[string]error{}
+	}
+	f.fail[method] = err
+}
+
+// failed is the error this method was given, if any: read under the lock, so a
+// method's own body stays as short as it was.
+func (f *fakeStore) failed(method string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fail[method]
+}
 
 func (f *fakeStore) setMark(name string, m Mark) {
 	f.mu.Lock()
@@ -84,6 +119,12 @@ func (f *fakeStore) currentOf(r Run) (string, bool) {
 }
 
 func (f *fakeStore) Marks(context.Context) (map[string]Mark, error) {
+	// The error and NOT the map: a caller that ignores the error must not be
+	// handed the state anyway, which is what a real database cannot do either —
+	// an unreadable state is not an empty one.
+	if err := f.failed("Marks"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make(map[string]Mark, len(f.marks))
@@ -107,6 +148,9 @@ func (f *fakeStore) UpdateMark(_ context.Context, name string, fn func(prev Mark
 }
 
 func (f *fakeStore) Leases(context.Context, time.Time) ([]Lease, error) {
+	if err := f.failed("Leases"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]Lease, 0, len(f.leases))
@@ -123,6 +167,11 @@ func (f *fakeStore) Leases(context.Context, time.Time) ([]Lease, error) {
 func (f *fakeStore) SetPlacement(_ context.Context, r Run, name string, l Lease) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.placeErr != nil {
+		// Nothing is written: a placement the database refused is not half of
+		// one, which is the whole point of writing the two halves as one.
+		return f.placeErr
+	}
 	l.Slug, l.Run = r.Slug, r.ID
 	f.leases[key(r)] = l
 	f.current[key(r)] = name
@@ -130,6 +179,9 @@ func (f *fakeStore) SetPlacement(_ context.Context, r Run, name string, l Lease)
 }
 
 func (f *fakeStore) Current(_ context.Context, r Run) (string, bool, error) {
+	if err := f.failed("Current"); err != nil {
+		return "", false, err
+	}
 	n, ok := f.currentOf(r)
 	return n, ok, nil
 }
@@ -143,6 +195,12 @@ func (f *fakeStore) setRoundRobin(n int64) {
 }
 
 func (f *fakeStore) RoundRobin(context.Context) (int64, error) {
+	// Nothing is counted: a read the database refused did not advance the
+	// counter, and a caller that ignored the error must not be able to spread
+	// runs on the strength of a value that was never read.
+	if err := f.failed("RoundRobin"); err != nil {
+		return 0, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	used := f.rr
@@ -736,24 +794,39 @@ func TestWaitAnswersTheEarliestOfTheCandidates(t *testing.T) {
 	if at, ok := SlotFrees(leases, a1.Name, now, run, 2); !ok || !at.Equal(now.Add(5*time.Minute)) {
 		t.Fatalf("SlotFrees under a cap of two = %s, %v; want the earlier expiry", at, ok)
 	}
-	// The count the arithmetic is, at a number where one lapse is not enough
-	// and neither is two: Free asks for strictly FEWER than limit holders, so a
-	// cap of three under five holders is freed by the THIRD expiry (two holders
-	// left), not by the first or the second. SlotFrees' own comment had this
-	// pair as "two lapses" — one short of what the code does — and nothing
-	// pinned the count.
+	// The worked example in SlotFrees' own doc, asserted rather than only
+	// described: a cap of three with five holders waits for the THIRD lapse
+	// (holders - limit + 1), because five, four and three holders are all "not
+	// fewer than limit" and only the third lapse leaves two. The doc said "two
+	// lapses" until the reviews of C1.9, which is the error a reader would have
+	// reasoned from — a run told to come back at the second lapse returns to a
+	// credential that is still full — and a maintainer who made the code match
+	// that sentence would reintroduce m10 for every cap above two.
 	five := make([]Lease, 0, 5)
-	for i, until := range []time.Duration{60, 50, 40, 30, 20} {
-		five = append(five, Lease{Slug: run.Slug, Run: fmt.Sprintf("holder-%d", i), Credential: a1.Name, Until: now.Add(until * time.Minute)})
+	for i := 1; i <= 5; i++ {
+		five = append(five, Lease{Slug: run.Slug, Run: fmt.Sprintf("h%d", i), Credential: a1.Name, Until: now.Add(time.Duration(i) * time.Minute)})
 	}
-	if at, ok := SlotFrees(five, a1.Name, now, run, 3); !ok || !at.Equal(now.Add(40*time.Minute)) {
-		t.Fatalf("SlotFrees under a cap of three with five holders = %s, %v; want the third expiry, 40m", at, ok)
+	if at, ok := SlotFrees(five, a1.Name, now, run, 3); !ok || !at.Equal(now.Add(3*time.Minute)) {
+		t.Fatalf("SlotFrees under a cap of three with five holders = %s, %v; want the third expiry, 3m — the lapse after which fewer than three holders are left", at, ok)
 	}
-	// Four holders under the same cap need one lapse fewer, and the run asking
-	// is not one of them: asked as a sixth run, the four are all in its way.
-	four := five[1:]
-	if at, ok := SlotFrees(four, a1.Name, now, run, 3); !ok || !at.Equal(now.Add(30*time.Minute)) {
-		t.Fatalf("SlotFrees under a cap of three with four holders = %s, %v; want the second expiry, 30m", at, ok)
+	if at, ok := SlotFrees(five, a1.Name, now, run, 5); !ok || !at.Equal(now.Add(time.Minute)) {
+		t.Fatalf("SlotFrees under a cap of five with five holders = %s, %v; want the first expiry, 1m", at, ok)
+	}
+	// And the answer is the one Free agrees with, which is what makes it the
+	// lapse that matters: three holders are still live an instant before it, and
+	// the instant SlotFrees names is the first at which Free admits the run
+	// (Live is a strict After, so the lease ending at that instant is over).
+	if Free(five, a1.Name, now.Add(3*time.Minute-time.Second), run, 3) {
+		t.Error("Free admitted the run an instant before the lapse SlotFrees names, while three holders were still live")
+	}
+	if !Free(five, a1.Name, now.Add(3*time.Minute), run, 3) {
+		t.Error("Free refused the run at the lapse SlotFrees names, so the time it answers is not when the run may come back")
+	}
+	// The same arithmetic one holder short: four holders under a cap of three
+	// wait for the SECOND expiry (4 - 3 + 1), not the first — the first leaves
+	// three, and three is still "not fewer than limit".
+	if at, ok := SlotFrees(five[1:], a1.Name, now, run, 3); !ok || !at.Equal(now.Add(3*time.Minute)) {
+		t.Fatalf("SlotFrees under a cap of three with four holders = %s, %v; want the second expiry, 3m", at, ok)
 	}
 	// A lapsed lease is nobody's hold, and one run's own expired hold is not a
 	// wait either.
@@ -1102,6 +1175,260 @@ func TestARacingUsageLimitKeepsTheResetInTheAnswer(t *testing.T) {
 	}
 }
 
+// A second exhaustion opens a fresh window, through the API the service uses:
+// exhaust a shared token with no reset header, come back after the window it
+// opened, exhaust it again with no reset header, and the hold the answer carries
+// is the new window and not the remains of the old one.
+//
+// Review finding N1 at the selection level: `Exhaust`'s `m.Since = now` is what
+// makes the second exhaustion's date move, and with it gone the mark stayed
+// dated from the first exhaustion — whose window had closed — so the token was
+// worth a fifteen-minute backoff and nothing else, and D142's control (one
+// exhaustion costs the token the rest of its window) was silently gone.
+func TestASecondExhaustionHoldsTheTokenForAFreshWindow(t *testing.T) {
+	st := newFakeStore()
+	const window = 5 * time.Hour // DefaultBackoffCap, and so the default window
+
+	s := selector(st, Settings{})
+	if _, err := s.Exhausted(ctx, a1.Name, TierA, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	first := st.mark(a1.Name)
+	if !first.Since.Equal(now) || first.State != StateBackedOff {
+		t.Fatalf("the first exhaustion left %+v; want a backoff dated %s", first, now)
+	}
+
+	// The window passes and the token is exhausted a second time, with no reset
+	// header either time.
+	at := now.Add(window + time.Hour)
+	later := &Selector{Store: st, Settings: Settings{}, Now: func() time.Time { return at }}
+	if _, err := later.Exhausted(ctx, a1.Name, TierA, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if second := st.mark(a1.Name); !second.Since.Equal(at) {
+		t.Fatalf("the second exhaustion is dated %s; want %s: the window is measured from the exhaustion that opened it", second.Since, at)
+	}
+
+	// And the answer a selection gives is that window, not the backoff.
+	_, wait, err := later.Select(ctx, run, []Credential{a1})
+	var eu *ExhaustedUntil
+	if !errors.As(err, &eu) {
+		t.Fatalf("the selection after the second exhaustion = %v; want an ExhaustedUntil answer", err)
+	}
+	if wait != window || !eu.At.Equal(at.Add(window)) {
+		t.Fatalf("the answer = %s until %s; want the %s window the second exhaustion opened, until %s", wait, eu.At, window, at.Add(window))
+	}
+	// The backoff the second exhaustion also carries is not due for a probe yet
+	// — its wait is a doubling away — and it is not the hold either: the answer
+	// is the window, and the probe comes due when the wait lapses (C1.12).
+	if eu.Probe {
+		t.Fatal("a probe is reported due on a fresh backoff whose wait has not passed")
+	}
+}
+
+// A decision the store could not record is a failed selection, not a call: the
+// credential's placement (D154's stickiness and D142's slot, written as one) is
+// what the service answers a call from, and a selection that returned a
+// credential it could not place would send real work to a run whose state says
+// it is somewhere else — or nowhere.
+//
+// Review finding N2: both `take` call sites returned the error, and no test ever
+// made one fail, so either could be turned into "return the credential anyway"
+// without a red test.
+func TestAnUnrecordedPlacementFailsTheSelection(t *testing.T) {
+	refused := errors.New("the database refused the write")
+
+	// The cascade path: a new run, nothing placeable.
+	fresh := newFakeStore()
+	fresh.placeErr = refused
+	c, _, err := selector(fresh, noWindow()).Select(ctx, run, []Credential{a1})
+	if !errors.Is(err, refused) {
+		t.Fatalf("a selection whose placement was refused = %q, %v; want the store's error", c.Name, err)
+	}
+	if len(fresh.leases) != 0 || len(fresh.current) != 0 {
+		t.Fatalf("a refused placement wrote %d leases and %d placements", len(fresh.leases), len(fresh.current))
+	}
+
+	// The sticky path: a run already placed on the credential it keeps, whose
+	// refresh of its own lease is refused. It is a failed selection too — the
+	// run's hold has lapsed on paper and the call would go out on a slot it has
+	// lost (TestTheStickyPathRefreshesTheLease is the same path with the write
+	// landing).
+	stuck := newFakeStore()
+	stuck.setPlacement(run, a1.Name, Lease{Credential: a1.Name, Until: now.Add(time.Minute)})
+	stuck.placeErr = refused
+	c, _, err = selector(stuck, noWindow()).Select(ctx, run, []Credential{a1})
+	if !errors.Is(err, refused) {
+		t.Fatalf("a sticky selection whose lease refresh was refused = %q, %v; want the store's error", c.Name, err)
+	}
+	if l, _ := stuck.lease(run); !l.Until.Equal(now.Add(time.Minute)) {
+		t.Fatalf("a refused sticky placement left the lease %+v; want the one that was there", l)
+	}
+}
+
+// An unreadable state is not an empty one: every read a selection makes fails
+// the selection rather than being read as "no marks", "no leases", "no stickiness"
+// or "no counter". A selection that went on to answer a credential from a
+// state it could not read would spend a token the state may already have held —
+// and the cascade is the path every call the project makes takes, so the read
+// it happens on is the common one. Each of the four reads is pinned by one test
+// below, because the first read to fail is the only one whose returned error a
+// single fault would prove.
+func TestAnUnreadableMarkSetFailsTheSelection(t *testing.T) {
+	failed := errors.New("the database refused the read")
+	st := newFakeStore()
+	st.setMark(a1.Name, Mark{State: StateExhausted, Until: now.Add(time.Hour)})
+	st.setFail("Marks", failed)
+
+	// a1 is the only candidate and its own mark holds it, so a selection that
+	// ignored the error would have to see the mark to refuse it — and reading
+	// the empty set instead answers a1, which is the spend this return stops.
+	c, _, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
+	if !errors.Is(err, failed) {
+		t.Fatalf("a selection over an unreadable mark set = %q, %v; want the store's error", c.Name, err)
+	}
+	if len(st.leases) != 0 || len(st.current) != 0 {
+		t.Fatalf("a failed mark read wrote %d leases and %d placements", len(st.leases), len(st.current))
+	}
+}
+
+func TestAnUnreadableLeaseSetFailsTheSelection(t *testing.T) {
+	failed := errors.New("the database refused the read")
+	st := newFakeStore()
+	// Another run holds a1's only slot, so this run is only refused at all
+	// because the leases were read: an empty set in their place answers a1.
+	st.setLease(Run{Slug: run.Slug, ID: "other"}, Lease{Credential: a1.Name, Until: now.Add(time.Minute)})
+	st.setFail("Leases", failed)
+
+	_, _, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
+	if !errors.Is(err, failed) {
+		t.Fatalf("a selection over an unreadable lease set = %v; want the store's error", err)
+	}
+	if len(st.leases) != 1 || len(st.current) != 0 {
+		t.Fatalf("a failed lease read wrote %d leases and %d placements; want only the other run's hold", len(st.leases), len(st.current))
+	}
+}
+
+func TestAnUnreadablePlacementFailsTheSelection(t *testing.T) {
+	failed := errors.New("the database refused the read")
+	st := newFakeStore()
+	st.setFail("Current", failed)
+
+	c, _, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
+	if !errors.Is(err, failed) {
+		t.Fatalf("a selection over an unreadable placement = %q, %v; want the store's error", c.Name, err)
+	}
+	if len(st.leases) != 0 || len(st.current) != 0 {
+		t.Fatalf("a failed placement read wrote %d leases and %d placements", len(st.leases), len(st.current))
+	}
+}
+
+func TestAnUnreadableTieBreakCounterFailsTheSelection(t *testing.T) {
+	failed := errors.New("the database refused the read")
+	st := newFakeStore()
+	// No cap, so the two candidates stay tied and the selection has to read the
+	// counter — a fault here alone would never be reached.
+	set := noWindow()
+	set.ConcurrencyPerToken = ptr(0)
+	st.setFail("RoundRobin", failed)
+
+	c, _, err := selector(st, set).Select(ctx, run, []Credential{a1, a2})
+	if !errors.Is(err, failed) {
+		t.Fatalf("a tied selection over an unreadable counter = %q, %v; want the store's error", c.Name, err)
+	}
+	if st.rr != 0 {
+		t.Fatalf("a failed counter read advanced it to %d", st.rr)
+	}
+	if len(st.leases) != 0 || len(st.current) != 0 {
+		t.Fatalf("a failed counter read wrote %d leases and %d placements", len(st.leases), len(st.current))
+	}
+}
+
+// The probe handoff is a decision the MARK makes, and only a backed-off mark
+// whose wait has passed owes one (C1.12). An exhausted credential is answered
+// with a time, never with "probe it": a probe's success would otherwise be the
+// way around D142's window, and a caller that probes an exhausted token has
+// spent a call on the one credential the window exists to keep out of rotation.
+//
+// Review finding N2: needs was never asserted false for anything, so the flag
+// could be turned on for an exhausted mark with no red test.
+func TestAnExhaustedMarkIsNeverAskedForAProbe(t *testing.T) {
+	st := newFakeStore()
+	st.setMark(a1.Name, Mark{State: StateExhausted, Since: now.Add(-time.Minute), Until: now.Add(30 * time.Minute)})
+
+	// The control off, so the wait is the reset and nothing else: what is
+	// asserted here is the flag, not the time.
+	_, wait, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
+	var eu *ExhaustedUntil
+	if !errors.As(err, &eu) {
+		t.Fatalf("a selection against an exhausted token = %v; want an ExhaustedUntil answer", err)
+	}
+	if eu.Probe {
+		t.Fatal("an exhausted mark was handed off for a probe: its reset is a time, not a question (C1.12)")
+	}
+	if wait != 30*time.Minute {
+		t.Fatalf("the wait = %s; want the 30m reset", wait)
+	}
+
+	// The same under the default settings, where the window is what holds it:
+	// still a wait and not a probe.
+	_, _, err = selector(st, Settings{}).Select(ctx, run, []Credential{a1})
+	if !errors.As(err, &eu) || eu.Probe {
+		t.Fatalf("an exhausted mark under the window control answered probe=%v; want false", eu.Probe)
+	}
+
+	// A credential that is fine but held by another run waits for the lease,
+	// and that is not a probe either: the mark holds nothing at all.
+	held := newFakeStore()
+	held.setLease(Run{Slug: run.Slug, ID: "other"}, Lease{Credential: a2.Name, Until: now.Add(10 * time.Minute)})
+	_, wait, err = selector(held, Settings{}).Select(ctx, Run{Slug: run.Slug, ID: "r9"}, []Credential{a2})
+	if !errors.As(err, &eu) {
+		t.Fatalf("a selection against a credential held by another run = %v; want an ExhaustedUntil answer", err)
+	}
+	if eu.Probe {
+		t.Fatal("a credential whose mark holds nothing was handed off for a probe: only a backed-off wait is probed")
+	}
+	if wait != 10*time.Minute {
+		t.Fatalf("the wait = %s; want the lease's 10m", wait)
+	}
+}
+
+// The threshold a Settings never filled in is the policy's own 15 minutes, not
+// zero: with a zero threshold every wait is over it, so a run would fail over to
+// the paid key — or, under oauth-only, be told to wait — for a reset a minute
+// away, and the "wait for a credential that resets soon" rule would be dead in
+// the configuration every caller that forgets the member has.
+//
+// Review finding N2: withDefaults' `<= 0` was untested, so it could be a `< 0`
+// and no test went red.
+func TestAnUnsetThresholdIsThePolicyDefault(t *testing.T) {
+	if got := (Settings{}).withDefaults().WaitThreshold; got != projectpolicy.DefaultWaitThreshold {
+		t.Fatalf("an unset threshold defaulted to %s; want the policy's %s", got, projectpolicy.DefaultWaitThreshold)
+	}
+
+	st := newFakeStore()
+	st.setMark(a1.Name, Mark{State: StateExhausted, Since: now, Until: now.Add(time.Minute)})
+
+	// The member left at zero, which is every caller that does not fill it in,
+	// and the paid key on offer. The window is off, so the wait in play is the
+	// reset the response named: a minute, well inside any threshold, and the
+	// question is only whether an unset member counts as zero.
+	set := noWindow()
+	set.Fallback = Auto
+	_, wait, err := selector(st, set).Select(ctx, run, []Credential{a1, b1})
+	var eu *ExhaustedUntil
+	if !errors.As(err, &eu) {
+		t.Fatalf("a one-minute wait under a threshold nobody set = %v; want the run to wait", err)
+	}
+	if wait != time.Minute {
+		t.Fatalf("the wait = %s; want the minute's reset", wait)
+	}
+	// Nothing was spent: the run idles rather than moving to the paid key.
+	if len(st.leases) != 0 || len(st.current) != 0 {
+		t.Fatalf("a one-minute wait under an unset threshold took the paid key: %d leases, %d placements", len(st.leases), len(st.current))
+	}
+}
+
 // A hand-built negative concurrency cap fails closed wherever it is read. Free
 // has always refused it ("no room at all"), and the time answer must agree: the
 // credential is refused, so "usable now, wait 0" is not an answer to give — a
@@ -1230,5 +1557,152 @@ func TestTheStickyPathRefreshesTheLease(t *testing.T) {
 	}
 	if cur, _, err := st.Current(ctx, run); err != nil || cur != a1.Name {
 		t.Fatalf("the sticky selection left the run on %q, %v; want %q", cur, err, a1.Name)
+	}
+}
+
+// failStore is a Store that refuses one chosen call, so the selection's
+// fail-closed guards can be exercised: a call is never sent on a decision the
+// service could not read, or on one it could not record. Review finding N2 —
+// every guard on a store error was unreachable from the tests.
+type failStore struct {
+	*fakeStore
+	marksErr, leasesErr, currentErr, rrErr, placeErr error
+}
+
+func (f *failStore) Marks(ctx context.Context) (map[string]Mark, error) {
+	if f.marksErr != nil {
+		return nil, f.marksErr
+	}
+	return f.fakeStore.Marks(ctx)
+}
+
+func (f *failStore) Leases(ctx context.Context, now time.Time) ([]Lease, error) {
+	if f.leasesErr != nil {
+		return nil, f.leasesErr
+	}
+	return f.fakeStore.Leases(ctx, now)
+}
+
+func (f *failStore) Current(ctx context.Context, r Run) (string, bool, error) {
+	if f.currentErr != nil {
+		return "", false, f.currentErr
+	}
+	return f.fakeStore.Current(ctx, r)
+}
+
+func (f *failStore) RoundRobin(ctx context.Context) (int64, error) {
+	if f.rrErr != nil {
+		return 0, f.rrErr
+	}
+	return f.fakeStore.RoundRobin(ctx)
+}
+
+// SetPlacement both records the decision and, in the sticky path, is what
+// refreshes the lease: a store that refuses it must fail the selection rather
+// than hand the caller a credential it could not place.
+func (f *failStore) SetPlacement(ctx context.Context, r Run, name string, l Lease) error {
+	if f.placeErr != nil {
+		return f.placeErr
+	}
+	return f.fakeStore.SetPlacement(ctx, r, name, l)
+}
+
+func TestSelectFailsClosedWhenTheStoreRefuses(t *testing.T) {
+	boom := errors.New("the database refused")
+	// Two never-exhausted shared credentials tie on Since (both zero), so the
+	// cascade reaches the round-robin tie-break; a selection of either still has
+	// to record its decision.
+	for _, tc := range []struct {
+		name string
+		fail func(*failStore)
+	}{
+		{"marks", func(f *failStore) { f.marksErr = boom }},
+		{"leases", func(f *failStore) { f.leasesErr = boom }},
+		{"current", func(f *failStore) { f.currentErr = boom }},
+		{"round robin", func(f *failStore) { f.rrErr = boom }},
+		{"placement", func(f *failStore) { f.placeErr = boom }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := &failStore{fakeStore: newFakeStore()}
+			tc.fail(fs)
+			c, wait, err := selector(fs, noWindow()).Select(ctx, run, []Credential{a1, a2})
+			if err == nil {
+				t.Fatalf("a selection over a store that refused the %s call answered (%q, %s); want it refused", tc.name, c.Name, wait)
+			}
+			if !errors.Is(err, boom) {
+				t.Fatalf("the selection over a refused %s call = %v; want the store's error", tc.name, err)
+			}
+			if c.Name != "" || wait != 0 {
+				t.Fatalf("the refused %s selection carried (%q, %s); want nothing", tc.name, c.Name, wait)
+			}
+		})
+	}
+}
+
+// Select's fail-closed contract: a state that cannot be READ is not a state
+// that is EMPTY. Each of the three reads is a fact the answer is built on — the
+// marks say what is held, the leases say what is taken, the placement says what
+// the run is already on — and answering "nothing there" for a read that failed
+// is not a smaller answer, it is a different one: a credential the state says is
+// held is selected, and the call goes to a token the service has already been
+// told to leave alone.
+//
+// The seeded exhausted mark is what makes that difference visible rather than
+// only the shape of the error: with the state read as empty the only candidate
+// looks free, so a test that asserted "an error came back" would still pass on
+// a mutation that answered an empty map and then failed later for an unrelated
+// reason. Here the credential the state holds is the one the mutation selects.
+//
+// Mutation (read a failed Marks as map[string]Mark{}, a failed Leases as none,
+// or a failed Current as "not placed"): the corresponding case stops returning
+// the read's error.
+func TestSelectFailsClosedOnAStateItCannotRead(t *testing.T) {
+	for _, tc := range []struct{ name, method string }{
+		{"the marks cannot be read", "Marks"},
+		{"the leases cannot be read", "Leases"},
+		{"the run's placement cannot be read", "Current"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			// The only candidate is held (its reset is an hour out) and the run is
+			// placed on it, so every arm below is a read the answer needs.
+			st.setMark(a1.Name, Mark{State: StateExhausted, Since: now.Add(-time.Hour), Until: now.Add(time.Hour)})
+			st.setPlacement(run, a1.Name, Lease{Credential: a1.Name, Until: now.Add(time.Hour)})
+			boom := errors.New("the state is unreachable")
+			st.setFail(tc.method, boom)
+
+			c, wait, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
+			if !errors.Is(err, boom) {
+				t.Fatalf("Select with %s = %q, %v, %v; want the read's own error: an unreadable state is not an empty one (C1.10's state is the answer, not a cache of it)",
+					tc.method, c.Name, wait, err)
+			}
+			if c.Name != "" {
+				t.Errorf("Select returned %q alongside the error", c.Name)
+			}
+			if st.updates != 0 {
+				t.Errorf("a refused selection wrote to the store %d times", st.updates)
+			}
+		})
+	}
+}
+
+// Record refuses a nil change the way Mark does. The guard is not redundant
+// even though Mark has the same one: Record wraps f in a closure to carry the
+// settings, so the function Mark receives is never nil and its check cannot
+// fire — the nil call would land inside the store's compare-and-set callback as
+// a nil-pointer panic, one frame below the error a caller can act on.
+//
+// Mutation (drop the guard): the call panics instead of returning.
+func TestRecordRefusesANilChange(t *testing.T) {
+	st := newFakeStore()
+	_, err := selector(st, noWindow()).Record(ctx, a1.Name, nil)
+	if err == nil {
+		t.Fatal("Record with no change = nil error; want a refusal naming the credential")
+	}
+	if !strings.Contains(err.Error(), a1.Name) || !strings.Contains(err.Error(), "no change") {
+		t.Errorf("the refusal = %q; want it to name %q and say what was missing", err, a1.Name)
+	}
+	if st.updates != 0 {
+		t.Errorf("the refused record wrote to the store %d times", st.updates)
 	}
 }

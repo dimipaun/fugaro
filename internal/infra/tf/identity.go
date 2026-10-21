@@ -120,7 +120,7 @@ var removalInstanceAttributes = map[string]string{
 // (TestRemovalInstanceAttributesDecideEveryManagedType), so leaving a type out
 // is a decision rather than an omission.
 var removalNoInstanceAttribute = map[string]string{
-	"google_artifact_registry_repository_iam_member": "an IAM grant's whole state is the grant: the provider's id is the repository, the role and the member, it adds no output-only value of its own, and a grant re-created exactly as it was is the same grant",
+	"google_artifact_registry_repository_iam_member": "an IAM grant's whole state is the grant: the provider's id is the repository, the role and the member, and a grant re-created exactly as it was is the same grant. The one computed attribute these resources carry beside it does not tell them apart, and it is named here because a reader of this map will look for it: the policy's `etag`. It is the IAM POLICY's value and not the grant's own — it changes when any grant on that resource is written, by another member's entry or by this one applied again — so an entry bound to it would refuse a grant that was never replaced, and one re-created exactly as it was would carry a different etag and be refused for it (the review's nit on this map, which first said these types carry no output-only value at all)",
 	"google_cloud_run_v2_job_iam_member":             "an IAM grant's whole state is the grant (see google_artifact_registry_repository_iam_member)",
 	"google_cloud_scheduler_job":                     "the provider adds no output-only value to a scheduler job: its id is projects/P/locations/R/jobs/NAME, derived from name and region, and the one computed attribute it carries beside it (state, ENABLED or PAUSED) is configuration a re-creation need not change",
 	"google_project_service":                         "a service enablement has no instance: its id is PROJECT/SERVICE, the pair it enables, and enabling the same service in the same project again is that same fact rather than a new object",
@@ -361,7 +361,20 @@ const RemovalIdentityPrintMax = 8192
 // And it must be an identity this program can PRINT whole
 // (RemovalIdentityPrintMax): the printed text is the text an entry has to
 // hold, so a longer one is refused rather than cut.
+//
+// The type is part of that, and it is required rather than optional: the
+// printed identity is what `fugaro allow-delete` records, and that command
+// refuses any identity that does not begin with `type=` (internal/cli/allow_delete.go,
+// parseIdentity), so an identity without one is a text no entry can hold — the
+// refusal would print an approval its own fix cannot record, which is the loop
+// this identity exists to close. A plan's resource_changes entry always carries
+// a type (terraform 1.x writes one), so this is the fail-closed answer for a
+// hand-written plan rather than a case a provider produces, and it leaves the
+// refusal printing the reason instead of a pasteable-looking text (identityText).
 func (i RemovalIdentity) Identifies() bool {
+	if i.Type == "" {
+		return false
+	}
 	if attr := removalInstanceAttributes[i.Type]; attr != "" && i.Instance == "" {
 		return false
 	}
@@ -502,6 +515,9 @@ func Approves(entries []DeleteEntry, rc ResourceChange) (bool, string) {
 // parenthetical reads its type exactly as the identity beside it does, and
 // nothing the plan wrote reaches the line raw.
 func (i RemovalIdentity) notIdentified() string {
+	if i.Type == "" {
+		return "no resource type on the change, and every entry begins with the type it is about"
+	}
 	if attr := removalInstanceAttributes[i.Type]; attr != "" && i.Instance == "" {
 		return "the before view of a " + identityValue(i.Type) + " carries no " + attr + ", the value that tells one instance of the name from the next"
 	}

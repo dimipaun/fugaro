@@ -89,7 +89,8 @@ const (
 	// maxRunDays bounds the liveness scan. A run's identity lives until its
 	// fx, which token.validate holds to at most 30 days from the mint, so a
 	// run that is live now cannot have been launched more than 30 days ago
-	// (plus a day of day-number rounding). A run id claiming an older launch
+	// (plus a day of day-number rounding, and the scan's own extra day above
+	// today, so at most 34 reads). A run id claiming an older launch
 	// is refused rather than scanned: the scan is one database read per day,
 	// and an identity that could ask for thousands of them is not one this
 	// service admits.
@@ -550,8 +551,11 @@ func (a *Authenticator) verifyRun(ctx context.Context, tok string, now time.Time
 }
 
 // checkLive refuses a run whose write-once outcome exists on any day from its
-// launch day to today. It is not agents/<slug>/<run>: the rules let the run's
-// own token write there, so it is not evidence (W2).
+// launch day to the day after this service's today: the window is the
+// database's, whose clock may sit either side of this one, so both days an
+// outcome can be written on are read whatever the skew. It is not
+// agents/<slug>/<run>: the rules let the run's own token write there, so it is
+// not evidence (W2).
 func (a *Authenticator) checkLive(ctx context.Context, slug, run string, now time.Time) error {
 	launch, ok := runDay(run)
 	if !ok {
@@ -576,7 +580,16 @@ func (a *Authenticator) checkLive(ctx context.Context, slug, run string, now tim
 	if today-launch > maxRunDays {
 		return fmt.Errorf("%w: the run id names a launch older than any identity's fx can reach", ErrUnverified)
 	}
-	for day := today; day >= launch; day-- {
+	// The scan ends one day ABOVE today, not at it: the day an outcome is
+	// written under is the database's (the rules' todayExpr is the rules
+	// server's now), and the database's clock can be ahead of this service's
+	// just as it can be behind, so a run that ended moments before the
+	// database's midnight writes its outcome under a day this clock still calls
+	// tomorrow. A scan that stopped at today would admit that run (review nit).
+	// Reading the extra day can only find an outcome that is there — it is
+	// written once and never removed — so it can never admit a live run, the
+	// same argument that widens the window at the launch end above.
+	for day := today + 1; day >= launch; day-- {
 		exists, err := a.cfg.Outcomes.OutcomeExists(ctx, day, slug, run)
 		if err != nil {
 			return fmt.Errorf("%w: the run's outcome could not be read", ErrUnavailable)

@@ -174,9 +174,19 @@ Run it in your own terminal, as an operator, with your own credentials. Pass
 the entries to approve, and they replace the list: an invocation that leaves an
 entry out removes that approval, so the command names the entries it would drop
 and asks for the project's name before writing such a list. With no arguments
-the command prints the list — each entry in the same ADDRESS=IDENTITY form, so
-a line can be pasted back — and writes nothing; it never empties the list,
-because an empty list is what an absent one already means.
+the command prints the list — each entry in the same ADDRESS=IDENTITY form —
+and writes nothing; it never empties the list, because an empty list is what an
+absent one already means. A printed line is one you can paste back as far as its
+IDENTITY half goes: the command that recorded the entry escaped it, so the
+printers leave it alone and a line inside the listing's own bound carries it
+back byte for byte. The address half is the plan's own — not escaped here and
+not bounded here — so an address holding a tab, a run of spaces or a byte
+outside printable ASCII is printed as the printers rewrite it: that line is not
+the entry, and pasting it back records an entry about an address no plan has,
+which the plan refuses rather than deleting anything. A line longer than twice
+the identity's own bound is printed through the bounded sanitiser instead, cut
+and marked as cut: what you read there is visibly a text and not an entry. The
+entry itself is unchanged in the object either way.
 
 What the object is for: a run's own credentials cannot write it, and the
 deployer account a managed apply impersonates will not be able to (D75, Task
@@ -2913,7 +2923,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for validate |
 | `--json` | bool | `false` | no | print machine-readable output |
-| `--offline` | bool | `false` | no | never read the runs bucket: resolve against the cached project layer, if any |
+| `--offline` | bool | `false` | no | never read the runs bucket or the project's published policy: resolve against the cached project layer, if any; a cascade file is refused, not admitted unproven |
 | `--project-layer` | string | "" | no | resolve against this project layer file instead of the published one (also checks the file; for CI without bucket access, and before fugaro config publish) |
 
 Subcommands:

@@ -2417,10 +2417,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := o.requireCheckoutProject(ctx, dir); err != nil {
 		return err
 	}
-	root, cfg, err := loadCheckoutConfigAt(ctx, dir)
+	root, rf, err := loadCheckoutResolved(ctx, dir, nil, layerOptions{Lenient: true})
 	if err != nil {
 		return err
 	}
+	cfg := rf.Cfg
 	repo, err := checkoutRepo(ctx, root)
 	if err != nil {
 		return err
@@ -2451,6 +2452,15 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// there at bootstrap: refuse before any cloud effect (Task 4 step 2 of
 	// the price-catalog plan).
 	if err := r.gateCatalogSwitches(o, repo, lc); err != nil {
+		return err
+	}
+	// agent.auth: cascade is a fugaro.yaml value an older runner's config
+	// reader refuses outright, so the same kind of break, judged against the
+	// base image the job is built from (Task C1.1's skew constant). The gate
+	// is told which layer set the value (rf.Res), since a resolved cascade is
+	// not necessarily the repository's file asking for one: the subject of
+	// its messages names that layer, never a file that may not carry it.
+	if err := r.gateCascadeAuth(o, repo, lc, cfg, rf.Res.SourceOf("agent.auth")); err != nil {
 		return err
 	}
 	if !o.forget {
@@ -2787,6 +2797,33 @@ func (r *initRun) gateCatalogSwitches(o *initOptions, repo string, lc *localcfg.
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseCatalogSwitches(repo, lc, w)
+}
+
+// gateCascadeAuth is repoEngine's version gate for agent.auth: cascade
+// (Task C1.1's skew): refuseCascadeSkew, unless there is nothing to refuse it
+// for — --forget tears the repository down, and --plan-only shows the plan
+// without applying it (the same escape gateCatalogSwitches leaves).
+// --print-vars is judged like a deploy would be, since the values it prints
+// are the ones a deploy would use, and its warnings go to stderr so stdout
+// stays the Terraform variables alone.
+//
+// authSource is the layer the resolved auth came from
+// (config.Resolution.SourceOf("agent.auth")): the value is what the gate
+// judges, and where it came from is what its messages name, so a layer's
+// default is not reported as the repository's own line.
+func (r *initRun) gateCascadeAuth(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config, authSource string) error {
+	if o.forget || o.planOnly {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	auth := ""
+	if cfg != nil {
+		auth = cfg.Agent.Auth
+	}
+	return refuseCascadeSkew(repo, auth, authSource, lc.BaseImage(config.BaseKind), w)
 }
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates

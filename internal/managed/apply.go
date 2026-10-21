@@ -261,11 +261,12 @@ type RefusedError struct {
 // through it would be this program printing text of someone else's choosing —
 // in text the session that reads it acts on — and a value of any length would
 // push the rest out of sight. A rule's own words are rendered by refusalWhy and
-// not by Field: they are bounded already where the rule built them
-// (refusalWhyMax), and Field's own cut would fall inside the identity a removal
-// rule prints for its reader to approve, which is the one part of the line that
-// has to reach the terminal whole. The advice is this program's own and is
-// rendered as it is.
+// not by Field: the two gates that judge a change against the owner's delete
+// list are bounded already where the rule built them (refusalWhyMax), and
+// Field's own cut would fall inside the identity a removal rule prints for its
+// reader to approve, which is the one part of the line that has to reach the
+// terminal whole — every other gate's why is one Field, as it was. The advice
+// is this program's own and is rendered as it is.
 func (e *RefusedError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s, so nothing is applied (%d refusal(s))", ErrRefused, len(e.Verdict.Refusals))
@@ -284,7 +285,7 @@ func (e *RefusedError) Error() string {
 			b.WriteString(safetext.Field(r.Address))
 			b.WriteString(": ")
 		}
-		b.WriteString(refusalWhy(r.Why))
+		b.WriteString(refusalWhy(r.Why, printsRemovalIdentity(r.Gate)))
 	}
 	if len(e.Verdict.Refusals) == 0 {
 		b.WriteString(": the verdict refused and listed nothing, which is a refusal all the same")
@@ -627,13 +628,15 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 }
 
 // advice is the sentence a refusal ends with, when the mode has one: a
-// refused plan whose guard refused a delete or replace the owner's list would
-// admit if it named the address (Verdict.Listable) ends with DeleteAdvice,
-// since that is the one thing its reader can act on. Nothing else gets it: a
-// refusal from the cover or the cost list alone says what the plan is, not who
-// may approve it, and a guard refusal made only of what no list clears — an
-// object moved here from another address, an action the guard does not know,
-// a change with no actions — would send the owner to list an address and the
+// refused plan whose guard refused a delete or replace a new entry in the
+// owner's list would admit — one naming the address AND the identity of the
+// object the plan removes (Verdict.Listable, whose rule is tf.ListableEntries')
+// — ends with DeleteAdvice, since that is the one thing its reader can act on.
+// Nothing else gets it: a refusal from the cover or the cost list alone says
+// what the plan is, not who may approve it, and a guard refusal made only of
+// what no entry clears — an object moved here from another address, an action
+// the guard does not know, a change with no actions, a removal whose before
+// view identifies nothing — would send the owner to record an entry and the
 // next plan would be refused the same way. No advice rather than the wrong one.
 func (r Request) advice(v Verdict) string {
 	if len(v.Listable) == 0 {

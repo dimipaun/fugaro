@@ -681,9 +681,11 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	} else {
 		copyResponseHeaders(w.Header(), resp.Header, decoded)
 	}
-	if rt.provider != nil {
-		// Whatever else comes back from a provider is scrubbed of its key
-		// (it is the one in the request, read at request time).
+	if rt.provider != nil || s.o.Upstream.Kind == KindOAuth {
+		// Whatever else comes back is scrubbed of the credential that was
+		// sent: a provider's key, or the tier-A subscription token (which
+		// an error body may echo). The credential is the one in the
+		// request, read at request time.
 		key := keyFrom(up.Header)
 		redactHeaders(w.Header(), key)
 		rw = newRedactWriter(w, key)
@@ -851,6 +853,19 @@ func (s *Server) upstreamRequest(ctx context.Context, r *http.Request, rt route,
 		if _, err := rt.provider.attachCredential(up.Header); err != nil {
 			return nil, nil, err
 		}
+		return up, sent, nil
+	}
+	if s.o.Upstream.Kind == KindOAuth {
+		// Tier A (oauth.go): Check 90's header allow-list and the
+		// subscription credential, and nothing else. The invariant -- an
+		// OAuth token is only ever sent to Anthropic's own endpoint -- is
+		// checked inside oauthUpstream, in the one place the token is
+		// attached.
+		h, err := s.oauthUpstream(rt, r.Header)
+		if err != nil {
+			return nil, nil, err
+		}
+		up.Header = h
 		return up, sent, nil
 	}
 	up.Header = forwardHeaders(r.Header)
@@ -1125,11 +1140,27 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 	src, closeSrc, decoded, _ := decodeBody(resp)
 	defer closeSrc()
 	copyResponseHeaders(w.Header(), resp.Header, decoded)
+	var out io.Writer = w
+	var rw *redactWriter
+	if s.o.Upstream.Kind == KindOAuth {
+		// Tier A (oauth.go): a token count goes to Anthropic with the
+		// subscription credential too, and this path copies the answer
+		// through unread -- so an answer that echoes the credential is
+		// scrubbed here exactly as a messages call's is. Without this a
+		// count_tokens call would hand the token to the agent.
+		key := keyFrom(up.Header)
+		redactHeaders(w.Header(), key)
+		rw = newRedactWriter(w, key)
+		out = rw
+	}
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)
 	_ = rc.Flush()
 	var n int64
-	pump(w, rc, src, func(b []byte) { n += int64(len(b)) })
+	pump(out, rc, src, func(b []byte) { n += int64(len(b)) })
+	if rw != nil {
+		_ = rw.Close()
+	}
 	s.log.Info("token count", "stage", s.stageName(), "status", resp.StatusCode, "request_bytes", len(body), "response_bytes", n)
 }
 

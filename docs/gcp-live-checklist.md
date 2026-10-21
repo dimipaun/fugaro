@@ -343,6 +343,30 @@ renumbered for them. **All ten are owner-run and none has been run**: 81 at P2.3
 P2.3, 89 at P4.4. Until they are run, every live claim of the mobile app is unverified and each of the three
 rows stays **NOT RUN**.
 
+**Check 90 to 99 are the credentials service's**
+([docs/credentials-service/README.md](credentials-service/README.md), whose
+"Checks 90–99" row and whose plan's own "Check numbers this plan takes (90–99)"
+record the block the owner reserved for that work on 2026-10-17, D146 and D151).
+Task C0.3 of that plan writes each of **90** (the OAuth header swap, on the
+owner's own machine, no cloud and no installation) and **91** (Cloud Run
+streaming through a throwaway service on installation `fugaro`) as one script
+the owner runs — `scripts/live-checks/check90.sh` and `check91.sh`, each
+printing a `CHECK 90 RESULT` / `CHECK 91 RESULT` block to paste back — and Task
+C0.4 and Task C0.5 are the runs. **Check 90's row and its section are below,
+and they are the record of the owner's run of 2026-10-21: PASSED, TIER A
+VIABLE** (the run's own `FACT tier-a: PASS - VIABLE`), with one informational
+FAIL (`stream`) and no usage limit observed, so U3 stays open. They are a **run
+record** and not C0.3's own text — the check's steps and its script are that
+task's and stand on the branch whose head is draft PR #727, not in this tree —
+and when that text lands it goes **into that same row and that same section**:
+one number has one row and one section here, never two. **Check 91's row
+and its section are not in this file yet.** **92 and 94–99** belong to that
+plan's later tasks and are reserved here and unwritten; **93 is reserved and
+unused** (the declined in-runner cascade's end-to-end check, its subject gone
+with the owner's O1 ruling of 2026-10-17). The block is carved out of the
+website work's range exactly as the mobile work's 80–89 is, and **above 99 this
+work claims nothing**.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -510,6 +534,7 @@ probe account carries predefined grants only).
 | 81 | The deployed rules' fence (design `m9-budget-and-dashboard.md` §6.2 and §6.4; mobile plan Task P4.2a writes it, and P2.3 and P4.2 **run** it): the live half of P2.2's and P6.4's denial cases for the **signed-in user** — an account whose own uid has a device node (`config/admin/devices/<uid>`, D166, which **you** write over IAM because `fugaro pair` is P6.6 and is not built) and a token whose `mu` claim is its own uid makes **exactly two writes** (one message into its own `inbox/$msg`, carrying the `mac` and `kind` generation 3 requires; the `acked: true` once, on a message already in its own `outbox/$msg`) and reads **nothing beyond** the nodes D112's user-claim read grant sits at (`config/caps/{global,defaults,repos/$slug}`, `config/kill/{global,repos/$slug}`, `spend/$day/{global,repos/$slug,runs/$slug/$run}`, plus its own `outbox` and `heartbeat` — the grant sits on those nodes and cascades down only, so `spend/$day` and each of their parents is **not** readable); everything else is refused — another account's mailbox, a read of its own inbox, the outbox message and the heartbeat (the consumer's writes, **check 80's** half), a message with no `mac`, a second, `false` or parent-less ack, the parents of the granted nodes, the device allowlist (its own node included, which no client token may read), both pairing nodes, and every family the grant does not name (`config/limits/policyRules`, `config/mode`, `config/policy/**`, `agents/**`, `outcomes/**`, `runs/**`, `fugaro/**`) — an account with **no** device node is refused everything, its own mailbox included, and a token whose `mu` names another uid is admitted nowhere | See "Check 81" below; **you** run it, on installation `fugaro` (never `belong`), in project `fugaro-dev`, with two accounts you add by hand (D114) and custom tokens you mint yourself; every step re-runs the one guarded setup block, which reads the backend out of the project's own config (printing the project ids it found, never the key), and five nodes are seeded with your own IAM credentials (which bypass the rules and prove nothing about them): the three mailbox nodes it reads and acks, and the two device nodes. **No agent runs any step of it** | Four minted custom tokens exchanged for ID tokens (two in step 1, step 7's mismatch token and the residual's, which needs a second signer), five seeded nodes, and a set of reads and writes each of which must answer a permission denial; the tokens and the web API key are credentials and never appear in a `FACT` line or a pull request. **USER-RUN, NOT RUN.** |
 | 82 | The rules deploy and the marker (design `m9-budget-and-dashboard.md` §6.2 and §6.4; mobile plan Task P4.2a writes it, and P2.3 **runs** it): `fugaro init --firebase` puts this release's generated rules document on the database and records the generation the emulator cases and check 81's denial cases are written against — the two act lines in the order the plan prints them — `rules: deploys the security rules (<N> bytes, generated)` when the deployed document differs, and then, as the plan's **last** write, the marker line `config/limits/policyRules: records the rules generation (config/limits/policyRules = 3)` — followed by a second run that writes nothing (`The database already has the rules, mark, project name and mode.`), and by the marker node itself read back holding this release's `projectpolicy.RulesVersion` (3) over a document that `infra.SameJSON` calls `rules.Generate()`'s own output — the same JSON document, formatting ignored; the generated document is 58942 bytes — and that carries the `mailbox` subtree, the device allowlist and the pairing nodes; an installation still on an older generation (1 or 2) is moved to generation 3 by exactly this run, with `fugaro doctor`'s `policy-rules-skew` line as the before-state — and, if its accounts have no device node, every app read refused until they do (check 81 step 1 writes them by hand) | See "Check 82" below; **you** run it, on installation `fugaro` (never `belong`), `fugaro-dev`, at your own terminal, and **you** type the confirmation (a coding agent's session cannot). **No agent applies rules** | One rules deploy of about 58 KB and at most the marker write beside it, under the database step's own confirmation; the marker-above-this-binary refusal is **read, not provoked** (no hand-written marker on the dogfood installation). **USER-RUN, NOT RUN.** |
 | 89 | A signed EAS build, and the store's **internal** track (mobile plan Task P4.2a writes it, and P4.4 **runs** it; D120, C8): a build of the app at `mobile/` — its own artifact, outside the Go module (C2), at the commit whose tag it is versioned from (C6) — signed with **your** distribution credentials (EAS-managed or your own distribution certificate and upload key), and reaching the stores' internal testing tracks only; no public release is implied or made, and the submit track is read before anything is built — step 1's `jq` reads `submit.internal.android.track`, and a profile naming a public track is a stop you take there ("edit it and re-run"), not something the guard reads: the guard hard-stops on the build itself — without `mobile/eas.json` or `mobile/app.config.js` in the checkout (P4.4's), and without the store identity, which it resolves through `app.config.js` out of the two variables you export (the identity is **not** in `app.json` and never will be: the committed config carries no release identity, P3.1's boundary test, and the identity is yours). No agent runs `eas build` or `eas submit`, none touches a signing key, an App Store Connect API key or a Play service-account key, and no store credential enters an agent's environment | See "Check 89" below; **you** run it, at your own terminal, with your own Apple and Google accounts, your own signing keys and your own EAS project, from a clean checkout of the tagged commit; **no agent runs any step of it** (D120, Global Constraint 9). Its guard hard-stops today: P3.1's `mobile/app.json` and P4.4's `mobile/eas.json` and `mobile/app.config.js` are in the tree, so the file tests pass and the stop is the store identity itself — the two variables must be in your shell (or in the EAS project's environment the profile names, for the build job), and until they are, the guard stops before a build that could not reach any track | One build per platform and one submission per platform, on the internal tracks; the signing keys, the App Store Connect API key and the Play service-account key are yours, are never read by this check and are never pasted into a `FACT` line. **USER-RUN, NOT RUN.** |
+| 90 | The OAuth header swap (credentials-service plan Task C0.3 writes it and Task C0.4 **ran** it; D151, F21; **settles U1** and the timeout half of U4, and reaches U3 only if a usage limit can be observed): Claude Code's subscription traffic reaching Anthropic through a throwaway loopback proxy on **your own machine** — no cloud project, no installation, no `fugaro` command, never `belong` — which swaps the credential the client sent for your own `claude setup-token` value held in a `0600` file, and records which request headers have to pass through, that the token was **accepted by a live call**, what the client does when the answer is delayed by 90 seconds, and that the shell carried no routing variable and the swap was the only difference between the control and the swapped call | See "Check 90" below; **you** run it, at your own terminal, with your own token and your own machine's interpreter (Task C0.3's script is `scripts/live-checks/check90.sh`, which prints a `CHECK 90 RESULT` block of one `FACT` line per key; the section below records that run's facts **as the owner reported them**, states where their layout differs from the script's print, and is a run record rather than the check's own text, which is not in this tree, and **no agent runs any step of it** — not the script, not a proxy, not a `FACT` line). Check 91 is the Cloud Run half of the same pair, and it is **not run** | The run's own verdict: `FACT tier-a: PASS - VIABLE` — the swapped call succeeded where the control did, so **TIER A IS VIABLE** and Global Constraint 4's drop does not apply. `anthropic-version` is the one header that **must** pass through (dropping it failed the call) and 15 more were observed, of which the 7 named optional ones were dropped without failing. The client waited 93s for an answer delayed by 90s, in one attempt, and succeeded. **One informational FAIL**, `stream` (the client's own buffering, or an answer too short to tell). **No usage limit was observed or provoked**, so U3 stays open and the plan's 15-minute default back-off applies. The token file was `0600`, its value and length were never printed, and the restore removed it. **RUN 2026-10-21: PASSED — TIER A VIABLE.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -5616,3 +5641,177 @@ echo "Check 89 ready: $TAG at $SHA — $APP"
 - The builds are on your Expo account (and inside the internal tracks). TestFlight builds expire on Apple's own schedule; a Play internal-testing release can be halted or its rollout stopped from the console if you want the internal link dead.
 - **Nothing public was created, so there is no public release to withdraw** — that is C8's point, and if step 3's negative ever fails, the restore is the halt named there, recorded with what was exposed and for how long.
 - The signing credentials are yours and stay where they were (EAS's servers or your machine). No step here creates, rotates, exports or deletes one, and none is ever pasted.
+
+## Check 90: the OAuth header swap — one script you run (your own machine; no cloud, no installation, never `belong`; run by you; **RUN 2026-10-21: PASSED — TIER A VIABLE**, one informational FAIL, `stream`)
+
+**RUN 2026-10-21, exit 0 — TIER A IS VIABLE.** The owner ran Check 90 at head
+`77ff754f` — the commit Task C0.3's own text stood at, its script being
+`scripts/live-checks/check90.sh`, which is that work's and is not in this tree —
+on the owner's own machine, with the owner's own `claude setup-token` token.
+**No cloud project was touched, no installation was touched (`belong` least of
+all), no `fugaro` command ran, and no agent ran any step of it** — not the
+script, not the proxy, not a `FACT` line. The facts below are the run's, as the
+owner reported them; their layout is the paste's, not the script's own print,
+and the paragraph after the block states the difference.
+
+**This section is a run record, and the check's own text is not in this tree.**
+The register's other `## Check N` sections state exactly what the owner types,
+step by step, because each of them **is** the check's own text. This one is not:
+Task C0.3's text for Check 90 — its register row and section as written,
+`scripts/live-checks/check90.sh` and
+`docs/credentials-service/check90-steps.md` — stands on the branch whose head is
+draft **PR #727**, so this tree holds the **record of the run** and carries no
+step of the check itself. Nothing here tells the owner what to type, and a
+reader looking for that finds it on that branch, not in this file.
+
+**One number, one row, one section.** When Task C0.3's text lands here, its row
+and its section are **this** row and **this** section: the steps, the proxy
+program and the `check90-steps.md` reference are added under this heading, the
+run's facts stay as recorded below them, and the row above keeps **RUN
+2026-10-21: PASSED — TIER A VIABLE**. A merge that would leave two `| 90 |` rows
+or two `## Check 90:` sections is resolved that way — one row and one section,
+carrying the steps **and** this run — and #727's own `NOT RUN` wording is what
+gives way, because the run has happened.
+[docs/credentials-service/implementation-plan.md](credentials-service/implementation-plan.md)'s
+C0.3 and its check-numbers rule say the same.
+
+**The question, and why the run is the gate.** Tier A is the design in which
+Claude Code's subscription traffic reaches Anthropic through a proxy that
+attaches the **proxy's own** credential in place of the client's — the
+mechanism [credentials-service/](credentials-service/README.md) rests on (F21,
+D151) and the one that plan's C1.7 is written against. Whether it works at all
+was **U1**, that work's first unverified item, and it is why Slice 0 runs
+before any product code: if a swapped call did not succeed, C1.7 and the TIER A
+parts of C1.11 and C1.12 would be **dropped** (the plan's Global Constraint 4)
+and that work would have been written for nothing. **The swapped call succeeded
+where the control did**, so the plan's own verdict line is the register's
+verdict: **TIER A IS VIABLE**, and Global Constraint 4's drop does not apply.
+
+**The run's facts, as the owner reported them:**
+
+```
+FACT claude-version: PASS - 2.1.305 (Claude Code)
+FACT env-cleared: PASS - no ANTHROPIC_*/proxy/vertex/bedrock variable set in the shell
+FACT managed-settings-dir: PASS - no /etc/claude-code on this machine
+FACT settings-routing: PASS - no settings file read sets apiKeyHelper or a routing env key (2 files read)
+FACT token-file: PASS - 0600 file in the scratch dir; value and length never printed
+FACT token-validity: PASS - the token was ACCEPTED by a live call at 2026-10-21T02:42:06Z
+FACT control: PASS - the call succeeded with the setup-token and no proxy
+FACT observed-control: PASS - the client sent the credential this check swaps (credential-header: authorization)
+FACT swap: PASS - the call succeeded with the proxy's own credential attached (3s; the proxy saw 1 request and answered 200)
+FACT swap-credential-header: PASS - credential-header: authorization
+FACT stream: FAIL - completed, but all 20 lines arrived within 0s: this client buffers, or the answer was too short to tell
+FACT headers-observed: PASS - accept anthropic-beta anthropic-dangerous-direct-browser-access anthropic-version content-type user-agent x-app x-claude-code-session-id x-stainless-arch x-stainless-lang x-stainless-os x-stainless-package-version x-stainless-retry-count x-stainless-runtime x-stainless-runtime-version x-stainless-timeout
+FACT headers-required: PASS - anthropic-version
+FACT headers-optional: PASS - accept anthropic-beta anthropic-dangerous-direct-browser-access content-type user-agent x-app x-claude-code-session-id
+FACT usage-limit: PASS - none observed; none was provoked; U3 stays open and the plan's 15-minute default back-off applies
+FACT timeout-retry: PASS - the client waited 93s for an answer delayed by 90s, in 1 attempt(s), and succeeded
+FACT restore: PASS - proxy stopped, token file removed, scratch directory gone
+FACT tier-a: PASS - VIABLE - the swap call succeeded where the control did
+FACT xtrace: PASS - this shell is not tracing
+FACT header-drop-accept: PASS (optional); header-drop-anthropic-beta: PASS (optional); header-drop-anthropic-dangerous-direct-browser-access: PASS (optional); header-drop-anthropic-version: FAIL - the call failed when it was dropped, so it MUST pass through; header-drop-content-type: PASS (optional); header-drop-user-agent: PASS (optional); header-drop-x-app: PASS (optional); header-drop-x-claude-code-session-id: PASS (optional); header-drop-skipped: PASS - more than 8 optional headers were seen; the rest were not dropped (CHECK90_MAX_DROPS)
+```
+
+**The format this record is in, and where it differs from the script's own
+print.** Task C0.3's script prints the run as a `CHECK 90 RESULT` block: the line
+`CHECK 90 RESULT`, then **one line per key** — `FACT <key>: <verdict> — <detail>`,
+with an em dash — then one line of the same shape for each further key the run
+recorded (the drops, **one line per header**), and `CHECK 90 RESULT END (exit N)`
+at the end. The facts above are that block's, key for key and verdict for
+verdict, and they are recorded **as the owner reported them** rather than as the
+script printed them: this paste separates with ` - `, its nine `header-drop-*`
+facts — the eight drops and the `CHECK90_MAX_DROPS` note, which the script prints
+one per line — sit on the single line above, and the `CHECK 90 RESULT` header and
+footer lines are not repeated because **the exit status they carry is recorded
+in this section's opening paragraph** (`RUN 2026-10-21, exit 0`). **The wording of a detail is the paste's, not the
+script's**: a reader who compares a detail above with the script's own text (on
+#727's branch, since the script is not in this tree) will find the script's
+wording there. **The keys, the verdicts and the numbers above are the run's** —
+`2.1.305`, the `PASS` on `tier-a`, the `FAIL` on `stream` and on
+`header-drop-anthropic-version`, `93s` for a 90s delay in `1` attempt, the 16
+observed header names. This register does not show the script's raw output beside
+the paste, because the script is not in this tree: the paste is the record, and
+it is the owner's account of what that run printed.
+
+**What the block settles, and what it leaves open.**
+
+- **`tier-a` / `control` / `observed-control` / `swap` / `swap-credential-header`**
+  — the client sent the credential this check swaps (`authorization`), the
+  control call succeeded with the setup-token and no proxy, and the **swapped**
+  call succeeded with the proxy's own credential attached (3s; the proxy saw 1
+  request and answered 200). The swap is what the service does; **U1 is
+  settled**.
+- **`headers-required`: `anthropic-version`** — the one header that **must**
+  pass through. `header-drop-anthropic-version: FAIL` records that the call
+  failed when it was dropped; a proxy that rewrites a request must not drop it.
+  This line is what C1.7's header list is written against.
+- **`headers-optional`** — `accept`, `anthropic-beta`,
+  `anthropic-dangerous-direct-browser-access`, `content-type`, `user-agent`,
+  `x-app`, `x-claude-code-session-id`: each was dropped in turn and the call
+  still succeeded. `headers-observed` lists **16** names; the 7 optional ones
+  above plus `anthropic-version` are the 8 dropped, and `header-drop-skipped`
+  records that more than 8 optional headers were seen — so the eight
+  `x-stainless-*` names were **not** dropped, and their optionality is
+  **unmeasured, not established**.
+- **`token-validity`** — the token was **accepted by a live call** at
+  2026-10-21T02:42:06Z. The check records acceptance and nothing else about the
+  token: **it does not record the token's expiry**, which stays Anthropic's own
+  documentation and what `claude setup-token` printed (**U2** is recorded as
+  acceptance, not as a lifetime — the plan's C0.3 bullet and its check-numbers
+  entry first asked for the stated expiry and are amended on 2026-10-21, because
+  the script deliberately never asks for `claude setup-token`'s second line:
+  [credentials-service/reconciliation.md](credentials-service/reconciliation.md)
+  §5). `token-file` records the file was `0600` and
+  that neither the value nor its length was printed.
+- **`timeout-retry`** — the client waited **93s** for an answer the proxy
+  delayed by 90s, in **1** attempt, and succeeded. That is the timeout-and-retry
+  half of **U4**; the half that is what Claude Code itself *prints* when it
+  meets a usage or rate limit is **not** recorded, because none was met.
+- **`usage-limit`: none observed, and none provoked.** **U3 stays open**, and
+  the plan's 15-minute default back-off applies until a limit is seen on the
+  wire.
+- **`env-cleared` / `managed-settings-dir` / `settings-routing` / `xtrace`** —
+  no `ANTHROPIC_*`, proxy, Vertex or Bedrock variable was set in the shell, no
+  `/etc/claude-code` managed settings directory existed on the machine, no
+  settings file read set `apiKeyHelper` or a routing key (2 files were read),
+  and the shell was not tracing. That is what makes the run evidence about the
+  **swap** rather than about the machine.
+- **`restore`** — proxy stopped, token file removed, scratch directory gone.
+  Nothing here creates, rotates, exports or deletes a credential, and no value
+  from the run appears in a `FACT` line, in this register or in a pull request.
+
+**The one FAIL, and its meaning.** `FACT stream: FAIL - completed, but all 20
+lines arrived within 0s: this client buffers, or the answer was too short to
+tell`. **It is informational, and it is not a finding about the swap.** The step
+asks whether the client consumes the answer incrementally while the proxy
+relays it; all 20 lines arriving within 0s says the arrival times could not be
+separated — either this client buffers the whole answer before printing it, or
+the answer was too short for the difference to show. The call itself completed,
+so the header contract, the swap and Tier A are unaffected. It is also **not**
+evidence about streaming through the service: that is **Check 91's** question
+(Cloud Run streaming, SSE through a real service), and the plan's C1.8 must not
+read this line either way.
+
+**Operator note — the first attempt failed for an environment reason, not the
+swap.** A first attempt on the same machine stopped at step 2 because that
+Mac's Python was a **python.org build, which carries no CA certificates**: the
+check's own HTTPS read could not verify the certificate it was given. The
+remedy is the interpreter's trust store, not the check — export
+`SSL_CERT_FILE=/etc/ssl/cert.pem` (the system bundle) before running the script,
+or run it with an interpreter that uses that bundle — and the run recorded above
+is the same machine's second attempt with it. **Nothing about the swap, the
+header list or Tier A follows from the first attempt**, and a python.org
+interpreter without `SSL_CERT_FILE` set will stop at the same step again.
+
+**Passes when:** `FACT tier-a: PASS - VIABLE` — the swapped call succeeds where
+the control does, `anthropic-version` is passed through, and the environment
+carries no routing variable. **Fails when:** the swapped call fails while the
+control succeeds (Global Constraint 4's drop — a finding about the design, not
+about the machine), or the environment is not clear: a routing variable, a
+managed settings directory, or a settings file that sets `apiKeyHelper` makes
+the run say nothing about the swap.
+
+**Restore.** The script's own: proxy stopped, token file removed, scratch
+directory gone (`FACT restore: PASS`). Nothing in this check touches an
+installation, a cloud project or a credential of yours, and nothing it prints
+is a secret.
