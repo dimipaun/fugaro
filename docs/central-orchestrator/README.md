@@ -91,7 +91,10 @@ work rather than to whoever answers first (`docs/design/desktop-console-v2.md`).
 - [docs/coordinator/](../coordinator/README.md) — the sibling document set, and the register
   of every D-block and check range. The coordinator is *"advisory, not authoritative … It
   never blocks or reorders merges"*, and unbuilt; the spec's *"every orchestrator … reports to
-  the coordinator"* therefore describes a path with no reader (§3 #51, **D14**).
+  the coordinator"* therefore describes a path with no reader (§3 #51, **D14**). **Added
+  2026-10-21:** the coordinator is **not** a role this work's service plays — the owner answered
+  that work's D196 **(B)**, so it gets **its own** resident service and every orchestrator,
+  this one included, reaches it **as a client**; this plan's P4/P5 no longer block it.
 - [docs/design/v1.md](../design/v1.md) §2 — the non-goal the spec's *"carries PRs through to
   merge"* contradicts: *"Auto-merge. Fugaro never merges."* (§3 #22, **D18**).
 - [SECURITY.md](../../SECURITY.md) — the trust assumptions every credential question here
