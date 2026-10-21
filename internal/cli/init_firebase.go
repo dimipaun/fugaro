@@ -23,7 +23,7 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
-// printVarsUngatedFirebase is update --firebase --print-vars's warning.
+// printVarsUngatedFirebase is update --firebase-project --print-vars's warning.
 const printVarsUngatedFirebase = "--print-vars is ungated and makes no cloud call, so the Firebase root's admins list holds only --budget-admin and the local config's terraform.budget_admins: the GCP project's owners and editors are read from its IAM policy when the converge runs, and the Firebase project is not checked"
 
 // firebaseVars is the installation's and the Firebase root's tfvars as one
@@ -71,7 +71,7 @@ func (r *initRun) historyJob(ctx context.Context, c *infra.Clients, lc *localcfg
 		h.DeployJob = ok
 		if !ok && !r.historyNoted {
 			r.historyNoted = true
-			r.warn(fmt.Sprintf("the history job (the sweeper of crashed runs) is not deployed, so crashed runs are not cleaned up and old run users are not deleted: its image %s does not exist, and nothing builds it for you (like the dev base image until M7). From a checkout of this repository run\n  sh images/build-base.sh history %s\n  docker push %s\nthen run fugaro update --firebase again (gcloud auth configure-docker %s lets docker push there)", h.Image, h.Image, h.Image, strings.SplitN(h.Image, "/", 2)[0]))
+			r.warn(fmt.Sprintf("the history job (the sweeper of crashed runs) is not deployed, so crashed runs are not cleaned up and old run users are not deleted: its image %s does not exist, and nothing builds it for you (like the dev base image until M7). From a checkout of this repository run\n  sh images/build-base.sh history %s\n  docker push %s\nthen run fugaro update --firebase-project again (gcloud auth configure-docker %s lets docker push there)", h.Image, h.Image, h.Image, strings.SplitN(h.Image, "/", 2)[0]))
 		}
 	}
 	spec.History = &h
@@ -115,7 +115,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 	return true, false, nil
 }
 
-// initFirebase is fugaro update --firebase <fp>: it adopts the project's own
+// initFirebase is fugaro update --firebase-project <fp>: it adopts the project's own
 // Firebase project and builds the budget backend in it.
 //
 //  0. checks, before anything is applied: the Firebase project exists, is
@@ -142,7 +142,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 		return userErr("--budget-mode enforce needs budget.per_run_usd in the project config (more than 0): it is the per-run cap the jobs enforce")
 	}
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" && lc.Budget.FirebaseProject != fp {
-		return userErr("project %s already uses Firebase project %s (budget.firebase_project); one Fugaro project has one Firebase project (design D3, which may be the installation's own GCP project), so --firebase %s is refused", lc.Name, lc.Budget.FirebaseProject, fp)
+		return userErr("project %s already uses Firebase project %s (budget.firebase_project); one Fugaro project has one Firebase project (design D3, which may be the installation's own GCP project), so --firebase-project %s is refused", lc.Name, lc.Budget.FirebaseProject, fp)
 	}
 
 	// 0. Discovery.
@@ -346,7 +346,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 		return err
 	}
 	if lc.BudgetMode() == localcfg.BudgetOff && mode == "" {
-		r.warn("budget.mode is off in the project config, so jobs don't use the backend yet: fugaro update --firebase " + fp + " --budget-mode observe turns it on (then fugaro update --repo for each repository)")
+		r.warn("budget.mode is off in the project config, so jobs don't use the backend yet: fugaro update --firebase-project " + fp + " --budget-mode observe turns it on (then fugaro update --repo for each repository)")
 	}
 
 	return nil
@@ -410,7 +410,7 @@ func adoptOrder(name string) int {
 	return 3
 }
 
-// firebaseHistory is update --firebase's last step, the installation root
+// firebaseHistory is update --firebase-project's last step, the installation root
 // again: it deploys the history job with the Firebase outputs once the
 // history image exists (the images stage, before it, mirrors that image).
 // It is the installation-2 stage's engine, split out of initFirebase so the
@@ -529,7 +529,7 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 func (r *initRun) confirmLocation() error {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, infra.FirestoreLocation)
 	if !canConfirmTyped(initflow.Typed, r.conditions()) {
-		lf := promptLeft(initflow.Firebase, "type "+infra.FirestoreLocation+" to confirm the Firestore database's permanent location when asked, after running", r.o.doorName(), "--firebase", quoteWord(r.o.firebase))
+		lf := promptLeft(initflow.Firebase, "type "+infra.FirestoreLocation+" to confirm the Firestore database's permanent location when asked, after running", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebase))
 		return &initflow.NeedsYouError{Left: lf}
 	}
 	fmt.Fprintf(r.w, "Type %s to create it there: ", infra.FirestoreLocation)

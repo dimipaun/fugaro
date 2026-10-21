@@ -51,12 +51,12 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		noMarker(t, r.gcs, initRunsBucket)
 	})
 
-	// (b) update --firebase: Firebase is added to a project that already
+	// (b) update --firebase-project: Firebase is added to a project that already
 	// exists, which this run did not create.
-	t.Run("update --firebase on an existing project", func(t *testing.T) {
+	t.Run("update --firebase-project on an existing project", func(t *testing.T) {
 		r := newFBRig(t)
 		r.markedRuns(t, initProjectName, initProject)
-		if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes"); err != nil {
+		if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 			t.Fatal(err)
 		}
 		noMarker(t, r.gcs, initRunsBucket)
@@ -238,7 +238,7 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 	// nothing. This is where D73's "adding Firebase is never what makes a
 	// project managed" is decided — the AddFirebase branch of the same stage
 	// that creates — so it is pinned here and not only through init
-	// --firebase (b), a different stage. The bucket is the project's own,
+	// --firebase-project (b), a different stage. The bucket is the project's own,
 	// seeded and numbered as (c) seeds it, so a mutation that marks the
 	// project on adding Firebase really writes.
 	t.Run("--create-project adding Firebase to an existing project", func(t *testing.T) {
@@ -273,11 +273,11 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		noMarker(t, r.gcs, bucket)
 	})
 
-	// (c'') --create-project with --firebase set to the same project: the
+	// (c'') --create-project with --firebase-project set to the same project: the
 	// one-project layout the docs tell the owner to run ("One project or
 	// two: either is supported", docs/gcp-setup.md, and the live checklist's
 	// init step), where the Firebase backend lives in the project the run
-	// creates. It is a different path to the same fact: with --firebase the
+	// creates. It is a different path to the same fact: with --firebase-project the
 	// installation is the Firebase engine's first apply and the installation
 	// stage is skipped (init_stages.go, newInstallationStage), so the
 	// outputs markCreated reads — the runs bucket among them — are set by
@@ -292,7 +292,7 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		bucket := "fugaro-runs-" + newProj
 		out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n"+names(1)+"us-east5\n"+names(1),
 			"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
-			"--firebase", newProj, "--budget-mode", "observe")
+			"--firebase-project", newProj, "--budget-mode", "observe")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -380,7 +380,7 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 // createdFBRig is the rig of the one-project layout: the create rig (the
 // project, its billing and Firebase Management) with the Firebase engine's
 // own fakes on top, for `fugaro setup --create-project --gcp-project P
-// --firebase P`. The Firebase project is the one this run creates, so its
+// --firebase-project P`. The Firebase project is the one this run creates, so its
 // database, its admins and its billing exist as the run itself leaves them,
 // not as a rig seeds them.
 type createdFBRig struct {
@@ -840,7 +840,7 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		r.script["plan@installation"] = map[string]any{"exit": 0}
 		r.script["show@installation"] = map[string]any{"stdout": `{"format_version":"1.2","resource_changes":[]}`}
 		r.save(t)
-		_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes")
+		_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 		managedRefusal(t, err, addr, true)
 		if len(r.applies(t)) != 0 {
 			t.Errorf("applied: %v", r.applies(t))

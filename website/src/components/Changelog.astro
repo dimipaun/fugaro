@@ -107,7 +107,7 @@ type Element = { kind: 'list'; items: string[] } | { kind: 'paragraph'; text: st
 
 /**
  * The text of a line, escaped for HTML. The release notes carry `<` in their own prose
- * (`fugaro init --firebase <firebase-project-id>`, `--repo <owner/name>`), which is text
+ * (`fugaro init --firebase-project <firebase-project-id>`, `--repo <owner/name>`), which is text
  * to a reader and must not become an element in the page.
  */
 function escapeHTML(text: string): string {

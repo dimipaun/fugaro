@@ -132,7 +132,7 @@ func (d *discovery) firebaseDB(spec FirebaseSpec) error {
 	case d.absent(err, serviceFirebaseDatabase):
 		return nil
 	case err != nil:
-		return fmt.Errorf("listing the Realtime Database instances of project %s (fugaro update --firebase needs firebasedatabase.instances.list there): %w", d.project, err)
+		return fmt.Errorf("listing the Realtime Database instances of project %s (fugaro update --firebase-project needs firebasedatabase.instances.list there): %w", d.project, err)
 	}
 	ok := false
 	for _, i := range found {
@@ -151,13 +151,13 @@ func (d *discovery) firebaseDB(spec FirebaseSpec) error {
 			d.refuse(fmt.Errorf("the Firebase project %s's default Realtime Database is %s (location %s, ID %s), not %s in %s: a default instance can neither move nor be renamed, and a project has only one, so this Firebase project cannot host Fugaro's backend as the module defines it; use another Firebase project",
 				d.project, i.Name, loc, id, wantID, firebaseDBRegion))
 		case i.State == "DISABLED":
-			d.refuse(fmt.Errorf("%s is DISABLED, not ACTIVE: re-enable it in the Firebase console (Realtime Database, the database's menu), then rerun fugaro update --firebase %s", where, d.project))
+			d.refuse(fmt.Errorf("%s is DISABLED, not ACTIVE: re-enable it in the Firebase console (Realtime Database, the database's menu), then rerun fugaro update --firebase-project %s", where, d.project))
 		case i.State == "DELETED":
-			d.refuse(fmt.Errorf("%s is DELETED, not ACTIVE: it is being deleted; wait until it is gone (the plan then creates it), then rerun fugaro update --firebase %s", where, d.project))
+			d.refuse(fmt.Errorf("%s is DELETED, not ACTIVE: it is being deleted; wait until it is gone (the plan then creates it), then rerun fugaro update --firebase-project %s", where, d.project))
 		case i.State != "ACTIVE":
-			d.refuse(fmt.Errorf("%s is %s, not ACTIVE: rerun fugaro update --firebase %s once it is ACTIVE", where, cmp.Or(i.State, "in no state"), d.project))
+			d.refuse(fmt.Errorf("%s is %s, not ACTIVE: rerun fugaro update --firebase-project %s once it is ACTIVE", where, cmp.Or(i.State, "in no state"), d.project))
 		case i.DatabaseUrl == "":
-			d.refuse(fmt.Errorf("%s has no database URL, so neither fugaro nor its runs could reach it; fugaro refuses to adopt it. Rerun fugaro update --firebase %s once the Firebase console shows its URL", where, d.project))
+			d.refuse(fmt.Errorf("%s has no database URL, so neither fugaro nor its runs could reach it; fugaro refuses to adopt it. Rerun fugaro update --firebase-project %s once the Firebase console shows its URL", where, d.project))
 		default:
 			ok = true
 		}
@@ -190,20 +190,20 @@ func (d *discovery) webKey(spec FirebaseSpec) error {
 	case d.absent(err, serviceAPIKeys):
 		return nil
 	case err != nil:
-		return fmt.Errorf("reading API key %s (fugaro update --firebase needs apikeys.keys.get there): %w", name, err)
+		return fmt.Errorf("reading API key %s (fugaro update --firebase-project needs apikeys.keys.get there): %w", name, err)
 	}
 	where := "API key " + name
 	switch {
 	case k.DisplayName != webKeyDisplayName:
 		d.refuse(&ForeignError{Resource: where, Found: "display name " + strconv.Quote(k.DisplayName), Want: "display name " + strconv.Quote(webKeyDisplayName)})
 	case k.DeleteTime != "":
-		d.refuse(fmt.Errorf("%s is deleted (since %s; a deleted key keeps its ID for 30 days), so it can be neither imported nor created: restore it with gcloud services api-keys undelete %s --project %s, then rerun fugaro update --firebase %s",
+		d.refuse(fmt.Errorf("%s is deleted (since %s; a deleted key keeps its ID for 30 days), so it can be neither imported nor created: restore it with gcloud services api-keys undelete %s --project %s, then rerun fugaro update --firebase-project %s",
 			where, k.DeleteTime, id, d.project, d.project))
 	case k.ServiceAccountEmail != "":
 		d.refuse(fmt.Errorf("%s is bound to service account %s, so it authenticates as that account; the web key is bound to none. fugaro refuses to adopt it", where, k.ServiceAccountEmail))
 	default:
 		if found, ok := webKeyRestrictions(k.Restrictions); !ok {
-			d.refuse(fmt.Errorf("%s has these restrictions: %s. The web key's are exactly API targets %s, with no methods and no browser, server, Android or iOS restriction. It may be in use by something else, so fugaro refuses to adopt and narrow it: if it is Fugaro's, set exactly those restrictions on it (Credentials in the Google Cloud console), then rerun fugaro update --firebase %s",
+			d.refuse(fmt.Errorf("%s has these restrictions: %s. The web key's are exactly API targets %s, with no methods and no browser, server, Android or iOS restriction. It may be in use by something else, so fugaro refuses to adopt and narrow it: if it is Fugaro's, set exactly those restrictions on it (Credentials in the Google Cloud console), then rerun fugaro update --firebase-project %s",
 				where, found, strings.Join(tf.APITargets(), " and "), d.project))
 			return nil
 		}
@@ -265,7 +265,7 @@ func (d *discovery) tokenSigner(spec FirebaseSpec) error {
 	case d.absent(err, serviceIAM):
 		return nil
 	case err != nil:
-		return fmt.Errorf("reading service account %s (fugaro update --firebase needs iam.serviceAccounts.get in project %s): %w", email, d.project, err)
+		return fmt.Errorf("reading service account %s (fugaro update --firebase-project needs iam.serviceAccounts.get in project %s): %w", email, d.project, err)
 	}
 	wantDesc := signerDescription(spec.FugaroProject)
 	if a.DisplayName != signerDisplayName || a.Description != wantDesc {
@@ -276,13 +276,13 @@ func (d *discovery) tokenSigner(spec FirebaseSpec) error {
 	}
 	refused := len(d.refusals)
 	if a.Disabled {
-		d.refuse(fmt.Errorf("token signer %s is disabled, so no run could sign in; fugaro refuses to adopt it. If it is Fugaro's, enable it (gcloud iam service-accounts enable %s --project %s), then rerun fugaro update --firebase %s",
+		d.refuse(fmt.Errorf("token signer %s is disabled, so no run could sign in; fugaro refuses to adopt it. If it is Fugaro's, enable it (gcloud iam service-accounts enable %s --project %s), then rerun fugaro update --firebase-project %s",
 			email, email, d.project, d.project))
 	}
 
 	keys, err := d.c.IAM.Projects.ServiceAccounts.Keys.List(name).KeyTypes("USER_MANAGED").Context(d.ctx).Do()
 	if err != nil {
-		return fmt.Errorf("listing the keys of service account %s (fugaro update --firebase needs iam.serviceAccountKeys.list in project %s): %w", email, d.project, err)
+		return fmt.Errorf("listing the keys of service account %s (fugaro update --firebase-project needs iam.serviceAccountKeys.list in project %s): %w", email, d.project, err)
 	}
 	var userKeys []string
 	for _, k := range keys.Keys {
@@ -294,7 +294,7 @@ func (d *discovery) tokenSigner(spec FirebaseSpec) error {
 	}
 	if len(userKeys) > 0 {
 		var b strings.Builder
-		fmt.Fprintf(&b, "token signer %s has %d user-managed key(s) (%s): whoever holds one signs run tokens without IAM, and Fugaro never creates one. fugaro refuses to adopt it. Delete them, then rerun fugaro update --firebase %s:", email, len(userKeys), strings.Join(userKeys, ", "), d.project)
+		fmt.Fprintf(&b, "token signer %s has %d user-managed key(s) (%s): whoever holds one signs run tokens without IAM, and Fugaro never creates one. fugaro refuses to adopt it. Delete them, then rerun fugaro update --firebase-project %s:", email, len(userKeys), strings.Join(userKeys, ", "), d.project)
 		for _, id := range userKeys {
 			fmt.Fprintf(&b, "\n  gcloud iam service-accounts keys delete %s --iam-account %s --project %s", shellWord(id), email, d.project)
 		}
@@ -303,7 +303,7 @@ func (d *discovery) tokenSigner(spec FirebaseSpec) error {
 
 	p, err := d.c.IAM.Projects.ServiceAccounts.GetIamPolicy(name).OptionsRequestedPolicyVersion(3).Context(d.ctx).Do()
 	if err != nil {
-		return fmt.Errorf("reading the IAM policy of service account %s (fugaro update --firebase needs iam.serviceAccounts.getIamPolicy in project %s): %w", email, d.project, err)
+		return fmt.Errorf("reading the IAM policy of service account %s (fugaro update --firebase-project needs iam.serviceAccounts.getIamPolicy in project %s): %w", email, d.project, err)
 	}
 	d.signerPolicy(spec, email, p)
 
@@ -421,7 +421,7 @@ func signerGrantMessage(sa, fp, role string, minter bool, gs []signerGrant) stri
 	} else {
 		b.WriteString("Each could act as the signer and mint run tokens.")
 	}
-	fmt.Fprintf(&b, " Remove them, then rerun fugaro update --firebase %s:\n", fp)
+	fmt.Fprintf(&b, " Remove them, then rerun fugaro update --firebase-project %s:\n", fp)
 	for _, g := range gs {
 		fmt.Fprintf(&b, "  gcloud iam service-accounts remove-iam-policy-binding %s --project %s --member=%s --role=%s", sa, fp, shellWord(g.member), shellWord(role))
 		if g.conditional {
@@ -490,7 +490,7 @@ func (d *discovery) minterRole(spec FirebaseSpec) error {
 	case d.absent(err, serviceIAM):
 		return nil
 	case err != nil:
-		return fmt.Errorf("reading custom role %s (fugaro update --firebase needs iam.roles.get in project %s): %w", name, d.project, err)
+		return fmt.Errorf("reading custom role %s (fugaro update --firebase-project needs iam.roles.get in project %s): %w", name, d.project, err)
 	}
 	want := tf.RolePermissions[MinterRoleID]
 	got := slices.Sorted(slices.Values(role.IncludedPermissions))
@@ -501,7 +501,7 @@ func (d *discovery) minterRole(spec FirebaseSpec) error {
 		// The plan's create undeletes it; a deleted role can't be imported.
 		d.im.Notes = append(d.im.Notes, fmt.Sprintf("custom role %s is deleted; the plan's create restores it", name))
 	case !slices.Equal(got, slices.Sorted(slices.Values(want))):
-		d.refuse(fmt.Errorf("custom role %s includes %s, not exactly %s: it is granted to people on the token signer, so a wider role makes each grant reach further. fugaro refuses to adopt it; if it is Fugaro's, set its permissions back (gcloud iam roles update %s --project %s --permissions=%s), then rerun fugaro update --firebase %s",
+		d.refuse(fmt.Errorf("custom role %s includes %s, not exactly %s: it is granted to people on the token signer, so a wider role makes each grant reach further. fugaro refuses to adopt it; if it is Fugaro's, set its permissions back (gcloud iam roles update %s --project %s --permissions=%s), then rerun fugaro update --firebase-project %s",
 			name, cmp.Or(strings.Join(got, ", "), "no permission"), strings.Join(want, ", "), id, d.project, strings.Join(want, ","), d.project))
 	default:
 		d.add(importMinterRole, "", "", id)

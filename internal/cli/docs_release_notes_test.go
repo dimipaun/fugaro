@@ -117,8 +117,8 @@ func TestReleaseNotesV090FollowsTheFormat(t *testing.T) {
 	// it a shared job keeps a runner that refuses the policy just published
 	// (the review of PR #660).
 	last := steps[len(steps)-1]
-	if !strings.Contains(last, "**Per installation") || !strings.Contains(last, "`fugaro init --firebase <gcp-project>`") {
-		t.Errorf("the operators' last step is %q: it must be the per-installation `fugaro init --firebase <gcp-project>` that moves the shared jobs onto the base image the image step pinned, since no image command touches them", last)
+	if !strings.Contains(last, "**Per installation") || !strings.Contains(last, "`fugaro init --firebase-project <gcp-project>`") {
+		t.Errorf("the operators' last step is %q: it must be the per-installation `fugaro init --firebase-project <gcp-project>` that moves the shared jobs onto the base image the image step pinned, since no image command touches them", last)
 	}
 	refresh := -1
 	for i, step := range steps {

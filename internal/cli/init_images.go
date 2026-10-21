@@ -25,7 +25,7 @@ import (
 // The images stage (stage 5, design m11-setup-and-skills.md §3.3) puts this
 // release's images where the installation can read them, as the person
 // running init: the history image is COPIED into the project's own registry
-// (with --firebase, which is what deploys its job), and each base kind that
+// (with --firebase-project, which is what deploys its job), and each base kind that
 // is asked for (--base) or that the checkout's fugaro.yaml names is PINNED
 // by digest through the project's remote (pull-through) repository, with
 // nothing copied (design registry-remote-repository.md §3.1-§3.2). The copy
@@ -191,7 +191,7 @@ type imagesStage struct {
 	// image refresh's workflows'): --base and the checkout's kinds are not
 	// added.
 	// Nil means the default kinds; non-nil but empty means NO base kinds.
-	// It limits base kinds only: the history image (--firebase) is unaffected.
+	// It limits base kinds only: the history image (--firebase-project) is unaffected.
 	// Kinds are de-duplicated and unknown ones (not in config.Bases) dropped.
 	only []string
 }
@@ -487,7 +487,7 @@ func (s *imagesStage) Check(ctx context.Context) (initflow.Status, error) {
 		// image-refresh.md's step 2); the notes say which kind and why.
 		return initflow.Status{State: initflow.Skipped, Detail: "No changes: " + strings.Join(notes, "; ")}, nil
 	case len(items) == 0:
-		return initflow.Status{State: initflow.Skipped, Detail: "no image to pin or copy: the history image goes with --firebase, a base image with --base KIND or a checkout whose fugaro.yaml names it"}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: "no image to pin or copy: the history image goes with --firebase-project, a base image with --base KIND or a checkout whose fugaro.yaml names it"}, nil
 	case releaseVersion() == "":
 		return initflow.Status{State: initflow.Skipped, Detail: "development build, no published images to pin or copy: build one from a checkout (sh images/build-base.sh <kind> <tag> and docker push <tag>), then fugaro update --base-image KIND=<tag>"}, nil
 	}
@@ -853,7 +853,7 @@ func (s *imagesStage) confirmReplace(pl []planned) error {
 	if !reachable {
 		args := []string{r.o.doorName()}
 		if r.o.firebase != "" {
-			args = append(args, "--firebase", quoteWord(r.o.firebase))
+			args = append(args, "--firebase-project", quoteWord(r.o.firebase))
 		}
 		for _, k := range kinds {
 			if k != "history" {
@@ -997,7 +997,7 @@ func (s *imagesStage) sourceLine(ctx context.Context) string {
 		parts = append(parts, fmt.Sprintf("the base image(s) %s are signature-verified at %s's -pinned tag and pinned by digest through the remote repository", strings.Join(verified, ", "), src))
 	}
 	// The copy clause belongs to a run that copies, exactly as applyDetail's
-	// does: a base-only run (fugaro update --base base, no --firebase) pins a
+	// does: a base-only run (fugaro update --base base, no --firebase-project) pins a
 	// base and copies nothing, so "every image copied is pinned with
 	// --expect-digest" would claim a copy that did not happen — and a copy
 	// is the only thing --expect-digest has anything to do with.

@@ -102,7 +102,7 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"job's environment was deployed with.\n\n" +
 			"Publishing refuses without the rules marker (config/limits/policyRules): a\n" +
 			"policy published before the rules are deployed is one the runs it bounds\n" +
-			"cannot read, so run fugaro update --firebase with a Fugaro that deploys them\n" +
+			"cannot read, so run fugaro update --firebase-project with a Fugaro that deploys them\n" +
 			"first. It also refuses a node written by a newer Fugaro.\n\n" +
 			"allow_repos is seeded from this machine's repos: map and from the shared\n" +
 			"config's repository list, and only when the node is absent or --seed-repos is\n" +
@@ -317,7 +317,7 @@ func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 		// deserves its own sentence: there is nothing to be older than, and a
 		// message naming a node that does not exist sends the operator
 		// looking for it.
-		return userErr("the deployed rules carry no policy marker at %s, so they predate the policy model: a policy published now is one the runs it bounds cannot read; re-run 'fugaro update --firebase' with fugaro >= %s first",
+		return userErr("the deployed rules carry no policy marker at %s, so they predate the policy model: a policy published now is one the runs it bounds cannot read; re-run 'fugaro update --firebase-project' with fugaro >= %s first",
 			projectpolicy.PathRulesMarker(), policySince)
 	}
 	var gen int
@@ -343,13 +343,13 @@ func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 // rulesSkewText is the one sentence for "the deployed rules are older than
 // the marker": the marker records this generation, and the *document* deployed
 // at .settings/rules is not the one this generation generates. `fugaro update
-// --firebase` redeploys over it (infra.DB.Plan compares the same way), and
+// --firebase-project` redeploys over it (infra.DB.Plan compares the same way), and
 // doctor's policy-rules-skew check prints the sentence (plan task 1.6 step 4's
 // fifth check), so the state reads the same whether the operator met it as a
 // report or in the deploy's own words. It is a plain sentence and not an
 // error, because doctor has no error to wrap it in.
 func rulesSkewText() string {
-	return fmt.Sprintf("the deployed rules are older than the marker %s: re-run 'fugaro update --firebase' with fugaro >= %s first; a policy published now is one the runs it bounds cannot read",
+	return fmt.Sprintf("the deployed rules are older than the marker %s: re-run 'fugaro update --firebase-project' with fugaro >= %s first; a policy published now is one the runs it bounds cannot read",
 		projectpolicy.PathRulesMarker(), policySince)
 }
 
@@ -378,7 +378,7 @@ func rulesSkewText() string {
 // nothing made (the review of PR #402 found the two texts disagreeing; this is
 // one text per state, shared by both readers).
 func rulesMarkerPrePolicyText(gen int) string {
-	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro reads a project policy under: this installation's rules predate the policy nodes, so no run reads a published policy and publishing one is refused; re-run 'fugaro update --firebase' with fugaro >= %s first, which deploys the rules a policy is read under and records generation %d in the marker",
+	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro reads a project policy under: this installation's rules predate the policy nodes, so no run reads a published policy and publishing one is refused; re-run 'fugaro update --firebase-project' with fugaro >= %s first, which deploys the rules a policy is read under and records generation %d in the marker",
 		projectpolicy.PathRulesMarker(), gen, projectpolicy.PolicyRulesVersion, policySince, projectpolicy.RulesVersion)
 }
 
@@ -391,7 +391,7 @@ func rulesMarkerPrePolicyText(gen int) string {
 // is this release's own document, whose mailbox the mobile app has no grant for
 // until the owner deploys it (mobile plan P2.3).
 func rulesMarkerOlderText(gen int) string {
-	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4), and binds that user claim to a device node (mobile plan P6.4, D166): a phone account with no %s/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one — nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand; re-run 'fugaro update --firebase' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4), and binds that user claim to a device node (mobile plan P6.4, D166): a phone account with no %s/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one — nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand; re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.PolicyRulesVersion, rules.PathDevices, projectpolicy.RulesVersion)
 }
 

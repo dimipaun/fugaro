@@ -85,8 +85,9 @@ type initOptions struct {
 	launchersChanged, operatorsChanged  bool
 	alertEmailChanged, baseImageChanged bool
 
-	// --firebase adopts the project's own Firebase project (its ID) and
-	// builds the budget backend in it; --budget-mode seeds the mode and
+	// --firebase-project names a separate Firebase project to build the budget
+	// backend in; empty means the installation's own GCP project, which is the
+	// default (firebaseProject, D7). --budget-mode seeds the mode and
 	// --budget-admin adds admins to the owners and editors.
 	firebase            string
 	budgetMode          string
@@ -251,6 +252,13 @@ type initCreation struct {
 // the caller holds. fugaro restore's child sets strictCreate and created on
 // them before the flags are parsed into the same value, and runs the setup
 // door.
+// retiredFirebaseFlag is the flag --firebase-project replaced (D7), written
+// once: the SetFlagErrorFunc below refuses that spelling by name, and the test
+// that pins the rename (init_firebase_test.go's TestOldFirebaseFlagIsGone)
+// reads it from here. A retired name that a sentence and a scan each spell out
+// separately is two names that drift.
+const retiredFirebaseFlag = "firebase"
+
 func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	o.door = d.name
 	cmd := &cobra.Command{
@@ -299,6 +307,17 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			return err
 		},
 	}
+	// --firebase is gone, not aliased (D2's reasoning applies to a flag too,
+	// D7): a script that still passes it gets a sentence naming the flag that
+	// replaced it instead of pflag's bare "unknown flag: --firebase", which
+	// says what changed but not what to type. Only that one spelling is
+	// answered; every other unknown flag keeps cobra's own error.
+	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		if strings.Contains(err.Error(), "unknown flag: --"+retiredFirebaseFlag) {
+			return userErr("--%s is --firebase-project now: pass it only to build the budget backend in a separate Firebase project, since it defaults to the installation's own --gcp-project (fugaro %s --help)", retiredFirebaseFlag, c.Name())
+		}
+		return err
+	})
 	addCloudFlags(cmd, &o.cloud)
 	f := cmd.Flags()
 	f.StringVar(&o.name, "name", "", "the project's name: for a project config "+d.name+" creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; adopting an installation defaults it to the installation's)")
@@ -318,9 +337,9 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.alertEmail, "alert-email", "", "where failed image checks and rebuilds are reported (default: the local config's)")
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
-	f.StringVar(&o.firebase, "firebase", "", "adopt this Firebase project (the one you created and linked to billing, or created with --create-project) and build the budget backend in it: three confirmed applies, the database's rules and mark, the Firestore history database (permanent us-east5 location, typed confirmation) and the config")
-	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe)")
-	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
+	f.StringVar(&o.firebase, "firebase-project", "", "build the budget backend in this Firebase project, when it is not the installation's own --gcp-project (it is, by default: this is the advanced flag for a separate Firebase project, one you created and linked to billing, or created with --create-project). The backend is three confirmed applies, the database's rules and mark, the Firestore history database (permanent us-east5 location, typed confirmation) and the config")
+	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe)")
+	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
 	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). An ID that exists and you can read is adopted; one held by someone else is refused. Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it")
 	f.StringVar(&o.displayName, "display-name", "", "with --create-project: the project's display name (default: its ID)")
 	f.StringVar(&o.parent, "parent", "", "with --create-project: organizations/<number> or folders/<number> to create the project under (default: no parent; an organization is never guessed)")
@@ -373,7 +392,7 @@ type initRun struct {
 	gcpProject, projectName string
 	res                     initResult
 
-	// update --firebase: the Firebase root's outputs once known (the history
+	// update --firebase-project: the Firebase root's outputs once known (the history
 	// job's environment), a change to the local config the run makes, the
 	// text appended to the installation apply's confirmation, and whether
 	// the history job's missing image has been said.
@@ -470,7 +489,7 @@ type initResult struct {
 	// Error is why a run refused before any stage ran (missing inputs, bad
 	// flags), so --json prints an object on every outcome.
 	Error string `json:"error,omitempty"`
-	// Firebase and RTDBURL are set by update --firebase.
+	// Firebase and RTDBURL are set by update --firebase-project.
 	Firebase string `json:"firebase_project,omitempty"`
 	RTDBURL  string `json:"rtdb_url,omitempty"`
 	// Anchor is set by update --anchor.
@@ -494,7 +513,7 @@ func runInit(r *initRun) error {
 		}
 	}
 	// --plan-only creates and changes nothing: --yes confirms nothing under
-	// it, in any path (the converge, --firebase, --repo, the embedded repo
+	// it, in any path (the converge, --firebase-project, --repo, the embedded repo
 	// engine). What a plan needs made first takes the typed confirmation.
 	if o.planOnly {
 		o.yes = false
@@ -572,7 +591,7 @@ func runInit(r *initRun) error {
 
 	e := &initEngine{r: r, lc: lc, spec: spec, path: path, old: old}
 	if !o.forget && !o.configOnly {
-		// The default and --firebase modes: the converge loop over the
+		// The default and --firebase-project modes: the converge loop over the
 		// engines (init_stages.go), whose own outcome records the creation
 		// fact before it prints the result (markCreated, called from
 		// outcome), whatever the loop's outcome — which the run still
@@ -611,7 +630,7 @@ func runInit(r *initRun) error {
 // and the one moment either step can run from.
 //
 // The fact is the project this run created, and nothing else (D73: adding
-// Firebase to an existing project is not creating one, so update --firebase
+// Firebase to an existing project is not creating one, so update --firebase-project
 // writes nothing). It has two halves since Task 3.0 — the object above, and
 // the fugaro_managed label on the GCP project itself — and they are written
 // here together because they are one fact about one creation: the read
@@ -938,6 +957,25 @@ func (o *initOptions) checkOnboardRepo() error {
 	return nil
 }
 
+// firebaseProject is the Firebase project this run works in: the one
+// --firebase-project names, and the run's own --gcp-project when it names none
+// (D7, "one project id for Google Cloud and Firebase by default"). A separate
+// Firebase project is the advanced flag's, and the run's own project is the
+// default path — which is what makes checkCreateProject's pairing rule (a
+// created project is its own Firebase project) the ordinary case instead of a
+// special one.
+//
+// It is the *id*, not the flag: an empty answer means the run has no Firebase
+// project to name, and whether the budget backend is in the run at all is
+// still the flag's own presence (init_stages.go's newFirebaseStage,
+// init_review.go's firebaseVerified), so a run that passes nothing applies no
+// backend. Every site that resolves the id — the flag's validation here, the
+// pairing rule, the Firebase engine and the commands it prints — reads it from
+// here, so the one default has one definition.
+func (o *initOptions) firebaseProject() string {
+	return cmp.Or(o.firebase, o.cloud.gcpProject)
+}
+
 // check refuses flag combinations that mean nothing.
 func (o *initOptions) check() error {
 	// The one feature this release cannot complete, refused first and before
@@ -1050,17 +1088,19 @@ func (o *initOptions) check() error {
 	}
 	if o.firebase == "" && (o.budgetMode != "" || o.budgetAdminsChanged) {
 		// Door-relative for the same reason as the --no-build refusal above:
-		// --firebase is both doors' flag (init_firebase.go's prompts already
-		// name the reader's door), so a setup user who passed --budget-mode is
-		// told to add it to the run they are in.
-		return userErr("--budget-mode and --budget-admin are for %s --firebase <firebase-project-id>", o.doorProgram())
+		// --firebase-project is both doors' flag (init_firebase.go's prompts
+		// already name the reader's door), so a setup user who passed
+		// --budget-mode is told to add it to the run they are in.
+		return userErr("--budget-mode and --budget-admin are for %s --firebase-project <firebase-project-id>", o.doorProgram())
 	}
-	if o.firebase != "" {
+	// fp is the Firebase project the run works in: --firebase-project when it
+	// is given, the run's own --gcp-project otherwise (firebaseProject, D7).
+	if fp := o.firebaseProject(); o.firebase != "" {
 		switch {
 		case o.forget || o.configOnly:
-			return userErr("--firebase builds the budget backend; it excludes --forget and --config-only")
-		case !infra.ValidProjectID(o.firebase):
-			return userErr("--firebase %q is not a project ID (6 to 30 of a-z, 0-9 and '-', starting with a letter)", o.firebase)
+			return userErr("--firebase-project builds the budget backend; it excludes --forget and --config-only")
+		case !infra.ValidProjectID(fp):
+			return userErr("--firebase-project %q is not a project ID (6 to 30 of a-z, 0-9 and '-', starting with a letter)", fp)
 		case o.budgetMode != "" && !slices.Contains([]string{"off", "observe", "enforce"}, o.budgetMode):
 			return userErr("--budget-mode %q must be off, observe or enforce", o.budgetMode)
 		}
@@ -1195,7 +1235,7 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 		opts.Operators = append([]string{}, o.operators...)
 	}
 	// The installation carries the history account (and, once it can, the
-	// sweeper's job) from the first --firebase on, and a plain fugaro update
+	// sweeper's job) from the first --firebase-project on, and a plain fugaro update
 	// keeps them while the config records the Firebase project.
 	opts.BudgetBackend = o.firebase != "" || lc.Terraform.BudgetBackend || (lc.Budget != nil && lc.Budget.FirebaseProject != "")
 	if o.budget > 0 {
@@ -1568,7 +1608,7 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 
 // installRoot is the installation root's discovery, plan, guard, confirmation
 // and apply, and its outputs. stop means the run ends here (--plan-only).
-// fugaro update --firebase runs it twice more, as the first and third of its
+// fugaro update --firebase-project runs it twice more, as the first and third of its
 // applies.
 func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec) (outs infra.InstallationOutputs, stop bool, err error) {
 	if spec, err = r.historyJob(ctx, c, lc, spec); err != nil {
@@ -2305,7 +2345,7 @@ func (o *initOptions) installationFlags() []string {
 		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--launcher": o.launchersChanged,
 		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": len(o.replaceImages) > 0, "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
-		"--firebase": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
+		"--firebase-project": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
 		"--create-project": o.createProject, "--managed": o.managed, "--display-name": o.displayName != "", "--parent": o.parent != "", "--link-billing": o.linkBilling != "",
 	}
 	var set []string

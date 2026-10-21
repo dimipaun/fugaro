@@ -268,7 +268,7 @@ func TestTheQuestionIsAskedOnlyWhereItCanBeActedOn(t *testing.T) {
 // project ID may not contain Google's restricted words (infra.ValidateNewProjectID),
 // which the prompt's own check accepts. Without this, "create" typed at a
 // terminal would reach Google with an ID Google refuses, or create a project
-// that is not the one --firebase names.
+// that is not the one --firebase-project names.
 func TestTheCreateAnswerIsHeldToTheFlagsChecks(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -281,9 +281,9 @@ func TestTheCreateAnswerIsHeldToTheFlagsChecks(t *testing.T) {
 			want: "google",
 		},
 		{
-			name: "--firebase names another project",
+			name: "--firebase-project names another project",
 			o:    &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}, firebase: "proj-9999"},
-			want: "--firebase",
+			want: "--firebase-project",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -111,7 +111,7 @@ func (r *initRun) runCovers() (bool, error) {
 func (r *initRun) declinedRun() error {
 	args := []string{r.o.doorName()}
 	if r.o.firebase != "" {
-		args = append(args, "--firebase", quoteWord(r.o.firebase))
+		args = append(args, "--firebase-project", quoteWord(r.o.firebase))
 	}
 	fmt.Fprintln(r.w, "not confirmed (the project's name was not typed at the review); nothing was applied")
 	return &initflow.NeedsYouError{Left: promptLeft(initflow.Installation, "type the project's name at the review to apply all of its steps", args...)}
@@ -226,7 +226,7 @@ func (e *initEngine) accessLists(ctx context.Context) []access {
 		return "from the local config"
 	}
 	out := []access{
-		{what: "launchers", members: e.spec.Launchers, source: src(o.launchersChanged), note: "launch runs; also mint run tokens when --firebase's token signer is applied"},
+		{what: "launchers", members: e.spec.Launchers, source: src(o.launchersChanged), note: "launch runs; also mint run tokens when --firebase-project's token signer is applied"},
 		{what: "operators", members: e.spec.Operators, source: src(o.operatorsChanged), note: "onboard repositories and submit builds"},
 	}
 	if o.firebase != "" || e.lc.Terraform.BudgetBackend {
