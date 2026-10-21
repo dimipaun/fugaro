@@ -2639,14 +2639,21 @@ func notAdmittedSentence(r string) string {
 // and these listings reach this sentence exactly for the names the config does
 // not know. The canonical form is the one that stands on its own.
 //
-// The name is bounded too, at safetext.FieldMax bytes (the alphabet is ASCII,
-// so bytes are characters): every other name these listings print is held to
-// that bound, and without it a run that wrote a long enough identifier-shaped
-// slug made the advisory line, and the command in it, as long as it chose. A
-// longer name gets no command, the same answer as any other name that is not a
-// repository identifier.
+// The name is bounded too, at projectpolicy.MaxPatternLen bytes (the alphabet
+// is ASCII, so bytes are characters) — the bound `repos add` applies to the
+// argument through ValidPattern, and not a bound of this package's own. It is
+// the tightest of the two that could be used here: safetext.FieldMax is 512,
+// so bounding at that let a hand-written 256-byte slug field be handed
+// 'fugaro project repos add github/acme/<300 bytes>', which exits with "the
+// pattern is N characters; at most 255 are allowed" — the same defect as the
+// provider-kind one above, and the property the test is named for. Every other
+// name these listings print is held to that bound as well, and without any
+// bound a run that wrote a long enough identifier-shaped slug made the advisory
+// line, and the command in it, as long as it chose. A longer name gets no
+// command, the same answer as any other name that is not a repository
+// identifier.
 func enrollableArg(name string) (string, bool) {
-	if len(name) > safetext.FieldMax {
+	if len(name) > projectpolicy.MaxPatternLen {
 		return "", false
 	}
 	segs := strings.Split(name, "/")

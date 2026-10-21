@@ -1152,6 +1152,37 @@ func TestProjectReposLsNeverAdvertisesACommandItWouldRefuse(t *testing.T) {
 	if !strings.Contains(line, "not admitted") || !strings.Contains(line, "not a repository name") {
 		t.Errorf("the entry for %q does not say the allow-list refuses it, nor that it is not an enrollable name:\n%s", notAProvider, line)
 	}
+
+	// The same defect one bound over: a hand-written slug field of 256 bytes is
+	// identifier-shaped and inside safetext.FieldMax, so a gate bounded at
+	// FieldMax printed `fugaro project repos add github/acme/<300 bytes>` —
+	// which `repos add` refuses with "the pattern is N characters; at most 255
+	// are allowed" (projectpolicy.MaxPatternLen, the bound the command applies
+	// and the one the gate is now held to). Nothing here is a wildcard or a
+	// provider problem: the ONLY thing wrong with this name is its length.
+	long := "github/acme/" + strings.Repeat("a", projectpolicy.MaxPatternLen-len("github/acme/")+1)
+	rec2 := budget.DayRecord{Repo: long, Slug: long, Date: budget.DayDate(budget.Day(f.now)),
+		Version: budget.DayRecordVersion, Final: true, SpentMicros: budget.Micros(1_000_000), Runs: 1}
+	f.fs.Set(budget.SpendCollection, budget.DayDate(budget.Day(f.now))+"_handwritten_long", rec2.ToFields())
+	out2, _, err := execute(t, "project", "repos", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out2)
+	}
+	_, seen2, ok2 := strings.Cut(out2, "repositories seen here")
+	if !ok2 {
+		t.Fatalf("the listing does not print the seen half:\n%s", out2)
+	}
+	longLine := listLine(t, seen2, long)
+	// The NAME, not the word "repos add": the refusal sentence these lines
+	// carry ends with a generic 'fugaro project repos add provider/owner/name'
+	// whatever the name is, so only the name itself says a command was built
+	// from it.
+	if strings.Contains(longLine, "repos add "+long) {
+		t.Errorf("the listing tells the operator to run a `repos add` command for a %d-byte name, which `repos add` refuses (projectpolicy.MaxPatternLen is %d):\n%s", len(long), projectpolicy.MaxPatternLen, longLine)
+	}
+	if !strings.Contains(longLine, "not admitted") || !strings.Contains(longLine, "not a repository name") {
+		t.Errorf("the entry for the %d-byte name does not say the allow-list refuses it, nor that it is not an enrollable name:\n%s", len(long), longLine)
+	}
 }
 
 // TestProjectShowNeverAdvertisesAPatternAsTheRemedy: `project show`'s running
@@ -1212,7 +1243,8 @@ func TestProjectShowNeverAdvertisesAPatternAsTheRemedy(t *testing.T) {
 // "/"-segments (drop the alphabet check) — red on `github/*/*`, `github/acme/app
 // b`, `github/acme/app;id` and the uppercase provider; drop the "-"/"."/".."
 // segment rule — red on `-x/y/z`, `github/acme/-app` and `github/acme/..`;
-// drop the length bound — red on the name one byte over safetext.FieldMax;
+// drop the length bound — red on the name one byte over
+// projectpolicy.MaxPatternLen, the bound `repos add` applies;
 // put the provider test back on task.ValidProvider, which reads the shape of a
 // provider and nothing else — red on `prod/acme/app`, the name `repos add`
 // refuses even though it is shaped like a provider.
@@ -1220,9 +1252,12 @@ func TestEnrollableArgHoldsTheRemedyToARepository(t *testing.T) {
 	for _, ok := range []string{
 		"github/acme/app",
 		"bitbucket/acme/group/app", // a repository path may nest
-		"github/Acme/App",          // the repository alphabet admits A-Z; the provider kind does not
-		// Exactly at the bound (safetext.FieldMax bytes) is still a name.
-		"github/acme/" + strings.Repeat("a", safetext.FieldMax-len("github/acme/")),
+		"github/Acme/App",          // the repository alphabet admits A-Z; `repos add` lower-cases its argument, so this one works
+		// Exactly at the bound `repos add` applies (projectpolicy.MaxPatternLen
+		// bytes) is still a name: ValidPattern accepts 255 characters and
+		// refuses 256. safetext.FieldMax is 512, and bounding at THAT handed the
+		// operator a command the command refuses.
+		"github/acme/" + strings.Repeat("a", projectpolicy.MaxPatternLen-len("github/acme/")),
 	} {
 		got, is := enrollableArg(ok)
 		if !is {
@@ -1251,12 +1286,34 @@ func TestEnrollableArgHoldsTheRemedyToARepository(t *testing.T) {
 		"github/acme/app;id",  // shell metacharacters
 		"github/acme/app`id`", // and backticks
 		"../acme/app",         // a path out of the tree
-		// One byte over the bound every printed name is held to: the advisory
-		// line must not be as long as a run chose.
-		"github/acme/" + strings.Repeat("a", safetext.FieldMax-len("github/acme/")+1),
+		// One byte over the bound `repos add` applies: the advisory line must
+		// not be as long as a run chose, and the command in it must be one that
+		// command accepts.
+		"github/acme/" + strings.Repeat("a", projectpolicy.MaxPatternLen-len("github/acme/")+1),
 	} {
 		if got, is := enrollableArg(bad); is {
 			t.Errorf("enrollableArg(%q) = %q, true; want no command at all", bad, got)
 		}
+	}
+}
+
+// TestReposAddTakesTheLengthEnrollableArgBoundsAt: the boundary above, run
+// against the command itself and not against the validator the comment cites.
+// enrollableArg refuses at projectpolicy.MaxPatternLen because that is what
+// `repos add` accepts — and if the command's own bound ever moved, the gate
+// would go on printing a remedy the command refuses, which is the whole defect.
+// So the pair is pinned end to end: exactly MaxPatternLen bytes is enrolled,
+// one byte more is refused.
+func TestReposAddTakesTheLengthEnrollableArgBoundsAt(t *testing.T) {
+	newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	at := "github/acme/" + strings.Repeat("a", projectpolicy.MaxPatternLen-len("github/acme/"))
+	if _, _, err := execute(t, "project", "repos", "add", at); err != nil {
+		t.Fatalf("`repos add` refused a %d-byte name, the length enrollableArg prints a command for: %v", len(at), err)
+	}
+	if _, _, err := execute(t, "project", "repos", "add", at+"a"); err == nil {
+		t.Fatalf("`repos add` accepted a %d-byte name, one byte over the bound enrollableArg refuses at: the gate and the command have drifted apart", len(at)+1)
 	}
 }
