@@ -15,7 +15,8 @@
     "record-fixture": "tsc -p tsconfig.record-fixture.json && node .record-fixture/tools/record-fixture/index.js",
     "package": "npm run build && electron-builder --mac --universal --publish never",
     "package:targets": "electron-builder --mac --universal --publish never",
-    "package:linux": "electron-builder --linux --publish never"
+    "package:linux": "electron-builder --linux --publish never",
+    "package:win": "npm run build && electron-builder --win --publish never"
   },
   "build": {
     "appId": "io.github.dimipaun.fugaro-console",

@@ -800,6 +800,22 @@ describe('the packaging configuration the fuses belong to', () => {
     expect(script).not.toMatch(/\bnpx\b/)
     expect(script).not.toMatch(/--publish\s+(?:always|onTag|onTagOrDraft)/)
     expect(script).not.toMatch(/electron-builder@/)
+    // The Windows pack is the same packer, the same lockfile and the same
+    // refusal to publish. `--win` selects the platform; the target (NSIS) and
+    // the architecture (x64) are named in the manifest's `win` block rather
+    // than on this line, so `package:win` is the whole command a workflow runs
+    // and what it produced is a fact in this repository -- the Linux leg's own
+    // arrangement. `--publish never` is here rather than on a workflow line so
+    // that no invocation can add one.
+    //
+    // Until the `win32` fuse row lands this script fails *inside `afterPack`*,
+    // with the refusal that names `win32`: that is the proof the fuse hook is
+    // what stands in the way, and not the builder.
+    const windows = manifest.scripts['package:win'] ?? ''
+    expect(windows).toBe('npm run build && electron-builder --win --publish never')
+    expect(windows).not.toMatch(/\bnpx\b/)
+    expect(windows).not.toMatch(/--publish\s+(?:always|onTag|onTagOrDraft)/)
+    expect(windows).not.toMatch(/electron-builder@/)
     const pin = manifest.devDependencies['electron-builder']
     expect(pin).toBe('26.17.0')
     expect(manifest.dependencies ?? {}).not.toHaveProperty('electron-builder')
