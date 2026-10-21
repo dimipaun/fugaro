@@ -1646,12 +1646,14 @@ under the run's picture are a real list.
   pass or fail on the minifier rather than on the rule; the shorthand plant is what caught the
   first reading of this rule, which asked whether **every** word of the value was `none` and so
   called `list-style: none inside` a bulleted list.
-- **The figures, and the numbers that did not move.** Nothing here is re-derived. The built
-  `/security/` page weighs **92,541 bytes** (HTML 30,102, of which inline CSS 15,560; fetched
-  files 62,439) inside the 1,498,995-byte page budget, and the whole site is **1,404,138 bytes**
-  inside the 5,203,797-byte one; `/security/` is one of the three reference pages D188 exempts
-  from the page word ceiling, with its lead measured on every run like any other page's. Its
-  word count is **553**, which is
+- **The figures, and the numbers that did not move.** Nothing here is re-derived (D192: the
+  budgets move only when the owner asks). The built `/security/` page weighs **119,067 bytes**
+  (HTML 30,327, of which inline CSS 15,734; fetched files 88,740) inside the 1,603,485-byte page
+  budget, and the whole site is **1,436,570 bytes** inside the 5,373,414-byte one — the figures as
+  this branch reads them once `main`'s console page and slider (#841, #842) are merged in, since
+  both pages fetch the same one script and `main` re-derived the ceilings for it; `/security/` is
+  one of the three reference pages D188 exempts from the page word ceiling, with its lead measured
+  on every run like any other page's. Its word count is **553**, which is
   the number it read before this round: the wide drawing's 76 words are the tall drawing's own
   words in the tall drawing's own order — the gate above refuses any difference — and the tall
   one is now `hidden`, so the page counts one drawing's words either way. The bullets half adds
@@ -1662,8 +1664,9 @@ under the run's picture are a real list.
   artifact — the page's own HTML for the two drawings, the layout classes, the `hidden`
   attribute, the labels and their boxes, the built stylesheet for the changeover and the
   marker, and the gates' own measurement for the bytes and the words — with `(cd website &&
-  npm run check)` green over all of the gates (413 pass, 1 skipped) and `node --test
-  test/security.mjs` green over all ten of its cases. **Whether the wide drawing reads as the
+  npm run check)` green over all of the gates (432 cases, 431 pass, 1 skipped, on the merged
+  branch) and `node --test test/security.mjs` green over all ten of its cases. **Whether the wide
+  drawing reads as the
   same picture the owner approved, and whether the headline and the whole drawing really fit a
   1440 × 800 first screen, are the owner's checks at the preview** (70a–70c, P9, D187) — and no
   word of `SECURITY.md` changed in this round, so the page's claims are the owner's text
