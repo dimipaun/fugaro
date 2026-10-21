@@ -87,15 +87,22 @@
 //     JavaScript — which is why the case below reads the artifact rather than trusting this
 //     line, and why D192 requires the README's figure to be re-derived in the same commit that
 //     changes the script.
-//   - Page weight per page: the heaviest page, `docs/index.html` — its HTML (the whole generated
-//     CLI reference) plus the first-party files it fetches: the script above and the logo and
-//     icons the layout links — × 1.25, rounded up. One ceiling for every page rather than one per
-//     page, so a page that grows with the product (the changelog, the reference) is held to the
-//     same line as the rest instead of to its own history.
-//   - Whole site: every file in `dist/` — eleven pages, the script, the brand icons, the manifest
-//     and the two `fugaro watch` assets — × 1.25, rounded up. It is the build every checkout
-//     makes alike, tags or no tags, since the changelog reads the plugin's version rather than
-//     the checkout's tags.
+//   - Page weight per page: the heaviest page — the console page today, at 399,732 bytes, since
+//     the four screenshots landed and its weight is its HTML plus the pictures it renders, where
+//     it was `docs/index.html` before them, whose HTML is the whole generated CLI reference —
+//     plus the first-party files the page fetches: the script above and the logo and icons the
+//     layout links — × 1.25, rounded up. One ceiling for every page rather than one per page, so
+//     a page that grows with the product (the changelog, the reference) or with the pictures it
+//     carries is held to the same line as the rest instead of to its own history. **Which page
+//     is the heaviest is a fact about the build and not about this list**: the figure in
+//     `website/README.md` names the page, a round that adds pictures can move that page from the
+//     docs hub to the console page and back, and this derivation only runs under
+//     `FUGARO_DERIVE_BUDGETS=1` — so a round that changes which page it is re-derives there in
+//     the commit that does, and the README's sentence moves with it.
+//   - Whole site: every file in `dist/` — eleven pages, the script, the brand icons, the manifest,
+//     the two `fugaro watch` assets, and the console's four screenshots and the manifest they
+//     came with — × 1.25, rounded up. It is the build every checkout makes alike, tags or no
+//     tags, since the changelog reads the plugin's version rather than the checkout's tags.
 //
 // **Where this build's three numbers come from** is written in `website/README.md` too, one
 // bullet up from this file's name in its gates list: the same rounds, the same causes and the

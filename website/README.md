@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **988,260 bytes in a checkout with no tags** and to **988,260 bytes with the
+  commit builds to **1,387,679 bytes in a checkout with no tags** and to **1,387,679 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -592,7 +592,7 @@ added or removed without this sentence moving fails there:
     their SHA-256 values and the tag they are derived from are the same values, and the page
     still says in the data file's own words that Windows and Linux builds do not exist yet.
     The page's words went 239 → **133** against the ceiling the budget states, which is the
-    room "Adding a console screenshot" below counts. The page weight and the script did not
+    room "The console's screenshots" below counts. The page weight and the script did not
     move: the heaviest page is the docs hub, and the console page is not it.
   - **The homepage became the hero, one three-tab slider and one Get started button** (the
     owner's approved draft "Home, draft 2 (slider)", 2026-10-19), and it moved the site figure
@@ -686,6 +686,40 @@ added or removed without this sentence moving fails there:
     renders. Nothing else moved and no page gained a word — the block's markup is rendered only
     while the data file carries a block, and the file this checkout ships carries none — so the
     page weight and the script are where they were, and the count of files in `dist/` is 23.
+  - **The console page's four fixture screenshots** (the owner's feedback of 2026-10-21:
+    "console page: screenshots missing") moved the page weight and the site figure, with the
+    script where it was. `website/public/screenshots/` carries four WebP captures of the
+    console's own screens — Live, Run, Spend and Installations, 1920 x 1200 each, 306,982 bytes
+    between them, with the `MANIFEST.json` the run that took them wrote beside them — and
+    `data/console-screens.yaml` carries the four rows the slider renders them from, in place of
+    the empty list the placeholder frame used to draw. **The console page is the heaviest page of
+    the site while it renders them**, 92,530 → **399,732 bytes** (the four pictures, its own
+    markup, the script and the icons it fetches), which is why the page weight moves with the
+    site figure here: the page the ceiling is derived from is the console page now, and the docs
+    hub — the page every earlier derivation in this list measured — is 292,469 bytes. The site
+    figure moves 988,260 → **1,387,679**, which is **399,419 bytes**, and **309,378** of them are
+    this round's: the four pictures' **306,982** bytes, the manifest's **2,176**, and **220** onto
+    the console page's own markup (30,091 → 30,311 bytes — four `img`, `figure` and `figcaption`
+    elements in place of the placeholder frame's slide, which the per-file comparison of the two
+    builds shows is the whole of the rest: no other file in `dist/` moved a byte). **The other
+    90,041 bytes are what earlier rounds left un-derived**, and this round pays them by
+    re-deriving rather than adding them to a figure that had already stopped describing its
+    build: the gate's own build of the branch this round starts from is **1,078,301 bytes across
+    23 files**, while this list still said 988,260 — D192's exact derivation runs only under
+    `FUGARO_DERIVE_BUDGETS=1`, which CI does not set, and the owner's ruling of 2026-10-20 is
+    that these figures are re-derived when they ask rather than on every round, so a figure here
+    can lag the build it names (the redesign's README records that ruling, and the drift it
+    allows was 1,035,806 against the stated site figure in the round that wrote it down). Those
+    90,041 bytes are bytes the site grew before this round and are absorbed here, the way the
+    `--repo` round's 1,126 bytes were paid in the logo round above. The script is untouched — the
+    slider ships no JavaScript and needs none — and the count of files in `dist/` goes 23 →
+    **28**. The page's own words go
+    211 → **303**, well inside D188's 500 and the derived ceiling: a row's `alt` is text a reader
+    gets when the picture does not arrive, and the four of them are the whole of the move.
+    `test/console-screens.mjs` holds the four rows to the files' own headers and to the
+    manifest's `alt` texts, and the two figures above are re-derived in this commit, from the
+    gate's own build.
+
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -709,11 +743,11 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,083,750 bytes. Three times 361,250: the heaviest page, the
-    docs hub, at 289,000 bytes (its HTML — the whole generated CLI reference — plus the
-    files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,705,975 bytes. Three times 1,235,325 (every file in `dist/`, 988,260
-    bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
+  - **Page weight per page:** 1,498,995 bytes. Three times 499,665: the heaviest page, the
+    console page, at 399,732 bytes (its HTML, the four screenshots it renders, and the files
+    it fetches: the script above, the logo and the icons), plus 25 %.
+  - **Whole site:** 5,203,797 bytes. Three times 1,734,599 (every file in `dist/`, 1,387,679
+    bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
@@ -1297,78 +1331,110 @@ platform, and not an invented second one, is the word each button carries. Its r
 **draft until the owner publishes it** (the workflow creates `console-vX.Y.Z` with `--draft`),
 so the buttons land with the published release and not with the draft.
 
-## Adding a console screenshot
+## The console's screenshots
 
 The console page opens with a screenshot slider (the owner's feedback of 2026-10-19: *"Console:
-we need a screenshot slider at the top"*). It is **data-driven and ships empty**:
+we need a screenshot slider at the top"*), and the owner read the preview on 2026-10-21 and said
+the screenshots were missing. The four are there now:
+`public/screenshots/console-{live,run,spend,installations}.webp`, 1920 x 1200 each, served at
+`/screenshots/`, with `public/screenshots/MANIFEST.json` beside them — the record the run that
+took them wrote: the window they were captured in, each capture's pixel size and SHA-256, and the
+`alt` text for each screen. **They are fixture captures**: a fake fugaro with invented projects,
+taken from the real console build, and the owner asked for them. Nothing links to the manifest;
+it is served because `public/` is served, and it is what `test/console-screens.mjs` holds the data
+file's `alt` texts to.
+
 `src/components/ScreenshotSlider.astro` renders the rows of `data/console-screens.yaml` and
-nothing else, and that file's list is empty, so the page a reader gets today carries no slider,
-no heading and no placeholder — the page as it was before the component existed. Nothing in the
-build can make a screenshot: the owner takes them from the released console, on their own Mac
-(D190), and **no screenshot is committed**.
+nothing else, so adding, replacing or removing a screenshot is a data-file edit and a file:
 
-Adding the first one is two edits:
-
-1. **The file**, under `public/images/console/`. Create that directory with the first file:
-   git carries no empty directory, and a placeholder in it would be a file the site serves and
-   the budget counts. The name is letters, digits, dots, dashes and underscores; the extension
-   is one the slider serves — `png`, `jpg`, `jpeg`, `webp` or `avif`. A capture from macOS's own
-   `screencapture` is a PNG and is served as it comes; a WebP or an AVIF of the same picture is
-   fewer bytes for the same pixels, which is the whole of the choice. An SVG is refused: it is a
-   document that can carry script and references, and the site renders pictures.
-2. **The row**, in `data/console-screens.yaml`, in the order the slider shows them:
+1. **The file**, under `public/screenshots/`. The name is letters, digits, dots, dashes and
+   underscores; the extension is one the slider serves — `png`, `jpg`, `jpeg`, `webp` or `avif`.
+   An SVG is refused: it is a document that can carry script and references, and the site renders
+   pictures. **The four files here are WebP, and the PNG the capture run wrote is not what is
+   served**: see the conversion step below, which is a step of the round and not something the
+   capture does.
+2. **The conversion, which no run in this repository performs.** `npm run screenshots` — or
+   `scripts/console-screenshots.sh` from the root — writes one PNG per screen into
+   `console/screenshots/` at **2560 x 1600** (the capture window is 1280 x 800 CSS pixels at a
+   device scale factor of 2; `console/README.md`, "What comes back"), and that directory is
+   git-ignored and never committed. The four files this site serves are those captures at
+   **1920 x 1200** in WebP: the same picture at the same 16:10, at half the linear size and a
+   fraction of the bytes. Convert the capture before committing anything —
+   `cwebp -resize 1920 0 -q 80 console/screenshots/console-live.png -o
+   website/public/screenshots/console-live.webp` is one command that does it, and the quality is
+   the round's call, since the bytes it lands on are the round's budget line — and commit **only
+   the converted file**. The served file keeps the capture's own name with its own format's
+   extension (`console-live.png` → `console-live.webp`), which is the link the gate holds: the
+   row is matched to the manifest's capture **by that name**, so a picture served under a name no
+   capture has is refused. Which tool produced the four files shipped here is recorded nowhere;
+   that is half the reason this step is written down.
+3. **The manifest, copied in with the file.** `public/screenshots/MANIFEST.json` is the capture
+   run's own record of the **PNGs** — `tools/screenshots/manifest.ts` writes it beside the
+   captures as one entry per picture with its pixel size, its SHA-256 and its `alt` text, plus
+   what the run omitted — and it was copied into `public/` because the site's `alt` texts are its
+   texts and not a second drafting of them. **None of the files its hashes describe is served by
+   this site**: the WebP beside it is the converted form, and the manifest's names, sizes and
+   hashes are the captures'. Nothing in a website round regenerates the manifest, so a round that
+   adds, replaces or re-runs a capture copies the run's manifest in **in the same commit as the
+   file and the row**, so that the record beside the pictures still describes the run that took
+   them — a published manifest whose entries match nothing the site serves is the drift this step
+   exists to prevent.
+4. **The row**, in `data/console-screens.yaml`, in the order the slider shows them:
 
    ```yaml
    screens:
-     - file: runs-list.png
-       alt: A list of runs with their stage, age and spend.
-       caption: Every run, with what it is doing and what it has cost.
-       width: 1440
-       height: 900
+     - file: console-live.webp
+       alt: The console's Live screen for a fictional acme-platform installation: ...
+       caption: Live
+       width: 1920
+       height: 1200
    ```
 
    `file` is the file's **name** and not a path or a URL: the site path is derived from it at
    build time, so no file under `website/` carries a URL (Global Constraint 9). `alt` and
    `caption` are both required and neither may be empty: `alt` is what a reader gets when the
    picture does not arrive and what a screen reader reads instead of it, and the caption is the
-   line under the picture. `width` and `height` are the file's own pixels, which is what lets
-   the browser reserve the box before the file lands. `src/content.ts`'s `loadConsoleScreens()`
-   refuses a name that is a path or a URL, a name with no extension at all, a format the slider
-   does not serve, an empty `alt` or caption, a size that is not a positive whole number, and
-   any key no reader reads — at the document's root or in a row, which is what keeps a URL out
-   of the data file's own `src` line as well as out of `file`; every refusal names the row it
-   refused, and the build stops.
+   line under the picture — one word per screen is what the four rows carry. `width` and
+   `height` are the file's own pixels, which is what lets the browser reserve the box before the
+   file lands; `test/console-screens.mjs` reads each WebP's header and refuses a row that
+   declares a box the file is not, and holds each `alt` to the manifest's text for that capture,
+   verbatim. `src/content.ts`'s `loadConsoleScreens()` refuses a name that is a path or a URL, a
+   name with no extension at all, a format the slider does not serve, an empty `alt` or caption,
+   a size that is not a positive whole number, and any key no reader reads — at the document's
+   root or in a row, which is what keeps a URL out of the data file's own `src` line as well as
+   out of `file`; every refusal names the row it refused, and the build stops. **A list with no
+   row in it is still legal**: it renders no slider section at all, which is the state the page
+   was in before the four captures landed.
 
 **What a screenshot costs, against the three numbers the budget above states:**
 
 - **The whole site:** the file is served from `public/`, so its bytes are in `dist/` and count
-  once against the site ceiling the gates above state — several times the size of the build it
-  is derived from, so a screenshot's size is a thing to keep an eye on rather than the thing
-  that decides; `test/budget.mjs` holds the new build to that ceiling and asks for the figure to
-  be re-derived in the commit that adds the file.
-- **The console page's weight:** that page is a fraction of the page ceiling above, so it has
-  room for the pictures it renders, and it is not the page the ceiling is derived from (the
-  docs hub is).
-- **The page's words.** The console page stands at **133 of the 949 words** the ceiling above
-  allows it, and a row's words all count: the caption is text under the picture, and the `alt`
-  is counted too, because it is the text a reader gets when the picture does not
-  arrive (`test/budget.mjs`'s `visibleText` reads an `img`'s `alt`). The slider's own heading
-  takes one more. The page stood at 239 words against D188's 250 until the owner's cut of
-  2026-10-19 took its prose to the essentials, and the room that cut bought is the room the
-  screenshots land in: a page that needs more than the ceiling needs it raised in the same
-  commit that adds it — D188's own rule: the number moves where the need is, and a build that
-  needs more fails until it moves.
+  once against the site ceiling the gates above state; `test/budget.mjs` holds the new build to
+  that ceiling and asks for the figure to be re-derived in the commit that adds the file.
+- **The console page's weight:** the pictures a page renders are part of its weight, so **a page
+  that carries the heaviest set of pictures can become the page the page-weight ceiling is
+  derived from** — the console page is that page today, at 399,732 bytes with the four captures
+  in it, where the docs hub (292,469) was every earlier derivation's subject. A round that adds
+  pictures re-derives both figures, and this one did.
+- **The page's words.** The console page stands at **303 words** against the ceiling above, and
+  a row's words all count: the caption is text under the picture, and the `alt` is counted too,
+  because it is the text a reader gets when the picture does not arrive (`test/budget.mjs`'s
+  `visibleText` reads an `img`'s `alt`). The four rows' `alt` texts are 148 of those words, and a
+  page that needs more than the ceiling needs it raised in the same commit that adds it — D188's
+  own rule: the number moves where the need is, and a build that needs more fails until it moves.
 
-The slider's own bytes do **not** move when a screenshot is added: the component's stylesheet is
-inlined into the console page whether or not the slider renders, which is the 1,115 bytes the
-site figure's last round names. What moves the site figure then is the picture's own bytes.
+The slider's own bytes move with the page's markup and not with a script: the component's
+stylesheet is inlined into the console page whether or not the slider renders, and the slider
+ships no JavaScript at all — the track scrolls, the dots are anchors and the first picture is in
+the page, so it works with JavaScript off.
 
-`website/test/console-screens.mjs` holds both states: the empty one this checkout ships — no
-element marked `data-slot="console-screens"`, no track, no dots and no `<img>` in the page's own
-article — and a two-slide one, built from a copy of the repository whose data file carries two
-fixture rows. The fixture build writes no image bytes at all, because a test may not commit a
-picture either: it asserts the `src` the loader derives from the row's file name, and the `alt`,
-the caption, the size and the dot that each row produces.
+`website/test/console-screens.mjs` holds the shipped state — the four rows against the files'
+own headers and the manifest's `alt` texts, the page against the rows, and the loading of each
+slide — and the states beside it: a two-row fixture build, a one-slide build (which renders no
+dots at all), an empty data file (which renders no slider), and the refusals above. The fixture
+builds write no image bytes at all, because a test may not commit a picture either: they assert
+the `src` the loader derives from the row's file name, and the `alt`, the caption, the size and
+the dot that each row produces.
 
 ## The rule this directory is written to
 
@@ -1422,7 +1488,7 @@ website/
   data/install.yaml, site.yaml     # hand-written facts, pinned by Go tests
   data/release-summaries.yaml      # each release's product summary, pinned by test/changelog-page.mjs
   data/typical-costs.yaml          # the owner's own measurement of what a job costs, pinned by test/caps-and-costs.mjs
-  data/console-screens.yaml        # the console page's slides: hand-written, ships empty
+  data/console-screens.yaml        # the console page's slides: hand-written, one row per screenshot
   data/console-sha256sums.txt      # the console release's own sums file, copied verbatim
   content/                         # generated, do not edit (see the table above)
   src/lib/changelog.mjs            # reads docs/releases/ and the plugin's version at build time
