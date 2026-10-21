@@ -10,8 +10,10 @@
 //      from the *store*: with a chosen installation it reads that
 //      installation's one path and nothing else (`src/main/spawn.ts`'s
 //      `resolveInstalledBinary`); with nothing chosen it walks rule 4's list --
-//      the configured path, then `/opt/homebrew/bin`, `/usr/local/bin`,
-//      `~/.local/bin` and `/usr/bin`, then the app's own `PATH`. That second
+//      the configured path, then this platform's well-known directories
+//      (`spawn.ts`'s table: on macOS `/opt/homebrew/bin`, `/usr/local/bin`,
+//      `~/.local/bin` and `/usr/bin`, and Linux has its own list since the
+//      owner's ruling of 2026-10-20), then the app's own `PATH`. That second
 //      walk reaches directories this run cannot change, and on the owner's Mac
 //      the first of them holds their own CLI, so a launch that walked would
 //      photograph real runs. `assertLaunchIsFixture` is the rule that makes
@@ -59,7 +61,21 @@ import { homedir, tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 
 import { INSTALLATIONS_FILE_NAME, readInstallationFile } from '../../src/main/installations'
-import { WELL_KNOWN_BINARY_PREFIXES, resolveInstalledBinary } from '../../src/main/spawn'
+import { locationsFor, resolveInstalledBinary } from '../../src/main/spawn'
+
+/** walk is rule 4's list of well-known directories on **this** platform, as the
+ * refusal sentences below spell it.
+ *
+ * It is read from `spawn.ts`'s platform table (`locationsFor`) rather than
+ * written out here, because that table is the one place the console decides
+ * which directories to walk -- since the owner's Linux ruling of 2026-10-20 it
+ * is per platform (`DARWIN_LOCATIONS`, `LINUX_LOCATIONS`), and a sentence that
+ * named macOS's directories on a Linux machine would name a walk the handshake
+ * would not make. The unit suite holds the sentence to the platform's literals
+ * (`test/unit/screenshots.test.ts`, §3b) rather than to this expression. */
+function walk(): string {
+  return locationsFor().binaryPrefixes.join(', ')
+}
 
 /** SCRATCH_PREFIX names the one temporary tree a run owns. It is long enough to
  * be recognisable in a `ps` listing or a leftover directory. */
@@ -297,7 +313,7 @@ export async function assertLaunchIsFixture(options: {
     raw = readFileSync(file, 'utf8')
   } catch {
     throw new Error(
-      `the screenshot run refuses to start: the profile it seeded (${profile}) holds no ${INSTALLATIONS_FILE_NAME}, so the console's startup handshake would resolve a fugaro by walking ${WELL_KNOWN_BINARY_PREFIXES.join(', ')} and this app's PATH`,
+      `the screenshot run refuses to start: the profile it seeded (${profile}) holds no ${INSTALLATIONS_FILE_NAME}, so the console's startup handshake would resolve a fugaro by walking ${walk()} and this app's PATH`,
     )
   }
   const read = readInstallationFile(raw)
@@ -307,7 +323,7 @@ export async function assertLaunchIsFixture(options: {
   const active = read.file.active
   if (active === null) {
     throw new Error(
-      `the screenshot run refuses to start: the store it seeded (${file}) chooses no installation, and the startup handshake of a console with nothing chosen resolves a fugaro by walking ${WELL_KNOWN_BINARY_PREFIXES.join(', ')} and this app's PATH -- the directories where the operator's own fugaro lives. Every launch this run makes names the fixture as its chosen installation.`,
+      `the screenshot run refuses to start: the store it seeded (${file}) chooses no installation, and the startup handshake of a console with nothing chosen resolves a fugaro by walking ${walk()} and this app's PATH -- the directories where the operator's own fugaro lives. Every launch this run makes names the fixture as its chosen installation.`,
     )
   }
   const row = read.file.installations.find((installation) => installation.id === active)

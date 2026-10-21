@@ -60,6 +60,24 @@
 // Holding it here, in the build, is what makes the data file's own reader the refusal a page
 // build meets rather than a gate a later test run meets.
 //
+// **And a platform the release does not carry yet is a fact the file may hold, or not.** The
+// console ships for macOS, and since the owner's ruling of 2026-10-20 it is built for Linux too
+// — unsigned, an AppImage and a `.deb` (D10) — while the sentence both pages render about the
+// console is still the macOS one, because no Linux asset exists to link yet. So the data file
+// may carry an optional `linux` block: the sentence a Linux reader needs (what the build is,
+// that it is unsigned, how it is installed) and the ids of the assets it links. **It renders
+// only when it is there**, which is the component's own `if` and not a promise about its copy,
+// and while it is not there the page renders nothing about Linux at all — no heading, no
+// sentence, no link — which is what keeps the two pages saying macOS only without the markup
+// saying so.
+//
+// **And its links are held to the file's own assets.** Every id the block names has to be an id
+// `downloads` lists, and every entry there has already been held to the release's published name
+// and to the checksum the release's own sums file records for it. So a Linux link can appear
+// only once the asset's name, its checksum and the release's own line for it are all in the
+// data — the gate the follow-up that publishes has to pass, rather than a sentence it has to
+// remember to write.
+//
 // Standard library only, and no network: this module is imported by the build, and it
 // fetches nothing (Global Constraints 4 and 8).
 
@@ -273,7 +291,7 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
   }
 
   const doc = asMap(parsed, 'the document')
-  const allowed = ['version', 'available', 'name', 'what', 'released', 'not_released', 'properties', 'release', 'downloads']
+  const allowed = ['version', 'available', 'name', 'what', 'released', 'not_released', 'properties', 'release', 'downloads', 'linux']
   for (const key of Object.keys(doc)) {
     if (!allowed.includes(key)) {
       refuse(
@@ -477,6 +495,57 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
     refuse('available is true and downloads is empty: a section that says the console has shipped with nothing to download is the broken state the flag exists to prevent')
   }
 
+  // The optional block for a platform whose own artifact exists but whose facts differ from the
+  // released sentence's — Linux, whose build is unsigned and whose files are not disk images the
+  // macOS sentence describes (the owner's ruling of 2026-10-20; D10, and the header above).
+  // Absent is the state this checkout ships and the state the pages render nothing for: the
+  // block's links are its assets, so the sentences are not here either, and no part of a page
+  // has to say a platform is missing.
+  const linux = (() => {
+    if (doc.linux === undefined) return null
+    const map = asMap(doc.linux, 'linux')
+    for (const key of Object.keys(map)) {
+      if (!['text', 'assets', 'source'].includes(key)) {
+        refuse(
+          `linux carries the key "${key}", and this block is the sentence a page renders, the ids of the assets it links and the "source" that sentence came from: a fact nothing renders is a fact nothing pins`,
+          'D10',
+        )
+      }
+    }
+    const claim = asClaim({ text: map.text, source: map.source }, 'linux')
+    if (!Array.isArray(map.assets) || map.assets.length === 0) {
+      refuse(
+        "linux.assets is not a non-empty list, and this block exists for the assets it links: a paragraph about a platform's downloads with no download in it is the one thing it must not be",
+        'D10',
+      )
+    }
+    const named = map.assets.map((value, index) => {
+      const id = asText(value, `linux.assets[${index}]`)
+      const entry = downloads.find((download) => download.id === id)
+      if (entry === undefined) {
+        // The gate, in the one place a link can be introduced: the block links assets this file
+        // lists, and every one of those has already been held to the release's published name
+        // and to the checksum the release's own sums file records for it. So a link to a name
+        // that is not in the data — the Linux artifact before anyone has published it — cannot
+        // be rendered at all.
+        refuse(
+          `linux.assets[${index}] is ${JSON.stringify(id)} and downloads lists no entry with that id (${downloads.map((download) => download.id).join(', ')}): the block's links are the assets this file lists, each with the release's own published name and the checksum its own sums file records — so an id nothing backs is a download link no fact in this file supports (D10)`,
+          'D10',
+        )
+      }
+      return entry
+    })
+    if (new Set(named.map((entry) => entry.id)).size !== named.length) {
+      refuse('linux.assets names one asset twice, and one asset of a release is one link', 'D10')
+    }
+    // Whether the block is drawn is `available`'s business and not this reader's: the section
+    // renders the block — as it renders the assets — only while the console has shipped, so an
+    // unpublished console with a block in the file draws nothing of it. That is the same `if`
+    // the download list above it lives under, and a second refusal here would only make the
+    // flag-off fixture the tests build (W3.1's unreleased state) carry one more edit.
+    return { ...claim, downloads: named }
+  })()
+
   return {
     available,
     name: asText(doc.name, 'name'),
@@ -486,5 +555,6 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
     properties,
     release,
     downloads,
+    linux,
   }
 }

@@ -34,9 +34,16 @@
 //   3. **The binary is resolved explicitly** (rule 4): the operator's configured
 //      path first -- an absolute one, since a relative path is checked against
 //      the app's working directory and run against the child's, which is a
-//      refusal and not a fallback (review of Task 4.1) -- then
-//      `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`,
-//      `/usr/bin`, and only then `PATH`. The path and the version it reported
+//      refusal and not a fallback (review of Task 4.1) -- then the platform's
+//      well-known directories, then `PATH`. **Which directories those are is a
+//      per-platform list chosen in one place** (`PLATFORM_LOCATIONS`, read
+//      through `locationsFor`): the design's macOS order is
+//      `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and
+//      Linux's (the owner's ruling of 2026-10-20) is `/usr/local/bin`,
+//      `/usr/bin`, `~/.local/bin`, `/home/linuxbrew/.linuxbrew/bin`,
+//      `~/.linuxbrew/bin`. Neither list is ever read out of the app's own
+//      environment -- "never the inherited `PATH`" is a property of the list,
+//      and `PATH` is the separate last step. The path and the version it reported
 //      are the header's ("the resolved absolute path and the version it reports
 //      are shown in the header"), and **a candidate that exists but whose version
 //      cannot be read is refused rather than skipped**: falling through to the
@@ -50,7 +57,9 @@
 //      `FUGARO_PROJECT` in the app's environment cannot reach the child, which
 //      is asserted by diffing the child's own view of its environment against
 //      `CHILD_ENV_KEYS`. **The `PATH` is the resolved binary's own directory
-//      first, then every well-known prefix the console resolves against** --
+//      first, then the platform's own tool directories** (rule 5's list, from
+//      the same `locationsFor` table: macOS gets `/opt/homebrew/bin`, Linux
+//      gets `/home/linuxbrew/.linuxbrew/bin`, and neither gets the other's) --
 //      because the CLI looks up external tools itself (`doctor` resolves the SDK
 //      tools with `exec.LookPath`, `internal/cli/doctor.go:147`), and
 //      `terraform`, `cosign` and the rest do not sit beside the `fugaro` binary
@@ -110,35 +119,121 @@ export const CONFIG_FLAG = '--config'
 export const DIR_FLAG = '--dir'
 
 /**
- * WELL_KNOWN_BINARY_PREFIXES is rule 4's order, minus the last step: a
- * configured path first (`SpawnTarget.binaryPath`), then these directories in
- * this order, and only then every entry of the app's own `PATH`. `~/.local/bin`
- * is spelled as a prefix here and joined with the home directory at resolution
- * time, because the home directory is an argument rather than a constant.
+ * PlatformLocations is the whole of what this file knows per platform: where
+ * rule 4 looks for the CLI, and which tool directories rule 5 gives the child.
+ * The two are not the same list on any platform and the difference is
+ * deliberate (see each field), so they are two fields of one record rather than
+ * two constants that have to be kept in step by hand.
  */
-export const WELL_KNOWN_BINARY_PREFIXES: readonly string[] = Object.freeze([
-  '/opt/homebrew/bin',
-  '/usr/local/bin',
-  '~/.local/bin',
-  '/usr/bin',
-])
+export interface PlatformLocations {
+  /** binaryPrefixes is rule 4's order, minus the last step: a configured path
+   * first (`SpawnTarget.binaryPath`), then these directories in this order, and
+   * only then every absolute entry of the app's own `PATH`. `~/.local/bin` is
+   * spelled with `~` and joined with the home directory at resolution time,
+   * because the home directory is an argument rather than a constant. */
+  readonly binaryPrefixes: readonly string[]
+  /** childPathPrefixes is the well-known *tool* directories the child's `PATH`
+   * is built from: the resolved binary's own directory first, then these. It
+   * answers "where may the CLI find `terraform`?", so it includes `/bin`,
+   * `/usr/sbin` and `/sbin`, and it does not include `~/.local/bin` unless the
+   * binary itself lives there. Every entry is absolute: the child receives a
+   * literal string and nothing expands a `~` inside a `PATH`. */
+  readonly childPathPrefixes: readonly string[]
+}
 
 /**
- * CHILD_PATH_PREFIXES is the well-known *tool* prefixes the child's `PATH` is
- * built from: the resolved binary's own directory first, then these. They are
- * not the same list as `WELL_KNOWN_BINARY_PREFIXES` and the difference is
- * deliberate -- this one answers "where may the CLI find `terraform`?", so it
- * includes `/bin`, `/usr/sbin` and `/sbin`, and it does not include
- * `~/.local/bin` unless the binary itself lives there.
+ * DARWIN_LOCATIONS is rule 4's macOS order and rule 5's macOS tool list,
+ * verbatim from design section 3.4.
+ *
+ * `/opt/homebrew/bin` is the Apple-silicon Homebrew prefix; it exists on the
+ * Intel Macs too as of Homebrew's own relocation, and it is first because a
+ * Homebrew-installed CLI is the operator's own installation rather than the
+ * system's.
  */
-export const CHILD_PATH_PREFIXES: readonly string[] = Object.freeze([
-  '/opt/homebrew/bin',
-  '/usr/local/bin',
-  '/usr/bin',
-  '/bin',
-  '/usr/sbin',
-  '/sbin',
-])
+export const DARWIN_LOCATIONS: PlatformLocations = Object.freeze({
+  binaryPrefixes: Object.freeze(['/opt/homebrew/bin', '/usr/local/bin', '~/.local/bin', '/usr/bin']),
+  childPathPrefixes: Object.freeze([
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+  ]),
+})
+
+/**
+ * LINUX_LOCATIONS is the same two lists for Linux, from the owner's ruling of
+ * 2026-10-20 ("yes, Linux for 0.10.0, unsigned"), and the order is the brief's:
+ * `/usr/local/bin`, `/usr/bin`, `~/.local/bin`,
+ * `/home/linuxbrew/.linuxbrew/bin`, `~/.linuxbrew/bin`.
+ *
+ * Two things are worth stating, because both are choices rather than
+ * transcriptions:
+ *
+ *   - **`/opt/homebrew/bin` is not here.** It is the macOS Homebrew prefix: on
+ *     Linux the equivalent installations are Linuxbrew's two directories below,
+ *     and a directory that does not exist on the machine is not a place to look
+ *     for a binary.
+ *   - **`~/.linuxbrew/bin` is a resolution candidate and cannot be a `PATH`
+ *     entry**, because nothing expands a tilde inside a `PATH`; the per-user
+ *     case is covered by the resolved binary's own directory, which the child's
+ *     `PATH` always puts first.
+ */
+export const LINUX_LOCATIONS: PlatformLocations = Object.freeze({
+  binaryPrefixes: Object.freeze([
+    '/usr/local/bin',
+    '/usr/bin',
+    '~/.local/bin',
+    '/home/linuxbrew/.linuxbrew/bin',
+    '~/.linuxbrew/bin',
+  ]),
+  childPathPrefixes: Object.freeze([
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+    '/home/linuxbrew/.linuxbrew/bin',
+  ]),
+})
+
+/**
+ * PLATFORM_LOCATIONS is the per-platform table, and `locationsFor` is the only
+ * reader of it. **The platform choice lives here and nowhere else**: no other
+ * line in this module -- and none in `src/source/` -- names a well-known
+ * directory, so a second platform is a row in this table rather than an edit in
+ * each place that needs one.
+ *
+ * The keys are Node's own `process.platform` values, which are the same strings
+ * electron-builder uses for `electronPlatformName` -- so the two halves of "does
+ * this build support this platform?" (this table and the fuse hook's
+ * `SUPPORTED_PLATFORMS`) are keyed identically on purpose.
+ */
+export const PLATFORM_LOCATIONS: Readonly<Record<string, PlatformLocations>> = Object.freeze({
+  darwin: DARWIN_LOCATIONS,
+  linux: LINUX_LOCATIONS,
+})
+
+/**
+ * locationsFor is the one place the per-platform choice is made: the platform's
+ * two lists, or -- for a platform this build is not packaged for -- the POSIX
+ * ones.
+ *
+ * The fallback is stated rather than silent. The console *ships* on darwin and
+ * on Linux and the fuse hook refuses every other platform outright, so this
+ * branch is reached only by a developer running the sources somewhere the app
+ * has never been packaged. There, the POSIX layout is the nearest thing to a
+ * right answer, and every entry in it is an absolute directory that either
+ * exists or does not: the fallback cannot find a binary that is not on the
+ * machine. Refusing instead would make the sources unrunnable, which is a worse
+ * failure than searching the obvious directories -- and the one thing the
+ * fallback must not do is reach for the app's own `PATH`, which is why the
+ * lists are constants and not a read of the environment.
+ */
+export function locationsFor(platform: string = process.platform): PlatformLocations {
+  return PLATFORM_LOCATIONS[platform] ?? LINUX_LOCATIONS
+}
 
 /**
  * CHILD_ENV_KEYS is the whole environment the child may receive, and the order
@@ -691,11 +786,18 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
 export function binDirectories(options: {
   readonly configuredPath?: string | undefined
   readonly appEnv: Readonly<Record<string, string | undefined>>
+  /** `home` replaces `homedir()` for the `~` entries. It is an argument so the
+   * resolution is a pure function of what it is given. */
   readonly home?: string
-  /** `prefixes` replaces `WELL_KNOWN_BINARY_PREFIXES` for a test that cannot
+  /** `platform` replaces `process.platform` for the well-known list. It is how
+   * a test on one machine drives the other platform's order -- and the list
+   * itself comes from `locationsFor`, so an injected platform cannot choose a
+   * list this module does not already know. */
+  readonly platform?: string | undefined
+  /** `prefixes` replaces the platform's list outright, for a test that cannot
    * create `/opt/homebrew/bin`. It is the *list* that is injectable, never the
    * order: the loop below walks whatever list it is given front to back, and
-   * `test/unit/spawn.test.ts` asserts the real list separately. */
+   * `test/unit/spawn.test.ts` asserts the real lists separately. */
   readonly prefixes?: readonly string[] | undefined
 }): readonly string[] {
   const home = options.home ?? homedir()
@@ -711,7 +813,8 @@ export function binDirectories(options: {
   if (options.configuredPath !== undefined && options.configuredPath !== '' && isAbsolute(options.configuredPath)) {
     candidates.push(options.configuredPath)
   }
-  for (const prefix of options.prefixes ?? WELL_KNOWN_BINARY_PREFIXES) {
+  const wellKnown = options.prefixes ?? locationsFor(options.platform).binaryPrefixes
+  for (const prefix of wellKnown) {
     const base = prefix.startsWith('~') ? join(home, prefix.slice(2)) : prefix
     candidates.push(join(base, FUGARO_BINARY_NAME))
   }
@@ -792,6 +895,10 @@ export function childEnvironment(options: {
   readonly target: SpawnTarget
   readonly binaryPath: string
   readonly appEnv: Readonly<Record<string, string | undefined>>
+  /** `platform` replaces `process.platform` when the child's `PATH` is built,
+   * for the same reason `binDirectories` takes one: the platform's tool
+   * directories are a fact about the platform the child will run on. */
+  readonly platform?: string | undefined
 }): Readonly<Record<string, string>> {
   const env: Record<string, string> = Object.create(null) as Record<string, string>
   for (const key of CHILD_ENV_KEYS) {
@@ -799,15 +906,18 @@ export function childEnvironment(options: {
     const value = options.appEnv[key]
     if (typeof value === 'string' && value !== '') env[key] = value
   }
-  env['PATH'] = childPath(options.binaryPath)
+  env['PATH'] = childPath(options.binaryPath, options.platform)
   env['FUGARO_PROJECT'] = options.target.project
   return Object.freeze(env)
 }
 
 /** childPath is the child's `PATH`, and it is a list rather than one directory
- * -- see rule 4 in this file's header and design section 3.4 rule 5. */
-export function childPath(binaryPath: string): string {
-  return dedupe([dirname(binaryPath), ...CHILD_PATH_PREFIXES]).join(':')
+ * -- see rule 4 in this file's header and design section 3.4 rule 5. Its tail is
+ * the platform's own tool directories (`locationsFor`), so the macOS Homebrew
+ * prefix is not on a Linux child's `PATH` and Linuxbrew's system directory is
+ * not on a macOS one's. */
+export function childPath(binaryPath: string, platform: string = process.platform): string {
+  return dedupe([dirname(binaryPath), ...locationsFor(platform).childPathPrefixes]).join(':')
 }
 
 /**
@@ -1278,8 +1388,8 @@ export async function resolveBinary(options: {
  * That is the difference from `resolveBinary` with a `configuredPath`, and it is
  * the whole point (desktop-console plan Task 3.4b, step 4: "its handshake decides
  * the window"). `resolveBinary` skips a configured path that is missing or not
- * executable and carries on to `/opt/homebrew/bin`, `/usr/local/bin`,
- * `~/.local/bin` and `PATH` -- so a stored installation whose binary had gone
+ * executable and carries on to the platform's well-known directories and then
+ * `PATH` -- so a stored installation whose binary had gone
  * would have its window decided by some *other* `fugaro`, while the header still
  * named the stored path (review of 3.4b, B1). Here a stored binary that is not
  * there answers `path: null` (the handshake's `not-found`), one that is there

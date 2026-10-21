@@ -37,7 +37,7 @@
 # which is not a supported function (startsWith, endsWith, extract, == and !=
 # are), and resource.name is not supported at all for Artifact Registry
 # repositories, Cloud Run jobs, Cloud Scheduler jobs, IAM service accounts or
-# API keys. setIamPolicy would reject the binding and stop every fugaro init.
+# API keys. setIamPolicy would reject the binding and stop every fugaro update.
 # Until the fence is redesigned and measured live (0.9.6), the account, the
 # unconditioned create-and-read role and the operators' impersonation grant
 # are created as before, and every command that would use the deployer

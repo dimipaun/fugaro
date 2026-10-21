@@ -7,7 +7,7 @@
 # Nothing builds or publishes it for the project until M7 publishes images
 # (D11): build it by hand from the repository root with
 # images/build-base.sh history <registry>/fugaro-base/history:latest and
-# docker push it (fugaro init --firebase prints the commands). The syntax pin above, like the one in
+# docker push it (fugaro update prints the commands). The syntax pin above, like the one in
 # images/base/Dockerfile, is bumped by hand monthly.
 
 FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS fugaro

@@ -99,6 +99,16 @@ func (e *initEngine) setup(ctx context.Context) error {
 // replace it.
 var secretsHeld = func() []string { return nil }
 
+// loopProgram is the command every line the converge loop prints names
+// (initflow's Options.Program, task W1.1): the front door this run is. The
+// loop is behind both front doors and cannot know which one is running, so it
+// falls back to the program alone — and a fix that reads "rerun fugaro" is one
+// nobody can act on, which is why this is set and not left empty.
+//
+// There is one front door today. W1.2 splits the command into `fugaro setup`
+// and `fugaro update` and passes whichever one is running here.
+const loopProgram = "fugaro init"
+
 // options is the loop's configuration from the flags.
 func (e *initEngine) options() initflow.Options {
 	r, o := e.r, e.r.o
@@ -110,14 +120,19 @@ func (e *initEngine) options() initflow.Options {
 	return initflow.Options{
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
 		Terminal: stdinIsTerminal(r.cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv), Out: r.w,
+		Program: loopProgram,
 		Project: r.projectName, GCPProject: r.gcpProject, Region: e.lc.Region,
 		Redact: e.redact, OnPreview: func(rs []initflow.StageResult) { e.previewed = rs },
 	}
 }
 
-// converge runs fugaro init's default and --firebase modes through the
-// loop and maps its result to what init returns.
-func (e *initEngine) converge(ctx context.Context) error {
+// initStages is the stages converge() runs, in the canonical order, built
+// here rather than inside converge so that the registration itself is one
+// named thing: which stages a run has, and which flag a stage is behind, is
+// the confirmation matrix's rows (setup_refusals_test.go, which calls this
+// with an engine and reads the list back). The engines' own behaviour is
+// theirs; this function is only who is in the run.
+func initStages(e *initEngine) []initflow.Stage {
 	e.images, e.repo = newImagesStage(e), newRepositoryStage(e)
 	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), e.images, newInstallation2Stage(e)}
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
@@ -128,10 +143,17 @@ func (e *initEngine) converge(ctx context.Context) error {
 	if e.r.o.provisionBatch {
 		stages = append(stages, newComputeStage(e))
 	}
-	e.r.review = &runReview{cover: e.cover, firebase: e.firebaseVerified, owner: e.owner, screen: e.reviewScreen}
 	if e.r.o.createProject {
 		stages = append(stages, newProjectStage(e))
 	}
+	return stages
+}
+
+// converge runs fugaro init's default and --firebase modes through the
+// loop and maps its result to what init returns.
+func (e *initEngine) converge(ctx context.Context) error {
+	stages := initStages(e)
+	e.r.review = &runReview{cover: e.cover, firebase: e.firebaseVerified, owner: e.owner, screen: e.reviewScreen}
 	e.gateEarly(ctx)
 	res, err := initflow.Run(ctx, stages, e.options())
 	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {

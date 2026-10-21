@@ -189,7 +189,7 @@ resource "google_storage_bucket_iam_member" "runs_launcher" {
   }
 }
 
-# The state bucket isn't managed here (fugaro init creates it before any
+# The state bucket isn't managed here (fugaro setup creates it before any
 # Terraform runs), but operators added later need to read and lock the state.
 resource "google_storage_bucket_iam_member" "state" {
   for_each = toset(var.operators)
@@ -213,7 +213,7 @@ resource "google_artifact_registry_repository_iam_member" "base_writer" {
 
 # The remote repository is read, never written: it proxies the public
 # ghcr.io packages this installation's jobs and builds run (design §3.2,
-# §6). The operators' own credentials are what fugaro init uses to read
+# §6). The operators' own credentials are what fugaro update uses to read
 # the verified digest back through it before it pins anything.
 resource "google_artifact_registry_repository_iam_member" "ghcr_reader" {
   for_each = toset(var.operators)

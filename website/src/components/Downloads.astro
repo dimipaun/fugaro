@@ -47,12 +47,36 @@
 import { copyControlHTML } from '../lib/copy-control.mjs'
 
 interface DownloadFacts {
+  /**
+   * The data file's own id for the asset (`macos-dmg`): the key a per-platform block's
+   * `assets` list names, which `console-downloads.mjs` resolves against this list. The
+   * section filters on it when it draws a block's own rows under that block rather than
+   * above it, so telling one row from another never needs the file names to be compared.
+   */
+  id: string
   /** What a reader sees on the link: the platform and the asset's extension (`macOS .dmg`). */
   label: string
   /** Where a reader downloads it from. Only ever rendered while `available` is true. */
   url: string
   /** The SHA-256 of the published bytes, printed beside the link to check a download with. */
   sha256: string
+}
+
+/**
+ * A platform whose own artifact exists but whose facts the released sentence above does not
+ * describe: Linux, whose build is unsigned and whose files are an AppImage and a `.deb` rather
+ * than disk images (the owner's ruling of 2026-10-20; `docs/design/desktop-console.md` D10).
+ */
+interface PlatformFacts {
+  /** The data file's own sentence for this platform — rendered, never restated here. */
+  text: string
+  /**
+   * The data file's own entries for the assets this block links, in the file's order. Every id
+   * the block names in `downloads.json` has been resolved to an entry of the file's `downloads`
+   * list by `src/lib/console-downloads.mjs`, so a link here is always a link to an asset the
+   * data file names — and the file refuses a block naming an id it does not carry.
+   */
+  downloads: DownloadFacts[]
 }
 
 interface Props {
@@ -73,13 +97,30 @@ interface Props {
    * structural rather than editorial.
    */
   downloads: DownloadFacts[]
+  /**
+   * The data file's optional per-platform block, or `null` when it carries none — which is the
+   * state this checkout ships. It is rendered **only** when it is there, and while it is not
+   * there this component draws nothing for it: no heading, no sentence, no link, and no word
+   * saying which platform is missing. So the page's sentence about the platform the release
+   * carries stays the only one it makes, without the markup having to say "and not Linux"
+   * (`src/lib/console-downloads.mjs`, D10).
+   */
+  linux: PlatformFacts | null
 }
 
-const { available, note, released, downloads } = Astro.props
+const { available, note, released, downloads, linux } = Astro.props
 
 // A label rather than a fact: the section's own heading, which is the navigation's word
 // for this page and not a claim about the product (the layout's nav carries the same one).
 const HEADING = 'Downloads'
+
+// The assets a platform block links are rendered *under that block* and not in the list above
+// it: one asset of a release is one row on the page, and a Linux artifact listed twice — once
+// by the block that explains it and once by the sentence about the disk images — would be two
+// links to one file with one of them under a sentence that does not describe it. With no block
+// the list above is every asset the data file names, which is what the section renders today.
+const inBlock = new Set((linux?.downloads ?? []).map((download) => download.id))
+const listedAbove = downloads.filter((download) => !inBlock.has(download.id))
 ---
 
 <section id="downloads" aria-labelledby="downloads-heading">
@@ -94,7 +135,7 @@ const HEADING = 'Downloads'
         <p class="downloads-released">{released.text}</p>
 
         <ul class="downloads">
-          {downloads.map((download) => (
+          {listedAbove.map((download) => (
             <li>
               <a href={download.url} rel="noopener">
                 {download.label}
@@ -116,6 +157,27 @@ const HEADING = 'Downloads'
           <Fragment set:html={copyControlHTML('Copy the checksum verification command')} />
           <pre><code>{released.verify}</code></pre>
         </div>
+
+        {/* A platform whose artifact exists and whose facts the sentence above does not
+            carry — Linux, unsigned, an AppImage and a `.deb` (D10). One expression and one
+            condition: while the data file carries no block for it this renders nothing at
+            all, and the rows it does render are the same rows as above, from the same
+            entries, so a link here can only ever be an asset the data file names. */}
+        {linux && (
+          <div class="downloads-linux">
+            <p>{linux.text}</p>
+            <ul class="downloads">
+              {linux.downloads.map((download) => (
+                <li>
+                  <a href={download.url} rel="noopener">
+                    {download.label}
+                  </a>{' '}
+                  <code class="download-sha256">{download.sha256}</code>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </>
     ) : (
       <div class="downloads-unreleased">

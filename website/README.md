@@ -675,6 +675,15 @@ added or removed without this sentence moving fails there:
     same round that added the gate's vertical half**, so the bytes and the check that reads them
     arrive in one commit: a picture that grows by the card that overran is a picture only a
     gate that measures the inset on both axes can hold.
+  - **The console's per-platform block** (2026-10-20, the owner's Linux ruling): Getting
+    Started's console card renders the data file's optional `linux` block as the console page's
+    Downloads section does — the block's own sentence, and the assets the block names drawn
+    under it rather than in the list above — so the card no longer lists a Linux artifact under
+    a sentence about the disk images. **The whole site figure above is re-derived only when asked (the owner's ruling), so no figure is claimed here:**
+    the two rules that give that block its spacing, which are scoped to the component one page
+    renders. Nothing else moved and no page gained a word — the block's markup is rendered only
+    while the data file carries a block, and the file this checkout ships carries none — so the
+    page weight and the script are where they were, and the count of files in `dist/` is 23.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -1467,9 +1476,14 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` now holds one pending workflow,
+change `.github/workflows/`. `docs/pending-workflows/` now holds three pending workflows,
 `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
-P4.3), which is not this site's: the website's two manual
+P4.3) — `docs/pending-workflows/console-linux.yml` — the desktop console's Linux build check
+(2026-10-20: it packs the AppImage and the `.deb` on `ubuntu-latest` and uploads them, and
+holds no secret) — and `docs/pending-workflows/console-release-linux.yml` — the console's
+signing pipeline with the Linux legs added, which supersedes the staged `console-release.yml`
+and so is copied over it as well as into `.github/workflows/`. None of the three is this
+site's: the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
 owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
 console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:

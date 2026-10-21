@@ -559,9 +559,9 @@ field this task reads out of a document is `day`, which the rollover needs.
 |---|---|
 | 1 — argv is an array, `shell: false`, never built from a job-written field | `argvFor` is the only place an argv is built. It walks the row's *declared* arguments, refuses an undeclared key by name, and passes every value through a conservative character whitelist, so a value that arrived from a document cannot become a command word. Every emitted element is its own array entry, every emitted flag is asserted against `SPAWN_FLAGS`, and the spawner is always called with the literal `shell: false`. The schema's kinds and the table's kinds are related by exactly one mapping, `SPAWN_KIND_FOR`, and `assertSpawnSurface` refuses a row whose kind disagrees with the operation's schema — so a validated value that argv cannot spell is a table-load failure rather than a refusal a user reads |
 | 3 — `--project` on every command that takes it | `SPAWN_COMMANDS` carries `takesProject` per row: the nine commands of `addCloudFlags` (`internal/cli/cloud.go:51`) plus a tenth row (the console has two operations over `logs`, `--json` and `--url`, and neither may be the one that forgets). The handshake's argv is exactly `["version"]`, because `newVersionCmd` is `cobra.NoArgs` with no flags. `--config <path>` follows `--project` whenever the installation declares one |
-| 4 — the binary is resolved explicitly | the operator's configured path, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and only then every entry of the app's own `PATH`; the resolved path and version are what the header draws. **A candidate that exists but whose version cannot be read is refused rather than skipped** — falling through to the next `fugaro` on the machine would silently change which installation the numbers came from |
+| 4 — the binary is resolved explicitly | the operator's configured path, then the **platform's own well-known prefixes**, and only then the absolute entries of the app's own `PATH`; the resolved path and version are what the header draws. **The prefixes are a constant per platform, chosen by `process.platform` in one place** (`PLATFORM_LOCATIONS`, read through `locationsFor`) and never read out of the environment: macOS gets `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and Linux gets `/usr/local/bin`, `/usr/bin`, `~/.local/bin`, `/home/linuxbrew/.linuxbrew/bin`, `~/.linuxbrew/bin` — including the per-user Homebrew prefix neither list may take from the other. **A candidate that exists but whose version cannot be read is refused rather than skipped** — falling through to the next `fugaro` on the machine would silently change which installation the numbers came from |
 | 5 — the child's environment is built, not inherited | exactly `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`, the five `XDG_*` variables and the chosen installation's `FUGARO_PROJECT`. A hostile `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_*`, `SSH_AUTH_SOCK` or ambient `FUGARO_PROJECT` in the app's environment cannot reach the child |
-| 5 — the child's `PATH` is a list, not one directory | the resolved binary's own directory first, then `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin` — because the CLI looks up external tools itself (`exec.LookPath`, `internal/cli/doctor.go:147`), and `terraform` and `cosign` do not sit beside the `fugaro` binary even under Homebrew. The app's inherited `PATH` still never reaches the child, and a tool outside that list is reported as *not on the `PATH` the console gives the CLI* rather than as "not installed" |
+| 5 — the child's `PATH` is a list, not one directory | the resolved binary's own directory first, then the platform's tool prefixes — macOS's `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`; Linux's `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, `/home/linuxbrew/.linuxbrew/bin`, again from the one `PLATFORM_LOCATIONS` table — because the CLI looks up external tools itself (`exec.LookPath`, `internal/cli/doctor.go:147`), and `terraform` and `cosign` do not sit beside the `fugaro` binary even under Homebrew. The app's inherited `PATH` still never reaches the child, and a tool outside that list is reported as *not on the `PATH` the console gives the CLI* rather than as "not installed" |
 | 5 — the working directory is set explicitly | the installation's checkout when it has one, otherwise a private `0700` directory the app owns under the system temporary directory, checked with `lstat` (not a link, owned by this uid, mode `0700`) rather than trusted to `mkdir`. Never `/`, which is nobody's checkout. `doctor` is called with `--dir <that directory>` and **never `--strict`**: outside a checkout its `plugin-pin` check is a warning that `--strict` turns into a failure about the checkout rather than about the environment on screen |
 | 7 — the app never reads the operator's config | the config's *path* is a string on the installation, passed to the child as `--config`; the CLI is the reader. The add-an-installation check is a **spawn** for the same reason: one allow-listed `doctor --json` with the checkout as the child's working directory, and a checkout that belongs to another project is refused with the CLI's own `this checkout belongs to project %s; --project says %s` — and **not stored**, because storing it would leave every screen refused later with nothing on screen explaining why |
 | 10 — the spawn log (D20) | `src/main/spawnlog.ts`, documented below |
@@ -1956,9 +1956,25 @@ the six a fact rather than an intention:
   binary: the pinned `@electron/fuses` refuses that itself, both calls rejecting
   with "Could not find sentinel in the provided Electron binary", which
   `fuses.test.ts` asserts rather than assumes.)
-- **It refuses a platform that is not darwin** instead of skipping. A build on
-  any other platform would produce no `Contents/MacOS` bundle to flip, and a
-  silently skipped hook is the one outcome that ships the fuses unset.
+- **It refuses a platform this build is not packaged for** instead of skipping.
+  A build on Windows would produce no bundle to flip — no `Contents/MacOS` on
+  macOS, no bare executable in the pack directory on Linux — and a silently
+  skipped hook is the one outcome that ships the fuses unset. So `fuseTarget`
+  resolves the binary **per platform in one place**, from
+  `electronPlatformName`: darwin's
+  `<appOutDir>/<productName>.app/Contents/MacOS/<productName>`, and Linux's
+  `<appOutDir>/<executableName>` (the name `build.linux.executableName` sets,
+  or the sanitized product name lowercased when it sets none), and it
+  **refuses anything that is not darwin or linux**, naming the platform and the
+  two it packages. `SUPPORTED_PLATFORMS` is the one list both this hook and
+  `src/main/spawn.ts`'s location table are keyed on, so "which platforms does
+  this build support" has one answer. **The fuse set does not vary by
+  platform**: the same six flips, byte for byte, on both executables — including
+  `EnableEmbeddedAsarIntegrityValidation`, which Electron enforces on macOS and
+  ignores on Linux, because a per-platform fuse table would be a second policy
+  to keep in step. The one macOS-shaped word in the hook is the
+  `resetAdHocDarwinSignature` option, documented below as deliberately unset
+  for both platforms.
 - **It refuses a wire it has not accounted for.** After the flips, the hook
   compares the wire's length with the fuses `fuses.ts` decides about (six
   flipped, two left alone, one beyond the pin: nine) and stops the build if they
@@ -2156,7 +2172,7 @@ The two facts this rests on were **run, not assumed**, after `npm run build`:
 
 ```sh
 $ node -e "console.log(Object.keys(require('./dist/main/fuses.js')).join(','))"
-FLIPPED_FUSES,LEFT_ALONE_FUSES,afterPack,fuseConfig,macExecutable
+FLIPPED_FUSES,LEFT_ALONE_FUSES,BEYOND_PIN_FUSES,ACCOUNTED_FUSE_COUNT,SUPPORTED_PLATFORMS,fuseConfig,macExecutable,linuxExecutable,fuseTarget,afterPack
 $ node -e "console.log(JSON.stringify(require('./dist/main/fuses.js').fuseConfig()))"
 {"0":false,"2":false,"3":false,"4":true,"5":true,"7":false,"version":"1"}
 ```
@@ -2167,6 +2183,9 @@ uses), the six flips arrive at their documented indices with nothing else set,
 and calling the hook for a darwin context reaches the real `flipFuses` rather
 than a stub: it failed inside the Electron framework lookup for a path that has
 no bundle, which is what a real flip attempt against a non-bundle path does.
+**`fuseTarget` and the two platform functions are exported for the same reason
+the table is**: the resolution is the rule, and a test that could not call it
+with an injected platform could only assert one platform's answer.
 
 ### The packer is a pinned devDependency, and nothing it installs runs
 
@@ -2274,7 +2293,9 @@ nobody should trust:
 | `EnableNodeCliInspectArguments` given the index of the fuse above it (a copy-paste) | four named tests, including "knows every fuse this build names, at the index this build names it at" and "accounts for every fuse this pin knows" |
 | a value the plist parser does not understand (`<integer>`, a nested dict, a root array) | the parser fixtures: each throws rather than reporting an empty set |
 | a wire with `RunAsNode` left enabled, or with a fuse "removed" rather than set | the two `afterPack` verification tests, whose failure messages name the fuse and the binary |
-| `electronPlatformName: 'linux'` handed to the hook | "refuses a platform that is not darwin…", and `flipFuses` is never called |
+| `electronPlatformName: 'win32'` handed to the hook | "refuses a platform this build does not package, rather than shipping an unflipped binary", naming the platform and the two it packages, and `flipFuses` is never called |
+| `macExecutable` returned for a linux context, or the linux branch made to read `productName` instead of `executableName` | "names the Linux executable electron-builder produced, by its executableName", "falls back to the packager's sanitized name when no executableName is configured" and "refuses a Linux context that names no binary, rather than guessing a path to flip" |
+| `SUPPORTED_PLATFORMS` cut back to `['darwin']`, or `PLATFORM_LOCATIONS`'s `linux` row deleted from `src/main/spawn.ts` | that half's own list test: "refuses a platform this build does not package…" in `fuses.test.ts`, and the location-table test in `spawn.test.ts` — each module asserts the platform list it is keyed on, so neither can lose a platform unnoticed |
 | any entry added to `build.files`, or `asar` turned off, or `afterPack` repointed, or `productName` renamed | the packaging-configuration tests in `fuses.test.ts`, one named test each |
 | `asarUnpack: ["**/*"]`, `extraResources`, `extraFiles` or a `mas` block added to `build`; `extraResources` added to `build.mac` | "has exactly the build keys this task decided…" / "has exactly the mac keys this task decided" |
 | `publish` deleted (absent rather than `null`) | "publishes nowhere: publish is null, not merely absent" and the exact-keys test |
@@ -3845,3 +3866,183 @@ selector it waited for, a blank capture fails on its own numbers, and the fake's
 prints which commands the console actually asked for. The menu click that opens the picker is
 in the same category: `test/e2e/installations.spec.ts` drives that same click, but only a run
 with a display exercises it against the built app and the frozen menu this run installs.
+
+## The Linux build, unsigned (the owner's ruling of 2026-10-20)
+
+**The owner ruled: *"yes, Linux for 0.10.0, unsigned"*.** Windows stays out. The
+ruling is recorded where the answer is — the design's **D10** cell carries it as
+a dated amendment after the 2026-10-15 acceptance it changes — and in its own
+section, [design §7.6](../../docs/design/desktop-console.md), with the four
+places that had read "later" amended in the same commit (§4.1 item 5, §4.2,
+§7.5's owner-run row, §9.4's runner bullet and staged-file table). The plan's
+Task 5.1 carries a dated note too, because two phrases of its own text are
+withdrawn by the ruling: "two **signed** deliverables", and Linux "via the
+distro channels this repo would have to choose".
+
+**One sentence is the whole of the security story here, and it is the one a
+reader must not have to infer: an AppImage is not code-signed.** Nothing on
+Linux signs, notarises or staples anything. There is no Linux key, no
+certificate, no owner-run signing step and no secret in any Linux job, because
+there is nothing to sign *with* — and the release's own words, the design's and
+this file's say unsigned rather than leaving it to be deduced.
+
+### What ships, and the configuration that produces it
+
+| | |
+|---|---|
+| Targets | `AppImage` and `deb`, **x64**, pinned in `build.linux.target` rather than passed on a command line |
+| Artifact names | `Fugaro.Console-<version>-linux-x64.AppImage` and `…-linux-x64.deb` — `build.linux.artifactName` is `Fugaro.Console-${version}-linux-${arch}.${ext}`, so the name comes from the tag's X.Y.Z and never from a file name typed into a workflow |
+| Icon | `console/build/icon.png` — **the same file `build.mac.icon` names**, so the two platforms cannot show different marks |
+| Desktop entry | `executableName: fugaro-console`, `category: "Development;Monitor"`, a `synopsis` and a `description`; the deb's `maintainer` is required rather than decorative — this `package.json` has no `author` with an email, so without it the deb leg fails at pack time |
+| Command | `npm run package:linux` — `electron-builder --linux --publish never`, the pinned local packer, never `npx`, and never publishing |
+
+**The bundle is exactly as strict on Linux as on macOS, and that is the point of
+putting the Linux keys beside the macOS ones rather than in a second file.**
+`asar` stays `true`, `build.files` is the same allow-list `build-files.test.ts`
+holds (the compiled main process, the preload, the shared and source modules,
+the renderer bundle and its two documents — and *not* `dist/main/fuses.js`,
+which is a build-time hook and not shipped code), `publish` stays `null`, and
+`npmRebuild` stays `false`. **`electronDownload.checksums` grew the Linux
+archive**: `electron-v44.7.2-linux-x64.zip` joins the two darwin zips, so every
+Electron archive this build downloads is verified against a hash in this
+repository — a platform whose download was unverified would be the one place the
+pinning story did not hold.
+
+### The same six fuses, on the Linux executable
+
+**`src/main/fuses.ts` resolves the binary per platform in one place.**
+`fuseTarget` reads `electronPlatformName` and returns either darwin's
+`<appOutDir>/<productName>.app/Contents/MacOS/<productName>` or Linux's
+`<appOutDir>/<executableName>` — `linuxExecutable` falls back to the packer's
+own `sanitizedName.toLowerCase()`, the name `LinuxPackager` uses when
+`executableName` is unset, and **refuses a context that names no binary at all**
+rather than guessing a path to flip. Anything that is not `darwin` or `linux` is
+**refused, naming the platform and the two this build packages**: a hook that
+skipped would ship the fuses unset, which is the one outcome it exists to
+prevent. `SUPPORTED_PLATFORMS` is that list, and it is the same list
+`src/main/spawn.ts`'s location table is keyed on.
+
+**The fuse set does not vary by platform.** The same six flips are written into
+the Linux executable, with byte-for-byte the same `fuseConfig()`, and the wire
+is read back on Linux too — a `RunAsNode` that came back enabled stops the build
+before the packer turns `linux-unpacked` into an AppImage or a deb.
+`EnableEmbeddedAsarIntegrityValidation` is enforced by Electron on macOS and
+ignored on Linux; it is set on Linux anyway, because a per-platform fuse table
+would be a second policy to keep in step with the first.
+
+### Resolution on Linux: two lists, chosen by the platform, never the inherited `PATH`
+
+`src/main/spawn.ts` has one table — `PLATFORM_LOCATIONS`, read through
+`locationsFor` — and it is the only place the platform is consulted:
+
+- **Rule 4's prefixes**, in order: macOS `/opt/homebrew/bin`, `/usr/local/bin`,
+  `~/.local/bin`, `/usr/bin`; **Linux** `/usr/local/bin`, `/usr/bin`,
+  `~/.local/bin`, `/home/linuxbrew/.linuxbrew/bin`, `~/.linuxbrew/bin`.
+  **Neither list is read out of the environment** and neither may take the
+  other's Homebrew prefix: `/opt/homebrew/bin` is the macOS prefix and
+  `/home/linuxbrew/.linuxbrew/bin` is Linux's, and a directory that does not
+  exist on the machine is not a place to look for a binary. The app's own
+  `PATH` remains what design rule 4 says it is — the **last** candidates, after
+  every well-known prefix, and only their absolute entries (a relative or empty
+  entry resolves against the app's own working directory, which is nothing the
+  operator chose).
+- **Rule 5's child `PATH`**, rebuilt from the resolved binary's own directory
+  and the platform's tool directories: for Linux `/usr/local/bin`, `/usr/bin`,
+  `/bin`, `/usr/sbin`, `/sbin`, `/home/linuxbrew/.linuxbrew/bin`. `~/.linuxbrew/bin`
+  is deliberately **not** in that list: nothing expands a tilde inside a `PATH`,
+  and the per-user case is covered by the resolved binary's own directory, which
+  always comes first. The app's inherited `PATH` never reaches the child on
+  either platform.
+- **A developer platform that is neither** (running the sources on Windows, which
+  this build does not package) falls back to the POSIX list rather than to the
+  environment: the fallback cannot find a binary that is not on the machine, and
+  the one thing it must not do is reach for the app's `PATH`.
+
+### The owner's commands, and what they do not need
+
+```sh
+cd console
+npm ci --ignore-scripts                      # exact pins, registry host, from the lockfile
+node node_modules/electron/install.js        # the distribution, verified against the pinned checksums
+npm run build && npm run package:linux       # AppImage and deb into release/, unsigned
+sha256sum release/*.AppImage release/*.deb   # what a reader checks against console-sha256sums.txt
+```
+
+**There is no signing step in that list and no secret in it** — no `CSC_LINK`, no
+keychain, no `--sign`, no environment. The macOS section below is the one with
+the owner-only pipeline, and none of it applies here.
+
+### CI: staged for the owner, and outside the release gate
+
+Two files, both staged under `docs/pending-workflows/` because no Fugaro run may
+create or edit anything under `.github/workflows/`:
+
+- **`console-linux.yml`** — one job, `console-linux`, on `ubuntu-latest`:
+  `contents: read`, **no environment and no secret**, the pinned toolchain,
+  Electron's own download verified against the three checksums `package.json`
+  pins, `npm run build`, `npm run package:linux`, an assertion that exactly one
+  `.AppImage` and one `.deb` came out, and `upload-artifact`. It runs on every
+  pull request and every push to `main`, with no path filter.
+- **`console-release-linux.yml`** — **the staged `console-release.yml` with the
+  Linux legs added**, so it supersedes that file and is copied over both the
+  staged copy and the workflow. Its third job, `linux`, holds no secret either;
+  it packs on the pinned `ubuntu-24.04` and then verifies **what ships** — the
+  SHA-256 of both artifacts, the `.deb` through `dpkg-deb`, the AppImage through
+  its own runtime's `--appimage-extract`, and the fuse wire read back with
+  `@electron/fuses` out of the executable *inside each artifact*, which is the
+  one claim the pack-time hook cannot make about the packaged result. `publish`
+  now merges both legs into **one** `console-sha256sums.txt`, re-checks it in the
+  directory that ships, signs that file keyless with cosign into
+  `console-sha256sums.txt.sigstore.json` (this workflow's own OIDC identity — not
+  a key of the owner's) and attaches everything to `console-vX.Y.Z`.
+
+**Neither file is in `scripts/release-gate.sh`'s required-check list, and that is
+a decision rather than an omission.** The gate's list is derived from
+`console-tests.yml`'s job set and asserted by `TestReleaseGateRequiresTheConsoleCheck`,
+which refuses a workflow with more than one job — so adding the Linux build to
+the gate is not a packaging change at all, it is a change to which checks gate a
+release tag, and that is the owner's call. `docs/pending-workflows/README.md`'s
+`## console-linux.yml` section carries the three edits it would take, and the
+copy-in commands for both files.
+
+### The website says nothing about Linux yet, and that is deliberate
+
+`website/content/downloads.json` may carry an optional per-platform block, and
+the reader that validates it (`website/src/lib/console-downloads.mjs`) holds it
+to the file's own assets: the block names the ids of the downloads it links, and
+every id must resolve to an entry of the file's `downloads` list — which is
+itself held to the release's published names and its sums file. So **a download
+link can only exist for an asset the data file names**, and **the block renders
+only when it is there** (`Downloads.astro` draws nothing for it otherwise: no
+heading, no sentence, no link, not even a word saying which platform is
+missing). The shipped file carries **no** Linux block, so both pages still say
+macOS only, exactly as they did before this ruling — the entry lands when a
+release actually carries a Linux asset, and not before.
+
+### What was verified here, and what was not
+
+- **Verified in this container**: the fuse hook's per-platform resolution, the
+  refusal of a platform this build does not package, the same-six-fuses claim,
+  the Linux wire read-back, the Linux executable-name fallback and its refusal
+  of a nameless context (`test/unit/fuses.test.ts`); both location lists and the
+  child's `PATH` on both platforms (`test/unit/spawn.test.ts`); the packaging
+  configuration — the two targets, x64, the artifact name, the icon, the
+  desktop-entry fields, the absence of any signature setting, and the Linux key
+  set (`test/unit/fuses.test.ts`); the two staged workflows' shape, their
+  pins and their secret-lessness (`internal/cli/docs_desktop_console_test.go`).
+  Every new guard was mutation-proven.
+- **Not verified here, and not verifiable in this container**: no
+  `electron-builder` run at all — this task's own rule is that the packaging is
+  unit-tested as a configuration rather than executed, and a real Linux pack
+  needs a Linux runner with a display-less AppImage toolchain. So **nothing in
+  this repository has yet produced an AppImage or a `.deb`**; the first one is
+  the staged `console-linux.yml` job's, and the first that ships is the tag's.
+
+### What is not here
+
+**No Linux auto-update** (design §7.3 is Squirrel.Mac and an `electron-updater`
+feed; the AppImage has no such feed here), **no arm64 Linux build** until one can
+be built and verified on a runner that has it, **no Flatpak, snap or rpm**, **no
+Linux Homebrew cask**, **no Windows build**, and **no signature of any kind**.
+Each is a later decision and not an oversight: this ruling is the smallest thing
+that makes "Linux is supported" true.

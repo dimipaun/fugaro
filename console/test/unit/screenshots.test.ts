@@ -639,6 +639,22 @@ describe('the fixture CLI and the installation store it seeds', () => {
 // 3b. The launch's own store, which is the only thing the handshake may read.
 // ---------------------------------------------------------------------------
 
+/** WELL_KNOWN_PREFIXES is rule 4's list of well-known directories, **per
+ * platform**, written out here as a literal rather than read from `spawn.ts`'s
+ * table. The refusal sentences are built from that table (`locationsFor()`), so
+ * an expectation built from the same function would hold whatever the table
+ * became -- the shape of assertion two reviews of this branch have already had
+ * to fix. These literals are the ones `test/unit/spawn.test.ts` holds the table
+ * itself to, and the reason the list is per platform is the owner's Linux ruling
+ * of 2026-10-20 (`spawn.ts`'s `DARWIN_LOCATIONS` and `LINUX_LOCATIONS`). */
+const WELL_KNOWN_PREFIXES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  darwin: Object.freeze(['/opt/homebrew/bin', '/usr/local/bin', '~/.local/bin', '/usr/bin']),
+  linux: Object.freeze(['/usr/local/bin', '/usr/bin', '~/.local/bin', '/home/linuxbrew/.linuxbrew/bin', '~/.linuxbrew/bin']),
+})
+
+/** WALK is that list as the refusal sentence spells it, on this machine. */
+const WALK: string = (WELL_KNOWN_PREFIXES[process.platform] ?? WELL_KNOWN_PREFIXES['linux'] ?? []).join(', ')
+
 describe('a launch is checked against the store it seeds', () => {
   /**
    * The check under test is the run's first refusal, and it is the fix for the
@@ -692,9 +708,13 @@ describe('a launch is checked against the store it seeds', () => {
     try {
       const profile = fixture.newProfile()
       fixture.seedInstallations(profile, null)
+      // The sentence names the list, and the list is the platform's: it is the
+      // walk the handshake would make *here*, not a macOS constant that would be
+      // a lie on the Linux build the owner ruled in on 2026-10-20.
+      expect(WALK).not.toBe('')
       await expect(
         assertLaunchIsFixture({ profile, expected: fixture.binary, env, isolation }),
-      ).rejects.toThrow(/chooses no installation.*\/opt\/homebrew\/bin, \/usr\/local\/bin, ~\/\.local\/bin, \/usr\/bin/)
+      ).rejects.toThrow(`chooses no installation, and the startup handshake of a console with nothing chosen resolves a fugaro by walking ${WALK} and this app's PATH`)
     } finally {
       rmSync(isolation.scratch, { recursive: true, force: true })
     }
@@ -750,7 +770,7 @@ describe('a launch is checked against the store it seeds', () => {
       const empty = fixture.newProfile()
       await expect(
         assertLaunchIsFixture({ profile: empty, expected: fixture.binary, env, isolation }),
-      ).rejects.toThrow(/holds no installations\.json/)
+      ).rejects.toThrow(`holds no installations.json, so the console's startup handshake would resolve a fugaro by walking ${WALK} and this app's PATH`)
 
       const broken = fixture.newProfile()
       writeFileSync(join(broken, 'installations.json'), '{"version":1}')

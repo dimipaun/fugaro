@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How it works, draft 3: bold run diagram</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#6FD8F5}a:hover{color:#E6EEF5}
+</style>
+</helmet>
+<div style="width: 1440px; height: 3060px; box-sizing: border-box; background: #0A0E16; color: #E6EEF5; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; position: relative; overflow: hidden">
+
+  <svg aria-hidden="true" width="1440" height="1500" viewBox="0 0 1440 1500" style="position: absolute; top: 0; left: 0; pointer-events: none">
+    <defs>
+      <radialGradient id="bgGlowA" cx="0.72" cy="0.3" r="0.55">
+        <stop offset="0" stop-color="#17A8E6" stop-opacity="0.26"></stop>
+        <stop offset="1" stop-color="#17A8E6" stop-opacity="0"></stop>
+      </radialGradient>
+      <radialGradient id="bgGlowB" cx="0.15" cy="0.65" r="0.4">
+        <stop offset="0" stop-color="#F5A524" stop-opacity="0.08"></stop>
+        <stop offset="1" stop-color="#F5A524" stop-opacity="0"></stop>
+      </radialGradient>
+      <pattern id="bgGrid" width="48" height="48" patternUnits="userSpaceOnUse">
+        <path d="M48 0 H0 V48" fill="none" stroke="#24303F" stroke-width="1" stroke-opacity="0.45"></path>
+      </pattern>
+      <linearGradient id="bgGridFade" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#fff" stop-opacity="0.85"></stop>
+        <stop offset="0.6" stop-color="#fff" stop-opacity="0.2"></stop>
+        <stop offset="1" stop-color="#fff" stop-opacity="0"></stop>
+      </linearGradient>
+      <mask id="bgGridMask"><rect width="1440" height="1500" fill="url(#bgGridFade)"></rect></mask>
+    </defs>
+    <rect width="1440" height="1500" fill="url(#bgGrid)" mask="url(#bgGridMask)"></rect>
+    <rect width="1440" height="1500" fill="url(#bgGlowA)"></rect>
+    <rect width="1440" height="1500" fill="url(#bgGlowB)"></rect>
+  </svg>
+
+  <!-- Top bar -->
+  <header style="position: relative; width: 1240px; display: flex; align-items: center; gap: 28px; padding: 20px 0; border-bottom: 1px solid #24303F">
+    <a href="/" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: #E6EEF5; font-weight: 800; font-size: 20px; letter-spacing: -0.01em">
+      <svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#17A8E6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="4"></rect><path d="M8 10 L11 12.5 L8 15"></path><path d="M13 15 H16"></path></svg>
+      Fugaro
+    </a>
+    <div style="flex-grow: 1"></div>
+    <nav aria-label="Site" style="display: flex; gap: 22px; font-size: 14px">
+      <a href="/" style="color: #9FB2C4; text-decoration: none">Home</a>
+      <a href="/how-it-works/" aria-current="page" style="color: #E6EEF5; text-decoration: none; font-weight: 600; border-bottom: 2px solid #17A8E6; padding-bottom: 3px">How it works</a>
+      <a href="/getting-started/" style="color: #9FB2C4; text-decoration: none">Getting started</a>
+      <a href="/console/" style="color: #9FB2C4; text-decoration: none">Console</a>
+      <a href="/caps-and-costs/" style="color: #9FB2C4; text-decoration: none">Caps and costs</a>
+      <a href="/docs/" style="color: #9FB2C4; text-decoration: none">Docs</a>
+      <a href="/changelog/" style="color: #9FB2C4; text-decoration: none">Changelog</a>
+      <a href="/security/" style="color: #9FB2C4; text-decoration: none">Security</a>
+      <a href="/faq/" style="color: #9FB2C4; text-decoration: none">FAQ</a>
+      <a href="/community/" style="color: #9FB2C4; text-decoration: none">Community</a>
+    </nav>
+  </header>
+
+  <!-- Hero -->
+  <section aria-labelledby="hero-title" style="position: relative; width: 1240px; display: flex; align-items: flex-end; gap: 64px; padding: 88px 0 56px">
+    <div style="flex: 1 1 0; display: flex; flex-direction: column; gap: 26px">
+      <div style="display: inline-flex; align-self: flex-start; align-items: center; gap: 10px; padding: 7px 14px; border: 1px solid #24303F; border-radius: 999px; background: #0D131D; font-size: 14px; font-weight: 600; color: #6FD8F5; letter-spacing: 0.04em; text-transform: uppercase">
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: #17A8E6; box-shadow: 0 0 10px #17A8E6"></span>
+        How it works
+      </div>
+      <h1 id="hero-title" style="margin: 0; font-size: 92px; line-height: 0.96; font-weight: 900; letter-spacing: -0.045em">How a task becomes<br><span style="background: linear-gradient(92deg, #6FD8F5 0%, #17A8E6 50%, #4CC38A 100%); -webkit-background-clip: text; background-clip: text; color: transparent">a pull request</span></h1>
+    </div>
+    <div style="width: 380px; display: flex; flex-direction: column; gap: 24px; padding-bottom: 8px">
+      <p style="margin: 0; font-size: 21px; line-height: 1.45; color: #9FB2C4">One execution per task, then gone, in your own cloud project. <span style="color: #E6EEF5">The run record and the PR remain; the container does not.</span></p>
+      <div style="display: flex; align-items: center; gap: 24px">
+        <a href="/getting-started/" style="display: inline-flex; align-items: center; gap: 10px; padding: 15px 24px; border-radius: 16px; background: linear-gradient(135deg, #6FD8F5, #17A8E6); color: #0A0E16; font-weight: 800; font-size: 17px; text-decoration: none; box-shadow: 0 10px 34px rgba(23,168,230,0.35)">
+          Get started
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0A0E16" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12 H19"></path><path d="M13 6 L19 12 L13 18"></path></svg>
+        </a>
+        <a href="/caps-and-costs/" style="color: #6FD8F5; font-weight: 600; font-size: 16px; text-decoration: none; border-bottom: 1px solid #24303F; padding-bottom: 2px">Caps and costs</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- The run diagram: hero of the page -->
+  <section aria-labelledby="diagram-title" style="position: relative; width: 1240px; display: flex; flex-direction: column; gap: 18px">
+    <h2 id="diagram-title" style="margin: 0; font-size: 15px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #9FB2C4">The run, end to end</h2>
+    <figure style="margin: 0; border-radius: 20px; box-shadow: 0 30px 80px rgba(0,0,0,0.45), 0 0 0 1px #24303F">
+      <svg role="img" aria-label="How a task becomes a pull request: your agent asks for the work; Fugaro runs one run per piece; each is an ephemeral cloud job in your own cloud project that goes through bootstrap, implement, verify, review, a fix round back into review, and writeback; at the first checkpoint push a draft pull request opens, marked not verified. Spend caps watch the whole run." width="1240" height="740" viewBox="0 0 1240 740" fill="none" style="display: block">
+        <defs>
+          <linearGradient id="panelFill" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#0F1724"></stop>
+            <stop offset="1" stop-color="#0B1019"></stop>
+          </linearGradient>
+          <linearGradient id="badgeFill" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#6FD8F5"></stop>
+            <stop offset="1" stop-color="#17A8E6"></stop>
+          </linearGradient>
+          <linearGradient id="jobFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#132235"></stop>
+            <stop offset="1" stop-color="#101925"></stop>
+          </linearGradient>
+          <linearGradient id="capsFill" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#211A0E"></stop>
+            <stop offset="1" stop-color="#121A26"></stop>
+          </linearGradient>
+          <linearGradient id="prFill" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#0F2419"></stop>
+            <stop offset="1" stop-color="#121A26"></stop>
+          </linearGradient>
+          <filter id="glow" filterUnits="userSpaceOnUse" x="0" y="0" width="1240" height="740">
+            <feGaussianBlur stdDeviation="5" result="b"></feGaussianBlur>
+            <feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+          </filter>
+          <marker id="head" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L11 6L1 11z" fill="#6FD8F5"></path></marker>
+          <marker id="headAmber" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L11 6L1 11z" fill="#F5A524"></path></marker>
+          <marker id="headDim" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L11 6L1 11z" fill="#8FA6BC"></path></marker>
+        </defs>
+
+        <rect x="0" y="0" width="1240" height="740" rx="20" fill="url(#panelFill)"></rect>
+
+        <!-- 1 Your agent -->
+        <rect x="40" y="80" width="240" height="200" rx="18" fill="#121A26" stroke="#17A8E6" stroke-width="2.5"></rect>
+        <circle cx="76" cy="116" r="18" fill="url(#badgeFill)"></circle>
+        <text x="76" y="123" text-anchor="middle" fill="#0A0E16" font-size="19" font-weight="900" font-family="system-ui, sans-serif">1</text>
+        <text x="60" y="180" fill="#E6EEF5" font-size="30" font-weight="900" letter-spacing="-0.6" font-family="system-ui, sans-serif">Your agent</text>
+        <text x="60" y="216" fill="#6FD8F5" font-size="18" font-family="system-ui, sans-serif">“Fan out these three</text>
+        <text x="60" y="240" fill="#6FD8F5" font-size="18" font-family="system-ui, sans-serif">bug fixes.”</text>
+
+        <!-- 2 Fugaro -->
+        <rect x="340" y="80" width="240" height="200" rx="18" fill="#121A26" stroke="#17A8E6" stroke-width="2.5"></rect>
+        <circle cx="376" cy="116" r="18" fill="url(#badgeFill)"></circle>
+        <text x="376" y="123" text-anchor="middle" fill="#0A0E16" font-size="19" font-weight="900" font-family="system-ui, sans-serif">2</text>
+        <text x="360" y="180" fill="#E6EEF5" font-size="30" font-weight="900" letter-spacing="-0.6" font-family="system-ui, sans-serif">Fugaro</text>
+        <text x="360" y="214" fill="#9FB2C4" font-size="17" font-family="system-ui, sans-serif">One run per piece, each</text>
+        <text x="360" y="238" fill="#9FB2C4" font-size="17" font-family="system-ui, sans-serif">with a self-contained</text>
+        <text x="360" y="262" fill="#9FB2C4" font-size="17" font-family="system-ui, sans-serif">task</text>
+
+        <!-- 3 Ephemeral cloud job -->
+        <rect x="640" y="40" width="560" height="470" rx="22" fill="url(#jobFill)" stroke="#17A8E6" stroke-width="2.5" stroke-dasharray="10 7" filter="url(#glow)"></rect>
+        <circle cx="680" cy="80" r="18" fill="url(#badgeFill)"></circle>
+        <text x="680" y="87" text-anchor="middle" fill="#0A0E16" font-size="19" font-weight="900" font-family="system-ui, sans-serif">3</text>
+        <text x="712" y="91" fill="#E6EEF5" font-size="30" font-weight="900" letter-spacing="-0.6" font-family="system-ui, sans-serif">Ephemeral cloud job</text>
+        <text x="668" y="128" fill="#6FD8F5" font-size="17" font-weight="700" font-family="system-ui, sans-serif">in your own cloud project</text>
+        <text x="668" y="152" fill="#9FB2C4" font-size="16" font-family="system-ui, sans-serif">Cloud Run job per repository workflow</text>
+        <text x="668" y="174" fill="#9FB2C4" font-size="16" font-family="system-ui, sans-serif">one execution per task, then gone</text>
+
+        <!-- stage pills -->
+        <rect x="668" y="196" width="224" height="58" rx="14" fill="#0A0E16" stroke="#2E4A66" stroke-width="1.5"></rect>
+        <text x="780" y="232" text-anchor="middle" font-size="21" font-weight="800" font-family="system-ui, sans-serif"><tspan fill="#6FD8F5">1 </tspan><tspan fill="#E6EEF5">bootstrap</tspan></text>
+        <rect x="948" y="196" width="224" height="58" rx="14" fill="#0A0E16" stroke="#2E4A66" stroke-width="1.5"></rect>
+        <text x="1060" y="232" text-anchor="middle" font-size="21" font-weight="800" font-family="system-ui, sans-serif"><tspan fill="#6FD8F5">2 </tspan><tspan fill="#E6EEF5">implement</tspan></text>
+        <rect x="948" y="302" width="224" height="58" rx="14" fill="#0A0E16" stroke="#2E4A66" stroke-width="1.5"></rect>
+        <text x="1060" y="338" text-anchor="middle" font-size="21" font-weight="800" font-family="system-ui, sans-serif"><tspan fill="#6FD8F5">3 </tspan><tspan fill="#E6EEF5">verify</tspan></text>
+        <rect x="668" y="302" width="224" height="58" rx="14" fill="#0A0E16" stroke="#2E4A66" stroke-width="1.5"></rect>
+        <text x="780" y="338" text-anchor="middle" font-size="21" font-weight="800" font-family="system-ui, sans-serif"><tspan fill="#6FD8F5">4 </tspan><tspan fill="#E6EEF5">review</tspan></text>
+        <rect x="668" y="420" width="224" height="58" rx="14" fill="#0A0E16" stroke="#8FA6BC" stroke-width="1.5" stroke-dasharray="5 4"></rect>
+        <text x="780" y="455" text-anchor="middle" font-family="system-ui, sans-serif"><tspan fill="#E6EEF5" font-size="21" font-weight="800">fix</tspan><tspan fill="#9FB2C4" font-size="15">, then review again</tspan></text>
+        <rect x="948" y="420" width="224" height="58" rx="14" fill="#0A0E16" stroke="#2E4A66" stroke-width="1.5"></rect>
+        <text x="1060" y="456" text-anchor="middle" font-size="21" font-weight="800" font-family="system-ui, sans-serif"><tspan fill="#6FD8F5">5 </tspan><tspan fill="#E6EEF5">writeback</tspan></text>
+
+        <!-- flow arrows -->
+        <g filter="url(#glow)" stroke-linecap="round">
+          <path d="M284 180 H330" stroke="#17A8E6" stroke-width="4" marker-end="url(#head)"></path>
+          <path d="M584 180 H630" stroke="#17A8E6" stroke-width="4" marker-end="url(#head)"></path>
+          <path d="M896 225 H938" stroke="#17A8E6" stroke-width="4" marker-end="url(#head)"></path>
+          <path d="M1060 258 V292" stroke="#17A8E6" stroke-width="4" marker-end="url(#head)"></path>
+          <path d="M944 331 H902" stroke="#17A8E6" stroke-width="4" marker-end="url(#head)"></path>
+          <path d="M896 449 H938" stroke="#17A8E6" stroke-width="4" marker-end="url(#head)"></path>
+          <path d="M1060 482 V552" stroke="#4CC38A" stroke-width="4" marker-end="url(#head)"></path>
+        </g>
+        <path d="M748 364 C716 384 716 396 744 414" stroke="#8FA6BC" stroke-width="3" stroke-linecap="round" marker-end="url(#headDim)"></path>
+        <path d="M812 416 C844 396 844 384 816 366" stroke="#8FA6BC" stroke-width="3" stroke-linecap="round" marker-end="url(#headDim)"></path>
+        <text x="307" y="164" text-anchor="middle" fill="#6FD8F5" font-size="14" font-family="ui-monospace, Menlo, monospace">run</text>
+        <text x="607" y="164" text-anchor="middle" fill="#6FD8F5" font-size="14" font-family="ui-monospace, Menlo, monospace">launch</text>
+        <text x="1076" y="530" fill="#4CC38A" font-size="14" font-family="ui-monospace, Menlo, monospace">first checkpoint push</text>
+
+        <!-- 4 Pull request -->
+        <rect x="640" y="560" width="560" height="140" rx="18" fill="url(#prFill)" stroke="#4CC38A" stroke-width="2.5" filter="url(#glow)"></rect>
+        <circle cx="680" cy="600" r="18" fill="#4CC38A"></circle>
+        <text x="680" y="607" text-anchor="middle" fill="#0A0E16" font-size="19" font-weight="900" font-family="system-ui, sans-serif">4</text>
+        <text x="712" y="611" fill="#E6EEF5" font-size="30" font-weight="900" letter-spacing="-0.6" font-family="system-ui, sans-serif">Pull request</text>
+        <text x="668" y="656" fill="#9FB2C4" font-size="17" font-family="system-ui, sans-serif">a draft opens at the first push (marked not verified)</text>
+        <g transform="translate(1124 586)" stroke="#4CC38A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <circle cx="10" cy="8" r="6"></circle><circle cx="10" cy="44" r="6"></circle><circle cx="42" cy="44" r="6"></circle>
+          <path d="M10 14 V38"></path><path d="M42 38 V22 C42 16 38 12 32 12 H22"></path><path d="M27 7 L22 12 L27 17"></path>
+        </g>
+
+        <!-- 5 Spend caps band -->
+        <rect x="40" y="320" width="560" height="380" rx="18" fill="url(#capsFill)" stroke="#F5A524" stroke-width="2.5"></rect>
+        <g transform="translate(64 346)" stroke="#F5A524" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <path d="M4 34 A20 20 0 0 1 44 34"></path><path d="M24 34 L34 20"></path><circle cx="24" cy="34" r="3" fill="#F5A524"></circle>
+        </g>
+        <text x="64" y="436" fill="#E6EEF5" font-size="32" font-weight="900" letter-spacing="-0.8" font-family="system-ui, sans-serif">Spend caps watch</text>
+        <text x="64" y="472" fill="#F5A524" font-size="32" font-weight="900" letter-spacing="-0.8" font-family="system-ui, sans-serif">the whole run</text>
+        <circle cx="72" cy="514" r="4" fill="#F5A524"></circle>
+        <text x="88" y="520" fill="#C9D6E2" font-size="18" font-family="system-ui, sans-serif">A run halts when its next call's worst case</text>
+        <text x="88" y="544" fill="#C9D6E2" font-size="18" font-family="system-ui, sans-serif">would pass the cap</text>
+        <circle cx="72" cy="578" r="4" fill="#F5A524"></circle>
+        <text x="88" y="584" fill="#C9D6E2" font-size="18" font-family="system-ui, sans-serif">runs also share daily caps per</text>
+        <text x="88" y="608" fill="#C9D6E2" font-size="18" font-family="system-ui, sans-serif">repository and project</text>
+        <circle cx="72" cy="642" r="4" fill="#F5A524"></circle>
+        <text x="88" y="648" fill="#C9D6E2" font-size="18" font-family="system-ui, sans-serif">There is no Fugaro service in between: it uses</text>
+        <text x="88" y="672" fill="#C9D6E2" font-size="18" font-family="system-ui, sans-serif">your Google Cloud project and your model credentials</text>
+        <path d="M604 400 C622 400 622 330 636 318" stroke="#F5A524" stroke-width="3" stroke-dasharray="7 6" stroke-linecap="round" marker-end="url(#headAmber)"></path>
+        <path d="M604 640 H632" stroke="#F5A524" stroke-width="3" stroke-dasharray="7 6" stroke-linecap="round" marker-end="url(#headAmber)"></path>
+      </svg>
+    </figure>
+  </section>
+
+  <!-- The same, in words -->
+  <section aria-labelledby="words-title" style="position: relative; width: 1240px; display: flex; flex-direction: column; gap: 32px; padding: 120px 0 0">
+    <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 40px">
+      <h2 id="words-title" style="margin: 0; font-size: 56px; line-height: 1; font-weight: 900; letter-spacing: -0.035em">The same, in words</h2>
+      <p style="margin: 0; font-size: 17px; color: #9FB2C4; max-width: 420px; line-height: 1.5">Every fact in the picture, in the run's own order.</p>
+    </div>
+    <ol style="list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px">
+      <li style="background: #0D131D; border: 1px solid #24303F; border-top: 3px solid #17A8E6; border-radius: 18px; padding: 28px 26px; display: flex; flex-direction: column; gap: 14px">
+        <span style="font-size: 64px; font-weight: 900; line-height: 0.9; letter-spacing: -0.04em; color: #17A8E6">01</span>
+        <strong style="font-size: 24px; font-weight: 800; letter-spacing: -0.01em">Your agent</strong>
+        <span style="font-size: 17px; line-height: 1.5; color: #9FB2C4">“Fan out these three bug fixes.”</span>
+      </li>
+      <li style="background: #0D131D; border: 1px solid #24303F; border-top: 3px solid #17A8E6; border-radius: 18px; padding: 28px 26px; display: flex; flex-direction: column; gap: 14px">
+        <span style="font-size: 64px; font-weight: 900; line-height: 0.9; letter-spacing: -0.04em; color: #17A8E6">02</span>
+        <strong style="font-size: 24px; font-weight: 800; letter-spacing: -0.01em">Fugaro</strong>
+        <span style="font-size: 17px; line-height: 1.5; color: #9FB2C4">One run per piece, each with a self-contained task</span>
+      </li>
+      <li style="background: #0D131D; border: 1px solid #24303F; border-top: 3px solid #17A8E6; border-radius: 18px; padding: 28px 26px; display: flex; flex-direction: column; gap: 14px">
+        <span style="font-size: 64px; font-weight: 900; line-height: 0.9; letter-spacing: -0.04em; color: #17A8E6">03</span>
+        <strong style="font-size: 24px; font-weight: 800; letter-spacing: -0.01em">Ephemeral cloud job</strong>
+        <span style="font-size: 17px; line-height: 1.5; color: #9FB2C4; display: flex; flex-direction: column; gap: 4px"><span>in your own cloud project</span><span>Cloud Run job per repository workflow</span><span>one execution per task, then gone</span></span>
+      </li>
+      <li style="background: #0D131D; border: 1px solid #24303F; border-top: 3px solid #4CC38A; border-radius: 18px; padding: 28px 26px; display: flex; flex-direction: column; gap: 14px">
+        <span style="font-size: 64px; font-weight: 900; line-height: 0.9; letter-spacing: -0.04em; color: #4CC38A">04</span>
+        <strong style="font-size: 24px; font-weight: 800; letter-spacing: -0.01em">Pull request</strong>
+        <span style="font-size: 17px; line-height: 1.5; color: #9FB2C4">a draft opens at the first push (marked not verified)</span>
+      </li>
+      <li style="grid-column: 1 / -1; background: linear-gradient(100deg, #1E180D 0%, #0D131D 55%); border: 1px solid #3A2F1A; border-left: 4px solid #F5A524; border-radius: 18px; padding: 30px 32px; display: flex; align-items: flex-start; gap: 40px">
+        <span style="font-size: 64px; font-weight: 900; line-height: 0.9; letter-spacing: -0.04em; color: #F5A524">05</span>
+        <strong style="width: 260px; flex: none; font-size: 28px; line-height: 1.15; font-weight: 900; letter-spacing: -0.02em">Spend caps watch the whole run</strong>
+        <span style="flex: 1 1 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; font-size: 17px; line-height: 1.5; color: #C9D6E2">
+          <span>A run halts when its next call's worst case would pass the cap</span>
+          <span>runs also share daily caps per repository and project</span>
+          <span>There is no Fugaro service in between: it uses your Google Cloud project and your model credentials</span>
+        </span>
+      </li>
+    </ol>
+  </section>
+
+  <!-- Also true of a run -->
+  <section aria-labelledby="also-title" style="position: relative; width: 1240px; display: flex; gap: 64px; padding: 120px 0 0">
+    <div style="width: 360px; flex: none; display: flex; flex-direction: column; gap: 18px">
+      <h2 id="also-title" style="margin: 0; font-size: 56px; line-height: 1; font-weight: 900; letter-spacing: -0.035em">Also true<br>of a run</h2>
+      <p style="margin: 0; font-size: 17px; color: #9FB2C4; line-height: 1.5">What the picture does not draw.</p>
+    </div>
+    <ul style="flex: 1 1 0; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; background: #0D131D; border: 1px solid #24303F; border-radius: 20px; overflow: hidden">
+      <li style="display: flex; align-items: center; gap: 22px; padding: 24px 28px; border-bottom: 1px solid #24303F; font-size: 19px; line-height: 1.45">
+        <span style="width: 48px; height: 48px; flex: none; border-radius: 14px; background: #121A26; border: 1px solid #24303F; display: flex; align-items: center; justify-content: center">
+          <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6FD8F5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"></rect><path d="M7 10 L10 12.5 L7 15"></path><path d="M12 15 H16"></path></svg>
+        </span>
+        <span>The plugin’s working skill launches, watches and diagnoses runs</span>
+      </li>
+      <li style="display: flex; align-items: center; gap: 22px; padding: 24px 28px; border-bottom: 1px solid #24303F; font-size: 19px; line-height: 1.45">
+        <span style="width: 48px; height: 48px; flex: none; border-radius: 14px; background: #121A26; border: 1px solid #24303F; display: flex; align-items: center; justify-content: center">
+          <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#4CC38A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M2 12 H8"></path><path d="M16 12 H22"></path></svg>
+        </span>
+        <span>The draft appears at the run’s first checkpoint push (within about a minute of its first commit), marked not verified</span>
+      </li>
+      <li style="display: flex; align-items: center; gap: 22px; padding: 24px 28px; border-bottom: 1px solid #24303F; font-size: 19px; line-height: 1.45">
+        <span style="width: 48px; height: 48px; flex: none; border-radius: 14px; background: #121A26; border: 1px solid #24303F; display: flex; align-items: center; justify-content: center">
+          <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6FD8F5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12 A8 8 0 1 1 17.7 6.3"></path><path d="M20 4 V9 H15"></path></svg>
+        </span>
+        <span>Sync to the exact target commit and restore the dependency caches.</span>
+      </li>
+      <li style="display: flex; align-items: center; gap: 22px; padding: 24px 28px; border-bottom: 1px solid #24303F; font-size: 19px; line-height: 1.45">
+        <span style="width: 48px; height: 48px; flex: none; border-radius: 14px; background: #121A26; border: 1px solid #24303F; display: flex; align-items: center; justify-content: center">
+          <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6FD8F5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1.5"></rect><path d="M5 9 V19 A1 1 0 0 0 6 20 H18 A1 1 0 0 0 19 19 V9"></path><path d="M10 13 H14"></path></svg>
+        </span>
+        <span>The run record and the PR remain; the container does not.</span>
+      </li>
+      <li style="display: flex; align-items: center; gap: 22px; padding: 24px 28px; font-size: 19px; line-height: 1.45">
+        <span style="width: 48px; height: 48px; flex: none; border-radius: 14px; background: #121A26; border: 1px solid #24303F; display: flex; align-items: center; justify-content: center">
+          <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#F5A524" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 L20 6 V12 C20 16.5 16.5 20 12 21 C7.5 20 4 16.5 4 12 V6 Z"></path></svg>
+        </span>
+        <span>The trust boundary is the container, not the process.</span>
+      </li>
+    </ul>
+  </section>
+
+  <!-- Closing call to action -->
+  <section aria-labelledby="cta-title" style="position: relative; width: 1240px; padding: 120px 0 0">
+    <div style="position: relative; overflow: hidden; border-radius: 20px; border: 1px solid #24303F; background: linear-gradient(120deg, #0F2233 0%, #0D131D 60%); padding: 56px 64px; display: flex; align-items: center; justify-content: space-between; gap: 40px">
+      <svg aria-hidden="true" width="520" height="260" viewBox="0 0 520 260" style="position: absolute; right: -60px; top: -40px; pointer-events: none">
+        <defs><radialGradient id="ctaGlow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#17A8E6" stop-opacity="0.35"></stop><stop offset="1" stop-color="#17A8E6" stop-opacity="0"></stop></radialGradient></defs>
+        <rect width="520" height="260" fill="url(#ctaGlow)"></rect>
+      </svg>
+      <div style="position: relative; display: flex; flex-direction: column; gap: 12px">
+        <h2 id="cta-title" style="margin: 0; font-size: 44px; line-height: 1.05; font-weight: 900; letter-spacing: -0.03em">Turn a task into a pull request</h2>
+        <p style="margin: 0; font-size: 18px; color: #9FB2C4">In your own cloud project.</p>
+      </div>
+      <a href="/getting-started/" style="position: relative; display: inline-flex; align-items: center; gap: 10px; padding: 16px 26px; border-radius: 16px; background: linear-gradient(135deg, #6FD8F5, #17A8E6); color: #0A0E16; font-weight: 800; font-size: 17px; text-decoration: none; box-shadow: 0 10px 34px rgba(23,168,230,0.35)">
+        Get started
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0A0E16" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12 H19"></path><path d="M13 6 L19 12 L13 18"></path></svg>
+      </a>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer style="position: relative; width: 1240px; margin-top: 96px; padding: 28px 0; border-top: 1px solid #24303F; display: flex; gap: 28px; font-size: 15px">
+    <a href="https://github.com/dimipaun/fugaro" style="color: #9FB2C4">dimipaun/fugaro</a>
+    <a href="/security/" style="color: #9FB2C4">Security</a>
+    <a href="/changelog/" style="color: #9FB2C4">Changelog</a>
+    <a href="/privacy/" style="color: #9FB2C4">Privacy</a>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":3060}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

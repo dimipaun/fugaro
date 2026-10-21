@@ -2401,6 +2401,22 @@ func runInitRepo(r *initRun, args []string) error {
 	return r.repoEngine(cmd.Context(), dir, "", false)
 }
 
+// billableBuildLeft is the left-for-you for a billable first image build: the
+// step that is money, and the one thing repoEngine leaves when the build's
+// typed confirmation cannot be had. It is one function because it is one
+// prompt, in two wordings that differ only in which command starts it:
+// embedded is the converge's repository stage (the checkout), false is
+// fugaro init --repo. Both are LeftPrompt, and that is the point — the person
+// types the project's name at the build's own prompt, and there is nothing to
+// paste that would do it for them. The confirmation matrix
+// (setup_refusals_test.go) calls this too, so a change here moves it there.
+func billableBuildLeft(embedded bool) initflow.Left {
+	if embedded {
+		return promptLeft(initflow.Repository, "in the checkout, type the project's name at the first image build's prompt (it is billable)", "init")
+	}
+	return promptLeft(initflow.Repository, "type the project's name at the first image build's prompt (it is billable)", "init", "--repo")
+}
+
 // repoEngine is init --repo's engine for the checkout at dir. The converge's
 // repository stage runs it too (embedded): then the result is the converge's
 // to print, and bin is the terraform its environment check already found.
@@ -2651,7 +2667,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		// Everything else is done; the billable build is the user's to type.
 		// (Step 7b already ran: the API delete is attempted before this, so
 		// there is no residue left to name here.)
-		left := promptLeft(initflow.Repository, "type the project's name at the first image build's prompt (it is billable)", "init", "--repo")
+		left := billableBuildLeft(embedded)
 		if r.buildHold != "" {
 			// Not offered: the GitHub App is not ready (appPreCheck), which no
 			// typing fixes.
@@ -2659,8 +2675,6 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 			if !embedded {
 				left.Commands = []string{selfCommand() + " init --repo"}
 			}
-		} else if embedded {
-			left = promptLeft(initflow.Repository, "in the checkout, type the project's name at the first image build's prompt (it is billable)", "init")
 		}
 		if embedded {
 			return &initflow.NeedsYouError{Left: left}
