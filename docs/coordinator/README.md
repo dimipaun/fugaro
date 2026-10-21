@@ -38,7 +38,7 @@ repository actually has against it.
 | --- | --- |
 | [spec.md](spec.md) | **The owner's spec, verbatim** — *"Fugaro Coordinator Agent — Design Spec"*, sections 1–11, exactly as received. Committed alone, in its own commit, before anything else in this directory. |
 | [reconciliation.md](reconciliation.md) | Corrections to the brief this work was written from (§0); the spec's concepts against what the repository has (§1); findings **#1–#30**, each classified **Wrong / Exists / Gap / Rule / Open**, each citing a path and a symbol and stating its consequence (§2); **Q1–Q16**, each with two or three options, the recommendation first, what it changes in the spec, and **the owner's answer of 2026-10-19** (§3); the **UNVERIFIED** table (§4); the glossary the spec's words need (§5); and the **five new decisions the planning found — D193–D197** (§6), each recommendation first, with the alternative, its cost and the part it blocks. |
-| [implementation-plan.md](implementation-plan.md) | The plan: what it is written to and what changed since the reconciliation (§1); the order and the five dependencies that force it (§2); what is **deliberately not** in it (§3); **"What the owner must answer before any part starts"** (§4), a table naming every decision, what it blocks, the recommendation the plan is written to and **the owner's answer of 2026-10-21**; the parts **P0–P8** (§5), each mergeable on its own on the long-lived `coordinator` branch, each with its scope, the paths and symbols it touches, its **red step** and the mutation that proves it, its verification, what it depends on, its reviewer tier, whether it is security-sensitive, and its commit message; the critical path and the effort (§6); the **security-sensitive parts and what an independent review of each must cover** (§7); the test rules (§8); the owner-run live checks **proposed by name and not numbered** (§9); the numbers held (§10); and the **owner approval gate** (§11), **passed 2026-10-21 for P0–P6**. **P0–P6 may start; P7 and P8 wait on the front-door design review and on the owner's U2/U3 checks.** Target release **0.11.0**. |
+| [implementation-plan.md](implementation-plan.md) | The plan: what it is written to and what changed since the reconciliation (§1); the order and the five dependencies that force it (§2); what is **deliberately not** in it (§3); **"What the owner must answer before any part starts"** (§4), a table naming every decision, what it blocks, the recommendation the plan is written to and **the owner's answer of 2026-10-21**; the parts **P0–P8** (§5), each mergeable on its own on the long-lived `coordinator` branch, each with its scope, the paths and symbols it touches, its **red step** and the mutation that proves it, its verification, what it depends on, its reviewer tier, whether it is security-sensitive, and its commit message; the critical path and the effort (§6); the **security-sensitive parts and what an independent review of each must cover** (§7); the test rules (§8); the owner-run live checks **proposed by name and not numbered** (§9); the numbers held (§10); and the **owner approval gate** (§11), **passed 2026-10-21 for P0–P6**. **P0–P6 may start; P7 and P8 wait on the front-door design review, and on nothing else** — the owner's U2/U3 checks stay open beside them. Target release **0.11.0**. |
 
 ## Typos fixed in `spec.md`
 
@@ -129,15 +129,17 @@ When a later work moves into D198 onward, this note is the thing to correct.
 
 ## How these documents are held
 
-Eleven tests pin everything above, and they are one command:
+Thirteen tests pin everything above, and they are one command:
 `go test ./internal/cli/ -run TestDocsCoordinator`. They are the reason a claim in this folder
 can be trusted without re-reading the repository — the spec cannot stop being verbatim, a
 citation cannot drift to a path that has moved, the numbers table cannot stop agreeing with the
 documents it is read from, the plan cannot stop being an order rather than a list, and the five
-decisions a reader has to weigh cannot be renumbered or answered by accident.
-`TestDocsCoordinatorMutationRecordIsCounted` is the odd one out: it reads
-`internal/cli/docs_coordinator_test.go` itself and holds that file's record of its own planted
-mutations to the list under it.
+decisions a reader has to weigh cannot be renumbered, nor their answers of 2026-10-21 drift —
+the one answered against the recommendation least of all.
+`TestDocsCoordinatorMutationRecordIsCounted` and `TestDocsCoordinatorSelfMapIsCounted` are the odd
+ones out: they read `internal/cli/docs_coordinator_test.go` itself, holding that file's record of
+its own planted mutations to the list under it, and its own count of the tests it declares to the
+map it heads.
 
 ## Related
 

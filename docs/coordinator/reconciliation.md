@@ -715,10 +715,12 @@ not lost:
 
 **Amended 2026-10-21** — the owner answered **D196** (§6) **option (B)**, against that decision's
 recommendation and against this answer's reading: the coordinator is **not** tied to the central
-orchestrator, because *"there can be multiple central orchestrators in the near future"*, so it
-gets its own resident service and the plan builds it. The answer above is the owner's, given on
-2026-10-19, and it is **left as it was given** — this note is what records what the later decision
-changed, and the plan's P7 and P8 are rewritten to it rather than to the answer above.
+orchestrator, because *"there can be multiple central orchestrators in the near future"* — **the
+owner's words of 2026-10-21**, written down in this folder and nowhere else, because the answer
+arrived as a ruling rather than as a document — so it gets its own resident service and the plan
+builds it. The answer above is the owner's, given on 2026-10-19, and it is **left as it was
+given** — this note is what records what the later decision changed, and the plan's P7 and P8 are
+rewritten to it rather than to the answer above.
 
 ### Q11 — How is the coordinator's spend capped, and charged to the project?
 **Changes spec §9.**
@@ -936,7 +938,8 @@ between two documents**, and shipping either plan without it decides the other's
 
 **Answered 2026-10-21: option (B), against the recommendation** — the coordinator is **not** tied
 to the central orchestrator, because *"there can be multiple central orchestrators in the near
-future"*: it gets **its own resident service**, built in this work, with its own identity, its own
+future"* — **the owner's words of 2026-10-21**, recorded in this folder and nowhere else, because
+the answer arrived as a ruling rather than as a document: it gets **its own resident service**, built in this work, with its own identity, its own
 scale-to-zero configuration and its own ID-token front door. **P7 and P8 no longer wait on the
 central orchestrator plan's P4 and P5**, and the allow-list admission of
 `google_cloud_run_v2_service` is shared with that plan's **P1** — **whichever part lands first

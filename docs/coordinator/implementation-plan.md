@@ -8,8 +8,9 @@ on **2026-10-21**, and is cited by **path and symbol, never by line number**. A 
 **new** does not exist yet. **Owner: Dimi Paun. Date: 2026-10-21.**
 **Amended 2026-10-21**: the owner answered **D193–D197**, four as recommended and **D196 against
 the recommendation**, and passed this plan's **owner approval gate** for the parts that need only
-those decisions — **P0–P6**. **P7 and P8 still wait**, on the front-door design review and on the
-owner's **U2/U3** checks, and §11 says so in full.
+those decisions — **P0–P6**. **P7 and P8 still wait**, on the front-door design review and on
+nothing else, and §11 says so in full — with the owner's **U2/U3** checks staying open beside
+them.
 
 **Every part is independently mergeable**, on the long-lived branch **`coordinator`** that this
 work creates: a part lands, it is verified, and the tree works with it and without the parts
@@ -36,16 +37,21 @@ since, and each one changes this plan rather than decorating it:
    plans a **resident service per installation** that consumes work and launches jobs, and its
    **P9** says the orchestrator *"reports to the coordinator (D14): what it launched, what prompts
    are open, and who holds which lease — a writer of the project-wide record, taking nothing back,
-   defined in the coordinator's documents rather than invented here"*. That plan records P9's
+   defined in the coordinator's documents rather than invented here"*. That plan recorded P9's
    coordinator half as **blocked on this document existing**, and its §3 names the coordinator's
    plan as one of the two siblings it depends on. **P4 below is that missing definition**: the
    report path, its record and its idempotency, written so that one writer serves every
-   orchestrator — the local one today and the central one when it exists.
+   orchestrator — the local one today and the central one when it exists. **Superseded
+   2026-10-21**: that P9's "Depends on" line now records that this document exists and that its
+   P4/P5 no longer block the coordinator's half — the sibling plan was edited by this change, and
+   a reader following the citation above must not find the opposite of what this item says.
 2. **The same plan's P4 builds the first Cloud Run *service* in Fugaro — and its P1 admits the
    type.** Q10(A) answered that one service per installation would serve both, the coordinator
    being a role of it, and this plan was written to that reading until **2026-10-21**, when the
    owner answered **D196 option (B)**: the coordinator is **not** tied to the central
-   orchestrator, because *"there can be multiple central orchestrators in the near future"*. So
+   orchestrator, because *"there can be multiple central orchestrators in the near future"* —
+   **the owner's words of 2026-10-21**, recorded in the reconciliation and nowhere else, since
+   the answer arrived as a ruling rather than as a document. So
    the coordinator gets **its own resident service**, built by **P7** of this plan, with its own
    identity, its own scale-to-zero configuration and its own ID-token front door — and **P7 and
    P8 no longer wait on that plan's P4 and P5**. One thing is still shared, and it is the one
@@ -364,8 +370,9 @@ generation bump and what a client with an older marker sees; and the amended cla
 ### P4 — The report path: what every orchestrator declares
 
 **Scope.** The writer every orchestrator reports through, and **the coordinator's half of the
-central orchestrator plan's P9** — the half that plan records as blocked on this document
-existing. **`fugaro coordinator report`** writes one intent record under
+central orchestrator plan's P9** — the half that plan recorded as blocked on this document
+existing, until **2026-10-21**, when its own "Depends on" line was amended to say this document
+exists and its P4/P5 no longer block that half (§1 item 1). **`fugaro coordinator report`** writes one intent record under
 `coordinator/repos/<slug>/intents/<id>`: the services and files the caller is about to touch, the
 branch, the target release, who declares it and when. It is the spec's §6 *"intent signals …
 sent before code exists"* with the CLI as the transport, and it takes **nothing back** — the
@@ -490,7 +497,8 @@ existing allow-list and changes no CSP, and the review's job is to confirm exact
   commit that the admission is already there.
 - **The module, and the service.** D196's answer is **option (B)**: the coordinator is **not** the
   central orchestrator's service, because *"there can be multiple central orchestrators in the
-  near future"*. So this part writes the Terraform the earlier draft of it deliberately did not: a
+  near future"* — **the owner's words of 2026-10-21** (reconciliation §6), recorded there and
+  nowhere else. So this part writes the Terraform the earlier draft of it deliberately did not: a
   new `deploy/terraform/gcp/modules/coordinator/` holding the service, **its own service account**,
   its IAM, and its `min_instance_count = 0` configuration — the shape
   `deploy/terraform/gcp/modules/installation/history.tf` gives the history job and
@@ -602,7 +610,7 @@ P1 ── P2 ── P5 ───────────────────
       │
 P3 ── P4 ── P5
 P1, P3 ── P6
-P7(was blocked: D196, answered) ── P8(blocked: D197)
+P7(was blocked: D196, answered) ── P8(was blocked: D197, answered)
 ```
 
 - **The critical path is P1 → P3 → P4 → P5.** P1 is the view; P3 is where it is kept; P4 is who

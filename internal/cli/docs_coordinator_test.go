@@ -14,39 +14,52 @@ package cli
 // a citation drifts to a path that no longer exists, a citation into a document
 // other works add to drifts off the sentence it meant, the work starts
 // allocating decision numbers the owner never gave it, or the plan's parts stop
-// being an order and become a list. Each of the eleven tests below is one of
+// being an order and become a list. Each of the thirteen tests below is one of
 // those, plus the structural facts (the questions are numbered and optioned; the
 // index states the status, the owner and the commit checked against; the five
 // decisions planning found are numbered, contiguous and written recommendation
-// first) and one that reads this file rather than the documents (the mutation
-// record's count against the list it heads).
+// first, and answered on 2026-10-21, the one answered against the recommendation
+// included) and the two that read this file rather than the documents (the
+// mutation record's count against the list it heads, and the map below against
+// the tests it declares).
 //
 //  * TestDocsCoordinatorIsWritten -- the three files exist and carry the
 //    load-bearing sentences: the status line, the owner, the date, the commit
-//    the reconciliation was run against, and the two facts that arrived with
-//    the owner's answers of 2026-10-19: all sixteen questions are answered, and
-//    none of the answers is an approval -- and the sentence that scopes the
-//    content anchors to the reconciliation's citations, so that the index cannot
-//    widen it back over its own links into those trees, which name no phrase and
-//    are held by no anchor.
+//    the reconciliation was run against, and the facts that arrived with the
+//    owner's answers of 2026-10-19 -- all sixteen questions are answered, and
+//    none of the answers is an approval -- and with the answers of 2026-10-21:
+//    the five decisions the planning found are answered, and the plan's owner
+//    gate is passed for the parts that need only those decisions (P0-P6), with
+//    the parts it did NOT open named in the same sentence -- and the sentence
+//    that scopes the content anchors to the reconciliation's citations, so that
+//    the index cannot widen it back over its own links into those trees, which
+//    name no phrase and are held by no anchor.
 //  * TestDocsCoordinatorSpecIsVerbatim -- spec.md carries the spec's own title,
 //    status and eleven sections, and carries none of the reconciliation's
 //    apparatus: the two documents have not been mixed.
 //  * TestDocsCoordinatorNewDecisionsAreNumbered -- the five decisions planning
 //    found are D193-D197, written in the reconciliation's §6 as `### D<n> — ...`
 //    headings in order and with no gap, each stating its recommendation before
-//    its alternatives, and the index says of them that they are written and not
-//    answered. The old test here asserted the opposite -- that this work
+//    its alternatives, and the index says of them that they are answered
+//    2026-10-21. The old test here asserted the opposite -- that this work
 //    allocated no decision number at all -- and it is replaced rather than
 //    deleted: an answer picks an option and allocates nothing, which is still
 //    true and is still pinned, but the planning that followed the answers found
 //    five things the answers do not settle, and those are decisions.
+//  * TestDocsCoordinatorDecisionsAreAnswered -- the five decisions are ANSWERED,
+//    not merely written: each carries the owner's answer of 2026-10-21 under it,
+//    **D196 against the recommendation** and the other four as recommended, the
+//    section no longer says none of them is answered, Q10's recorded answer of
+//    2026-10-19 is amended under rather than rewritten, the plan's gate table
+//    records the same answer in each decision's own row, and the plan's gate
+//    says it passed for P0-P6 while naming the parts it did not open.
 //  * TestDocsCoordinatorPlanIsWritten -- the plan exists, is at the status the
-//    index gives it ("plan written; no code is implemented; approval gate
-//    open"), carries its parts P0..P8 contiguously and in order, carries the one
-//    section heading the brief asked for by name, names every decision D193-D197
-//    with the part it blocks, and marks the paths it cites that do not exist yet
-//    as new.
+//    index gives it ("approved to build on the branch `coordinator`, target
+//    0.11.0; no code is implemented yet"), carries its parts P0..P8 contiguously
+//    and in order, carries the one section heading the brief asked for by name,
+//    names every decision D193-D197 with the part it blocks, marks the paths it
+//    cites that do not exist yet as new, and carries no sentence saying the
+//    coordinator is a role another service plays -- the reading D196 replaced.
 //  * TestDocsCoordinatorPlanCitationsExist -- every repository path the plan
 //    cites resolves, measured against the same independent census the
 //    reconciliation's citation check uses, with the plan's own exception list for
@@ -93,8 +106,14 @@ package cli
 //    and compare. The count had drifted by two -- "twenty-six" over a list of
 //    twenty-four -- which is the same silent-overclaim the citation census
 //    exists to catch in the document.
+//  * TestDocsCoordinatorSelfMapIsCounted -- the other test that reads this file
+//    rather than the documents: the number of coordinator tests it declares, the
+//    count its own map states over them, the one bullet per test the map carries
+//    and the index's sentence about it are held to each other. They went stale
+//    together once -- "eleven" over twelve tests -- because a count is the claim
+//    that moves while nothing about what it counts looks wrong.
 //
-// Mutation (verified, run and restored) -- 88, one per way these documents can
+// Mutation (verified, run and restored) -- 92, one per way these documents can
 // rot, each planted and reverted. The count is a digit and not a word, and
 // there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
 // reads it and counts the list under it: one arrow per mutation, so a number
@@ -363,6 +382,17 @@ package cli
 //	  the questions are answered now, and the heading says which;
 //	  strip the "Answered 2026-10-19: option (A)" line out of Q7 -> fails,
 //	  naming Q7: a question with no answer reads as one that is still open.
+//	TestDocsCoordinatorSelfMapIsCounted
+//	  put this file's own count back to "twelve" over the thirteen tests it
+//	  declares -> fails: the map's count and the tests the file declares are read
+//	  against each other, which is the drift this round found;
+//	  delete the map's bullet for one of the tests -> fails, naming it: a test the
+//	  map does not list is a check no reader of the map knows is there;
+//	  put the index's sentence back to "Twelve tests pin everything above" ->
+//	  fails: the index states the same count, and the two readings are one claim;
+//	  add a fourteenth `TestDocsCoordinator...` test with no bullet -> fails on
+//	  every reading at once -- the declared tests, the map's count and the index's
+//	  sentence -- which is what makes the map a list rather than prose about one.
 //
 // One change is deliberately NOT in that list, because it is not a way a
 // document can rot and the record counts only those: insert a row above every
@@ -2384,6 +2414,63 @@ func TestDocsCoordinatorMutationRecordIsCounted(t *testing.T) {
 	}
 	if declared == 0 {
 		t.Error("the mutation record claims no mutations at all: a record of zero planted mutations proves nothing about the checks above it")
+	}
+}
+
+// coordinatorTestFuncRE finds every test this file declares for this folder, by
+// the name they all share.
+var coordinatorTestFuncRE = regexp.MustCompile(`(?m)^func (TestDocsCoordinator[A-Za-z]+)\(t \*testing\.T\) \{`)
+
+// coordinatorCountWords spells a small count the way this file's own prose and
+// the index's sentence write it, so the two can be compared with the number of
+// tests the file actually declares.
+var coordinatorCountWords = []string{
+	"zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+	"nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+	"sixteen", "seventeen", "eighteen", "nineteen", "twenty",
+}
+
+// TestDocsCoordinatorSelfMapIsCounted: this file's map of itself and the index's
+// sentence about it both state HOW MANY tests there are, and both are claims
+// about this file rather than about the documents -- which is why neither was
+// checked, and why both went stale the moment a test was added: the map said
+// "eleven" over twelve tests and the index repeated it.
+//
+// It is the same defect TestDocsCoordinatorMutationRecordIsCounted exists to
+// catch, one level out: a count is the easiest claim to leave behind, because
+// nothing about the thing it counts looks wrong when it moves. So the three
+// readings are held to each other -- the tests the file declares, the map's own
+// count and its one bullet per test, and the index's sentence -- and the map is
+// read as the list it is, so a test added without an entry fails here rather
+// than joining a list nobody re-counts.
+func TestDocsCoordinatorSelfMapIsCounted(t *testing.T) {
+	src, err := os.ReadFile("docs_coordinator_test.go")
+	if err != nil {
+		t.Fatalf("reading this test file to check its own map of itself: %v", err)
+	}
+	text := string(src)
+
+	names := coordinatorTestFuncRE.FindAllStringSubmatch(text, -1)
+	if len(names) == 0 {
+		t.Fatal("no TestDocsCoordinator... test was found in this file, so its own map cannot be counted against anything")
+	}
+	if len(names) >= len(coordinatorCountWords) {
+		t.Fatalf("this file declares %d coordinator tests, more than coordinatorCountWords spells; extend that table rather than dropping the check", len(names))
+	}
+	word := coordinatorCountWords[len(names)]
+
+	if want := "Each of the " + word + " tests below"; !strings.Contains(text, want) {
+		t.Errorf("this file declares %d coordinator tests and its own map does not say so: it lacks %q, and a count in prose is the claim that moves while nothing about what it counts looks wrong", len(names), want)
+	}
+	for _, m := range names {
+		if want := "//  * " + m[1] + " --"; !strings.Contains(text, want) {
+			t.Errorf("this file declares %s and its own map carries no %q bullet: a test the map does not list is a check no reader of the map knows is there", m[1], want)
+		}
+	}
+	index := readDoc(t, coordinatorReadme)
+	want := strings.ToUpper(word[:1]) + word[1:] + " tests pin everything above"
+	if !strings.Contains(index, want) {
+		t.Errorf("%s does not carry %q: the index states how many tests hold it, and that count is a claim about this file like any other", coordinatorReadme, want)
 	}
 }
 
