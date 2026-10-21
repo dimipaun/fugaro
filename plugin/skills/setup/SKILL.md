@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set the current repository up for Fugaro together with the user. Investigate the repository (languages, versions, build tool, test commands, services), write fugaro.yaml with the image settings or a Dockerfile, discuss each decision with the user, loop on fugaro validate --json and the local image build until both pass, and hand off a pull request. Use when setting Fugaro up for a repository, or fixing a fugaro.yaml or a failing local image build.
+description: Set the current repository up for Fugaro with the user. Investigate the repository (languages, versions, build tool, test commands, services), write fugaro.yaml with the image settings or a Dockerfile, discuss each decision with the user, loop on fugaro validate --json and the local image build until both pass, and hand off a pull request. Use when setting Fugaro up for a repository, or fixing a fugaro.yaml or a failing local image build.
 ---
 
 <!-- fugaro-skill name=setup fugaro-version=0.9.0 -->
