@@ -681,9 +681,11 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	} else {
 		copyResponseHeaders(w.Header(), resp.Header, decoded)
 	}
-	if rt.provider != nil {
-		// Whatever else comes back from a provider is scrubbed of its key
-		// (it is the one in the request, read at request time).
+	if rt.provider != nil || s.o.Upstream.Kind == KindOAuth {
+		// Whatever else comes back is scrubbed of the credential that was
+		// sent: a provider's key, or the tier-A subscription token (which
+		// an error body may echo). The credential is the one in the
+		// request, read at request time.
 		key := keyFrom(up.Header)
 		redactHeaders(w.Header(), key)
 		rw = newRedactWriter(w, key)
@@ -851,6 +853,19 @@ func (s *Server) upstreamRequest(ctx context.Context, r *http.Request, rt route,
 		if _, err := rt.provider.attachCredential(up.Header); err != nil {
 			return nil, nil, err
 		}
+		return up, sent, nil
+	}
+	if s.o.Upstream.Kind == KindOAuth {
+		// Tier A (oauth.go): Check 90's header allow-list and the
+		// subscription credential, and nothing else. The invariant -- an
+		// OAuth token is only ever sent to Anthropic's own endpoint -- is
+		// checked inside oauthUpstream, in the one place the token is
+		// attached.
+		h, err := s.oauthUpstream(rt, r.Header)
+		if err != nil {
+			return nil, nil, err
+		}
+		up.Header = h
 		return up, sent, nil
 	}
 	up.Header = forwardHeaders(r.Header)
