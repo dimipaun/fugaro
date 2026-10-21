@@ -23,15 +23,21 @@
 // path rule, because the operator's own paths are the remedy a refusal names, so
 // nothing had replaced the path before the net saw it.
 //
-// The fix is one guard, on the net itself: a run that is a **path** -- rooted at
-// `/`, with a second slash behind it, which is the path rule's own definition of
-// a path, **and no word of it a candidate on its own** (`isPathRun`,
-// `src/shared/sanitize.ts`) -- is not a run the net reads. The second half is
-// what keeps the guard from being a hole: a name is words run together by
-// separators while a token is one unbroken stretch, and a *token written inside
-// a path* has a word that is a candidate by itself, so it is still redacted,
-// whole run and all -- which is the invariant `split-secrets.test.ts` pins for
-// this door, and the case below that holds this guard to it.
+// The fix is one guard, on the net itself: a run that is a **path** -- the path
+// rule's own pattern matches it whole (`PATH_RUN_RE`: `ABS_PATH_SOURCE`, the one
+// definition, asked of the run rather than of the text, with a single trailing
+// separator allowed because a run stops at the first dot directory) **and no word
+// of it a candidate on its own** (`isPathRun`, `src/shared/sanitize.ts`) -- is not
+// a run the net reads. The second half is what keeps the guard from being a hole:
+// a name is words run together by separators while a token is one unbroken
+// stretch, and a *token written inside a path* has a word that is a candidate by
+// itself, so it is still redacted, whole run and all -- which is the invariant
+// `split-secrets.test.ts` pins for this door, and the case below that holds this
+// guard to it. The first half is the path rule's question and not a weaker one:
+// the guard read "rooted, with a second slash behind it" at first, and a run with
+// an *empty* segment between its slashes is not a path the path rule can match, so
+// that reading swallowed a run the net had redacted before -- the reviewer's
+// finding, and the case below that holds the guard to the pattern.
 //
 // The cases are then the two halves the owner asked for: the paths that MUST
 // come out as written (the header's own, built at run time the way the run built
@@ -123,6 +129,16 @@ const PATHS: readonly (readonly [string, string])[] = [
     ),
   ],
 ]
+
+/**
+ * word is one segment of a name, and it is deliberately **under the net's `{20,}`
+ * floor**: a run built out of words this long is a candidate only as a whole, so
+ * what happens to it is the guard's decision and nothing else. Assembled from
+ * fragments for the reason `scratch` is.
+ */
+function word(): string {
+  return ['aB3', 'xY9mQ2', 'pL7vN'].join('')
+}
 
 /**
  * spelled is a blob spelled with separators -- the shape a base64url body has
@@ -240,6 +256,26 @@ describe('a real credential is still replaced', () => {
     const key = fake.highEntropyRun()
     expect(refusal(`read /home/x/${key}/key failed`)).toBe(`read ${TOKEN_PLACEHOLDER} failed`)
     expect(sentence(`read /home/x/${key}/key failed`)).toBe(`read ${PATH_PLACEHOLDER} failed`)
+  })
+
+  it('redacts a run the path rule would never take: the guard asks the path rule’s pattern', () => {
+    // **The case the review round added, and the reason the guard's first half is
+    // the path rule's own pattern and not a weaker question.** A root and a second
+    // slash are one run to the net even when the segment between them is *empty*,
+    // so a guard reading "rooted, with a second slash behind it" took
+    // `//<word>/<word>` -- a run `ABS_PATH_RE` cannot match at all -- for a path.
+    // The net had redacted it before the guard existed and the sentence door drew
+    // it written afterwards, while the recorder, which runs no guard, still
+    // redacted it: a redaction lost, and the two layers disagreeing over a string
+    // `sanitize-agreement.test.ts` says they cannot disagree about. Each `word` is
+    // under the net's floor, so no word of the run is a candidate and the guard's
+    // second half cannot save the first.
+    const doubled = `//${word()}//${word()}`
+    expect(sentence(`wrote ${doubled} here`)).toBe(`wrote ${TOKEN_PLACEHOLDER} here`)
+    expect(refusal(`wrote ${doubled} here`)).toBe(`wrote ${TOKEN_PLACEHOLDER} here`)
+    expect(createRedactor().redactText(`wrote ${doubled} here`)).toBe(
+      `wrote ${TOKEN_PLACEHOLDER} here`,
+    )
   })
 
   it('keeps redacting a high-entropy run that is not a path', () => {
