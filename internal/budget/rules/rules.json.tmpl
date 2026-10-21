@@ -242,8 +242,8 @@
       "$slug": {
         "$job": {
           "lease": {
-            ".read": "USER",
-            ".write": "USER && LEASEWRITE",
+            ".read": "ORCH",
+            ".write": "ORCH && LEASEWRITE",
             ".validate": "newData.hasChildren(['holder', 'holder_uid', 'generation', 'renewed_at']) && $slug.length <= {{.MaxKeyLength}} && $job.length <= {{.MaxKeyLength}}",
             "holder": { ".validate": "STR && (newData.parent().child('holder_uid').val() == '' ? newData.val() == '' : newData.val().length > 0)" },
             "holder_uid": { ".validate": "STR && (newData.val() == '' || newData.val() == auth.uid)" },

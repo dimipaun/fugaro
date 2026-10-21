@@ -650,13 +650,31 @@ func TestLeaseIsTheUserClaimsAndNobodyElses(t *testing.T) {
 // property, and it is written to fail the day the gap closes.
 //
 // A lease is scoped to the project and not to the job: the rules grant
-// `orchestrators/$slug/$job/lease` to every paired device of the installation,
-// so a paired device may create a seat for a slug and a job its token never
-// named — one it was never given, and (once P2's access record exists) one it
-// may not be allowed to shepherd. The access record that would scope the create
-// to the device's own repositories is P2's, and it is not deployed; D12's
-// project-level commands and D19's one service per installation are what the
-// rules can check today, and a project is what they check.
+// `orchestrators/$slug/$job/lease` to every *administered* identity of the
+// installation, so such an identity may create a seat for a slug and a job its
+// token never named — one it was never given, and one it may not be meant to
+// shepherd.
+//
+// P2 built the access record, and it did **not** close this, which is worth
+// saying here rather than leaving to be discovered: the owner's D6 answer makes
+// the allowlist the device node extended with the administered email and role —
+// one predicate over one node, per identity and not per orchestrator — so what
+// the rules check about `$slug` is nothing at all beyond the path being under
+// `orchestrators`. Scoping a seat to the orchestrator, or to the repositories
+// an identity may shepherd, needs a grant whose predicate reads the published
+// policy's per-orchestrator block, and that is a second authorisation document
+// inside the rules: the owner's ruling chose the one-node record instead (the
+// alternative D6 rejected), and no rule here can consult the allowlist per slug
+// without it. The narrowing is the service's — it is where "which central
+// orchestrator may you use" is answered on every connection and every
+// submission (D19's one service per installation, not deployed) — and until it
+// exists the rules are the whole of what guards a seat, and they guard it by
+// identity alone. The property that *is* enforced at the database is the one
+// above this: a seat can only be taken at all by an identity the operator has
+// administered.
+
+// What it is not: this case asserts the gap, and it is written to fail the day
+// it closes, whoever closes it.
 //
 // What it costs while it is open: a paired device can take a seat for a job it
 // was not meant to run, and a seat taken wrongly is recovered by the grace (ten
@@ -665,8 +683,9 @@ func TestLeaseIsTheUserClaimsAndNobodyElses(t *testing.T) {
 // is not a paired device of this project, which the case above pins.
 //
 // Hand mutation this fails on: scoping the create to the writer's own
-// repositories, which is the change P2 makes and the change this case exists to
-// announce.
+// repositories or to the orchestrator its policy names, which is a change no
+// part has made (see the paragraph above: the owner's D6 answer put the
+// allowlist on the device node, per identity and not per orchestrator).
 func TestLeaseCreationIsTheProjectsAndNotTheJobs(t *testing.T) {
 	h := newHarness(t)
 	alice := h.phone(aliceUID)

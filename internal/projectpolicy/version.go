@@ -247,9 +247,45 @@ const PolicyRulesVersion = 1
 // the feature is off until a project opts in, and D19's service is not
 // deployed at all.
 //
+// Generation 5 is the orchestrator access record (central-orchestrator plan P2,
+// decisions D6 and D12). It is not a new subtree: the lease above keeps every
+// node it has. What moved is the **grant** on it, from the phone's pairing
+// record (USER) to the record D6 chose — the same device node `$uid`, extended
+// with the email an administrator writes and the role it carries (ORCH,
+// internal/budget/rules' orchestratorAccess).
+//
+// That is a generation for the reason the lease was one, read the other way
+// round. Generation 4's problem was a subtree that did not exist, so the write
+// that must not be allowed was any write at all. Here the write is allowed and
+// the *reader* is wrong: under a generation-4 document, a paired device whose
+// node no administrator has given an email and a role to holds leases — it can
+// take the seat a shepherd holds while it acts on a job, which is the one
+// orchestrator surface there is. The rules are the only thing that decides that
+// (the service D19 describes is not deployed, and the per-orchestrator
+// allow-list is a policy document the rules do not read), so an installation
+// that has not redeployed is an installation where the record D6 chose does not
+// authorise anything and the pairing record still does. The generation is what
+// makes that state visible — the deploy's own marker and doctor's
+// policy-rules-skew — instead of a silence an operator would read as "the
+// record is in force".
+//
+// What the bump does to an existing installation, plainly. The policy is
+// untouched: Read and the publish gate stay on PolicyRulesVersion (1), so no
+// published policy is dropped and publishing keeps working. `fugaro doctor`'s
+// `policy-rules-skew` compares the deployed document with this binary's and
+// warns until the owner re-runs `fugaro init --firebase`, and the deploy's own
+// downgrade refusal (internal/infra's DB.Plan) stops a plan from putting an
+// older document over a newer marker. Nothing is *revoked* by the redeploy:
+// every identity that holds a device node keeps its mailbox, its dashboard and
+// its caps, because those families stay on USER — what the redeploy takes away
+// is the orchestrator lease from a node that has no administered email or role,
+// and the operator writes both with `fugaro orchestrator add` before or after
+// (the order does not matter: the record is what the rules read, and the
+// command writes it in the same node the pairing step does).
+//
 // It is not Version: the policy schema and the rules that guard it move
 // independently.
-const RulesVersion = 4
+const RulesVersion = 5
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own

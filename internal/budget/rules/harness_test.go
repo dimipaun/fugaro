@@ -349,8 +349,46 @@ func (h *harness) unpaired(mb string) *rtdb.Client { return h.as(claims{mu: mb, 
 // (`fugaro pair` over IAM, plan task P6.6): config/admin/devices/<uid>. The
 // rules deny every client a write there, so only this admin path can create
 // one — and only a delete through it revokes.
+//
+// It writes the *whole* access record, not the pairing half: the email and the
+// role an administrator writes are what the orchestrator grants require (D6,
+// central-orchestrator P2, orchestratorAccess), so a helper that stopped at
+// `pairedAt` would make every positive control in the lease's own tests fail
+// for a reason that has nothing to do with the case each names. The pairing
+// half on its own has its own helper, pairDeviceUnadministered.
 func (h *harness) pairDevice(uid string) {
+	h.set(PathDevices+"/"+uid, map[string]any{
+		"pairedAt": msgAt,
+		"email":    uid + "@example.test",
+		"role":     RoleOrchestratorMember,
+	})
+}
+
+// pairDeviceUnadministered writes the pairing half of the record and nothing
+// else: the node D166 keys, with no email and no role. It is the state
+// `fugaro pair` leaves the installation in — pairing is discovery, and
+// administration (`fugaro orchestrator add`) is a second, deliberate write —
+// so it is the state the orchestrator grants have to refuse while every family
+// the phone already had keeps working.
+func (h *harness) pairDeviceUnadministered(uid string) {
 	h.set(PathDevices+"/"+uid, map[string]any{"pairedAt": msgAt})
+}
+
+// administer writes the orchestrator access record's two administered fields
+// onto a device node (D6, D12, central-orchestrator P2) — the email and the
+// role `fugaro orchestrator add` writes over IAM — and leaves the pairing half
+// alone. It does not create the node: a caller that means "a paired account
+// that was then administered" pairs it first, and one that means "the node a
+// client wrote" has no business here (no client token can write this node).
+//
+// The write is a multi-path update rather than a whole-node PUT so that a case
+// can administer an account whose node it seeded with fields of its own.
+func (h *harness) administer(uid, email, role string) {
+	h.t.Helper()
+	h.patch(map[string]any{
+		PathDevices + "/" + uid + "/email": email,
+		PathDevices + "/" + uid + "/role":  role,
+	})
 }
 
 // unpairDevice is `fugaro pair revoke`'s write: the child is deleted, and the

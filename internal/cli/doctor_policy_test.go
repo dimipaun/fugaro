@@ -161,6 +161,7 @@ func TestRulesMarkerOlderTextNamesWhatTheDocumentAdds(t *testing.T) {
 		{`"mailbox"`, "mailbox subtree"},
 		{`"devices"`, rules.PathDevices},
 		{`"orchestrators"`, "orchestrators/<slug>/<job>/lease"},
+		{`child('email')`, "administered email"},
 	} {
 		if !strings.Contains(string(gen), c.docKey) {
 			t.Errorf("the generated rules carry no %s: rulesMarkerOlderText names it as something a redeploy adds, so either the template lost it or this list is stale", c.docKey)
@@ -622,6 +623,18 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		for _, want := range []string{"orchestrators/<slug>/<job>/lease", "central orchestrators"} {
 			if !strings.Contains(c.Problem, want) {
 				t.Errorf("the between-generations body does not name the orchestrators lease (%q absent from %q): an operator who deploys generation 4 without reading this does not know the redeploy is what gives the central orchestrators a seat to hold", want, c.Problem)
+			}
+		}
+		// Generation 5 narrows that grant, which is the *opposite* direction
+		// from the three additions above and is the one an operator is most
+		// likely to read as a lockout: the sentence has to say that an
+		// installation on generation 4 redeploys into a document where a
+		// device node no administrator has given an email and a role to holds
+		// no lease. The three halves: the administered email, the role, and
+		// what such a node keeps (everything else it had).
+		for _, want := range []string{"administered email", "role", "loses the lease"} {
+			if !strings.Contains(c.Problem, want) {
+				t.Errorf("the between-generations body does not say the redeploy narrows the lease's grant to the orchestrator access record (%q absent from %q): an operator who deploys generation 5 without reading this finds an identity that held leases refused and cannot tell that from a broken deploy", want, c.Problem)
 			}
 		}
 		// And it is this state's one text: doctor is its only printer, and the
