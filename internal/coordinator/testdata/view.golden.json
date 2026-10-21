@@ -71,22 +71,22 @@
           "base_branch": "main",
           "declared_by": "other@example.com",
           "files": [
-            "console/src/main/ipc.ts",
             "internal/cli/exec.go",
-            "internal/coordinator/view.go"
+            "internal/coordinator/view.go",
+            "schemas/result.schema.json"
           ]
         }
       ],
       "branch": "fugaro/20261011-090000-bbbb",
       "in_flight": true,
       "files": [
-        "console/src/main/ipc.ts",
         "internal/cli/exec.go",
-        "internal/coordinator/view.go"
+        "internal/coordinator/view.go",
+        "schemas/result.schema.json"
       ],
       "services": [
-        "console",
-        "internal"
+        "internal",
+        "schemas"
       ]
     },
     {

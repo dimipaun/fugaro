@@ -202,7 +202,7 @@ func ReleaseOf(branch string) string {
 
 // ServiceOf is the service a path belongs to: the first segment of the path,
 // so "internal/coordinator/view.go" belongs to the service "internal" and
-// "console/src/main/ipc.ts" to "console". A path with no separator belongs to
+// "schemas/result.schema.json" to "schemas". A path with no separator belongs to
 // no service — it sits in the repository's own root — and answers "".
 //
 // This is a *derivation* and it is the whole of the rule: the view's files

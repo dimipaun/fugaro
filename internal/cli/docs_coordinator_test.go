@@ -2481,9 +2481,12 @@ func TestDocsCoordinatorSelfMapIsCounted(t *testing.T) {
 // test fails and the citation starts being checked as the ordinary path it has
 // become. An exception map that only excuses is how a check rots; this one is
 // written to expire by itself.
-var coordinatorPlanNewPaths = map[string]string{
-	"internal/cli/coordinator.go": "P1's new read command; P0's plan is what names it before it exists",
-}
+// It is empty because P1 has landed: internal/cli/coordinator.go was the one
+// path it ever excused, and the entry went in the commit that created the file
+// (part P1, `fugaro coordinator status`). The map stays, empty, because
+// the check that reads it is the one that must fail the day a part's plan
+// declares a path that does not exist yet.
+var coordinatorPlanNewPaths = map[string]string{}
 
 // coordinatorPlanRolePhraseRE is the reading D196 replaced, and it is matched as
 // a phrase rather than pinned as a line because the plan carried it in four

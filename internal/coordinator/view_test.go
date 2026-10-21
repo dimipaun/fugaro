@@ -239,7 +239,7 @@ func TestCoordinatorReleaseOfAndServiceOf(t *testing.T) {
 	}
 	for _, tc := range []struct{ path, want string }{
 		{"internal/coordinator/view.go", "internal"},
-		{"console/src/main/ipc.ts", "console"},
+		{"schemas/result.schema.json", "schemas"},
 		{"go.mod", ""},
 		{"", ""},
 		{"/absolute/path.go", ""},
