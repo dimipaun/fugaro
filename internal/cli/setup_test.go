@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // setup_test.go pins the two front doors task W1.2 of
@@ -59,29 +60,49 @@ func TestSetupAndUpdateAreRegistered(t *testing.T) {
 	}
 }
 
-// sharedFlags are the flags both doors take: the cloud flags and the
-// installation's own, which is what makes them two doors of one converge
-// rather than two commands. A door that lost one would silently converge
-// something else.
-var sharedFlags = []string{
-	"config", "project", "gcp-project", "region",
-	"name", "scheduler-region", "runs-bucket", "state-bucket", "base-image",
-	"launcher", "operator", "budget", "budget-currency", "billing-account",
-	"alert-email", "no-log-isolation", "registry-cleanup", "firebase",
-	"budget-mode", "budget-admin", "plan-only", "print-vars", "config-only",
-	"publish-config", "anchor", "allow-delete", "yes", "onboard-repo",
-	"allow-fork", "non-interactive", "json", "repo", "check-github-app",
-	"github-app-id", "no-build", "allow-job-delete", "retire",
+// declaredFlags is every flag a door declares, hidden or not: what it takes
+// from a command line. The doors differ only in what they *hide* — setup hides
+// --forget, update hides the six creating flags, each refused by name — so the
+// declared sets are the converge's flags, and they have to be the same set.
+func declaredFlags(door string) map[string]bool {
+	out := map[string]bool{}
+	doorCommands[door]().Flags().VisitAll(func(f *pflag.Flag) { out[f.Name] = true })
+	return out
+}
+
+// sharedFlagsFloor names flags the converge cannot be without. It is not the
+// check below — that one reads the two doors' own flag sets — but the floor
+// under it: two doors that lost the same flag at once would leave the two sets
+// equal to each other and empty of it.
+var sharedFlagsFloor = []string{
+	"repo", "firebase", "yes", "plan-only", "print-vars", "config-only",
+	"json", "anchor", "retire", "gcp-project", "region", "name",
 }
 
 // TestBothDoorsTakeTheSharedFlags: the flags that belong to the converge are
 // on both doors, and they are *declared* there rather than hidden: a user
 // reading `fugaro update --help` has to find --repo, --firebase and --yes.
+//
+// The two doors' declared sets are read off the commands and held to each
+// other rather than compared against a list written here. A list cannot say
+// this: a flag missing from it is a flag nothing checks, which is how --base,
+// --expect-digest, --image-source and --replace-image — all four declared by
+// both doors — went unchecked, so a door that dropped one passed.
 func TestBothDoorsTakeTheSharedFlags(t *testing.T) {
-	for name, build := range doorCommands {
-		cmd := build()
-		for _, flag := range sharedFlags {
-			f := cmd.Flags().Lookup(flag)
+	setup, update := declaredFlags("setup"), declaredFlags("update")
+	for _, d := range []struct {
+		door, other string
+		has, lacks  map[string]bool
+	}{{"setup", "update", setup, update}, {"update", "setup", update, setup}} {
+		for flag := range d.has {
+			if !d.lacks[flag] {
+				t.Errorf("fugaro %s declares --%s and fugaro %s does not: they are two doors of one converge, and a flag lost from one of them converges something else", d.door, flag, d.other)
+			}
+		}
+	}
+	for _, flag := range sharedFlagsFloor {
+		for name, build := range doorCommands {
+			f := build().Flags().Lookup(flag)
 			if f == nil {
 				t.Errorf("fugaro %s has no --%s", name, flag)
 				continue
@@ -105,6 +126,9 @@ func TestAForeignFlagIsHiddenFromItsDoorsHelp(t *testing.T) {
 	for _, tc := range []struct{ door, flag string }{
 		{"setup", "forget"},
 		{"update", "create-project"},
+		{"update", "display-name"},
+		{"update", "parent"},
+		{"update", "managed"},
 		{"update", "link-billing"},
 		{"update", "provision-batch"},
 	} {
@@ -124,6 +148,23 @@ func TestAForeignFlagIsHiddenFromItsDoorsHelp(t *testing.T) {
 			for _, line := range strings.Split(cmd.Flags().FlagUsages(), "\n") {
 				if strings.HasPrefix(strings.TrimSpace(line), "--"+tc.flag+" ") {
 					t.Errorf("fugaro %s's flag list offers --%s, which it refuses:\n%s", tc.door, tc.flag, strings.TrimSpace(line))
+				}
+			}
+			// The Long as well, which the flag list cannot speak for: setup's
+			// help went on telling the reader what --forget does — twice —
+			// after the flag itself was hidden, so the generated reference
+			// printed the refusal and the offer side by side, and nothing here
+			// noticed.
+			//
+			// A paragraph that *begins* with the flag is a paragraph about it,
+			// which is the offer in prose. A door may still name a flag it
+			// refuses inside a sentence — update's Long lists the creating
+			// flags as the ones it refuses by name, which is the sentence that
+			// says it will not take them — so only the paragraph's opening
+			// counts.
+			for _, para := range strings.Split(cmd.Long, "\n\n") {
+				if strings.HasPrefix(strings.TrimSpace(para), "--"+tc.flag+" ") {
+					t.Errorf("fugaro %s's help has a paragraph documenting --%s, which it refuses:\n%s", tc.door, tc.flag, strings.TrimSpace(para))
 				}
 			}
 		})

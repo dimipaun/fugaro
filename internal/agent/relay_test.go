@@ -420,6 +420,11 @@ func TestRelayOnToolNeverRepeatsTheRawCommand(t *testing.T) {
 		{"dispatcher subcommand kept, args dropped", "go test ./internal/...", "tool Bash: go test"},
 		{"npm run", "npm run build", "tool Bash: npm run"},
 		{"the fugaro runs subcommand is kept (G17 renamed ls)", "fugaro runs ls --all", "tool Bash: fugaro runs"},
+		// The converge's two doors (W1.2): the summary kept `init`, the word
+		// the CLI retired, and hid the two commands that replaced it.
+		{"the fugaro setup door is kept", "fugaro setup --repo --plan-only", "tool Bash: fugaro setup"},
+		{"the fugaro update door is kept", "fugaro update --repo --forget", "tool Bash: fugaro update"},
+		{"the retired init word is not a subcommand any more", "fugaro init --repo", "tool Bash: fugaro"},
 		{"git commit", "git commit -m 'msg'", "tool Bash: git commit"},
 		{"bash -c keeps the flag, drops the script", `bash -c "echo ` + secret + `"`, "tool Bash: bash -c"},
 		{"a URL looks nothing like a subcommand", "curl https://user:pass@host/" + secret, "tool Bash: curl"},

@@ -36,7 +36,8 @@ backend by accident. A first installation is fugaro setup.
 
 --forget is update's own: it is the rollback, and it turns log isolation and
 registry cleanup off with a guarded apply before it removes every address from
-Terraform's state, destroying nothing else.
+Terraform's state — in a checkout, the repository's addresses with them —
+destroying nothing else.
 
 Everything else is setup's help word for word, because it is the same
 converge: the review screen and the one typed project name in a project Fugaro

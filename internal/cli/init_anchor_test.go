@@ -694,7 +694,11 @@ func TestInitHelpAnchorFixIsImageRefresh(t *testing.T) {
 	if !strings.Contains(long, "fugaro image refresh --repo <owner/name> --workflow <name> in the checkout") {
 		t.Errorf("init help does not name fugaro image refresh: %q", long)
 	}
-	for _, old := range []string{"fugaro init --base <kind> from outside the checkout", "fugaro init --repo in the checkout", "fugaro image build --repo"} {
+	// Respelled with the door this help belongs to (W1.2 renamed the command):
+	// the point is that the old multi-step sequence — the base image built from
+	// outside the checkout, then --repo in it — does not come back, and a
+	// string no door can contain any more guards nothing at all.
+	for _, old := range []string{"fugaro setup --base <kind> from outside the checkout", "fugaro setup --repo in the checkout", "fugaro image build --repo"} {
 		if strings.Contains(long, old) {
 			t.Errorf("init help still lists the old step %q", old)
 		}

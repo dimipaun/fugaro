@@ -371,7 +371,15 @@ func (r *initRepoRig) fugaroInitIn(t *testing.T, stdin *os.File, args ...string)
 	if slices.Contains(args, "--repo") && !slices.Contains(args, "--print-vars") && !slices.Contains(args, "--plan-only") && !slices.Contains(args, "--forget") && !slices.Contains(args, "--onboard-repo") {
 		args = append(slices.Clone(args), "--onboard-repo", r.repo)
 	}
-	cmd := exec.CommandContext(ctx, r.fugaro, append([]string{"init"}, args...)...)
+	// The door, not the retired word: `fugaro init` is a tombstone since W1.2
+	// (docs/setup-wizard/implementation-plan.md) that applies nothing and exits
+	// 1, so every run below would be that refusal and this package would be red
+	// — the 27th test would even pass vacuously, since it only asserts exit 1.
+	// `fugaro setup` is the door these --repo runs mean: none of them passes a
+	// creating flag, which is the only thing that would make the two doors
+	// differ here. This file's strings and the helpers' names are W2.2's and
+	// W5.2's; the command word is the one line that cannot wait for them.
+	cmd := exec.CommandContext(ctx, r.fugaro, append([]string{"setup"}, args...)...)
 	cmd.Dir = r.dir
 	cmd.Env = hermeticEnv(env)
 	if stdin != nil {

@@ -2473,10 +2473,6 @@ and safe, 1 a check failed or nothing was written, 2 a build record could not
 be read from the cloud (missing credentials included). A coding agent's
 session may run it, --yes included: it edits only a local file.
 
---forget is the rollback: it turns log isolation and registry cleanup off
-with a guarded apply, then removes every address from Terraform's state,
-destroying nothing else.
-
 setup --firebase <firebase-project-id> builds the project's budget backend in a
 Firebase project you created and linked to billing. It may be the project's
 own GCP project (one project for everything) or a project of its own (setup
@@ -2573,8 +2569,6 @@ extension in VS Code and JetBrains terminals, so a person's own IDE terminal
 can be refused: its refusal tells you what to do about it). A pasted private key may have at most 120 lines. It creates each
 secret's container, before the repository stage, with the labels
 setup --repo's Terraform adopts (fugaro, fugaro_repo, fugaro_secret).
---forget removes the repository from
-Terraform's state, destroying nothing.
 
 --create-project --gcp-project <id> creates that GCP project and adds Firebase
 to it, as you, after you type its ID at a terminal; --link-billing <account>
@@ -2751,7 +2745,8 @@ backend by accident. A first installation is fugaro setup.
 
 --forget is update's own: it is the rollback, and it turns log isolation and
 registry cleanup off with a guarded apply before it removes every address from
-Terraform's state, destroying nothing else.
+Terraform's state — in a checkout, the repository's addresses with them —
+destroying nothing else.
 
 Everything else is setup's help word for word, because it is the same
 converge: the review screen and the one typed project name in a project Fugaro
