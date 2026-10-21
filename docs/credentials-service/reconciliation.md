@@ -18,9 +18,9 @@ The spec asks for a per-project **credential proxy**: a Cloud Run service that a
 
 There is no local or remote branch `design-mixed-credentials`; the commit `d5db6092` exists and holds the 2026-10-14 draft of `docs/design/mixed-credentials.md`. `main` carries a **later, corrected** version of the same file (merged through #359, #397, #408, #441), plus the held plan [`docs/plans/2026-10-14-oauth-reviewer-stage.md`](../plans/2026-10-14-oauth-reviewer-stage.md) (Path B, PR #363, **held until project-centric phase 5** by that design's D9). §2.3 below folds in the version on `main`, which supersedes the `d5db6092` draft, and lists what this spec supersedes in both.
 
-### 1.2 `agent.auth` has three values, not four
+### 1.2 `agent.auth` has four values, and OpenRouter is not one of them
 
-`internal/config/validate.go` (`Validate`) accepts exactly `vertex`, `api-key` and `oauth` (default `vertex`, `internal/config/defaults.go`). **OpenRouter is not an auth value**: it is a provider route (`config.ModelProvider` in the local config's `providers`, key env `ProviderKeyEnv` → `FUGARO_PROVIDER_KEY_<NAME>`) used under `auth: api-key`, and since 0.8.0 a routing value (`internal/config/routing.go`, `RoutingClaude.Via` ∈ `direct | openrouter | auto`, checked by `CheckRouting`).
+`internal/config/validate.go` (`Validate`) accepts exactly `vertex`, `api-key`, `oauth` and `cascade` (`config.AgentAuths`, `internal/config/defaults.go`; default `vertex`). **The fourth is this work's own and it landed with C1.1** — the [implementation plan](implementation-plan.md)'s Task C1.1, which adds the value, its refusals and the `cascadeSince` skew constant (`internal/cli/recipes_skew.go`). At the baseline this document was checked against there were three values, and this heading said so ("has three values, not four"), which was right then and is wrong on the branch that implements the work. **OpenRouter is not an auth value**: it is a provider route (`config.ModelProvider` in the local config's `providers`, key env `ProviderKeyEnv` → `FUGARO_PROVIDER_KEY_<NAME>`) used under `auth: api-key`, and since 0.8.0 a routing value (`internal/config/routing.go`, `RoutingClaude.Via` ∈ `direct | openrouter | auto | cascade`, checked by `CheckRouting`; `cascade` is C1.2's value, the project policy's switch).
 
 ### 1.3 The shared-job OAuth refusal is not on `main`
 

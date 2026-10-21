@@ -78,10 +78,13 @@ func TestDocsProjectNamedOAuthTokensSecurityMdResidual(t *testing.T) {
 		// admitted here all the same: an api-key run whose models go through
 		// the gateway mounts no Anthropic key and needs none
 		// (agent.BuildEnv's api-key arm), so "never API-key ones" is not this
-		// document's to say — and the refusal is not `fugaro validate`'s,
-		// which reads no policy node at all.
+		// document's to say — and the refusal is not `fugaro validate`'s:
+		// since the cascade landed (plan Task C1.1) it does read the published
+		// policy node, but for O2's switch and for nothing this rule covers,
+		// which is the sentence the document has to carry rather than the
+		// "reads no policy node" it carried while main's validate read none.
 		"`projectpolicy.validProfileAccounts`",
-		"`fugaro validate` reads no policy node and is not one of the three",
+		"`fugaro validate` is not one of the three — it reads the published node for the cascade's own switch",
 		"or api-key runs under the gateway",
 		"`agent.BuildEnv`",
 		"fugaro doctor",

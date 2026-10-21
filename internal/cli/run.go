@@ -1176,7 +1176,7 @@ func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 	}
 	// The two documents auth can come from are read differently, and only one
 	// of them is validated. The checkout's own config went through
-	// config.Validate (agent.auth is one of vertex, api-key, oauth), while the
+	// config.Validate (agent.auth is one of config.AgentAuths), while the
 	// ref's bytes are read by config.AgentOf, which decodes strictly and
 	// validates nothing — so an arbitrary string arrives here from a committed
 	// fugaro.yaml. A value this Fugaro cannot place is refused, which is what
