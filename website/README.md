@@ -765,10 +765,10 @@ added or removed without this sentence moving fails there:
     not being shown and the stop for a reader who has asked their system for less motion, and it
     writes the slide on screen to the block's `data-active` for the stylesheet to draw. **The
     block is only on the homepage, so its own bytes land there and nowhere else**: **2,186 bytes**
-    onto the homepage's HTML — **1,054** of stylesheet and **1,132** of markup — and **10,912**
+    onto the homepage's HTML — **1,054** of stylesheet and **1,132** of markup — and **10,971**
     onto the script, which every page loads once, so the page weight moves by the script alone,
-    399,902 → **410,814** on the console page, and the site figure by both, 1,402,356 →
-    **1,415,454**. The count of files in `dist/` stays **28**, the count of pages **11**, and the
+    399,902 → **410,873** on the console page, and the site figure by both, 1,402,356 →
+    **1,415,513**. The count of files in `dist/` stays **28**, the count of pages **11**, and the
     homepage's own words go 468 → **461** — a dot is a circle with no text in it, and the three
     labels the tabs showed are now the dots' own names, which a screen reader reads and the page
     does not draw. **All three figures are re-derived here**, from the gates' own build, in the commit
@@ -777,8 +777,8 @@ added or removed without this sentence moving fails there:
     the file the site ships, run against the built homepage in a stub DOM — with each case
     planted against the line of the script it reads.
 
-  - **JavaScript per page:** 190,500 bytes. Three times 63,500: the one script the site ships,
-    `public/scripts/site.js` (50,800 bytes), plus 25 %. What the file carries is the copy
+  - **JavaScript per page:** 190,722 bytes. Three times 63,574: the one script the site ships,
+    `public/scripts/site.js` (50,859 bytes), plus 25 %. What the file carries is the copy
     control, the menu, the consent gate and the homepage's slider above, in the detail
     `test/nav-hover.mjs` holds it to: the hover behaviour is bound only where `matchMedia` says the device's pointer hovers
     and only for a pointer that says it is a mouse or a pen — a tap sends a pointer of its
@@ -800,10 +800,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,540,554 bytes. Three times 513,518: the heaviest page, the
-    console page, at 410,814 bytes (its HTML, the four screenshots it renders, and the files
+  - **Page weight per page:** 1,540,776 bytes. Three times 513,592: the heaviest page, the
+    console page, at 410,873 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,307,954 bytes. Three times 1,769,318 (every file in `dist/`, 1,415,454
+  - **Whole site:** 5,308,176 bytes. Three times 1,769,392 (every file in `dist/`, 1,415,513
     bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 

@@ -850,8 +850,9 @@
       timer = null
     }
 
-    /** Whether the block should be still. The page's own visibility first, so a page nobody is
-     *  shown costs no media query and no timer at all. */
+    /** Whether the block should be still. Held first and the page's own visibility second, so a
+     *  reader standing in the block — and a page nobody is shown — cost no media query and no
+     *  timer at all. */
     function still() {
       return held || !shown() || calm()
     }
@@ -969,10 +970,9 @@
 
     // Where the block opens. A reader who arrived on one of the slides — the dots are links,
     // and a link whose fragment is a slide's own id is a link to that slide — opens on that
-    // one; a
-    // reader who arrived on the page opens on the first, which is the panel the stylesheet
-    // shows while no fragment is targeted, so the mark and the panel agree from the first
-    // frame. The address is read defensively: the stub DOMs that run this file have no
+    // one; a reader who arrived on the page opens on the first, which is the panel the
+    // stylesheet shows while no fragment is targeted, so the mark and the panel agree from the
+    // first frame. The address is read defensively: the stub DOMs that run this file have no
     // `location`, and a block that threw on one would take the copy controls down with it.
     var opening = slides[0]
     var hash = window.location && window.location.hash ? window.location.hash.slice(1) : ''

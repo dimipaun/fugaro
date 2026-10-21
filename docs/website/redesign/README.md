@@ -1496,9 +1496,9 @@ what it says — and the strip of tabs is the one part of it that is gone.
   that moved the bytes.
 - **The bytes.** The block is only on the homepage, so its own bytes land there and nowhere
   else: **2,186 onto the homepage's HTML** — 1,054 of stylesheet and 1,132 of markup — and
-  **10,912 onto the script**, which every page loads once. The page weight (the console page,
-  still the heaviest) moves by the script alone, 399,902 → **410,814**; the site figure by both,
-  1,402,356 → **1,415,454**; and all three of the README's byte budgets are re-derived in the
+  **10,971 onto the script**, which every page loads once. The page weight (the console page,
+  still the heaviest) moves by the script alone, 399,902 → **410,873**; the site figure by both,
+  1,402,356 → **1,415,513**; and all three of the README's byte budgets are re-derived in the
   commit that ships the script (D192). The count of files in `dist/` stays **28** and the count
   of pages **11**, and the homepage's own words go 468 → **461**, because a dot is a circle with
   no text in it: the three labels the tabs showed are now the dots' names, which a screen reader
