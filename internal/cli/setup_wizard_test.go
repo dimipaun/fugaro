@@ -354,6 +354,63 @@ func TestSetupAsksCreateOrAdoptWithCreateDefault(t *testing.T) {
 	}
 }
 
+// TestSetupAsksTheProjectQuestionWhenEveryOtherInputIsAFlag: the wizard's
+// questions are answered by flags, so a run whose --gcp-project, --region and
+// --name all came from the command line has an empty `missing` — and the
+// project's question is not a row `missing` can hold, because the answer a run
+// that cannot ask takes creates nothing (setup.go's askProjectAnswer). It is
+// still a first run at a terminal, and the question is the wizard's first
+// (D11): it is asked, and answered, rather than taken on the user's behalf.
+//
+// Without this the run adopted silently, and the plan view then printed
+// "[skipped] project not creating: this run's answer was to adopt an existing
+// GCP project" — a statement about an answer nobody gave.
+func TestSetupAsksTheProjectQuestionWhenEveryOtherInputIsAFlag(t *testing.T) {
+	for _, tc := range []struct {
+		answer string
+		want   bool
+	}{
+		{setupAnswerAdopt, false},
+		{setupAnswerCreate, true},
+	} {
+		t.Run(tc.answer, func(t *testing.T) {
+			o := &initOptions{cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}, name: "aurora"}
+			r, out := wizardRun(t, tc.answer+"\n", o)
+			if err := r.gatherInputs(t.Context()); err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			if !strings.Contains(out.String(), setupAskProject) {
+				t.Errorf("--gcp-project, --region and --name answered every other question, and the run did not ask the one left:\n%s", out)
+			}
+			if r.o.createProject != tc.want {
+				t.Errorf("the answer %q recorded create=%v, want %v:\n%s", tc.answer, r.o.createProject, tc.want, out)
+			}
+		})
+	}
+
+	// The one question left is asked even when nothing else is: a run that
+	// cannot be asked still takes adoption, and a scripted run still says
+	// --create-project (D12), so neither is held to answering it.
+	for _, tc := range []struct {
+		name string
+		o    *initOptions
+	}{
+		{"--yes", &initOptions{cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}, name: "aurora", yes: true}},
+		{"--json", &initOptions{cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}, name: "aurora", asJSON: true}},
+		{"--create-project", &initOptions{cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}, name: "aurora", createProject: true}},
+	} {
+		t.Run(tc.name+" is not asked", func(t *testing.T) {
+			r, out := wizardRun(t, setupAnswerCreate+"\n", tc.o)
+			if err := r.gatherInputs(t.Context()); err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			if strings.Contains(out.String(), setupAskProject) {
+				t.Errorf("%s: the run asked a question it cannot act on or has already answered:\n%s", tc.name, out)
+			}
+		})
+	}
+}
+
 // TestSetupAdoptsWhenTheUserTypesAnExistingID: the second answer is adoption,
 // and it is the answer that reads nothing and creates nothing. The stage is
 // registered (it is `setup` on a first run) and it has nothing to do: an
@@ -491,6 +548,48 @@ func TestSetupOnAnExistingInstallationConvergesAndSaysSo(t *testing.T) {
 			t.Errorf("name %q, create %v: want the installation's own name and no creation", r.o.name, r.o.createProject)
 		}
 	})
+}
+
+// TestSetupKeepsAnExplicitCreateProjectOnAnExistingInstallation: the answer to
+// the wizard's first question is --create-project's own field, and a run that
+// named it on the command line keeps it. An installation the runs bucket's
+// marker names is what makes `setup` keep the project and take the
+// installation's own name; it is not an answer, and it never overwrites one the
+// run was told.
+//
+// Reversing the flag here would drop --link-billing — the documented way to
+// link billing to a project this run did not create, and one check() has
+// already validated — along with --managed, --parent and --display-name; the
+// project stage's answer() is what decides, and the run said create. It would
+// also be inconsistent with itself: a run that passes --name as well never
+// reaches this path at all, so the flag would be honoured there and reversed
+// here.
+func TestSetupKeepsAnExplicitCreateProjectOnAnExistingInstallation(t *testing.T) {
+	old := installationName
+	installationName = func(context.Context, string, string, string) string { return initProjectName }
+	t.Cleanup(func() { installationName = old })
+
+	o := &initOptions{
+		cloud:         cloudOptions{gcpProject: "proj-1234", region: defaultRegion},
+		createProject: true,
+		linkBilling:   "0123AB-4567CD-89EF01",
+	}
+	r, out := wizardRun(t, "", o)
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out.String(), setupAlreadySetUp) {
+		t.Fatalf("the run does not say the installation is already set up, so this path was not taken:\n%s", out)
+	}
+	if r.o.name != initProjectName {
+		t.Errorf("name %q, want the installation's own %q", r.o.name, initProjectName)
+	}
+	if !r.o.createProject {
+		t.Errorf("the installation already being there reversed --create-project: the project stage skips and --link-billing %s never reaches the project:\n%s", o.linkBilling, out)
+	}
+	if r.o.linkBilling != o.linkBilling {
+		t.Errorf("--link-billing %q became %q", o.linkBilling, r.o.linkBilling)
+	}
 }
 
 // TestSetupOutsideACheckoutSkipsTheRepositoryQuestion: outside a checkout there

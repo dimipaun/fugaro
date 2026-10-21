@@ -353,6 +353,18 @@ var setupQuestions = []wizardQuestion{
 	},
 }
 
+// asksProjectAnswer is the whole of the question's own condition: the door this
+// run is can act on the answer, the answer is not already on the command line,
+// and the run can be asked one at all. It is split out because gatherInputs
+// needs the same answer to decide whether it is about to prompt for anything:
+// the project's is the one question the table in setupQuestions cannot name as
+// missing, so a run whose other inputs all came from flags has nothing in
+// `missing` and still has this question to ask.
+func (r *initRun) asksProjectAnswer() bool {
+	o := r.o
+	return o.door != updateDoor.name && !o.configOnly && !o.createProject && r.canAsk()
+}
+
 // askProjectAnswer asks the wizard's first question and records the answer
 // where the rest of the run reads it: --create-project's own field, so a person
 // at a terminal and a scripted run answer one question, and the project stage
@@ -383,10 +395,10 @@ var setupQuestions = []wizardQuestion{
 // applied to what the person typed. The answer is the flag, so it is held to
 // what the flag is held to.
 func (r *initRun) askProjectAnswer() error {
-	o := r.o
-	if o.door == updateDoor.name || o.configOnly || o.createProject || !r.canAsk() {
+	if !r.asksProjectAnswer() {
 		return nil
 	}
+	o := r.o
 	v, err := r.prompt(setupAskProject, setupAnswerCreate, func(s string) error {
 		if s != setupAnswerCreate && s != setupAnswerAdopt {
 			return errors.New("answer " + setupAnswerAdopt + " to install into a project that already exists, or " + setupAnswerCreate + " to create a new one")

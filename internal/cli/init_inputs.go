@@ -185,13 +185,19 @@ func (r *initRun) canAsk() bool {
 // gatherInputs completes --name, --gcp-project and --region for a first run:
 // it asks for what is missing in a terminal, and otherwise refuses, naming
 // every missing flag (the GitHub App's ID too, when the checkout's
-// repository needs it) in one error. With a project config nothing is asked.
+// repository needs it) in one error.
+//
+// The wizard's project question is not one of those three. It is asked
+// whenever the run can answer it, whether or not the other inputs came from
+// flags, because no flag is required for it: a run that cannot ask takes its
+// answer itself rather than demanding one (askProjectAnswer), so the question
+// cannot be a row `missing` holds. With a project config nothing is asked.
 func (r *initRun) gatherInputs(ctx context.Context) error {
 	name, fromCheckout, missing, creating := r.firstRunMissing(ctx)
-	if !creating || len(missing) == 0 {
+	if !creating {
 		return nil
 	}
-	if !r.canAsk() {
+	if len(missing) > 0 && !r.canAsk() {
 		flags := make([]string, len(missing))
 		for i, m := range missing {
 			flags[i] = m.String()
@@ -206,8 +212,16 @@ func (r *initRun) gatherInputs(ctx context.Context) error {
 		}
 		return userErr("there is no project config yet: pass %s to create one", strings.Join(flags, ", "))
 	}
-	fmt.Fprintln(r.w, "fugaro setup: this is the first run here; each answer has a suggestion, press Enter to accept it.")
 	o := r.o
+	// The banner goes with any question this run is about to ask. `missing`
+	// cannot answer whether there is one: it names every question but the
+	// project's, so a run whose other inputs all came from flags has an empty
+	// `missing` and still has that question to ask — it is the wizard's first
+	// (D11), and a run whose inputs are all flags is still a first run at a
+	// terminal.
+	if len(missing) > 0 || r.asksProjectAnswer() {
+		fmt.Fprintln(r.w, "fugaro setup: this is the first run here; each answer has a suggestion, press Enter to accept it.")
+	}
 	if o.cloud.gcpProject == "" {
 		v, err := r.prompt("GCP project ID", suggestGCPProject(), func(s string) error {
 			if !infra.ValidProjectID(s) {
@@ -234,15 +248,19 @@ func (r *initRun) gatherInputs(ctx context.Context) error {
 	}
 	// An installation may already be there (a teammate's, or one this machine
 	// has no project config for): `setup` keeps it, and converges as `fugaro
-	// update` does rather than offering to create a second one (D11). It asks
-	// nothing more — not the name, which is the installation's own, and not
-	// whether to create the project: this run is creating nothing whatever the
-	// answer would have been, which is why the question is asked below and not
-	// here. The installation stage adopts it and says which roles to ask an
-	// owner for.
+	// update` does rather than offering to create a second one (D11). What
+	// this settles is the name — the installation's own, so it is not asked —
+	// and the run returns here, so the project question below is not asked
+	// either: the answer this path takes is adoption. The one answer it never
+	// overrides is one
+	// the run was told: --create-project is a scripted run saying what it
+	// wants, and it stays what the project stage acts on, which is also where
+	// --link-billing (the documented way to link billing to a project this
+	// run did not create) reaches a project. The installation stage adopts it
+	// and says which roles to ask an owner for.
 	if name == "" && !o.configOnly {
 		if installed := installationName(ctx, o.cloud.gcpProject, o.cloud.region, o.runsBucket); installed != "" {
-			o.name, o.createProject = installed, false
+			o.name = installed
 			fmt.Fprintf(r.w, "%s%s: keeping project %s, and converging as %s does\n",
 				o.programPrefix(), setupAlreadySetUp, pluginwire.Printable(installed), "fugaro "+updateDoor.name)
 			return nil

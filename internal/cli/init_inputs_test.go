@@ -272,10 +272,16 @@ func TestCheckoutProjectNeverNamesANewInstallation(t *testing.T) {
 	if r.o.name != "my-team" || !strings.Contains(out.String(), "a value is needed") || strings.Contains(out.String(), "[evil-project]") || !strings.Contains(out.String(), "fugaro.yaml says evil-project") {
 		t.Errorf("name %q\n%s", r.o.name, out.String())
 	}
-	// With --name it is the user's own word.
-	r = &initRun{o: &initOptions{name: "evil-project", cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+	// With --name it is the user's own word. The project question is still
+	// asked: the three flags answered every other question, and that one is
+	// not a row `missing` can hold (setup_wizard_test.go), so a first run at a
+	// terminal answers it rather than having an answer taken for it.
+	r = &initRun{o: &initOptions{name: "evil-project", cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader(setupAnswerAdopt + "\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Errorf("--name: %v", err)
+	}
+	if r.o.name != "evil-project" {
+		t.Errorf("--name: name %q, want the user's own word", r.o.name)
 	}
 }
 
@@ -313,9 +319,11 @@ func TestFirstRunSuggestsTheInstallationsName(t *testing.T) {
 		t.Errorf("the installation was looked up with %q, want once with the GCP project and region already known", asked)
 	}
 	// Typing another name is still the user's word (the run then refuses it
-	// against the installation as before); --name is never replaced.
+	// against the installation as before); --name is never replaced, and it is
+	// not an answer to the project question: that one is asked, because no flag
+	// gave it, and the answer here is adoption.
 	asked = nil
-	r = &initRun{o: &initOptions{name: "mine", cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+	r = &initRun{o: &initOptions{name: "mine", cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader(setupAnswerAdopt + "\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil || r.o.name != "mine" || len(asked) != 0 {
 		t.Errorf("--name: %v %q %v", err, r.o.name, asked)
 	}
