@@ -52,6 +52,61 @@ func implementPNG(t *testing.T, ctx context.Context, req agent.Request) (agent.R
 	return agent.Result{CostUSD: 1}, nil
 }
 
+// fixWithPNG is a fix stage that commits a PNG, the way a fix for a finding
+// about a missing icon would, and reports what a fix stage reports.
+func fixWithPNG(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	icon := filepath.Join(req.Dir, "mobile", "assets", "icon.png")
+	if err := os.MkdirAll(filepath.Dir(icon), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(icon, []byte(pngFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shell(t, req, "git add -A && git commit -qm 'Add the icon the review asked for'")
+	verifyTest(t, ctx, req)
+	return agent.Result{CostUSD: 0.2}, nil
+}
+
+// capturePrompt is a review step that records the prompt it was given and
+// answers with verdict and findings.
+func capturePrompt(prompts *[]string, verdict string, findings int) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		*prompts = append(*prompts, req.Prompt)
+		return review(verdict, findings)(t, ctx, req)
+	}
+}
+
+// TestReviewInputIsRebuiltForEveryRound: a fix between two review rounds
+// changes the branch, so the second round's prompt carries the new file's
+// marker — the input is built per round, never once for the whole loop. A
+// stale diff would tell the reviewer the icon is missing in the very round
+// that reviews the fix for it.
+//
+// Mutation (build the input once, in agentLoop, before the loops): the second
+// round's prompt carries no marker and this test fails.
+func TestReviewInputIsRebuiltForEveryRound(t *testing.T) {
+	h := newHarness(t, "", nil)
+	var prompts []string
+	rec, err := h.run(t,
+		implement("feature"),
+		capturePrompt(&prompts, "changes", 1),
+		fixWithPNG,
+		capturePrompt(&prompts, "ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(prompts) != 2 {
+		t.Fatalf("the run made %d review calls, want 2", len(prompts))
+	}
+	marker := fmt.Sprintf("binary file mobile/assets/icon.png changed, %d bytes", len(pngFixture))
+	if strings.Contains(prompts[0], marker) {
+		t.Fatalf("the first round's prompt names a file the branch did not have yet:\n%s", prompts[0])
+	}
+	if !strings.Contains(prompts[1], marker) {
+		t.Fatalf("the second round's prompt does not name the file the fix added (%q):\n%s", marker, prompts[1])
+	}
+}
+
 // postPrompt sends the stage's prompt to the gateway as Claude Code would:
 // the prompt is the user message's content, and that is the body the gateway
 // prices and forwards.

@@ -276,6 +276,17 @@ func reviewBatches(paths []string, n int) [][]string {
 	return out
 }
 
+// reviewPromptWithInput is the review stage's prompt with the built input
+// appended. Every review round builds it again, never once for the whole
+// loop: a fix between two rounds changes the branch, and a diff that no
+// longer matches the checkout under review is worse than no diff at all.
+func (r *run) reviewPromptWithInput(ctx context.Context, prompt string) string {
+	if input := r.reviewInputBlock(ctx); strings.TrimSpace(input) != "" {
+		return prompt + "\n\n" + input
+	}
+	return prompt
+}
+
 // reviewInputBlock is the review stage's input as the prompt carries it, and
 // "" when it cannot be built. A build that fails warns and appends nothing:
 // the reviewer then reads the diff itself, as it did before this existed,

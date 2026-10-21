@@ -290,13 +290,7 @@ func stripClaudeConfig(dir string) error {
 // asked to resolve /name from the reviewed checkout itself. Passing "" for
 // that argument is what makes ReviewPrompt/PickPrompt fall through to the
 // promptFile branch instead of the leading-slash one.
-// input is the review stage's built input for the single-pull-request case
-// (reviewinput.go), appended last: it is the longest part of the prompt by
-// far. A pick run passes "" — its attempts are worktrees beside the main
-// checkout, which no head has been checked out into, so there is no range to
-// build a diff from (and PickPrompt carries the rule about binary files
-// instead).
-func (r *run) reviewModePrompt(input string) string {
+func (r *run) reviewModePrompt() string {
 	var p string
 	if len(r.reviewHeads) == 1 {
 		p = ReviewPrompt("", r.reviewFile, r.cfg.Git.BaseBranch)
@@ -310,9 +304,6 @@ func (r *run) reviewModePrompt(input string) string {
 	}
 	if task := strings.TrimSpace(r.spec.Task); task != "" {
 		p += "\n\nAdditional instructions from the launcher:\n\n" + task
-	}
-	if strings.TrimSpace(input) != "" {
-		p += "\n\n" + input
 	}
 	return p
 }
@@ -430,12 +421,16 @@ func (r *run) reviewMode(ctx context.Context) {
 		return
 	}
 	// The built input is the reviewed pull request's own diff, read from the
-	// checkout reviewMode's line above put its head in (reviewinput.go).
-	input := ""
+	// checkout reviewMode's line above put its head in (reviewinput.go). A
+	// pick run gets none: its attempts are worktrees beside the main
+	// checkout, which no head has been checked out into, so there is no range
+	// to build a diff from — PickPrompt carries the rule about binary files
+	// instead.
+	prompt := r.reviewModePrompt()
 	if len(r.reviewHeads) == 1 {
-		input = r.reviewInputBlock(ctx)
+		prompt = r.reviewPromptWithInput(ctx, prompt)
 	}
-	req := agent.Request{Prompt: r.reviewModePrompt(input), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+	req := agent.Request{Prompt: prompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 	res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
 	r.countTokens(res)
 	if !ok {
