@@ -1035,34 +1035,38 @@ added or removed without this sentence moving fails there:
   refusal come back.
 - `test/caps-figures.mjs` — the caps page's figures survive a phone (the owner's feedback of
   2026-10-19: "these render terrible on mobile", read on the page's right-hand part, the cost
-  figures). The page's two tables — what a job costs and the aggregation's per-recipe ranges —
-  were both read as tables at 360 px: the first inside an `overflow-x: auto` box, which is six
-  nowrap columns scrolling sideways inside their own box, and the second with no box at all,
-  whose minimum content width is what widened the document. Below the site's 48 rem breakpoint
-  each row is now a block, each cell a line labelled with its column's own header text through
-  `data-label`, and the label is printed by one rule (`content: attr(data-label)`) rather than
-  written into every cell; the wide table's own fit — the nowrap figures and the scroll box
-  around them — is scoped to `min-width: 48rem`, and the stacked figures are set at
-  `--font-size-base`, because `base.css` sets every `table` at the table's smaller type. The
-  gate reads the built page's own markup and stylesheet: every cell's `data-label` is its
-  column's head text in its column's order, each of the five elements a stacked table is made of
-  (the table, its body, its rows and both kinds of cell) is separately `display: block` at 360 and
-  at 390 px with the head out of the flow, the rule that prints the labels is matched against the
-  page's own cells — a `content: attr(data-label)` on a selector that reaches no cell prints
-  nothing, and reads exactly like the rule that works — nothing in force at those widths holds a
-  figure on one line or in a scroll box, no box is wider than `main`'s own content box at 360 px
-  (read out of the stylesheet, not typed), the figures are no smaller than the body, and the two
-  declarations the wide layout is made of are read again at 768 and at 1280 px, so a block that
-  was deleted or moved behind a wider query is refused rather than green on every phone width.
-  It reads the checkout's build and a copy built with a fixture `costs.json`, because the
-  per-recipe table is the one this checkout cannot render (D96); the fixture case also plants a
-  defect only that table's cells can show, so the second table is read rather than assumed. Its
-  refusals are kept the way the others keep theirs: the reading run against `main`'s own
-  `CapsCosts.astro` fails on every defect it is written for — every cell unlabelled, the five
-  stacking declarations missing, the head row left in the flow, no rule printing a label, the
-  nowrap figures and the scroll box in force at the phone's width, and the figures at the table's
-  smaller type — and every refusal has a case that plants the one thing it names in the
-  artifact's own bytes.
+  figures), as the bold redesign of 2026-10-21 left them. The page's two tables — what a job
+  costs and the aggregation's per-recipe ranges — were both read as tables at 360 px: the first
+  inside an `overflow-x: auto` box, which is six nowrap columns scrolling sideways inside their
+  own box, and the second with no box at all, whose minimum content width is what widened the
+  document. The tables are gone: the figures are three job cards now, so the stacking rules, the
+  `data-label` on every cell and the one rule that printed them went with them, and this gate
+  was rewritten around the cards rather than kept — a gate whose refusals cannot fire reads like
+  one. The defect each rule is for is unchanged: every figure is under the name it is for (a
+  `<dt>` before its `<dd>`, a name that says something, a figure that prints something, and no
+  two figures in one card sharing a name); a phone reads one column of cards, read out of the
+  page's own `grid-template-columns` at 360 and at 390 px rather than assumed from a class name;
+  the labelled row wraps rather than pushing its figure out of the card; nothing in force at
+  those widths holds a figure on one line or in a scroll box; no box is wider than `main`'s own
+  content box at 360 px (read out of the stylesheet, not typed); the rows are no smaller than the
+  body, which is the size `base.css` would otherwise leave a table at; and the three cards are
+  side by side above this page's own 60 rem breakpoint, read again at 960 and at 1280 px, so a
+  block that was deleted or moved behind a wider query is refused rather than green on every
+  phone width. Two rules were added when the bars arrived: **the bar's own sentence names the
+  marks the bar draws, and only those** — the bar is a picture with no text a reader can see, so
+  its `aria-label` is the whole of what a reader who cannot see it is told, and the review job
+  has no middle half and no worst run, so its bar draws neither; and **the page's two hero
+  actions are 44 px targets**, read by `test/lib/controls.mjs`, the rule the homepage's own
+  controls are held by as well. Its refusals are kept the way the others keep theirs: every
+  defect it is written for has a case that plants the one thing it names in the artifact's own
+  bytes — a card without a name or a list of figures, a figure with no `<dt>` before it, two
+  figures under one name, a card with no bar, a bar with no accessible name, a bar whose
+  sentence drops a mark it draws or names one it does not, a hero action under the 44 px target
+  or with no minimum at all or with one that holds only above a breakpoint, the grid left at
+  three columns at a phone's width, a row that cannot wrap, the nowrap figures and the scroll
+  box in force at the phone's width, a box wider than the phone's content box, the rows at a
+  table's smaller type, and the wide layout deleted or moved — and each case watches the named
+  refusal come back.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
@@ -1122,8 +1126,11 @@ Three things about those commands are worth stating rather than leaving to the t
   one named installation's run records, is refused inside a coding agent's session, and
   prints percentiles per recipe with the window and the sample size behind each — never a
   repository, a run id, a branch, a task, a person or a commit (D96, D97). Until the owner
-  runs it, the file is absent and the caps-and-costs page renders its "not enough runs yet"
-  state: an empty figure is honest, an invented one is not.
+  runs it, the file is absent — and the caps-and-costs page renders nothing from it: the
+  per-recipe ranges section that read it was removed on 2026-10-21 (the owner's ruling), and
+  `src/content.ts` still validates the file, so the day one is published the build refuses a
+  group below `min_runs` rather than publishing it. An empty figure is honest, an invented
+  one is not.
 - **`website/data/*.yaml` is hand-written, and pinned by tests rather than regenerated.**
   `install.yaml` is held to `README.md`, `docs/release.md` and `.goreleaser.yaml` by
   `internal/cli/docs_website_install_test.go`, and `site.yaml` to `go.mod`, the
@@ -1140,9 +1147,10 @@ Three things about those commands are worth stating rather than leaving to the t
   of 2026-10-19). `src/content.ts` reads it, validates it (a version, a window of at least
   `site.yaml`'s `min_runs` runs, an ascending middle half, no duplicate id) and refuses it by
   name, and `test/caps-and-costs.mjs` holds the built page to it **in both directions**: every
-  field the file carries is rendered in its own column, and no figure on the page is one the
-  file does not carry. So a refresh is an edit to this file and never to a page, and a field
-  added to it with no column to land in fails the build rather than going unrendered.
+  field the file carries is rendered in the field it is for — the card's own line or its
+  labelled row — and no figure on the page is one the file does not carry. So a refresh is an
+  edit to this file and never to a page, and a field added to it with no place to land fails
+  the build rather than going unrendered.
 - **`website/data/console-sha256sums.txt` is the release's, copied rather than written.** It is
   the `console-sha256sums.txt` asset of the console's `console-vX.Y.Z` release, byte for byte —
   one `<64 hex>  <published name>` line per artifact, the shape `sha256sum` writes and
