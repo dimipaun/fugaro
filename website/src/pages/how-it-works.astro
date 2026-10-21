@@ -38,6 +38,7 @@
  */
 import Base from '../layouts/Base.astro'
 import RunDiagram from '../components/RunDiagram.astro'
+import ZoomLevels from '../components/ZoomLevels.astro'
 import { LABELS } from '../lib/run-labels.mjs'
 
 /**
@@ -90,6 +91,14 @@ const LEAD_CLOSE = sentence(LABELS.ownProject.text)
   </section>
 
   <RunDiagram />
+
+  {/* The four levels, drawn out from the run above: where the run end to end is the page's
+      picture of one run, these are the same shapes zooming out — inside one job, the jobs the
+      orchestrator fans out, the developer's own view, and the whole project. D237 puts them
+      here, under "The run, end to end", and D244 makes them one `<defs>` of `<symbol>`s drawn
+      through `<use>`, so a job is the same tile at every level. Still pictures only: the pinned,
+      scroll-driven zoom between them is Part 5. */}
+  <ZoomLevels />
 
   {/* The board's closing band: the same promise as the opening, and the one link that acts on
       it. Its heading is the board's own — no document of this repository writes it — and it is

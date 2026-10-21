@@ -102,7 +102,7 @@
   var OPEN_MENUS = '.site-nav details[open]'
 
   // The menu's submenus: one `<details>` per group, whose `<summary>` is the control that
-  // announces the group's state. There are three of them and no other menu control at any
+  // announces the group's state. There are two of them and no other menu control at any
   // width — the labels are the menu on a phone as much as on a wide viewport (the owner's
   // brief of 2026-10-19, item 1) — and each one opens and closes by its own click.
   var GROUP_DETAILS = '.site-nav-group details'
@@ -202,7 +202,7 @@
   // an element that is no longer rendered, so the control that opened it takes the focus
   // back — which is where a keyboard reader expects to be after dismissing a menu. The open
   // menus are read in document order and the first one that holds the focus and is still
-  // drawn takes it; the three groups are siblings and no level sits inside another, so there
+  // drawn takes it; the groups are siblings and no level sits inside another, so there
   // is only ever one open at a time and the search is a formality rather than a choice.
   function closeMenus() {
     var active = document.activeElement
@@ -546,14 +546,42 @@
 
   // The console slider's own three, and the two the bar is drawn from: the track it scrolls,
   // the slides it counts, the dots it marks, the bar itself and the count in it.
+  //
+  // **The interior is `data-slider-*` too, and that is the correction of 2026-10-21** (the
+  // homepage's "See it" panel became a slider that renders the console page's own rows, D246).
+  // These three were `.screens-track`, `.screen` and `.screen-dot` — the console page's class
+  // names — and a second page can only reuse this driver by borrowing the classes of a page it
+  // has nothing to do with. The classes stay, because they are what the stylesheet draws; what
+  // the script reads is the attribute, which is the same shape as the door above it. The
+  // homepage's own slider reads `[data-slider-slide]` and `[data-slider-dot]` for its panels
+  // and its dots, so the two drivers now share those two names and the two blocks differ in
+  // what they put under them: a track of slides against a block of panels.
   var SLIDER_BAR = '[data-slider-bar]'
-  var SLIDER_TRACK = '.screens-track'
-  var SLIDER_SLIDE = '.screen'
-  var SLIDER_DOT = '.screen-dot'
+  var SLIDER_TRACK = '[data-slider-track]'
+  var SLIDER_SLIDE = '[data-slider-slide]'
+  var SLIDER_DOT = '[data-slider-dot]'
   var SLIDER_COUNT = '[data-slider-counter]'
 
+  /**
+   * The elements of `block`'s OWN slider: everything `selector` matches inside it that belongs
+   * to no nearer slider. The homepage's "See it" panel holds one of these blocks inside the
+   * homepage's own, so a plain `block.querySelectorAll('[data-slider-slide]')` would hand the
+   * outer block the inner one's slides — and the two drivers would count, mark and move each
+   * other's. `closest('[data-slider]')` is what tells them apart, and it answers the block
+   * itself for everything of the block's own: the same expression a browser answers, so the
+   * rule needs no bookkeeping and cannot go stale.
+   */
+  function own(block, selector) {
+    var found = block.querySelectorAll(selector)
+    var kept = []
+    for (var i = 0; i < found.length; i++) {
+      if (found[i].closest(SLIDER) === block) kept.push(found[i])
+    }
+    return kept
+  }
+
   function slider(section) {
-    var track = section.querySelector(SLIDER_TRACK)
+    var track = own(section, SLIDER_TRACK)[0]
     if (!track) return
     var slides = track.querySelectorAll(SLIDER_SLIDE)
     // One slide is nowhere to go, and the markup renders no bar for it either: this is that
@@ -561,11 +589,18 @@
     // Next button that goes to the slide it is already on.
     if (slides.length < 2) return
 
-    var bar = section.querySelector(SLIDER_BAR)
-    var count = section.querySelector(SLIDER_COUNT)
-    var dots = section.querySelectorAll(SLIDER_DOT)
-    var prev = section.querySelector(SLIDER_PREV)
-    var next = section.querySelector(SLIDER_NEXT)
+    // Every hook this driver reads is read through `own()`, the single elements as much as the
+    // lists: the homepage's "See it" panel holds a slider of its own inside this page's block,
+    // and its bar, its count and its two arrows carry the same four names this one's do — a
+    // `section.querySelector` would answer with whichever came first in the document, which is
+    // this block's own today and the inner block's the day the two are written the other way
+    // round. The rule is the same one the slides and the dots are read with, and it needs no
+    // document order to be right.
+    var bar = own(section, SLIDER_BAR)[0]
+    var count = own(section, SLIDER_COUNT)[0]
+    var dots = own(section, SLIDER_DOT)
+    var prev = own(section, SLIDER_PREV)[0]
+    var next = own(section, SLIDER_NEXT)[0]
     var index = 0
     var timer = null
     var over = false
@@ -611,7 +646,15 @@
     // reader's own motion gets anyway. That motion stays the stylesheet's — `scroll-behavior:
     // smooth` on the track, which the base layout's reduced-motion rule neutralises — and so is
     // a dot's anchor with no script.
+    // A track the page is not laying out cannot be moved, and a move it cannot make is not one
+    // to count: `clientWidth` is zero for a box inside a `display: none` subtree, and the case
+    // on this site is the homepage, where this slider renders inside the "See it" panel and that
+    // panel is drawn only while the reader is on it (D246). The clock keeps its beat there — six
+    // seconds of a panel nobody has opened is no work — and every beat is refused here, so the
+    // count and the mark on the dots stay on the slide the track is showing: the first one, which
+    // is what the reader who opens the panel sees, and where their next move starts from.
     function show(to) {
+      if (!(track.clientWidth || 0)) return
       index = (to + slides.length) % slides.length
       var left = index * (track.clientWidth || 0)
       if (typeof track.scrollTo === 'function') track.scrollTo({ left: left, behavior: 'instant' })
@@ -1038,18 +1081,27 @@
    * shows. This is the clock, the two controls and the mark on the current dot.
    *
    * The block is handed in by `start()`, which found every `[data-slider]` on the page once and
-   * gave each one to both of this file's sliders. A block with no panels in it — the console
-   * page's, whose slider is a scroll container — is one this function returns from at once.
+   * gave each one to both of this file's sliders. A block with no panels of its own in it — the
+   * console page's, whose slider is a scroll container, and the panel the homepage's own slider
+   * renders that scroll container in — is one this function returns from at once.
    */
   function panels(block) {
-    var slides = block.querySelectorAll(SLIDE)
+    // A block that carries a track of its OWN is the console-style slider's, and its slides are
+    // the track's `<li>`s rather than the block's panels: the driver above moves it, and two
+    // drivers on one block would each write the other's state. The homepage's block holds one
+    // of those inside its third panel, which is the case this reads.
+    if (own(block, SLIDER_TRACK).length > 0) return
+    var slides = own(block, SLIDE)
     // One slide is not a slider, and no slide is a block this file has nothing to say about.
     // A block that grew a second panel gets the whole behaviour from the same markup.
     if (slides.length < 2) return
 
-    var dots = block.querySelectorAll(DOT)
-    var back = block.querySelector(SLIDER_PREV)
-    var on = block.querySelector(SLIDER_NEXT)
+    var dots = own(block, DOT)
+    // `own()` here for the same reason the driver above reads its own two arrows with it: the
+    // block holds a slider of its own, whose arrows carry these two names, and document order is
+    // not a rule either of them should rest on.
+    var back = own(block, SLIDER_PREV)[0]
+    var on = own(block, SLIDER_NEXT)[0]
     var at = 0
     var timer = null
     // The two ways a reader is in the block, and they are two flags rather than one: a pointer
@@ -1244,10 +1296,11 @@
     // 2026-10-21 — so neither is behind the clipboard gate the copy controls stand behind below.
     //
     // One query, for the one attribute a slider's block is marked with, and each of the two
-    // drivers below is handed every block: the console's slider returns at once from a block
-    // with no `.screens-track` in it and this file's homepage slider at once from a block with
-    // no panels, so a page carrying one of the two blocks takes the same path as a page
-    // carrying the other, and a page carrying both would get both.
+    // drivers below is handed every block: the console slider's returns at once from a block
+    // with no track of its own in it and this file's homepage slider at once from a block with
+    // no panels of its own, so a page carrying one of the two blocks takes the same path as a
+    // page carrying the other, and a page carrying one inside the other — the homepage — gets
+    // both, each on its own block and neither on the other's elements.
     var sliders = document.querySelectorAll(SLIDER)
     for (var s = 0; s < sliders.length; s++) {
       slider(sliders[s])
