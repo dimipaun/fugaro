@@ -134,6 +134,137 @@ func TestReviewInputOfAPullRequestThatAddsAPngIsTextOnly(t *testing.T) {
 	}
 }
 
+// TestReviewInputOfPathspecMagicNames: the paths the input is built from are
+// the reviewed pull request's own, so a changed file can be named
+// ":(exclude)*" or ":!app.go". Handed to git as pathspecs those are magic
+// rather than file names: the diff comes back empty — an input that says it
+// carries the changes and carries none of them — and ls-tree fails outright
+// ("pathspec magic not supported by this command: 'exclude'"), which drops
+// the whole input to the warn-and-read-the-diff-yourself path.
+//
+// Mutation (drop --literal-pathspecs from reviewTextDiff and treeSizes): the
+// build fails on the binary file's size, so no marker and no diff line is in
+// the input, and this test fails.
+func TestReviewInputOfPathspecMagicNames(t *testing.T) {
+	testutil.IsolateGit(t)
+	remote := testutil.NewRemote(t, map[string]string{"README.md": "hello\n"})
+	repo, err := gitops.OpenOrClone(context.Background(), filepath.Join(t.TempDir(), "work"), remote, gitops.IdentityEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CheckoutNewBranch(context.Background(), "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, repo.Dir, ":(exclude)*", "the exclude magic must not hide me\n")
+	write(t, repo.Dir, ":!app.go", "the bang magic must not hide me either\n")
+	write(t, repo.Dir, ":(exclude)icon.png", pngFixture)
+	if _, err := repo.CommitAll(context.Background(), "names git reads as magic"); err != nil {
+		t.Fatal(err)
+	}
+	in, err := buildReviewInput(context.Background(), repo, "origin/main", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := in.Text()
+	if strings.ContainsRune(text, 0) {
+		t.Fatalf("the input carries a NUL byte:\n%q", text)
+	}
+	for _, want := range []string{
+		"+the exclude magic must not hide me",
+		"+the bang magic must not hide me either",
+		"binary file :(exclude)icon.png changed, " + strconv.Itoa(len(pngFixture)) + " bytes",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("the input has no %q:\n%s", want, text)
+		}
+	}
+}
+
+// TestReviewInputOfATextPathThatIsAPrefixOfABinary: git matches a pathspec
+// that is a component prefix of another path, so asking for the text file "a"
+// answers with the binary "a/icon.png" as well. Each path is asked for on its
+// own and the answer is cut to that path's own section, so the second file's
+// section — and git's "Binary files ... differ" notice with it — is not in
+// the input.
+//
+// Mutation (return the whole answer from reviewTextDiff, without
+// firstDiffSection): the notice is in the input and this test fails.
+func TestReviewInputOfATextPathThatIsAPrefixOfABinary(t *testing.T) {
+	testutil.IsolateGit(t)
+	remote := testutil.NewRemote(t, map[string]string{"a": "the file that becomes a directory\n"})
+	repo, err := gitops.OpenOrClone(context.Background(), filepath.Join(t.TempDir(), "work"), remote, gitops.IdentityEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CheckoutNewBranch(context.Background(), "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(repo.Dir, "a")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, repo.Dir, "a/icon.png", pngFixture)
+	if _, err := repo.CommitAll(context.Background(), "a becomes a directory"); err != nil {
+		t.Fatal(err)
+	}
+	in, err := buildReviewInput(context.Background(), repo, "origin/main", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := in.Text()
+	if strings.ContainsRune(text, 0) {
+		t.Fatalf("the input carries a NUL byte:\n%q", text)
+	}
+	if strings.Contains(text, "Binary files") {
+		t.Fatalf("the input carries git's notice for a file it did not ask for:\n%s", text)
+	}
+	if !strings.Contains(text, "-the file that becomes a directory") {
+		t.Fatalf("the input carries no diff of the text path:\n%s", text)
+	}
+	if !slicesContain(inputLines(in), "binary file a/icon.png changed, "+strconv.Itoa(len(pngFixture))+" bytes") {
+		t.Fatalf("the input does not name the binary file under the text path:\n%s", text)
+	}
+}
+
+// TestReviewInputOfABinaryThePullRequestsAttributesCallText: the reviewed
+// pull request's own .gitattributes can mark a PNG as text ("*.png diff"),
+// and git then counts it as text in numstat and prints its bytes as diff
+// lines, NULs and all. Those bytes are not the input's to carry: a path whose
+// own diff comes back with a NUL in it is treated as the binary file it is,
+// and gets the marker every other binary file gets.
+//
+// Mutation (drop the NUL check in reviewTextDiff): the input carries the
+// PNG's bytes and this test fails.
+func TestReviewInputOfABinaryThePullRequestsAttributesCallText(t *testing.T) {
+	testutil.IsolateGit(t)
+	remote := testutil.NewRemote(t, map[string]string{"README.md": "hello\n"})
+	repo, err := gitops.OpenOrClone(context.Background(), filepath.Join(t.TempDir(), "work"), remote, gitops.IdentityEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CheckoutNewBranch(context.Background(), "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, repo.Dir, ".gitattributes", "*.png diff\n")
+	write(t, repo.Dir, "mobile/assets/icon.png", pngFixture)
+	if _, err := repo.CommitAll(context.Background(), "an icon git is told to read as text"); err != nil {
+		t.Fatal(err)
+	}
+	in, err := buildReviewInput(context.Background(), repo, "origin/main", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := in.Text()
+	if strings.ContainsRune(text, 0) {
+		t.Fatalf("the input carries the PNG's bytes:\n%q", text)
+	}
+	if strings.Contains(text, pngFixture) {
+		t.Fatal("the input carries the PNG's bytes")
+	}
+	if !slicesContain(inputLines(in), "binary file mobile/assets/icon.png changed, "+strconv.Itoa(len(pngFixture))+" bytes") {
+		t.Fatalf("the input does not name the PNG in one line:\n%s", text)
+	}
+}
+
 // TestReviewInputMarksAnOddPathInOneLine: a path holding a newline — which
 // git is willing to carry, and reads verbatim from numstat -z — is quoted, so
 // a binary file is always exactly one line of the input and can never break

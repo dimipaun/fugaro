@@ -25,6 +25,12 @@ import (
 //
 // So the reviewer is handed the diff as text, and every binary file in it is
 // one line naming the path and its size, never its bytes.
+//
+// The paths in that diff are the reviewed pull request's own, which makes
+// them untrusted input to every git call here: they are passed as literals
+// (--literal-pathspecs), never as pathspec magic or globs, and each path is
+// asked for on its own so that git's pathspec prefix matching cannot pull a
+// second file's text — a binary file's bytes among it — into the answer.
 
 // binaryRule is what the review stage's prompt tells the reviewer about
 // binary files. The builder's own header carries it whenever a diff is
@@ -82,8 +88,9 @@ func binaryMarker(path string, bytes int64) string {
 // and asks for the rest itself.
 const maxReviewDiffBytes = 256 << 10
 
-// reviewPathsPerCall bounds how many paths one git call names. A very wide
-// change would otherwise overrun the argument list.
+// reviewPathsPerCall bounds how many paths one ls-tree call names. A very
+// wide change would otherwise overrun the argument list. (The diff is asked
+// for one path at a time, whatever the change's width: see reviewTextDiff.)
 const reviewPathsPerCall = 100
 
 // reviewChange is one path the range changes.
@@ -117,6 +124,20 @@ func buildReviewInput(ctx context.Context, repo *gitops.Repo, base, head string)
 		}
 		text = append(text, c.path)
 	}
+	var diff string
+	if len(text) > 0 {
+		var claimed []string
+		var err error
+		diff, claimed, err = reviewTextDiff(ctx, repo, rng, text)
+		if err != nil {
+			return reviewInput{}, err
+		}
+		// A path git called text whose own diff carries bytes is a binary
+		// file the pull request's own .gitattributes claimed as text: its
+		// bytes are dropped, and it takes the marker every other binary file
+		// takes.
+		binary = append(binary, claimed...)
+	}
 	if len(binary) > 0 {
 		sizes, err := binarySizes(ctx, repo, base, head, binary)
 		if err != nil {
@@ -126,11 +147,7 @@ func buildReviewInput(ctx context.Context, repo *gitops.Repo, base, head string)
 			in.Parts = append(in.Parts, reviewPart{Kind: reviewPartText, Text: binaryMarker(path, sizes[path]) + "\n"})
 		}
 	}
-	if len(text) > 0 {
-		diff, err := reviewTextDiff(ctx, repo, rng, text)
-		if err != nil {
-			return reviewInput{}, err
-		}
+	if diff != "" {
 		in.Parts = append(in.Parts, reviewPart{Kind: reviewPartText, Text: "git diff " + rng + ":\n\n" + cutReviewDiff(diff, rng)})
 	}
 	return in, nil
@@ -139,7 +156,9 @@ func buildReviewInput(ctx context.Context, repo *gitops.Repo, base, head string)
 // reviewChanges lists what base...head changes, in git's own order, calling a
 // path binary exactly as git does: numstat reports a binary file's counts as
 // "-" (its "binary" test is a NUL byte in the blob's first 8000, so it is the
-// same answer `git diff` gives).
+// same answer `git diff` gives). That answer is the pull request's to
+// influence — its own .gitattributes can mark a binary file as text — which
+// is why reviewTextDiff checks the bytes it gets back as well.
 func reviewChanges(ctx context.Context, repo *gitops.Repo, rng string) ([]reviewChange, error) {
 	out, err := sessionGit(ctx, repo, "diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", rng)
 	if err != nil {
@@ -197,10 +216,16 @@ func binarySizes(ctx context.Context, repo *gitops.Repo, base, head string, path
 // treeSizes reads the sizes of paths in rev (`git ls-tree -l -z`), without
 // reading the blobs. A path rev's tree does not hold is absent from the map,
 // never an error.
+//
+// The paths are the pull request's own and are passed as literals
+// (--literal-pathspecs): as pathspecs they would be magic, and a changed file
+// named ":(exclude)icon.png" would make ls-tree fail outright ("pathspec
+// magic not supported by this command: 'exclude'"), dropping the whole input
+// to the warn-and-read-the-diff-yourself path.
 func treeSizes(ctx context.Context, repo *gitops.Repo, rev string, paths []string) (map[string]int64, error) {
 	sizes := make(map[string]int64, len(paths))
 	for _, batch := range reviewBatches(paths, reviewPathsPerCall) {
-		out, err := sessionGit(ctx, repo, append([]string{"ls-tree", "-l", "-z", rev, "--"}, batch...)...)
+		out, err := sessionGit(ctx, repo, append([]string{"--literal-pathspecs", "ls-tree", "-l", "-z", rev, "--"}, batch...)...)
 		if err != nil {
 			return nil, err
 		}
@@ -226,18 +251,36 @@ func treeSizes(ctx context.Context, repo *gitops.Repo, rev string, paths []strin
 	return sizes, nil
 }
 
-// reviewTextDiff is the range's diff limited to paths: the text of the
-// change, per path, concatenated in git's own order. The paths are passed on
-// the command line, so only paths that are not binary are ever named — a
-// binary file's bytes are never asked for, and git's own "Binary files ...
-// differ" notice never reaches the input either.
-func reviewTextDiff(ctx context.Context, repo *gitops.Repo, rng string, paths []string) (string, error) {
+// reviewTextDiff is the range's diff limited to paths: each path's own diff,
+// in the order given, concatenated. One path per call, and the answer cut to
+// that path's own section, so that nothing else's text can ride along: a
+// pathspec matches a path that has it as a component prefix, so asking for
+// "a" also answers with "a/icon.png".
+//
+// Only paths git did not call binary are named here, so a binary file's bytes
+// are never asked for, and git's own "Binary files ... differ" notice is not
+// part of the input either. The paths come from the reviewed pull request and
+// are passed as literals (--literal-pathspecs): a changed file named
+// ":(exclude)*" is a file name, not pathspec magic that would come back as an
+// empty diff — an input claiming to carry the changes and carrying none.
+//
+// The paths returned alongside the text are the ones whose own diff carries
+// bytes: the pull request's .gitattributes can mark a binary file as text
+// ("*.png diff"), and git then reports it in numstat as text and prints its
+// bytes as diff lines. Those bytes are not the input's to carry.
+func reviewTextDiff(ctx context.Context, repo *gitops.Repo, rng string, paths []string) (string, []string, error) {
 	var b strings.Builder
-	for _, batch := range reviewBatches(paths, reviewPathsPerCall) {
-		out, err := sessionGit(ctx, repo, append([]string{
-			"diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", rng, "--"}, batch...)...)
+	var binary []string
+	for _, path := range paths {
+		out, err := sessionGit(ctx, repo, "--literal-pathspecs", "diff",
+			"--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", rng, "--", path)
 		if err != nil {
-			return "", err
+			return "", nil, err
+		}
+		out = firstDiffSection(out)
+		if strings.ContainsRune(out, 0) {
+			binary = append(binary, path)
+			continue
 		}
 		if out == "" {
 			continue
@@ -245,7 +288,18 @@ func reviewTextDiff(ctx context.Context, repo *gitops.Repo, rng string, paths []
 		b.WriteString(out)
 		b.WriteString("\n")
 	}
-	return b.String(), nil
+	return b.String(), binary, nil
+}
+
+// firstDiffSection is the diff of the one path that was asked for. A section
+// starts at a line beginning "diff --git " (a diff's own content line always
+// carries a leading ' ', '+' or '-'), so everything from the second such line
+// on belongs to another path — a path this call did not ask for.
+func firstDiffSection(diff string) string {
+	if i := strings.Index(diff, "\ndiff --git "); i >= 0 {
+		return diff[:i+1]
+	}
+	return diff
 }
 
 // cutReviewDiff bounds the diff at maxReviewDiffBytes, cutting at a line
