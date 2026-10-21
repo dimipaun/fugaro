@@ -145,10 +145,10 @@ added or removed without this sentence moving fails there:
   depended on the git state of the checkout the gates run in. The changelog rendered each
   release file's **"not yet released"** state wherever `git tag --list` found no tag
   (`src/lib/changelog.mjs`), so the same commit built to two site figures a changelog page's
-  own bytes apart — the larger in a checkout with no
-  tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and the smaller with the tags this repository's own clone carries, the
-  changelog page's own "not yet released" labels being the whole of the difference. A figure
+  own bytes apart — the larger in a checkout with no tags, which is what
+  `website-preview.yml`'s default checkout is, and therefore what the deployed site is — and
+  the smaller with the tags this repository's own clone carries, the changelog page's own
+  "not yet released" labels being the whole of the difference. A figure
   derived from one of those two builds was refused by the other, which is what happened: the
   gate could not measure the build the README named and `website-preview` could not deploy. So
   the derivation is read over **the gates' own build of the site**: a copy of the repository in
@@ -908,7 +908,6 @@ added or removed without this sentence moving fails there:
     the space belongs inside the run that carries it — which is what the security drawing's own
     labels do.
 
-||||||| d3a2ef08
   - **The homepage's "See it" panel is a slider of the console page's own pictures** (the owner's
     brief of 2026-10-21, `docs/website/zoom-diagrams/spec.md`, Part 1 of its implementation plan;
     D246, D250, D251, D252), and **no picture is added**: `ScreenshotSlider.astro` is the site's
@@ -947,9 +946,6 @@ added or removed without this sentence moving fails there:
 
   - **JavaScript per page:** 262,560 bytes. Three times 87,520: the one script the site ships,
     `public/scripts/site.js` (70,016 bytes), plus 25 %. What the file carries is the copy
-||||||| d3a2ef08
-  - **JavaScript per page:** 248,211 bytes. Three times 82,737: the one script the site ships,
-    `public/scripts/site.js` (66,189 bytes), plus 25 %. What the file carries is the copy
   - **The menu lost its third group** (the owner's feedback of 2026-10-21: "let's drop the top
     reference menu. We'll move the submenu console under product, and the rest go under
     Project"). The Reference group's `<li>`, `<details>`, `<summary>` and its list wrapper are
@@ -974,8 +970,8 @@ added or removed without this sentence moving fails there:
     route that has left its group, and `test/nav-hover.mjs` reads the two lists the menu
     draws; `base.css`'s phone cut is left at the width the four-item row was measured at.
 
-  - **JavaScript per page:** 248,211 bytes. Three times 82,737: the one script the site ships,
-    `public/scripts/site.js` (66,189 bytes), plus 25 %. What the file carries is the copy
+  - **JavaScript per page:** 262,560 bytes. Three times 87,520: the one script the site ships,
+    `public/scripts/site.js` (70,016 bytes), plus 25 %. What the file carries is the copy
     control, the menu, the consent gate and **both of the site's sliders** — the console page's,
     which the feedback-B round above added, and the homepage's, which the feedback-A round above
     it added.
