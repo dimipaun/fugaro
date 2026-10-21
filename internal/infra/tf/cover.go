@@ -1606,7 +1606,16 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 				// set, which is exactly the path a credential reaches this
 				// process without a Secret Manager read. The module sets a
 				// literal for each of the three and nothing else.
-				if e["value_source"] != nil {
+				//
+				// The test is the block's contents, not the key's presence.
+				// `value_source` is a nested block of list nesting mode, and
+				// Terraform renders an unset one as an empty list rather than
+				// omitting it: every env entry of a plan the module writes
+				// carries `"value_source": []` (testdata/golden/*.plan.json),
+				// so a nil test on the interface refuses the module's own
+				// three literals. objects([]any{}) is nil, so this admits that
+				// shape and still refuses a real secret_key_ref.
+				if refs := objects(e["value_source"]); len(refs) > 0 {
 					return "an environment variable whose value comes from a source rather than the module: this service's environment is the module's three names and nothing else"
 				}
 			}

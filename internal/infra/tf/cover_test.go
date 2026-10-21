@@ -770,11 +770,20 @@ func TestCoverRefusesACheckSpecOutsideThePin(t *testing.T) {
 // writes it: one container at template[0].containers[0] — one `template` level
 // fewer than a job's — with image as the container's image, the module's three
 // environment variables, and the IAM check stated rather than implied.
+//
+// Each env entry carries `"value_source": []` because that is what Terraform
+// writes for a nested block of list nesting mode that the module does not set:
+// the key is present with an empty list, not absent or null (see
+// testdata/golden/*.plan.json, where every literal env entry of every plan has
+// exactly this shape). A fixture without it is a plan the module cannot
+// produce, and it hid a cover case that refused all three of these literals —
+// the rows below are what catch that, so the shape is held here rather than
+// simplified away.
 func service(image string) ResourceChange {
 	c := map[string]any{"image": image, "env": []any{
-		map[string]any{"name": "FUGARO_PROJECT", "value": "aurora"},
-		map[string]any{"name": "FUGARO_GCP_PROJECT", "value": "proj-1"},
-		map[string]any{"name": "FUGARO_REGION", "value": "us-east5"},
+		map[string]any{"name": "FUGARO_PROJECT", "value": "aurora", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_GCP_PROJECT", "value": "proj-1", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_REGION", "value": "us-east5", "value_source": []any{}},
 	}}
 	return rc("google_cloud_run_v2_service", map[string]any{"invoker_iam_disabled": false,
 		"template": []any{map[string]any{"containers": []any{c}}}}, map[string]any{}, "create")
@@ -865,6 +874,21 @@ func TestCoverRefusesACredentialsServiceThatIsNotTheModules(t *testing.T) {
 		covered bool
 	}{
 		"as the module writes it": {svc, true},
+		// The row above covers this too, but the property deserves its own
+		// name, because it is the one the nil test got wrong: a nested block
+		// of list nesting mode that the module does not set is an EMPTY LIST
+		// in a plan, not an absent or null key, so an entry carrying
+		// `"value_source": []` is a literal the module set and must be
+		// admitted. Reverting the check in cover.go to `!= nil` fails here.
+		"an environment whose value_source is the empty list Terraform writes": {func() ResourceChange {
+			r := svc()
+			container(r)["env"] = []any{
+				map[string]any{"name": "FUGARO_PROJECT", "value": "aurora", "value_source": []any{}},
+				map[string]any{"name": "FUGARO_GCP_PROJECT", "value": "proj-1", "value_source": []any{}},
+				map[string]any{"name": "FUGARO_REGION", "value": "us-east5", "value_source": []any{}},
+			}
+			return r
+		}, true},
 		"an environment the module does not set": {func() ResourceChange {
 			r := svc()
 			c := container(r)
