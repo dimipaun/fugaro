@@ -1,26 +1,30 @@
 # Central orchestrators — the documents
 
-**Status: plan only; no code is implemented, except the guard test P0 adds
-(`internal/cli/docs_central_orchestrator_test.go`, the one file that owns this folder) — every
-part after P0 is unbuilt, and no feature code exists.** This directory holds the owner's spec
+**Status: plan only; three parts have landed — P0's guard test
+(`internal/cli/docs_central_orchestrator_test.go`, the one file that owns this folder), P1's
+admission of the Cloud Run service type (`internal/infra/tf/cover.go`) and P3's lease
+(`internal/lease`) — and P2 and P4–P9 are unbuilt.** This directory holds the owner's spec
 for **central orchestrators** — Fugaro orchestrators that run permanently in the cloud instead
 of on a developer's machine (`spec.md`, verbatim) — the reconciliation of that spec against the
 code at `origin/main` **`2f8b4dca`**, the decisions the reconciliation could not answer on its
 own (**D1–D26**), and the plan that follows from them (`implementation-plan.md`). **Six of the
 twenty-six decisions are answered — D1, D2, D3, D6, D12 and D19, each as its recommendation,
 by the owner on 2026-10-20 — and D4–D5, D7–D11, D13–D18 and D20–D26 are still open**
-(reconciliation §6). Nothing else follows from these documents yet: no feature Go, no
-TypeScript, no Terraform, no rules change, no `.github/workflows` change and no live action —
-the only Go they have produced is `internal/cli/docs_central_orchestrator_test.go`, the guard
-test P0 adds. **Owner: Dimi Paun. Date: 2026-10-20. Base: `main` at `2f8b4dca`** — the commit
+(reconciliation §6). Nothing else follows from these documents yet: no TypeScript, no
+Terraform, no `.github/workflows` change and no live action. The Go and the rules they have
+produced are the guard test P0 adds, `internal/cli/docs_central_orchestrator_test.go`; P1's one
+type in `internal/infra/tf/cover.go` and `internal/infra/tf/managed_cover.go`; and P3's lease —
+`internal/lease` and the generation-4 rules change in `internal/budget/rules` — and nothing
+beyond them. **Owner: Dimi Paun. Date: 2026-10-20. Base: `main` at `2f8b4dca`** — the commit
 every path and symbol below was read at, and this branch's own merge base.
 
 **Nothing here is approved.** The owner wrote the spec; the reconciliation and the plan are
 this work's. **Six decisions — D1, D2, D3, D6, D12 and D19 — were answered by the owner on
 2026-10-20, each as the recommendation the plan was written to, and an answer is not an
-approval of anything**: no part of the plan has been accepted except P0 (the guard test), the
-gate in `implementation-plan.md` §9 is passed for nothing, and the parts the twenty open
-decisions block do not start. The two siblings this work depends on are also
+approval of anything**: no part of the plan has been accepted except the three that have landed
+(P0's guard test, P1's admission of the service type and P3's lease), the gate in
+`implementation-plan.md` §9 is passed for nothing else, and the parts the twenty open decisions
+block do not start. The two siblings this work depends on are also
 unbuilt: the always-on orchestrator design is in **open PR #632** (with the rigor modes work
 in **open PR #773**), and `docs/credentials-service/` and `docs/coordinator/` are each
 *"plan only; nothing is implemented"* in their own words.

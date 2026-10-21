@@ -5,7 +5,10 @@ package cli
 // (spec.md, verbatim, committed alone), the reconciliation of that spec against the tree at
 // origin/main 2f8b4dca (reconciliation.md), the index (README.md) and the plan
 // (implementation-plan.md). P0 is the guard test that owns the folder and its citations; it
-// is the one piece of Go this work has written, and it implements no part of the orchestrator.
+// is the piece of Go P0 wrote, and it implements no part of the orchestrator. P1's admission
+// of the service type and P3's lease have landed since, and the sentences pinned below name
+// them: this file's own premise is "P0 and nothing else", so a part that lands has to be
+// written into the pins here or the pins quietly stop being true.
 //
 // The reconciliation's whole value is that every claim in it is checkable, and the four things
 // a later edit can silently break are: the spec stops being verbatim, a citation drifts to a
@@ -18,8 +21,8 @@ package cli
 //  * TestDocsCentralOrchestratorIsWritten -- the four files exist and carry the load-bearing
 //    sentences: the index's status line, the owner, the date, the commit the reconciliation
 //    was run against, the fact that six decisions are answered (D1, D2, D3, D6, D12, D19) and
-//    that an answer is not an approval, and the sentence that says P0 is the only part of the
-//    plan that has landed.
+//    that an answer is not an approval, and the sentences that say which parts of the plan
+//    have landed (P0's guard test, P1's admission and P3's lease) and which have not.
 //  * TestDocsCentralOrchestratorSpecIsVerbatim -- spec.md carries the owner's own title, byline
 //    and nineteen sections in order, carries none of the reconciliation's apparatus, and hashes
 //    to the byte-for-byte pin: an edit here is an edit to the owner's text and has to be
@@ -94,10 +97,11 @@ const centralOrchAnsweredMarker = "**Answered 2026-10-20 — the recommendation,
 
 // centralOrchReadmeStatus is the index's status sentence, and it is the one place the two
 // halves of P0's premise meet: the plan's P0 says the README carries "plan only; no code is
-// implemented", and P0 landing is the one thing that would make that sentence false. The
-// sentence keeps the phrase and states its own exception, so neither half can be dropped
-// silently.
-const centralOrchReadmeStatus = "**Status: plan only; no code is implemented, except the guard test P0 adds (`internal/cli/docs_central_orchestrator_test.go`, the one file that owns this folder) — every part after P0 is unbuilt, and no feature code exists.**"
+// implemented", and a part landing is the one thing that would make that sentence false. The
+// sentence keeps the phrase and names, part by part, what has landed and what has not, so
+// neither half can be dropped silently — P0's guard test first, then P1's admission of the
+// service type and P3's lease, which landed after it.
+const centralOrchReadmeStatus = "**Status: plan only; three parts have landed — P0's guard test (`internal/cli/docs_central_orchestrator_test.go`, the one file that owns this folder), P1's admission of the Cloud Run service type (`internal/infra/tf/cover.go`) and P3's lease (`internal/lease`) — and P2 and P4–P9 are unbuilt.**"
 
 // centralOrchReadmeAnswered, centralOrchReadmeApproval, centralOrchReconciledAnswered and
 // centralOrchReconciledRegister are the sentences the owner's answers of 2026-10-20 put into
@@ -107,13 +111,13 @@ const centralOrchReadmeStatus = "**Status: plan only; no code is implemented, ex
 const (
 	centralOrchReadmeAnswered        = "**Six of the twenty-six decisions are answered — D1, D2, D3, D6, D12 and D19, each as its recommendation, by the owner on 2026-10-20 — and D4–D5, D7–D11, D13–D18 and D20–D26 are still open**"
 	centralOrchReadmeApproval        = "**Six decisions — D1, D2, D3, D6, D12 and D19 — were answered by the owner on 2026-10-20, each as the recommendation the plan was written to, and an answer is not an approval of anything**"
-	centralOrchReadmeP0Only          = "no part of the plan has been accepted except P0 (the guard test)"
+	centralOrchReadmeLandedOnly      = "no part of the plan has been accepted except the three that have landed (P0's guard test, P1's admission of the service type and P3's lease)"
 	centralOrchReconciledAnswered    = "**Six of the twenty-six decisions — D1, D2, D3, D6, D12 and D19 — were answered by the owner on 2026-10-20, each as its recommendation, and an answer is not an approval**"
 	centralOrchReconciledStatus      = "**Status: reconciliation only; nothing is implemented and no plan is approved.**"
 	centralOrchReconciledRegister    = "**The register, read by name against `main`.**"
 	centralOrchReconciledNextFree    = "**The next free block is D221 onward, not D193 onward.**"
 	centralOrchReadmeOwner           = "**Owner: Dimi Paun. Date: 2026-10-20. Base: `main` at `2f8b4dca`**"
-	centralOrchPlanStatus            = "P0 — the guard test that pins this folder and its citations, `internal/cli/docs_central_orchestrator_test.go` — has landed"
+	centralOrchPlanStatus            = "P0 — the guard test that pins this folder and its citations, `internal/cli/docs_central_orchestrator_test.go` — has landed, and so have P1 (the Cloud Run service type admitted to the Terraform cover, `internal/infra/tf/cover.go` and `internal/infra/tf/managed_cover.go`) and P3 (the lease, `internal/lease`)"
 	centralOrchReadmeNoCheck         = "**not claimed and not written.**"
 	centralOrchReadmeRegisterReading = "**the highest D-number written anywhere under `docs/` is D220 and the next free block is D221 onward**"
 	// The three sentences that say P0 has landed, one per document. Each was stale until the
@@ -305,12 +309,12 @@ func TestDocsCentralOrchestratorIsWritten(t *testing.T) {
 	}
 	readme := flattenDoc(readDoc(t, centralOrchReadme))
 	for what, want := range map[string]string{
-		"the status line, with its exception stated in the same sentence": centralOrchReadmeStatus,
-		"the sentence naming the six answered decisions":                  centralOrchReadmeAnswered,
-		"the sentence that answering one is not an approval":              centralOrchReadmeApproval,
-		"the sentence that only P0 is accepted":                           centralOrchReadmeP0Only,
-		"the owner, the date and the commit checked against":              centralOrchReadmeOwner,
-		"the corrected register reading":                                  centralOrchReadmeRegisterReading,
+		"the status line, naming part by part what has landed": centralOrchReadmeStatus,
+		"the sentence naming the six answered decisions":       centralOrchReadmeAnswered,
+		"the sentence that answering one is not an approval":   centralOrchReadmeApproval,
+		"the sentence naming the three parts accepted":         centralOrchReadmeLandedOnly,
+		"the owner, the date and the commit checked against":   centralOrchReadmeOwner,
+		"the corrected register reading":                       centralOrchReadmeRegisterReading,
 	} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s lacks %s: %q", centralOrchReadme, what, want)
@@ -332,7 +336,7 @@ func TestDocsCentralOrchestratorIsWritten(t *testing.T) {
 	}
 	plan := flattenDoc(readDoc(t, centralOrchPlan))
 	if !strings.Contains(plan, centralOrchPlanStatus) {
-		t.Errorf("%s lacks the sentence recording that P0, and only P0, has landed: %q", centralOrchPlan, centralOrchPlanStatus)
+		t.Errorf("%s lacks the sentence recording which parts have landed, P0 first: %q", centralOrchPlan, centralOrchPlanStatus)
 	}
 	// The three sentences that went stale the day P0 landed, and the three that replaced
 	// them: a document that still says the guard is unwritten contradicts the guard standing
@@ -849,6 +853,10 @@ var centralOrchContentAnchors = []centralOrchContentAnchor{
 	{"docs/coordinator/README.md", "docs/coordinator/README.md", "5. Decisions D1–D26", "The numbers this work holds", "", ""},
 	{"docs/design/voice.md", "docs/design/voice.md", "5. Decisions D1–D26", "the phase that ships the check writes them", "", ""},
 	{"budget/sweep.go", "internal/budget/sweep.go", "6. For the owner — the answered six, and the open twenty", "// DefaultStaleAfter is how long an entry may go without a heartbeat", "", ""},
+	// D19's correction (P1, 2026-10-21) cites notCovered a second time: the sentence it corrects
+	// claimed the admitted type asks a typed confirmation of its own, and this delegation — the
+	// one line that decides which plans ask one — is what says the type does not.
+	{"internal/cli/init_review.go", "internal/cli/init_review.go", "D19 — Per installation or per project, and one service per orchestrator", "func (r *initRun) notCovered(p *tf.Plan, imports []tf.ImportKey) string {", "", ""},
 	{"docs/coordinator/README.md", "docs/coordinator/README.md", "7. The numbers this work would hold", "The numbers this work holds", "", ""},
 	{"README.md", "docs/mobile/voice-session/README.md", "7. The numbers this work would hold", "| **D201–D220** | this work's decisions, all written and **all open**.", "", ""},
 	{"reconciliation.md", "docs/mobile/voice-session/reconciliation.md", "7. The numbers this work would hold", "tree. So this work starts at **D201** and leaves D193–D200 alone rather than", "", ""},
