@@ -297,6 +297,42 @@ var sealRunnerIntroduced = time.Date(2026, 10, 17, 17, 45, 33, 0, time.UTC)
 // never gated.
 const titlesSince = "0.8.5"
 
+// cascadeSince is the first fugaro release whose config reader accepts
+// fugaro.yaml's agent.auth: cascade (docs/credentials-service, D133): before
+// it the value is not one of config.AgentAuths, so a job built from an older
+// base image refuses the file at bootstrap ("agent.auth: must be one of
+// vertex, api-key, oauth") and the run dies before the agent starts.
+//
+// The judge is the installation's base image — the ref a job of the
+// repository is built from (lc.BaseImage, config.BaseKind) — because that is
+// where the reader lives: unlike the recipe and artifact gates there is no
+// per-workflow build record for a checkout: clone or a derived image that
+// could answer differently, and this value is read by the same config reader
+// either way (refuseCascadeSkew). docs/release.md ("Before you tag") has the
+// checklist verify it equals the release that ships the value.
+//
+// It names 0.10.0, which is not tagged yet, and that is the ruling rather than
+// a slip: the owner's ruling of 2026-10-20 places the whole credentials
+// service — this value included — in the next release, which is 0.10.0 (the
+// line named 0.9.6 while the release was expected to ship as 0.9.6, and the
+// owner renumbered it), so 0.10.0 is the release this value ships in and the
+// one whose config reader accepts it. An installation whose base image is
+// 0.9.5 or older is therefore refused, which is right: that
+// runner's config.Validate does not know the value, so a cascade repository
+// deployed against it would die at bootstrap, and `fugaro init --base base`
+// — run by a binary of the release that carries the value — is the fix that
+// clears the refusal. No `cascadeShipped`-style boolean belongs beside this
+// constant, the shape catalogSince has: that one gates a value read by a
+// release *later* than the binary that writes it, so no base image of any age
+// could read it and the age check would be vacuous, while here the reader is
+// this release's own config reader and the age check is the whole rule.
+//
+// TestCascadeSinceIsTheReleaseTheDocsAndSchemasName holds it to the number
+// docs/release.md's bullet and the two schemas' agent.auth descriptions state,
+// and TestCascadeSinceIsTheReleaseTheCredentialsServiceShipsIn holds it to the
+// release the service ships in, so the constant cannot move without them.
+const cascadeSince = "0.10.0"
+
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets
 // agent.recipe (an unknown key to an older runner).
@@ -556,6 +592,63 @@ func switchProviders(providers map[string]config.ModelProvider, repo string) []s
 		}
 	}
 	return names
+}
+
+// refuseCascadeSkew refuses fugaro init --repo, before any cloud effect, when
+// the cascade is in effect and the installation's base image predates the
+// release whose config reader accepts the value: the job would be deployed,
+// then die at bootstrap on a file the image refuses.
+//
+// auth is the resolved agent.auth, src the layer it came from
+// (config.Resolution.SourceOf("agent.auth"), which is what the subject names:
+// see cascadeSubject), and ref is the installation's base image
+// (lc.BaseImage(config.BaseKind)); anything but cascade passes — this is the
+// one auth the value is new for, and every other one is read by every release.
+// A ref that is not a release base image is only warned about (nothing can
+// tell what such a runner knows), and no base image at all passes, since the
+// job is then built from this release's own image, which reads it — both the
+// reading checkCloneImageSince gives the same states.
+func refuseCascadeSkew(repo, auth, src, ref string, warn io.Writer) error {
+	if auth != config.AuthCascade {
+		return nil
+	}
+	subject := cascadeSubject(repo, src)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the value is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, cascadeSince):
+		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner refuses the file at bootstrap, because %s is not one of the agent.auth values it knows. Run fugaro init --base base in your own terminal window to move the installation's base image to a current release, or run this repository with agent.auth: api-key",
+			subject, cascadeSince, pluginwire.Printable(ref), rel, config.AuthCascade)
+	}
+	return nil
+}
+
+// cascadeSubject names, for the two messages above, what put the cascade in
+// effect: the repository's own fugaro.yaml, or the project layer's defaults.
+// The resolved value is not proof that the file asked for it — agent.auth
+// resolves like every other key, the repository's value else the workflow's
+// profile's else the layer's defaults (config.Resolve) — so a subject that
+// always said "fugaro.yaml's" would tell the operator of a layered
+// installation to edit a line their file does not have, and the fix differs:
+// the layer's default is what has to change, or an agent.auth line the
+// repository adds, which wins over it. The same care annotate() takes with a
+// problem's path and doctor's oauth-token-allowed check takes with the auth
+// it names.
+//
+// src is Resolution.SourceOf("agent.auth"). A source this cannot name is
+// named rather than guessed at, so a value that reaches the config some new
+// way is still never attributed to a file that does not carry it.
+func cascadeSubject(repo, src string) string {
+	switch src {
+	case config.SourceRepo:
+		return "fugaro.yaml's agent.auth: " + config.AuthCascade + " of " + repo
+	case config.SourceProject:
+		return "the project layer's defaults.agent.auth: " + config.AuthCascade + " of " + repo
+	}
+	return repo + "'s agent.auth: " + config.AuthCascade + " (set by " + pluginwire.Printable(src) + ")"
 }
 
 // refuseCatalogSwitches refuses fugaro init --repo, before any cloud effect,

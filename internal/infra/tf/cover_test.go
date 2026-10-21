@@ -392,6 +392,12 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 		"modules/installation/bucket.tf":  {`uniform_bucket_level_access = true`, `public_access_prevention    = "enforced"`},
 		"modules/firebase/firebase.tf":    {`identitytoolkit.googleapis.com`, `securetoken.googleapis.com`},
 		"modules/installation/budget.tf":  {`billing_account = var.budget.billing_account`},
+		// The credentials service's own literals, which its case in cover.go
+		// reads: the IAM setting it requires and the three environment
+		// variables credentialsServiceEnv allows. A module edit that renames
+		// or drops one fails here rather than refusing a plan the module
+		// still writes.
+		"modules/installation/credentials.tf": {`invoker_iam_disabled = false`, `"FUGARO_PROJECT"`, `"FUGARO_GCP_PROJECT"`, `"FUGARO_REGION"`},
 	}
 	for file, wants := range pins {
 		got := all[filepath.Join(root, "gcp", file)]
@@ -758,6 +764,176 @@ func TestCoverRefusesACheckSpecOutsideThePin(t *testing.T) {
 			v, _ := json.Marshal(m)
 			p := &Plan{ResourceChanges: []ResourceChange{jobWithSpec(string(v), false)}}
 			if got := tc.cover.NotCovered(p, nil); (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
+	}
+}
+
+// service is the credentials service as modules/installation/credentials.tf
+// writes it: one container at template[0].containers[0] — one `template` level
+// fewer than a job's — with image as the container's image, the module's three
+// environment variables, and the IAM check stated rather than implied.
+func service(image string) ResourceChange {
+	c := map[string]any{"image": image, "env": []any{
+		map[string]any{"name": "FUGARO_PROJECT", "value": "aurora"},
+		map[string]any{"name": "FUGARO_GCP_PROJECT", "value": "proj-1"},
+		map[string]any{"name": "FUGARO_REGION", "value": "us-east5"},
+	}}
+	return rc("google_cloud_run_v2_service", map[string]any{"invoker_iam_disabled": false,
+		"template": []any{map[string]any{"containers": []any{c}}}}, map[string]any{}, "create")
+}
+
+// The credentials service is the one container image in the tree that is not a
+// job: init's one confirmation admits the type, so its image has to be held to
+// this run's registry exactly as a job's is. Without the check a hand-edited or
+// stale terraform.tfvars.json can name any registry, owner and digest, and the
+// apply runs that image as the account that reads every model credential in the
+// bundle — the operator-push boundary credentials.tf's M1 comment cites, and
+// what baseImageOK refuses for a job image.
+//
+// The image is held to the pin's closed shape (baseImageOK: this run's
+// registry, and under the remote repository's ID the recorded owner, a
+// fugaro-<kind> image, a version tag and a digest) AND to an @sha256: digest,
+// because M1's rule for THIS image is that a tag is never enough: the registry
+// grants roles/artifactregistry.writer to every operator (iam.tf), so a
+// mutable tag would let an operator push the code the next owner apply runs as
+// that account. The module's own validation refuses a tag already
+// (modules/installation/variables.tf, TestCredentialsServiceImageMustBeADigest),
+// so no plan the module can produce is refused here; the digest rule is held at
+// the cover layer too, which is the layer a hand-edited module does not go
+// through.
+//
+// Mutation (run, restore): delete the google_cloud_run_v2_service case from
+// Cover.attributes — every "refused" row below becomes covered, which is the
+// hole this case exists to close.
+func TestCoverRefusesACredentialsServiceImageOutsideThePin(t *testing.T) {
+	const reg = "us-east5-docker.pkg.dev/proj-1/"
+	d := strings.Repeat("a", 64)
+	for name, tc := range map[string]struct {
+		image   string
+		covered bool
+	}{
+		"the released image through the proxy":     {reg + "fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + d, true},
+		"the base registry, pinned by digest":      {reg + "fugaro-base/fugaro-credentials@sha256:" + d, true},
+		"a tag beside the digest, as C1.20 writes": {reg + "fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + d, true},
+		"a foreign registry with a valid digest":   {"evil.example.com/proj-1/fugaro-base/fugaro-credentials@sha256:" + d, false},
+		"another project of this registry":         {"us-east5-docker.pkg.dev/other-proj/fugaro-base/fugaro-credentials@sha256:" + d, false},
+		"a foreign owner through the proxy":        {reg + "fugaro-ghcr/evil/fugaro-credentials:1.2.3@sha256:" + d, false},
+		"the proxy path without a version tag":     {reg + "fugaro-ghcr/dimipaun/fugaro-credentials@sha256:" + d, false},
+		"the proxy path without a digest":          {reg + "fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3", false},
+		"a mutable tag in the base registry":       {reg + "fugaro-base/fugaro-credentials:latest", false},
+		"a truncated digest in the base registry":  {reg + "fugaro-base/fugaro-credentials@sha256:" + strings.Repeat("a", 63), false},
+		"not a sha256 digest":                      {reg + "fugaro-base/fugaro-credentials@sha512:" + d, false},
+		"a bare path in the registry":              {reg, false},
+		"the registry itself":                      {"us-east5-docker.pkg.dev", false},
+		"dot-dot under the proxy":                  {reg + "fugaro-ghcr/../evil/fugaro-credentials:1@sha256:" + d, false},
+		"an empty image":                           {"", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := &Plan{ResourceChanges: []ResourceChange{service(tc.image)}}
+			if got := testCover.NotCovered(p, nil); (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
+	}
+}
+
+// The service's other two decisions are the plan's, not the module's: its
+// environment, and whether IAM is required at all.
+//
+// The environment is an allowlist of the three names the module sets, because
+// an environment is the one path a credential could reach this process without
+// a Secret Manager read, and this process's account reads every model
+// credential in the bundle. An environment the plan does not fully know is
+// refused rather than trusted — the same rule checkSpecs applies to a job's.
+// invoker_iam_disabled must be false (IAM required), so a plan that turns the
+// front end's IAM check off — letting anyone invoke the one account that reads
+// the bundle — is not covered.
+//
+// Mutation (run, restore): delete the google_cloud_run_v2_service case from
+// Cover.attributes — every "refused" row below becomes covered.
+func TestCoverRefusesACredentialsServiceThatIsNotTheModules(t *testing.T) {
+	img := "us-east5-docker.pkg.dev/proj-1/fugaro-base/fugaro-credentials@sha256:" + strings.Repeat("a", 64)
+	// svc builds the module's service fresh for each row, and container is the
+	// one container of a change svc built.
+	svc := func() ResourceChange { return service(img) }
+	container := func(r ResourceChange) map[string]any {
+		return r.Change.After["template"].([]any)[0].(map[string]any)["containers"].([]any)[0].(map[string]any)
+	}
+	unkEnv := func(v any) map[string]any {
+		return map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"env": v}}}}}
+	}
+	for name, tc := range map[string]struct {
+		change  func() ResourceChange
+		covered bool
+	}{
+		"as the module writes it": {svc, true},
+		"an environment the module does not set": {func() ResourceChange {
+			r := svc()
+			c := container(r)
+			c["env"] = append(c["env"].([]any), map[string]any{"name": "FUGARO_SECRET_ID", "value": "fugaro-project-aurora-creds-bundle"})
+			return r
+		}, false},
+		"an environment with an empty name": {func() ResourceChange {
+			r := svc()
+			container(r)["env"] = []any{map[string]any{"name": "", "value": "x"}}
+			return r
+		}, false},
+		"an environment whose name is not known": {func() ResourceChange {
+			r := svc()
+			container(r)["env"] = []any{map[string]any{"value": "x"}}
+			r.Change.AfterUnknown = unkEnv([]any{map[string]any{"name": true}})
+			return r
+		}, false},
+		"an environment whose value is not known": {func() ResourceChange {
+			r := svc()
+			container(r)["env"] = []any{map[string]any{"name": "FUGARO_PROJECT"}}
+			r.Change.AfterUnknown = unkEnv([]any{map[string]any{"value": true}})
+			return r
+		}, false},
+		"an environment list that is not known": {func() ResourceChange {
+			r := svc()
+			r.Change.AfterUnknown = unkEnv(true)
+			return r
+		}, false},
+		"a container image that is not known": {func() ResourceChange {
+			r := svc()
+			delete(container(r), "image")
+			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"image": true}}}}}
+			return r
+		}, false},
+		"no container": {func() ResourceChange {
+			r := svc()
+			r.Change.After["template"] = []any{map[string]any{}}
+			return r
+		}, false},
+		"containers that are not known": {func() ResourceChange {
+			r := svc()
+			r.Change.After["template"] = []any{map[string]any{}}
+			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": true}}}
+			return r
+		}, false},
+		"IAM turned off": {func() ResourceChange {
+			r := svc()
+			r.Change.After["invoker_iam_disabled"] = true
+			return r
+		}, false},
+		"IAM not stated": {func() ResourceChange {
+			r := svc()
+			delete(r.Change.After, "invoker_iam_disabled")
+			return r
+		}, false},
+		"IAM setting that is not known": {func() ResourceChange {
+			r := svc()
+			delete(r.Change.After, "invoker_iam_disabled")
+			r.Change.AfterUnknown = map[string]any{"invoker_iam_disabled": true}
+			return r
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := &Plan{ResourceChanges: []ResourceChange{tc.change()}}
+			if got := testCover.NotCovered(p, nil); (len(got) == 0) != tc.covered {
 				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
 			}
 		})

@@ -1823,3 +1823,248 @@ run "deployer_scoped_opt_in" {
     error_message = "each conditioned deployer role is bound exactly once, under its own service's fmgd- fence and no other's"
   }
 }
+
+# The credentials service is OFF by default (D147): with
+# var.credentials_service null this module creates nothing at all, so an
+# installation that has not opted in plans exactly what it planned before
+# C1.18 existed — no service, no account, no container, no grant.
+run "credentials_service_off_by_default" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  assert {
+    condition     = length(google_cloud_run_v2_service.credentials) == 0 && length(google_service_account.credentials) == 0
+    error_message = "the credentials service and its account must not exist unless credentials_service is set (D147)"
+  }
+  assert {
+    condition     = length(google_secret_manager_secret.credentials_bundle) == 0 && length(google_secret_manager_secret_iam_member.credentials_bundle) == 0
+    error_message = "the bundle container and its one accessor grant must not exist unless credentials_service is set"
+  }
+}
+
+# The opt-in (C1.18, and the owner's Q6 ruling of 2026-10-19). This run is the
+# whole security claim of the task, so it says what it pins:
+#
+#   * ONE secret container — the bundle — and ONE accessor grant on it, to the
+#     service's own account, and the grant carries NO condition: no
+#     secretmanager.googleapis.com/secretId filter and no name-prefix fence,
+#     which is what Q6 replaced. A condition added here fails this run.
+#   * The service's account holds nothing else IN THIS MODULE: not a member of
+#     the project's other secret containers (the run sets two of them, the two
+#     model credentials, so the assertion has something to be false about),
+#     nothing on the runs bucket, and no grant here that would let anyone act
+#     as it. What this run cannot see is a grant written in another file — a
+#     per-secret grant to the service's account added to secrets.tf, say, is
+#     not a resource of this module and no assertion here can reach it. That
+#     direction is the Go scan's: deploy/terraform's
+#     TestCredentialsServiceGrantsAreTheOneBundle reads credentials.tf, and
+#     internal/infra/managed's TestRunAccountsHaveNoWritePathTo… walks every
+#     module's IAM resources. (Independent review n1: this comment used to
+#     claim the run guarded that too, which it does not.)
+#   * The service requires IAM: nothing in this module grants invoker to
+#     anyone, and the container reads no credential from its environment.
+run "credentials_service_on" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    # Two project-wide model-credential containers, so "the service's account
+    # holds no member over any other secret" has something to be false about.
+    project_secrets = {
+      "claude-oauth-token" = "fugaro-project-aurora-claude-oauth-token-3f1c0a9d2b7e4451"
+      "anthropic-api-key"  = "fugaro-project-aurora-anthropic-api-key-8c2d5f6a1e9b3074"
+    }
+    credentials_service = {
+      account_id    = "fugaro-credentials"
+      service       = "fugaro-credentials"
+      image         = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+    }
+  }
+
+  # The grants below are written from the account's computed member, so the
+  # mock provider has to give it one during the plan for them to be readable.
+  override_resource {
+    target          = google_service_account.credentials[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition     = google_service_account.credentials[0].account_id == "fugaro-credentials"
+    error_message = "the service's account is the one credentials_service.account_id names, and the grants below are read against it"
+  }
+  assert {
+    condition = (length(google_secret_manager_secret.credentials_bundle) == 1 &&
+      google_secret_manager_secret.credentials_bundle[0].secret_id == "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358" &&
+    google_secret_manager_secret.credentials_bundle[0].project == "proj-1234")
+    error_message = "the bundle container's Secret Manager ID must be the one the variable carries — the name the loader reads — in this project"
+  }
+  assert {
+    condition = google_secret_manager_secret.credentials_bundle[0].labels == tomap({
+      fugaro         = "managed"
+      fugaro_project = "aurora"
+    })
+    error_message = "the bundle container carries fugaro=managed and the installation's name, and deliberately no fugaro_secret: that label is what discovery reads to decide which logical secret of the project's set a container holds, and this one is not one of them"
+  }
+  assert {
+    condition = (length(google_secret_manager_secret.credentials_bundle[0].replication) == 1 &&
+    length(google_secret_manager_secret.credentials_bundle[0].replication[0].auto) == 1)
+    error_message = "the bundle container is replicated automatically, like every container the CLI adopts"
+  }
+  assert {
+    condition = (length(google_secret_manager_secret_iam_member.credentials_bundle) == 1 &&
+      google_secret_manager_secret_iam_member.credentials_bundle[0].role == "roles/secretmanager.secretAccessor" &&
+      google_secret_manager_secret_iam_member.credentials_bundle[0].secret_id == google_secret_manager_secret.credentials_bundle[0].secret_id &&
+    google_secret_manager_secret_iam_member.credentials_bundle[0].member == google_service_account.credentials[0].member)
+    error_message = "Q6: the service's account holds roles/secretmanager.secretAccessor on the one bundle container, and on nothing else"
+  }
+  assert {
+    condition     = length(google_secret_manager_secret_iam_member.credentials_bundle[0].condition) == 0
+    error_message = "Q6: the bundle grant carries NO condition — a secretId filter or a name-prefix fence is exactly what the ruling replaced"
+  }
+  assert {
+    condition = length([
+      for k, g in google_secret_manager_secret_iam_member.operator : k
+      if g.member == google_service_account.credentials[0].member
+    ]) == 0
+    error_message = "the service's account must hold no member over the project's other secret containers: one container, one grant (Q6)"
+  }
+  assert {
+    condition = length([
+      for k, g in google_storage_bucket_iam_member.runs : k
+      if g.member == google_service_account.credentials[0].member
+    ]) == 0
+    error_message = "the service's account must hold nothing on the runs bucket"
+  }
+  assert {
+    condition = length(concat([
+      for k, g in google_service_account_iam_member.scheduler_user : k
+      if g.member == google_service_account.credentials[0].member || g.service_account_id == google_service_account.credentials[0].name
+      ], [
+      for k, g in google_service_account_iam_member.fugaro_deployer_token_creator : k
+      if g.member == google_service_account.credentials[0].member || g.service_account_id == google_service_account.credentials[0].name
+    ])) == 0
+    error_message = "nobody may act as the service's account: anyone who could deploy a revision as it could read every model credential the installation holds"
+  }
+  assert {
+    condition = (length(google_cloud_run_v2_service.credentials) == 1 &&
+      google_cloud_run_v2_service.credentials[0].name == "fugaro-credentials" &&
+      google_cloud_run_v2_service.credentials[0].location == "us-east5" &&
+    google_cloud_run_v2_service.credentials[0].project == "proj-1234")
+    error_message = "the service is the one credentials_service names, in the installation's region"
+  }
+  assert {
+    condition = (google_cloud_run_v2_service.credentials[0].template[0].service_account == google_service_account.credentials[0].email &&
+      google_cloud_run_v2_service.credentials[0].template[0].containers[0].image == "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3" &&
+    google_cloud_run_v2_service.credentials[0].template[0].timeout == "3600s")
+    error_message = "the service runs as its own account, on the image the variable carries, with the longest timeout Cloud Run allows for a streaming proxy"
+  }
+  assert {
+    condition = tomap({
+      for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
+      }) == tomap({
+      FUGARO_PROJECT     = "aurora"
+      FUGARO_GCP_PROJECT = "proj-1234"
+      FUGARO_REGION      = "us-east5"
+    })
+    error_message = "the container's environment is its identity and nothing else: no secret ID, no credential value, and no fourth entry"
+  }
+  assert {
+    condition = (length(google_cloud_run_v2_service.credentials[0].template[0].containers) == 1 &&
+    google_cloud_run_v2_service.credentials[0].template[0].containers[0].resources[0].limits == tomap({ cpu = "1", memory = "512Mi" }))
+    error_message = "the service runs one container with the pinned resources"
+  }
+  assert {
+    condition = (length(google_cloud_run_v2_service.credentials[0].traffic) == 1 &&
+      google_cloud_run_v2_service.credentials[0].traffic[0].percent == 100 &&
+    google_cloud_run_v2_service.credentials[0].traffic[0].type == "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST")
+    error_message = "all traffic goes to the latest revision"
+  }
+  assert {
+    condition     = google_cloud_run_v2_service.credentials[0].ingress == "INGRESS_TRAFFIC_ALL"
+    error_message = "the ingress is ALL because the caller is a Cloud Run job of this project, which reaches the service over its public run.app URL; the fence is the IAM check, not the network"
+  }
+  assert {
+    condition     = google_cloud_run_v2_service.credentials[0].invoker_iam_disabled == false
+    error_message = "the service must require IAM: invoker_iam_disabled false is stated rather than implied, so a change of the provider's default cannot open the service silently"
+  }
+  assert {
+    condition     = google_cloud_run_v2_service.credentials[0].deletion_protection == false
+    error_message = "the service holds no data of its own: the bundle container is what must survive, and it carries prevent_destroy"
+  }
+  assert {
+    condition = google_cloud_run_v2_service.credentials[0].labels == tomap({
+      fugaro      = "managed"
+      fugaro_role = "credentials"
+    })
+    error_message = "the service carries fugaro=managed and its own role label"
+  }
+  assert {
+    condition = length([
+      for g in google_project_iam_member.launcher : g.member
+      if g.member == google_service_account.credentials[0].member
+    ]) == 0
+    error_message = "the service's account holds no project-level role: it reads one secret and nothing else"
+  }
+}
+
+# The image is pinned by digest, and a tag is refused at plan time (C1.18,
+# independent security review M1). Why this is a security rule and not a
+# preference: the service runs as the account that reads every credential in
+# the bundle, and modules/installation/iam.tf grants every operator
+# roles/artifactregistry.writer on the installation's registry — so a mutable
+# `fugaro-credentials:latest` would let an operator push the code that the
+# next owner apply runs as that account. A digest cannot be rewritten. The
+# run above is the digest form, planned and asserted; this one is the tag
+# form, refused by the variable's validation before any resource is planned.
+run "credentials_service_image_must_be_a_digest" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id    = "fugaro-credentials"
+      service       = "fugaro-credentials"
+      image         = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:latest"
+      bundle_secret = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# A digest that is not 64 lower-case hex digits is not a digest: a truncated
+# or upper-case one would not resolve, and `@sha256:` alone would pass a check
+# that only looked for the marker. This is the second half of the same rule.
+run "credentials_service_image_must_be_a_whole_digest" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id    = "fugaro-credentials"
+      service       = "fugaro-credentials"
+      image         = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e"
+      bundle_secret = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}

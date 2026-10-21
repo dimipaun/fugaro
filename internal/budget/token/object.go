@@ -45,7 +45,7 @@ func ObjectKey(slug, run string) string {
 // because a plaintext object in the bucket is the exposure the seal closes
 // (§7.4), and a reader of tokens/ must never find one written by Fugaro.
 func PutObject(ctx context.Context, b *blobx.Bucket, slug, run, tok string, key []byte) error {
-	if !validSegment(slug) || !validSegment(run) {
+	if !ValidSegment(slug) || !ValidSegment(run) {
 		return errors.New("budget token: invalid slug or run id")
 	}
 	if len(key) != KeySize {
@@ -77,7 +77,7 @@ func PutObject(ctx context.Context, b *blobx.Bucket, slug, run, tok string, key 
 // success. A token a refused cleanup left behind stays replayable by a holder
 // of its key (bucket-iam.md §2.3).
 func DeleteObject(ctx context.Context, b *blobx.Bucket, slug, run string) error {
-	if !validSegment(slug) || !validSegment(run) {
+	if !ValidSegment(slug) || !ValidSegment(run) {
 		return errors.New("budget token: invalid slug or run id")
 	}
 	err := b.Delete(ctx, ObjectKey(slug, run))
@@ -111,7 +111,7 @@ func DeleteObject(ctx context.Context, b *blobx.Bucket, slug, run string) error 
 // (Exists): no driver answers "exists" with a refusal, and the object is a
 // sealed token of tens of bytes.
 func ObjectPresent(ctx context.Context, b *blobx.Bucket, slug, run string) (bool, error) {
-	if !validSegment(slug) || !validSegment(run) {
+	if !ValidSegment(slug) || !ValidSegment(run) {
 		return false, errors.New("budget token: invalid slug or run id")
 	}
 	_, _, err := b.ReadStrict(ctx, ObjectKey(slug, run))
@@ -156,7 +156,7 @@ func ObjectPresent(ctx context.Context, b *blobx.Bucket, slug, run string) (bool
 //     plaintext, so a plaintext object is someone else's write);
 //   - a token whose own fs/fr/uid are not this run's is ErrTokenMismatch.
 func TakeObject(ctx context.Context, b *blobx.Bucket, slug, run string, key []byte) (string, error) {
-	if !validSegment(slug) || !validSegment(run) {
+	if !ValidSegment(slug) || !ValidSegment(run) {
 		return "", errors.New("budget token: invalid slug or run id")
 	}
 	name := ObjectKey(slug, run)

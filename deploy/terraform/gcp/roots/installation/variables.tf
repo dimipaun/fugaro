@@ -159,6 +159,23 @@ variable "history" {
   default = null
 }
 
+variable "credentials_service" {
+  type = object({
+    account_id    = string
+    service       = string
+    image         = string
+    bundle_secret = string
+  })
+  # The credentials service (D146, D147), OFF by default: fugaro init's
+  # credentials stage (C1.20) is the only writer, and only when the owner runs
+  # it. Absent, the module creates nothing and every job keeps its
+  # model-secret accessors. bundle_secret is the one container the service
+  # reads — the project-wide container of the logical name "creds-bundle"
+  # (internal/backend/gcp's ProjectSecretID), which that stage fills so this
+  # variable and the loader's own derivation (C1.11) name one secret.
+  default = null
+}
+
 variable "project_secrets" {
   type = map(string)
   # The project-wide secret containers (logical name -> secret ID) the

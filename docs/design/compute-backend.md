@@ -347,9 +347,25 @@ for estimates:
   the metadata signal immediately and the workload's only warning is the
   30 s shutdown period. For a Fugaro run a preemption is a hard kill
   mid-stage: the model spend for that stage is gone, the run does not reach
-  `finalize`, and recovery is a follow-up run. Recommendation: **spot off by
-  default**, opt-in per profile for workloads that tolerate it (a nightly
-  batch, a test-only workflow). If it is ever turned on, the run wants the
+  `finalize`, and recovery is a follow-up run. **Nothing finalizes a preempted
+  run's record, and nothing is asked to.** The owner's ruling of 2026-10-21
+  settled how such a run is reported, and it is the read side that reports it:
+  a run whose record was never finalized, whose backend is `cloud-batch` and
+  whose job's own report carries the platform's preemption — a status event
+  saying so, or the reserved exit code Batch reports for a task whose VM was
+  reclaimed, which `internal/backend/batch` reads in the same `jobs.get` that
+  produces the execution (`preempted`) — **reads as `failed (preempted)`** in
+  `runs ls`, `fugaro watch` and `fugaro diagnose RUN`, in their `--json` forms
+  and in the desktop console's contract, rather than as a run still going.
+  **The derived status is never written back anywhere**: no component gains a
+  storage permission for this, the reaper stays deletion-only (§3.4), the
+  budget lease expires by its own timeout, and the history sweep settles the
+  cost. A finalized record always wins over the derivation, and a job whose
+  state cannot be read — or whose state is not a terminal `FAILED` — leaves the
+  run exactly as recorded, with a note: **an unreadable job never makes a live
+  run look failed.** Recommendation: **spot off by default**, opt-in per
+  profile for workloads that tolerate it (a nightly batch, a test-only
+  workflow). If it is ever turned on, the run wants the
   120 s notice set explicitly, because the runner's SIGTERM path
   (`cmd/fugaro/main.go` cancels the context so the task still finalizes) has
   only the shutdown period to checkpoint otherwise. Whether Batch's
@@ -374,12 +390,24 @@ for estimates:
 - **The machine type.** Batch container jobs use a machine type with enough
   vCPUs/memory for the task's `computeResource`; a Fugaro run's needs come
   from the workflow's `resources` (Cloud Run-shaped today, §4). An
-  `e2-standard-4`-class VM (4 vCPU / 16 GiB) is the likely default, and it is
-  the one 57a measured on: **0.13402284 USD/h in `us-east5`**, which is exactly
+  `e2-standard-4`-class VM (4 vCPU / 16 GiB) is the type 57a measured on:
+  **0.13402284 USD/h in `us-east5`**, which is exactly
   the figure the backend's own price table carries for the US group
   (`internal/backend/batch/prices.go`, §5.2) — so the run's hand estimate and
   the shipped table agree. The table's figures are still unconfirmed against a
   bill, which is 57b-5's job.
+- **The type a run gets by default is not that one**, and the figures above are
+  the measured type's rather than a default run's: `internal/backend/batch`'s
+  `defaultMachineType` is `e2-standard-8`, because a task gets half a machine's
+  vCPUs and a quarter of its memory (§5.2, `taskResources`) and the config's
+  default ask — 4 CPUs and 8Gi for a workflow that names no `resources:` (§4) —
+  does not fit in an `e2-standard-4`'s share of 2000m/4096MiB. A default
+  installation whose default type were `e2-standard-4` would refuse every
+  workflow that names no resources until the operator set
+  `batch.machine_type`, which is no default at all. This design's cost figures
+  are therefore the measured type's, and a run that wants them names it
+  (`batch.machine_type: e2-standard-4`); what the type is on a default
+  installation is the larger one the code sets.
 
 **Substrate verdict.** Identical: all three bill Compute Engine VMs. Batch
 does not add a charge.
@@ -1530,6 +1558,12 @@ the teardown is assumed rather than read:
   **Built** (Task 5, `internal/backend/batch/reap.go`) as the safety net that
   measurement makes it: Batch's own teardown is the main path (the numbers are
   in this section's bullets above), so the reaper only ever sees the residual.
+  **It deletes, and it writes nothing** — the owner's ruling of 2026-10-21 is
+  that no component gains a storage permission for a run whose record was never
+  finalized, so a job the reaper deletes, like a job the platform preempted,
+  leaves the run's own objects exactly as the run left them. What that run
+  reads as is derived when it is read (§1.3), never finalized by the reaper and
+  never written back.
   The built decisions, each narrower than
   this section's prose: the job pass runs before the instance pass; a job
   `QUEUED` past the queue deadline is **deleted** (`jobs.delete`) — Task 9's
@@ -3054,8 +3088,16 @@ leaked VM of *this check* is told from a real run's.
    or 120 seconds if the job asks for it, and the shutdown afterwards is best
    effort and can take up to 30 seconds (MIG/spot docs, §1.3). **FACT:** whether
    the job asked for the 120-second notice, whether the runner received SIGTERM,
-   whether it reached `finalize`, and the time from the preemption notice to the
-   VM's death.
+   whether it reached `finalize`, the time from the preemption notice to the
+   VM's death, **and — the one the read side's derivation is built on — the exit
+   code the job's own report carries for the killed task, read out of the job's
+   status events in the same `jobs.get` (`internal/backend/batch`'s
+   `preemptExitCode`) rather than from a second call.** The step is what turns
+   that number from second-hand into a measured fact: the derivation accepts a
+   status event that says the VM was preempted *or* the reserved exit code, and
+   the code the platform actually reports is what says which of the two is the
+   one to trust. **Nothing about it is written back** (§1.3): the step measures
+   the report, and the run's own record stays unfinished either way.
 8. **Teardown on every exit path.** For each of: success; failure (a runnable
    that exits non-zero); **cancel** (`gcloud batch jobs cancel` on the job the
    cancel iteration submitted — `jobs.cancel`, **not**
@@ -4288,7 +4330,10 @@ above where used):
   57a-8 cancelled a running job and its VM was gone **3 s** later, ending
   `CANCELLED` with its record intact; the **preempted** path is step 7, which
   was **not run** (a separate script is being written), and the
-  `DELETION_IN_PROGRESS` corner was not driven directly.
+  `DELETION_IN_PROGRESS` corner was not driven directly. **That is the standing
+  of the read side's preemption derivation too** (§1.3): the reserved exit code
+  it accepts is the owner's ruling rather than a measurement, it is written in
+  code and deliberately nowhere under `docs/`, and step 7 is what measures it.
 - Batch logs reach Cloud Logging only when the destination is set, and the
   monitored resource is `batch.googleapis.com/Job` with labels
   `resource_container`/`location`/`job_id`

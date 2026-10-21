@@ -1065,6 +1065,106 @@ func postRawJob(t *testing.T, bf *gcpfake.Batch, id, body string) {
 // matching the name the backend launched with (design §2.3). The fake is set
 // to answer with the number, which is what makes the rewrite -- rather than
 // the fake agreeing -- the reason the names below match.
+// preemptEvent is the report a preempted run's job carries: a task-level status
+// event whose task execution ended with Batch's reserved preemption exit code.
+// The shape is the API's own -- StatusEvent.TaskExecution is documented as
+// "only defined for task-level status events where the task fails", and its
+// ExitCode as the task's exit code, from Batch's reserved list or the runnable
+// (batch/v1's TaskExecution, read off the generated client) -- and *which* of
+// these a live preemption actually leaves behind is Check 57a step 7's
+// (design §7.2, §9).
+func preemptEvent() map[string]any {
+	return map[string]any{
+		"type":        "STATUS_CHANGED",
+		"description": "Task state is FAILED",
+		"taskState":   "FAILED",
+		"taskExecution": map[string]any{
+			"exitCode": preemptExitCode,
+		},
+	}
+}
+
+// TestAPreemptedJobReadsAsPreempted: a run whose Batch job ended FAILED because
+// its Spot VM was reclaimed must be readable as exactly that, from the same
+// jobs.get the backend already makes -- no new permission, no new call
+// (the owner's 2026-10-21 ruling; design compute-backend.md §1.3).
+//
+// The cases below are the whole of the rule, and each is one way a wrong reader
+// would be wrong: a FAILED job whose report names a preemption is preempted; a
+// FAILED job whose report says nothing of the kind is not (a crashed runnable
+// must never read as reclaimed); a *running* job that carries the same event is
+// not (a live run must never read as failed); and a job whose state this build
+// cannot read is not, whatever its events say, because the state is the half
+// that says the execution is over at all.
+func TestAPreemptedJobReadsAsPreempted(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name      string
+		state     string
+		events    []map[string]any
+		preempted bool
+		terminal  bool
+	}{
+		{name: "FAILED with the preemption exit code", state: "FAILED", events: []map[string]any{preemptEvent()}, preempted: true, terminal: true},
+		{name: "FAILED with a preemption the platform spells out", state: "FAILED", events: []map[string]any{
+			{"type": "STATUS_CHANGED", "description": "Task state is FAILED", "taskState": "FAILED",
+				"taskExecution": map[string]any{"exitCode": 1}},
+			{"type": "STATUS_CHANGED", "description": "The task's VM was preempted"},
+		}, preempted: true, terminal: true},
+		{name: "FAILED for another reason", state: "FAILED", events: []map[string]any{
+			{"type": "STATUS_CHANGED", "description": "Task state is FAILED", "taskState": "FAILED",
+				"taskExecution": map[string]any{"exitCode": 50000}},
+		}, terminal: true},
+		{name: "FAILED with no events at all", state: "FAILED", terminal: true},
+		{name: "RUNNING carrying the preemption event", state: "RUNNING", events: []map[string]any{preemptEvent()}},
+		{name: "a state this build does not know", state: "SOMETHING_NEW", events: []map[string]any{preemptEvent()}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			b, bf, _, _ := newTestBackend(t, nil)
+			ref, err := b.Launch(ctx, spec())
+			if err != nil {
+				t.Fatalf("Launch: %v", err)
+			}
+			bf.SetState(ref.Job, c.state)
+			bf.SetStatusEvents(ref.Job, c.events...)
+			x, err := b.Execution(ctx, ref.Name)
+			if err != nil {
+				t.Fatalf("Execution: %v", err)
+			}
+			if x.State.Terminal() != c.terminal {
+				t.Errorf("state %q read as %v (terminal %v), want terminal %v", c.state, x.State, x.State.Terminal(), c.terminal)
+			}
+			if x.Preempted != c.preempted {
+				t.Fatalf("Preempted = %v, want %v: the read side derives a run's outcome from this field, so a wrong answer here is a wrong status there", x.Preempted, c.preempted)
+			}
+		})
+	}
+}
+
+// TestListCarriesThePreemptionToo: runs ls reads its executions from List, so a
+// preemption List dropped would be a listing that could not derive it while
+// diagnose, which reads the execution on its own, could.
+func TestListCarriesThePreemptionToo(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	ref, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	bf.SetState(ref.Job, "FAILED")
+	bf.SetStatusEvents(ref.Job, preemptEvent())
+	list, err := b.List(ctx, backend.ListFilter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("List returned %d executions, want 1", len(list))
+	}
+	if !list[0].Preempted {
+		t.Fatalf("the listed execution is %+v, want Preempted: List and Execution read the same job, so they must not disagree about it", list[0])
+	}
+}
+
 func TestExecutionRewritesTheProjectNumber(t *testing.T) {
 	ctx := context.Background()
 	b, bf, _, _ := newTestBackend(t, nil)
@@ -1504,6 +1604,18 @@ func TestJobDefinitionIsAVMWithTheDesignsNetwork(t *testing.T) {
 		t.Errorf("noExternalIpAddress = %v, want true (C7)", ni["noExternalIpAddress"])
 	}
 
+	// No provisioning model is named anywhere in it, and that is a fact
+	// limits.go's MaxRunDuration rests on: Batch reads an absent
+	// provisioningModel as STANDARD, whose RUNNING ceiling is the 14 days that
+	// constant is, while FLEX_START's is 7 (design §1.8). A task that later
+	// asks for one -- FLEX_START, or the SPOT model design §1.3 has the profile
+	// carry (C5) -- has to move that constant with it, not only this JSON.
+	if blob, err := json.Marshal(call.Job); err != nil {
+		t.Fatalf("marshalling the created job: %v", err)
+	} else if strings.Contains(string(blob), "provisioningModel") {
+		t.Errorf("the job definition names a provisioning model, and MaxRunDuration (14 days) is the ceiling for STANDARD alone: %s", blob)
+	}
+
 	// The task asks for a share of the machine type, not the whole of it: the
 	// VM it lands on also runs the OS, the Batch agent and the Docker daemon,
 	// and a request for the whole type leaves nothing for them and sits
@@ -1895,17 +2007,18 @@ func TestNewRefusesAnIncompleteVMConfiguration(t *testing.T) {
 	}
 }
 
-// TestTheVMDefaultsAreTheDesignsOwn: the two fields an installation may leave
-// unset are the design's own values -- the e2-standard-4 the design names as
-// the likely default, which every price and size in prices.go is carried for,
-// and the 50 GB disk Check 57a's jobs carried (design §1.3, §7.2) -- and they
-// are defaults, not silent zeros: a job whose computeResource and boot disk
-// were zero would be a VM of the wrong shape or no VM at all.
-func TestTheVMDefaultsAreTheDesignsOwn(t *testing.T) {
+// TestTheVMDefaultsCarryTheDefaultAsk: the two fields an installation may
+// leave unset, and why each has the value it has. The machine type is the
+// smallest type whose task share carries the config's default ask of 4 CPUs
+// and 8Gi (limits_test's own test is what holds the config's side of that), and
+// the boot disk is the 50 GB Check 57a's jobs carried (design §7.2). They are
+// defaults, not silent zeros: a job whose computeResource and boot disk were
+// zero would be a VM of the wrong shape or no VM at all.
+func TestTheVMDefaultsCarryTheDefaultAsk(t *testing.T) {
 	ctx := context.Background()
 	b, bf, _, _ := newTestBackend(t, func(o *Options) { o.MachineType, o.BootDiskGB = "", 0 })
-	if defaultMachineType != "e2-standard-4" {
-		t.Errorf("defaultMachineType = %q, want the design's e2-standard-4 (§1.3)", defaultMachineType)
+	if defaultMachineType != "e2-standard-8" {
+		t.Errorf("defaultMachineType = %q, want the smallest e2-standard type whose task share carries the config's default 4 CPU/8Gi ask", defaultMachineType)
 	}
 	if defaultBootDiskGB != 50 {
 		t.Errorf("defaultBootDiskGB = %d, want the 50 Check 57a's jobs carried (§7.2)", defaultBootDiskGB)
@@ -2231,4 +2344,58 @@ func TestLaunchRefusesASecretEnv(t *testing.T) {
 	if n := len(bf.Creates()); n != 0 {
 		t.Fatalf("a refused launch created %d job(s)", n)
 	}
+}
+
+// CheckOptions is the whole of New's validation as one function, so `fugaro
+// doctor` can ask "would this installation's facts build a job?" without
+// opening a Batch and a Logging client to answer it (design compute-backend.md
+// §4.4's doctor half). The two doors must not disagree: what CheckOptions
+// refuses is what New refuses.
+//
+// Mutation (have New stop calling it, or have CheckOptions answer nil): one of
+// the two assertions fails.
+func TestCheckOptionsIsTheValidationNewRuns(t *testing.T) {
+	o := testOptions(t)
+	if err := CheckOptions(&o); err != nil {
+		t.Fatalf("a complete options value is refused: %v", err)
+	}
+	// The VM defaults are filled in, which is the other half of what New's
+	// validation did before this function existed.
+	if o.MachineType == "" || o.BootDiskGB == 0 {
+		t.Fatalf("CheckOptions left the VM defaults unfilled: machine type %q, boot disk %d", o.MachineType, o.BootDiskGB)
+	}
+	for _, tc := range []struct {
+		name  string
+		tweak func(*Options)
+		want  string
+	}{
+		{"no network", func(o *Options) { o.Network = "" }, "network and a subnetwork"},
+		{"no image", func(o *Options) { o.Image = "" }, "the image a run's job runs"},
+		{"the default compute account", func(o *Options) { o.ServiceAccount = "123456789012-compute@developer.gserviceaccount.com" }, "default Compute Engine"},
+		{"an unpriceable machine type", func(o *Options) { o.MachineType = "e2-micro" }, "machine type"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := testOptions(t)
+			tc.tweak(&o)
+			err := CheckOptions(&o)
+			if err == nil {
+				t.Fatalf("CheckOptions accepted %s", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("CheckOptions refused %s with %q, want %q in it", tc.name, err, tc.want)
+			}
+			// And New refuses it too: the same door.
+			if _, nerr := New(context.Background(), testOptionsWith(t, tc.tweak)); nerr == nil {
+				t.Fatalf("New accepted %s, which CheckOptions refuses", tc.name)
+			}
+		})
+	}
+}
+
+// testOptionsWith is testOptions with a tweak applied.
+func testOptionsWith(t *testing.T, tweak func(*Options)) Options {
+	t.Helper()
+	o := testOptions(t)
+	tweak(&o)
+	return o
 }

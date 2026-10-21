@@ -12,8 +12,9 @@ import (
 // The table's own consistency: a machine type's quantities are its family's
 // shape (a standard type has 4 GiB per vCPU), and every machine type it
 // carries has a family price, so nothing in it can be priced at zero. The
-// design names e2-standard-4 as the likely default (§1.3) and c2-standard-60
-// as Check 57a step 11's quota probe (§7.2); both must be in it.
+// design names e2-standard-4 as the type 57a measured on, and the type an
+// installation may select (§1.3), and c2-standard-60 as Check 57a step 11's
+// quota probe (§7.2); both must be in it.
 func TestMachineTypeTableIsInternallyConsistent(t *testing.T) {
 	for _, want := range []string{"e2-standard-4", "c2-standard-60"} {
 		if _, ok := machineTypes[want]; !ok {

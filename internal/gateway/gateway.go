@@ -48,12 +48,12 @@ const (
 
 // Upstream is where calls go and with what credential.
 type Upstream struct {
-	Kind string // "anthropic" or "vertex"
+	Kind string // "anthropic", "vertex" or KindOAuth (tier A, oauth.go)
 	// BaseURL overrides the real API's base for tests: "" is
 	// https://api.anthropic.com, or the Vertex host of each call's
 	// location. It must be https, or http on a loopback address.
 	BaseURL string
-	APIKey  string             // anthropic: the real key
+	APIKey  string             // anthropic: the real key; KindOAuth: the subscription token, sent as its bearer token and only to Anthropic's own endpoint
 	Token   oauth2.TokenSource // vertex: called per request (it caches)
 	// VertexProject is the only GCP project a Vertex path may name.
 	VertexProject string
@@ -217,6 +217,10 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
+	if o.Upstream.Kind == KindOAuth {
+		// Tier A (oauth.go): the read timeout a subscription call is held to.
+		s.client = oauthUpstreamClient(s.client)
+	}
 	s.base, s.cancelBase = context.WithCancel(context.WithoutCancel(ctx))
 	s.hctx, s.hstop = context.WithCancel(s.base)
 	s.gctx, s.gstop = context.WithCancel(context.WithoutCancel(ctx))
@@ -259,6 +263,17 @@ func (o Options) validate() error {
 		// a key is refused by name (missingAnthropicKey) rather than at
 		// startup. A stored key is mounted whenever the secret has a
 		// version, so this is a fact about data, not about routing.
+	case KindOAuth:
+		// Tier A (oauth.go). The credential is not optional here, as the
+		// Anthropic key is: this kind exists only to attach one, so a
+		// gateway without it is a mistake, refused at start rather than at
+		// every call. The base must be Anthropic's own endpoint (D133).
+		if err := checkOAuthBaseURL(u.BaseURL); err != nil {
+			return err
+		}
+		if u.APIKey == "" {
+			return errors.New("gateway: the OAuth upstream has no credential")
+		}
 	case "vertex":
 		if u.Token == nil {
 			return errors.New("gateway: the vertex upstream has no token source")
@@ -485,7 +500,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var rt route
 	switch s.o.Upstream.Kind {
-	case "anthropic":
+	case "anthropic", KindOAuth:
+		// Tier A (oauth.go) serves the same paths, with the same gateway
+		// token, as the Anthropic upstream: only the credential differs.
 		p := r.URL.Path
 		if r.Method != http.MethodPost || (p != "/v1/messages" && p != "/v1/messages/count_tokens") {
 			writeError(w, http.StatusNotFound, "not_found_error", "fugaro: the budget gateway doesn't serve "+r.Method+" "+logValue(p))

@@ -121,6 +121,11 @@ func (p PRSettings) CheckpointsOn() bool { return p.Checkpoints == nil || *p.Che
 
 // Agent configures the Claude Code agent.
 type Agent struct {
+	// Auth is where the run's model calls are authenticated: vertex (the
+	// default), api-key, oauth, or cascade — which asks for the project's
+	// credentials cascade and is enabled only by the project policy's switch
+	// (docs/credentials-service, D133, O2; config.AgentAuths is the list, and
+	// CheckCascadeGateway is the budget it needs).
 	Auth         string  `yaml:"auth"`
 	Model        string  `yaml:"model"`
 	ReviewRounds int     `yaml:"review_rounds"`
@@ -479,10 +484,10 @@ const BitbucketSecret = "bitbucket-token"
 // mapped to the variable each one becomes. A workflow's secrets may not
 // reuse them (design §5.1, §6.1).
 var ReservedSecrets = map[string]string{
-	BitbucketSecret:  "FUGARO_BITBUCKET_TOKEN",
-	"github-app-key": "FUGARO_GITHUB_APP_PRIVATE_KEY",
-	ClaudeOAuthToken: "CLAUDE_CODE_OAUTH_TOKEN",
-	AnthropicSecret:  "ANTHROPIC_API_KEY",
+	BitbucketSecret:    "FUGARO_BITBUCKET_TOKEN",
+	GitHubAppKeySecret: "FUGARO_GITHUB_APP_PRIVATE_KEY",
+	ClaudeOAuthToken:   "CLAUDE_CODE_OAUTH_TOKEN",
+	AnthropicSecret:    "ANTHROPIC_API_KEY",
 }
 
 // CodexOAuthToken is reserved for the Codex harness's OAuth credential but is

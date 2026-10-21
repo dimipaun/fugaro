@@ -26,7 +26,13 @@ var allowedTypes = map[string]bool{
 	"google_billing_budget":                          true,
 	"google_cloud_run_v2_job":                        true,
 	"google_cloud_run_v2_job_iam_member":             true,
-	"google_cloud_scheduler_job":                     true,
+	// The credentials service (D146, C1.18): the service itself and each job
+	// account's roles/run.invoker on it. Both are created only on an
+	// installation that has opted in, so no plan of an installation that has
+	// not carries them.
+	"google_cloud_run_v2_service":            true,
+	"google_cloud_run_v2_service_iam_member": true,
+	"google_cloud_scheduler_job":             true,
 	// The Batch backend's own root (design compute-backend §8.1 task 6) is a
 	// root of its own, applied by its own stage behind --provision-batch and
 	// its own typed confirmation: these three types are the NAT, its router
@@ -157,6 +163,13 @@ var grantRules = map[string]map[string]who{
 	"google_cloud_run_v2_job_iam_member": {
 		customKey + "fugaroJobRunner": toPeople | toAccounts,
 		"roles/run.invoker":           toAccounts,
+	},
+	// The credentials service (C1.18): each job account may invoke it, and
+	// nothing else may. No person is ever granted this role, and the grant is
+	// unconditional — the service's own ID-token check (Q6) is what decides
+	// who is served, not an IAM condition.
+	"google_cloud_run_v2_service_iam_member": {
+		"roles/run.invoker": toAccounts,
 	},
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,
@@ -654,6 +667,15 @@ var knownCommands = [][2][]string{
 	{{"/usr/local/bin/fugaro"}, {"budget", "history", "--sweep"}},
 	{{"fugaro"}, {"image", "check", "--job"}},
 }
+
+// credentialsServiceEnv are the only environment variables the credentials
+// service's container sets (installation/credentials.tf): the project it
+// serves, the project it reads the bundle in, and the region — no secret ID
+// and no value, because the loader derives the container from the project
+// name and reads it as the service's own account. The case below is an
+// allowlist of these, so an environment that hands this process anything else
+// is not covered; TestAllowedTypesCoverTheModules keeps the two lists in step.
+var credentialsServiceEnv = []string{"FUGARO_PROJECT", "FUGARO_GCP_PROJECT", "FUGARO_REGION"}
 
 // APITargets are the two services the Firebase web key may call, sorted;
 // a fresh slice each call, so no caller can change the rule.
@@ -1688,6 +1710,72 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 			}
 			if why := c.checkSpecs(m, unk, append(slices.Clone(cp), "env"), proj); why != "" {
 				return why
+			}
+		}
+	case "google_cloud_run_v2_service":
+		// The credentials service (D146, C1.18): the one container image in
+		// the tree that is not a job's. Its container sits one `template`
+		// shorter than a job's (template[0].containers[0]), and it is held to
+		// this run's registry exactly as a job's image is — without this case
+		// init's one typed confirmation would cover a plan whose service runs
+		// whatever var.credentials_service.image names, so a hand-edited or
+		// stale terraform.tfvars.json could point it at any registry, owner
+		// and digest, and the apply would run that image as the account that
+		// reads every model credential in the bundle (independent security
+		// review of this file, which found the case missing).
+		//
+		// Two checks are stricter than a job's, because of what that account
+		// is. The image must be pinned by an @sha256: digest as well as be in
+		// this run's registry: credentials.tf's M1 comment makes that a
+		// security rule, because the registry grants
+		// roles/artifactregistry.writer to every operator (iam.tf) and a
+		// mutable tag would let an operator push the code the next owner apply
+		// runs as this account. (No plan the module can produce is refused for
+		// it — its own variable validation requires the digest — so this is
+		// the rule held at the layer a hand-edited module does not pass
+		// through.) And the environment is the module's three names and
+		// nothing else: an environment is the one path a credential could
+		// reach this process without a Secret Manager read.
+		if unknown(rc.Change, "invoker_iam_disabled") {
+			return "an IAM setting that is not known"
+		}
+		if a["invoker_iam_disabled"] != false {
+			return "a service that does not require IAM, which would let anyone invoke the account that reads every model credential in the bundle"
+		}
+		cs := objects(at(a["template"], "containers"))
+		unk := rc.Change.AfterUnknown
+		if unknownAt(unk, "template", 0, "containers") {
+			return "containers that are not known"
+		}
+		if len(cs) == 0 {
+			return "no container"
+		}
+		for i, m := range cs {
+			cp := []any{"template", 0, "containers", i}
+			if unknownAt(unk, append(slices.Clone(cp), "image")...) {
+				return "a container image that is not known"
+			}
+			img := str(m["image"])
+			if !c.baseImageOK(img, proj) {
+				return fmt.Sprintf("runs the image %q, which is outside this run's registry %s/%s/ or not a base image of it in the shape this installation pins (%s/%s/%s/<owner>/fugaro-<kind>:<version>@sha256:<digest>)",
+					img, c.Registry, proj, c.Registry, proj, c.Ghcr)
+			}
+			if _, digest, ok := strings.Cut(img, "@"); !ok || !pinDigestRE.MatchString(digest) {
+				return fmt.Sprintf("runs the image %q, which is not pinned by an @sha256: digest: this service's account reads every model credential in the bundle and every operator may push to this run's registry",
+					img)
+			}
+			if unknownAt(unk, append(slices.Clone(cp), "env")...) {
+				return "an environment that is not known"
+			}
+			for j, e := range objects(m["env"]) {
+				ep := append(slices.Clone(cp), "env", j)
+				if unknownAt(unk, append(slices.Clone(ep), "name")...) || unknownAt(unk, append(slices.Clone(ep), "value")...) {
+					return "an environment variable that is not known"
+				}
+				if n := str(e["name"]); !slices.Contains(credentialsServiceEnv, n) {
+					return fmt.Sprintf("an environment variable %q, which the credentials service does not read: its container sets only %s",
+						n, strings.Join(credentialsServiceEnv, ", "))
+				}
 			}
 		}
 	case "google_cloud_scheduler_job":
