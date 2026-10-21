@@ -143,7 +143,7 @@ func outputHygieneLefts(t *testing.T) []printedLeft {
 	var out []printedLeft
 	add := func(name string, lf initflow.Left) { out = append(out, printedLeft{name, lf}) }
 
-	add("preflight", preflightStage{}.Left())
+	add("preflight", preflightStage{e}.Left())
 	add("project/gcp", (&projectStage{e: e, id: "acme-prod"}).Left())
 	e.r.o.createProject = true
 	e.r.o.parent = "folders/123"

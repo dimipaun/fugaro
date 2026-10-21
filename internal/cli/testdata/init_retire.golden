@@ -22,7 +22,7 @@ Order of operations:
   3. apply, then delete the 1 orphaned Cloud Run job through the API.
 
 Next command:
-  fugaro init --repo . --retire
+  fugaro update --repo . --retire
 ⚠ CONFIRM (project aurora, GCP project proj-1234): retire 3 addresses of proj-1234: remove 2 from Terraform's state (destroying nothing), then apply, then delete 1 Cloud Run job through the API. Delete fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]). Fugaro deletes no secret, so these leave Terraform's state and stay in Secret Manager if they are still there: claude-oauth-token-bmb (fugaro-acme-sandbox-claude-oauth-token-bmb-2dfc7765d8e5dd81), unmanaged.
 Type aurora to confirm:   confirmed
 removed 2 addresses from Terraform's state; nothing was destroyed
@@ -47,7 +47,7 @@ Still missing for acme/sandbox:
   claude-oauth-token: fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201
     claude setup-token
     fugaro secrets set claude-oauth-token --repo acme/sandbox
-  Then rerun fugaro init --repo when they are stored.
+  Then rerun fugaro update --repo when they are stored.
 deleted the orphaned Cloud Run job fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0])
 The local config <tmp> changes:
   + base_images:
@@ -79,5 +79,5 @@ The local config <tmp> changes:
 backed up the old local config to <tmp>
 wrote <tmp>
 published the shared config to gs://fugaro-runs-proj-1234/fugaro/config.yaml
-note: to let teammates use this installation without setup, run fugaro init --anchor in this checkout (it checks the images first)
+note: to let teammates use this installation without setup, run fugaro update --anchor in this checkout (it checks the images first)
 project: aurora (GCP proj-1234)
