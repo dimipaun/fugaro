@@ -280,6 +280,55 @@ func TestSelectLeastRecentlyExhausted(t *testing.T) {
 	if c.Name != a1.Name {
 		t.Fatalf("the new run took %q; want %q, the one exhausted longest ago", c.Name, a1.Name)
 	}
+
+	// The order is by when each credential was exhausted (Since) and never by
+	// the reset it reported (Until): the two are different fields, and the
+	// upstream's reset is not the exhaustion plus a fixed window, so the two
+	// need not agree. The two marks above put them in the same order — and
+	// name the longest-exhausted one first — which is why they cannot tell
+	// the two fields apart, nor an ordering at all from the round robin that
+	// answers when nothing is exhausted: a lookup that always answered the
+	// zero time would tie these two, and the tie-break by name takes
+	// shared-1, which is what the assertion above wants.
+	//
+	// These two order every way but the right one. shared-2 was exhausted an
+	// hour before shared-1 (Since) while its reset lapses later (Until), and
+	// the tie-break by name and the round robin's counter both start at
+	// shared-1: so the answer here is shared-2 only for a lookup that orders
+	// by the exhaustion time.
+	st2 := newFakeStore()
+	st2.setMark(a1.Name, Mark{State: StateExhausted, Since: now.Add(-2 * time.Hour), Until: now.Add(-110 * time.Minute)})
+	st2.setMark(a2.Name, Mark{State: StateExhausted, Since: now.Add(-3 * time.Hour), Until: now.Add(-5 * time.Minute)})
+
+	c, _, err = selector(st2, set).Select(ctx, run, []Credential{a1, a2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Name != a2.Name {
+		t.Fatalf("the new run took %q; want %q, the one exhausted longest ago (Since) — not the one whose reset lapsed first (Until), and not the round robin's first by name", c.Name, a2.Name)
+	}
+
+	// A credential that has never been exhausted beats one that has, however
+	// recently that one came back: the zero time is the oldest there is, and
+	// "never exhausted" is not "exhausted at the beginning of time" by
+	// accident but the rule (recency). shared-2 carries no mark at all here,
+	// and the cap is off so that shared-1 is usable and the choice really is
+	// the ordering's: with the policy's default of one run per token the
+	// exhausted one would be out of the set for a reason that has nothing to
+	// do with this rule, which is what the stickiness test above cannot
+	// separate.
+	st3 := newFakeStore()
+	set3 := noWindow()
+	set3.ConcurrencyPerToken = ptr(0)
+	st3.setMark(a1.Name, Mark{State: StateExhausted, Since: now.Add(-time.Hour), Until: now.Add(-time.Minute)})
+
+	c, _, err = selector(st3, set3).Select(ctx, run, []Credential{a1, a2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Name != a2.Name {
+		t.Fatalf("the new run took %q; want %q, the credential that has never been exhausted", c.Name, a2.Name)
+	}
 }
 
 // Credentials exhausted equally recently — of which the commonest case is a set

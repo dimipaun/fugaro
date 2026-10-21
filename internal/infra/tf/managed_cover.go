@@ -359,7 +359,7 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 			// the owner reads the address, runs fugaro allow-delete — has
 			// nothing to record but the address, which is no longer an
 			// approval.
-			add(rc, "actions "+strings.Join(acts, ", ")+": an address that is not on the owner's delete list (the plan removes "+RemoveIdentityText(rc)+")")
+			add(rc, "actions "+strings.Join(acts, ", ")+": "+notOnDeleteListReason(rc))
 			continue
 		// The list names an address, and the object a removal takes away is
 		// the one in before: with a moved block that object was at another

@@ -35,6 +35,21 @@ const ReasonLost = "no execution found and the runner never recorded the run"
 // record never reached a final status (OOM kill, task timeout, node loss).
 const ReasonNoFinalRecord = "execution ended without finalizing"
 
+// DerivedPreempted is the read side's derivation for a run the platform
+// reclaimed: a Cloud Batch job whose Spot VM was preempted ends FAILED, Batch
+// does not retry it, and the runner never reaches finalize, so no object in
+// the runs bucket ever records what happened. The status is derived when the
+// run is read and is **never written back**: the bucket keeps what the run
+// itself wrote, the launch's lease expires by its own timeout, and the
+// history sweep settles the cost (the owner's 2026-10-21 ruling; design
+// compute-backend.md §1.3).
+const DerivedPreempted = "preempted"
+
+// ReasonPreempted explains a row whose Derived is DerivedPreempted. It says
+// what the platform did and not what the run did, because nothing about the
+// run's own work is known: the record it would have said it with never came.
+const ReasonPreempted = "the Batch job was preempted: its Spot VM was reclaimed before the run finalized"
+
 // StaleDraftAfter is how long past its last status update a running first
 // run with no recorded deadline may go before its draft is called stale.
 // Stages and verifies run for many minutes and the limits are configurable,
@@ -89,6 +104,15 @@ type Row struct {
 	Status       string                       `json:"status"`
 	Stage        string                       `json:"stage,omitempty"`
 	Reason       string                       `json:"reason,omitempty"`
+	// Derived, when set, is the read side's own reading of a run the run's
+	// record never settled: today the one value is DerivedPreempted, for a run
+	// whose Cloud Batch job ended FAILED because its Spot VM was reclaimed.
+	// It is a *derivation* and says so by being its own field: Status stays the
+	// vocabulary every reader already switches on (`failed` here), and a
+	// consumer that does not know this field loses the decoration, not the
+	// status. Nothing writes it back to the runs bucket, and nothing acts on
+	// it — a row whose record is not final is derived anew on every read.
+	Derived string `json:"derived,omitempty"`
 	// Halt is why a halted run was halted.
 	Halt        *runstore.Halt `json:"halt,omitempty"`
 	Batch       string         `json:"batch,omitempty"`
@@ -336,6 +360,13 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		row.Status = StatusUnlaunched // no claim, or a stale one: its launcher is gone
 	case e != nil && e.State == backend.StateCancelled:
 		row.Status, row.Reason = string(runstore.StatusCancelled), "execution cancelled before the run finalized"
+	case e != nil && e.Preempted:
+		// The platform's own report of the execution settles what happened to
+		// the run's machine, and the record above never settled the run: this
+		// is a reclamation, not a fault, and it is derived here rather than
+		// written anywhere (DerivedPreempted). It comes after the record's own
+		// verdict and must: a run that DID finalize keeps what it recorded.
+		row.Status, row.Reason, row.Derived = string(runstore.StatusFailed), ReasonPreempted, DerivedPreempted
 	case e != nil && e.State.Terminal():
 		row.Status, row.Reason = string(runstore.StatusInfraError), ReasonNoFinalRecord+" ("+string(e.State)+")"
 	case e != nil && e.State == backend.StatePending:

@@ -34,6 +34,76 @@ func exec(state backend.State) *backend.Execution {
 	return e
 }
 
+// preemptedExec is an execution the platform reclaimed: a terminal failure the
+// backend read as a Spot preemption (backend.Execution.Preempted).
+func preemptedExec() *backend.Execution {
+	e := exec(backend.StateFailed)
+	e.Preempted = true
+	return e
+}
+
+// TestJoinDerivesAPreemption: a run whose record never finalized, whose
+// execution the platform reclaimed, is `failed (preempted)` with the reason
+// for it -- derived when read, and never written back anywhere (the owner's
+// 2026-10-21 ruling; design compute-backend.md §1.3). The cases are each half
+// of the rule and each way it could be wrongly applied:
+//
+//   - the record that never finalized plus a reclaimed execution is the
+//     derivation itself;
+//   - a run that DID finalize keeps its record: the record is the run's own
+//     account of itself and a platform fact about the machine it ran on does
+//     not overwrite it;
+//   - a terminal failure that is not a preemption stays what it is today
+//     (infra_error, `execution ended without finalizing`), so a crashed
+//     runnable is never called reclaimed;
+//   - a cancelled execution stays cancelled;
+//   - a PENDING or RUNNING execution is not derived: a live run must never be
+//     shown as failed;
+//   - and a run with no execution at all is not derived either, whether it is
+//     merely pending or has been given up for lost.
+func TestJoinDerivesAPreemption(t *testing.T) {
+	running := func() *runstore.Record {
+		r := rec(runstore.StatusRunning, nil)
+		deadline := now.Add(time.Hour)
+		r.Deadline = &deadline
+		return r
+	}
+	cases := []struct {
+		name, status, reason, derived string
+		in                            Input
+	}{
+		{"record never finalized", "failed", ReasonPreempted, DerivedPreempted,
+			Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: preemptedExec()}},
+		{"no record at all", "failed", ReasonPreempted, DerivedPreempted,
+			Input{Task: spec, Launch: launch, Exec: preemptedExec()}},
+		{"the record finalized", "succeeded", "", "",
+			Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil), Exec: preemptedExec()}},
+		{"a terminal failure that is not a preemption", "infra_error", ReasonNoFinalRecord + " (failed)", "",
+			Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: exec(backend.StateFailed)}},
+		{"a cancelled execution", "cancelled", "execution cancelled before the run finalized", "",
+			Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: exec(backend.StateCancelled)}},
+		{"still running", "running", "", "",
+			Input{Task: spec, Launch: launch, Record: running(), Exec: exec(backend.StateRunning)}},
+		{"pending", StatusPending, "", "",
+			Input{Task: spec, Launch: launch, Exec: exec(backend.StatePending)}},
+		{"lost", "infra_error", ReasonLost, "",
+			Input{Task: spec, Launch: &runstore.Launch{Execution: "exec-1", LaunchedAt: now.Add(-runstore.ClaimTTL - time.Hour)}}},
+	}
+	for _, tc := range cases {
+		row := Join(tc.in, prices, now)
+		if row.Status != tc.status || row.Reason != tc.reason || row.Derived != tc.derived {
+			t.Errorf("%s: status %q reason %q derived %q, want %q %q %q",
+				tc.name, row.Status, row.Reason, row.Derived, tc.status, tc.reason, tc.derived)
+		}
+	}
+	// The derived row is terminal and settled: runs ls --watch must be able to
+	// stop on it, and nothing about it moves on its own.
+	row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: preemptedExec()}, prices, now)
+	if !row.Terminal || !row.Settled {
+		t.Errorf("the derived row is terminal=%v settled=%v, want both true", row.Terminal, row.Settled)
+	}
+}
+
 func TestJoinStatuses(t *testing.T) {
 	sub := runstore.NewCost(2, 0.1, runstore.BasisSubscription)
 	cases := []struct {

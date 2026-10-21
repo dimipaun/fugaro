@@ -35,7 +35,7 @@ fugaro init --project <name>
 
 Then continue here. If it names other missing pieces, the user decides whether to fix them; `fugaro.yaml` can be written once the installation exists. Its `fugaro_yaml` field says whether a `fugaro.yaml` exists and is valid, and its `secrets` field lists the stored secrets by name: use both to tell new setup from fixing, and in step 8.
 
-**A managed project's deletes.** A managed project records, in one object at the root of its runs bucket, the addresses whose deletes and replacements its owner approves. Its writer is the owner's command, run in their own terminal window, not through the agent; it refuses an agent's session. That is a speed bump, not a boundary: your session holds the owner's credentials, so never write that object yourself, by this command or any other:
+**A managed project's deletes.** A managed project records, in one object at its runs bucket's root, the addresses whose deletes and replacements its owner approves. Its writer is the owner's command, run in their own terminal, not through the agent; it refuses an agent's session. That is a speed bump, not a boundary: your session holds the owner's credentials, so never write that object yourself, by this command or any other:
 
 ```bash user-runs
 # one address, copied whole
@@ -91,9 +91,9 @@ One workflow per buildable unit, all on the one Fugaro base. Write the runtimes 
 
 ## 5. Decisions, one topic at a time
 
-Ask, with your evidence and a recommended answer for each, **one topic at a time** (use your question tool if you have one): wait for the answer, apply it, then ask the next. Never default one silently. `reference/decisions.md` has each topic, its options and what to recommend:
+Ask, with your evidence and a recommended answer for each, **one topic at a time** (use your question tool if you have one): wait for the answer, apply it, then ask the next. Never default silently. `reference/decisions.md` has each topic, its options and what to recommend:
 1. On a GitHub repository only, the GitHub App: its ID (a number, not a secret) and whether it is named `<yourname>-fugaro`, has the four permissions and is installed on this repository. Asked now because the final plan needs the ID; skipped, with a one-line confirmation, when `fugaro doctor --json` or an earlier plan already shows one.
-2. `agent.auth`: `oauth`, `api-key`, `vertex` or `cascade`. It decides which secrets exist and which caps can apply. Recommend the credential the evidence supports; `vertex` only once the facts are verified.
+2. `agent.auth`: `oauth`, `api-key`, `vertex` or `cascade`. It decides which secrets exist and which caps apply. Recommend the credential the evidence supports; `vertex` only once the facts are verified.
 3. `agent.models`: coder, reviewer and background model IDs, read from `fugaro budget prices`, never from memory. Ask open-ended first ("which models do you want for the coder and the reviewer?"), saying in one sentence what each role is: the coder writes the change, the reviewer checks it, background is a small model for housekeeping. Recommend one only after the user answers or asks, never guessed from the repository's domain, and never the biggest by default.
 4. Caps and `budget`: numbers only from the user.
 5. `git.pr.reviewers` and `labels`.

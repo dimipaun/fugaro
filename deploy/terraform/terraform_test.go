@@ -3708,18 +3708,23 @@ var resourceCountSentence = regexp.MustCompile(`keeps\s+the\s+(\w+)\s+resources\
 var numberWords = map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
 	"six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
 
-// TestModelSecretEnvsMatchTheCredentialsService pins the three literals in
-// modules/workflow/sa.tf — the two variable names and the provider-key prefix
-// — to internal/config, and the drop they drive to the opt-in. Terraform
-// cannot ask Go, so the module spells the names out; this test is what keeps
-// the two spellings one rule (the TestLauncherConditionPreconditionMatchesGo
+// TestServiceHeldSecretsMatchTheCredentialsService pins the four literals in
+// modules/workflow/sa.tf — the two model-credential variable names, the
+// provider-key prefix and the one service-held logical name — to
+// internal/config, and the drop they drive to the opt-in. Terraform cannot ask
+// Go, so the module spells the names out; this test is what keeps the two
+// spellings one rule (the TestLauncherConditionPreconditionMatchesGo
 // precedent).
 //
-// The mutation is either list: rename a reserved key in Go and the module's
-// literal keeps dropping the accessor of a variable no job has, while the
-// renamed one keeps it — the job's account then reads a model credential the
-// service was supposed to be the only holder of.
-func TestModelSecretEnvsMatchTheCredentialsService(t *testing.T) {
+// The mutation is any one of the lists: rename a reserved key in Go and the
+// module's literal keeps dropping the accessor of a variable no job has, while
+// the renamed one keeps it — the job's account then reads a credential the
+// service was supposed to be the only holder of. The App key's clause (C2.3)
+// is the one the model lists cannot cover: it is a reserved logical name, not
+// a variable, so dropping it needs its own list, and a module that spells it
+// wrong leaves the job's account with the private key of the installation's
+// GitHub App.
+func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	const path = "gcp/modules/workflow/sa.tf"
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -3727,41 +3732,59 @@ func TestModelSecretEnvsMatchTheCredentialsService(t *testing.T) {
 	}
 	code := stripComments(string(b))
 
-	m := regexp.MustCompile(`model_secret_env_names\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(code)
-	if m == nil {
-		t.Fatalf("%s declares no model_secret_env_names list", path)
+	// quotedList is the strings in the list literal the pattern captures.
+	quotedList := func(pattern, what string) []string {
+		t.Helper()
+		m := regexp.MustCompile(pattern).FindStringSubmatch(code)
+		if m == nil {
+			t.Fatalf("%s declares no %s list", path, what)
+		}
+		var got []string
+		for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+			got = append(got, q[1])
+		}
+		slices.Sort(got)
+		return got
 	}
-	var got []string
-	for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
-		got = append(got, q[1])
+	equal := func(what string, got, want []string, goName string) {
+		t.Helper()
+		w := slices.Clone(want)
+		slices.Sort(w)
+		if !slices.Equal(got, w) {
+			t.Errorf("%s: %s = %v, config.%s = %v", path, what, got, goName, want)
+		}
 	}
-	want := slices.Clone(config.ModelSecretEnvs)
-	slices.Sort(got)
-	slices.Sort(want)
-	if !slices.Equal(got, want) {
-		t.Errorf("%s: model_secret_env_names = %v, config.ModelSecretEnvs = %v", path, got, want)
-	}
+
+	equal("model_secret_env_names",
+		quotedList(`model_secret_env_names\s*=\s*\[([^\]]*)\]`, "model_secret_env_names"),
+		config.ModelSecretEnvs, "ModelSecretEnvs")
+	equal("service_held_secret_names",
+		quotedList(`service_held_secret_names\s*=\s*\[([^\]]*)\]`, "service_held_secret_names"),
+		config.ServiceHeldSecretNames, "ServiceHeldSecretNames")
 
 	p := regexp.MustCompile(`model_secret_env_prefix\s*=\s*"([^"]*)"`).FindStringSubmatch(code)
 	if p == nil || p[1] != config.ProviderKeyEnvPrefix {
 		t.Errorf("%s: model_secret_env_prefix = %v, config.ProviderKeyEnvPrefix = %q", path, p, config.ProviderKeyEnvPrefix)
 	}
 
-	// And the drop itself, clause by clause: an env is a model credential
-	// exactly when it is one of the names OR it carries the provider-key
-	// prefix. Pinning the whole expression is the point — the two halves are
-	// what the review's mutation m1 removed, and with the prefix clause gone
-	// every FUGARO_PROVIDER_KEY_* secret keeps its job accessor, which is the
-	// one thing the opt-in exists to take away.
-	if !strings.Contains(squash(code), "env => contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix)") {
-		t.Errorf("%s: is_model_secret_env must be `contains(model_secret_env_names, env) || startswith(env, model_secret_env_prefix)`; either clause alone leaves a model credential's accessor with the job (review m1):\n%s", path, code)
+	// And the drop itself, clause by clause: a mount is a credential the
+	// service holds exactly when its VARIABLE is one of the model names, OR
+	// carries the provider-key prefix, OR its LOGICAL NAME is one the service
+	// holds. Pinning the whole expression is the point — the two model halves
+	// are what the review's mutation m1 removed, and with the prefix clause
+	// gone every FUGARO_PROVIDER_KEY_* secret keeps its job accessor, which is
+	// the one thing the opt-in exists to take away; the name clause (C2.3) is
+	// the App key, whose variable is a reserved name the model lists must never
+	// grow to cover (D145 keeps Bitbucket's token with the job, F7).
+	if !strings.Contains(squash(code), "env => contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix) || contains(local.service_held_secret_names, logical)") {
+		t.Errorf("%s: is_service_held must be `contains(model_secret_env_names, env) || startswith(env, model_secret_env_prefix) || contains(service_held_secret_names, logical)`; a missing clause leaves that credential's accessor with the job (review m1, C2.3):\n%s", path, code)
 	}
 
 	// The drop is gated on the opt-in, in the same expression that reads the
 	// names: with credentials_service null the set is the workflow's own
 	// secret_env and nothing changes (D147).
-	if !strings.Contains(squash(code), "logical if var.credentials_service == null || !local.is_model_secret_env[env]") {
-		t.Errorf("%s: the job's secret set must be the workflow's own secret_env while the credentials service is off, and drop the model credentials only when it is on:\n%s", path, code)
+	if !strings.Contains(squash(code), "logical if var.credentials_service == null || !local.is_service_held[env]") {
+		t.Errorf("%s: the job's secret set must be the workflow's own secret_env while the credentials service is off, and drop the credentials it holds only when it is on:\n%s", path, code)
 	}
 
 	// And the grant the job gains: one invoker grant, on the one service the
