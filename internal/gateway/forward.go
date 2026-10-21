@@ -704,15 +704,24 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	} else {
 		copyResponseHeaders(w.Header(), resp.Header, decoded)
 	}
-	if rt.provider != nil || s.o.Upstream.Kind == KindOAuth {
+	if rt.provider != nil || s.o.Upstream.Kind == KindOAuth || s.o.Upstream.Kind == KindService {
 		// Whatever else comes back is scrubbed of the credential that was
-		// sent: a provider's key, or the tier-A subscription token (which
-		// an error body may echo). The credential is the one in the
-		// request, read at request time.
+		// sent: a provider's key, the tier-A subscription token, or the
+		// service call's job ID token (which an error body may echo). The
+		// credential is the one in the request, read at request time.
 		key := keyFrom(up.Header)
 		redactHeaders(w.Header(), key)
 		rw = newRedactWriter(w, key)
 		out = rw
+		if s.o.Upstream.Kind == KindService {
+			// The run's own identity travels on the service call as well
+			// (HeaderRunIdentity), and it is a Firebase token for this run:
+			// it is dropped from an answer that echoes it, exactly as the
+			// bearer credential is. Its body is not scanned for it -- the
+			// service's own answers are never relayed (serviceAnswer) and
+			// the model never receives this header.
+			redactHeaders(w.Header(), up.Header.Get(HeaderRunIdentity))
+		}
 	}
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)
@@ -1202,9 +1211,9 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 	copyResponseHeaders(w.Header(), resp.Header, decoded)
 	var out io.Writer = w
 	var rw *redactWriter
-	if s.o.Upstream.Kind == KindOAuth {
-		// Tier A (oauth.go): a token count goes to Anthropic with the
-		// subscription credential too, and this path copies the answer
+	if s.o.Upstream.Kind == KindOAuth || s.o.Upstream.Kind == KindService {
+		// Tier A (oauth.go), and a service call (C1.15): a token count goes
+		// upstream with a credential too, and this path copies the answer
 		// through unread -- so an answer that echoes the credential is
 		// scrubbed here exactly as a messages call's is. Without this a
 		// count_tokens call would hand the token to the agent.
@@ -1212,6 +1221,11 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 		redactHeaders(w.Header(), key)
 		rw = newRedactWriter(w, key)
 		out = rw
+		if s.o.Upstream.Kind == KindService {
+			// The run's identity is on this call too (HeaderRunIdentity),
+			// and is dropped from an answer that echoes it, as in forward.
+			redactHeaders(w.Header(), up.Header.Get(HeaderRunIdentity))
+		}
 	}
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)

@@ -416,37 +416,46 @@ type serviceTried struct {
 }
 
 // readServiceRefusal reads a non-2xx answer as the service's own refusal.
-// ok is false when the answer is not one — an answer that is not JSON, one
-// that names no error, or anything after the JSON value (the contract decodes
-// strictly, Convention 6) — which is how a *model* error the service relayed
-// is told from the service's own answer: it is relayed to the agent, and a
-// refusal never is.
+// ok is false when the answer is not one — a 2xx, or a body that does not say
+// it is a refusal (claimsRefusal) — which is how a *model* error the service
+// relayed is told from the service's own answer: that one is relayed to the
+// agent as it always was, and a refusal never is.
 //
-// An error means the answer claims to be a refusal and breaks the rules the
-// contract writes refusals by: the caller must not act on it as one, and must
-// not relay it either. The validating half is the contract's own
-// (validateTriedList, ReadWireError, ReadExhaustedUntil), mirrored here; the
-// two are held together by TestServiceContractMirrorsCredsvc.
+// An error means the answer says it is a refusal and is not one this contract
+// could have written: a body over the contract's bound, one that does not
+// decode strictly, one with something after its JSON value, a message past
+// its bound, or a tried list that breaks its rules. The caller must not act
+// on it as a refusal — and must not relay it either, which is the whole point
+// of asking here rather than at the relay: a refusal names the project's
+// credentials, and a body that claims to be one is never put in front of the
+// agent, whether or not this release can read it.
+//
+// The validating half is the contract's own (validateTriedList,
+// ReadWireError, ReadExhaustedUntil), mirrored here; the two are held
+// together by TestServiceContractMirrorsCredsvc.
 func readServiceRefusal(status int, body []byte) (serviceRefusal, bool, error) {
 	if status/100 == 2 {
 		return serviceRefusal{}, false, nil
 	}
-	if len(body) >= maxServiceRefusalBytes {
-		// Longer than any refusal this contract can write: not one, and not
-		// read as one.
+	if !claimsRefusal(body) {
 		return serviceRefusal{}, false, nil
+	}
+	// From here the body says it is this service's own refusal: it is acted
+	// on as one or refused as one, and never relayed to the agent -- a body
+	// this contract could not have written names the project's credentials,
+	// and the agent has no business seeing the set of them (D143).
+	if len(body) >= maxServiceRefusalBytes {
+		// Longer than any refusal this contract can write.
+		return serviceRefusal{}, true, errors.New("the refusal is longer than this contract's")
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	var e serviceRefusal
 	if dec.Decode(&e) != nil {
-		return serviceRefusal{}, false, nil
+		return serviceRefusal{}, true, errors.New("the refusal isn't a body this contract could have written")
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return serviceRefusal{}, false, nil
-	}
-	if e.Error == "" {
-		return serviceRefusal{}, false, nil
+		return serviceRefusal{}, true, errors.New("the refusal carries something after its JSON value")
 	}
 	if len(e.Message) > maxRefusalMessageBytes {
 		return serviceRefusal{}, true, errors.New("the refusal's message is longer than this contract's")
@@ -455,6 +464,32 @@ func readServiceRefusal(status int, body []byte) (serviceRefusal, bool, error) {
 		return serviceRefusal{}, true, err
 	}
 	return e, true, nil
+}
+
+// claimsRefusal reports whether a body says it is this service's own refusal:
+// a JSON object whose "error" member is a non-empty string, and which is not
+// the model API's own error envelope — {"type":"error","error":{...}} — which
+// the service relays from the credential's upstream and which is another
+// writer's body.
+//
+// It is deliberately loose where the reader above is strict. The question
+// here is not "can this release read the refusal" but "is this the service's
+// own text": a refusal this release cannot read halts the run rather than
+// being relayed (readServiceRefusal's error), so a field a later service adds
+// to a refusal body cannot put a sentence naming the project's credentials in
+// front of the agent. No error is returned and no part of the body is echoed.
+func claimsRefusal(body []byte) bool {
+	var probe struct {
+		Type  string          `json:"type"`
+		Error json.RawMessage `json:"error"`
+	}
+	// The first JSON value alone: a body with something after it still says
+	// what it is, and the strict reader below is what refuses the trailer.
+	if json.NewDecoder(bytes.NewReader(body)).Decode(&probe) != nil || probe.Type == "error" {
+		return false
+	}
+	var typ string
+	return json.Unmarshal(probe.Error, &typ) == nil && typ != ""
 }
 
 // validTriedList holds a tried list to the contract's rules: the count bound
@@ -520,11 +555,11 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 			err = errors.New("the answer carries no tier")
 		}
 		if err != nil {
-			return s.haltService(stateDetailUnreadable), true
+			return s.haltService(w, stateDetailUnreadable), true
 		}
 		sw, err := switchValue(resp.Header)
 		if err != nil {
-			return s.haltService(stateDetailUnreadable), true
+			return s.haltService(w, stateDetailUnreadable), true
 		}
 		s.answer(ServiceAnswer{Tier: tier, Credential: name, Switch: sw})
 		return resp.StatusCode, false
@@ -537,20 +572,20 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 	if rerr != nil {
 		// A body that broke mid-read, before any of it reached the agent:
 		// not a refusal this code can read, and not one to relay.
-		return s.haltService(stateDetailUnreadable), true
+		return s.haltService(w, stateDetailUnreadable), true
 	}
 	e, ok, err := readServiceRefusal(resp.StatusCode, head)
 	if !ok {
 		return resp.StatusCode, false // a model error the service relayed
 	}
 	if err != nil {
-		return s.haltService(stateDetailUnreadable), true
+		return s.haltService(w, stateDetailUnreadable), true
 	}
 	switch e.Error {
 	case ErrorExhaustedUntil:
 		ex, err := exhaustedAnswer(e)
 		if err != nil {
-			return s.haltService(stateDetailUnreadable), true
+			return s.haltService(w, stateDetailUnreadable), true
 		}
 		// The wait is not a halt: the runner decides what to do about it
 		// (C1.17), and until it does the call is answered retryably and
@@ -561,15 +596,15 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 			"fugaro: the credentials service has no credential available before "+ex.ResetAt.UTC().Format(time.RFC3339))
 		return http.StatusServiceUnavailable, true
 	case ErrorStateUnavailable:
-		return s.haltService(refusalDetail(e.Error)), true
+		return s.haltService(w, refusalDetail(e.Error)), true
 	case ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity:
-		return s.haltService(refusalDetail(e.Error)), true
+		return s.haltService(w, refusalDetail(e.Error)), true
 	}
 	// A refusal whose type this release does not know. It is the service's
 	// own answer and is not relayed, and the call cannot be accounted for
 	// either: stop rather than improvise (D143's posture). The type is from
 	// a closed set the service writes, and is not echoed into the detail.
-	return s.haltService(stateDetailUnreadable), true
+	return s.haltService(w, stateDetailUnreadable), true
 }
 
 // replayBody is a response body whose first bytes were read and put back.
@@ -604,35 +639,33 @@ func refusalDetail(typ string) string {
 	return stateDetailUnreadable
 }
 
-// haltService records a halt the service's own answer forces, and returns the
-// status the agent's answer is written with. The first halt of any kind
-// stands, and a halt the gateway decided itself does not cancel the calls in
-// flight, exactly as a run-cap halt does not: each of them settles by its own
-// answer.
-func (s *Server) haltService(detail string) int {
+// haltService records a halt the service's own answer forces, writes the
+// refusal the agent's call is answered with -- the first halt's message, which
+// is this one's unless a halt came first -- and returns its status. The first
+// halt of any kind stands, and a halt the gateway decided itself does not
+// cancel the calls in flight, exactly as a run-cap halt does not: each of them
+// settles by its own answer.
+func (s *Server) haltService(w http.ResponseWriter, detail string) int {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.halt == nil {
 		h := Halt{Reason: ReasonBudgetUnavailable, Scope: "run", Detail: detail, At: time.Now().UTC()}
 		s.haltLocked(h, "fugaro: budget halted: "+haltText(h), s.stageNameLocked(), true)
 	}
+	msg := s.haltMsg
+	s.mu.Unlock()
+	writeHalt(w, msg)
 	return http.StatusForbidden
 }
 
 // serviceUnreachable halts a run whose gateway could not reach the service at
-// all (D143), writing the halt the agent gets and reporting whether it
-// halted: an external halt or a cancelled request came first, and this one
-// is not the cause.
+// all (D143), answering the call with the halt, and reports whether this is
+// the thing that stopped it: an external halt or a cancelled request came
+// first, and then the agent's answer is the one that cause wrote.
 func (s *Server) serviceUnreachable(w http.ResponseWriter, base, req context.Context) (halted bool) {
 	if req.Err() != nil || base.Err() != nil {
 		return false
 	}
-	s.haltService(stateDetailUnreachable)
-	msg, ok := s.haltedMessage()
-	if !ok {
-		return false
-	}
-	writeHalt(w, msg)
+	s.haltService(w, stateDetailUnreachable)
 	return true
 }
 
