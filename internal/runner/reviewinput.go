@@ -14,10 +14,10 @@ import (
 // reviewer that reads the diff itself can reach for a changed PNG with its
 // Read tool, and Claude Code puts what it read into the next Messages body
 // as a base64 image block. The budget gateway refuses an image for a model
-// with no image rate (internal/gateway/forward.go, "images aren't priced"),
-// and a model priced by the project's model_prices has no image rate to give
-// — an override carries rates per million tokens and has no image field at
-// all (internal/pricing/overrides.go). Run 20261021-002046-31cc ended
+// with no image rate (internal/gateway/forward.go's check), and a model
+// priced by the project's model_prices has no image rate to give — an
+// override carries rates per million tokens and has no image field at all
+// (internal/pricing/overrides.go). Run 20261021-002046-31cc ended
 // exactly there: its pull request added two PNGs under mobile/assets/, the
 // reviewer read one, and the run failed at its review stage with
 // `stage review: images aren't priced for model deepseek/deepseek-v4.1-flash`,
