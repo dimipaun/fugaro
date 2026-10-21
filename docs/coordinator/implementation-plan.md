@@ -196,6 +196,13 @@ touches no file outside `docs/coordinator/` and its own guard, so they are run t
 
 **Commit.** `cli: pin the coordinator's plan, its parts and its new decisions`
 
+**Status: written.** The guard this part describes is in the tree already — it landed in the
+same change as the plan, because the pins that hold the index's status line and its numbers
+table would otherwise have been left red while this document sat in review. It is a part here
+for the reason every other part is: the plan has to account for the work the plan itself needed,
+and it would be dishonest to list eight future parts and quietly leave out the one that was
+already done.
+
 ---
 
 ### P1 — The view, computed: the shape, and the one-repository join
@@ -644,8 +651,12 @@ Each check below is **owner-run, on a real project, by the owner** unless it is 
   alternative and its cost.
 - **Check numbers: none claimed**, for the reason in §9. The part that ships a check takes the
   number free at its own merge, which is the register's rule and not this plan's.
-- **No Go test exists in this work yet**: this plan is docs-only, and **P0** is the first part
-  that adds code — to the folder's own guard.
+- **No Go code exists in this work yet.** The only Go it has added is the folder's own guard —
+  three new tests and two rewritten pins in `internal/cli/docs_coordinator_test.go` — and that
+  landed **with this plan rather than after it**, because the pins holding the index's status
+  line and its numbers table cannot be left red while the plan is in review. P0 is written into
+  this document anyway, because a plan whose parts do not account for the work the plan itself
+  needed is a plan that starts with a lie of omission.
 
 ## 11. The owner approval gate
 
