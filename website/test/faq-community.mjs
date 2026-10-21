@@ -538,6 +538,112 @@ test('the FAQ links the security page and the caps guide rather than summarizing
   assert.match(caps, /href="\/caps-and-costs\/"/, "the FAQ's cost answer does not link the caps-and-costs page")
 })
 
+// ---- the bold look (the owner's approved boards of 2026-10-20) ----------------------------
+
+test('the FAQ wears the site’s bold look, in the shapes the site writes once', () => {
+  // The redesign gives the page the shapes `base.css` §2c writes for the whole site rather
+  // than a set of its own: the display scale's headline with the accent's gradient on its last
+  // word, and one card per answer. A page that drew its own copy of either would be the second
+  // definition of a shape the site has, which is what the owner's "one look" is about — and a
+  // page that quietly lost one would look like the site it was before. So the three are read
+  // off the built page, and the headline's words are held to the string they were.
+  const page = builtPage('faq')
+
+  const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(page)
+  assert.ok(h1, 'the built FAQ carries no `h1`')
+  assert.match(
+    h1[0],
+    /\bdisplay-xl\b/,
+    'the FAQ’s headline is not set in the site’s display scale (`base.css`’s `.display-xl`), which is the oversized heavy line every redesigned page opens with',
+  )
+  assert.match(
+    h1[1],
+    /<span[^>]*\bclass="gradient-text"[^>]*>[^<]+<\/span>/,
+    'the FAQ’s headline carries no word in the accent’s gradient, which is the emphasis the boards put on part of a headline',
+  )
+  assert.equal(
+    pageText(h1[1]),
+    'Frequently asked questions',
+    'the FAQ’s headline is not the heading it was: the redesign is a change of styling and layout, and not a word of the page moved with it',
+  )
+
+  // Each answer's opening tag, read for the two things it carries rather than for the order
+  // they are written in: which answer it is, and whether it is drawn as a card. Astro writes
+  // the attributes in the order the source has them — and adds one of its own — so an edit
+  // that moved `id` above `class` is not a defect and must not read as one.
+  const answers = [...page.matchAll(/<article\b[^>]*>/g)].map((m) => ({
+    id: /\bid="([^"]+)"/.exec(m[0])?.[1],
+    card: /\bclass="[^"]*\bcard\b[^"]*"/.test(m[0]),
+  }))
+  assert.ok(answers.length >= 5, `the FAQ renders ${answers.length} answers, which is too few for this check to mean anything`)
+  assert.ok(
+    answers.every((answer) => answer.id !== undefined),
+    'an answer on the FAQ carries no `id`, which is the anchor the page’s own source links and the entry `website/data/faq.yaml` names it by',
+  )
+  assert.deepEqual(
+    answers.filter((answer) => !answer.card).map((answer) => answer.id),
+    [],
+    'these answers are not drawn as the site’s card (`base.css`’s `.card`): the redesign lays each answer on one, so the six read as a set a reader scans rather than as a document',
+  )
+
+  const section = element(page, 'comparison')
+  assert.match(
+    section,
+    /class="comparison-panel"/,
+    'the FAQ’s comparison section is not drawn in a panel, which is the box every raised block of the redesigned site stands in',
+  )
+})
+
+/**
+ * The narrowest column a page of this site is read in: the 320 px viewport the checklist
+ * measures the chrome at (`docs/gcp-live-checklist.md`), less `main`'s own gutter — `base.css`
+ * gives the content container `--space-sm`, which is 1rem, on each side.
+ */
+const NARROWEST_COLUMN_PX = 320 - 2 * 16
+
+/** A CSS length in the two units a track can demand one in, in px; null for anything else. */
+function trackLengthInPx(value) {
+  const m = /^([\d.]+)(rem|px)$/.exec(value)
+  if (!m) return null
+  return Number(m[1]) * (m[2] === 'rem' ? 16 : 1)
+}
+
+test('the FAQ’s answers grid cannot be wider than the column it sits in', () => {
+  // The answers are the page's one grid, and a `grid-template-columns` that names a bare
+  // length is a demand the column has to meet: a fixed 20rem track is 320 px whatever the
+  // column is, and at the narrowest viewport the site is read at the column is 288 px — so
+  // the cards would run off the right of the page and the document would scroll sideways at
+  // the one width there is least room for it. `min(<length>, 100%)` is the form that yields
+  // to the column; `0`, `auto`, a percentage and an `fr` cannot exceed it; and this reads the
+  // page's own inlined stylesheet, which is the CSS the artifact a reader gets carries.
+  const page = builtPage('faq')
+  const css = [...page.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
+
+  const tracks = [...css.matchAll(/grid-template-columns\s*:\s*([^;}]+)/g)].map((m) => m[1].trim())
+  assert.ok(
+    tracks.length > 0,
+    'the built FAQ names no `grid-template-columns` at all, so this case proved nothing: the answers’ grid is the one this page has',
+  )
+
+  const tooWide = []
+  for (const track of tracks) {
+    // The values that yield come out first — `min(20rem, 100%)`, `var(…)`, `clamp(…)` — so
+    // what is left is the lengths the declaration demands outright. `minmax(…)` is left in
+    // place on purpose: it is the demand, and the lookbehind is what keeps `minmax(` from
+    // being read as a call to `max(`.
+    const demanded = track.replace(/(?<![A-Za-z-])(?:min|max|clamp|var)\([^()]*\)/g, ' ')
+    for (const m of demanded.matchAll(/(?:^|[\s,(])([\d.]+(?:rem|px))/g)) {
+      const px = trackLengthInPx(m[1])
+      if (px !== null && px > NARROWEST_COLUMN_PX) tooWide.push(`${m[1]} in “${track}”`)
+    }
+  }
+  assert.deepEqual(
+    tooWide,
+    [],
+    `the FAQ asks for a grid track wider than the ${NARROWEST_COLUMN_PX} px the narrowest column has: ${tooWide.join(', ')} — write the minimum as \`min(<length>, 100%)\` so the track takes the column where the column is narrower than the length, which is the phone’s single column`,
+  )
+})
+
 test('neither page restates README.md, CONTRIBUTING.md or SECURITY.md', () => {
   const pages = [
     { name: 'website/src/pages/faq.astro', text: flatten(pageText(builtPage('faq'))) },
