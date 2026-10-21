@@ -76,6 +76,41 @@ func TestProjectJobTftestTitlesAreTheOnesInternalInfraWrites(t *testing.T) {
 	}
 }
 
+// TestProjectJobTftestAppKeyNameIsTheOneInternalInfraWrites: the tftest run
+// shared_job_mounting_the_app_key_keeps_the_accessor asserts the module's
+// secretAccessor member by the App key's project-wide container name, exactly
+// like the job names and condition titles above — and a name spelled here that
+// internal/infra never writes would make that assertion consistent with itself
+// and with nothing else. The installation's secrets map is where that name
+// comes from (internal/infra/testdata/installation-accounts.tfvars.json's
+// "github-app-key" entry), and internal/infra builds it with
+// gcp.ProjectSecretID from the Fugaro project name.
+//
+// Mutation (run, restore): change one hex digit of the name in the tftest and
+// this fails; change internal/infra's naming and the tftest's run fails at
+// terraform test time, since the module would grant the name the map holds
+// while the run asserts the literal.
+func TestProjectJobTftestAppKeyNameIsTheOneInternalInfraWrites(t *testing.T) {
+	const path = "gcp/roots/installation/tests/project_job.tftest.hcl"
+	data, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	// The run's own secrets map, so this pairs the literal with the run that
+	// asserts it rather than with any other name in the file.
+	re := regexp.MustCompile(`github-app-key\s*=\s*"([^"]+)"`)
+	matches := re.FindAllStringSubmatch(string(data), -1)
+	if len(matches) == 0 {
+		t.Fatalf("%s spells no github-app-key container: the run this test checks is gone or reworded, and the review's [low] item — the shared job account's retention, pinned by a run and not only by a plan paragraph — would be unguarded again", path)
+	}
+	want := gcp.ProjectSecretID("aurora", config.GitHubAppKeySecret)
+	for _, m := range matches {
+		if m[1] != want {
+			t.Errorf("%s: the App key's project-wide container is %q, want %q (gcp.ProjectSecretID for the tftest's fugaro_project and config.GitHubAppKeySecret): the installation's secrets map holds the latter, so a member asserted by the former is a grant the plan would never create", path, m[1], want)
+		}
+	}
+}
+
 // The embedded tree is what fugaro init writes into its workdir, so every
 // root, module and lock file it needs must be in it. Each task that adds a
 // root or module adds its paths here.
