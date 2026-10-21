@@ -925,6 +925,51 @@ func TestAHandWrittenNodeIsNotOneToTakeOver(t *testing.T) {
 	}
 }
 
+// TestReadRefusesAHandWrittenNode: Read is the inspection path, and the one a
+// caller reaches for when it wants to know who holds a seat. It answers the
+// same thing Take does about a node that is not a record this code wrote —
+// an error, not a Record that looks valid because nobody checked it. The
+// promise is the doc comment's, and this is what holds the two together.
+//
+// Hand mutation this fails on: returning the node from Read without calling
+// Record.valid (a generation 0 node comes back as a Record and a nil error,
+// and a caller that trusts it acts on a lease the rules would have refused).
+func TestReadRefusesAHandWrittenNode(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	db := newClient(t, f)
+	path := Path("aurora", "r1")
+
+	// Absent: no record, no error, found false.
+	if rec, found, err := Read(ctx(t), db, path); found || err != nil {
+		t.Errorf("Read of an absent node = (%+v, %v, %v), want found false and no error", rec, found, err)
+	}
+
+	// A node written through IAM: refused, like Take refuses it.
+	for _, bad := range []map[string]any{
+		{"holder": "someone", "holder_uid": "uid-someone", "generation": 0, "renewed_at": 1},
+		{"holder": "someone", "holder_uid": "uid-someone", "generation": 3, "renewed_at": 0},
+	} {
+		f.Set(path, bad)
+		rec, found, err := Read(ctx(t), db, path)
+		if err == nil {
+			t.Errorf("Read of %v = (%+v, %v, nil), want an error: it is not a record this code wrote", bad, rec, found)
+		}
+	}
+
+	// A record this code wrote comes back as one, so the check above is not
+	// Read refusing everything. It is a node of its own: the two above were
+	// left in place, and a hand-written one is not one to take over either.
+	good := Path("aurora", "r2")
+	held, err := Take(ctx(t), db, good, holder("dimi (laptop)", "uid-local"), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, found, err := Read(ctx(t), db, good)
+	if err != nil || !found || rec != held {
+		t.Errorf("Read of a lease this code wrote = (%+v, %v, %v), want the record Take returned", rec, found, err)
+	}
+}
+
 // TestPathIsEscapedLikeEveryOtherPath: a slug or a job id carrying the
 // characters RTDB forbids in a key must not reach the path unescaped, and an
 // empty one must not collapse the path onto another node.
@@ -992,12 +1037,16 @@ func TestTheRulesCarryTheLeaseAndTheGraceWeApply(t *testing.T) {
 		t.Errorf("the generated rules do not carry the grace (%s ms, DefaultGrace): the database would let a takeover of a fresh lease through, or refuse one of a stale lease", graceMs)
 	}
 	// The transition is the node's `.write`, and every field's `.validate` is a
-	// shape check. It has to be: the engine consults a `.validate` for the
-	// location written and below it, so a `.validate` on the lease node is
-	// never read for a write to `lease/holder_uid` — a seat taken field by
-	// field by whoever asks. A `.write` is read for the location written *and
-	// every ancestor*, which is what makes one predicate the gate for the whole
-	// record.
+	// shape check. It has to be: the engine reads a `.validate` at the location
+	// written, at its ancestors and at the children of the location written —
+	// but not at a sibling of it, so a transition on the `generation` child is
+	// never read for a write to `lease/holder_uid`, and the seat is taken field
+	// by field by whoever asks. A `.write` is read for the location written
+	// *and every ancestor*, which is what makes one predicate the gate for the
+	// whole record. (Both halves measured on the emulator: the lease node's own
+	// `.validate` is load-bearing for the writes below it — see
+	// TestLeaseDeletingARequiredFieldIsRefused — while the `generation` child's
+	// is not.)
 	write, _ := leaseRule[".write"].(string)
 	if write == "" {
 		t.Fatal("the lease node has no .write: the transition would have to be on a child's .validate, which a write to that child's sibling never consults")

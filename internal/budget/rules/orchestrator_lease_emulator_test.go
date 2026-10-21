@@ -22,15 +22,26 @@ package rules
 // take the seat by writing the node directly. This is the plan's U3: the race
 // the protocol implies is made deterministic here, on the real rules engine.
 //
-// Two things about the engine decide how the document is written, and both were
-// measured here rather than assumed (TestLeaseFieldByFieldWritesAreRefused and
-// its neighbours are what measure them):
+// Three things about the engine decide how the document is written, and all
+// three were measured here rather than assumed. The cases that measure them
+// are TestLeaseFieldByFieldWritesAreRefused,
+// TestLeaseDeletingARequiredFieldIsRefused and
+// TestLeaseTheLeasePackageHoldsItsOwnSeat.
 //
-//   - A `.validate` is consulted for the location written and below it, never
-//     for an ancestor — so a transition on the lease node's `.validate` is not
-//     read for a write to `lease/holder_uid`. A `.write` *is* read for the
-//     location written and every ancestor, with data/newData at the ancestor,
-//     which is why the transition is the lease node's `.write`.
+//   - A `.write` is read for the location written *and every ancestor*, with
+//     data/newData at the ancestor, which is why the transition is the lease
+//     node's `.write`.
+//   - A `.validate` is read for the location written, its ancestors and the
+//     children of the location written — but not for a node that is none of
+//     those. So the lease node's `.validate` *is* consulted for a write to
+//     `lease/holder_uid` (it is an ancestor of the written location) and its
+//     hasChildren clause is load-bearing: it is what refuses a write that
+//     deletes a required field, which the `.write` predicate alone allows for
+//     the holder. The transition used to sit on the `generation` child, and
+//     that is why it was bypassable — a sibling write never reaches it.
+//     (Measured: with the lease node's `.validate` replaced by `false`, the
+//     holder's own PUT of `lease/renewed_at` answers 401, though the `.write`
+//     predicate allows it.)
 //   - A grant cascades down: a `.write: false` on a child does not withdraw an
 //     ancestor's grant. What refuses a field-by-field write is the ancestor's
 //     predicate, not a denial below it.
@@ -39,14 +50,22 @@ package rules
 // leaseWrite, or the `NEW == now` bound on the stamp, and watch the case that
 // names it fail.
 //
-// One boundary is not reachable through the harness: the exactly-at-the-grace
-// takeover. The emulator stamps the Date header with one-second resolution and
-// internal/rtdb's ServerNow projects it forward by the real time elapsed, so the
-// client's reading is always a little past the instant a test asks the emulator
-// for. The boundary itself is pinned in internal/lease
-// (TestTakeoverIsRefusedWhileTheLeaseIsFresh, through a database whose clock is
-// fixed) against the same clause of this template, character for character
-// (TestTheRulesCarryTheLeaseAndTheGraceWeApply).
+// The emulator sends no Date header at all (measured: `Date` is empty on every
+// response), so internal/rtdb's ServerNow — the Date header of the last
+// response, projected forward — is false against it, and internal/lease
+// refuses to judge a lease without the database's clock (D3, ErrNoClock). Two
+// things follow, and both are stated rather than worked around quietly:
+//
+//   - The exactly-at-the-grace takeover cannot be driven through the real
+//     client here, because the client has no reading of this database's clock.
+//     The boundary is pinned in internal/lease instead
+//     (TestTakeoverIsRefusedWhileTheLeaseIsFresh, through a database whose
+//     clock is fixed) against the same clause of this template, character for
+//     character (TestTheRulesCarryTheLeaseAndTheGraceWeApply).
+//   - A case that drives internal/lease itself has to supply the clock the
+//     emulator will not: emuClock, below, answers ServerNow from the
+//     database's own resolved server value. That is still the database's
+//     clock and not this process's, which is the whole of what D3 asks.
 
 import (
 	"context"
@@ -57,6 +76,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/lease"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -472,6 +492,54 @@ func TestLeaseRecordShapeIsTheRulesOwn(t *testing.T) {
 	mustTake(h, alice, leasePath, ok)
 }
 
+// TestLeaseDeletingARequiredFieldIsRefused: the case the lease node's
+// `.validate` exists for, and the one that shows it is load-bearing rather than
+// decorative. The `.write` predicate allows the recorded holder's write to
+// `renewed_at` alone — that write is the heartbeat — so nothing in the
+// transition refuses a *deletion* of it, or of `holder_uid`, or of
+// `generation`. What refuses it is the hasChildren clause on the lease node's
+// own `.validate`, which the engine does consult for a write below the node
+// (measured: with that clause replaced by `true`, every write below answers
+// 200). Strip a required field and the next reader has a node it cannot judge:
+// a lease with no stamp is one nobody can call stale, and a lease with no
+// generation is one whose fencing token has restarted.
+//
+// The node is written first as this code writes it, so the holder is the
+// recorded holder and the `.write` predicate passes: the refusal below is the
+// shape clause and nothing else.
+//
+// Hand mutation this fails on: dropping the hasChildren clause from the lease
+// node's `.validate` (or moving it onto a child, where a write to a sibling
+// never reaches it) — the holder then deletes `renewed_at` and the lease it
+// leaves is one no reader can age.
+func TestLeaseDeletingARequiredFieldIsRefused(t *testing.T) {
+	h := newHarness(t)
+	alice := h.phone(aliceUID)
+	mustTake(h, alice, leasePath, leaseRecord(aliceUID, 1))
+
+	for _, field := range []string{"renewed_at", "holder_uid", "generation", "holder"} {
+		// The multi-path shape: one field of the record, set to null.
+		h.mustDeny(alice, "the holder deleting "+field+" as a multi-path update", map[string]any{leasePath + "/" + field: nil})
+		// And the raw PUT to the child, which is what a client that does not go
+		// through internal/lease sends.
+		h.rawDenied(claims{mu: aliceUID, fp: "-"}, "PUT", leasePath+"/"+field, "null")
+	}
+	// The record is intact after every one of those refusals, and the holder's
+	// own heartbeat still lands: the clause refuses the deletion and not the
+	// writes the protocol makes.
+	if got := h.value(leasePath); !strings.Contains(got, `"generation":1`) || !strings.Contains(got, `"holder_uid":"`+aliceUID+`"`) {
+		t.Fatalf("after the refused deletions the lease is %s, want Alice's record at generation 1", got)
+	}
+	mustTake(h, alice, leasePath, leaseRecord(aliceUID, 1))
+	// A whole-record write that leaves a field out is the same failure in one
+	// write, and refused by the same clause.
+	partial := leaseRecord(aliceUID, 1)
+	delete(partial, "generation")
+	if err := take(h, alice, leasePath, partial); !errors.Is(err, rtdb.ErrPermission) {
+		t.Errorf("a whole-record write with no generation: %v, want the rules to refuse it", err)
+	}
+}
+
 // TestLeaseIsNeverDeleted: the generation must not restart, and the whole point
 // of Release is that it writes an empty holder instead of deleting the node. A
 // delete would take the fencing token with it, and the next taker would begin
@@ -696,5 +764,148 @@ func TestLeaseTwoOrchestratorsRaceForOneSeat(t *testing.T) {
 	b := strings.Contains(got, `"holder_uid":"`+bobUID+`"`)
 	if a == b {
 		t.Fatalf("the seat after the race is %s, want exactly one of the two holders in it", got)
+	}
+}
+
+// emuClock is the real rtdb client with the one thing this emulator cannot
+// give it: a clock. It answers ServerNow from the database's own resolved
+// server value — the admin client writes {".sv":"timestamp"} to a scratch node
+// and the write's own answer carries the instant the database resolved it to —
+// because the emulator sends no Date header, which is what rtdb.ServerNow
+// reads. It is still the database's clock and not this process's, which is
+// what D3 is about; every other call is the real client's, so the record
+// shape, the ETag protocol and the rules under test are the deployed ones.
+type emuClock struct {
+	*rtdb.Client
+	h       *harness
+	scratch string
+}
+
+func (c *emuClock) ServerNow() (time.Time, bool) {
+	ctx := context.Background()
+	etag, _, err := c.h.admin.GetETag(ctx, c.scratch, nil)
+	if err != nil {
+		return time.Time{}, false
+	}
+	var out struct {
+		At int64 `json:"at"`
+	}
+	if err := c.h.admin.PutIfMatchInto(ctx, c.scratch, etag, map[string]any{"at": rtdb.ServerTimestamp{}}, &out); err != nil {
+		return time.Time{}, false
+	}
+	return time.UnixMilli(out.At).UTC(), true
+}
+
+// TestLeaseTheLeasePackageHoldsItsOwnSeat is the case that closes the gap
+// between the two halves of this protocol. Every other case in this file
+// hand-mirrors the record in its own leaseRecord helper and drives raw HTTP;
+// internal/lease's own tests run against internal/gcpfake, which evaluates no
+// rules at all. So the two halves were held together by string assertions over
+// the golden document — a field name, a timestamp shape or an ETag convention
+// could drift on either side and every test would still pass.
+//
+// This one points the real package at the real engine: lease.Take, Renew,
+// Release and the typed refusals, through an rtdb client, against the deployed
+// document. What it pins is exactly what the mirroring could not: that
+// wireOf's field names are the ones the template validates, that the stamp the
+// package sends is the one the rules demand (`newData.renewed_at == now`) and
+// the one it gets back is the database's, and that the ETag compare-and-set
+// the package speaks is the one this database answers. The clock is the
+// adapter above, for the reason it gives.
+//
+// Hand mutation this fails on: renaming a field in wireOf (the write is
+// refused $other), sending a computed stamp instead of rtdb.ServerTimestamp
+// (refused `NEW == now`), or writing without If-Match.
+func TestLeaseTheLeasePackageHoldsItsOwnSeat(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	alice, bob := h.phone(aliceUID), h.phone(bobUID)
+	who := func(uid string) lease.Holder { return lease.Holder{Name: holderName(uid), UID: uid} }
+	clocked := func(c *rtdb.Client, name string) lease.DB {
+		return &emuClock{Client: c, h: h, scratch: "probe/clock-" + name}
+	}
+	aliceDB, bobDB := clocked(alice, "alice"), clocked(bob, "bob")
+
+	path := lease.Path("aurora", "r1")
+	if path != leasePath {
+		t.Fatalf("lease.Path = %q, want the path every other case here uses (%q)", path, leasePath)
+	}
+
+	held, err := lease.Take(ctx, aliceDB, path, who(aliceUID), lease.Options{Mode: "enforce", PR: 7})
+	if err != nil {
+		t.Fatalf("Take through the rules: %v", err)
+	}
+	if held.Generation != 1 || held.HolderUID != aliceUID {
+		t.Fatalf("Take returned %+v, want generation 1 held by %s", held, aliceUID)
+	}
+	// The stamp is the database's, and it came back through the write's own
+	// answer: nothing on this path reads the local clock.
+	if d := time.Since(held.Renewed()); d < 0 || d > 30*time.Second {
+		t.Errorf("the record Take returned is stamped %s away from now, so it is not the database's reading", d.Round(time.Millisecond))
+	}
+	// The node the package wrote is the record the rules validate, field for
+	// field, and the server value was resolved rather than stored verbatim.
+	got := h.value(path)
+	for _, want := range []string{
+		`"holder":"` + holderName(aliceUID) + `"`, `"holder_uid":"` + aliceUID + `"`,
+		`"generation":1`, `"mode":"enforce"`, `"pr":7`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the lease package's own write is %s, want it to carry %s", got, want)
+		}
+	}
+	if strings.Contains(got, ".sv") {
+		t.Errorf("the node stores the server value verbatim (%s): the rules' `NEW == now` would have refused it, so this is not the stamp that landed", got)
+	}
+
+	// The heartbeat, and the generation does not move.
+	beaten, err := lease.Renew(ctx, aliceDB, path, held)
+	if err != nil {
+		t.Fatalf("Renew through the rules: %v", err)
+	}
+	if beaten.Generation != held.Generation {
+		t.Errorf("Renew moved the generation to %d: a heartbeat is not a takeover", beaten.Generation)
+	}
+	if !beaten.Renewed().After(held.Renewed()) && beaten.Renewed() != held.Renewed() {
+		t.Errorf("Renew stamped the record %s, before the stamp it replaced (%s)", beaten.Renewed(), held.Renewed())
+	}
+
+	// Another orchestrator on a fresh seat: the typed refusal, from the package.
+	if _, err := lease.Take(ctx, bobDB, path, who(bobUID), lease.Options{}); !errors.Is(err, lease.ErrHeld) {
+		t.Errorf("Take of a fresh seat by another orchestrator = %v, want a typed *HeldError", err)
+	}
+
+	// The grace passes. Ten minutes is not a test's to wait for, so the seat is
+	// aged through the admin path — which is the state a crashed orchestrator
+	// leaves behind, and the state the rules must let the next one take over.
+	h.set(path, leaseSeed(aliceUID, 1, stale()))
+	taken, err := lease.Take(ctx, bobDB, path, who(bobUID), lease.Options{})
+	if err != nil {
+		t.Fatalf("Take of a seat whose holder stopped renewing: %v, want the takeover accepted", err)
+	}
+	if taken.Generation != 2 {
+		t.Errorf("the takeover wrote generation %d, want 2: the fencing token moves by one", taken.Generation)
+	}
+
+	// The old holder's next heartbeat: the typed loss, not a bare permission
+	// error and not a silent continue.
+	if _, err := lease.Renew(ctx, aliceDB, path, beaten); !errors.Is(err, lease.ErrLost) {
+		t.Errorf("the old holder's Renew = %v, want a typed *LostError", err)
+	}
+
+	// The release, and the seat is free: the generation keeps moving (3), and
+	// the next taker moves it again (4).
+	if err := lease.Release(ctx, bobDB, path, taken); err != nil {
+		t.Fatalf("Release through the rules: %v", err)
+	}
+	if got := h.value(path); !strings.Contains(got, `"holder_uid":""`) || !strings.Contains(got, `"generation":3`) {
+		t.Fatalf("after the release the lease is %s, want an empty holder at generation 3", got)
+	}
+	next, err := lease.Take(ctx, aliceDB, path, who(aliceUID), lease.Options{})
+	if err != nil {
+		t.Fatalf("Take of a released seat: %v", err)
+	}
+	if next.Generation != 4 {
+		t.Errorf("the take after a release wrote generation %d, want 4", next.Generation)
 	}
 }
