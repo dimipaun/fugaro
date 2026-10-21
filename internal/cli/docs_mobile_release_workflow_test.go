@@ -24,9 +24,12 @@ package cli
 //
 //   - TestDocsMobileReleaseWorkflowIsStagedAndPinned: the triggers are a
 //     release-tag push and a manual dispatch and nothing else, on the tag
-//     pattern the sibling release workflows use; the permissions are
-//     `contents: read` and no more; both jobs wait at the `mobile-release`
-//     environment; the file names exactly one secret (`EXPO_TOKEN`), carries no
+//     pattern the sibling release workflows use; **a tag push runs
+//     `scripts/release-gate.sh` first in each job, as every other tag-triggered
+//     publishing workflow here does, and a manual dispatch skips it**; the
+//     permissions are `contents: read` plus the `checks: read` that gate needs;
+//     both jobs wait at the `mobile-release` environment; the file names exactly
+//     one secret (`EXPO_TOKEN`), carries no
 //     literal that could be one, and binds the token in the `env:` of the steps
 //     that talk to EAS rather than at job level; every `uses:` is a full 40-hex
 //     commit with its `# vX.Y.Z` beside it; `eas-cli` is installed at one exact
@@ -132,6 +135,28 @@ const (
 	// of the EAS project's environment, so that `::add-mask::` can hide it:
 	// `mask <NAME>` is the only shape the two names below may take in the file.
 	mobileReleaseMaskCommand = "mask "
+	// mobileReleaseGateCommand is the release gate every tag-triggered
+	// publishing workflow in this repository runs first
+	// (`.github/workflows/release.yml`, `images.yml`, `console-release.yml`):
+	// the tag is a strict `vX.Y.Z`, its commit is reachable from `origin/main`,
+	// and the required checks succeeded on it. Without it a tag pushed on an
+	// off-main or red commit would still build on EAS and submit to two stores.
+	mobileReleaseGateCommand = "scripts/release-gate.sh"
+	// mobileReleaseFollowUpEdits is how many follow-up edits the copy-in commit
+	// needs, as the word both sides of it write: the two sentences that count and
+	// name the files still pending, and the README section's own Status line,
+	// which its test reads against the tree in both directions. Both sides are
+	// read (mobileReleaseFollowUpEditsRE, below) and both have to say this: an
+	// owner told "two" leaves the third edit out, and the suite goes red in their
+	// commit rather than here.
+	mobileReleaseFollowUpEdits = "Three"
+	// mobileReleaseGateCondition is the whole `if:` on that step: the gate is a
+	// claim about a tag, and this workflow also runs by hand, where there is no
+	// tag to check and `dry_run` is what holds the run back. `images.yml` and
+	// `console-release.yml` carry the same condition for the same reason.
+	// Compared whole rather than by substring, like every other gate here: a
+	// condition that also fired on a dispatch would gate a path that has no tag.
+	mobileReleaseGateCondition = "github.event_name == 'push'"
 	// mobileReleasePinTestName and mobileReleaseReadmeTestName are the two
 	// checks this file adds. The document beside the staged file has to name
 	// both, so the paragraph that tells a reader what is verified cannot outlive
@@ -280,13 +305,24 @@ var (
 	// assertion below is that there is exactly one and that it is the Expo
 	// token: a second one would be a credential nobody wrote down.
 	mobileReleaseSecretRE = regexp.MustCompile(`secrets\.([A-Za-z0-9_]+)`)
-	// mobileReleaseDottedRE finds a dotted token of two or more lowercase
-	// labels: the shape the store identity has (mobile/README.md: "letters,
-	// digits and hyphens in two or more dot-separated segments"). Version
-	// comments (`# v7.0.1`) and runner images (`ubuntu-24.04`) are excluded by
-	// requiring the LAST label to start with a letter, and the file names the
-	// workflow is allowed to mention are excluded by suffix below.
-	mobileReleaseDottedRE = regexp.MustCompile(`\b[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)+\b`)
+	// mobileReleaseDottedRE finds a dotted token of two or more labels: the
+	// shape the store identity has (mobile/README.md: "letters, digits and
+	// hyphens in two or more dot-separated segments"). Version comments
+	// (`# v7.0.1`) and runner images (`ubuntu-24.04`) are excluded by requiring
+	// the LAST label to start with a letter, and the file names the workflow is
+	// allowed to mention are excluded by suffix below.
+	//
+	// **Case-insensitive, deliberately**: the identity's labels may be either
+	// case (`mobile/README.md` says "letters, either case"), so a pasted
+	// `com.Fugaro.App` has to be caught exactly as `com.fugaro.app` is. A
+	// lowercase-only scan would pass the one accident it exists to catch, and
+	// the sentence in docs/pending-workflows/README.md that describes it says so.
+	mobileReleaseDottedRE = regexp.MustCompile(`(?i)\b[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)+\b`)
+	// mobileReleaseFollowUpEditsRE finds the sentence in which each side of the
+	// copy-in states **how many** follow-up edits the copy-in commit needs: the
+	// workflow file's own header, and the README section that writes them out.
+	// Both are read, and both have to say mobileReleaseFollowUpEdits.
+	mobileReleaseFollowUpEditsRE = regexp.MustCompile(`\b(\w+) follow-up edits\b`)
 	// mobileReleaseEasCLIRE finds the CLI install and captures whatever version,
 	// if any, is pinned to it. Go's regexp has no lookahead, so a bare
 	// `eas-cli` is caught by requiring the capture to be exactly `@<version>`
@@ -301,19 +337,32 @@ var (
 var mobileReleaseKnownSuffixes = []string{"yml", "yaml", "json", "js", "md", "sh"}
 
 // mobileReleaseAllowedDotted is every other dotted token the file may carry,
-// each one a field name or an event-payload path rather than a value. It is
-// short on purpose: adding an entry is the deliberate act of saying "this is
-// not the store identity", which is what makes the check below worth having.
+// each one a field name rather than a value. It is short on purpose: adding an
+// entry is the deliberate act of saying "this is not the store identity", which
+// is what makes the check below worth having. The `github.` context namespace
+// (`github.event.inputs.dry_run`, `github.event_name`, `github.ref_name`,
+// `github.token`) is allowed as a namespace rather than entry by entry, below:
+// a path into the event payload is not a value, and no bundle identifier is
+// spelled `github.…`.
 var mobileReleaseAllowedDotted = []string{
 	"engines.node",                  // mobile/package.json's field, named in a comment
-	"github.event.inputs",           // the payload path the dry_run conditions read
 	"submit.internal.android.track", // the EAS submit field C8 pins, named in a comment
+	"android.buildType",             // the eas.json field that makes the Android build an AAB
+	"artifacts.buildUrl",            // the EAS field the summary deliberately does not read
+	"Info.plist",                    // the iOS binary's metadata file, named in a comment
 }
 
 // mobileReleaseSummaryRE finds the steps that write the run summary. The build's
 // URL has to reach a reader of the run, and `$GITHUB_STEP_SUMMARY` is the only
 // place a job can put it.
 var mobileReleaseSummaryRE = regexp.MustCompile(`GITHUB_STEP_SUMMARY`)
+
+// mobileReleasePerLabelRE finds the `[per …]` labels the README puts on the
+// steps only the owner can do, each one naming where that step is done. The
+// section's set of them is checked rather than only the ones the needles name:
+// a label is a claim about a place, and a place no step is done in is a step a
+// reader goes looking for.
+var mobileReleasePerLabelRE = regexp.MustCompile(`\[per [^\]]+\]`)
 
 // TestDocsMobileReleaseWorkflowIsStagedAndPinned: the staged release
 // workflow is safe to copy in. Every assertion below is a property a later edit
@@ -337,6 +386,11 @@ func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if !slices.Equal(wf.On.Push.Tags, []string{mobileReleaseTagPattern}) {
 		t.Errorf("the push trigger is for tags %q, not [%s]: this is the mobile app's release, and `v*` -- the pattern this file used to carry -- also starts one on `vtest` and on a `v1.2.3-rc1` tag", wf.On.Push.Tags, mobileReleaseTagPattern)
 	}
+	// The header's copy-in instructions are a procedure, and the number of edits
+	// in it is a claim about another file: the README section lists them, and the
+	// third is that section's own Status line. This side is checked here, the
+	// README's side in the test below, and both against the same count.
+	mobileReleaseFollowUpEditsIn(t, path+"'s header", text)
 	// The brief's own named refusals, scanned in the bytes as well as decoded:
 	// `pull_request_target` and `workflow_run` run with a read/write token and
 	// the repository's secrets, and this job holds an Expo token.
@@ -369,9 +423,13 @@ func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
 		t.Errorf("%s's workflow-level permissions are %v, not exactly {contents: read}: this job reads the repository and talks to EAS, and creates no GitHub release, tag or artifact", path, wf.Permissions)
 	}
+	// A job adds one scope to the floor above: `checks: read`, which is what the
+	// release gate's `gh api …/check-runs` call needs. Nothing else -- a job
+	// block is where a widening hides, and neither job writes anything.
 	for name, job := range wf.Jobs {
-		if len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
-			t.Errorf("job %q declares permissions %v, not exactly {contents: read}: a job-level block is where a widening hides", name, job.Permissions)
+		want := map[string]string{"contents": "read", "checks": "read"}
+		if len(job.Permissions) != len(want) || job.Permissions["contents"] != want["contents"] || job.Permissions["checks"] != want["checks"] {
+			t.Errorf("job %q declares permissions %v, not exactly {contents: read, checks: read}: the release gate reads the tagged commit's check-runs and needs the second, and a job that writes nothing needs nothing else", name, job.Permissions)
 		}
 	}
 
@@ -511,6 +569,7 @@ func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 // quietly lacks.
 type mobileReleaseJobShape struct {
 	platform  string
+	gates     int
 	installs  int
 	masks     int
 	builds    int
@@ -562,13 +621,39 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 		t.Errorf("the %s job binds %v at job level: the Expo token belongs in the `env:` of the steps that talk to EAS, and a job-level binding hands it to every step in the job", platform, job.Env)
 	}
 
-	var maskAt, buildAt, summaryAt, submitAt = -1, -1, -1, -1
+	var gateAt, maskAt, buildAt, summaryAt, submitAt = -1, -1, -1, -1, -1
 	for i, step := range job.Steps {
 		cmd := workflowRunCommands(step.Run)
 		switch {
 		case strings.HasPrefix(step.Uses, "actions/checkout@"):
 			if !strings.Contains(fmt.Sprintf("%v", step.With["persist-credentials"]), "false") {
 				t.Errorf("the %s job's checkout keeps the persisted credentials: this job only reads the repository", platform)
+			}
+			// Full depth: `scripts/release-gate.sh` asks whether the tagged
+			// commit is reachable from `origin/main`, which a shallow clone
+			// cannot answer.
+			if got := fmt.Sprintf("%v", step.With["fetch-depth"]); got != "0" {
+				t.Errorf("the %s job's checkout takes fetch-depth %q, not 0: the release gate below asks whether the tagged commit is reachable from origin/main, and a shallow clone cannot answer that", platform, got)
+			}
+		case strings.Contains(cmd, mobileReleaseGateCommand):
+			// The gate every tag-triggered publishing workflow here runs first,
+			// and the condition that keeps it off the manual path: a dispatch has
+			// no tag to check, and `dry_run` is what holds that path back.
+			shape.gates++
+			gateAt = i
+			if got := step.If; got != mobileReleaseGateCondition {
+				t.Errorf("the %s job's release gate carries `if: %s`, not `if: %s`: the gate is a claim about a tag, and this workflow also runs by hand, where there is no tag to check", platform, got, mobileReleaseGateCondition)
+			}
+			if !strings.Contains(cmd, `"$TAG"`) {
+				t.Errorf("the %s job's release gate does not pass the tag to %s: the script takes the tag as its argument and refuses anything that is not a strict vX.Y.Z", platform, mobileReleaseGateCommand)
+			}
+			for name, want := range map[string]string{
+				"GH_TOKEN": "${{ github.token }}", // the checks API read the gate makes
+				"TAG":      "${{ github.ref_name }}",
+			} {
+				if got := step.Env[name]; got != want {
+					t.Errorf("the %s job's release gate sets %s to %q, not %q: the gate cannot read the commit's check-runs without the token, and it needs the pushed tag rather than any other ref", platform, name, got, want)
+				}
 			}
 		case strings.HasPrefix(step.Uses, "actions/setup-node@"):
 			// The Node line comes from the app's own manifest, the way
@@ -652,18 +737,37 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 	}
 
 	// The counts and the order. One of each step, and the order is load-bearing:
-	// the mask has to be in place before the first command that resolves the
-	// app's config, the summary describes the build the step before it made, and
-	// the submission submits that same build.
-	if shape.installs != 1 || shape.masks != 1 || shape.builds != 1 || shape.summaries != 1 || shape.submits != 1 || shape.dryRuns != 1 {
-		t.Errorf("the %s job carries %d install(s), %d mask step(s), %d build(s), %d summary step(s), %d submission(s) and %d dry-run notice(s), not one of each: the job is this platform's whole release", platform, shape.installs, shape.masks, shape.builds, shape.summaries, shape.submits, shape.dryRuns)
-	} else if !(maskAt < buildAt && buildAt < summaryAt && summaryAt < submitAt) {
-		t.Errorf("the %s job's steps are out of order (mask %d, build %d, summary %d, submission %d): the mask has to run before the first `eas` command that resolves mobile/app.config.js, the summary has to describe the build that was made, and the submission has to follow both", platform, maskAt, buildAt, summaryAt, submitAt)
+	// the gate has to run before anything is built or submitted, the mask has to
+	// be in place before the first command that resolves the app's config, the
+	// summary describes the build the step before it made, and the submission
+	// submits that same build.
+	if shape.gates != 1 || shape.installs != 1 || shape.masks != 1 || shape.builds != 1 || shape.summaries != 1 || shape.submits != 1 || shape.dryRuns != 1 {
+		t.Errorf("the %s job carries %d release gate(s), %d install(s), %d mask step(s), %d build(s), %d summary step(s), %d submission(s) and %d dry-run notice(s), not one of each: the job is this platform's whole release", platform, shape.gates, shape.installs, shape.masks, shape.builds, shape.summaries, shape.submits, shape.dryRuns)
+	} else if !(gateAt < maskAt && maskAt < buildAt && buildAt < summaryAt && summaryAt < submitAt) {
+		t.Errorf("the %s job's steps are out of order (gate %d, mask %d, build %d, summary %d, submission %d): the gate has to refuse an off-main or red tag before anything is built, the mask has to run before the first `eas` command that resolves mobile/app.config.js, the summary has to describe the build that was made, and the submission has to follow both", platform, gateAt, maskAt, buildAt, summaryAt, submitAt)
 	}
 	if len(shape.uses) != 2 {
 		t.Errorf("the %s job uses %d actions (%q); it needs a checkout and a node", platform, len(shape.uses), shape.uses)
 	}
 	return shape
+}
+
+// mobileReleaseFollowUpEditsIn checks the one claim in text about how many
+// follow-up edits the copy-in commit needs, and reports every way it can be
+// wrong: stated nowhere, stated twice, or stating a count other than the three
+// this copy-in actually needs. It is shared by the two tests because the two
+// sides have to agree -- the workflow file's header tells the owner the number,
+// and the README section is where the edits are written out.
+func mobileReleaseFollowUpEditsIn(t *testing.T, what, text string) {
+	t.Helper()
+	got := mobileReleaseFollowUpEditsRE.FindAllStringSubmatch(text, -1)
+	if len(got) != 1 {
+		t.Errorf("%s states how many follow-up edits the copy-in needs %d times (%q); it has to state it exactly once, because the count and the list it introduces are one claim", what, len(got), got)
+		return
+	}
+	if got[0][1] != mobileReleaseFollowUpEdits {
+		t.Errorf("%s says %q follow-up edits, and the copy-in needs %s: the two sentences that count and name the pending files, and the Status line the copy-in changes -- which is read against the tree, so leaving it out of that commit turns the suite red there", what, got[0][1], mobileReleaseFollowUpEdits)
+	}
 }
 
 // workflowRunCommands returns a step's `run:` script with its comment lines
@@ -710,11 +814,18 @@ func mobileReleaseIdentityShapedTokens(text string) []string {
 		labels := strings.Split(token, ".")
 		last := labels[len(labels)-1]
 		// A version comment (`# v7.0.1`) and a runner image (`ubuntu-24.04`)
-		// end in a digit: neither is a name.
-		if len(last) < 2 || last[0] < 'a' || last[0] > 'z' {
+		// end in a digit: neither is a name. Either case counts as a letter, for
+		// the reason the scan above is case-insensitive.
+		if len(last) < 2 || !isASCIILetter(last[0]) {
 			continue
 		}
-		if slices.Contains(mobileReleaseKnownSuffixes, last) {
+		if slices.Contains(mobileReleaseKnownSuffixes, strings.ToLower(last)) {
+			continue
+		}
+		// A path into the GitHub event payload is a field the workflow reads,
+		// not a value: `github.event_name` is the release gate's condition, and
+		// `github.ref_name` and `github.token` are what that step is given.
+		if strings.HasPrefix(strings.ToLower(token), "github.") {
 			continue
 		}
 		if slices.Contains(mobileReleaseAllowedDotted, token) {
@@ -726,6 +837,14 @@ func mobileReleaseIdentityShapedTokens(text string) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// isASCIILetter reports whether b is an ASCII letter of either case. The scan
+// above is case-insensitive, so the label tests that decide whether a token is
+// a name have to be too: `com.Fugaro.App`'s last label starts with an uppercase
+// letter and is a name exactly as `com.fugaro.app`'s is.
+func isASCIILetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
 // TestDocsMobileReleaseIdentityShapedTokensSeeAnIdentity pins the check above
@@ -740,9 +859,18 @@ func TestDocsMobileReleaseIdentityShapedTokensSeeAnIdentity(t *testing.T) {
 		{"an identity with three labels", "bundle id: com.fugaro.app\n", []string{"com.fugaro.app"}},
 		{"an identity with two labels", "the app is fugaro.app\n", []string{"fugaro.app"}},
 		{"an identity pasted into a command", "eas build --platform ios # com.example.phone\n", []string{"com.example.phone"}},
+		// The identity's labels may be either case (mobile/README.md), so a scan
+		// that only saw lowercase would pass the one paste it exists to catch.
+		{"an identity in mixed case", "the bundle id is com.Fugaro.App\n", []string{"com.Fugaro.App"}},
+		{"an identity in upper case", "bundle id: COM.FUGARO.APP\n", []string{"COM.FUGARO.APP"}},
 		{"a clean file", "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\nruns-on: ubuntu-24.04\nnode-version-file: mobile/package.json\nsee mobile/app.config.js and docs/pending-workflows/README.md\n", nil},
-		{"the three allowed field names", "engines.node github.event.inputs submit.internal.android.track\n", nil},
+		{"the two allowed field names", "engines.node submit.internal.android.track\n", nil},
+		// The event-payload namespace the release gate and the dry-run conditions
+		// read, allowed as a namespace rather than entry by entry.
+		{"the github context namespace", "if: github.event_name == 'push'\nenv:\n  TAG: ${{ github.ref_name }}\n  GH_TOKEN: ${{ github.token }}\nif: ${{ github.event.inputs.dry_run != 'true' }}\n", nil},
 		{"a version with no comment", "  uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n", nil},
+		// A file name this repository uses, in the case its own file names use.
+		{"a file name in mixed case", "see docs/pending-workflows/README.md and mobile/package.json\n", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := mobileReleaseIdentityShapedTokens(tc.text)
@@ -787,6 +915,11 @@ func mobileReleaseReadmeSection(t *testing.T) string {
 func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 	section := mobileReleaseReadmeSection(t)
 
+	// The other half of the header's claim, against the same count: this section
+	// is where the edits are written out, and the third of them is this
+	// section's own Status line, read against the tree just below.
+	mobileReleaseFollowUpEditsIn(t, pendingWorkflowsReadmePath+"'s `"+mobileReleaseReadmeHeading+"` section", section)
+
 	for _, want := range []struct{ needle, why string }{
 		{"`" + mobileReleaseEnvironment + "`", "the protected environment both jobs wait at, by name"},
 		{"required reviewer", "the reviewer whose click is the gate, and that there is one"},
@@ -803,6 +936,10 @@ func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 		{mobileReleaseTagPattern, "the tag filter the workflow triggers on, stated rather than left as the `v*` this file used to carry"},
 		{"`" + mobileReleaseDisabledPlatforms + "`", "the repository variable that can turn either platform off, by name"},
 		{"gh variable set " + mobileReleaseDisabledPlatforms, "the command that turns a platform off, which is the whole of what \"one repository setting\" means"},
+		{mobileReleaseGateCommand, "the gate a tag push runs first, so an off-main or red commit publishes nothing"},
+		{mobileReleaseGateCondition, "the condition that keeps that gate off the manual-dispatch path, where there is no tag to check"},
+		{"checks: read", "the one scope the release gate adds beside `contents: read`"},
+		{"com.Fugaro.App", "the mixed case the identity scan catches as well as the lowercase spelling"},
 		{"::add-mask::", "the mechanism that keeps the identity out of the log, by name"},
 		{"first dry run", "the run whose log the owner reads for an identifier, since no test can"},
 		{"eas-cli@" + mobileReleaseEasCLIVersion, "the CLI's exact pinned version"},
@@ -830,6 +967,35 @@ func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 		if !strings.Contains(section, want.needle) {
 			t.Errorf("%s's `%s` section lacks %q (%s): the owner is the one who copies this file in, and this section is where they read it", pendingWorkflowsReadmePath, mobileReleaseReadmeHeading, want.needle, want.why)
 		}
+	}
+
+	// The `[per …]` labels are the section's claim about where each step is
+	// done, so the **set** is checked and not only the three labels the needles
+	// above name. A label for an account no step is done under sends a reader
+	// looking for a step that is not there -- the Apple side has none of its
+	// own here, because the App Store Connect key and the signing certificate
+	// are EAS's, server-side, under the owner's own account (the closing
+	// paragraph of the owner's section says so). This is the check that would
+	// have caught the intro sentence that used to name the owner's Apple
+	// account among the places a step is done.
+	var labels []string
+	for _, label := range mobileReleasePerLabelRE.FindAllString(section, -1) {
+		if !slices.Contains(labels, label) {
+			labels = append(labels, label)
+		}
+	}
+	slices.Sort(labels)
+	want := []string{
+		"[per Expo account]",
+		"[per Google Cloud, then per Play Console]",
+		"[per Google account]",
+		"[per Play Console]",
+		"[per owner's machine]",
+		"[per repo, after the first dry run]",
+		"[per repo]",
+	}
+	if !slices.Equal(labels, want) {
+		t.Errorf("%s's `%s` section labels its steps %q, and the steps there are done in exactly %q: each label says where a step is done, so a label for an account no step is done under is a step a reader will look for and not find", pendingWorkflowsReadmePath, mobileReleaseReadmeHeading, labels, want)
 	}
 
 	// The order the section prescribes is load-bearing, so it is checked as an

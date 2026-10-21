@@ -18,11 +18,13 @@
 #
 # **The staged copy is deleted after the copy-in**, as images.yml's and
 # console-linux.yml's are: this is a new workflow with nothing to be
-# byte-identical to. Two follow-up edits belong in that same commit -- the
+# byte-identical to. Three follow-up edits belong in that same commit: the
 # sentence in website/README.md and this README's own opening line, both of
-# which count and name the files still pending here -- and
-# docs/pending-workflows/README.md's `## mobile-release.yml` section carries
-# both as exact text.
+# which count and name the files still pending here, and
+# docs/pending-workflows/README.md's `## mobile-release.yml` section's own
+# **Status line**, which its tests read against the tree in both directions and
+# which therefore has to stop saying "staged and pending" in the very commit
+# that applies the file. All three are in that section as exact text.
 #
 # TWO THINGS MUST EXIST BEFORE THIS FILE RUNS, AND NEITHER IS IN IT
 #
@@ -45,6 +47,16 @@
 #
 # WHAT THIS FILE IS, AND WHAT IT DELIBERATELY DOES NOT CONTAIN
 #
+#   - **A tag publishes nothing unless it is on main and its checks passed.**
+#     Every tag-triggered publishing workflow in this repository runs
+#     `scripts/release-gate.sh` first (`.github/workflows/release.yml`,
+#     `images.yml`, `console-release.yml`), and this one is no exception: the
+#     gate is the first step of each job, and it runs **only on a tag push** --
+#     a manual dispatch has no tag to check, and `dry_run` is what holds that
+#     path back. The gate reads the tagged commit's check-runs, so each job
+#     carries `checks: read` beside `contents: read`, and the checkout is
+#     full-depth (`fetch-depth: 0`) because the gate asks whether that commit is
+#     reachable from `origin/main`.
 #   - **The store identity is not here.** The iOS bundle identifier and the
 #     Android package name live in the EAS project's own `production`
 #     environment, and every `eas` command below runs through
@@ -144,10 +156,30 @@ jobs:
     environment: mobile-release
     permissions:
       contents: read
+      # The release gate below asks GitHub for the tagged commit's check-runs,
+      # which is a read of the checks API and of nothing else.
+      checks: read
     steps:
+      # Full depth: the gate asks whether the tagged commit is reachable from
+      # `origin/main`, and a shallow clone cannot answer that.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      # The gate every tag-triggered publishing workflow here runs first: the
+      # tag is a strict `vX.Y.Z`, its commit is reachable from `origin/main`,
+      # and the required checks succeeded on it. Without it a tag pushed on an
+      # off-main or red commit would still build on EAS and submit to a store.
+      # A manual dispatch skips it -- there is no tag to check, and `dry_run` is
+      # what holds that path back.
+      - name: The tag is strict, on main, and its checks passed
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          scripts/release-gate.sh "$TAG"
       # The Node line comes from mobile/package.json's `engines.node`, the same
       # way console-linux.yml takes the console's: a second copy of it written
       # here would be a pin that can disagree with the app's own.
@@ -275,10 +307,25 @@ jobs:
     environment: mobile-release
     permissions:
       contents: read
+      checks: read # the release gate below reads the commit's check-runs
     steps:
+      # Full depth, for the same reason the iOS job's checkout is: the gate
+      # below asks whether the tagged commit is reachable from `origin/main`.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      # The same gate as the iOS job's, run independently of it: this job is
+      # this platform's release, and a tag that is off-main or red must not
+      # reach a store from either job.
+      - name: The tag is strict, on main, and its checks passed
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          scripts/release-gate.sh "$TAG"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: mobile/package.json

@@ -802,12 +802,14 @@ else.
 
 **What the jobs are.** Two jobs, `ios` and `android`, each on the pinned
 `ubuntu-24.04` — the build itself runs on EAS's own workers, so the runner is
-only the client that uploads it — with `contents: read` and nothing else, and
-**neither job needs the other**, so a platform that fails never blocks the
-other's release. Each job checks the repository out with
-`persist-credentials: false`, takes the Node line from `mobile/package.json`'s
-`engines.node` (the same way `console-linux.yml` takes the console's), installs
-`eas-cli` **at one exact version**, masks the store identity, runs `eas build
+only the client that uploads it — with `contents: read` and the `checks: read`
+the release gate below needs, and nothing else, and **neither job needs the
+other**, so a platform that fails never blocks the other's release. Each job
+checks the repository out with `persist-credentials: false` and
+`fetch-depth: 0`, runs the release gate (below), takes the Node line from
+`mobile/package.json`'s `engines.node` (the same way `console-linux.yml` takes
+the console's), installs `eas-cli` **at one exact version**, masks the store
+identity, runs `eas build
 --platform <platform> --profile internal --non-interactive --wait --json` under
 `eas env:exec production`, writes the build's **id** into
 `$GITHUB_STEP_SUMMARY`, and then runs `eas submit --profile internal --platform
@@ -815,6 +817,25 @@ other's release. Each job checks the repository out with
 commit SHA with its `# vX.Y.Z` beside it. The `concurrency` group is the
 workflow's own name and not the ref, so two releases queue rather than submit at
 once, and a release that is mid-submission is never cancelled.
+
+**A tag publishes nothing unless it is on main and its checks passed.** On a tag
+push the **first step of each job** is `scripts/release-gate.sh "$TAG"` — the
+same gate `release.yml`, `images.yml` and `console-release.yml` run first, which
+refuses unless the tag is a strict `vX.Y.Z`, its commit is reachable from
+`origin/main`, and the required checks (`test`, `terraform`, `rules` and both
+console legs) succeeded on it. Without it, a tag pushed on an off-main or red
+commit would still build on EAS and submit to TestFlight and to Google Play:
+this is a publishing workflow, so it is held to the same rule as every other one
+here (`docs/release.md`, "What a tag does"). The step carries
+`if: github.event_name == 'push'`, the same condition the sibling workflows
+carry: a **manual dispatch has no tag to check**, and `dry_run` is what holds
+that path back. Because the gate reads the tagged commit's check-runs, each job
+holds **`checks: read` beside `contents: read`** — and nothing else — and the
+checkout is **full-depth (`fetch-depth: 0`)**, because the gate asks whether that
+commit is reachable from `origin/main`, which a shallow clone cannot answer.
+`TestDocsMobileReleaseWorkflowIsStagedAndPinned` holds each job to exactly one
+gate step, to that exact condition, and to coming before anything is built or
+submitted.
 
 **The submission submits the build the run made, and the summary carries no
 artifact link.** The build step captures `eas build --json` into
@@ -907,8 +928,10 @@ is not green here.
 
 None is in the file, and none can be: a staging file cannot create a GitHub
 environment or a secret, and it cannot read a run's log. **Each step below is
-labelled with where it is done** — the repository, the owner's Expo account, or
-the owner's Apple account.
+labelled with where it is done** — the repository, or the owner's own Expo
+account. (The Apple side needs no step of its own here: the App Store Connect key
+and the signing certificate are EAS's, server-side, under the owner's own
+account — the closing paragraph of this section says so.)
 
 **The first two have to be done *before* the file is copied in, not after it.**
 GitHub creates a missing environment the first time a job names it, and the
@@ -1003,7 +1026,9 @@ appear in the workflow exactly once per job — as the mask step's arguments —
 nowhere else**: a value can only be masked by naming the variable it is read
 from, and that is the whole of the exception. The test above holds each name to
 that count, refuses a name bound in any step's `env:` or `with:`, and refuses the
-file outright if a reverse-DNS-shaped value appears anywhere in it.
+file outright if a reverse-DNS-shaped value appears anywhere in it — **in either
+case**, so a pasted `com.Fugaro.App` is caught exactly as `com.fugaro.app` is
+(the identity's labels may be either case, `mobile/README.md`).
 
 ### To copy it in
 
@@ -1172,8 +1197,13 @@ owner-run check for the store path, and it is **NOT RUN**.
 
 What *is* asserted offline, by `TestDocsMobileReleaseWorkflowIsStagedAndPinned`,
 is the file's text: its two triggers and the absence of any third, on the tag
-pattern `v[0-9]+.[0-9]+.[0-9]+`; `contents: read` as the whole permission and no
-job-level widening; the `mobile-release` environment on both jobs; the single
+pattern `v[0-9]+.[0-9]+.[0-9]+`; `contents: read` at the top and
+`{contents: read, checks: read}` on each job — the second being what the release
+gate's check-runs read needs — with no other scope and no job-level
+`env:`; the **release gate** as each job's first step, carrying exactly
+`if: github.event_name == 'push'` so a manual dispatch skips it, with
+`fetch-depth: 0` on the checkout it depends on; the `mobile-release` environment
+on both jobs; the single
 `secrets.EXPO_TOKEN` reference — bound in the `env:` of the steps that run an
 `eas` command and on no other step, with no job-level `env:` at all — and no
 secret-shaped literal; every `uses:` a full 40-hex SHA with its `# vX.Y.Z`, and
@@ -1192,7 +1222,13 @@ build's **id**; that no step runs `--latest` or `eas build:list` or reads
 `artifacts.buildUrl`; the mask step in each job, before the first `eas` command
 that resolves the app's config, naming both identity variables — each of which
 appears **exactly once per job and nowhere else** in the file; and that no
-reverse-DNS-shaped value appears anywhere in it.
+reverse-DNS-shaped value appears anywhere in it, **in either case** — the scan
+is case-insensitive on purpose, because a lowercase-only one would pass a pasted
+`com.Fugaro.App`, which is the accident it exists to catch. (A handful of
+dotted names the file is allowed to carry are listed explicitly — `engines.node`,
+`submit.internal.android.track`, `android.buildType`, `artifacts.buildUrl`,
+`Info.plist` — plus the `github.` event-payload namespace the conditions read.
+Each is a field or file name, never a value.)
 
 **What none of that can tell the owner is what a log looks like.** The mask step
 is asserted to exist, to run before the first `eas` command and to name both
