@@ -392,7 +392,7 @@ test('a slide stops being the row\'s when its picture, its box, its loading or i
 
   const firstFile = `/${SCREENS_DIR}/${rows[0].file}`
   const cases = [
-    ['a slide loading another file', page.replace(firstFile, '/images/console/other.webp'), /want the row's own file under/],
+    ['a slide loading another file', page.replace(firstFile, '/screenshots/other.webp'), /want the row's own file under/],
     ['a slide whose alt text nobody wrote', page.replace(rows[0].alt, 'A screenshot of the console.'), /is not the row's alt text/],
     ['a declared box that is not the file\'s', page.replace(`width="${rows[0].width}"`, `width="${rows[0].width + 8}"`), /the box the browser reserves is the file's own/],
     ['the first slide fetched lazily, so the frame waits for nothing and shows nothing', page.replace('loading="eager"', 'loading="lazy"'), /the first slide is the one the frame shows/],

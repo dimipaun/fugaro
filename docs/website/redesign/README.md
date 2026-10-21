@@ -280,7 +280,11 @@ here goes stale the way the byte budgets did before D192.
   component's stylesheet: Astro inlines it into the console page that imports it, whether or
   not the slider renders, so the bytes are in the build while the list is empty and while it is
   not. The page weight and the script stay where they were: the console page is not the
-  heaviest page, and the slider ships no script at all.
+  heaviest page, and the slider ships no script at all. (**The list is no longer empty**: the
+  owner's feedback of 2026-10-21 — "console page: screenshots missing" — is the four fixture
+  captures under `website/public/screenshots/` and the four rows that render them, which moved
+  both figures and made the console page the page the page-weight ceiling is derived from. The
+  round is in `website/README.md`'s list, with the numbers.)
   **And the round after *that* is the run's own timeline** (the owner's feedback of
   2026-10-19): the site figure alone moves once more, by the rail, the connector, the rule that
   stops it at the last step and the markup that places them, on the one page that renders a

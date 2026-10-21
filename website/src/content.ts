@@ -1038,7 +1038,7 @@ export function loadConsoleScreens(): ConsoleScreensFacts {
     // The dot is required before the format is read. With no dot at all `lastIndexOf` answers
     // -1 and `slice(0)` hands back the whole name, so a name that IS a served format — `png`,
     // `jpg`, `webp` — would pass a check that only asks whether the extension is one of them,
-    // and the row would render a picture at `/images/console/png`. There is no dot, so there is
+    // and the row would render a picture at `/screenshots/png`. There is no dot, so there is
     // no extension and no picture either.
     const dot = name.lastIndexOf('.')
     const format = dot === -1 ? '' : name.slice(dot + 1).toLowerCase()
