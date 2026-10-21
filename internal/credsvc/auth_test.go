@@ -1215,20 +1215,30 @@ func TestVerifyBoundsTheLaunchDayScan(t *testing.T) {
 	// The day BELOW the launch day, which the outcome's own day can be: DAYOK
 	// bounds an outcome to the database's today or yesterday, and the day it is
 	// written under is the database's clock rather than the run's launch day --
-	// so a run launched today whose outcome is written as the database's
-	// "yesterday" lands on the day below its launch day. The run has ended, and
-	// a scan that stops at the launch day (the launch-1 bound) admits it: this
-	// is the write-once revocation W2 rests on, so the day is read.
+	// so a run launched yesterday whose outcome is written as the database's
+	// "yesterday" a further day behind this clock lands on the day below its
+	// launch day. The run has ended, and a scan that stops at the launch day
+	// (the launch bound) admits it: this is the write-once revocation W2 rests
+	// on, so the day is read.
+	//
+	// The launch day is strictly before today on purpose. With a launch day of
+	// today the clamp above already lowers the bound to today-1 -- the day the
+	// outcome is planted on -- so the pre-fix scan reads it too and the subtest
+	// proves nothing (the review round that found it). A launch day the clamp
+	// leaves alone is the only shape that tells the two scans apart: the
+	// outcome sits on today-2, which the pre-fix scan (down to the launch day)
+	// never reads.
 	t.Run("an outcome on the day below the launch day", func(t *testing.T) {
 		f := newFixture(t)
 		today := budget.Day(f.now)
-		f.db.set(budget.PathOutcome(today-1, f.slug, f.run))
+		f.run = f.now.AddDate(0, 0, -1).Format("20060102-150405") + "-ee55"
+		f.db.set(budget.PathOutcome(today-2, f.slug, f.run))
 		_, err := f.verify(f.runToken(), f.jobToken(), f.job)
 		if !errors.Is(err, ErrUnverified) {
 			t.Fatalf("err = %v, want a refusal: the run's outcome is on the day below its launch day", err)
 		}
-		if days := f.db.daysAsked(); len(days) == 0 || days[0] != today+1 || days[len(days)-1] != today-1 {
-			t.Errorf("days scanned = %v, want %d down to %d", days, today+1, today-1)
+		if days := f.db.daysAsked(); len(days) != 4 || days[0] != today+1 || days[3] != today-2 {
+			t.Errorf("days scanned = %v, want %d down to %d", days, today+1, today-2)
 		}
 	})
 }
