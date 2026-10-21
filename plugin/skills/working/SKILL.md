@@ -33,11 +33,13 @@ The remote agent cannot see this conversation, your files or the user's machine.
 
 ## Runs on a long-lived branch
 
-A long-lived branch (`integration-0.9.x`) is a base of its own: launch the run with `--ref BRANCH` so it works from that branch rather than from main's tip. The draft pull request it opens still targets main, and retargeting it to BRANCH afterwards is a person's step in the provider's own interface, not the run's.
+A long-lived branch (`integration-0.9.x`) is launched with `--ref BRANCH`, and the run takes its base branch from the `fugaro.yaml` on that ref: `git.base_branch` is what its pull request targets and what its review reads the diff against. On a branch whose own file still names main — `integration-0.9.5`'s does — the draft pull request opens against main, and retargeting it to BRANCH afterwards is a person's step in the provider's own interface. A branch whose file names itself gets its pull requests against BRANCH, with nothing to retarget, and a follow-up on one needs that: it refuses a base that is not the branch its configuration comes from.
 
-Review cost scales with the diff of the pull request against its base, so a branch that has drifted far from main makes every run onto it expensive. Keep the branch merged forward into main often, and keep each pull request small; a wide batch onto one branch pays for that branch's divergence from main once per run (the `parallelism` skill). A run that halted at its cap with `run_cap` usually means its review read too much, not that the work was large.
+Review cost scales with the diff of the pull request against its base, so where the base is main the review reads the branch's whole divergence from main before the change the task was about. Keep each pull request small, and merge main into the branch often so it never drifts far from it; a wide batch onto one branch pays that cost once per run (the `parallelism` skill).
 
-To see what a run cost, and where: `fugaro runs ls` for its row, and `fugaro diagnose RUN` for the breakdown — its review stage is where a base that is too far from main shows up. On a pull request that was retargeted, check the base its runs recorded before launching a fix round: the plain listing does not print it, `fugaro diagnose RUN --json` does, as `base_branch`.
+To see what a run cost: `fugaro runs ls` for its row, and `fugaro diagnose RUN` for the cost beside the halt and its detail.
+A halt with `run_cap` is the run reaching its dollar cap — `reference/diagnose.md` has the row, and the printed detail names the cap and what the run spent; on a pull request whose base is far from main the review can reach the cap alone.
+On a pull request that was retargeted, check the base its runs recorded before launching a fix round: the plain listing prints none, `fugaro diagnose RUN --json` prints it as `row.base_branch`.
 
 ## Monitor
 
