@@ -1,0 +1,202 @@
+{
+  "repo": "acme/app",
+  "records": [
+    {
+      "runs": [
+        {
+          "id": "20261013-140000-eeee",
+          "status": "running",
+          "branch": "fugaro/20261013-140000-eeee",
+          "base_branch": "main",
+          "declared_by": "someone@example.com",
+          "files": [
+            "internal/cli/exec.go"
+          ]
+        }
+      ],
+      "branch": "fugaro/20261013-140000-eeee",
+      "in_flight": true,
+      "files": [
+        "internal/cli/exec.go"
+      ],
+      "services": [
+        "internal"
+      ]
+    },
+    {
+      "pr": {
+        "number": 12,
+        "url": "https://github.com/acme/app/pull/12",
+        "title": "Add search to the catalogue",
+        "branch": "fugaro/20261010-101500-aaaa",
+        "state": "open"
+      },
+      "runs": [
+        {
+          "id": "20261010-101500-aaaa",
+          "pr": 12,
+          "status": "succeeded",
+          "outcome": "ready",
+          "terminal": true,
+          "branch": "fugaro/20261010-101500-aaaa",
+          "base_branch": "main",
+          "declared_by": "someone@example.com",
+          "files": [
+            "internal/cli/exec.go",
+            "internal/coordinator/view.go"
+          ]
+        }
+      ],
+      "branch": "fugaro/20261010-101500-aaaa",
+      "in_flight": true,
+      "files": [
+        "internal/cli/exec.go",
+        "internal/coordinator/view.go"
+      ],
+      "services": [
+        "internal"
+      ]
+    },
+    {
+      "pr": {
+        "number": 14,
+        "url": "https://github.com/acme/app/pull/14",
+        "title": "Index the catalogue nightly",
+        "branch": "fugaro/20261011-090000-bbbb",
+        "draft": true,
+        "state": "open"
+      },
+      "runs": [
+        {
+          "id": "20261011-090000-bbbb",
+          "pr": 14,
+          "status": "succeeded",
+          "outcome": "ready",
+          "terminal": true,
+          "branch": "fugaro/20261011-090000-bbbb",
+          "base_branch": "main",
+          "declared_by": "other@example.com",
+          "files": [
+            "internal/cli/exec.go",
+            "internal/coordinator/view.go",
+            "schemas/result.schema.json"
+          ]
+        }
+      ],
+      "branch": "fugaro/20261011-090000-bbbb",
+      "in_flight": true,
+      "files": [
+        "internal/cli/exec.go",
+        "internal/coordinator/view.go",
+        "schemas/result.schema.json"
+      ],
+      "services": [
+        "internal",
+        "schemas"
+      ]
+    },
+    {
+      "pr": {
+        "number": 15,
+        "url": "https://github.com/acme/app/pull/15",
+        "title": "Release 0.11.0",
+        "branch": "release/v0.11.0",
+        "state": "open"
+      },
+      "runs": [
+        {
+          "id": "20261013-130000-dddd",
+          "pr": 15,
+          "status": "running",
+          "branch": "release/v0.11.0",
+          "declared_by": "release-bot",
+          "files": []
+        }
+      ],
+      "branch": "release/v0.11.0",
+      "release": "0.11.0",
+      "in_flight": true,
+      "files": [],
+      "services": []
+    },
+    {
+      "pr": {
+        "number": 17,
+        "url": "https://github.com/acme/app/pull/17",
+        "title": "Hand-written change no run opened",
+        "branch": "topic/hand-written",
+        "state": "open"
+      },
+      "runs": [],
+      "branch": "topic/hand-written",
+      "in_flight": true,
+      "files": [],
+      "services": []
+    },
+    {
+      "pr": {
+        "number": 16,
+        "url": "https://github.com/acme/app/pull/16",
+        "title": "Tidy the docs",
+        "branch": "fugaro/20261012-120000-cccc",
+        "state": "merged"
+      },
+      "runs": [
+        {
+          "id": "20261012-120000-cccc",
+          "pr": 16,
+          "status": "succeeded",
+          "outcome": "ready",
+          "terminal": true,
+          "branch": "fugaro/20261012-120000-cccc",
+          "base_branch": "main",
+          "declared_by": "someone@example.com",
+          "files": [
+            "internal/coordinator/view.go"
+          ]
+        }
+      ],
+      "branch": "fugaro/20261012-120000-cccc",
+      "in_flight": false,
+      "files": [
+        "internal/coordinator/view.go"
+      ],
+      "services": [
+        "internal"
+      ]
+    }
+  ],
+  "collisions": [
+    {
+      "a": "20261013-140000-eeee",
+      "b": "#12",
+      "files": [
+        "internal/cli/exec.go"
+      ],
+      "services": [
+        "internal"
+      ]
+    },
+    {
+      "a": "20261013-140000-eeee",
+      "b": "#14",
+      "files": [
+        "internal/cli/exec.go"
+      ],
+      "services": [
+        "internal"
+      ]
+    },
+    {
+      "a": "#12",
+      "b": "#14",
+      "files": [
+        "internal/cli/exec.go",
+        "internal/coordinator/view.go"
+      ],
+      "services": [
+        "internal"
+      ]
+    }
+  ]
+}

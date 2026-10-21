@@ -1,0 +1,20 @@
+acme/app: 4 records, 3 in flight
+
+WORK                  BRANCH                       RELEASE  RUNS  FILES  STATE      DECLARED BY
+20261013-120000-cccc  release/v0.11.0              0.11.0   1     1      in flight  release-bot
+#12                   fugaro/20261013-100000-aaaa  -        1     2+     in flight  someone@example.com
+#14                   fugaro/20261013-110000-bbbb  -        1     1      in flight  other@example.com
+#16                   fugaro/20261013-130000-dddd  -        1     1      landed     someone@example.com
+
+n+ in FILES is a run whose changed-file set is short of the one it changed
+(runstore.ChangedFiles): the paths it lists, and every collision computed from
+them, are the ones the run recorded and not necessarily all of them.
+
+COLLISIONS
+20261013-120000-cccc and #12: service internal
+20261013-120000-cccc and #14: service internal
+#12 and #14: internal/coordinator/view.go; service internal
+
+declared by is the launcher each run's own launch record wrote about itself
+(launch.json's launched_by): a declaration, and never a verified identity
+(docs/coordinator/reconciliation.md, finding #11).

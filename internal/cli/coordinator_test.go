@@ -1,0 +1,634 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"gocloud.dev/blob"
+
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
+)
+
+// updateCoordinatorGolden rewrites testdata/coordinator_status.golden, the way
+// the package's other goldens do — under a flag name of its own, because
+// -update, -update-review, -update-retire and -update-cloudrun are already
+// taken and a second flag.Bool of one name panics.
+var updateCoordinatorGolden = flag.Bool("update-coordinator", false, "rewrite testdata/coordinator_status.golden")
+
+// The command is the per-repository read the CLI already performs — the runs
+// bucket plus a gitprov.Provider opened exactly as exec.go's providerOptions
+// opens one — and these tests drive it end to end through the fixture bucket
+// and a fake host. What each of them is for:
+//
+//   - TestCoordinatorStatusJSON: the joined view, read as data, over real run
+//     objects and a real (fake) provider — the records, the collision rule
+//     (one per pair, and a pair that shares only a service is one), the
+//     declaration under a name that says it is one, and the one record whose
+//     stored file set is short of what the run changed: the field that
+//     qualifies the collisions, since a truncated set is what they are
+//     computed over.
+//   - TestCoordinatorStatusTextGolden: the rendered view, read rather than
+//     accepted.
+//   - TestCoordinatorStatusWritesNothing: the plan's sentence for P1, held by
+//     a test — the runs bucket is unchanged and the host's write log is empty.
+//   - TestCoordinatorStatusReadsOnlyThePullRequestsTheRunsName: P1's reader,
+//     pinned as the limitation it is (finding #10), so that P2 replacing it is
+//     a deliberate change and not a surprise.
+//   - TestCoordinatorStatusRefusesAnUnnamedRepository: one repository's view
+//     is asked for by name.
+//   - TestCoordinatorStatusNeverPrintsACredential: the one security rule this
+//     path owns — the provider's own credential values never reach an error
+//     this command prints, from opening the provider or from a read.
+//   - TestCoordinatorStatusWithNoRuns: an empty bucket is a view with nothing
+//     in it, not a failure.
+//   - TestCoordinatorStatusWindow: the window is runs ls's, measured back from
+//     runs ls's clock.
+//   - TestCoordinatorStatusFollowsTheRecordsPullRequest: a run is on the pull
+//     request its record names, else its task's — runs.go's own order.
+//   - TestCoordinatorStatusSanitisesWhatSomebodyElseWrote: a branch name or a
+//     launcher's own string cannot redraw the table around itself.
+
+// coordinatorRunSeed is one run the test fixture's bucket holds, in the terms
+// the view reads it: what its task says, what its launch record declared, and
+// what its result record ended up as.
+type coordinatorRunSeed struct {
+	id     string
+	pr     int    // the pull request the task names, 0 for none (a first run)
+	prev   string // the run the task continues, set with pr
+	branch string // the run's branch, on the task and on the record
+	who    string // launch.json's launched_by
+	status runstore.Status
+	prRef  int      // the pull request the record names, 0 for none
+	base   string   // the record's base_branch
+	files  []string // the paths the record says it changed
+	// total is what the record says the run changed, when that is more than
+	// files holds: a truncated set (runstore.ChangedFiles). 0 for a whole one,
+	// which is the ordinary record and the only kind the store writes.
+	total int
+}
+
+// coordinatorFixture is the fixture the tests below drive: a cloud fixture
+// whose runs bucket holds seeds, and the fake host the runs' pull requests are
+// read from.
+type coordinatorFixture struct {
+	*cloudFixture
+	host *fake.Provider
+}
+
+// newCoordinatorFixture seeds runs into the fixture's bucket and points the
+// command's provider opener at a fake host holding prs.
+func newCoordinatorFixture(t *testing.T, seeds []coordinatorRunSeed, prs ...fake.PRState) *coordinatorFixture {
+	t.Helper()
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	for _, s := range seeds {
+		store := runstore.Open(b, appSlug, s.id)
+		spec := &task.Spec{Version: 1, RunID: s.id, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+		// A follow-up task names its pull request, its branch and the run it
+		// continues — task.Validate's own rule ("branch, pr and previous_run
+		// must be set together") — and a first run names none of the three.
+		if s.pr != 0 {
+			spec.Branch, spec.PR, spec.PreviousRun = s.branch, s.pr, s.prev
+		}
+		if err := store.CreateTask(ctx, spec); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: s.id, LaunchedBy: s.who}); err != nil {
+			t.Fatal(err)
+		}
+		if s.status == "" {
+			continue
+		}
+		rec := &runstore.Record{Version: 1, RunID: s.id, Repo: "acme/app", Workflow: "web",
+			Status: s.status, Branch: s.branch, BaseBranch: s.base}
+		if s.prRef != 0 {
+			rec.PR = &runstore.PRRef{Number: s.prRef, URL: fmt.Sprintf("https://github.com/acme/app/pull/%d", s.prRef)}
+		}
+		if len(s.files) > 0 {
+			rec.ChangedFiles = runstore.NewChangedFiles(s.files)
+			if s.total > 0 {
+				// A record whose stored set is short of the one the run
+				// changed: the caps in runstore.ChangedFiles fall on a run
+				// that touched more paths than the record holds, and the
+				// record says so (Total and Truncated) rather than passing
+				// the short list off as the whole one.
+				rec.ChangedFiles.Total = s.total
+				rec.ChangedFiles.Truncated = true
+			}
+		}
+		if err := store.WriteRecord(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
+	host.State.PRs = prs
+	setCoordinatorHost(t, func([]string, func(string)) (gitprov.Opener, error) { return gitprov.Static(host), nil })
+	return &coordinatorFixture{cloudFixture: f, host: host}
+}
+
+// setCoordinatorHost replaces the command's provider opener for one test.
+func setCoordinatorHost(t *testing.T, open func([]string, func(string)) (gitprov.Opener, error)) {
+	t.Helper()
+	prev := openCoordinatorProvider
+	openCoordinatorProvider = open
+	t.Cleanup(func() { openCoordinatorProvider = prev })
+}
+
+// coordinatorPR is one pull request in the fake host's state.
+func coordinatorPR(number int, branch string, state gitprov.PRState, draft bool) fake.PRState {
+	return fake.PRState{
+		PR:    gitprov.PR{Number: number, URL: fmt.Sprintf("https://github.com/acme/app/pull/%d", number), Draft: draft},
+		Spec:  gitprov.PRSpec{Branch: branch},
+		State: state,
+	}
+}
+
+// coordinatorSeeds is the fixture every test below starts from: two open pull
+// requests that touch one file between them, a third open one a run is still
+// working on, a merged one with a run behind it, and a run that has not opened
+// a pull request at all.
+func coordinatorSeeds() []coordinatorRunSeed {
+	return []coordinatorRunSeed{
+		// The one record whose stored file set is short of what the run
+		// changed: it also collides with #14 on internal/coordinator/view.go,
+		// which is the point — a truncated set is what the collisions are
+		// computed over, and the view says so rather than passing the short
+		// list off as the whole one.
+		{id: "20261013-100000-aaaa", pr: 12, prev: "20261012-090000-1111", branch: "fugaro/20261013-100000-aaaa",
+			who: "someone@example.com", status: runstore.StatusSucceeded, prRef: 12, base: "main",
+			files: []string{"internal/cli/exec.go", "internal/coordinator/view.go"}, total: 400},
+		{id: "20261013-110000-bbbb", pr: 14, prev: "20261012-090000-2222", branch: "fugaro/20261013-110000-bbbb",
+			who: "other@example.com", status: runstore.StatusSucceeded, prRef: 14, base: "main",
+			files: []string{"internal/coordinator/view.go"}},
+		// A run still going that has opened no pull request: a first run, so
+		// its task names none.
+		{id: "20261013-120000-cccc", branch: "release/v0.11.0", who: "release-bot",
+			status: runstore.StatusRunning, base: "main", files: []string{"internal/cli/root.go"}},
+		{id: "20261013-130000-dddd", pr: 16, prev: "20261012-090000-3333", branch: "fugaro/20261013-130000-dddd",
+			who: "someone@example.com", status: runstore.StatusSucceeded, prRef: 16, base: "main",
+			files: []string{"internal/coordinator/view.go"}},
+		// A run that finished with no pull request: not work in flight, and not
+		// in the view.
+		{id: "20261013-140000-eeee", branch: "fugaro/20261013-140000-eeee", who: "someone@example.com",
+			status: runstore.StatusFailed},
+	}
+}
+
+func coordinatorPRs() []fake.PRState {
+	return []fake.PRState{
+		coordinatorPR(12, "fugaro/20261013-100000-aaaa", gitprov.PROpen, false),
+		coordinatorPR(14, "fugaro/20261013-110000-bbbb", gitprov.PROpen, true),
+		coordinatorPR(16, "fugaro/20261013-130000-dddd", gitprov.PRMerged, false),
+		// A pull request no run names: P1's reader never asks for it, and the
+		// test below says so.
+		coordinatorPR(99, "topic/hand-written", gitprov.PROpen, false),
+	}
+}
+
+// TestCoordinatorStatusJSON drives the whole path — the runs bucket, the host,
+// the join — and reads the view as data.
+func TestCoordinatorStatusJSON(t *testing.T) {
+	newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	out, errOut, err := execute(t, "coordinator", "status", "--json", "--since", "0")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	var v coordinatorView
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if v.Repo != "acme/app" {
+		t.Errorf("repo = %q, want acme/app", v.Repo)
+	}
+	// The in-flight running run, #12, #14, #16 (merged, so listed last).
+	var labels []string
+	for _, r := range v.Records {
+		labels = append(labels, recordLabel(r))
+	}
+	want := []string{"20261013-120000-cccc", "#12", "#14", "#16"}
+	if !slices.Equal(labels, want) {
+		t.Errorf("records = %v, want %v", labels, want)
+	}
+	// The run that finished with no pull request is not work in flight.
+	if slices.Contains(labels, "20261013-140000-eeee") {
+		t.Error("the view lists a run that finished with no pull request")
+	}
+	// Three pairs, one per pair of in-flight records that touch something
+	// common: the running run and #12 share the service "internal" and no
+	// file, the running run and #14 the same, and #12 and #14 share one path.
+	// A pair that shares only a service is a collision — that is the rule.
+	var pairs []string
+	for _, c := range v.Collisions {
+		pairs = append(pairs, c.A+" and "+c.B)
+	}
+	wantPairs := []string{
+		"20261013-120000-cccc and #12",
+		"20261013-120000-cccc and #14",
+		"#12 and #14",
+	}
+	if !slices.Equal(pairs, wantPairs) {
+		t.Errorf("collisions = %v, want %v", pairs, wantPairs)
+	}
+	for _, c := range v.Collisions {
+		wantFiles := []string{}
+		if c.A == "#12" && c.B == "#14" {
+			wantFiles = []string{"internal/coordinator/view.go"}
+		}
+		if !slices.Equal(c.Files, wantFiles) || !slices.Equal(c.Services, []string{"internal"}) {
+			t.Errorf("collision %s and %s = files %q, services %q; want files %q, services [internal]",
+				c.A, c.B, c.Files, c.Services, wantFiles)
+		}
+	}
+	// The running run is on a release branch, and the record says so.
+	for _, r := range v.Records {
+		if recordLabel(r) == "20261013-120000-cccc" && r.Release != "0.11.0" {
+			t.Errorf("the release branch run declares release %q, want 0.11.0", r.Release)
+		}
+	}
+	// The launcher is carried as a declaration, under a name that says so.
+	if !strings.Contains(out, `"declared_by": "someone@example.com"`) {
+		t.Errorf("the view does not carry the launcher as a declaration:\n%s", out)
+	}
+	for _, refused := range []string{`"launched_by"`, `"requested_by"`, `"identity"`} {
+		if strings.Contains(out, refused) {
+			t.Errorf("the view carries %s: finding #11's string is a declaration, never an identity", refused)
+		}
+	}
+	// The merged pull request collides with nothing.
+	for _, c := range v.Collisions {
+		if c.A == "#16" || c.B == "#16" {
+			t.Errorf("the merged #16 is in a collision: %+v", c)
+		}
+	}
+	// The one field that qualifies everything above it: the run behind #12
+	// stored a file set short of the one it changed, so the collisions the view
+	// reports are the ones the paths it recorded produce, and not necessarily
+	// all of them. The view says so rather than passing the short list off as
+	// the whole one. Every other record's set is whole, and the key is then
+	// absent rather than false — so the count is one, not four.
+	truncated := 0
+	for _, r := range v.Records {
+		for _, run := range r.Runs {
+			if !run.FilesTruncated {
+				continue
+			}
+			truncated++
+			if recordLabel(r) != "#12" {
+				t.Errorf("the run %s behind %s is marked truncated, want only #12's", run.ID, recordLabel(r))
+			}
+		}
+	}
+	if truncated != 1 {
+		t.Errorf("%d runs are marked truncated, want exactly 1 (#12's)", truncated)
+	}
+	if n := strings.Count(out, `"files_truncated": true`); n != 1 {
+		t.Errorf("the view carries files_truncated %d times, want once:\n%s", n, out)
+	}
+}
+
+// TestCoordinatorStatusTextGolden is the rendered view, read rather than
+// accepted: it is what a person sees.
+func TestCoordinatorStatusTextGolden(t *testing.T) {
+	newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	out, _, err := execute(t, "coordinator", "status", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const path = "testdata/coordinator_status.golden"
+	if *updateCoordinatorGolden {
+		if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	want, err := os.ReadFile(filepath.FromSlash(path))
+	if err != nil {
+		t.Fatalf("no golden file: run go test ./internal/cli -run TestCoordinatorStatusTextGolden -update-coordinator")
+	}
+	if out != string(want) {
+		t.Errorf("the rendered view changed (go test ./internal/cli -run TestCoordinatorStatusTextGolden -update-coordinator to accept):\ngot:\n%s\nwant:\n%s", out, want)
+	}
+}
+
+// "It reads; it writes nothing, anywhere" (the plan's own sentence for P1).
+// The two places this command could write are the runs bucket and the host,
+// and both are checked: the bucket's objects are the same files, byte for byte
+// and stamp for stamp, and the fake host's call log — which records the calls
+// that write and nothing else — is empty.
+func TestCoordinatorStatusWritesNothing(t *testing.T) {
+	f := newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	runs := filepath.Join(f.dir, "runs")
+	before := coordinatorTree(t, runs)
+	if _, _, err := execute(t, "coordinator", "status", "--json", "--since", "0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "coordinator", "status", "--since", "0"); err != nil {
+		t.Fatal(err)
+	}
+	if after := coordinatorTree(t, runs); !slices.Equal(before, after) {
+		t.Errorf("the runs bucket changed under a read:\nbefore: %v\nafter:  %v", before, after)
+	}
+	if calls := f.host.Snapshot().Calls; len(calls) != 0 {
+		t.Errorf("the host was called to write: %+v", calls)
+	}
+}
+
+// coordinatorTree is every file under dir as "path size modtime", sorted: what
+// a write into the bucket would change.
+func coordinatorTree(t *testing.T, dir string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		out = append(out, fmt.Sprintf("%s %d %s", filepath.ToSlash(rel), info.Size(), info.ModTime().UTC()))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// P1's reader is the runs bucket's own declarations: gitprov has no call that
+// lists a repository's pull requests (reconciliation finding #10), so the
+// numbers the runs name are the ones read, and a pull request no run names is
+// not in the view. This is the part's documented limit, and P2's reader is
+// what widens it; the assertion is here so that widening it is a change
+// somebody makes on purpose.
+func TestCoordinatorStatusReadsOnlyThePullRequestsTheRunsName(t *testing.T) {
+	f := newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	out, _, err := execute(t, "coordinator", "status", "--json", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, `"number": 99`) {
+		t.Errorf("the view holds a pull request no run names:\n%s", out)
+	}
+	for i := range f.host.State.PRs {
+		if f.host.State.PRs[i].Number == 99 {
+			return
+		}
+	}
+	t.Fatal("the fixture's host lost the pull request the test is about")
+}
+
+// The view is one repository's, asked for by name: a local config listing more
+// than one is refused rather than guessed at, and --repo answers it.
+func TestCoordinatorStatusRefusesAnUnnamedRepository(t *testing.T) {
+	f := newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: [web] }\n")
+	if _, _, err := execute(t, "coordinator", "status", "--since", "0"); err == nil || !strings.Contains(err.Error(), "--repo") {
+		t.Fatalf("two repositories and no --repo: err = %v, want one naming --repo", err)
+	}
+	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--json", "--since", "0"); err != nil {
+		t.Fatalf("--repo acme/app: %v", err)
+	}
+}
+
+// secretErrHost fails every read of a pull request with an error carrying the
+// credential, which is what a real host's 401 does.
+type secretErrHost struct {
+	*fake.Provider
+	secret string
+}
+
+func (h secretErrHost) PullRequest(context.Context, int) (gitprov.PRInfo, error) {
+	return gitprov.PRInfo{}, fmt.Errorf("GET /repos/acme/app/pulls/12: 401: bad credentials (token %s)", h.secret)
+}
+
+// The one security rule on this path: the credential values the provider
+// opener hands back are redacted out of anything this command prints, whether
+// the failure came from opening the provider or from a read through it.
+func TestCoordinatorStatusNeverPrintsACredential(t *testing.T) {
+	const secret = "ghs_0123456789abcdefghij"
+	for _, tc := range []struct {
+		name string
+		open func([]string, func(string)) (gitprov.Opener, error)
+	}{
+		{"opening the provider", func([]string, func(string)) (gitprov.Opener, error) {
+			return func(context.Context, string, string) (gitprov.Provider, []string, error) {
+				return nil, []string{secret}, fmt.Errorf("github: the App credential %s was refused", secret)
+			}, nil
+		}},
+		{"reading a pull request", func([]string, func(string)) (gitprov.Opener, error) {
+			host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
+			return func(context.Context, string, string) (gitprov.Provider, []string, error) {
+				return secretErrHost{Provider: host, secret: secret}, []string{secret}, nil
+			}, nil
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+			setCoordinatorHost(t, tc.open)
+			out, errOut, err := execute(t, "coordinator", "status", "--since", "0")
+			if err == nil {
+				t.Fatalf("the read failed and the command succeeded: %s%s", out, errOut)
+			}
+			for _, got := range []string{err.Error(), out, errOut} {
+				if strings.Contains(got, secret) {
+					t.Errorf("the credential reached the output: %q", got)
+				}
+			}
+			if !strings.Contains(err.Error(), "[REDACTED]") {
+				t.Errorf("the failure is %q, want the credential redacted in it", err)
+			}
+		})
+	}
+}
+
+// An empty bucket is an empty view, not a failure: nothing is in flight, and
+// the command says so without asking the host anything.
+func TestCoordinatorStatusWithNoRuns(t *testing.T) {
+	newCoordinatorFixture(t, nil)
+	out, _, err := execute(t, "coordinator", "status", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "0 records, 0 in flight") || !strings.Contains(out, "declared by") {
+		t.Errorf("the empty view is:\n%s", out)
+	}
+}
+
+// status reads runs ls's window, measured back from runs ls's clock
+// (coordinatorSince), so a run older than the window is not in the view unless
+// the window is opened.
+func TestCoordinatorStatusWindow(t *testing.T) {
+	recent := recentRunID(t, time.Minute, "feed")
+	old := "20200101-000000-dddd" // runid-guard:allow
+	newCoordinatorFixture(t, []coordinatorRunSeed{
+		{id: recent, branch: "topic/recent", who: "someone@example.com"},
+		{id: old, branch: "topic/old", who: "someone@example.com"},
+	})
+	labels := func(args ...string) []string {
+		t.Helper()
+		out, _, err := execute(t, append([]string{"coordinator", "status", "--json"}, args...)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var v coordinatorView
+		if err := json.Unmarshal([]byte(out), &v); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		var got []string
+		for _, r := range v.Records {
+			got = append(got, recordLabel(r))
+		}
+		return got
+	}
+	if got := labels(); !slices.Equal(got, []string{recent}) {
+		t.Errorf("the default window holds %v, want only the run inside it (%s)", got, recent)
+	}
+	if got := labels("--since", "0"); !slices.Equal(got, []string{old, recent}) {
+		t.Errorf("--since 0 holds %v, want both runs", got)
+	}
+}
+
+// A run is on the pull request its own record names, and on the one its task
+// names only when the record names none — runs.go's own rule (onPR), so the
+// two views of one run never disagree about which pull request it is on.
+func TestCoordinatorStatusFollowsTheRecordsPullRequest(t *testing.T) {
+	newCoordinatorFixture(t,
+		[]coordinatorRunSeed{
+			// The record's pull request wins over the task's.
+			{id: "20261013-100000-aaaa", pr: 12, prev: "20261012-090000-1111", branch: "fugaro/20261013-100000-aaaa",
+				who: "someone@example.com", status: runstore.StatusSucceeded, prRef: 13, base: "main"},
+			// And a run whose record names no pull request takes the task's.
+			{id: "20261013-110000-bbbb", pr: 12, prev: "20261012-090000-2222", branch: "fugaro/20261013-110000-bbbb",
+				who: "other@example.com", status: runstore.StatusRunning, base: "main"},
+		},
+		coordinatorPR(12, "fugaro/20261013-100000-aaaa", gitprov.PROpen, false),
+		coordinatorPR(13, "fugaro/20261013-100000-aaaa", gitprov.PROpen, false),
+	)
+	out, _, err := execute(t, "coordinator", "status", "--json", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v coordinatorView
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	var labels []string
+	for _, r := range v.Records {
+		labels = append(labels, recordLabel(r))
+	}
+	if !slices.Equal(labels, []string{"#12", "#13"}) {
+		t.Fatalf("records = %v, want #12 and #13", labels)
+	}
+	for _, r := range v.Records {
+		var ids []string
+		for _, run := range r.Runs {
+			ids = append(ids, run.ID)
+		}
+		want := []string{"20261013-100000-aaaa"}
+		if recordLabel(r) == "#12" {
+			want = []string{"20261013-110000-bbbb"}
+		}
+		if !slices.Equal(ids, want) {
+			t.Errorf("%s holds runs %v, want %v: the record's pull request comes first, the task's second",
+				recordLabel(r), ids, want)
+		}
+	}
+}
+
+// Everything a row carries is somebody else's text — a branch name, a
+// launcher's own string — and none of it may reach the terminal raw: a
+// launcher that writes an escape, a carriage return or a megabyte about
+// itself must not be able to redraw the table around it.
+func TestCoordinatorStatusSanitisesWhatSomebodyElseWrote(t *testing.T) {
+	hostile := "bob@example.com\x1b[2J\x1b[31mnot really bob\x07\r" + strings.Repeat("x", 4096)
+	newCoordinatorFixture(t,
+		[]coordinatorRunSeed{{id: "20261013-100000-aaaa", pr: 12, branch: "topic/" + strings.Repeat("b", 4096),
+			who: hostile, status: runstore.StatusRunning, prRef: 12, base: "main"}},
+		coordinatorPR(12, "topic/"+strings.Repeat("b", 4096), gitprov.PROpen, false),
+	)
+	out, _, err := execute(t, "coordinator", "status", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i := strings.IndexAny(out, "\x1b\x07\r"); i >= 0 {
+		t.Errorf("the table carries a control character at offset %d: %q", i, out[max(0, i-40):min(len(out), i+40)])
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if n := len([]rune(line)); n > 4*coordinatorMaxCellRunes {
+			t.Errorf("a line of the table is %d runes wide, want a cell to be bounded at %d: %q", n, coordinatorMaxCellRunes, line)
+		}
+	}
+	if !strings.Contains(out, "bob@example.com") {
+		t.Errorf("the declared launcher is not in the table at all:\n%s", out)
+	}
+}
+
+// coordinatorView is the JSON the command prints, for the tests' own reads:
+// the same field names the view's types carry, spelled here so that a rename
+// in one place breaks a test in the other.
+type coordinatorView struct {
+	Repo       string              `json:"repo"`
+	Records    []coordinatorRecord `json:"records"`
+	Collisions []coordinatorPair   `json:"collisions"`
+}
+
+// coordinatorRecord is one record of the printed view.
+type coordinatorRecord struct {
+	PR struct {
+		Number int `json:"number"`
+	} `json:"pr"`
+	Runs []struct {
+		ID             string `json:"id"`
+		DeclaredBy     string `json:"declared_by"`
+		FilesTruncated bool   `json:"files_truncated"`
+	} `json:"runs"`
+	Release  string   `json:"release"`
+	InFlight bool     `json:"in_flight"`
+	Files    []string `json:"files"`
+}
+
+// coordinatorPair is one collision of the printed view.
+type coordinatorPair struct {
+	A        string   `json:"a"`
+	B        string   `json:"b"`
+	Files    []string `json:"files"`
+	Services []string `json:"services"`
+}
+
+// recordLabel is the view's own name for a record, recomputed from the JSON
+// rather than read from a field the view does not print.
+func recordLabel(r coordinatorRecord) string {
+	if r.PR.Number > 0 {
+		return fmt.Sprintf("#%d", r.PR.Number)
+	}
+	if len(r.Runs) > 0 {
+		return r.Runs[0].ID
+	}
+	return "-"
+}

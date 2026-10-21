@@ -1,6 +1,6 @@
 # The coordinator — the implementation plan
 
-**Status: approved to build on the branch `coordinator`, target 0.11.0; no code is implemented yet.** This plan follows from
+**Status (2026-10-21, later): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0 and P1 are on `coordinator`, and P2–P8 are not started.** Each part carries its own **Status** line below, and this one moves with them: the status line and the pins that hold it change in the commit that lands a part, which is what the P0 section says of itself and what every earlier plan in this repository did (`docs/mobile/README.md`, `docs/setup-wizard/README.md`). This plan follows from
 [reconciliation.md](reconciliation.md), which wins wherever it disagrees with
 [spec.md](spec.md). Every path and symbol below was re-read against `main` at `1e0953b7`
 (`docs(central-orchestrator): spec, reconciliation and plan for central orchestrators (#775)`)
@@ -278,6 +278,14 @@ something a person can look at.**
 credential and no write; its GitHub access is the per-repository read the CLI already performs.
 
 **Commit.** `coordinator: the project view's shape, and the one-repository join`
+
+**Status: built.** On the long-lived `coordinator` branch, in this plan's own commit message. The
+package, the join, the collision rule, the fixtures, the command and its registration are in the
+tree, with the command's own ten tests and the package's seven; the plan's status line above moved
+with them. The one thing this part does NOT do is stated where a reader meets it rather than
+here: `gitprov.Provider` reads one pull request by number and cannot list a repository's
+(reconciliation **#10**), so this part's pull requests are the numbers the runs name, and **P2** is
+the part that replaces the reader — behind the same input to the join, as D193 asks.
 
 ---
 
