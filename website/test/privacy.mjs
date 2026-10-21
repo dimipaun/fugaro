@@ -606,6 +606,17 @@ export function reachFailures(files, host) {
 /** An e-mail address, as a page would carry one: a mailto: link, or the shape in prose. */
 const ADDRESS_RE = /[\w.+-]+@[\w-]+\.[a-z]{2,}/i
 
+/**
+ * A literal string, as a pattern that matches it and nothing else. The repository below is
+ * interpolated into two patterns, and a repository URL is a string with `.` in it: unescaped,
+ * `github.com` would match `githubXcom` and a link to somebody else's issue tracker would be
+ * read as the owner's route, so the one link the section is allowed to carry is not the one
+ * it has to carry.
+ */
+function escaped(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 /** Every way the page's contact section departs from the owner's ruling, or []. */
 export function contactFailures(html, repository) {
   const out = []
@@ -622,7 +633,8 @@ export function contactFailures(html, repository) {
     section.push(sibling)
   }
   const hrefs = section.flatMap((node) => [...walk(node)]).filter((el) => el.name === 'a' && el.attrs.has('href')).map((el) => el.attrs.get('href'))
-  const wanted = [new RegExp(`^${repository}/issues/?$`), new RegExp(`^${repository}/blob/main/SECURITY\\.md#.+$`)]
+  const repo = escaped(repository)
+  const wanted = [new RegExp(`^${repo}/issues/?$`), new RegExp(`^${repo}/blob/main/SECURITY\\.md#.+$`)]
   for (const re of wanted) {
     if (!hrefs.some((href) => re.test(href))) {
       out.push(
@@ -1056,6 +1068,21 @@ test('a contact section with a third route, or a page carrying an address, is re
 
   const missing = contactFailures(SHELL('<h1>Privacy</h1><h2>Contact</h2><p>Ask us.</p>'), repo)
   assert.equal(missing.length, 2, missing.join('\n'))
+})
+
+test('the contact route is matched literally, not as a pattern', () => {
+  // The repository is interpolated into two patterns and it is a URL, so it carries `.`:
+  // read as a pattern, `github.com` matches `githubXcom` and a link to a stranger's issue
+  // tracker is taken for the owner's route. A slug with a dot in it is a slug a repository
+  // can have, which is why the string is escaped rather than assumed to be pattern-free.
+  const repo = 'https://github.com/fugaro/fugaro.v2'
+  const good = `<h2>Contact</h2><p>Ask in the <a href="${repo}/issues">issue tracker</a>, or report through <a href="${repo}/blob/main/SECURITY.md#reporting-a-vulnerability">SECURITY.md</a>.</p>`
+  assert.deepEqual(contactFailures(SHELL(`<h1>Privacy</h1>${good}`), repo), [])
+
+  const decoy = `${repo.replace(/\.v2$/, 'Xv2')}/issues`
+  const failures = contactFailures(SHELL(`<h1>Privacy</h1>${good.replace('</p>', `<a href="${decoy}">help</a></p>`)}`), repo)
+  assert.equal(failures.length, 1, failures.join('\n'))
+  assert.match(failures[0], /links https:\/\/github\.com\/fugaro\/fugaroXv2\/issues: the owner's ruling/)
 })
 
 test('a page that links a terms page, and a sitemap that lists one, are refused', (t) => {

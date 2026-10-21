@@ -1152,6 +1152,88 @@ func TestProjectReposLsNeverAdvertisesAPatternAsTheRemedy(t *testing.T) {
 	}
 }
 
+// TestProjectReposLsNeverAdvertisesACommandItWouldRefuse: the remedy is printed
+// to be pasted into a shell, so it has to be a command that WORKS. `repos add`
+// validates its argument with projectpolicy.ValidPattern, whose first segment
+// must be a git provider kind (config.Providers: github, bitbucket) — while the
+// shape of a provider (task.ValidProvider: ^[a-z][a-z0-9-]*$) admits any
+// lower-case word. A spendDaily slug of `prod/acme/app`, the name one
+// hand-written document's slug field can carry, is provider-shaped, so a gate
+// that only reads the shape handed the operator
+//
+//   - (seen in spendDaily; not admitted: … 'fugaro project repos add prod/acme/app')
+//
+// and that command exits with `"prod" is not a git provider kind (github,
+// bitbucket)`. The name is a repository identifier AND its first segment has to
+// be a provider kind this Fugaro knows, or the name gets no command at all.
+//
+// Mutation (verified, run and restored): put the provider test back on
+// task.ValidProvider — this test fails on the hand-written slug, which prints
+// the command `repos add` refuses.
+func TestProjectReposLsNeverAdvertisesACommandItWouldRefuse(t *testing.T) {
+	f := newSeenFixture(t)
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	// Written by hand, the way the comment on spendRepos describes: the ID is
+	// the day's own (firestore's validName refuses a "/" in a document ID, so
+	// Fugaro's own writer never stores a slug that way) and the slug FIELD is
+	// the name this listing reads (budget.FromFields) and prints.
+	const notAProvider = "prod/acme/app"
+	rec := budget.DayRecord{Repo: notAProvider, Slug: notAProvider, Date: budget.DayDate(budget.Day(f.now)),
+		Version: budget.DayRecordVersion, Final: true, SpentMicros: budget.Micros(1_000_000), Runs: 1}
+	f.fs.Set(budget.SpendCollection, budget.DayDate(budget.Day(f.now))+"_handwritten", rec.ToFields())
+
+	out, _, err := execute(t, "project", "repos", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	_, seen, ok := strings.Cut(out, "repositories seen here")
+	if !ok {
+		t.Fatalf("the listing does not print the seen half:\n%s", out)
+	}
+	line := listLine(t, seen, notAProvider)
+	if strings.Contains(line, "repos add "+notAProvider) {
+		t.Errorf("the listing tells the operator to run `fugaro project repos add %s`, which `repos add` refuses (%q is not a git provider kind):\n%s", notAProvider, "prod", line)
+	}
+	if !strings.Contains(line, "not admitted") || !strings.Contains(line, "not a repository name") {
+		t.Errorf("the entry for %q does not say the allow-list refuses it, nor that it is not an enrollable name:\n%s", notAProvider, line)
+	}
+
+	// The same defect one bound over: a hand-written slug field of 256 bytes is
+	// identifier-shaped and inside safetext.FieldMax, so a gate bounded at
+	// FieldMax printed `fugaro project repos add github/acme/<300 bytes>` —
+	// which `repos add` refuses with "the pattern is N characters; at most 255
+	// are allowed" (projectpolicy.MaxPatternLen, the bound the command applies
+	// and the one the gate is now held to). Nothing here is a wildcard or a
+	// provider problem: the ONLY thing wrong with this name is its length.
+	long := "github/acme/" + strings.Repeat("a", projectpolicy.MaxPatternLen-len("github/acme/")+1)
+	rec2 := budget.DayRecord{Repo: long, Slug: long, Date: budget.DayDate(budget.Day(f.now)),
+		Version: budget.DayRecordVersion, Final: true, SpentMicros: budget.Micros(1_000_000), Runs: 1}
+	f.fs.Set(budget.SpendCollection, budget.DayDate(budget.Day(f.now))+"_handwritten_long", rec2.ToFields())
+	out2, _, err := execute(t, "project", "repos", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out2)
+	}
+	_, seen2, ok2 := strings.Cut(out2, "repositories seen here")
+	if !ok2 {
+		t.Fatalf("the listing does not print the seen half:\n%s", out2)
+	}
+	longLine := listLine(t, seen2, long)
+	// The NAME, not the word "repos add": the refusal sentence these lines
+	// carry ends with a generic 'fugaro project repos add provider/owner/name'
+	// whatever the name is, so only the name itself says a command was built
+	// from it.
+	if strings.Contains(longLine, "repos add "+long) {
+		t.Errorf("the listing tells the operator to run a `repos add` command for a %d-byte name, which `repos add` refuses (projectpolicy.MaxPatternLen is %d):\n%s", len(long), projectpolicy.MaxPatternLen, longLine)
+	}
+	if !strings.Contains(longLine, "not admitted") || !strings.Contains(longLine, "not a repository name") {
+		t.Errorf("the entry for the %d-byte name does not say the allow-list refuses it, nor that it is not an enrollable name:\n%s", len(long), longLine)
+	}
+}
+
 // TestProjectShowNeverAdvertisesAPatternAsTheRemedy: `project show`'s running
 // list is the run registry's keys, which a run writes, and its not-admitted
 // note goes through the same sentence as `repos ls` — so it had the same hole
@@ -1210,18 +1292,26 @@ func TestProjectShowNeverAdvertisesAPatternAsTheRemedy(t *testing.T) {
 // "/"-segments (drop the alphabet check) — red on `github/*/*`, `github/acme/app
 // b`, `github/acme/app;id` and the uppercase provider; drop the "-"/"."/".."
 // segment rule — red on `-x/y/z`, `github/acme/-app` and `github/acme/..`;
-// drop the length bound — red on the name one byte over safetext.FieldMax;
-// hold the provider kind to task.ValidProvider instead of config.Providers (the
-// check this test was widened for) — red on `githubb/acme/app` and
-// `gitlab/acme/app`, which `repos add` refuses (projectpolicy.ValidPattern) and
-// which the listing advised until it was fixed.
+// drop the length bound — red on the name one byte over
+// projectpolicy.MaxPatternLen, the bound `repos add` applies;
+// put the provider test back on task.ValidProvider, which reads the shape of a
+// provider and nothing else — red on `prod/acme/app`, the name `repos add`
+// refuses even though it is shaped like a provider.
 func TestEnrollableArgHoldsTheRemedyToARepository(t *testing.T) {
 	for _, ok := range []string{
 		"github/acme/app",
+		// A trailing ".git" on a NAME (not on a whole ".git" segment) is a name
+		// `repos add` takes: task.CanonicalRepo strips the suffix and stores
+		// "github/acme/app". The gate must not refuse it, which is why the rule
+		// below is about the last segment and not the suffix.
+		"github/acme/app.git",
 		"bitbucket/acme/group/app", // a repository path may nest
-		"github/Acme/App",          // the repository alphabet admits A-Z; the provider kind does not
-		// Exactly at the bound (safetext.FieldMax bytes) is still a name.
-		"github/acme/" + strings.Repeat("a", safetext.FieldMax-len("github/acme/")),
+		"github/Acme/App",          // the repository alphabet admits A-Z; `repos add` lower-cases its argument, so this one works
+		// Exactly at the bound `repos add` applies (projectpolicy.MaxPatternLen
+		// bytes) is still a name: ValidPattern accepts 255 characters and
+		// refuses 256. safetext.FieldMax is 512, and bounding at THAT handed the
+		// operator a command the command refuses.
+		"github/acme/" + strings.Repeat("a", projectpolicy.MaxPatternLen-len("github/acme/")),
 	} {
 		got, is := enrollableArg(ok)
 		if !is {
@@ -1233,19 +1323,13 @@ func TestEnrollableArgHoldsTheRemedyToARepository(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{
-		"",                // nothing
-		"*",               // the allow-list's own entry: admits every repository
-		"github/*/*",      // a pattern a run wrote
-		"acme/app",        // two segments: `repos add` resolves its provider through a config these listings do not have
-		"github/acme",     // no repository name
-		"GitHub/acme/app", // not a provider kind (the kinds are lower-case)
-		// A word a slug could be built from but no repository can carry: it is
-		// not in config.Providers, so `repos add githubb/acme/app` is refused
-		// (projectpolicy.ValidPattern) and advising it would invite the operator
-		// to run a command that cannot be run (the review finding on this
-		// change). Every kind a repository may have is in that list.
-		"githubb/acme/app",
-		"gitlab/acme/app",
+		"",                    // nothing
+		"*",                   // the allow-list's own entry: admits every repository
+		"github/*/*",          // a pattern a run wrote
+		"acme/app",            // two segments: `repos add` resolves its provider through a config these listings do not have
+		"github/acme",         // no repository name
+		"GitHub/acme/app",     // not a provider kind (task.ValidProvider is lower-case)
+		"prod/acme/app",       // provider-shaped, but not a git provider kind: `repos add` refuses this argument (projectpolicy.ValidPattern)
 		"-x/y/z",              // a shell word opening with a dash reads as an option
 		"github/acme/-app",    // the same, one segment in
 		"github/acme/..",      // a directory, not a repository
@@ -1256,12 +1340,103 @@ func TestEnrollableArgHoldsTheRemedyToARepository(t *testing.T) {
 		"github/acme/app;id",  // shell metacharacters
 		"github/acme/app`id`", // and backticks
 		"../acme/app",         // a path out of the tree
-		// One byte over the bound every printed name is held to: the advisory
-		// line must not be as long as a run chose.
-		"github/acme/" + strings.Repeat("a", safetext.FieldMax-len("github/acme/")+1),
+		// The last segment is exactly ".git": `repos add` strips a trailing
+		// ".git" (after lower-casing) and is left with an empty segment, so it
+		// refuses the name — and this gate printed
+		// `fugaro project repos add github/acme/.git`, which the command answers
+		// with "is not a repository: the repository must look like owner/name".
+		"github/acme/.git",
+		"github/acme/.GIT", // the strip is applied after ASCIILower, so the case does not save it
+		// One byte over the bound `repos add` applies: the advisory line must
+		// not be as long as a run chose, and the command in it must be one that
+		// command accepts.
+		"github/acme/" + strings.Repeat("a", projectpolicy.MaxPatternLen-len("github/acme/")+1),
 	} {
 		if got, is := enrollableArg(bad); is {
 			t.Errorf("enrollableArg(%q) = %q, true; want no command at all", bad, got)
 		}
+	}
+}
+
+// TestEnrollableArgAgreesWithReposAddOnEveryName: the property the table above
+// claims — every name it accepts is a name `repos add` accepts — pinned by
+// running BOTH for each name, so the gate cannot accept a name the command
+// refuses without this failing. The table alone did not hold it: it carried the shapes
+// the author thought of, and "github/acme/.git" was not one of them, so the
+// gate printed `fugaro project repos add github/acme/.git` and the command
+// answered "is not a repository: the repository must look like owner/name" —
+// the same defect as the provider-kind and the length bounds, found the same
+// way (by running the pair instead of reading the validator).
+//
+// Mutations (each verified, run and restored): drop the ".git" last-segment
+// rule — red on both ".git" names; widen it to a suffix test on the whole name
+// — red on "github/acme/app.git", which `repos add` accepts and this then
+// refuses; widen it from the last segment to every segment — red on
+// "github/.git/app"; move it to the FIRST segment — red on both ".git" names,
+// the shape it exists for.
+func TestEnrollableArgAgreesWithReposAddOnEveryName(t *testing.T) {
+	// The implication runs ONE way and that is the property: a name this gate
+	// accepts is a name `repos add` accepts. The converse is deliberately false
+	// — `repos add github/*/*` would enrol every repository, and refusing to
+	// print it is the point of the gate — so the names it refuses are not
+	// checked against the command here.
+	for _, name := range []string{
+		"github/acme/app",
+		"bitbucket/acme/group/app",
+		"github/Acme/App",
+		"github/acme/app.git", // the command strips the suffix and stores the name
+		"github/.git/app",     // a ".git" SEGMENT in the middle is not the shape below
+		"github/acme/git",
+		"github/acme/" + strings.Repeat("a", projectpolicy.MaxPatternLen-len("github/acme/")),
+	} {
+		got, ok := enrollableArg(name)
+		if !ok {
+			t.Errorf("enrollableArg(%q) refused a repository identifier, so this test checks nothing about it", name)
+			continue
+		}
+		newProjectFixture(t, "")
+		if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := execute(t, "project", "repos", "add", name); err != nil {
+			t.Errorf("enrollableArg(%q) = %q, and a listing prints `fugaro project repos add %s`, but `repos add` refuses it: %v", name, got, name, err)
+		}
+	}
+
+	// And the shape the table above was missing, with both halves: the gate
+	// refuses it AND the command refuses it, which is what makes the gate's
+	// refusal the right answer rather than a lost remedy.
+	for _, name := range []string{"github/acme/.git", "github/acme/.GIT"} {
+		if got, ok := enrollableArg(name); ok {
+			t.Errorf("enrollableArg(%q) = %q; want no command at all: `repos add` strips a trailing \".git\" and is left with an empty segment, so it refuses this name", name, got)
+		}
+		newProjectFixture(t, "")
+		if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := execute(t, "project", "repos", "add", name); err == nil {
+			t.Errorf("`repos add` accepted %q, so refusing it in the listing loses a remedy that works", name)
+		}
+	}
+}
+
+// TestReposAddTakesTheLengthEnrollableArgBoundsAt: the boundary above, run
+// against the command itself and not against the validator the comment cites.
+// enrollableArg refuses at projectpolicy.MaxPatternLen because that is what
+// `repos add` accepts — and if the command's own bound ever moved, the gate
+// would go on printing a remedy the command refuses, which is the whole defect.
+// So the pair is pinned end to end: exactly MaxPatternLen bytes is enrolled,
+// one byte more is refused.
+func TestReposAddTakesTheLengthEnrollableArgBoundsAt(t *testing.T) {
+	newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	at := "github/acme/" + strings.Repeat("a", projectpolicy.MaxPatternLen-len("github/acme/"))
+	if _, _, err := execute(t, "project", "repos", "add", at); err != nil {
+		t.Fatalf("`repos add` refused a %d-byte name, the length enrollableArg prints a command for: %v", len(at), err)
+	}
+	if _, _, err := execute(t, "project", "repos", "add", at+"a"); err == nil {
+		t.Fatalf("`repos add` accepted a %d-byte name, one byte over the bound enrollableArg refuses at: the gate and the command have drifted apart", len(at)+1)
 	}
 }

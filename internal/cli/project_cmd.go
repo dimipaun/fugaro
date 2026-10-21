@@ -2661,39 +2661,60 @@ func notAdmittedSentence(r string) string {
 // enrollableArg is name as the one argument `fugaro project repos add` takes
 // for it, when name is a repository identifier and nothing else: a
 // provider/owner/name path (a repository may nest, so any depth above two) over
-// the repository alphabet [A-Za-z0-9._-], whose first segment is a git provider
-// kind this machine's Fugaro knows (config.Providers, the kinds a repository's
-// git.provider may be), with no empty, "." or ".." segment and no segment
-// opening with "-" (a shell word that opens with a dash reads as an option). A
-// "*" — the wildcard of a pattern, and the one character that makes the name
-// admit more than itself — is not in the alphabet, and neither is a space, so a
-// pattern and a name a run padded are both refused. The value comes back quoted
-// as one shell word (shellword.Quote: unchanged when it is already safe,
-// single-quoted otherwise), because what is printed is meant to be pasted into
-// a shell.
+// the repository alphabet [A-Za-z0-9._-], whose first segment is a provider
+// kind this Fugaro knows (config.Providers — the set projectpolicy.ValidPattern
+// requires, and the one `repos add` validates the argument with), with no
+// empty, "." or ".." segment and no segment opening with "-" (a shell
+// word that opens with a dash reads as an option). A "*" — the wildcard of a
+// pattern, and the one character that makes the name admit more than itself —
+// is not in the alphabet, and neither is a space, so a pattern and a name a run
+// padded are both refused.
 //
-// The provider kind is held to config.Providers and not to task.ValidProvider,
-// which accepts any lower-case word a slug could be built from: `repos add`
-// validates the argument it is given with projectpolicy.ValidPattern
-// (canonicalRepoArg), and that function's provider check is this same list —
-// "githubb" is a slug, not a kind any repository can carry. A kind outside the
-// list is an argument the command refuses, and a name this command would refuse
-// is not a remedy (notAdmittedSentence): the listing would be inviting the
-// operator to run an enrollment that cannot be made.
+// The provider is the KIND and not its shape: task.ValidProvider reads
+// ^[a-z][a-z0-9-]*$, which admits any lower-case word, while `repos add`
+// validates the argument it is given with projectpolicy.ValidPattern, whose
+// first segment must be a member of config.Providers. A slug field of
+// `prod/acme/app` — a name one hand-written spendDaily document can carry — is
+// provider-shaped, so a shape-only gate printed
+// 'fugaro project repos add prod/acme/app', and that command exits with
+// `"prod" is not a git provider kind (github, bitbucket)`: an instruction the
+// program hands out that the program itself refuses. What is printed is meant
+// to work, so the set is the one the command applies. A provider kind spelled
+// in another case is refused by both tests anyway (config.Providers is
+// lower-case, and so is task.ValidProvider).
+//
+// The value comes back quoted as one shell word
+// (shellword.Quote: unchanged when it is already safe, single-quoted
+// otherwise), because what is printed is meant to be pasted into a shell.
 //
 // The bare owner/name form `repos add` also takes is deliberately not offered:
 // it resolves its provider through this machine's config (canonicalRepoArg),
 // and these listings reach this sentence exactly for the names the config does
 // not know. The canonical form is the one that stands on its own.
 //
-// The name is bounded too, at safetext.FieldMax bytes (the alphabet is ASCII,
-// so bytes are characters): every other name these listings print is held to
-// that bound, and without it a run that wrote a long enough identifier-shaped
-// slug made the advisory line, and the command in it, as long as it chose. A
-// longer name gets no command, the same answer as any other name that is not a
-// repository identifier.
+// The name must also be one `repos add` accepts after its own canonicalising:
+// a last segment of exactly ".git" is not, because task.CanonicalRepo strips a
+// trailing ".git" (after lower-casing) and is then left with an empty one, so
+// 'github/acme/.git' is printed by the shape rules above and refused by the
+// command. "github/acme/app.git" IS accepted (the command stores
+// "github/acme/app"), so the rule is about the last segment and not the
+// suffix.
+//
+// The name is bounded too, at projectpolicy.MaxPatternLen bytes (the alphabet
+// is ASCII, so bytes are characters) — the bound `repos add` applies to the
+// argument through ValidPattern, and not a bound of this package's own. It is
+// the tightest of the two that could be used here: safetext.FieldMax is 512,
+// so bounding at that let a hand-written 256-byte slug field be handed
+// 'fugaro project repos add github/acme/<300 bytes>', which exits with "the
+// pattern is N characters; at most 255 are allowed" — the same defect as the
+// provider-kind one above, and the property the test is named for. Every other
+// name these listings print is held to that bound as well, and without any
+// bound a run that wrote a long enough identifier-shaped slug made the advisory
+// line, and the command in it, as long as it chose. A longer name gets no
+// command, the same answer as any other name that is not a repository
+// identifier.
 func enrollableArg(name string) (string, bool) {
-	if len(name) > safetext.FieldMax {
+	if len(name) > projectpolicy.MaxPatternLen {
 		return "", false
 	}
 	segs := strings.Split(name, "/")
@@ -2704,6 +2725,19 @@ func enrollableArg(name string) (string, bool) {
 		if !repoIdentSegment(seg) {
 			return "", false
 		}
+	}
+	// A name whose LAST segment is exactly ".git" is refused by `repos add`,
+	// and this gate has to refuse it too or it prints a command the program
+	// itself answers with `"github/acme/.git" is not a repository: the
+	// repository must look like owner/name`. task.CanonicalRepo strips a
+	// trailing ".git" — after ASCII-lowering, so ".GIT" goes the same way —
+	// and then requires every segment to be non-empty: "github/acme/.git"
+	// becomes "github/acme/" and fails. Only the last segment, and only the
+	// whole segment: "github/acme/app.git" is a name the command accepts (it
+	// stores "github/acme/app"), and a ".git" segment in the middle is left
+	// alone.
+	if strings.EqualFold(segs[len(segs)-1], ".git") {
+		return "", false
 	}
 	return shellword.Quote(name), true
 }
