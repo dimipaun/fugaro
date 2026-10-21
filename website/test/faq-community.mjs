@@ -538,6 +538,52 @@ test('the FAQ links the security page and the caps guide rather than summarizing
   assert.match(caps, /href="\/caps-and-costs\/"/, "the FAQ's cost answer does not link the caps-and-costs page")
 })
 
+// ---- the bold look (the owner's approved boards of 2026-10-20) ----------------------------
+
+test('the FAQ wears the site’s bold look, in the shapes the site writes once', () => {
+  // The redesign gives the page the shapes `base.css` §2c writes for the whole site rather
+  // than a set of its own: the display scale's headline with the accent's gradient on its last
+  // word, and one card per answer. A page that drew its own copy of either would be the second
+  // definition of a shape the site has, which is what the owner's "one look" is about — and a
+  // page that quietly lost one would look like the site it was before. So the three are read
+  // off the built page, and the headline's words are held to the string they were.
+  const page = builtPage('faq')
+
+  const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(page)
+  assert.ok(h1, 'the built FAQ carries no `h1`')
+  assert.match(
+    h1[0],
+    /\bdisplay-xl\b/,
+    'the FAQ’s headline is not set in the site’s display scale (`base.css`’s `.display-xl`), which is the oversized heavy line every redesigned page opens with',
+  )
+  assert.match(
+    h1[1],
+    /<span[^>]*\bclass="gradient-text"[^>]*>[^<]+<\/span>/,
+    'the FAQ’s headline carries no word in the accent’s gradient, which is the emphasis the boards put on part of a headline',
+  )
+  assert.equal(
+    pageText(h1[1]),
+    'Frequently asked questions',
+    'the FAQ’s headline is not the heading it was: the redesign is a change of styling and layout, and not a word of the page moved with it',
+  )
+
+  const questions = [...page.matchAll(/<article[^>]*\bid="([^"]+)"/g)].map((m) => m[1])
+  assert.ok(questions.length >= 5, `the FAQ renders ${questions.length} answers, which is too few for this check to mean anything`)
+  const cards = [...page.matchAll(/<article[^>]*\bclass="[^"]*\bcard\b[^"]*"[^>]*\bid="([^"]+)"/g)].map((m) => m[1])
+  assert.deepEqual(
+    cards,
+    questions,
+    'the FAQ’s answers are not all drawn as the site’s card (`base.css`’s `.card`): the redesign lays each answer on one, so the six read as a set a reader scans rather than as a document',
+  )
+
+  const section = element(page, 'comparison')
+  assert.match(
+    section,
+    /class="comparison-panel"/,
+    'the FAQ’s comparison section is not drawn in a panel, which is the box every raised block of the redesigned site stands in',
+  )
+})
+
 test('neither page restates README.md, CONTRIBUTING.md or SECURITY.md', () => {
   const pages = [
     { name: 'website/src/pages/faq.astro', text: flatten(pageText(builtPage('faq'))) },
