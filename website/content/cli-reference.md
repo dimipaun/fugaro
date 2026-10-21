@@ -92,7 +92,10 @@ could take off a hold a newer release placed.
 
 The write is one node — creds/marks/NAME, in this installation's own database —
 and it is conditional on the value read (PutIfMatch), so a mark the service
-changed at the same moment is not lost.
+changed at the same moment is not lost: the write re-reads the mark and clears
+it only while its state is still the one the confirmation named, so a 401 the
+service recorded while you were reading is left for its own decision rather
+than taken off with the hold you confirmed.
 
 NAME is "default" (the repository's own unnamed claude-oauth-token secret), a
 claude_accounts name of the selected project config, or an account the database
@@ -156,6 +159,12 @@ available, exhausted until T, backed off or broken. A project with no backend,
 and a machine where no project config could be selected, answer with the names
 alone and a note saying why: the command never turns "could not read" into
 "every account is available".
+
+That read is bounded: five seconds for the whole of it (the token source, the
+project check and the marks), one attempt per call, and no retry. A database
+that is unreachable rather than refusing — a laptop offline, a firewall that
+drops — therefore costs this command seconds, not the per-call timeout twice,
+and the names are printed with a note saying the states could not be read.
 
 --json's "complete" is false when no project config could be selected for a
 reason other than an explicit --config/--project/$FUGARO_CONFIG/$FUGARO_PROJECT
