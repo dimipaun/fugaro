@@ -647,7 +647,7 @@ func labelFilter(labels map[string]string) string {
 //     only: RetireSet never counts one as a retirement, so a kept container
 //     an earlier run released can never make the summary, the refusal gate
 //     or --retire fire again. Without this split every later
-//     `fugaro init --repo` would re-report the two OAuth tokens forever,
+//     `fugaro update` would re-report the two OAuth tokens forever,
 //     because a kept container is forgotten by design (design §3.1a).
 //
 // stateAddrs are the addresses the state holds, which is the only thing that

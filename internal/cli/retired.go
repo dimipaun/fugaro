@@ -18,11 +18,19 @@ import (
 // constructs no client — and it is hidden, because it is not a command this
 // CLI offers any more.
 
-// retirementText is the one sentence the retired `fugaro init` says, whatever
-// came after it on the command line. It is a constant because the tombstone
-// and its test both quote it, and because the plan's census (W0.2) exempts
-// the files that name the command only to retire it.
-const retirementText = "`fugaro init` is now `fugaro setup` (first run) and `fugaro update` (after a CLI upgrade)"
+// retiredInitMessage is the one sentence the retired `fugaro init` says,
+// whatever came after it on the command line. It is a constant because the
+// tombstone and its test both quote it, and because the plan's census (W0.2)
+// exempts the files that name the command only to retire it.
+//
+// It is not named `retirementText`, although that is the phrase this file's
+// own comment uses for it: `retirementText` is the census's
+// (internal/cli/docs_live_init_census_test.go, W0.2), where it is the list of
+// the four paths that may name the retired command. Two package-level
+// declarations of one name do not compile, so the tombstone's sentence and the
+// census's list cannot share it, and the census keeps it because the plan
+// names the exemption class, not this string.
+const retiredInitMessage = "`fugaro init` is now `fugaro setup` (first run) and `fugaro update` (after a CLI upgrade)"
 
 // newRetiredInitCmd is the hidden `init`: one message, two names, exit 1.
 //
@@ -38,12 +46,12 @@ func newRetiredInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "init",
 		Short:              "Retired: fugaro setup on a first run, fugaro update after a CLI upgrade",
-		Long:               retirementText + ".\n\nIt applies nothing: it names the two commands that replaced it and exits 1.",
+		Long:               retiredInitMessage + ".\n\nIt applies nothing: it names the two commands that replaced it and exits 1.",
 		Hidden:             true,
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return userErr("%s", retirementText)
+			return userErr("%s", retiredInitMessage)
 		},
 	}
 }

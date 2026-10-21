@@ -468,8 +468,8 @@ import is erased, which is why the preload can still be typed against
 rather than off a paragraph — every `where` columns names the `internal/cli`
 file and line each entry was grepped from on 2026-10-16 (the three converge rows
 were re-read on 2026-10-21, after task W1.2 of
-`docs/setup-wizard/implementation-plan.md` split `fugaro init` into `fugaro
-setup` and `fugaro update`). It carries every
+`docs/setup-wizard/implementation-plan.md` split the old first-run `init` into
+`fugaro setup` and `fugaro update`). It carries every
 command the CLI has that writes (including `verify`, which runs a workflow's own
 build/test/lint commands in the checkout, and `image build`/`gate`/`record`/
 `refresh`), the `secrets` commands, the converge — `setup`, which creates the

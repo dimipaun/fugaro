@@ -142,7 +142,7 @@ func TestCredsTokenOfAnotherRepositoryDenied(t *testing.T) {
 // doctor read before a run may start (C1.19-C1.21) and `policyRules` is what
 // every reader of a published policy reads: a token that could write either
 // could make a run pass a gate the installation has not met. Both are written
-// by the owner's `fugaro init --firebase`, over IAM, which bypasses the rules.
+// by the owner's `fugaro update --firebase`, over IAM, which bypasses the rules.
 //
 // `policyRules` had no such pin; this adds it beside the new one.
 func TestRunTokenCannotWriteTheCredsRulesMarkers(t *testing.T) {

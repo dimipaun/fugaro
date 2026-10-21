@@ -14,7 +14,7 @@ import (
 )
 
 // TestInstallationVarsPlan plans the installation root with the tfvars
-// fugaro init writes, against a mock provider, so a type or validation
+// fugaro update writes, against a mock provider, so a type or validation
 // mismatch between Go and the HCL fails here rather than in a live plan.
 func TestInstallationVarsPlan(t *testing.T) {
 	if _, err := exec.LookPath("terraform"); err != nil {
@@ -126,7 +126,7 @@ func History0(t *testing.T, deploy bool) HistorySpec {
 	return h
 }
 
-// TestFirebaseVarsPlan plans the Firebase root with the tfvars fugaro init
+// TestFirebaseVarsPlan plans the Firebase root with the tfvars fugaro update
 // --firebase writes, against mock providers.
 func TestFirebaseVarsPlan(t *testing.T) {
 	// aurora-fp is the two-project layout; proj-1234 is the installation's

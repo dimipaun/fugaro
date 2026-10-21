@@ -21,7 +21,7 @@ const DefaultProfileName = config.DefaultJobProfile
 // repository admitted to it. Cloud Run cannot vary the image, the service
 // account, cpu, memory or the task timeout per execution, so a profile names
 // them once and one job and one job service account is deployed per (profile,
-// provider, account) — `fugaro init`, from the local config's own profiles.
+// provider, account) — `fugaro update`, from the local config's own profiles.
 //
 // It embeds config.JobProfile rather than respelling its fields, the way
 // Provider embeds config.ModelProvider: the operator's config file declares
@@ -56,7 +56,7 @@ func ValidProfileName(name string) error {
 // profile the published policy does not define halts the run. The job layout
 // calls it where the job a run is launched as is built, which is where the
 // profile's cpu, memory, timeout and secrets are applied (internal/infra's
-// ProjectJobs, the function `fugaro init` deploys one job per (profile,
+// ProjectJobs, the function `fugaro update` deploys one job per (profile,
 // provider, account) from). And the launcher calls it to compute that job's
 // own name (internal/cli's launchProjectJobFor) — the name the runner matches
 // CLOUD_RUN_JOB against, so the two sides resolve the same profile.
@@ -222,7 +222,7 @@ func providerOf(canonical string) string {
 // providerRequired is the refusal a profile that names no provider gets, in
 // the one place the sentence lives. validProfiles below is where the rule is
 // stated, but DeriveAccounts reaches an empty provider first on the publish
-// path it shares with `fugaro init` (internal/cli/project_cmd.go derives the
+// path it shares with `fugaro update` (internal/cli/project_cmd.go derives the
 // accounts block before the document is judged), so a profile naming
 // claude_accounts without a provider would otherwise be refused for the wrong
 // thing — the account's slug "is not a repository" — and the operator would
@@ -241,7 +241,7 @@ func providerRequired(at string) error {
 // name (CheckSecretName), never a Claude OAuth token, which no profile may
 // mount (isClaudeOAuthSecret), and never a Codex OAuth token, whose name is
 // reserved ahead of the harness that would read it (config.CodexOAuthSecret):
-// the rule `fugaro init` deploys by, stated here so that the two cannot
+// the rule `fugaro update` deploys by, stated here so that the two cannot
 // disagree about one profile.
 //
 // The accounts block is the fourth thing a profile is judged against, and the
@@ -305,7 +305,7 @@ func validProfiles(profiles map[string]Profile, accounts map[string]Account) err
 			// profile to ONE rule rather than to a copy of it each. Without
 			// it the documents can disagree about one profile: publish copies
 			// the operator's profiles verbatim, so a policy can mount the
-			// reserved claude-oauth-token and name a job `fugaro init` never
+			// reserved claude-oauth-token and name a job `fugaro update` never
 			// deployed — its account segment is the default
 			// account on the launcher's and the runner's side and empty on the
 			// deployer's. The launcher then reaches Cloud Run on that job and
@@ -314,7 +314,7 @@ func validProfiles(profiles map[string]Profile, accounts map[string]Account) err
 			// with cannotPlaceJob, which blames a stale module version. Like the
 			// two refusals above, it never echoes the entry.
 			if isClaudeOAuthSecret(secret) {
-				return fmt.Errorf("%s.secrets[%d]: a Claude OAuth token is person-owned (design D2), and its allow_data_to is a per-repository list a shared job cannot honour — a profile is shared by every repository admitted to it — so no profile mounts one until phase 5 decides how an account reaches a shared job. `fugaro init` refuses to deploy the job such a profile names, and this node must not name one either", at, i)
+				return fmt.Errorf("%s.secrets[%d]: a Claude OAuth token is person-owned (design D2), and its allow_data_to is a per-repository list a shared job cannot honour — a profile is shared by every repository admitted to it — so no profile mounts one until phase 5 decides how an account reaches a shared job. `fugaro update` refuses to deploy the job such a profile names, and this node must not name one either", at, i)
 			}
 			// The Codex harness's OAuth credential is the same KIND of name,
 			// reserved ahead of the harness itself (config.CodexOAuthToken,
@@ -457,7 +457,7 @@ func sortedProfileNames(entries map[string]json.RawMessage) []string {
 // by the same function publish uses (DeriveAccounts): a caller that passed an
 // empty one would make every profile listing an account fail the membership
 // rule below, with a sentence about a policy that was never published, on a
-// `fugaro init` that has the account in hand.
+// `fugaro update` that has the account in hand.
 func CheckProfiles(profiles map[string]Profile, accounts map[string]Account) error {
 	return validProfiles(profiles, accounts)
 }

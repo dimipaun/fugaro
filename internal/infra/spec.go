@@ -148,7 +148,7 @@ type RoleIDs struct {
 	JobRunner      string `json:"job_runner"`
 	BuildSubmitter string `json:"build_submitter"`
 	// TagMover is empty in the outputs of an installation applied before
-	// the role existed; fugaro init --repo refuses those.
+	// the role existed; fugaro update refuses those.
 	TagMover string `json:"tag_mover"`
 }
 
@@ -983,7 +983,7 @@ func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 // provider's own key whose provider lists repo -- AllowsData uniformly
 // across the last three, so §3a's no-list/["*"]-means-any-repository rule
 // applies to a provider's key exactly as it does everywhere else. ok is
-// false, id "" otherwise. It is exported because fugaro init --repo's
+// false, id "" otherwise. It is exported because fugaro update's
 // secrets stage (before any RepoSpec exists) needs the identical answer.
 func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool) {
 	if lc == nil || logical == "" {

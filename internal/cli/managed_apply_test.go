@@ -150,7 +150,7 @@ func TestManagedApplyRefusesWhenNoBudgetReadOpensTheGate(t *testing.T) {
 	}{
 		{"the marker is version 1: managed, and no amount recorded",
 			[]byte(`{"version":1,"gcp_project":"proj-1234"}`), false,
-			[]string{"has no budget recorded", "fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC", "fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID"}},
+			[]string{"has no budget recorded", "fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC", "fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID"}},
 		{"there is no marker at all", nil, false, []string{"is not managed", "is not there"}},
 		{"the marker exists and cannot be read", []byte(v2), true, []string{"is not managed", "cannot be read"}},
 		// A version-2 marker whose figure fails Budget.Check is reported as an

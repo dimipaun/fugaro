@@ -4,7 +4,7 @@ package rules
 
 // The emulator harness: starts the Realtime Database emulator of the pinned
 // firebase-tools (emulator/package-lock.json), loads the generated rules over
-// the same REST call `fugaro init` uses, and drives them with internal/rtdb as
+// the same REST call `fugaro update` uses, and drives them with internal/rtdb as
 // a run would. Nothing here contacts Firebase: the project id is a demo- id,
 // which the emulator treats as fully local, and tokens are unsigned.
 //
@@ -224,7 +224,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{t: t, ns: fmt.Sprintf("%s-%d-%d", project, time.Now().UnixNano()%1_000_000_000, nsCounter.Add(1))}
 	h.hc = &http.Client{Transport: nsTransport{h.ns}, Timeout: 30 * time.Second}
 	h.admin = h.client(rtdb.Auth{Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "owner"})})
-	// Deploy exactly as `fugaro init` does: PUT /.settings/rules.json.
+	// Deploy exactly as `fugaro update` does: PUT /.settings/rules.json.
 	req, _ := http.NewRequest(http.MethodPut, emuURL+"/.settings/rules.json", bytes.NewReader(rules))
 	req.Header.Set("Authorization", "Bearer owner")
 	resp, err := h.hc.Do(req)
