@@ -174,6 +174,9 @@ func TestWaitBeyondTimeoutHalts(t *testing.T) {
 	if n := len(h.agent.calls); n != 1 {
 		t.Fatalf("%d agent calls; the stage must not run again", n)
 	}
+	// The stored record of this halt is what `fugaro diagnose` and every other
+	// consumer validates: the reason must be in the schema's enum (C1.17).
+	assertStoredRecordValidates(t, h.store)
 }
 
 // TestHaltDuringTheInterruptedStageStopsTheWaitBeforeItStarts: a halt
@@ -294,4 +297,7 @@ func TestDeniedCascadeWriteHaltsNamed(t *testing.T) {
 	if out := b.outcome(); out == nil || out["status"] != "halted" {
 		t.Fatalf("outcome = %v; want a halted run", out)
 	}
+	// The reason is one the published schema knows: a consumer validating
+	// result.json must not refuse the record of this halt (C1.17).
+	assertStoredRecordValidates(t, b.store)
 }

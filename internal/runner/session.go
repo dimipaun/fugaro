@@ -108,13 +108,14 @@ func (r *run) sessionDir() (home, rel string, err error) {
 // review. Nothing here fails the run: a session that can't be saved is a
 // warning, and the next follow-up starts fresh.
 func (r *run) saveSession(ctx context.Context) {
-	// savedSession is the latest stage's; sessionID is the fallback for a
-	// run whose noteSession ran but whose review reported no session of its
-	// own (the two are equal then).
+	// savedSession is the session of the run's latest stage, and the only
+	// one this uploads: noteSession writes it (with sessionID, the work
+	// chain's) and noteReviewSession writes it alone, and fellBackFresh
+	// clears both when the session it named could not be resumed — the one
+	// case where uploading it would hand a later follow-up a conversation
+	// this branch never had. So there is nothing to fall back to when it is
+	// empty: a run whose stages all reported none has neither set.
 	id := r.savedSession
-	if id == "" {
-		id = r.sessionID
-	}
 	if id == "" {
 		return
 	}
