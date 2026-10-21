@@ -126,11 +126,13 @@ session may run it, --yes included: it edits only a local file.
 
 setup --firebase-project <firebase-project-id> builds the budget backend in a
 Firebase project you created and linked to billing, and it is the advanced
-case: by default the backend is built in the installation's own --gcp-project,
-which is what the flag defaults to, so it is passed only for a project of its
-own (setup creates a project or links billing only with --create-project and
---link-billing, and refuses one that is missing, has no billing, or whose
-database holds data and no Fugaro mark). It runs three applies, each
+case: the run's Firebase project is the installation's own --gcp-project by
+default (one id for both, D7), so this flag is for a project of its own — and
+it is also what adds the backend to the run, so a setup without it builds
+none. It creates nothing and links nothing (a project is created or billing
+linked only with --create-project and --link-billing, and it refuses one that
+is missing, has no billing, or whose database holds data and no Fugaro mark).
+It runs three applies, each
 with its own plan and confirmation: the installation (the history account),
 the Firebase root (the database, a restricted sign-in key, the token signer,
 and the budget admins: the GCP project's owners and editors who are users or

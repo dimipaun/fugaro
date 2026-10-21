@@ -1181,4 +1181,99 @@ func TestOldFirebaseFlagIsGone(t *testing.T) {
 	if !strings.Contains(got, "--firebase-project") {
 		t.Errorf("the refusal does not name the flag that replaced it: %q", got)
 	}
+	// Only that one spelling is answered, and the comparison is pflag's whole
+	// message. A typo that merely begins with it is a different question with
+	// a different answer: `--firebase-db` does not exist either, and telling
+	// its author that --firebase moved would name a rename that has nothing to
+	// do with what they typed.
+	for _, spelling := range []string{"--firebase-db", "--firebase-proj", "--firebase-project-x"} {
+		t.Run(spelling, func(t *testing.T) {
+			firstRunEnv(t)
+			out, errOut, err := executeStdin(t, "", "setup", spelling, fpID)
+			if err == nil {
+				t.Fatalf("fugaro setup %s exited 0", spelling)
+			}
+			if got := ExitCode(err); got != ExitUserError {
+				t.Errorf("exit %d, want %d", got, ExitUserError)
+			}
+			msg := out + errOut + ErrorText(err)
+			if !strings.Contains(msg, "unknown flag: "+spelling) {
+				t.Errorf("the error is not pflag's own for %s: %q", spelling, msg)
+			}
+			if strings.Contains(msg, "is --firebase-project now") {
+				t.Errorf("%s was answered with the retired flag's sentence:\n%s", spelling, msg)
+			}
+		})
+	}
+	// The retired spelling is an unknown flag, and unknown flags are pflag's:
+	// the refusal is raised while the flags are parsed, before there is a run
+	// whose --json object could carry it, so neither it nor cobra's own error
+	// for a flag that never existed prints one. The two have one shape, which
+	// is the point — the exit code (ExitUserError) is the half a script acts
+	// on, and the sentence the half a person reads.
+	for _, args := range [][]string{
+		{"setup", "--json", "--" + retiredFirebaseFlag, fpID},
+		{"setup", "--json", "--no-such-flag"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			firstRunEnv(t)
+			out, _, err := executeStdin(t, "", args...)
+			if err == nil {
+				t.Fatal("exit 0")
+			}
+			if got := ExitCode(err); got != ExitUserError {
+				t.Errorf("exit %d, want %d", got, ExitUserError)
+			}
+			if strings.Contains(out, "{") {
+				t.Errorf("%v printed a document on stdout, and a flag-parse refusal has no run to print one from: %q", args, out)
+			}
+		})
+	}
+}
+
+// TestTheFirebaseProjectDefaultNamesTheIdAndNotTheStage: D7's default has two
+// halves, and this pins them apart, because reading either as the other is a
+// wrong run. The *id* the run works in defaults to the run's own --gcp-project
+// (one id for both), so the pairing rule, the validation and every message
+// have one answer for "which project". The *backend* is still the flag's own
+// presence (init_stages.go's newFirebaseStage and newInstallation2Stage), so a
+// run that names no project applies none — and `--firebase-project=` is
+// pflag's empty value, which reads as no flag at all: a script whose variable
+// is unset must not buy three applies against the installation's own project,
+// one of them a Firestore database in a location that can never change.
+func TestTheFirebaseProjectDefaultNamesTheIdAndNotTheStage(t *testing.T) {
+	// The value is the id, whatever it names: the installation's own project
+	// spelled out, or a separate one (the advanced case).
+	for _, fp := range []string{initProject, fpID} {
+		o := &initOptions{cloud: cloudOptions{gcpProject: initProject}, firebase: fp}
+		if got := o.firebaseProject(); got != fp {
+			t.Errorf("--firebase-project %s: the id is %q", fp, got)
+		}
+	}
+	// The same id, and no backend: the two spellings of "no project named"
+	// converge nothing of the Firebase stage's.
+	for name, extra := range map[string][]string{
+		"no flag at all": {"--yes"},
+		"an empty value": {"--yes", "--firebase-project="},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newInitRig(t)
+			out, _, err := executeStdin(t, "", append([]string{"setup", "--json"}, extra...)...)
+			if err != nil {
+				t.Fatalf("%v:\n%s", err, out)
+			}
+			var res convergeJSON
+			if err := json.Unmarshal([]byte(out), &res); err != nil {
+				t.Fatalf("%v:\n%s", err, out)
+			}
+			if got := res.state("firebase"); got != "skipped" {
+				t.Errorf("with %s the Firebase stage is %q, want skipped: the default names which project a backend would use, it does not ask for one", name, got)
+			}
+			for _, c := range r.calls(t) {
+				if strings.Contains(strings.Join(c, " "), "firebase") {
+					t.Errorf("with %s the run called the Firebase engine: %q", name, c)
+				}
+			}
+		})
+	}
 }

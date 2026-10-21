@@ -252,6 +252,7 @@ type initCreation struct {
 // the caller holds. fugaro restore's child sets strictCreate and created on
 // them before the flags are parsed into the same value, and runs the setup
 // door.
+
 // retiredFirebaseFlag is the flag --firebase-project replaced (D7), written
 // once: the SetFlagErrorFunc below refuses that spelling by name, and the test
 // that pins the rename (init_firebase_test.go's TestOldFirebaseFlagIsGone)
@@ -311,10 +312,22 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// D7): a script that still passes it gets a sentence naming the flag that
 	// replaced it instead of pflag's bare "unknown flag: --firebase", which
 	// says what changed but not what to type. Only that one spelling is
-	// answered; every other unknown flag keeps cobra's own error.
+	// answered — the comparison is on pflag's whole message, so --firebase-db
+	// and every other unknown flag keep cobra's own error, as the comment
+	// above says.
+	//
+	// This refusal prints no --json object, and that is the one place it
+	// differs from the refusals the run makes (the door's foreign flag, check,
+	// the missing inputs above): it is raised by pflag while the flags are
+	// parsed, before there is a run to answer with, so it is an unknown-flag
+	// error like any other in that respect — `fugaro setup --json
+	// --no-such-flag` prints the same bare sentence. Its exit code is the
+	// user's (ExitUserError), which is the half a script can act on, and
+	// TestOldFirebaseFlagIsGone holds the two spellings to the same shape so
+	// neither drifts into a document the other does not print.
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
-		if strings.Contains(err.Error(), "unknown flag: --"+retiredFirebaseFlag) {
-			return userErr("--%s is --firebase-project now: pass it only to build the budget backend in a separate Firebase project, since it defaults to the installation's own --gcp-project (fugaro %s --help)", retiredFirebaseFlag, c.Name())
+		if err.Error() == "unknown flag: --"+retiredFirebaseFlag {
+			return userErr("--%s is --firebase-project now: pass --firebase-project <firebase-project-id> to build the budget backend in a Firebase project of its own, since the run's Firebase project is the installation's own --gcp-project by default (fugaro %s --help)", retiredFirebaseFlag, c.Name())
 		}
 		return err
 	})
@@ -337,7 +350,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.alertEmail, "alert-email", "", "where failed image checks and rebuilds are reported (default: the local config's)")
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
-	f.StringVar(&o.firebase, "firebase-project", "", "build the budget backend in this Firebase project, when it is not the installation's own --gcp-project (it is, by default: this is the advanced flag for a separate Firebase project, one you created and linked to billing, or created with --create-project). The backend is three confirmed applies, the database's rules and mark, the Firestore history database (permanent us-east5 location, typed confirmation) and the config")
+	f.StringVar(&o.firebase, "firebase-project", "", "build the budget backend in this Firebase project: the run's Firebase project is the installation's own --gcp-project by default (one id for both, D7), so this is the advanced flag, for a Firebase project of its own (one you created and linked to billing, or created with --create-project). It is also the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location, typed confirmation) and the config")
 	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe)")
 	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
 	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). An ID that exists and you can read is adopted; one held by someone else is refused. Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it")
@@ -957,21 +970,28 @@ func (o *initOptions) checkOnboardRepo() error {
 	return nil
 }
 
-// firebaseProject is the Firebase project this run works in: the one
-// --firebase-project names, and the run's own --gcp-project when it names none
-// (D7, "one project id for Google Cloud and Firebase by default"). A separate
-// Firebase project is the advanced flag's, and the run's own project is the
-// default path — which is what makes checkCreateProject's pairing rule (a
-// created project is its own Firebase project) the ordinary case instead of a
-// special one.
+// firebaseProject is the id of the Firebase project this run works in: the one
+// --firebase-project names, and the run's own --gcp-project when the flag names
+// a separate one — or, the identity case, the same id again (D7, C2: "one id
+// for Google Cloud and Firebase by default", so --firebase-project is not a
+// second value at all unless it says so). That is what makes
+// checkCreateProject's pairing rule (a created project is its own Firebase
+// project) the ordinary path rather than a special case.
 //
-// It is the *id*, not the flag: an empty answer means the run has no Firebase
-// project to name, and whether the budget backend is in the run at all is
-// still the flag's own presence (init_stages.go's newFirebaseStage,
-// init_review.go's firebaseVerified), so a run that passes nothing applies no
-// backend. Every site that resolves the id — the flag's validation here, the
-// pairing rule, the Firebase engine and the commands it prints — reads it from
-// here, so the one default has one definition.
+// It is the *id*, not an ask. Whether the budget backend is in the run at all
+// is the flag's own presence (init_stages.go's newFirebaseStage and
+// newInstallation2Stage, init_review.go's firebaseVerified), which is why the
+// default is not a way to request the backend without naming a project: the
+// flag takes a value, and a run that wants the backend names the project it
+// goes in — its own, or a separate one. An empty `--firebase-project=` is
+// pflag's empty value, which reads as no flag at all, deliberately: a script
+// whose variable is unset names no project, and three applies against the
+// installation's own project (one of them a Firestore database with a
+// permanent location) must not be what an empty string buys.
+//
+// Every site that resolves the id — the flag's validation here, the pairing
+// rule, the Firebase engine and the commands it prints, the review screen —
+// reads it from here, so the one default has one definition.
 func (o *initOptions) firebaseProject() string {
 	return cmp.Or(o.firebase, o.cloud.gcpProject)
 }
