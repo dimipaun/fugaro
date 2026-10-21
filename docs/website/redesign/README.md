@@ -1659,7 +1659,6 @@ rather than written over the decision**: the 2026-10-18 ruling, the 2026-10-19 b
   run check)` green. **Whether the two-group menu reads right — the labels' row at every width,
   the two groups' lengths, whether four and five is the split the owner wants — is the owner's
   check** (70a, P9, D190); `Base.astro`'s `NAV_GROUPS` is the one place a label would move.
-||||||| 15dd3f20
 
 ## The owner's 2026-10-21 feedback on the security page and How It Works: one picture at two layouts, and a bullet per fact
 
