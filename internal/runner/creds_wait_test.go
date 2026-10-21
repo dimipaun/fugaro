@@ -176,6 +176,49 @@ func TestWaitBeyondTimeoutHalts(t *testing.T) {
 	}
 }
 
+// TestHaltDuringTheInterruptedStageStopsTheWaitBeforeItStarts: a halt
+// recorded between the stage's own halt check and the wait — a kill switch,
+// a cap or the backend's grace, all of them other goroutines — must end the
+// wait before it begins. The sleep is the reset the service named, hours
+// away at worst, and no stage may run again after it.
+//
+// The window is reached deterministically through the record write the
+// interrupted stage makes on its way out (stageOnce's own r.save, after the
+// check that would have caught a halt recorded any earlier).
+func TestHaltDuringTheInterruptedStageStopsTheWaitBeforeItStarts(t *testing.T) {
+	h := newHarness(t, "", nil)
+	handle := watchRun(t)
+	interrupted := false
+	runner.SetWriteRecord(t, func(s *runstore.Store, ctx context.Context, rec *runstore.Record) error {
+		if interrupted {
+			interrupted = false // once: the halt is recorded at this one write
+			handle().HaltNow(runstore.Halt{Reason: runstore.HaltKillSwitch, Scope: "run", At: time.Now().UTC()})
+		}
+		return s.WriteRecord(ctx, rec)
+	})
+	runner.SetCredsWait(t, func(ctx context.Context, d time.Duration) error {
+		t.Errorf("the runner waited %s for a credential after a halt was recorded", d)
+		return nil
+	})
+	reset := time.Now().Add(3 * time.Minute)
+	stage := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		interrupted = true
+		handle().NoteExhausted(reset)
+		<-ctx.Done()
+		return initOnly(t, req.SessionID), ctx.Err()
+	}
+	rec, err := h.run(t, stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltKillSwitch {
+		t.Fatalf("rec = %+v, halt = %+v; want the run halted by the kill switch", rec, rec.Halt)
+	}
+	if n := len(h.agent.calls); n != 1 {
+		t.Fatalf("%d agent calls; the stage must not run again after a halt", n)
+	}
+}
+
 // TestWaitingUntilWrittenAndCleared: while a cascade run waits, its own
 // registry entry carries the instant it expects to resume at — the
 // dashboard's "waiting for a credential, expected resume T" (C1.3, D152) —

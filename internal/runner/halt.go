@@ -58,21 +58,25 @@ func (r *run) recordHaltLocked(h runstore.Halt) bool {
 	}
 	r.halt = &h
 	if r.haltDone != nil {
-		// Once, and only here: r.halt is set once, so one close is all a
-		// waiter can ever see. It wakes a caller waiting outside a stage —
-		// the credential wait (C1.17), whose sleep may be hours long and
-		// hears no halt otherwise.
+		// Once, and only here: the check above means r.halt was nil, so this
+		// is the run's first halt and the close cannot happen twice. It wakes
+		// a caller waiting outside a stage — the credential wait (C1.17),
+		// whose sleep may be hours long and hears no halt otherwise. The
+		// channel stays where it is rather than being nil'd: a caller that
+		// reads it after the halt (waitForCredential reads it once, then
+		// selects) must find it closed, not nil, or the select would block on
+		// a nil channel for the whole sleep.
 		close(r.haltDone)
-		r.haltDone = nil
 	}
 	r.failLocked((&HaltError{h}).Error())
 	return true
 }
 
-// haltCh is closed once a halt is recorded, and nil before Run creates it: a
-// caller that may have to wait outside a stage watches it to stop at once
+// haltCh is closed once a halt is recorded, and open until then: a caller
+// that may have to wait outside a stage watches it to stop at once
 // (waitForCredential). It is read under r.mu, and the channel itself is never
-// replaced.
+// replaced, so a select on it is decided by the halt whether the halt came
+// before or after the read. It is nil only before Run creates it.
 func (r *run) haltCh() <-chan struct{} {
 	r.mu.Lock()
 	defer r.mu.Unlock()

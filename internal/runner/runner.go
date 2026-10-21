@@ -214,10 +214,12 @@ type run struct {
 	failReason string
 	cancelled  bool
 	halt       *runstore.Halt
-	// haltDone is closed by the first halt recorded (recordHaltLocked, which
-	// then nils it), so a caller waiting outside a stage stops at once: the
-	// credential wait (C1.17) sleeps for a reset that may be hours away, and
-	// nothing else would end it. Guarded by mu; created by Run.
+	// haltDone is closed by the first halt recorded (recordHaltLocked), so a
+	// caller waiting outside a stage stops at once: the credential wait
+	// (C1.17) sleeps for a reset that may be hours away, and nothing else
+	// would end it. It is never closed twice and never nil'd after Run
+	// creates it, so it is either open (no halt) or closed (halted).
+	// Guarded by mu; created by Run.
 	haltDone      chan struct{}
 	tokens        int64                   // the stages' tokens so far, for the token cap
 	gatewayTokens int64                   // the last stage's tokens as the gateway counted them

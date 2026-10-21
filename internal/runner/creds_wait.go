@@ -129,6 +129,14 @@ func (r *run) waitForCredential(ctx context.Context, name string, until time.Tim
 		r.haltNow(h)
 		return &HaltError{h}
 	}
+	// A halt recorded between the stage's own check and here (a kill switch,
+	// a cap, the backend's grace, all of them other goroutines) ends the wait
+	// before it begins: the sleep below is hours long, and running the stage
+	// once more only to have its own check halt it is a stage the run did not
+	// need. A halt recorded after this is caught by haltCh below.
+	if h := r.haltValue(); h != nil {
+		return &HaltError{*h}
+	}
 	d := until.Sub(r.d.Now())
 	r.d.Log.Info("waiting for a credential", "stage", name, "resume_at", until.UTC().Format(time.RFC3339), "wait", d.String())
 	r.setWaitingUntil(until)
