@@ -84,12 +84,24 @@ type Rigor struct {
 // internal/rigor's one resolver reads, and it is built here rather than in
 // the resolver so that package never has to know about this one.
 func (c *Config) RigorConfig() rigor.Config {
+	out := c.ProjectRigor()
+	if r := c.RepoRigor; r != nil {
+		out.Repo, out.RepoAreas = r.Default, r.Areas
+	}
+	return out
+}
+
+// ProjectRigor is the project layer's half alone: defaults.rigor.default and
+// its areas, with the repository's rigor: block left out. It is what a run
+// falls back to when the base branch's own fugaro.yaml cannot be read
+// (internal/runner, D25): the layer came with the task and is no branch's, so
+// it is the one part of the configuration that is still true when no branch
+// could be asked, and falling back to the checked-out ref's own value instead
+// would let the branch under review set its own mode.
+func (c *Config) ProjectRigor() rigor.Config {
 	var out rigor.Config
 	if c.Layer != nil {
 		out.Project, out.ProjectAreas = c.Layer.Defaults.Rigor.Default, c.Layer.Defaults.Rigor.Areas
-	}
-	if r := c.RepoRigor; r != nil {
-		out.Repo, out.RepoAreas = r.Default, r.Areas
 	}
 	return out
 }
