@@ -309,6 +309,10 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	out := append(managedPlanFields(p), managedConfiguration(p)...)
 	out = append(out, c.managedProviderProject(p)...)
 	declared := managedConfigResources(p.Configuration)
+	// The address is one Field, like every other value a plan wrote: an entry
+	// the owner's delete list approves carries it, so an address past
+	// safetext.FieldMax is printed cut and the entry recorded from it matches
+	// nothing — refused, not approved, the limit guard.go's addr records.
 	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions

@@ -29,9 +29,11 @@ import (
 // so a name that cannot be sent is refused rather than silently mangled.
 //
 // Everything here is held to the same rules when it is read as when it is
-// written (review finding M2/M3): a tier, a credential name, a reason and a
-// reset instant are checked on both sides of the wire, so a value this code
-// would refuse to send is also a value it refuses to accept. The rules are
+// written (review finding M2/M3): a tier, a credential name, a reason, a reset
+// instant and a tried list are checked on both sides of the wire, so a value
+// this code would refuse to send is also a value it refuses to accept. The
+// refused body is included: WriteWireError will not write a tried list or a
+// message ReadWireError would refuse (review finding N3). The rules are
 // closed sets — a tier is A, B or C, a reason is one of the Reason*
 // constants — because both ends of this contract are this repository's code:
 // a new tier or a new reason is a change to this file, which is where the
@@ -156,6 +158,22 @@ const (
 	// hundred bytes, and the longest one — an exhausted answer's list of the
 	// credentials tried — is bounded by how many credentials a bundle may hold.
 	maxRefusalMessageBytes = 8 << 10
+	// maxTriedEntries bounds the structured Tried list, on both sides of the
+	// wire (review finding N2). The message field is clipped at
+	// maxRefusalMessageBytes, but the structured list is not, and it is what the
+	// runner rebuilds a run's halt message from: a reader that accepted a list
+	// of any length would build a sentence of any length from a body the writer
+	// never clipped, and a hostile or broken peer could hand the runner a
+	// gigabyte to render. Nothing bounds how many credentials a bundle may hold
+	// yet — C1.11's loader is the task that writes that bound — so this is the
+	// contract's own bound, and C1.11 must refuse a bundle larger than it: a
+	// service that could legitimately consider more credentials than this would
+	// be a service whose honest answer this contract refuses. Sixty-four is far
+	// above any project's shared-token set, and the reader and the writer are
+	// held to the same number, so a real cascade never meets it. A test ties the
+	// two sides; the tie to C1.11's bundle bound is recorded as a C1.11
+	// obligation, since that task's limit does not exist yet.
+	maxTriedEntries = 64
 )
 
 // Why a credential was not used, in the tried list. They are display strings:
@@ -255,6 +273,26 @@ func validateTried(tr Tried) error {
 	return nil
 }
 
+// validateTriedList holds a whole tried list to the contract's rules: the count
+// bound first (maxTriedEntries), then every entry by validateTried. It is asked
+// by every reader and writer of a refusal body — Wire, ReadExhaustedUntil and
+// ReadWireError — so "the same rules on both sides" is literal rather than
+// claimed: a list this code would refuse to write is a list it refuses to read,
+// and a general refusal body is held to exactly what the typed answer is (review
+// finding N3: the two readers of a body did not agree, and the package doc said
+// they did).
+func validateTriedList(tried []Tried) error {
+	if len(tried) > maxTriedEntries {
+		return fmt.Errorf("credsvc: a refusal carries %d tried credentials, over this contract's bound of %d", len(tried), maxTriedEntries)
+	}
+	for _, tr := range tried {
+		if err := validateTried(tr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // WireError is the JSON body of every refusal the service writes. It carries
 // names, tiers, reasons and an instant — never a value, and never anything
 // the caller presented.
@@ -272,11 +310,23 @@ type WireError struct {
 
 // WriteWireError writes the refusal: its type in the body, its status on the
 // response. A message the caller reads names no credential value.
+//
+// A body this contract could not read back is not written as if it could
+// (review finding N3, the write half): the tried list and the message are held
+// to the reader's rules here too, so "the same rules on both sides" is kept by
+// the writer and not only by the readers. An answer that fails them is answered
+// as state_unavailable — the same fallback an unrenderable exhausted answer
+// takes — because a body the runner would refuse is worse than a typed refusal
+// it can act on.
 func WriteWireError(w http.ResponseWriter, status int, e WireError) {
 	body, err := json.Marshal(e)
-	if err != nil {
-		// Unreachable: a WireError is strings and an integer. A body the
-		// runner can read is still better than none.
+	// Unreadable covers the unreachable marshal error (a WireError is strings
+	// and an integer) and the two rules the reader holds this body to: a body
+	// the other end of this contract would refuse is answered as the typed
+	// refusal it can act on instead. A body the runner can read is better than
+	// none.
+	unreadable := err != nil || validateTriedList(e.Tried) != nil || len(e.Message) > maxRefusalMessageBytes
+	if unreadable {
 		body = []byte(`{"error":"` + ErrorStateUnavailable + `"}`)
 		status = StatusUnavailable
 	}
@@ -329,6 +379,14 @@ func ReadWireError(status int, body []byte) (WireError, error) {
 	if len(e.Message) > maxRefusalMessageBytes {
 		return WireError{}, errors.New("credsvc: the refusal body's message is longer than this contract's")
 	}
+	// The tried list is held to the same rules here as it is in the typed
+	// answer and on the write side (review finding N3): a general refusal is a
+	// WireError like any other, its entries reach the same halt message, and a
+	// reader that skipped them would accept a body this code would never write —
+	// which is exactly the claim the package doc makes and did not keep.
+	if err := validateTriedList(e.Tried); err != nil {
+		return WireError{}, err
+	}
 	e.Message = safetext.OneLine(e.Message)
 	return e, nil
 }
@@ -363,6 +421,13 @@ type ExhaustedUntil struct {
 
 // Error is the sentence a run's halt message is built from. It names the
 // instant and the credentials tried, never a value.
+//
+// It renders tried entries as validated — validateTriedList requires a name, a
+// tier and a non-empty reason of every one — so every entry it is handed has a
+// reason and the sentence always names it. The branch that omitted an empty
+// reason was unreachable from any validated answer (review nit) and is gone; a
+// caller that builds an ExhaustedUntil by hand is expected to validate it, as
+// Wire and ReadExhaustedUntil do.
 func (e ExhaustedUntil) Error() string {
 	var b strings.Builder
 	b.WriteString("no credential is usable before ")
@@ -374,11 +439,9 @@ func (e ExhaustedUntil) Error() string {
 			b.WriteString(", ")
 		}
 		b.WriteString(tr.Name)
-		if tr.Reason != "" {
-			b.WriteString(" (")
-			b.WriteString(tr.Reason)
-			b.WriteString(")")
-		}
+		b.WriteString(" (")
+		b.WriteString(tr.Reason)
+		b.WriteString(")")
 	}
 	return b.String()
 }
@@ -405,10 +468,8 @@ func (e ExhaustedUntil) Wire(now time.Time) (status int, hdr http.Header, body [
 	if e.ResetAt.UnixMilli() <= 0 {
 		return 0, nil, nil, errors.New("credsvc: the exhausted answer carries no reset instant")
 	}
-	for _, tr := range e.Tried {
-		if err := validateTried(tr); err != nil {
-			return 0, nil, nil, err
-		}
+	if err := validateTriedList(e.Tried); err != nil {
+		return 0, nil, nil, err
 	}
 	hdr = http.Header{}
 	hdr.Set("Content-Type", contentTypeJSON)
@@ -432,11 +493,13 @@ func (e ExhaustedUntil) Wire(now time.Time) (status int, hdr http.Header, body [
 // beside it — the runner rebuilds it from them — so a rendering the other end
 // of this contract would refuse would make the whole typed answer unreadable,
 // which is the one answer the runner cannot do without (review finding). The
-// tried list is what makes it long: nothing bounds how many credentials the
-// service considers, and fifty of them at the rules' 200-byte name bound is
-// over the refusal bound. The structured Tried field is not clipped — it is
-// where the runner reads the names from — and the cut is made on bytes, which
-// is what the reader's bound counts.
+// tried list is what makes it long: maxTriedEntries lets a list of up to that
+// many credentials through, and about forty of them at the rules' 200-byte name
+// bound render past the refusal bound, so the clip is reachable and the list
+// bound above does not make it dead. The structured Tried
+// field is not clipped — it is where the runner reads the names from, and it is
+// bounded by maxTriedEntries instead — and the cut is made on bytes, which is
+// what the reader's bound counts.
 func clipRefusalMessage(s string) string {
 	if len(s) <= maxRefusalMessageBytes {
 		return s
@@ -488,10 +551,8 @@ func ReadExhaustedUntil(status int, body []byte) (ExhaustedUntil, bool, error) {
 	if e.ResetAt <= 0 {
 		return ExhaustedUntil{}, false, errors.New("credsvc: the exhausted answer carries no reset instant")
 	}
-	for _, tr := range e.Tried {
-		if err := validateTried(tr); err != nil {
-			return ExhaustedUntil{}, false, err
-		}
+	if err := validateTriedList(e.Tried); err != nil {
+		return ExhaustedUntil{}, false, err
 	}
 	return ExhaustedUntil{ResetAt: time.UnixMilli(e.ResetAt).UTC(), Tried: e.Tried}, true, nil
 }
@@ -626,8 +687,14 @@ func SwitchHeader(h http.Header) (Switch, bool, error) {
 	if err != nil {
 		return Switch{}, false, err
 	}
-	if !present || raw == "" {
+	if !present {
 		return Switch{}, false, nil
+	}
+	if raw == "" {
+		// A header that is present with no value is not "no switch": nothing in
+		// this contract writes one, so it is a record this code cannot read and
+		// must not silently drop (review nit). Refused, not read as absent.
+		return Switch{}, false, errors.New("credsvc: the switch header is present but empty")
 	}
 	var s Switch
 	if err := decodeStrict([]byte(raw), &s); err != nil {

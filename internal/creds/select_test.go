@@ -1554,6 +1554,85 @@ func TestTheStickyPathRefreshesTheLease(t *testing.T) {
 	}
 }
 
+// failStore is a Store that refuses one chosen call, so the selection's
+// fail-closed guards can be exercised: a call is never sent on a decision the
+// service could not read, or on one it could not record. Review finding N2 —
+// every guard on a store error was unreachable from the tests.
+type failStore struct {
+	*fakeStore
+	marksErr, leasesErr, currentErr, rrErr, placeErr error
+}
+
+func (f *failStore) Marks(ctx context.Context) (map[string]Mark, error) {
+	if f.marksErr != nil {
+		return nil, f.marksErr
+	}
+	return f.fakeStore.Marks(ctx)
+}
+
+func (f *failStore) Leases(ctx context.Context, now time.Time) ([]Lease, error) {
+	if f.leasesErr != nil {
+		return nil, f.leasesErr
+	}
+	return f.fakeStore.Leases(ctx, now)
+}
+
+func (f *failStore) Current(ctx context.Context, r Run) (string, bool, error) {
+	if f.currentErr != nil {
+		return "", false, f.currentErr
+	}
+	return f.fakeStore.Current(ctx, r)
+}
+
+func (f *failStore) RoundRobin(ctx context.Context) (int64, error) {
+	if f.rrErr != nil {
+		return 0, f.rrErr
+	}
+	return f.fakeStore.RoundRobin(ctx)
+}
+
+// SetPlacement both records the decision and, in the sticky path, is what
+// refreshes the lease: a store that refuses it must fail the selection rather
+// than hand the caller a credential it could not place.
+func (f *failStore) SetPlacement(ctx context.Context, r Run, name string, l Lease) error {
+	if f.placeErr != nil {
+		return f.placeErr
+	}
+	return f.fakeStore.SetPlacement(ctx, r, name, l)
+}
+
+func TestSelectFailsClosedWhenTheStoreRefuses(t *testing.T) {
+	boom := errors.New("the database refused")
+	// Two never-exhausted shared credentials tie on Since (both zero), so the
+	// cascade reaches the round-robin tie-break; a selection of either still has
+	// to record its decision.
+	for _, tc := range []struct {
+		name string
+		fail func(*failStore)
+	}{
+		{"marks", func(f *failStore) { f.marksErr = boom }},
+		{"leases", func(f *failStore) { f.leasesErr = boom }},
+		{"current", func(f *failStore) { f.currentErr = boom }},
+		{"round robin", func(f *failStore) { f.rrErr = boom }},
+		{"placement", func(f *failStore) { f.placeErr = boom }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := &failStore{fakeStore: newFakeStore()}
+			tc.fail(fs)
+			c, wait, err := selector(fs, noWindow()).Select(ctx, run, []Credential{a1, a2})
+			if err == nil {
+				t.Fatalf("a selection over a store that refused the %s call answered (%q, %s); want it refused", tc.name, c.Name, wait)
+			}
+			if !errors.Is(err, boom) {
+				t.Fatalf("the selection over a refused %s call = %v; want the store's error", tc.name, err)
+			}
+			if c.Name != "" || wait != 0 {
+				t.Fatalf("the refused %s selection carried (%q, %s); want nothing", tc.name, c.Name, wait)
+			}
+		})
+	}
+}
+
 // Select's fail-closed contract: a state that cannot be READ is not a state
 // that is EMPTY. Each of the three reads is a fact the answer is built on — the
 // marks say what is held, the leases say what is taken, the placement says what

@@ -226,22 +226,9 @@ func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 		return prev
 	}
 	set = set.withDefaults()
-	heldUntil, held := prev.holdInForce(now, set)
-	if reset.After(now) {
-		// A reset that is reported is a reset: the upstream named a time, and a
-		// named time is a better answer than any wait this package computes, so
-		// it replaces whatever hold was in force — when it reaches past it. A
-		// reset that does not is the racing case above: the hold stands, and the
-		// mark is returned untouched rather than rewritten with a time this
-		// credential is already held beyond.
-		if held && !reset.After(heldUntil) {
-			return prev
-		}
-		return Mark{State: StateExhausted, Until: reset, Since: now}
-	}
-	if held {
-		// A hold is already in force on this credential, and a usage limit with
-		// no reset time cannot be a fresh exhaustion of it: a credential that
+	if at, held := prev.holdInForce(now, set); held {
+		// A hold is already in force on this credential, so a usage limit
+		// arriving now cannot be a fresh exhaustion of it: a credential that
 		// holds is not selected (Usable refuses an exhausted one whose time has
 		// not come and a backed-off one outright), so the only calls that can be
 		// answering 429 here are the ones that were already in flight when the
@@ -249,7 +236,7 @@ func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 		// again, and N of them must leave the state one of them left — otherwise
 		// a burst of concurrent calls doubles the wait once per call and walks
 		// the credential to its five-hour cap in a second. So the hold in force
-		// is left exactly as it is, date and all.
+		// is left as it is, date and all.
 		//
 		// Which states hold, and by which clock, is holdInForce's: an exhausted
 		// mark holds until its reset (and the window), a backed-off one until
@@ -260,7 +247,27 @@ func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 		// wait of fifteen minutes, and Select answered wait=15m for a credential
 		// that was four hours from coming back. The racing call is the same call
 		// in either state.
+		//
+		// The reset question is the same question with a header attached, and it
+		// is answered the same way (review finding N5): a reset reported by an
+		// in-flight call must not *shorten* the hold. On tier B, whose window is
+		// off, a 429 that reported a one-minute reset used to cut a four-hour
+		// hold to a minute — the credential back in rotation long before the
+		// reset the upstream had actually given it. A named time is still better
+		// information than the wait this package computes, so a reset landing
+		// *after* the hold's end is taken — the later of the two answers, which
+		// is the protective one — but an earlier one leaves the hold as it is.
+		// Since does not move either way: the exhaustion being reported is the
+		// one that opened this hold, not a fresh one.
+		if !reset.IsZero() && reset.After(at) {
+			return Mark{State: StateExhausted, Until: reset, Since: prev.Since}
+		}
 		return prev
+	}
+	if !reset.IsZero() && reset.After(now) {
+		// A reset that is reported is a reset: the upstream named a time, and a
+		// named time is a better answer than any wait this package computes.
+		return Mark{State: StateExhausted, Until: reset, Since: now}
 	}
 	m := ProbeFailed(prev, now, set)
 	m.Since = now
