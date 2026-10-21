@@ -278,11 +278,7 @@ const execName = "fugaro exec"
 // the token, and on failure it is the metadata server's own text about a
 // request this code made. Only the status is reported.
 func metadataIDToken(ctx context.Context, env []string, audience string) (string, error) {
-	host := envLookup(env, metadataHostEnv)
-	if host == "" {
-		host = defaultMetadataHost
-	}
-	u := "http://" + host + metadataIdentityPath + "?audience=" + url.QueryEscape(audience)
+	u := metadataIdentityURL(env, audience)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return "", errors.New("the metadata request could not be built")
@@ -308,6 +304,21 @@ func metadataIDToken(ctx context.Context, env []string, audience string) (string
 		return "", errors.New("the metadata server answered with no usable identity token")
 	}
 	return tok, nil
+}
+
+// metadataIdentityURL is the metadata server's own endpoint for this job's
+// identity: the link-local name the platform serves it at unless the job's
+// environment says otherwise (GCE_METADATA_HOST, which the platform sets on
+// its own hosts and which is therefore the only thing that may move it), the
+// instance's default service account, and the audience Cloud Run IAM checks.
+// It is separate from the request so that where the token is asked for is one
+// expression a reader -- and a test -- can see without a call.
+func metadataIdentityURL(env []string, audience string) string {
+	host := envLookup(env, metadataHostEnv)
+	if host == "" {
+		host = defaultMetadataHost
+	}
+	return "http://" + host + metadataIdentityPath + "?audience=" + url.QueryEscape(audience)
 }
 
 // printableToken reports whether tok is one clean header value: non-empty and

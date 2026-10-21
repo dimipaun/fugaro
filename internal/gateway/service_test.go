@@ -237,6 +237,73 @@ func TestServiceUpstreamReadsTierAndCredential(t *testing.T) {
 	noHalt(t, h)
 }
 
+// TestServiceNeverSentToProviderRoute is D143's other half, on
+// TestOAuthNeverSentToProviderRoute's shape: a route is a provider's own
+// endpoint and is reached with the job's own key for that provider, which a
+// cascade run does not have. A service upstream therefore takes no routes at
+// all -- not at start-up, and not from a Route built in code past validation
+// either.
+func TestServiceNeverSentToProviderRoute(t *testing.T) {
+	_, psrv := anthropicfake.New(t, anthropicfake.MessageOK(dsModel, smallUsage))
+	cred := func() (string, error) { return "provider-key-" + t.Name(), nil }
+	svc := func() *Service {
+		return &Service{
+			IDToken:    func(context.Context) (string, error) { return serviceIDToken(t), nil },
+			RunIDToken: func() string { return serviceRunToken(t) },
+			Job:        serviceJob,
+		}
+	}
+
+	// 1. A service upstream takes no routes at all, whatever they point at.
+	for _, base := range []string{psrv.URL + "/api", psrv.URL, "https://api.anthropic.com"} {
+		gw, err := Start(context.Background(), Options{
+			Upstream: Upstream{Kind: KindService, BaseURL: "https://creds.example", Service: svc()},
+			Routes: []Route{{
+				Name: "openrouter", Models: []string{"deepseek/*"}, BaseURL: base, Auth: "bearer", Credential: cred,
+			}},
+			Prices: dsPrices(), Mode: Observe,
+		})
+		if err == nil {
+			_ = gw.Close(context.Background())
+			t.Errorf("a service upstream with a route to %s started", base)
+			continue
+		}
+		if !strings.Contains(err.Error(), "never reached through the credentials service") || !strings.Contains(err.Error(), "D143") {
+			t.Errorf("the refusal of a route to %s does not name the invariant: %v", base, err)
+		}
+	}
+
+	// 2. The refusal is in validateRoutes' kind switch, where a later edit
+	//    could quietly drop it -- and no routes at all stays legal, so the
+	//    guard is about the combination and not about the kind.
+	r := Route{Name: "openrouter", Models: []string{"deepseek/*"}, BaseURL: psrv.URL + "/api", Auth: "bearer", Credential: cred}
+	err := validateRoutes(Upstream{Kind: KindService, BaseURL: "https://creds.example"}, []Route{r})
+	if err == nil {
+		t.Error("validateRoutes passed a route to a service upstream")
+	} else if !strings.Contains(err.Error(), "never reached through the credentials service") {
+		t.Errorf("validateRoutes' refusal does not name the invariant: %v", err)
+	}
+	if err := validateRoutes(Upstream{Kind: KindService, BaseURL: "https://creds.example"}, nil); err != nil {
+		t.Errorf("validateRoutes refused a service upstream with no routes: %v", err)
+	}
+
+	// 3. The upstream's own path refuses a provider route even if one were
+	//    handed to it: the check is where the job's identity is attached,
+	//    not only at start-up.
+	pr := &Route{Name: "openrouter", BaseURL: psrv.URL + "/api", Auth: "bearer", Credential: cred}
+	s := &Server{o: Options{Upstream: Upstream{Kind: KindService, BaseURL: "https://creds.example", Service: svc()}}}
+	h, err := s.serviceUpstream(context.Background(), route{provider: pr, upstream: psrv.URL + "/api/v1/messages", path: "/v1/messages"}, http.Header{})
+	if err == nil {
+		t.Fatalf("the service upstream built a request for a provider route, with %v", h)
+	}
+	if !errors.Is(err, errServiceOnRoute) {
+		t.Errorf("the refusal is %v, want errServiceOnRoute", err)
+	}
+	if h != nil {
+		t.Errorf("a refused call wrote %v", h)
+	}
+}
+
 // TestServiceUnreachableHalts: a job that cannot reach the credentials
 // service halts the run the way an unreachable budget backend does (D143),
 // and every later call gets the same refusal.

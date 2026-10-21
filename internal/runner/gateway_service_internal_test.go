@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -513,34 +514,52 @@ func TestMetadataIDToken(t *testing.T) {
 	}
 
 	t.Run("an unreachable metadata server", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-		env := []string{metadataHostEnv + "=" + strings.TrimPrefix(srv.URL, "http://")}
-		srv.Close()
+		// The repository's own hermetic pattern for "there is no metadata
+		// server here" (internal/e2e's hermeticEnv): a closed loopback
+		// address, so this neither reaches a real Google endpoint nor waits
+		// on one that blackholes. The error names neither where the request
+		// went nor what it asked for.
+		env := []string{metadataHostEnv + "=127.0.0.1:1"}
 		got, err := metadataIDToken(context.Background(), env, audience)
 		if err == nil {
-			t.Fatalf("an unreachable metadata server returned %q", got)
+			t.Fatalf("a closed metadata server returned %q", got)
 		}
 		if !strings.Contains(err.Error(), "could not be reached") {
 			t.Errorf("the error is %q", err)
+		}
+		if strings.Contains(err.Error(), audience) || strings.Contains(err.Error(), "127.0.0.1") {
+			t.Errorf("the error names where the request went: %v", err)
 		}
 	})
 
 	t.Run("the platform's own host is the default", func(t *testing.T) {
 		// With no GCE_METADATA_HOST -- which is how the platform's own hosts
 		// look -- the token is asked for at the link-local name, and nothing
-		// else in the environment moves it.
+		// else in the environment moves it. This is the URL, not a call: it
+		// is asserted without touching the network, so the answer is the
+		// same on a lap, in CI and in a job.
+		const path = "/computeMetadata/v1/instance/service-accounts/default/identity"
+		for _, tc := range []struct {
+			name string
+			env  []string
+			want string
+		}{
+			{"no host in the environment", []string{"PATH=/usr/bin"},
+				"http://metadata.google.internal" + path},
+			{"an empty host", []string{metadataHostEnv + "="},
+				"http://metadata.google.internal" + path},
+			{"a host the platform set", []string{metadataHostEnv + "=127.0.0.1:1"},
+				"http://127.0.0.1:1" + path},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				got := metadataIdentityURL(tc.env, audience)
+				if want := tc.want + "?audience=" + url.QueryEscape(audience); got != want {
+					t.Errorf("the metadata URL is %q, want %q", got, want)
+				}
+			})
+		}
 		if defaultMetadataHost != "metadata.google.internal" {
-			t.Fatalf("the default host is %q", defaultMetadataHost)
-		}
-		// A run's env with no host in it, against the platform's name: the
-		// request goes there and fails to connect, which is what a machine
-		// that is not a job sees. The error names no host and no URL.
-		_, err := metadataIDToken(context.Background(), []string{"PATH=/usr/bin"}, audience)
-		if err == nil {
-			t.Skip("a metadata server is reachable from this machine")
-		}
-		if strings.Contains(err.Error(), audience) || strings.Contains(err.Error(), "metadata.google.internal") {
-			t.Errorf("the error names where the request went: %v", err)
+			t.Errorf("the default host is %q", defaultMetadataHost)
 		}
 	})
 }
