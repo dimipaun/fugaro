@@ -45,6 +45,16 @@ const (
 	Secrets       = "secrets"
 	Plugin        = "plugin"
 	Repository    = "repository"
+	// Credentials is the owner-run stage that applies the credentials service
+	// (docs/credentials-service, D146; C1.20). It is the only writer of the
+	// installation's credentials_service variable, it is always typed at a
+	// real terminal (--yes never covers it), and it comes BEFORE the
+	// repository stage: a repository root reads the installation's
+	// credentials_service output to decide whether its jobs mount a model
+	// credential at all, and it grants each job account run.invoker on the
+	// service — an apply that ran first would plan that grant against a
+	// resource that is not there yet.
+	Credentials = "credentials"
 	// Compute is the Batch backend's installation-level provisioning
 	// (design docs/design/compute-backend.md §8.1 task 6). It is last
 	// because it is the only stage that may not run before everything else
@@ -79,6 +89,11 @@ var order = []slot{
 	{name: Installation2, needs: []string{Firebase, Images}},
 	{name: Secrets, needs: []string{Installation2}, noYes: true},
 	{name: Plugin, needs: []string{Preflight}},
+	// The credentials service is the owner's step (money, permanent, and the
+	// one identity that reads every model credential), so --yes never covers
+	// it; it is applied before the repository roots, which read its output
+	// and grant each job's account an invoker on it.
+	{name: Credentials, needs: []string{Installation2}, noYes: true},
 	{name: Repository, needs: []string{Installation2, Secrets}},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
