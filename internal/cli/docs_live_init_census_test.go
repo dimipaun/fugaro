@@ -294,9 +294,10 @@ const censusRoot = "../.."
 // to a string no task has written; that file is the one place the order of the
 // two L2 tasks is visible.
 //
-// **W2.3 moved the list 28 files down: the live prose, and the pins that read
-// it.** Seventeen are the pages and skills a person reads -- README.md,
-// CONTRIBUTING.md, SECURITY.md, the fourteen live pages under docs/
+// **W2.3 moved the list 30 files down: the live prose, the pins that read it,
+// and the two website artifacts those renames forced.** Seventeen are the
+// pages and skills a person reads -- README.md, CONTRIBUTING.md, SECURITY.md,
+// the thirteen live pages under docs/
 // (backends, base-image, base-image-migration, checkout, dogfooding,
 // gcp-setup, git-providers, multi-model, project-claude-accounts,
 // project-layer, recipes, release) plus docs/releases/README.md, the releases
@@ -319,17 +320,18 @@ const censusRoot = "../.."
 // that read them are what forced the pair).
 //
 // **What stays is the residue the later tasks own, and it is not this task's
-// to rename.** Seven are still here because every mention they carry pins a
+// to rename.** Six are still here because every mention they carry pins a
 // *dated* document or a page whose own rewrite is another task's:
 // docs_release_notes_test.go quotes the 0.9.0 notes,
 // docs_compute_backend_test.go the 0.8.6 notes and design/compute-backend.md,
 // and docs_clone_workflows_test.go, docs_mobile_checks_test.go,
-// docs_mobile_checks_review_test.go, docs_project_centric_test.go and
-// docs_setup_wizard_checks_test.go quote docs/gcp-live-checklist.md, the live
-// page W2.6 rewrites. doctor_bucket_test.go and restore_test.go carry one
-// mention each -- a comment, and a must-not-contain guard whose subject is the
-// retired word -- and stay with them. docs/gcp-live-checklist.md itself is on
-// the list for the same reason.
+// docs_project_centric_test.go and docs_setup_wizard_checks_test.go quote
+// docs/gcp-live-checklist.md, the live page W2.6 rewrites.
+// doctor_bucket_test.go and restore_test.go carry one mention each -- a
+// comment, and a must-not-contain guard whose subject is the retired word --
+// and bring the residue to eight, which is what internal/cli contributes to
+// the list.
+// docs/gcp-live-checklist.md itself is on the list for the same reason.
 //
 // **What W2.6 has to settle before the flip can pass, written here because the
 // flip's own output is where it surfaces.** Nine of the files above are the

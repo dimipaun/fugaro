@@ -77,7 +77,7 @@ Through the **subagent review loop in a local session**, with your eyes on it: a
 - **Flaky is a hint.** `TestLedgerNeverExceedsGrantedWithLease` failed "sometimes" under `-race`; it was a real gateway bug (lease top-up starvation, #81), not a flake.
 - **Output.** Go emits no JUnit reports, so verify says "0 tests: no JUnit reports"; it reports pass or fail from the exit status only. `gotestsum` would add per-test results and `rerun_failed`; it is a follow-up.
 - **Login expiry.** `gcloud` and `gsutil` logins expire (reauth) while you are away; the `fugaro` CLI uses its own credentials and keeps working.
-- **The frictions that became M11** (design `m11-setup-and-skills.md` §6): the first-install `update --plan-only` failure, same-project refusal, the taken App name, the Cloud Billing API on the quota project, the default Compute account's `roles/editor`, the unpublished base and history images, wrapped multi-line commands, typed confirmations needing a real terminal, and the many manual rounds.
+- **The frictions that became M11** (design `m11-setup-and-skills.md` §6): the first-install `setup --plan-only` failure, same-project refusal, the taken App name, the Cloud Billing API on the quota project, the default Compute account's `roles/editor`, the unpublished base and history images, wrapped multi-line commands, typed confirmations needing a real terminal, and the many manual rounds.
 
 ## Left out of the `go` image, on purpose
 
