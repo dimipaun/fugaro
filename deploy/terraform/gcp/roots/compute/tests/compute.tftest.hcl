@@ -20,6 +20,13 @@ variables {
   project        = "proj-1234"
   project_number = "123456789012"
   region         = "us-east5"
+  # Not the region above, and deliberately: Cloud Scheduler does not serve
+  # us-east5, so this is what internal/backend/gcp's SchedulerRegion answers for
+  # it and what fugaro init writes into the tfvars. Keeping the two different
+  # here is the point of the runs that assert them: a Scheduler job created in
+  # the installation's region fails the apply, and a test whose region matched
+  # would never see it.
+  scheduler_region = "us-east4"
   network        = "projects/proj-1234/global/networks/default"
   subnetwork     = "projects/proj-1234/regions/us-east5/subnetworks/default"
   names = {
@@ -430,8 +437,8 @@ run "TestThePreloadRebuildIsScheduled" {
   }
 
   assert {
-    condition     = google_cloud_scheduler_job.preload_rebuild.name == "fugaro-preload-rebuild" && google_cloud_scheduler_job.preload_rebuild.region == "us-east5"
-    error_message = "the rebuild's job name and region are the inputs"
+    condition     = google_cloud_scheduler_job.preload_rebuild.name == "fugaro-preload-rebuild" && google_cloud_scheduler_job.preload_rebuild.region == "us-east4"
+    error_message = "the rebuild's job name is the input, and its region is the SCHEDULER region and not the installation's: Cloud Scheduler does not serve us-east5, so a job created there fails the apply and the preload is never rebuilt"
   }
   assert {
     condition     = google_cloud_scheduler_job.preload_rebuild.schedule == "0 3 * * 1" && google_cloud_scheduler_job.preload_rebuild.time_zone == "Etc/UTC"
@@ -794,8 +801,12 @@ run "TestTheReaperRunsAsTheReaperAccountOnASchedule" {
     error_message = "the schedule must not retry the POST: a failed pass is reported once, and the next tick a margin later is the retry"
   }
   assert {
+    condition     = google_cloud_scheduler_job.reaper_sweep.region == "us-east4"
+    error_message = "the sweep is created in the SCHEDULER region, not the installation's us-east5: Cloud Scheduler does not serve us-east5, so a job created there fails the apply and the sweep does not exist at all -- which is the leak this job is here to close, and the one failure of it nothing else notices"
+  }
+  assert {
     condition     = google_cloud_scheduler_job.reaper_sweep.http_target[0].http_method == "POST" && google_cloud_scheduler_job.reaper_sweep.http_target[0].uri == "https://run.googleapis.com/v2/projects/proj-1234/locations/us-east5/jobs/fugaroreap:run"
-    error_message = "the schedule starts the reaper's own job, in this project and region, on run.googleapis.com"
+    error_message = "the schedule starts the reaper's own job, in this project and region, on run.googleapis.com: the URI names the Cloud Run job's location, which IS the installation's us-east5 even though the Scheduler job lives in us-east4"
   }
   assert {
     condition     = google_cloud_scheduler_job.reaper_sweep.http_target[0].oauth_token[0].service_account_email == "fugaro-reaper@proj-1234.iam.gserviceaccount.com"

@@ -25,6 +25,36 @@ variable "region" {
   }
 }
 
+# Cloud Scheduler is NOT offered in every Cloud Run region, and the two are not
+# the same list: us-east5 -- the region this module's own variables block, its
+# tfvars testdata and the documented sandbox all use -- is a Cloud Run region
+# Cloud Scheduler does not serve (internal/backend/gcp's SchedulerRegions, and
+# names.go's nearestSchedulerRegion maps it to us-east4; docs/gcp-setup.md says
+# it too). So the module's Scheduler jobs live HERE and not in var.region, and
+# their HTTP targets name the Cloud Run job's own location, which stays
+# var.region: a Scheduler job can start a job in another region, since its URI
+# carries that location. A job created in var.region on such an installation
+# fails the apply outright, which is the one failure mode that leaves the
+# thing the job exists for undone.
+#
+# The caller resolves it, because Terraform cannot: fugaro init reads the
+# installation's scheduler_region when it names one and
+# internal/backend/gcp's SchedulerRegion otherwise -- the same choice the
+# history job and the daily image check already make
+# (internal/infra/spec.go's check, firebase.go's History) -- and passes it
+# here (internal/infra/compute.go's ComputeSpec.SchedulerRegion). It is an
+# input rather than a default for that reason, and the shape check below is
+# the same one those two make of it.
+variable "scheduler_region" {
+  description = "Where the module's Cloud Scheduler jobs live: the installation's scheduler_region, or the location Cloud Scheduler serves nearest var.region (internal/backend/gcp's SchedulerRegion). It is not var.region whenever Cloud Scheduler does not serve that region."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z]+-[a-z]+[0-9]+$", var.scheduler_region))
+    error_message = "scheduler_region must be a Cloud Scheduler location such as us-east4."
+  }
+}
+
 # Batch REFUSES noExternalIpAddress unless the interface names BOTH a network
 # and a subnetwork (measured 2026-10-15, Check 57a; design §1.7, §7.2). That
 # is why both are required variables here and why neither has a "default"

@@ -1750,7 +1750,10 @@ func TestComputeReaperRoleIsExactlyFive(t *testing.T) {
 // TestTheReaperJobRunsAsTheReaperAccountOnASchedule pins Task 11's invocation
 // (design §8.1 Task 11, steps 2 and 3): the Cloud Run job that runs
 // `fugaro reaper`, the invoker grant it is started with, and the Scheduler job
-// that starts it every ReapMargin.
+// that starts it every ReapMargin -- in the scheduler region and not the
+// installation's, which is the one attribute of it a plan cannot check and a
+// wrong value cannot be seen from (a Scheduler job in a region Cloud Scheduler
+// does not serve fails the apply).
 //
 // It is the task's red step, and it was written against a reaper.tf whose job
 // left `service_account` unset: a Cloud Run job with no service account runs as
@@ -1857,6 +1860,15 @@ func TestTheReaperJobRunsAsTheReaperAccountOnASchedule(t *testing.T) {
 		{"time_zone", `"Etc/UTC"`},
 		{"retry_count", "0"},
 		{"http_method", `"POST"`},
+		// The SCHEDULER region and never var.region. Cloud Scheduler does not
+		// serve every Cloud Run region -- us-east5, this module's own
+		// variables block and its tfvars testdata, is one it does not -- and a
+		// Scheduler job created in a region it does not serve fails the whole
+		// apply, so the sweep would not merely be unscheduled: it would not
+		// exist, and the leaked VMs it is here to delete would be swept by
+		// nothing. The URI below is the other half of the split and stays the
+		// Cloud Run job's own location.
+		{"region", "var.scheduler_region"},
 	} {
 		if !hasAttr(sweep.body, want[0], want[1]) {
 			t.Errorf("%s: %s does not set %s = %s", path, sweep.name, want[0], want[1])

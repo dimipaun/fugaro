@@ -29,6 +29,7 @@ func computeSpec() ComputeSpec {
 		Project:            "proj-1234",
 		ProjectNumber:      "123456789",
 		Region:             "us-east5",
+		SchedulerRegion:    "us-east4",
 		Network:            DefaultNetwork("proj-1234"),
 		Subnetwork:         DefaultSubnetwork("proj-1234", "us-east5"),
 		Names:              ComputeNamesFor(),
@@ -104,6 +105,13 @@ func TestComputeVarsRefuseWhatTheModuleRefuses(t *testing.T) {
 	}{
 		{"no project", func(s *ComputeSpec) { s.Project = "" }, "project"},
 		{"no region", func(s *ComputeSpec) { s.Region = "" }, "region"},
+		// Cloud Scheduler is not offered in every Cloud Run region, and the
+		// module's Scheduler jobs are created where it is: an empty scheduler
+		// region, or one that is not a region at all, is an apply that fails
+		// at the Scheduler job -- which would leave the reaper's sweep and the
+		// preload's rebuild absent rather than merely unscheduled.
+		{"no scheduler region", func(s *ComputeSpec) { s.SchedulerRegion = "" }, "scheduler region"},
+		{"a scheduler region that is not a region", func(s *ComputeSpec) { s.SchedulerRegion = "us-east5-abc" }, "scheduler region"},
 		{"no network", func(s *ComputeSpec) { s.Network = "" }, "network"},
 		{"no subnetwork", func(s *ComputeSpec) { s.Subnetwork = "" }, "subnetwork"},
 		{"no run accounts", func(s *ComputeSpec) { s.RunAccounts = nil }, "run account"},

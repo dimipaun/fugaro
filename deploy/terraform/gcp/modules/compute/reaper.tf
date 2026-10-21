@@ -324,14 +324,27 @@ resource "google_service_account_iam_member" "reaper_operator" {
 # budget. There is nothing for an operator to review first that 57b-10 and
 # 57b-11 do not measure on a sandbox.
 #
-# The region is this root's, the same one the preload's rebuild is scheduled in
-# (the compute module has one region and no scheduler_region input: an
-# installation whose region Cloud Scheduler does not serve is an installation
-# that cannot schedule its own rebuild either, and that is the preload's
-# problem before it is this job's).
+# The region is the SCHEDULER region, not this root's -- and that is not a
+# detail of this file, it is the difference between a sweep that runs and one
+# that never exists. Cloud Scheduler does not serve every Cloud Run region, and
+# the region this module's own variables block, its tfvars testdata and the
+# documented sandbox all use (us-east5) is one it does not serve
+# (internal/backend/gcp's SchedulerRegions, names.go's nearestSchedulerRegion,
+# docs/gcp-setup.md). A Scheduler job created in a region Scheduler does not
+# serve fails the APPLY, so on such an installation this job -- and, before it,
+# preload.tf's rebuild, which had the same omission -- would not exist at all,
+# and the leak this task closes would be the one nobody sweeps. The URI below
+# is unaffected by the split: it names the Cloud Run job's own location, which
+# is var.region, and a Scheduler job in another location can start it.
+#
+# The two are usually the same and the caller resolves the difference
+# (var.scheduler_region, which internal/infra/compute.go's ComputeSpec fills
+# from the installation's own scheduler_region or gcp.SchedulerRegion), the
+# same way the installation's history sweep and the daily image check already
+# do.
 resource "google_cloud_scheduler_job" "reaper_sweep" {
   project     = var.project
-  region      = var.region
+  region      = var.scheduler_region
   name        = local.reaper_scheduler_job
   schedule    = "*/15 * * * *"
   time_zone   = "Etc/UTC"

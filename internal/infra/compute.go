@@ -132,6 +132,20 @@ type ComputeSpec struct {
 	Project       string `json:"project"`
 	ProjectNumber string `json:"project_number"`
 	Region        string `json:"region"`
+
+	// SchedulerRegion is where the module's two Cloud Scheduler jobs live,
+	// which is NOT Region whenever Cloud Scheduler does not serve it: us-east5
+	// -- the sandbox's region and this spec's own testdata -- is a Cloud Run
+	// region Cloud Scheduler does not serve, and a Scheduler job created there
+	// fails the apply, so the reaper's sweep and the preload's rebuild would
+	// simply not exist on such an installation (the module's
+	// scheduler_region, gcp.SchedulerRegions). The caller resolves it the way
+	// the history job and the daily image check already do: the
+	// installation's own scheduler_region when it names one, and
+	// gcp.SchedulerRegion's nearest served location otherwise. The jobs' HTTP
+	// targets name the Cloud Run job's own location, so the split costs
+	// nothing.
+	SchedulerRegion string `json:"scheduler_region"`
 	// Network and Subnetwork are required, and both in full: Batch REFUSES
 	// noExternalIpAddress unless the job's interface names BOTH (measured
 	// 2026-10-15, Check 57a; §1.7, §7.2). The NAT is created on them.
@@ -210,6 +224,10 @@ func ComputeVars(spec ComputeSpec) ([]byte, error) {
 	switch {
 	case spec.Project == "" || spec.Region == "":
 		return nil, fmt.Errorf("the compute root needs a project and a region")
+	case spec.SchedulerRegion == "":
+		return nil, fmt.Errorf("the compute root needs the scheduler region: Cloud Scheduler is not offered in every Cloud Run region, so the module's Scheduler jobs live where it is and a job created in the installation's region fails the apply (the module's scheduler_region, resolved by the caller through gcp.SchedulerRegion)")
+	case !computeRegion.MatchString(spec.SchedulerRegion):
+		return nil, fmt.Errorf("the compute root's scheduler region %q is not a region such as us-east4: it is the location the module's Cloud Scheduler jobs are created in, and a value Cloud Scheduler does not serve fails the apply (the module's scheduler_region validation)", spec.SchedulerRegion)
 	case spec.Network == "" || spec.Subnetwork == "":
 		return nil, fmt.Errorf("the compute root needs the network and the subnetwork: Batch refuses noExternalIpAddress unless both are named (design compute-backend §1.7)")
 	case len(spec.RunAccounts) == 0:
@@ -246,6 +264,12 @@ func ComputeVars(spec ComputeSpec) ([]byte, error) {
 // principal with an address, never a domain: member, allUsers or
 // allAuthenticatedUsers.
 var computeOperator = regexp.MustCompile(`^(user|group|serviceAccount):[^@\s]+@[^@\s]+$`)
+
+// computeRegion is a region name's shape, which is a Cloud Scheduler
+// location's too: the module's own validation for both (its variables.tf),
+// and the same expression internal/localcfg's regionRE and the installation
+// module's history.scheduler_region use.
+var computeRegion = regexp.MustCompile(`^[a-z]+-[a-z]+[0-9]+$`)
 
 // ComputeServiceAgents are the project's Cloud Build and Cloud Scheduler
 // service agents, in that order, as modules/compute/iam.tf derives them from

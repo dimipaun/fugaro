@@ -51,8 +51,13 @@ func computeRig(t *testing.T) *initRig {
 	// kind of account the compute root accepts as a run account.
 	r.iam.AddServiceAccount(initProject, "fugaro-acme-web@proj-1234.iam.gserviceaccount.com", "Fugaro job acme/sandbox web")
 	// The rebuild job the compute root creates; the stage starts it once the
-	// apply is done.
-	r.sched.SetJob(initProject, "us-east5", infra.PreloadSchedulerJob,
+	// apply is done. It lives in the SCHEDULER region and not in the
+	// installation's, which is the whole point of that input: Cloud Scheduler
+	// does not serve us-east5 (the rig's region), so the module creates the
+	// job in us-east4 -- the location gcp.SchedulerRegion names for it -- and
+	// a stage that started it in the installation's region would be asking
+	// for a job that is not there.
+	r.sched.SetJob(initProject, "us-east4", infra.PreloadSchedulerJob,
 		"https://cloudbuild.googleapis.com/v1/projects/proj-1234/builds", "fugaro-preload@proj-1234.iam.gserviceaccount.com")
 	// The compute root's own outputs. They are scripted for this root alone:
 	// the installation's answer is a different one (a root's name is the
@@ -211,10 +216,44 @@ func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
 		"preload_refresh_days": infra.PreloadRefreshDaysDefault,
 		"network":              "projects/" + initProject + "/global/networks/default",
 		"subnetwork":           "projects/" + initProject + "/regions/us-east5/subnetworks/default",
+		// The scheduler region, resolved and not defaulted: the config names
+		// none, and Cloud Scheduler does not serve the installation's us-east5,
+		// so the root's Scheduler jobs are created in the nearest location it
+		// does serve (gcp.SchedulerRegion). The installation's region is NOT
+		// this value, and a tfvars that wrote it there is an apply that fails
+		// at the reaper's sweep.
+		"scheduler_region": "us-east4",
 	} {
 		if got := vars[k]; !equalJSON(got, want) {
 			t.Errorf("tfvars[%q] = %v, want %v", k, got, want)
 		}
+	}
+}
+
+// The installation's own scheduler_region wins over the nearest location Cloud
+// Scheduler serves, and the stage starts the rebuild in the region it named:
+// that is the reading the history job and the daily image check already make
+// of the config's field, and it is what lets an installation keep every
+// schedule in one place it chose.
+func TestComputeStageTakesTheConfigsSchedulerRegion(t *testing.T) {
+	typedThroughYes(t)
+	r := computeRig(t)
+	r.appendConfig(t, "scheduler_region: us-central1\n")
+	// The rebuild the stage starts lives where the config says, not where the
+	// rig's own region would have put it.
+	r.sched.SetJob(initProject, "us-central1", infra.PreloadSchedulerJob,
+		"https://cloudbuild.googleapis.com/v1/projects/proj-1234/builds", "fugaro-preload@proj-1234.iam.gserviceaccount.com")
+	r.save(t)
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := computeTfvars(t, r)["scheduler_region"]; !equalJSON(got, "us-central1") {
+		t.Errorf("tfvars[scheduler_region] = %v, want the config's own us-central1", got)
+	}
+	if runs := r.sched.Runs(); len(runs) != 1 || !strings.Contains(runs[0], "/locations/us-central1/") {
+		t.Errorf("the rebuild was started %v, want once in us-central1: the job lives where the config put it", runs)
 	}
 }
 

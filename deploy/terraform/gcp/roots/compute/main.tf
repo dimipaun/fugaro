@@ -35,6 +35,7 @@ module "compute" {
   project                = var.project
   project_number         = var.project_number
   region                 = var.region
+  scheduler_region       = var.scheduler_region
   network                = var.network
   subnetwork             = var.subnetwork
   names                  = var.names
