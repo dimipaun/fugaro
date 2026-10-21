@@ -62,6 +62,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -209,7 +210,21 @@ const (
 	// the names it prints.
 	mobileReleasePinTestName    = "TestDocsMobileReleaseWorkflowIsStagedAndPinned"
 	mobileReleaseReadmeTestName = "TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn"
+	// mobileReleaseOwnerStepsHeading is the heading over the owner's list of the
+	// things that have to be in place before the workflow can run at all. Its
+	// count is a claim about the list under it, and the two were read against
+	// each other because they had drifted apart: the heading said three over four
+	// numbered steps. A step that is not done *before* the first run -- the
+	// dry-run read, which is done after the copy-in, and the version bump, which
+	// is done before every release -- belongs to its own subsection, which is
+	// what the paragraph under the list forwards to.
+	mobileReleaseOwnerStepsHeading = "### Before it can run: the three things the owner does first"
 )
+
+// mobileReleaseNumberWords reads the count the heading states, in the words the
+// document writes it in. It is the reader `consolePendingSentence` uses for the
+// pending-file counts, narrowed to the heading that counts owner steps.
+var mobileReleaseNumberWords = map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 
 // mobileReleaseIdentityNames are the two EAS environment variables that hold the
 // store identity. They are the exception that proves the rule below: the
@@ -374,6 +389,13 @@ var (
 	// `eas-cli` is caught by requiring the capture to be exactly `@<version>`
 	// rather than by refusing an install without one.
 	mobileReleaseEasCLIRE = regexp.MustCompile(`npm install --global eas-cli([^\s]*)`)
+	// mobileReleaseNumberedItemsRE finds the owner list's numbered steps: each
+	// one is written `**1. [per repo] …**`, so an item is a bolded number at the
+	// start of a line and nothing else in the section is.
+	mobileReleaseNumberedItemsRE = regexp.MustCompile(`(?m)^\*\*([0-9]+)\. `)
+	// mobileReleaseCountWordRE reads the count the heading states ("the three
+	// things the owner does first"), which the list under it has to match.
+	mobileReleaseCountWordRE = regexp.MustCompile(`the (\w+) things? the owner`)
 )
 
 // mobileReleaseKnownSuffixes are the file extensions a dotted token may end in
@@ -847,8 +869,17 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 			// The id is pasted into the shell string this step runs, so its
 			// shape is checked before it gets there: `jq -e` refuses a document
 			// with no id, and this is what refuses an id that is not a UUID.
-			if !strings.Contains(cmd, mobileReleaseBuildIDShapeCheck) {
-				t.Errorf("the %s job's submission does not check that the build's id is a UUID before it pastes it into the submit command: the id comes out of a JSON document this run parsed, and anything else in that field -- a URL, or a string carrying a `;` -- would become part of the command", platform)
+			// The whole guard is read rather than the pattern alone --
+			// mobileReleaseBuildIDGuard says why: a `[[ … =~ … ]]` with no `!`,
+			// or one whose body reports the wrong shape and carries on, still
+			// carries the pattern this file looks for.
+			guard, why, guardEnd := mobileReleaseBuildIDGuard(cmd)
+			submitAt := strings.Index(cmd, "eas submit --profile")
+			switch {
+			case why != "":
+				t.Errorf("the %s job's submission does not guard the build's id before pasting it into the submit command: %s. The id comes out of a JSON document this run parsed, and anything else in that field -- a URL, or a string carrying a `;` -- would become part of the command", platform, why)
+			case submitAt >= 0 && submitAt < guardEnd:
+				t.Errorf("the %s job checks the build's id's shape only at byte %d of the step and submits at byte %d (the guard is %q): the check has to run before the command it protects, or the id reaches `--id` unchecked", platform, guardEnd, submitAt, guard)
 			}
 		case mobileReleaseSummaryRE.MatchString(cmd) && strings.Contains(cmd, "Dry run"):
 			shape.dryRuns++
@@ -893,6 +924,148 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 		t.Errorf("the %s job uses %d actions (%q); it needs a checkout and a node", platform, len(shape.uses), shape.uses)
 	}
 	return shape
+}
+
+// mobileReleaseBuildIDGuard reads a submission step's shape check **as a guard**
+// rather than as a pattern that appears somewhere in the step, and it is the
+// reason the submission assertion uses it: `mobileReleaseBuildIDShapeCheck` is a
+// literal, and every way of breaking this check that matters leaves the literal
+// where it is. Remove the `!` and an id that *is* a UUID is the only one the job
+// refuses, while a URL or a string carrying a `;` goes into the submit command;
+// drop the `exit 1` and a guard that fires only prints; test some other variable
+// and the id is never looked at. All three read as a green test against a
+// `strings.Contains(cmd, mobileReleaseBuildIDShapeCheck)`.
+//
+// It returns the guard's text, the byte the step reaches once the guard has
+// closed (so the caller can hold the submit command to coming after it), and a
+// reason the guard is not one -- the pattern missing, no `!`, no `=~`, a
+// variable other than `${build_id}`, a first line that opens no block, a block
+// never closed with `fi`, a body that does not stop the job, or a body that runs
+// the submission itself. A reason means the step has no guard of this shape and
+// the caller has nothing to read; an empty reason means `guard` is the whole
+// `if … fi` and the byte is where it ends.
+//
+// The check is deliberately matched against the file's own pattern constant and
+// not a looser "looks like a UUID" shape: this test pins what the workflow
+// documents, so a pattern that was quietly widened (`^.*$`, or a `grep -q` that
+// accepts anything) has to be an edit to that constant and to this test too.
+func mobileReleaseBuildIDGuard(cmd string) (guard, why string, endsAt int) {
+	lines := strings.Split(cmd, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.Contains(line, mobileReleaseBuildIDShapeCheck) {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return "", "the UUID pattern the check applies is nowhere in the step", -1
+	}
+	head := strings.TrimSpace(lines[start])
+	switch {
+	case !strings.HasPrefix(head, "if [["):
+		return "", fmt.Sprintf("the pattern is on %q, which is not an `if [[ … ]]` guard: a pattern in a command of its own checks nothing", head), -1
+	case !strings.Contains(head, "=~"):
+		return "", fmt.Sprintf("the guard %q applies no `=~` match, so the pattern beside it is text in a condition that never uses it", head), -1
+	case !strings.Contains(head, "${build_id}"):
+		return "", fmt.Sprintf("the guard %q does not test ${build_id}: whatever it does test, the id read out of the build's JSON still reaches the submit command", head), -1
+	case !strings.Contains(head, "!"):
+		return "", fmt.Sprintf("the guard %q has no `!`: it refuses a build id that *is* a UUID and lets every other value -- a URL, a string carrying a `;` -- through to the submit command", head), -1
+	case !strings.HasSuffix(head, "then"):
+		return "", fmt.Sprintf("the guard opens with %q, which is not a conditional block (`then`)", head), -1
+	}
+	stop := -1
+	for i := start + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "fi" {
+			stop = i
+			break
+		}
+	}
+	if stop < 0 {
+		return "", fmt.Sprintf("the guard on line %d of the step is never closed with `fi`", start+1), -1
+	}
+	body := strings.Join(lines[start:stop+1], "\n")
+	if !strings.Contains(body, "exit 1") {
+		return "", fmt.Sprintf("the guard %q does not stop the job (`exit 1`): a shape check whose failure only prints is a submission that still happens", body), -1
+	}
+	if strings.Contains(body, "eas submit") {
+		return "", fmt.Sprintf("the guard %q runs the submission itself: the check has to come before the command it protects", body), -1
+	}
+	for _, line := range lines[:stop+1] {
+		endsAt += len(line) + 1
+	}
+	return body, "", endsAt
+}
+
+// TestMobileReleaseBuildIDGuardIsAGuardAndNotAPattern pins the reader above
+// against temp text rather than against the file, so each way the check can be
+// present and still do nothing is checkable without editing the staged workflow:
+// the six breakages its own comment names -- the pattern missing, no `!`, the
+// match not applied, another variable tested, a block never closed, and a body
+// that only prints -- the guard that is moved after the command it protects,
+// and the one good guard those fixtures are variations of. It is what makes the
+// submission assertion's use of it safe -- that assertion reads the staged file,
+// and this one is the statement of what "a guard" means in it.
+//
+// The mutations that prove it are the fixtures themselves: every `bad` case here
+// is a guard a `strings.Contains(cmd, mobileReleaseBuildIDShapeCheck)` would
+// accept.
+func TestMobileReleaseBuildIDGuardIsAGuardAndNotAPattern(t *testing.T) {
+	const pat = mobileReleaseBuildIDShapeCheck
+	good := strings.Join([]string{
+		`build_id=$(jq -er '.id' "$RUNNER_TEMP/mobile-build.json")`,
+		`if [[ ! "${build_id}" =~ ` + pat + ` ]]; then`,
+		`  echo "::error::the build's id is not a UUID" >&2`,
+		`  exit 1`,
+		`fi`,
+		`eas env:exec --non-interactive production "eas submit --profile internal --id ${build_id}"`,
+	}, "\n")
+	guard, why, endsAt := mobileReleaseBuildIDGuard(good)
+	if why != "" {
+		t.Fatalf("the guard these fixtures are variations of is rejected: %s", why)
+	}
+	if !strings.Contains(guard, pat) || endsAt <= 0 {
+		t.Fatalf("the guard came back as %q ending at %d, and it is the `if … fi` carrying the pattern", guard, endsAt)
+	}
+
+	for _, bad := range []struct{ what, cmd, want string }{
+		{"the pattern is not there at all", strings.Replace(good, pat, `^[0-9a-f-]+$`, 1), "nowhere in the step"},
+		{"the `!` is gone", strings.Replace(good, "if [[ ! ", "if [[ ", 1), "no `!`"},
+		{"the body only prints", strings.Replace(good, "\n  exit 1", "", 1), "does not stop the job"},
+		{"another variable is tested", strings.Replace(good, `"${build_id}"`, `"${other_id}"`, 1), "does not test ${build_id}"},
+		{"the block is never closed", strings.Replace(good, "\nfi\n", "\n", 1), "never closed with `fi`"},
+		{"the match is not applied", strings.Replace(good, " =~ ", " == ", 1), "applies no `=~`"},
+	} {
+		_, why, _ := mobileReleaseBuildIDGuard(bad.cmd)
+		if why == "" {
+			t.Errorf("%s was accepted as a shape check, so this test would pass on a workflow whose id guard does nothing: the check has to be the `if [[ ! … =~ pattern ]] … exit 1 … fi` the file's comment describes", bad.what)
+			continue
+		}
+		if !strings.Contains(why, bad.want) {
+			t.Errorf("%s was rejected for the wrong reason: %q, and the reason looked for is %q", bad.what, why, bad.want)
+		}
+		if !strings.Contains(bad.cmd, mobileReleaseBuildIDShapeCheck) && bad.what != "the pattern is not there at all" {
+			t.Errorf("the fixture for %s no longer carries the pattern literal, so it no longer stands for a check that is present and does nothing", bad.what)
+		}
+	}
+
+	// And the order the assertion reads: a guard that is present, well shaped
+	// and placed *after* the command it protects still leaves the id pasted
+	// unchecked, so the byte the guard ends at has to be before the submit.
+	moved := strings.Join([]string{
+		`build_id=$(jq -er '.id' "$RUNNER_TEMP/mobile-build.json")`,
+		`eas env:exec --non-interactive production "eas submit --profile internal --id ${build_id}"`,
+		`if [[ ! "${build_id}" =~ ` + pat + ` ]]; then`,
+		`  exit 1`,
+		`fi`,
+	}, "\n")
+	_, why, endsAt = mobileReleaseBuildIDGuard(moved)
+	if why != "" {
+		t.Fatalf("the moved guard is a guard: %s", why)
+	}
+	if submit := strings.Index(moved, "eas submit --profile"); submit >= endsAt {
+		t.Fatalf("the moved fixture puts the submission at %d and the guard ends at %d: this fixture exists to be the order the submission assertion refuses, which is the submission *before* the byte the guard ends at", submit, endsAt)
+	}
 }
 
 // mobileReleaseFollowUpEditsIn checks the one claim in text about how many
@@ -1139,6 +1312,7 @@ func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 		"[per Play Console]",
 		"[per owner's machine]",
 		"[per repo, after the first dry run]",
+		"[per repo, before every release tag]",
 		"[per repo]",
 	}
 	if !slices.Equal(labels, want) {
@@ -1169,6 +1343,45 @@ func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 		t.Errorf("%s's `%s` section no longer carries %q: while the Play side is not ready the owner has to set %s before the copy-in, or the first run of the copied-in file can submit to Play", pendingWorkflowsReadmePath, mobileReleaseReadmeHeading, mobileReleaseAndroidSwitchStep, mobileReleaseDisabledPlatforms)
 	} else if androidOff > copyIn {
 		t.Errorf("%s's `%s` section sets %s at %d and gives the copy-in command at %d: the switch has to come first, because the Android job is enabled by default and a copy-in made before the variable is set is a workflow whose first run can submit to Play", pendingWorkflowsReadmePath, mobileReleaseReadmeHeading, mobileReleaseDisabledPlatforms, androidOff, copyIn)
+	}
+
+	// The owner's list counts itself, and the count and the list are one claim:
+	// the heading below said "the three things the owner does first" over four
+	// numbered steps until it was noticed, which is the drift a count in prose
+	// takes on without a test. The steps that are deliberately **not** among
+	// them -- the dry-run read and the version bump, each of which has a
+	// subsection of its own -- are forwarded to from the paragraph under the
+	// list, so the list is what the heading counts and nothing else.
+	if at := strings.Index(section, mobileReleaseOwnerStepsHeading); at < 0 {
+		t.Errorf("%s's `%s` section no longer carries the heading %q: that heading is where the owner's own list of what has to be in place before the workflow runs is, and this test reads the list under it", pendingWorkflowsReadmePath, mobileReleaseReadmeHeading, mobileReleaseOwnerStepsHeading)
+	} else {
+		rest := section[at+len(mobileReleaseOwnerStepsHeading):]
+		list := rest
+		if end := strings.Index(rest, "\n### "); end >= 0 {
+			list = rest[:end]
+		}
+		items := mobileReleaseNumberedItemsRE.FindAllStringSubmatch(list, -1)
+		var numbers []string
+		for _, item := range items {
+			numbers = append(numbers, item[1])
+		}
+		m := mobileReleaseCountWordRE.FindStringSubmatch(mobileReleaseOwnerStepsHeading)
+		if m == nil {
+			t.Fatalf("the heading %q no longer states a count this test can read: the heading and the list under it are one claim, and the count is the half that drifts", mobileReleaseOwnerStepsHeading)
+		}
+		want, ok := mobileReleaseNumberWords[strings.ToLower(m[1])]
+		if !ok {
+			t.Fatalf("the heading %q counts %q things, which is not a number this test can read", mobileReleaseOwnerStepsHeading, m[1])
+		}
+		if len(numbers) != want {
+			t.Errorf("%s's heading says the owner does %d thing(s) first and the list under it has %d numbered item(s) (%v): the heading and the list are one claim, and a step that is not among them -- the dry-run read, the version bump -- belongs in the paragraph below the list, not under this heading", pendingWorkflowsReadmePath, want, len(numbers), numbers)
+		}
+		for i, number := range numbers {
+			if number != strconv.Itoa(i+1) {
+				t.Errorf("%s's owner list numbers its steps %v: the heading counts them and the numbers are read in order, so a list that skips or repeats a number reads as fewer steps than it has", pendingWorkflowsReadmePath, numbers)
+				break
+			}
+		}
 	}
 
 	// The section has to name the identity's home rather than leave a reader
