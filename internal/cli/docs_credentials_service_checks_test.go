@@ -95,15 +95,37 @@ func TestLiveChecksAreOneScriptTheOwnerRuns(t *testing.T) {
 		}
 	}
 
+	// The appendix describes the FACT the script records, and Check 90's
+	// `token-file` fact records the token file's MODE and says out loud that the
+	// value and its length are not printed: a token's length is a hint about the
+	// value. The appendix told the owner to paste "the file's length and mode
+	// (wc -c, ls -l)" in three places, which asks for something no run of this
+	// check ever prints -- a promise to paste that cannot be kept, next to the
+	// token file, in the one document the owner reads while holding it.
+	if got := readDoc(t, check90Steps); strings.Contains(got, "wc -c") {
+		t.Errorf("%s: the appendix asks for the token file's length (wc -c), which no run of check90.sh records", check90Steps)
+	}
+	if got := readRepoFile(t, check90Script); !strings.Contains(got, "the value and its length are not printed anywhere") {
+		t.Errorf("%s: the token-file fact no longer says the length is not printed, which is what the appendix is corrected against", check90Script)
+	}
+
 	// A Restore that ends with a count that is not 0 is finished BY HAND: the
 	// register must not tell the owner to run the check again, which reads
 	// nothing -- a fresh run mints a scratch directory of its own and stops in
 	// the guards while the service or the repository is still in the project --
-	// and the appendix must not repeat the promise either.
+	// and the appendix must not repeat the promise either. The appendix is
+	// checked for the SAME strings, not for a paraphrase of them: the register's
+	// sentence was corrected while the appendix kept telling the owner to
+	// "re-run the Restore, which removes the directory once the three counts are
+	// 0", which is the promise this whole paragraph exists to retire, and a
+	// reader who follows the section's own link reads the appendix.
 	sec91 := registerSection(t, doc, check91Heading)
-	for _, forbidden := range []string{"re-run the Restore", "a re-run needs the records", "re-reads the records"} {
-		if strings.Contains(sec91, forbidden) {
-			t.Errorf("%s: the section starting %q says %q, which no run does", liveChecksDoc, check91Heading, forbidden)
+	for _, bad := range []string{"re-run the Restore", "a re-run needs the records", "re-reads the records"} {
+		if strings.Contains(sec91, bad) {
+			t.Errorf("%s: the section starting %q says %q, which no run does", liveChecksDoc, check91Heading, bad)
+		}
+		if got := readDoc(t, check91Steps); strings.Contains(got, bad) {
+			t.Errorf("%s: the appendix says %q, which no run does — a Restore that ended with a count that is not 0 is finished by hand", check91Steps, bad)
 		}
 	}
 	if want := "finishing a count that is not `0` is hand work"; !strings.Contains(sec91, want) {
@@ -145,6 +167,40 @@ func TestLiveChecksAreOneScriptTheOwnerRuns(t *testing.T) {
 		}
 		if !strings.Contains(line, "`bash "+row.script+"`") {
 			t.Errorf("%s: row %s does not tell the owner to run %s", liveChecksDoc, row.number, row.script)
+		}
+	}
+
+	// Row 90's own cell was double-edited into a bold run with a second bold run
+	// nested inside it: `**settles … met; **does NOT ask you to paste … itself**
+	// — and reaches U3 … outcome**`. The cell is read as the row's summary of what
+	// the check settles, so the nesting renders as emphasis on a phrase that was
+	// meant to be a peer of the first, and a claim repeated in it reads as two
+	// claims. The parenthetical is ONE bold run — the marker count below is what
+	// fails on that garble — and each claim is stated in it once, so that a later
+	// edit can neither drop one nor state it twice.
+	//
+	// Mutation (verified, run and restored): put the inner `**` pair and the
+	// duplicated "— and reaches U3 …" back — red on the marker count.
+	cell := ""
+	for _, l := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(l, "| 90 | ") {
+			cell = strings.SplitN(strings.TrimPrefix(l, "| 90 | "), "|", 2)[0]
+			break
+		}
+	}
+	if cell == "" {
+		t.Fatalf("%s: row 90 has no cell to read", liveChecksDoc)
+	}
+	if got := strings.Count(cell, "**"); got != 2 {
+		t.Errorf("%s: row 90's cell carries %d `**` markers; its parenthetical is one bold run, and a nested pair renders as bold inside bold", liveChecksDoc, got)
+	}
+	for _, want := range []string{
+		"settles U1",
+		"does NOT ask you to paste",
+		"reaches U3 only if a usage limit can be observed, recording either outcome",
+	} {
+		if got := strings.Count(cell, want); got != 1 {
+			t.Errorf("%s: row 90's cell says %q %d times; each claim is stated once", liveChecksDoc, want, got)
 		}
 	}
 }

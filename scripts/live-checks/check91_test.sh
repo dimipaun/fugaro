@@ -814,8 +814,15 @@ test_xtrace_is_refused() {
   : >"$dir/logs/fugaro.calls"
   : >"$dir/logs/curl.calls"
   local st=0
+  # The fast knobs are passed even though the guard should stop this run long
+  # before it reaches the wait: a test whose only defence against a REGRESSION
+  # is a guard that no longer fires must not then sit in the 35-minute idle wait
+  # and the hour-long stream. With the guard gone this run goes the whole way
+  # and the assertions below fail it, which is what a mutation should produce.
   env PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
     FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" FAKE_CURL_STATE="$dir/state" \
+    CHECK91_IDLE_SECONDS=0 CHECK91_PROBE_SECONDS=3 CHECK91_LONG_SECONDS=3 \
+    CHECK91_BODY_SIZES="1048576 2097152" \
     bash -x "$script" >"$dir/out" 2>"$dir/err" || st=$?
   expect_status "$st" 1 "xtrace"
   expect_contains "$(cat "$dir/err")" "+ " "xtrace: the trace really was on"

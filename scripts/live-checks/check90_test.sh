@@ -790,6 +790,37 @@ test_xtrace_is_refused() {
   return 0
 }
 
+# need_tools is the FIRST thing main does, and the ordering is the point:
+# free_port and random_placeholder are python3 programs, so `need python3` is
+# the only place a missing interpreter is named. Checked after them, the run
+# died inside free_port's command substitution -- "an internal error ended the
+# run (line N)", which names a line and not the tool, and reads as a defect in
+# the check rather than as the one thing the owner has to install. The PATH
+# here has bash, mktemp and claude and no python3 at all.
+test_missing_python3_is_named_not_an_internal_error() {
+  local dir=$work/notools
+  mkdir -p "$dir/bin" "$dir/home" "$dir/tmp"
+  write_fake_claude "$dir"
+  : >"$dir/claude.calls"
+  ln -sf "$(command -v bash)" "$dir/bin/bash"
+  ln -sf "$(command -v mktemp)" "$dir/bin/mktemp"
+  local st=0
+  printf '%s\n' "$SENTINEL" | env \
+    ${GUARD_UNSET[@]} \
+    PATH="$dir/bin" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
+    bash "$script" >"$dir/out" 2>"$dir/err" || st=$?
+  expect_status "$st" 2 "no python3: could not tell"
+  expect_contains "$(cat "$dir/err")" "needs 'python3' on PATH" "no python3: the missing tool is named"
+  expect_absent "$(cat "$dir/err")" "internal error" "no python3: the run reported an internal error instead of naming the missing tool"
+  if [ -s "$dir/claude.calls" ]; then fail "no python3: claude was run anyway"; fi
+  # Nothing was set up either: the guard is the first thing that runs, so there
+  # is no scratch directory to have made and none to remove.
+  expect_absent "$(cat "$dir/err")" "scratch directory:" "no python3: a scratch directory was made before the tools were checked"
+  assert_no_sentinel "$dir" "no python3"
+  return 0
+}
+
 # M1: every settings source Claude Code loads is discovered from its working
 # directory, and every hook, plugin hook and MCP server it starts inherits its
 # environment -- the CLAUDE_CODE_OAUTH_TOKEN in this one included. So the
@@ -1216,6 +1247,7 @@ test_streaming_call_is_capped
 test_sigint_cleans_up
 test_no_second_paste
 test_xtrace_is_refused
+test_missing_python3_is_named_not_an_internal_error
 test_child_is_confined
 test_swap_the_proxy_never_saw
 test_foreign_request_is_refused
