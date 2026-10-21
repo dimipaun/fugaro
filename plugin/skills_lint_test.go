@@ -578,7 +578,9 @@ var userLeadRE = regexp.MustCompile(`(?i)\b(user|owner|admin|they|their)\b[^.\n]
 
 // lintForbidden is design §9's list: what a skill must never tell an agent to
 // do. The owner's commands (budget set, kill and resume, secrets set, the
-// project policy publish, an applying init) are named only in a block marked
+// project policy publish, and an applying `fugaro setup` or `fugaro update` --
+// the converge's two doors, which W1.2 split the retired verb into) are named
+// only in a block marked
 // user-runs, never anywhere else, not even in a "never" sentence, and wherever they sit (a span, a
 // block, a link text, a wrapped paragraph, behind a prefix or a global flag).
 // Other forbidden commands may be named by a sentence in an inline span that

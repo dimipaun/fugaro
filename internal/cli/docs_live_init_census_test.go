@@ -854,7 +854,10 @@ func TestCensusOutputAndExemptArePinned(t *testing.T) {
 		path string
 		want bool
 	}{
-		// Every dated root, and the three retirement statements.
+		// Every dated root, and every path in retirementText -- named rather
+		// than counted, for the reason that list's own comment gives: it is
+		// appended to. The tombstone and its test, this file, and the relay
+		// case whose input is the retired command line.
 		{"docs/plans/setup-wizard/implementation-plan.md", true},
 		{"docs/releases/v0.9.0.md", true},
 		{"docs/design/x.md", true},
@@ -864,6 +867,7 @@ func TestCensusOutputAndExemptArePinned(t *testing.T) {
 		{"internal/cli/retired.go", true},
 		{"internal/cli/retired_test.go", true},
 		{"internal/cli/docs_live_init_census_test.go", true},
+		{"internal/agent/relay_test.go", true},
 		// The releases index beside the records stays live, and a prefix that
 		// stops at a slash is not a prefix that stops mid-word.
 		{"docs/releases/README.md", false},
