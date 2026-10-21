@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -74,6 +75,11 @@ type InstallOptions struct {
 	// managedDeployerShipped is false (0.8.6): the binding's fmgd- fence is
 	// not an IAM condition GCP accepts yet (deployer.tf's header).
 	ManagedDeployerScoped bool
+	// CredentialsService opts the installation in to the credentials service
+	// (D146). Only init's credentials stage sets it, and only from a
+	// Credentials() of its own after it verified the image's digest; nil is
+	// every other caller, and writes no variable at all.
+	CredentialsService *CredentialsServiceSpec
 }
 
 // Budget is an optional budget on the project, in whole units of currency.
@@ -135,6 +141,86 @@ type InstallationSpec struct {
 	// tfvars as before the variable existed and plans without the scoped
 	// deployer role and its binding (InstallOptions.ManagedDeployerScoped).
 	ManagedDeployerScoped bool `json:"managed_deployer_scoped,omitempty"`
+	// CredentialsService is the installation's credentials service (D146,
+	// D147), left out until an owner runs init's credentials stage (C1.20) —
+	// which is the only writer, and the only thing that can set it. Left out
+	// rather than written as null, so an installation that has not opted in
+	// writes exactly the tfvars it wrote before the variable existed, and the
+	// module creates nothing for an absent one.
+	CredentialsService *CredentialsServiceSpec `json:"credentials_service,omitempty"`
+}
+
+// CredentialsServiceSpec is the installation root's var.credentials_service
+// (D146): the service's own account and Cloud Run service, the image it runs,
+// and the ONE bundle container its account reads. It is not the outputs'
+// CredentialsService (spec.go), which is what a repository root reads back:
+// that object carries the name and the region, and this one carries what the
+// module needs to create them.
+//
+// The whole opt-in is this one object: the module's five resources are gated
+// on it, and one accessor grant on the one bundle container is its whole reach
+// in Secret Manager (Q6, Global Constraint 12). Nothing else about the
+// installation changes; what changes in the repository roots is that their
+// jobs stop mounting a model credential (C1.20, internal/infra/spec.go's
+// dropModelMounts).
+type CredentialsServiceSpec struct {
+	AccountID string `json:"account_id"`
+	Service   string `json:"service"`
+	Image     string `json:"image"`
+	// BundleSecret is the bundle container's Secret Manager ID, which the
+	// loader derives from the project the same way (gcp.ProjectSecretID of
+	// the logical name CredentialsBundleName): the module creates the
+	// container under this ID and grants the account on it, and the service
+	// reads it back by its own derivation, so the two never drift.
+	BundleSecret string `json:"bundle_secret"`
+}
+
+// The credentials service's singletons. The account is what reads the bundle,
+// and nothing else is granted actAs on it (modules/installation/credentials.tf);
+// the Cloud Run service's name is the name every job's invoker grant and the
+// repository roots' CredentialsService output carry.
+const (
+	CredentialsAccountID = "fugaro-credentials"
+	// CredentialsServiceName is the Cloud Run service's name. It may start
+	// with fugaro-: that prefix is reserved by the *job* listings (HistoryJob),
+	// and a Cloud Run service is not one of them.
+	CredentialsServiceName = "fugaro-credentials"
+	// CredentialsBundleName is the logical name of the one bundle secret —
+	// the document every credential the service holds lives in (Q6). It is a
+	// name of the platform's: no workflow may declare it and no `fugaro
+	// secrets set` stores a value under it, because the service's document is
+	// written by `fugaro creds set NAME` alone (C1.11, C1.25).
+	CredentialsBundleName = "creds-bundle"
+)
+
+// credsImageRE is the image form the module's own validation admits
+// (deploy/terraform/gcp/modules/installation/variables.tf): an image
+// reference ending in an @sha256: digest of its own, never a bare tag. A tag
+// is refused at plan time for a security reason rather than a preference —
+// the service runs as the account that reads every credential in the bundle,
+// and every operator holds roles/artifactregistry.writer on the registry the
+// image comes from, so a mutable tag would let an operator push the code that
+// the next owner apply runs as that account (D145: operators add, never
+// read). Refused here too, so the stage that fills it fails before it writes
+// a tfvars rather than in the plan.
+var credsImageRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/@:-]*@sha256:[0-9a-f]{64}$`)
+
+// Credentials is the credentials service's spec for lc: the names the module
+// uses, the bundle container the loader also derives, and the image the
+// caller verified. The image must be pinned by digest (credsImageRE) — this
+// is the check the stage's own test walks the tag form through, and it is the
+// same rule the Terraform variable states, so a tfvars this function returns
+// is never one the plan refuses for its image.
+func Credentials(lc *localcfg.Config, image string) (CredentialsServiceSpec, error) {
+	if !credsImageRE.MatchString(image) {
+		return CredentialsServiceSpec{}, userErr("the credentials service's image %q must be pinned by digest (ending in @sha256: and 64 lower-case hex digits): a tag is mutable, and this service reads every model credential the installation holds", image)
+	}
+	return CredentialsServiceSpec{
+		AccountID:    CredentialsAccountID,
+		Service:      CredentialsServiceName,
+		Image:        image,
+		BundleSecret: gcp.ProjectSecretID(lc.Name, CredentialsBundleName),
+	}, nil
 }
 
 // InstallationNames are the installation's singleton names.
@@ -228,6 +314,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 	}
 	s.ProjectJobs = jobs
 	s.ManagedDeployerScoped = o.ManagedDeployerScoped
+	s.CredentialsService = o.CredentialsService
 	if o.NoLogIsolation {
 		s.LogIsolation = new(false)
 	}

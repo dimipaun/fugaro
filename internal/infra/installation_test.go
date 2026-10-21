@@ -145,6 +145,98 @@ func TestInstallationLogIsolation(t *testing.T) {
 	}
 }
 
+// TestInstallationCredentialsServiceVars is the installation root's side of
+// the opt-in (docs/credentials-service, D146, D147; C1.20): an installation
+// that has not opted in writes no credentials_service key at all — its plan
+// is the one it always was, which is the OFF-by-default half of D147 — and
+// the one that has carries the four values the module reads, with the bundle
+// container's ID derived the way the loader derives it (the project-wide
+// secret of CredentialsBundleName).
+//
+// TestInstallationVarsMatchModule beside it is what holds the key to the
+// root's own variable: this test is about the value.
+func TestInstallationCredentialsServiceVars(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions)
+	s, err := Installation(lc, InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := InstallationVars(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "credentials_service") {
+		t.Errorf("an installation that has not opted in writes credentials_service:\n%s", data)
+	}
+	// The service on: the digest-pinned image the stage verified, and the one
+	// bundle container of Q6.
+	image := "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + strings.Repeat("ab", 32)
+	svc, err := Credentials(lc, image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err = Installation(lc, InstallOptions{CredentialsService: &svc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = InstallationVars(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		CredentialsService *CredentialsServiceSpec `json:"credentials_service"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.CredentialsService == nil {
+		t.Fatalf("the opt-in's tfvars have no credentials_service:\n%s", data)
+	}
+	if got := *doc.CredentialsService; got.Image != image || got.AccountID != CredentialsAccountID || got.Service != CredentialsServiceName {
+		t.Errorf("credentials_service = %+v, want the pinned image beside the account and service names", got)
+	}
+	// The literal, not the constant: the loader derives this name itself
+	// (C1.11's CredsBundleSecretID, "creds-bundle"), and the two must be the
+	// one string (modules/installation/credentials.tf's own comment says so).
+	if want := gcp.ProjectSecretID(lc.Name, "creds-bundle"); doc.CredentialsService.BundleSecret != want {
+		t.Errorf("bundle_secret = %q, want %q: the module creates the container the loader derives by the same name", doc.CredentialsService.BundleSecret, want)
+	}
+}
+
+// TestCredentialsRefusesAnImageThatIsNotADigest: the stage's own half of the
+// module's image rule (variables.tf's validation, and why it is a security
+// rule rather than a preference: every operator holds
+// roles/artifactregistry.writer on the registry the image comes from, and
+// this service runs as the account that reads every credential in the
+// bundle). A tag is refused here, before a tfvars is written, so the plan
+// never sees one; a digest with a tag BESIDE it is what the stage writes and
+// is admitted (mirror.RemoteRef's form, tf.cover's own case).
+func TestCredentialsRefusesAnImageThatIsNotADigest(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions)
+	digest := "@sha256:" + strings.Repeat("ab", 32)
+	reg := "us-east5-docker.pkg.dev/proj-1234/"
+	for image, ok := range map[string]bool{
+		reg + "fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3" + digest:            true,
+		reg + "fugaro-base/fugaro-credentials" + digest:                           true,
+		reg + "fugaro-base/fugaro-credentials:latest":                             false,
+		reg + "fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3":                     false,
+		reg + "fugaro-base/fugaro-credentials@sha256:" + strings.Repeat("AB", 32): false, // upper case is not a digest
+		"": false,
+	} {
+		svc, err := Credentials(lc, image)
+		switch {
+		case ok && err != nil:
+			t.Errorf("Credentials(%q) = %v, want it admitted", image, err)
+		case ok && !strings.Contains(svc.Image, "@sha256:"):
+			t.Errorf("Credentials(%q) lost the digest: %q", image, svc.Image)
+		case !ok && err == nil:
+			t.Errorf("Credentials(%q) was admitted; it is not pinned by digest", image)
+		case !ok && !strings.Contains(err.Error(), "@sha256:"):
+			t.Errorf("the refusal of %q does not say what is missing: %v", image, err)
+		}
+	}
+}
+
 // The installation spec carries the launchers' condition exactly as
 // gcp.LauncherBucketCondition spells it, for the spec's own runs bucket.
 func TestInstallationSpecCarriesTheLauncherCondition(t *testing.T) {
