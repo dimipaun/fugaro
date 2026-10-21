@@ -71,7 +71,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
-import { controlTargetFailures } from './lib/control-target.mjs'
+import { controlTargetFailures } from './lib/controls.mjs'
 import { builtPages, find, parse, textOf, walk } from './lib/html.mjs'
 import {
   CONSOLE_README,
@@ -427,7 +427,7 @@ function articleOf(page) {
 /**
  * The controls the console page asks a reader to tap, and what each one is: the classes the
  * redesign gave them. The home page's own case calls the same reading with its own controls
- * (`website/test/lib/control-target.mjs`), so the owner's one rule is one reading — a control
+ * (`website/test/lib/controls.mjs`), so the owner's one rule is one reading — a control
  * cannot pass here on a declaration that page's reader would refuse.
  */
 const CONSOLE_CONTROLS = [

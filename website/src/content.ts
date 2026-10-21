@@ -106,9 +106,11 @@ const PUBLIC_DIR = path.join(SITE_ROOT, 'public')
  * them renders the generated file or the build stops.
  *
  * `content/costs.json` is deliberately **not** in this list: it is W0.3's aggregation
- * output, the owner runs the command that writes it, and until then the caps-and-costs
- * page renders its "not enough runs yet" state, which is the honest state on day one
- * (W1.5, D96).
+ * output, the owner runs the command that writes it, and until then there is nothing to
+ * render — which is the honest state on day one (W1.5, D96). The per-recipe ranges section
+ * that read it was removed on 2026-10-21 (the owner's ruling) while the file is absent, so
+ * nothing on the site renders these figures today; the loader stays, and validates the file
+ * the day one is published.
  */
 const REQUIRED_DOCUMENTS = ['cli-reference.md', 'security.md']
 
@@ -1182,9 +1184,9 @@ function loadCosts(minRuns: number): CostsFacts | null {
   const file = COSTS_FILE
   const absolute = path.join(CONTENT_DIR, 'costs.json')
   if (!existsSync(absolute)) {
-    // The honest empty state rather than a failure: the aggregation is owner-run, and the
-    // caps-and-costs page renders its "not enough runs yet" state until it has been run
-    // (W1.5, D96).
+    // The honest empty state rather than a failure: the aggregation is owner-run, and no
+    // page renders these figures while it has not been run (W1.5, D96 — the ranges band
+    // that read them was removed on 2026-10-21).
     return null
   }
 

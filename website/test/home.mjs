@@ -66,7 +66,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cssDeclarations, cssRules, findAll, filesUnder, parse, textOf, walk } from './lib/html.mjs'
 import { buildCopy } from './lib/build.mjs'
-import { controlTargetFailures } from './lib/control-target.mjs'
+import { controlTargetFailures } from './lib/controls.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -2037,10 +2037,18 @@ const CONTROL_TARGETS = [
   ['home-install-button', 'the button in the closing call to action'],
 ]
 
-// The reading of the 44 px rule is the site's, not this page's: `test/lib/control-target.mjs`
-// holds it, and the console page's case calls the same one with its own controls — so a control
-// cannot pass here on a declaration that page's reading would refuse. What is this file's own is
-// the list below, because the controls belong to the page and the rule does not.
+/**
+ * Every way a homepage control misses the target size the owner's brief of 2026-10-19 measures
+ * it against, as the lines a reader of a failure gets. **Every control the page asks a reader
+ * to tap is at least 44 px tall**, and the page's own controls are the hero's two links in the
+ * action row, the run band's link to the page that draws the run, and the one button in the
+ * closing call to action (`HomeRunBand.astro`, `HomeInstall.astro`); the slider's three tabs
+ * are `test/slider.mjs`'s, which reads them at the widths the page is read at, so this reading
+ * is about the controls outside the slider. The reading itself is `test/lib/controls.mjs`'s —
+ * one rule read in two places, since `test/caps-figures.mjs` runs it over the caps page's two
+ * hero actions as well — and the list above is this page's.
+ */
+export { controlTargetFailures }
 
 test('every control the homepage asks a reader to tap is at least 44 px tall', () => {
   assert.deepEqual(

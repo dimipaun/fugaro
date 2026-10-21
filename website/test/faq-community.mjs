@@ -1,9 +1,9 @@
 // website/test/faq-community.mjs — the FAQ and the community page (website plan, W1.10).
 //
 // The two pages this file checks are the site's document pages, and the rules they answer to
-// are about what a page may *say*. Five of them are checked here, and each one reads its
-// source rather than the page's own copy of it (Review Focus: "the test must read the
-// source, not the generator's own output"):
+// are about what a page may *say* — and, for the community page, how it is *set*. Six of them
+// are checked here, and each one reads its source rather than the page's own copy of it
+// (Review Focus: "the test must read the source, not the generator's own output"):
 //
 //   1. **The FAQ's comparison section has provenance or it does not exist** (D103, F51–F52).
 //      A row about another tool is a claim the repository cannot verify, so a row carries a
@@ -32,6 +32,17 @@
 //      tag and the next line's text, so a sentence written as a link followed by a newline
 //      builds as `LICENSEis the whole of it`: the page reads wrong while every fact on it is
 //      still true, which is why this one is checked over the built HTML of both pages.
+//   6. **The community page is set in the bold redesign's look** (redesign P1, `base.css` §2c;
+//      the owner's brief of 2026-10-21). The page has no board of its own, so what it is held
+//      to is the look the boards did fix and the home page ships: the headline on the display
+//      scale's largest step with the accent's gradient on it, the section headlines on the
+//      display scale's middle step, the community surfaces drawn as cards in a grid, and the
+//      page's four bands still its four bands. This is a rule about the artifact's classes and
+//      structure rather than about a pixel — the pixels are the owner's check at the preview
+//      (RU1: the model that runs this gate cannot view a picture) — and it is what a later
+//      edit drops by accident: a page whose title falls back to the element default still
+//      passes every other gate in this repository, because every one of them is about what
+//      the page says. Each rule below has a case that plants the defect it refuses.
 //
 // How it reads a page: `npm run check` builds the site before it runs anything here, so the
 // real pages are read from `website/dist/` — the artifact a reader gets, not a rendering of
@@ -450,6 +461,190 @@ test("the community page links the repository's own community files, and each on
   )
 })
 
+// ---- the community page's look (redesign P1; the owner's brief of 2026-10-21) -------------
+
+/** The bands of the page, in the order the document writes them: every `<section>` with an
+ *  `id`, as the id and the markup up to its own closing tag. Sections are not nested here —
+ *  one band of the page holds cards and panels, never another band — so the first `</section>`
+ *  after an opening tag is that section's. */
+function bands(html) {
+  return [...html.matchAll(/<section[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/section>/g)].map(([, id, body]) => ({ id, body }))
+}
+
+/**
+ * The bold redesign's look on the community page, as the failure lines a reader sees (redesign
+ * P1, `base.css` §2c; the owner's brief of 2026-10-21). The page has no board of its own, so
+ * what it is held to is the look the boards did fix and the home page ships, in the four
+ * shapes a later edit can drop without any other gate noticing:
+ *
+ *   1. the page's headline is the display scale's largest step, with the accent's gradient on
+ *      it — a title that fell back to the element default passes every other gate here, because
+ *      they are all about what the page says;
+ *   2. every section headline is the display scale's middle step;
+ *   3. every community surface — an entry of the documents or the templates grid — is drawn as
+ *      `base.css`'s `.card` in a `community-grid` list, and both grids are still there, which
+ *      is the one shape the redesign draws an entry in;
+ *   4. the page's four bands are still its four bands, each opening with a heading, so a
+ *      reader's link into one of them (`/community/#issues`) still lands on something.
+ *
+ * It reads the built artifact, like every other case in this file, and it is a rule about
+ * classes and structure rather than about a pixel: the pixels are the owner's check at the
+ * preview (RU1).
+ */
+function boldLookFailures(html) {
+  const out = []
+
+  /** The classes of an element's opening tag, as the tokens the `class` attribute holds — the
+   *  tokens and not a substring, because `community-card` contains the word `card` and a rule
+   *  that read it as one would pass on an entry that lost `base.css`'s class (the case below
+   *  plants exactly that). */
+  const classes = (tag) => (/class="([^"]*)"/.exec(tag)?.[1] ?? '').split(/\s+/).filter(Boolean)
+
+  /** The opening tags of every list inside a piece of markup. */
+  const listsIn = (body) => [...body.matchAll(/<ul[^>]*>/g)].map(([tag]) => tag)
+
+  // 1. The headline.
+  const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(html)
+  if (h1 === null) out.push('the page has no h1 to set its headline on')
+  else {
+    if (!classes(h1[0]).includes('display-xl')) {
+      out.push(`the headline is not the display scale's largest step (${h1[0].slice(0, 90)}): the bold redesign sets a page's title at \`display-xl\``)
+    }
+    const gradient = [...h1[1].matchAll(/<span[^>]*>/g)].some(([tag]) => classes(tag).includes('gradient-text'))
+    if (!gradient) {
+      out.push(`the headline carries no gradient-text (${h1[1].slice(0, 90)}): the bold redesign puts the accent's gradient on the page's title`)
+    }
+  }
+
+  // 2. The section headlines.
+  const h2s = [...html.matchAll(/<h2[^>]*>/g)].map(([tag]) => tag)
+  if (h2s.length === 0) out.push('the page has no h2, so it has no section headline to set')
+  for (const tag of h2s) {
+    if (!classes(tag).includes('display-lg')) out.push(`a section headline is not on the display scale (${tag}): the bold redesign sets a section's heading at \`display-lg\``)
+  }
+
+  // 3. The surfaces. A community surface is a link to a file in this repository — the three
+  // documents, the licence and the issue templates are exactly that — and the page draws them
+  // in two lists. The lists are found by those links and not by the `community-grid` class,
+  // because a list that lost the class is one of the defects this rule refuses: selecting the
+  // lists by the class first would skip it, and its entries would never be inspected for
+  // `.card` either (the cases below plant exactly that, on one list and on both).
+  const pageBands = bands(html)
+  const surfaceLists = [...html.matchAll(/(<ul[^>]*>)([\s\S]*?)<\/ul>/g)]
+    .map(([, open, body]) => ({ open, body }))
+    .filter(({ body }) => /href="[^"]*\/blob\//.test(body))
+  if (surfaceLists.length === 0) {
+    out.push('the page draws no list of community surfaces: the documents, the licence and the issue templates are `.card` entries in a grid')
+  }
+  for (const { open, body } of surfaceLists) {
+    if (!classes(open).includes('community-grid')) {
+      out.push(`a list of community surfaces is not a community-grid (${open}): the bold redesign draws the community surfaces as cards in a grid`)
+    }
+    const items = [...body.matchAll(/<li[^>]*>/g)].map(([tag]) => tag)
+    if (items.length === 0) out.push(`a list of community surfaces carries no entry (${open})`)
+    for (const tag of items) {
+      if (!classes(tag).includes('card')) out.push(`a community entry is not a card (${tag}): the bold redesign draws every community surface as \`base.css\`'s \`.card\``)
+    }
+  }
+  // And each band that draws surfaces still draws one: a grid deleted outright leaves no list
+  // behind for the rule above to read, so the band would be empty rather than wrong — the
+  // entries and their links gone, with every gate here still green.
+  for (const id of ['repository', 'issues']) {
+    const band = pageBands.find((one) => one.id === id)
+    if (band !== undefined && !listsIn(band.body).some((tag) => classes(tag).includes('community-grid'))) {
+      out.push(`the ${id} band draws no community-grid list: its entries are cards in a grid, and a band that lost the grid lost the cards with it`)
+    }
+  }
+
+  // 4. The bands, and the ids a reader's link may name.
+  const ids = pageBands.map((band) => band.id)
+  if (ids.join(' ') !== 'repository issues ci licence') {
+    out.push(`the page's bands are ${ids.join(', ') || '(none)'}: they are the repository, the issues, the CI description and the licence, in that order`)
+  }
+  for (const band of pageBands) {
+    if (!/<h2[\s>]/.test(band.body)) out.push(`the ${band.id} band has no heading: every band of the page is a heading and what it holds`)
+  }
+
+  return out
+}
+
+test('the community page is set in the bold redesign’s look', () => {
+  assert.deepEqual(
+    boldLookFailures(builtPage('community')),
+    [],
+    `the community page is not set in the look the redesign fixed (redesign P1):\n  ${boldLookFailures(builtPage('community')).join('\n  ')}`,
+  )
+})
+
+test('every look refusal fires on the defect it names', () => {
+  const page = builtPage('community')
+  assert.deepEqual(boldLookFailures(page), [], 'the look rule fails on the built page, so the cases below are not proving what they name')
+
+  // Each case is one edit to the built page — the defect as a later edit would write it — and
+  // the refusal it names. The plants are strings the page really carries, so a page whose
+  // markup moved fails here loudly rather than leaving a case passing over nothing.
+  const cases = [
+    {
+      what: 'the headline off the display scale',
+      plant: page.replace('class="community-title display-xl"', 'class="community-title"'),
+      expected: /headline is not the display scale's largest step/,
+    },
+    {
+      what: 'the headline with no gradient on it',
+      plant: page.replace('<span class="gradient-text"', '<span'),
+      expected: /headline carries no gradient-text/,
+    },
+    {
+      what: 'a section headline off the display scale',
+      plant: page.replace('<h2 class="community-heading display-lg"', '<h2 class="community-heading"'),
+      expected: /section headline is not on the display scale/,
+    },
+    {
+      what: 'a community entry that is not a card',
+      plant: page.replace('<li class="card community-card"', '<li class="community-card"'),
+      expected: /community entry is not a card/,
+    },
+    {
+      // One list, not both, and one case per list: the rule reads the surfaces by their links,
+      // so a single grid that lost `community-grid` is refused rather than skipped over.
+      what: 'the documents list leaving the grid',
+      plant: page.replace('<ul class="community-grid documents"', '<ul class="documents"'),
+      expected: /list of community surfaces is not a community-grid/,
+    },
+    {
+      what: 'the templates list leaving the grid',
+      plant: page.replace('<ul class="community-grid templates"', '<ul class="templates"'),
+      expected: /list of community surfaces is not a community-grid/,
+    },
+    {
+      what: 'a band whose grid was deleted outright',
+      plant: page.replace(/<ul class="community-grid templates"[\s\S]*?<\/ul>/, ''),
+      expected: /issues band draws no community-grid list/,
+    },
+    {
+      what: 'a band that lost its heading',
+      // Astro's scoping attribute sits between the class and the `>` of every tag it renders,
+      // so the plant reaches the heading by what it says rather than by the whole tag.
+      plant: page.replace(/<h2[^>]*>Licence<\/h2>/, ''),
+      expected: /licence band has no heading/,
+    },
+    {
+      what: 'a band that is no longer one of the page’s four',
+      plant: page.replace('<section id="issues" class="community-section"', '<section id="questions" class="community-section"'),
+      expected: /bands are repository, questions, ci, licence/,
+    },
+  ]
+
+  for (const { what, plant, expected } of cases) {
+    assert.notEqual(plant, page, `${what}: the plant changed nothing, so the case below would prove nothing`)
+    const failures = boldLookFailures(plant)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what} was not refused (${expected}); the rule said:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
+})
+
 test('no link on either page runs into the word that follows it', () => {
   // Astro drops the whitespace between a closing tag and the text on the next line, so a
   // sentence written as `<a>LICENSE</a>` followed by a newline and `is the whole of it` is
@@ -536,6 +731,112 @@ test('the FAQ links the security page and the caps guide rather than summarizing
   assert.match(security, /href="\/security\/"/, 'the FAQ\'s security answer does not link the security page, so it either summarizes the model or says nothing (D99)')
   const caps = element(page, 'cost-and-caps')
   assert.match(caps, /href="\/caps-and-costs\/"/, "the FAQ's cost answer does not link the caps-and-costs page")
+})
+
+// ---- the bold look (the owner's approved boards of 2026-10-20) ----------------------------
+
+test('the FAQ wears the site’s bold look, in the shapes the site writes once', () => {
+  // The redesign gives the page the shapes `base.css` §2c writes for the whole site rather
+  // than a set of its own: the display scale's headline with the accent's gradient on its last
+  // word, and one card per answer. A page that drew its own copy of either would be the second
+  // definition of a shape the site has, which is what the owner's "one look" is about — and a
+  // page that quietly lost one would look like the site it was before. So the three are read
+  // off the built page, and the headline's words are held to the string they were.
+  const page = builtPage('faq')
+
+  const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(page)
+  assert.ok(h1, 'the built FAQ carries no `h1`')
+  assert.match(
+    h1[0],
+    /\bdisplay-xl\b/,
+    'the FAQ’s headline is not set in the site’s display scale (`base.css`’s `.display-xl`), which is the oversized heavy line every redesigned page opens with',
+  )
+  assert.match(
+    h1[1],
+    /<span[^>]*\bclass="gradient-text"[^>]*>[^<]+<\/span>/,
+    'the FAQ’s headline carries no word in the accent’s gradient, which is the emphasis the boards put on part of a headline',
+  )
+  assert.equal(
+    pageText(h1[1]),
+    'Frequently asked questions',
+    'the FAQ’s headline is not the heading it was: the redesign is a change of styling and layout, and not a word of the page moved with it',
+  )
+
+  // Each answer's opening tag, read for the two things it carries rather than for the order
+  // they are written in: which answer it is, and whether it is drawn as a card. Astro writes
+  // the attributes in the order the source has them — and adds one of its own — so an edit
+  // that moved `id` above `class` is not a defect and must not read as one.
+  const answers = [...page.matchAll(/<article\b[^>]*>/g)].map((m) => ({
+    id: /\bid="([^"]+)"/.exec(m[0])?.[1],
+    card: /\bclass="[^"]*\bcard\b[^"]*"/.test(m[0]),
+  }))
+  assert.ok(answers.length >= 5, `the FAQ renders ${answers.length} answers, which is too few for this check to mean anything`)
+  assert.ok(
+    answers.every((answer) => answer.id !== undefined),
+    'an answer on the FAQ carries no `id`, which is the anchor the page’s own source links and the entry `website/data/faq.yaml` names it by',
+  )
+  assert.deepEqual(
+    answers.filter((answer) => !answer.card).map((answer) => answer.id),
+    [],
+    'these answers are not drawn as the site’s card (`base.css`’s `.card`): the redesign lays each answer on one, so the six read as a set a reader scans rather than as a document',
+  )
+
+  const section = element(page, 'comparison')
+  assert.match(
+    section,
+    /class="comparison-panel"/,
+    'the FAQ’s comparison section is not drawn in a panel, which is the box every raised block of the redesigned site stands in',
+  )
+})
+
+/**
+ * The narrowest column a page of this site is read in: the 320 px viewport the checklist
+ * measures the chrome at (`docs/gcp-live-checklist.md`), less `main`'s own gutter — `base.css`
+ * gives the content container `--space-sm`, which is 1rem, on each side.
+ */
+const NARROWEST_COLUMN_PX = 320 - 2 * 16
+
+/** A CSS length in the two units a track can demand one in, in px; null for anything else. */
+function trackLengthInPx(value) {
+  const m = /^([\d.]+)(rem|px)$/.exec(value)
+  if (!m) return null
+  return Number(m[1]) * (m[2] === 'rem' ? 16 : 1)
+}
+
+test('the FAQ’s answers grid cannot be wider than the column it sits in', () => {
+  // The answers are the page's one grid, and a `grid-template-columns` that names a bare
+  // length is a demand the column has to meet: a fixed 20rem track is 320 px whatever the
+  // column is, and at the narrowest viewport the site is read at the column is 288 px — so
+  // the cards would run off the right of the page and the document would scroll sideways at
+  // the one width there is least room for it. `min(<length>, 100%)` is the form that yields
+  // to the column; `0`, `auto`, a percentage and an `fr` cannot exceed it; and this reads the
+  // page's own inlined stylesheet, which is the CSS the artifact a reader gets carries.
+  const page = builtPage('faq')
+  const css = [...page.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
+
+  const tracks = [...css.matchAll(/grid-template-columns\s*:\s*([^;}]+)/g)].map((m) => m[1].trim())
+  assert.ok(
+    tracks.length > 0,
+    'the built FAQ names no `grid-template-columns` at all, so this case proved nothing: the answers’ grid is the one this page has',
+  )
+
+  const tooWide = []
+  for (const track of tracks) {
+    // The values that yield come out first — `min(20rem, 100%)`, `var(…)`, `clamp(…)` — so
+    // what is left is the lengths the declaration demands outright. `minmax(…)` is left in
+    // place on purpose: it is the demand, and the lookbehind is what keeps `minmax(` from
+    // being read as a call to `max(`.
+    const demanded = track.replace(/(?<![A-Za-z-])(?:min|max|clamp|var)\([^()]*\)/g, ' ')
+    for (const m of demanded.matchAll(/(?:^|[\s,(])([\d.]+(?:rem|px))/g)) {
+      const px = trackLengthInPx(m[1])
+      if (px !== null && px > NARROWEST_COLUMN_PX) tooWide.push(`${m[1]} in “${track}”`)
+    }
+  }
+  assert.deepEqual(
+    tooWide,
+    [],
+    `the FAQ asks for a grid track wider than the ${NARROWEST_COLUMN_PX} px the narrowest column has: ${tooWide.join(', ')} — write the minimum as \`min(<length>, 100%)\` so the track takes the column where the column is narrower than the length, which is the phone’s single column`,
+  )
 })
 
 test('neither page restates README.md, CONTRIBUTING.md or SECURITY.md', () => {
