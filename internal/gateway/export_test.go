@@ -107,7 +107,7 @@ func TestExportedHelpersMatchInternal(t *testing.T) {
 		if err != nil {
 			t.Fatalf("upstreamRequest: %v", err)
 		}
-		got, key, err := UpstreamHeaders(h.gw.o.Upstream, rt.upstream, in, h.gw.Token())
+		got, key, err := UpstreamHeaders(h.gw.o.Upstream, in, h.gw.Token())
 		if err != nil {
 			t.Fatalf("UpstreamHeaders: %v", err)
 		}
@@ -127,7 +127,7 @@ func TestExportedHelpersMatchInternal(t *testing.T) {
 		if err != nil {
 			t.Fatalf("upstreamRequest: %v", err)
 		}
-		got, key, err := UpstreamHeaders(h.gw.o.Upstream, rt.upstream, in, h.gw.Token())
+		got, key, err := UpstreamHeaders(h.gw.o.Upstream, in, h.gw.Token())
 		if err != nil {
 			t.Fatalf("UpstreamHeaders: %v", err)
 		}
@@ -189,25 +189,25 @@ func TestExportedHelpersMatchInternal(t *testing.T) {
 	t.Run("refusals", func(t *testing.T) {
 		// A keyless Anthropic upstream is refused by name, not sent with
 		// x-api-key: "" -- the same error the gateway's own path gives.
-		_, _, err := UpstreamHeaders(Upstream{Kind: "anthropic"}, "https://api.anthropic.com/v1/messages", http.Header{}, "")
+		_, _, err := UpstreamHeaders(Upstream{Kind: "anthropic"}, http.Header{}, "")
 		if err == nil || !strings.Contains(err.Error(), config.MissingAnthropicKey) {
 			t.Errorf("a keyless Anthropic upstream: err = %v", err)
 		}
 		// An upstream kind the gateway doesn't know is refused rather than
 		// forwarded without a credential (Start refuses it through
 		// Options.validate; a helper has no Start).
-		if _, _, err := UpstreamHeaders(Upstream{Kind: "openai"}, "https://api.openai.com/v1/messages", http.Header{}, ""); err == nil {
+		if _, _, err := UpstreamHeaders(Upstream{Kind: "openai"}, http.Header{}, ""); err == nil {
 			t.Error("an unknown upstream kind was forwarded")
 		}
 		// A Vertex upstream with no token source is refused, not panicked on.
-		if _, _, err := UpstreamHeaders(Upstream{Kind: "vertex", VertexProject: "proj-1234"}, "https://aiplatform.googleapis.com/x", http.Header{}, ""); err == nil {
+		if _, _, err := UpstreamHeaders(Upstream{Kind: "vertex", VertexProject: "proj-1234"}, http.Header{}, ""); err == nil {
 			t.Error("a vertex upstream with no token source was forwarded")
 		}
 		// A subscription upstream is refused by UpstreamHeaders rather than
 		// forwarded with an x-api-key, and its calls are built by
 		// OAuthHeaders: a caller reaches the tier-A path by asking for it.
 		u := tierAUpstream(t)
-		if _, _, err := UpstreamHeaders(u, AnthropicBase(u)+"/v1/messages", http.Header{}, oauthToken(t)); err == nil {
+		if _, _, err := UpstreamHeaders(u, http.Header{}, oauthToken(t)); err == nil {
 			t.Error("a subscription upstream's call was built as an API-key call")
 		}
 		// Tier A goes to the upstream's own Anthropic endpoint and nowhere
@@ -245,7 +245,7 @@ func TestExportedHelpersMatchInternal(t *testing.T) {
 		own := oauthToken(t) + "-gateway"
 		in := http.Header{"X-Claude-Code-Session-Id": {own}, "Anthropic-Version": {"2023-06-01"}}
 		u := Upstream{Kind: "anthropic", APIKey: testKey}
-		got, _, err := UpstreamHeaders(u, "https://api.anthropic.com/v1/messages", in, own)
+		got, _, err := UpstreamHeaders(u, in, own)
 		if err != nil {
 			t.Fatalf("UpstreamHeaders: %v", err)
 		}
@@ -255,7 +255,7 @@ func TestExportedHelpersMatchInternal(t *testing.T) {
 		if got.Get("Anthropic-Version") == "" {
 			t.Error("a scrub deleted a header that never carried the token")
 		}
-		none, _, err := UpstreamHeaders(u, "https://api.anthropic.com/v1/messages", in, "")
+		none, _, err := UpstreamHeaders(u, in, "")
 		if err != nil {
 			t.Fatalf("UpstreamHeaders: %v", err)
 		}

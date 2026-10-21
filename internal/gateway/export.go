@@ -70,8 +70,8 @@ func AttachCredential(r *Route, h http.Header) (string, error) { return r.attach
 // the endpoint a subscription credential is sent to.
 func AnthropicBase(u Upstream) string { return anthropicBase(u) }
 
-// UpstreamHeaders builds the headers of a call to u's own endpoint at dest,
-// with u's credential attached, and returns that credential. It is what
+// UpstreamHeaders builds the headers of a call to u's own endpoint, with u's
+// credential attached, and returns that credential. It is what
 // Server.upstreamRequest builds for a call no route claims, for the two kinds
 // that carry an API key or a GCP token:
 //
@@ -84,6 +84,15 @@ func AnthropicBase(u Upstream) string { return anthropicBase(u) }
 // RouteHeaders, so a call can never leave with a header set no rule was
 // written for.
 //
+// There is no destination argument: what these headers carry does not depend on
+// where the call goes, and a destination this helper took and did not judge
+// read as one it had judged. The destination is the caller's, and it is the one
+// the gateway's own handler builds -- the request's path, held to the endpoints
+// the upstream serves, joined to AnthropicBase(u) for the anthropic kind
+// (gateway.go's ServeHTTP). A caller that named a different host would be
+// building the call itself, not reusing this one; the one credential whose
+// destination is checked is tier A's, in OAuthHeaders.
+//
 // scrub is the caller's own token -- the one it presented on the call it is
 // forwarding -- which is never sent upstream (the gateway scrubs the run's
 // token; the service scrubs the run identity it verified). "" scrubs
@@ -91,7 +100,7 @@ func AnthropicBase(u Upstream) string { return anthropicBase(u) }
 // token anywhere, so an empty scrub leaves the header set whole. Reading ""
 // as a token would be the opposite -- every value contains it -- and the
 // tier-A path below would go out with nothing but Authorization.
-func UpstreamHeaders(u Upstream, dest string, in http.Header, scrub string) (http.Header, string, error) {
+func UpstreamHeaders(u Upstream, in http.Header, scrub string) (http.Header, string, error) {
 	h := forwardHeaders(in)
 	scrubOwn(scrub, h)
 	switch u.Kind {
