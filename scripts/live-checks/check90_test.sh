@@ -500,7 +500,7 @@ test_env_guards() {
       "$v=some-value-that-must-not-be-printed" \
       FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
       bash "$script" >"$dir/out" 2>"$dir/err" || st=$?
-    expect_status "$st" 1 "guard $v"
+    expect_status "$st" 2 "guard $v"
     expect_contains "$(cat "$dir/err")" "$v" "guard $v: the message names it"
     expect_absent "$(cat "$dir/err")" "some-value-that-must-not-be-printed" "guard $v: no value"
     expect_contains "$(cat "$dir/out")" "FACT env-cleared: FAIL" "guard $v: the fact"
@@ -527,7 +527,7 @@ test_settings_guard() {
       CHECK90_MANAGED_SETTINGS_DIR="$dir/managed" \
       FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
       bash "$script" >"$dir/out" 2>"$dir/err") || st=$?
-    expect_status "$st" 1 "settings guard $case_name"
+    expect_status "$st" 2 "settings guard $case_name"
     expect_contains "$(cat "$dir/out")" "FACT settings-routing: FAIL" "settings guard $case_name: the fact"
     expect_contains "$(cat "$dir/err")" "settings.json" "settings guard $case_name: names the file"
     if [ -s "$dir/claude.calls" ]; then fail "settings guard $case_name: claude was run anyway"; fi
@@ -555,7 +555,7 @@ CASES
     CHECK90_MANAGED_SETTINGS_DIR="$dir/managed" \
     FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
     bash "$script" >"$dir/out" 2>"$dir/err") || st=$?
-  expect_status "$st" 1 "settings guard managed"
+  expect_status "$st" 2 "settings guard managed"
   expect_contains "$(cat "$dir/out")" "FACT settings-routing: FAIL" "settings guard managed: the fact"
   expect_contains "$(cat "$dir/err")" "managed-settings.json" "settings guard managed: names the file"
   if [ -s "$dir/claude.calls" ]; then fail "settings guard managed: claude was run anyway"; fi
@@ -777,7 +777,7 @@ test_xtrace_is_refused() {
     CHECK90_MANAGED_SETTINGS_DIR="$dir/managed" \
     FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
     bash -x "$script" >"$dir/out" 2>"$dir/err" || st=$?
-  expect_status "$st" 1 "xtrace"
+  expect_status "$st" 2 "xtrace"
   expect_contains "$(cat "$dir/err")" "+ " "xtrace: the trace really was on"
   expect_contains "$(cat "$dir/err")" "tracing" "xtrace: the message names it"
   expect_contains "$(cat "$dir/out")" "FACT xtrace: FAIL" "xtrace: the fact"
@@ -879,6 +879,26 @@ test_budget_is_read_at_every_step() {
   expect_contains "$out" "before step_drops" "budget: the step that did not run is named"
   expect_contains "$out" "FACT headers-required: FAIL — not reached" "budget: the drops did not run"
   expect_contains "$out" "FACT timeout-retry: FAIL — not reached" "budget: the delayed proxy did not run"
+  return 0
+}
+
+# The header lists are a MEASUREMENT, and a run that dropped no header did not
+# make it. `CHECK90_MAX_DROPS=0` is the documented knob that ends the loop
+# before its first drop (the budget can end it there too), and the step used to
+# record the fallback text -- "none: every header observed is optional" -- as a
+# PASS: a claim about what the client sends made without testing one header, in
+# the list Task C1.7 is written against. It reads INFO now, and the detail says
+# which stop ended the loop.
+test_no_drops_measured_is_not_a_pass() {
+  run90 nodrops ok "" CHECK90_MAX_DROPS=0
+  expect_status "$status" 0 "no drops: the run"
+  expect_contains "$out" "FACT headers-required: INFO — no header was dropped, so this list was NOT measured: the loop was stopped before its first drop by CHECK90_MAX_DROPS=0" \
+    "no drops: the untested list is not claimed"
+  expect_contains "$out" "FACT headers-optional: INFO — no header was dropped" \
+    "no drops: neither list is claimed"
+  expect_contains "$out" "FACT header-drop-skipped" "no drops: the knob is recorded as having stopped it"
+  expect_absent "$out" "every header observed is optional" \
+    "no drops: the run recorded the fallback text for a list it never tested"
   return 0
 }
 
@@ -1002,15 +1022,38 @@ test_child_is_not_started_with_debug_logging() {
 # 0600 file the proxy is pointed at, never through that process's command line:
 # `ps` shows a process's argv to every user of the machine for as long as the
 # process lives, and the delayed phase's proxy lives for minutes.
+#
+# The calls that the proxy swaps the credential for are the other half of the
+# same rule, and they are what this test is about: they are handed the
+# placeholder by the same 0600 FILE. They used to be handed it as the literal
+# text of the source variable (`CHK90_CRED_SOURCE=literal:<value>`), which put
+# the value on `env`'s own argv -- the very thing the file form exists to
+# prevent -- and this test did not notice, because it learned the value from
+# that same recording and then looked for it only in a snapshot of the live
+# process table, where `env`'s argv is already gone (it execs the child).
+#
+# The value is written nowhere this test can read afterwards -- that is the
+# point of it being per-run -- so the search is for its SHAPE: the script's
+# random_placeholder is "placeholder-" followed by hex, and the source the run
+# hands over is a PATH (file:/.../placeholder), which no shape match can
+# produce. Both recordings are searched, because either alone would miss it:
+# env.argv is the argv of the process that hands the credential over, which is
+# where a value passed as an argument appears, and the snapshot is the argv of
+# every process of the run while a call is live.
 test_placeholder_is_never_in_a_process_argv() {
   local dir=$work/placeholder
   run90 placeholder ok "" \
     FAKE_CLAUDE_PS="$dir/ps.snapshot" FAKE_PS_PATTERN='chk90|proxy'
   expect_status "$status" 0 "placeholder: the run"
-  local ph
-  ph=$(grep -o 'placeholder-[0-9a-f]*' "$dir/env.argv" 2>/dev/null | head -n 1 || true)
-  [ -n "$ph" ] || {
-    fail "placeholder: no placeholder was recorded in the argv the run handed over, so this test proves nothing"
+  # The positive control, and it is the same check that would fail on the
+  # literal form: the swapped calls must have been handed a source that IS the
+  # placeholder FILE. If the run handed no placeholder over at all -- or handed
+  # it over any other way -- there is nothing here for the silence below to be
+  # about, and this test says so instead of passing on it.
+  local handed
+  handed=$(grep -o 'CHK90_CRED_SOURCE=file:[^ ]*/placeholder' "$dir/env.argv" 2>/dev/null | head -n 1 || true)
+  [ -n "$handed" ] || {
+    fail "placeholder: no swapped call was handed the placeholder by file, so this test proves nothing about where the value went; env.argv held: $(cat "$dir/env.argv" 2>/dev/null | grep -c CHK90_CRED_SOURCE) credential source(s)"
     return 0
   }
   [ -s "$dir/ps.snapshot" ] || {
@@ -1019,14 +1062,15 @@ test_placeholder_is_never_in_a_process_argv() {
   }
   expect_contains "$(cat "$dir/ps.snapshot")" "proxy.py" \
     "placeholder: the snapshot did not catch the proxy itself, so its silence about the placeholder means nothing"
-  expect_absent "$(cat "$dir/ps.snapshot")" "$ph" \
-    "placeholder: the per-run placeholder is in a process's argv, where every user of this machine can read it"
   # ... and the proxy is pointed at the FILE, so its silence about the value is
   # not the silence of a proxy that was given no placeholder at all. (That the
   # file itself is 0600 and inside the 0700 scratch directory is the script's
   # own doing; what this run can see is that the value is not in any argv.)
   expect_contains "$(cat "$dir/ps.snapshot")" "--require-credential-file" \
     "placeholder: the proxy was not handed the placeholder file, so this proves nothing about how it was handed the value"
+  local hits
+  hits=$(grep -n 'placeholder-[0-9a-f]' "$dir/env.argv" "$dir/ps.snapshot" 2>/dev/null || true)
+  [ -z "$hits" ] || fail "placeholder: a per-run placeholder is in a process's argv, where every user of this machine can read it: $hits"
 }
 
 # Every managed settings directory the guard names is read, not just the first:
@@ -1056,7 +1100,7 @@ test_managed_settings_reads_every_directory_it_names() {
     CHECK90_KEEP_LOGS="$dir/logs" \
     FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
     bash "$script" >"$dir/out" 2>"$dir/err" || st=$?
-  expect_status "$st" 1 "managed settings: the run"
+  expect_status "$st" 2 "managed settings: the run"
   local line
   line=$(grep -m1 '^FACT managed-settings-dir: ' "$dir/out" || true)
   expect_contains "$line" "$dir/first" "managed settings: the first directory is named"
@@ -1176,6 +1220,7 @@ test_child_is_confined
 test_swap_the_proxy_never_saw
 test_foreign_request_is_refused
 test_budget_is_read_at_every_step
+test_no_drops_measured_is_not_a_pass
 test_version_probe_is_capped_and_once
 test_internal_error_is_aborted_not_viable
 test_token_length_is_not_printed

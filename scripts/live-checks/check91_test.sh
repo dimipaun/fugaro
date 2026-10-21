@@ -478,6 +478,15 @@ except Exception:
 n += 1
 open(counter, "w").write(str(n))
 same = mode == "warm" or n == 1
+if mode == "error-page" and n > 1:
+    # The cold probe answered with an error page, and curl EXITS 0: without
+    # --fail an HTTP error is not a failure to curl, so cold.out holds the error
+    # page's body and no started= line at all. The first probe (n == 1) is
+    # answered normally, so the run gets past its own "is this my image" check
+    # and the error lands where it did in the wild: on the measurement.
+    status, body = 503, "<html><head><title>503 Service Unavailable</title></head><body>the front end could not reach an instance</body></html>\n"
+    emit()
+    sys.exit(0)
 status, body = 200, "started=2026-10-20T01:00:00Z\n" if same else "started=2026-10-20T02:00:00Z\n"
 emit()
 sys.exit(0)
@@ -718,6 +727,29 @@ test_warm_cold_start() {
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "run services delete fugaro-chk91" "warm cold start: still restored"
 }
 
+# A cold probe that produced no measurement must not be recorded as one. curl
+# without --fail exits 0 on an HTTP error, so an error page from the front end
+# leaves cold.out with no started= line in it; the step compared that empty
+# `after` with `before`, found them different, and wrote "a DIFFERENT instance
+# answered" -- a failed measurement recorded in U5 as the cold start this check
+# exists to produce. It is a FAIL with the body quoted back instead.
+test_error_page_is_not_a_cold_start() {
+  local dir=$work/errpage
+  prepare "$dir"
+  run91 "$dir" FAKE_CURL_MODE=error-page
+  expect_status "$status" 1 "error page: the run"
+  expect_contains "$out" "FACT cold-start: FAIL — the cold request came back with no started= line" \
+    "error page: the fact says nothing was measured"
+  expect_contains "$out" "the front end could not reach an instance" \
+    "error page: the body is quoted back rather than inferred"
+  expect_absent "$out" "cold-start: PASS" "error page: a failed measurement is not a cold start"
+  # The steps after the wait still run, and the service is still restored: the
+  # measurement is missing, not the run.
+  expect_contains "$out" "FACT stream-unbuffered: PASS" "error page: the stream still ran"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "run services delete fugaro-chk91" \
+    "error page: still restored"
+}
+
 test_burst_stream() {
   local dir=$work/burst
   prepare "$dir"
@@ -761,6 +793,46 @@ test_no_http2_curl() {
   expect_contains "$out" "FACT restore: PASS — nothing of this check's was created" \
     "no HTTP/2 curl: there was nothing to delete"
   if [ -d "$scratch" ]; then fail "no HTTP/2 curl: the scratch directory survived"; fi
+}
+
+# `bash -x scripts/live-checks/check91.sh` is a natural thing to reach for on a
+# two-hour run, and it is the one way this check's own commands can leak the
+# identity token: `tok=$(gcloud auth print-identity-token)` and the printf that
+# writes the token into the 0600 curl config file are both traced in full, so
+# the trace carries the bearer token twice into stderr -- which is exactly the
+# log an owner pastes back. The check turns the trace off at its first line and
+# REFUSES a shell that arrived with it on (the flag is in SHELLOPTS/BASHOPTS
+# then, and every child this script starts would trace on its own), before
+# anything is created or spent.
+test_xtrace_is_refused() {
+  local dir=$work/xtrace
+  mkdir -p "$dir/state" "$dir/logs" "$dir/home" "$dir/tmp"
+  write_fake_fugaro "$dir"
+  write_fake_gcloud "$dir"
+  write_fake_curl "$dir"
+  : >"$dir/logs/gcloud.calls"
+  : >"$dir/logs/fugaro.calls"
+  : >"$dir/logs/curl.calls"
+  local st=0
+  env PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" FAKE_CURL_STATE="$dir/state" \
+    bash -x "$script" >"$dir/out" 2>"$dir/err" || st=$?
+  expect_status "$st" 1 "xtrace"
+  expect_contains "$(cat "$dir/err")" "+ " "xtrace: the trace really was on"
+  expect_contains "$(cat "$dir/err")" "tracing" "xtrace: the message names it"
+  expect_contains "$(cat "$dir/out")" "FACT xtrace: FAIL" "xtrace: the fact"
+  expect_absent "$(cat "$dir/out")" "CHECK 91 RESULT END (exit 0)" "xtrace: the run did not continue"
+  expect_absent "$(cat "$dir/err")" "FAKE-IDENTITY-TOKEN" "xtrace: the trace carries no token"
+  # Nothing was created, built or deployed: the guard is decided before the
+  # first gcloud call that spends anything.
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_absent "$calls" "repositories create" "xtrace: no repository created"
+  expect_absent "$calls" "builds submit" "xtrace: nothing built"
+  expect_absent "$calls" "run deploy" "xtrace: nothing deployed"
+  local sc
+  sc=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
+  if [ -n "$sc" ] && [ -d "$sc" ]; then fail "xtrace: the scratch directory survived the stop"; fi
 }
 
 # The staged source is this check's litter in the installation's bucket, and the
@@ -990,7 +1062,18 @@ test_failed_deploy_keeps_the_record_it_made() {
   expect_contains "$err" "the deploy failed and fugaro-chk91 is not there" "failed deploy: the stop"
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "run services delete" \
     "failed deploy: a service that is not there is never named"
-  expect_contains "$(cat "$dir/logs/gcloud.calls")" "repositories delete fugaro-chk91" \
+  # The BUILD succeeded, so the image is in the repository — and it is deleted
+  # here even though there is no service: the failed deploy's own stop takes the
+  # service record back, and with the image delete gated on that record the
+  # image was left in the repository, the repository delete failing on a
+  # repository that still holds it, and the stop's message promising the image
+  # went with the service. The build is what puts an image there, and its record
+  # (BUILD_ATTEMPTED) is what the delete is gated on.
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_contains "$calls" "artifacts docker images delete" \
+    "failed deploy: the image the successful build made is deleted"
+  expect_contains "$calls" "artifacts repositories delete fugaro-chk91" \
     "failed deploy: the repository this run made is still deleted"
   expect_contains "$out" "FACT restore: PASS" "failed deploy: the Restore ran"
 }
@@ -1039,6 +1122,37 @@ test_long_stream_request_carries_its_own_cap() {
   fi
   expect_contains "$out" "FACT stream-longest: PASS" "long stream cap: the step still records where the stream ended"
   expect_status "$status" 0 "long stream cap: the run"
+}
+
+# Every request mints its OWN identity token, and the body table is where that
+# matters most: it runs after the long stream, whose own mint is up to 59
+# minutes old by the time the first row is sent, and an identity token lives
+# about an hour. A row sent with that stale token answers 401 — and a 401 is not
+# matched by the `case ... in 200*` that decides "largest accepted", so
+# body-limit-http1 would read PASS with a too-small number: U5's request-body
+# figure silently wrong, in exactly the shape of the size limit the table is
+# measuring. The fake gcloud never ages a token, so expiry itself cannot be
+# staged here; what can be checked is the thing that prevents it — the mint
+# count has to grow with the number of rows.
+test_every_body_row_mints_its_own_token() {
+  local dir1=$work/mint1 dir3=$work/mint3 n1 n3
+  prepare "$dir1"
+  run91 "$dir1" CHECK91_BODY_SIZES="1048576"
+  expect_status "$status" 0 "mints: the one-row run"
+  prepare "$dir3"
+  run91 "$dir3" CHECK91_BODY_SIZES="1048576 2097152 4194304"
+  expect_status "$status" 0 "mints: the three-row run"
+  n1=$(grep -c 'auth print-identity-token' "$dir1/logs/gcloud.calls" || true)
+  n3=$(grep -c 'auth print-identity-token' "$dir3/logs/gcloud.calls" || true)
+  # A floor, so a count of 0 reads as "this test is looking at the wrong calls"
+  # rather than as "the step mints nothing": the probes before the table mint
+  # too (the unauthenticated one, the two cold-start ones, the two streams).
+  [ "${n1:-0}" -ge 5 ] || {
+    fail "mints: the one-row run minted ${n1:-0} token(s), which is fewer than the steps before the table alone, so this test is not counting the right calls"
+    return 0
+  }
+  [ "$((n3 - n1))" = 2 ] || fail "mints: the three-row run minted $n3 tokens against the one-row run's $n1, so the body table does not mint one per row — the rows after the first go out with a token that can be an hour old, and the 401 that answers them reads as the size limit"
+  return 0
 }
 
 test_restore_leftover() {
@@ -1198,9 +1312,11 @@ test_service_taken
 test_repo_taken
 test_happy_path
 test_warm_cold_start
+test_error_page_is_not_a_cold_start
 test_burst_stream
 test_liveness_probe_failure_is_recorded
 test_no_http2_curl
+test_xtrace_is_refused
 test_staged_source_is_removed
 test_unreadable_staging_bucket_stops_before_the_build
 test_every_curl_carries_a_cap
@@ -1211,6 +1327,7 @@ test_failed_create_takes_its_record_back
 test_failed_deploy_keeps_the_record_it_made
 test_interrupt_during_the_idle_wait_is_prompt
 test_long_stream_request_carries_its_own_cap
+test_every_body_row_mints_its_own_token
 test_restore_leftover
 test_restore_count_query_failure_is_not_zero
 test_restore_count_query_failure_is_not_papered_over

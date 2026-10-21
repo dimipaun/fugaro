@@ -41,7 +41,11 @@
 # Output:     progress on stderr, ONE block on stdout headed CHECK 90 RESULT,
 #             to copy back to the coordinator. Exit 0 when tier A is viable,
 #             1 when it is not, 2 when the run could not tell (a control that
-#             failed says nothing about the swap).
+#             failed says nothing about the swap). 1 is a VERDICT and only the
+#             swap's own FAIL produces it; every guard and hard stop — a missing
+#             tool, a routing variable, a settings file, a proxy that never
+#             listened, a token that was not typed — exits 2, because a run that
+#             stopped before its call learned nothing about the swap.
 #
 # CHECK90_UPSTREAM, CHECK90_DELAY, CHECK90_CALL_TIMEOUT, CHECK90_TOTAL_SECONDS,
 # CHECK90_MAX_DROPS, CHECK90_MANAGED_SETTINGS_DIR and
@@ -89,20 +93,20 @@ exec 3>&1 4>&2
 PROG=${0##*/}
 say() { printf '%s: %s\n' "$PROG" "$*" >&2; }
 owner() { printf '%s: %s\n' "$PROG" "$*" >&4; }
-die() { say "$*"; exit 1; }
+die() { say "$*"; exit 2; }
 
 # stop REASON: records a FAILed fact and ends the run. The EXIT trap prints the
 # block and cleans up, so a stop still gives you something to paste back.
+#
+# It exits 2, not 1: 1 is the block's VERDICT — tier A is not viable — and only
+# the swap call's own FAIL reaches `tier_a` with it. Every stop in this script is
+# the other thing: the run did not get to its measurement (a guard refused it, a
+# tool is missing, the proxy never listened, no token was typed, the control
+# failed), so the answer is "could not tell", which is the block's INCONCLUSIVE
+# route and the code the header and the register both document. A stop that
+# exited 1 would read as a swap that failed, which is a claim this script has no
+# business making on evidence it does not have.
 stop() {
-  fact "aborted" FAIL "$1"
-  owner "stopped: $1"
-  exit 1
-}
-
-# stop2 REASON: the same, for a stop that says nothing about the swap itself —
-# the run reached the calls but the control failed, so the answer is "could not
-# tell" rather than "no".
-stop2() {
   fact "aborted" FAIL "$1"
   owner "stopped: $1"
   exit 2
@@ -795,13 +799,17 @@ random_placeholder() {
   python3 -c 'import secrets; print("placeholder-" + secrets.token_hex(16))'
 }
 
-# Where a call is told its credential is — a SOURCE, never the value:
-#   file:PATH     the 0600 token file, the one the proxy reads too
-#   literal:TEXT  the placeholder above, which is not a credential
-# The child reads the source into CLAUDE_CODE_OAUTH_TOKEN itself. That is what
-# keeps the token off every command line: `env CLAUDE_CODE_OAUTH_TOKEN=value`
-# would put the value in `env`'s own argv, which /proc/<pid>/cmdline shows to
-# every process on the machine for as long as it lives.
+# Where a call is told its credential is — a SOURCE, never the value, and the
+# source is always a PATH: the 0600 token file for the real calls, the 0600
+# placeholder file for the ones the proxy swaps. There is deliberately no
+# `literal:` form. It was how the placeholder used to be passed, and that put
+# the placeholder's value on `env`'s own argv (`CHK90_CRED_SOURCE=literal:<the
+# value>`), which /proc/<pid>/cmdline shows to every process on the machine for
+# as long as the process lives — the thing this design exists to prevent, done
+# to the placeholder instead of the token. With a path the argv carries a
+# filename. The child reads the source into CLAUDE_CODE_OAUTH_TOKEN itself, and
+# that is what keeps the token off every command line too: `env
+# CLAUDE_CODE_OAUTH_TOKEN=value` would put the value in `env`'s argv.
 #
 # Three things about the child, the first two of them the review's M1: it runs
 # in the SCRATCH DIRECTORY, not in whatever directory the owner launched the
@@ -832,8 +840,7 @@ random_placeholder() {
 CRED_CHILD='
 case "$CHK90_CRED_SOURCE" in
 file:*) CLAUDE_CODE_OAUTH_TOKEN=$(cat "${CHK90_CRED_SOURCE#file:}") || exit 1 ;;
-literal:*) CLAUDE_CODE_OAUTH_TOKEN=${CHK90_CRED_SOURCE#literal:} ;;
-*) echo "check90: the call was given no credential source" >&2; exit 1 ;;
+*) echo "check90: the call was given no credential file" >&2; exit 1 ;;
 esac
 export CLAUDE_CODE_OAUTH_TOKEN
 unset CHK90_CRED_SOURCE
@@ -845,7 +852,7 @@ exec claude --settings "{\"disableAllHooks\":true}" --strict-mcp-config --tools 
 # nothing in its environment but the credential and the base URL this check
 # chose. The five variables the guards refused cannot reach it from here
 # either, and no argument of the call carries a credential: its argv holds only
-# the source — a path, or the placeholder — and the child is what reads it.
+# the source, which is a path, and the child is what reads it.
 claude_call() {
   local base=$1 src=$2 out=$3 secs=$4
   shift 4
@@ -901,7 +908,7 @@ step_control() {
   else
     fact "token-validity" FAIL "the control call was refused at $(date -u +%Y-%m-%dT%H:%M:%SZ), so this run measured nothing about the token's validity — and this check does not ask you to paste setup-token's line about it"
     fact "control" FAIL "the call failed ($(head -c 300 "$SCRATCH/control.out" | tr '\n' ' '))"
-    stop2 "the control call failed, so nothing about the swap can be learned: the token itself is what is in question. A token that fails here says nothing about the header swap"
+    stop "the control call failed, so nothing about the swap can be learned: the token itself is what is in question. A token that fails here says nothing about the header swap"
   fi
 }
 
@@ -921,7 +928,7 @@ step_observed_control() {
     fi
   else
     fact "observed-control" FAIL "the call failed through the proxy with nothing swapped ($(head -c 300 "$SCRATCH/observed.out" | tr '\n' ' '))"
-    stop2 "the observed control failed with the client's own credential untouched, so the proxy in the path is what failed — not the swap"
+    stop "the observed control failed with the client's own credential untouched, so the proxy in the path is what failed — not the swap"
   fi
 }
 
@@ -932,7 +939,7 @@ step_swap() {
   start_proxy "$log" --token-file "$TOKEN_FILE" --error-fields
   local started ended
   started=$(date +%s)
-  if claude_call "http://127.0.0.1:$PORT" "literal:$PLACEHOLDER" "$SCRATCH/swap.out" "$CALL_TIMEOUT" -p "say ok"; then
+  if claude_call "http://127.0.0.1:$PORT" "file:$PLACEHOLDER_FILE" "$SCRATCH/swap.out" "$CALL_TIMEOUT" -p "say ok"; then
     ended=$(date +%s)
     local h attempts ok
     h=$(header_of "$log")
@@ -944,7 +951,7 @@ step_swap() {
       # tell", never "not viable" — and never a PASS (the review's M3).
       fact "swap" INFO "the call exited 0, but the proxy saw no request: there was no swap to judge"
       fact "swap-credential-header" INFO "credential-header: ${h:-missing} (the proxy saw ${attempts} request(s))"
-      stop2 "the swap call exited 0 without the proxy having seen a single request (${attempts}), so no credential was swapped and this run measured nothing. Nothing is concluded about tier A"
+      stop "the swap call exited 0 without the proxy having seen a single request (${attempts}), so no credential was swapped and this run measured nothing. Nothing is concluded about tier A"
     fi
     if [ -z "$ok" ] || [ "$h" != authorization ]; then
       fact "swap" FAIL "the proxy performed the swap and the call still failed: upstream answer '${ok:-none}', credential-header '${h:-missing}', after $((ended - started))s. That is a measurement, not a missing one"
@@ -1040,7 +1047,7 @@ stream_call() { # stream_call TIMESFILE — one prompt, its arrival times record
   local times=$1
   env ${ENV_UNSET[@]+"${ENV_UNSET[@]}"} \
     ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" \
-    CHK90_CRED_SOURCE="literal:$PLACEHOLDER" CHK90_CWD="$SCRATCH" \
+    CHK90_CRED_SOURCE="file:$PLACEHOLDER_FILE" CHK90_CWD="$SCRATCH" \
     bash -c "$CRED_CHILD" check90-claude \
     -p "Write the numbers from 1 to 20, one per line." |
     while IFS= read -r _line; do date +%s >>"$times"; done
@@ -1049,27 +1056,48 @@ stream_call() { # stream_call TIMESFILE — one prompt, its arrival times record
 step_drops() {
   say "step 5/7: dropping each optional header in turn (this is the list Task C1.7 is written against)"
   local required=() optional=() name log status
-  local n=0
+  local n=0 dropped=0 stopped=""
   for name in $OPTIONAL_HEADERS; do
     n=$((n + 1))
     if [ "$n" -gt "$MAX_DROPS" ]; then
       fact "header-drop-skipped" PASS "more than $MAX_DROPS optional headers were seen; the rest were not dropped (CHECK90_MAX_DROPS)"
+      stopped="CHECK90_MAX_DROPS=$MAX_DROPS"
       break
     fi
     if past_deadline; then
       budget_exceeded "the rest of the header drops"
+      stopped="the run's ${TOTAL_SECONDS}s budget"
       break
     fi
     log=$(phase_log "drop-$name")
     start_proxy "$log" --token-file "$TOKEN_FILE" --drop "$name"
-    if claude_call "http://127.0.0.1:$PORT" "literal:$PLACEHOLDER" "$SCRATCH/drop.out" "$CALL_TIMEOUT" -p "say ok"; then
+    if claude_call "http://127.0.0.1:$PORT" "file:$PLACEHOLDER_FILE" "$SCRATCH/drop.out" "$CALL_TIMEOUT" -p "say ok"; then
       optional+=("$name")
       fact "header-drop-$name" PASS "the call survived dropping it (optional)"
     else
       required+=("$name")
       fact "header-drop-$name" FAIL "the call failed when it was dropped, so it MUST pass through"
     fi
+    dropped=$((dropped + 1))
   done
+  if [ "$dropped" -eq 0 ]; then
+    # Nothing was dropped, so NEITHER list was measured — and an empty list is
+    # not the same answer as a list that came back empty. It is reachable two
+    # ways that both leave the loop before its first drop: the documented knob
+    # CHECK90_MAX_DROPS=0, and the budget (past_deadline) on the first
+    # iteration. The fallback text used to read "none: every header observed is
+    # optional" for a run that tested not one header, which is a claim about the
+    # wire made on no evidence — and it is the list Task C1.7 is written
+    # against. INFO, not PASS and not FAIL: the run learned nothing here, and
+    # the detail says which of the two stopped it.
+    local why="the run saw no optional header to drop at all"
+    if [ -n "$stopped" ]; then
+      why="the loop was stopped before its first drop by $stopped"
+    fi
+    fact "headers-required" INFO "no header was dropped, so this list was NOT measured: $why. It is not 'none' — read headers-observed for what the client did send, and re-run without that stop to get the list Task C1.7 is written against"
+    fact "headers-optional" INFO "no header was dropped, so nothing was tested as optional: $why"
+    return 0
+  fi
   fact "headers-required" PASS "${required[*]:-none: every header observed is optional}"
   fact "headers-optional" PASS "${optional[*]:-none}"
 }
@@ -1081,7 +1109,7 @@ step_timeout() {
   log=$(phase_log delay)
   start_proxy "$log" --token-file "$TOKEN_FILE" --delay "$DELAY"
   started=$(date +%s)
-  claude_call "http://127.0.0.1:$PORT" "literal:$PLACEHOLDER" "$SCRATCH/delay.out" "$CALL_TIMEOUT" -p "say ok" || status=$?
+  claude_call "http://127.0.0.1:$PORT" "file:$PLACEHOLDER_FILE" "$SCRATCH/delay.out" "$CALL_TIMEOUT" -p "say ok" || status=$?
   ended=$(date +%s)
   attempts=$(attempts_in "$log")
   if [ "$status" -eq 124 ]; then
@@ -1158,6 +1186,14 @@ PORT_EOF
 }
 
 main() {
+  # FIRST, before anything below can use one: free_port and random_placeholder
+  # are python3 programs, and `need python3` is the only place that says so —
+  # checked after them it would be checked after the run had already failed on a
+  # missing interpreter, with python3's own "command not found" instead of the
+  # one line this script promises. It is also the guard that needs nothing: no
+  # scratch directory, no fact file, no call.
+  need_tools
+
   PORT=${CHECK90_PORT:-}
   [ -n "$PORT" ] || PORT=$(free_port)
   DELAY=${CHECK90_DELAY:-90}
@@ -1186,7 +1222,6 @@ main() {
   PLACEHOLDER=$(random_placeholder) || stop "cannot generate this run's placeholder"
   [ -n "$PLACEHOLDER" ] || stop "cannot generate this run's placeholder"
 
-  need_tools
   scratch_up
   # Into the 0600 file the proxy is pointed at, and nowhere else: the value
   # reaches the proxy by NAME and never through its argv.

@@ -82,6 +82,27 @@
 # waste them.
 set -euo pipefail
 
+# No xtrace, whatever the shell it was started from had. `bash -x
+# check91.sh` is a natural thing to reach for on a two-hour script — and this
+# script's commands carry the identity token: `tok=$(gcloud auth
+# print-identity-token)` and the printf that writes it into the curl config
+# file would both be traced in full, printing the bearer token twice to stderr,
+# into a log the owner would then paste back. So the trace is turned OFF here,
+# BASH_XTRACEFD is unset so a trace redirected to a file this script knows
+# nothing about cannot be reopened, and guard_xtrace REFUSES the run when this
+# shell arrived with tracing on — the case where the flag sits in
+# SHELLOPTS/BASHOPTS and every child would start tracing on its own.
+# Check 90 has the same guard for the same reason; its header spells the three
+# parts out.
+XTRACE_AT_START=no
+# Each source on its own: BASHOPTS carries names like extquote, and a single
+# pattern over the three concatenated would match that 'x' and refuse every run.
+case "${-:-}" in *x*) XTRACE_AT_START=yes ;; esac
+case "${SHELLOPTS:-}" in *xtrace*) XTRACE_AT_START=yes ;; esac
+case "${BASHOPTS:-}" in *xtrace*) XTRACE_AT_START=yes ;; esac
+{ set +x; } 2>/dev/null
+unset BASH_XTRACEFD 2>/dev/null || true
+
 # The owner's own stdout and stderr, kept on 3 and 4: a trap runs with whatever
 # redirection is in effect when the signal arrives, so the RESULT block is
 # written to the saved descriptors rather than to whatever fd 1 is doing then.
@@ -232,6 +253,15 @@ restore_run() {
   # did not create is never named here.
   if [ -f "$SERVICE_MINE" ]; then
     gcloud run services delete "${SVC:?}" --project="${P:?}" --region="${L:?}" --quiet >&2 || true
+  fi
+  # The image is not the service's, so it is NOT deleted under the service's
+  # record: the build is what puts an image in the repository, and the one path
+  # that has an image with no service — the deploy FAILED, and its own stop
+  # takes the service record back again — was left with the image in the
+  # repository, the repository delete failing on a repository that still holds
+  # it, and a stop message promising the image went with it. What says an image
+  # may exist here is BUILD_ATTEMPTED, which is set before `builds submit` runs.
+  if [ "$BUILD_ATTEMPTED" = yes ]; then
     gcloud artifacts docker images delete "${IMG:?}" --project="${P:?}" --delete-tags --quiet >&2 || true
   fi
   if [ -f "$REPO_MINE" ]; then
@@ -679,6 +709,14 @@ step_cold_start() {
   local detail="waited ${idle_seconds}s; cold: first byte ${cold%%|*}s, total ${cold##*|}s; warm: first byte ${warm%%|*}s, total ${warm##*|}s; started= before=${before} after=${after}; --min-instances=0 --max-instances=1"
   if [ "$cold_rc" != 0 ] || [ "$warm_rc" != 0 ]; then
     fact "cold-start" FAIL "a request failed (cold curl exit ${cold_rc}, warm curl exit ${warm_rc}), so no figure can be read — ${detail}"
+  elif [ -z "$after" ]; then
+    # A measurement that did not happen, and it is NOT the cold start: curl
+    # without --fail exits 0 on an HTTP error, so a 500 or 503 error page from
+    # the front end leaves cold.out with no started= line in it and an empty
+    # `after`. Read as a cold start it would be a failed measurement written
+    # into U5 as a number — the one thing worse than no number. The body is
+    # quoted back, so the error page is visible rather than inferred.
+    fact "cold-start" FAIL "the cold request came back with no started= line in its body (cold curl exit ${cold_rc}), so nothing was measured: an error page from the front end (an HTTP error still exits 0) or an empty reply looks exactly like this. The body said: $(head -c 200 "$SCRATCH/cold.out" | tr '\n' ' ') — ${detail}"
   elif [ "$after" != "$before" ]; then
     fact "cold-start" PASS "a DIFFERENT instance answered the cold request — ${detail}"
   else
@@ -750,8 +788,18 @@ step_body_limit() {
   local sizes=${CHECK91_BODY_SIZES:-"1048576 16777216 33554432 67108864 134217728"}
   local n h1 h2 h1_big="" h2_big=""
   local h1rc h2rc
+  local refused=0
   local table=""
   for n in $sizes; do
+    # A FRESH token for every row, and this is not tidiness: an identity token
+    # lives about an hour, and this step runs after the long stream, whose own
+    # mint is up to 59 minutes plus slack old by the time the first row is sent.
+    # A 401 is not matched by the `case ... in 200*` below, so an expired token
+    # would leave body-limit-http1 reading PASS with a too-small "largest
+    # accepted" — U5's request-body number silently wrong, and reading exactly
+    # like the limit this table is measuring. step_long_stream's own fact says
+    # to mint a fresh token for every probe after it.
+    mint_idt || stop "no identity token can be minted here, so the body table cannot be measured"
     head -c "$n" /dev/zero >"$SCRATCH/body.bin"
     # A row refused above the limit is a refusal curl may report with a
     # non-zero exit of its own (56, 55, 52): the row records it instead of
@@ -769,10 +817,21 @@ step_body_limit() {
     table="${table}${n}: HTTP/1.1 ${h1} | HTTP/2-to-front-end ${h2}"$'\n'
     case "$h1" in 200*) h1_big="$n: $h1" ;; esac
     case "$h2" in 200*) h2_big="$n: $h2" ;; esac
+    # A row the relay refused as unauthenticated is counted, and said out loud
+    # in the fact: with a fresh token per row a 401 is not expiry, and either
+    # way a 401 row is NOT the size limit this table measures. Without this the
+    # only place a 401 appeared was a row inside a table the PASS line does not
+    # print.
+    case "$h1" in 401*) refused=$((refused + 1)) ;; esac
+    case "$h2" in 401*) refused=$((refused + 1)) ;; esac
     rm -f "$SCRATCH/body.bin" "$SCRATCH/echo.out"
   done
+  local refusal_note=""
+  if [ "$refused" -gt 0 ]; then
+    refusal_note=" ${refused} row(s) answered 401: an identity token was refused, which is not a size limit — the token is minted fresh for every row here, so check the account's permission on the service before reading anything above into U5."
+  fi
   if [ -n "$h1_big" ]; then
-    fact "body-limit-http1" PASS "largest accepted: ${h1_big}. A 401 is an expired identity token, not a limit; a refusal above what the check believed is a finding about U5, not a failure of the check"
+    fact "body-limit-http1" PASS "largest accepted: ${h1_big}.${refusal_note} A refusal above what the check believed is a finding about U5, not a failure of the check"
   else
     fact "body-limit-http1" FAIL "no size was accepted on HTTP/1.1 end to end: $(printf '%s' "$table" | tr '\n' '; ')"
   fi
@@ -806,9 +865,25 @@ guard_http2() {
   esac
 }
 
+# guard_xtrace: refuse to run when this shell arrived with tracing on. The trace
+# would print the identity token — `tok=$(gcloud auth print-identity-token)` and
+# the printf that writes it into the 0600 config file are both traced in full —
+# into stderr, which is exactly the log an owner pastes back. It runs before
+# anything is created or spent, and it is the guard, not the `set +x` above,
+# that covers the case where the flag is in SHELLOPTS/BASHOPTS and every child
+# this script starts would trace on its own.
+guard_xtrace() {
+  if [ "$XTRACE_AT_START" = yes ]; then
+    fact "xtrace" FAIL "this shell was started with tracing on (-x, or xtrace in SHELLOPTS/BASHOPTS), which would print the commands this check runs — the minting of the identity token and the write of the file it goes into among them — into the log you would then paste"
+    stop "this shell is tracing (bash -x). Run it without -x: bash scripts/live-checks/check91.sh — the check prints its own RESULT block, so a trace is not needed to report a failure"
+  fi
+  fact "xtrace" PASS "this shell is not tracing, so no trace of this run can carry the identity token"
+}
+
 main() {
   need_tools
   scratch_up
+  guard_xtrace
   guard_http2
   guard_project
   write_relay
