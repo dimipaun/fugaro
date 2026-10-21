@@ -73,17 +73,19 @@ const (
 	//
 	// The deployed rules bake this number in as well
 	// (internal/budget/rules's LeaseGraceMs, which the template renders and
-	// TestTheRulesBakeTheGraceWeApply holds to this constant): the database
-	// refuses a takeover of a lease that is still fresh, so a client that
-	// disagreed about the grace could not take a seat the database considers
-	// held. The number therefore cannot be a per-call choice — a shorter
-	// grace here would only mean this process refuses takeovers the database
-	// would have allowed.
+	// TestTheRulesCarryTheLeaseAndTheGraceWeApply holds to this constant): the
+	// database refuses a takeover of a lease that is still fresh, so a client
+	// that disagreed about the grace could not take a seat the database
+	// considers held. The number therefore cannot be a per-call choice — a
+	// shorter grace here would only mean this process attempts takeovers the
+	// database refuses, and the caller would get a bare rtdb.ErrPermission
+	// where this package promises a typed *HeldError. Options has no Grace
+	// field for that reason.
 	DefaultGrace = 10 * time.Minute
 
 	// MaxString bounds a holder's name, its uid and the recorded mode. It is
 	// internal/budget/rules's MaxString, the bound the deployed rules apply
-	// to every registry string (TestTheRulesBakeTheGraceWeApply's sibling
+	// to every registry string (TestTheRulesCarryTheLeaseAndTheGraceWeApply
 	// holds the two together): a longer one is a record the database refuses,
 	// and refusing it here says so before the write is sent.
 	MaxString = 200
@@ -206,8 +208,16 @@ func (r Record) Expires(grace time.Duration) time.Time { return r.Renewed().Add(
 // Fresh reports whether the seat is still held at now, a reading of the
 // database's clock. A free lease is never fresh: an empty seat is one anyone
 // may take.
+//
+// The boundary is the deployed rules' own, and it is why the comparison is
+// written as it is. The template allows a takeover only while
+// `now - renewed_at > LeaseGraceMs`, so a seat whose grace has run out exactly
+// now (now == renewed_at + grace) is still fresh here and a takeover of it is
+// still refused by the database. A client one instant looser would attempt a
+// takeover the rules refuse, and the caller would get a bare
+// rtdb.ErrPermission where this package promises the typed *HeldError.
 func (r Record) Fresh(now time.Time, grace time.Duration) bool {
-	return !r.Free() && now.Before(r.Expires(grace))
+	return !r.Free() && !now.After(r.Expires(grace))
 }
 
 // valid reports whether the record is one this code wrote. A node the rules
@@ -240,27 +250,23 @@ type DB interface {
 	ServerNow() (time.Time, bool)
 }
 
-// Options are what a caller records on the lease beside the holder. The zero
-// value is the recommended setting.
+// Options are what a caller records on the lease beside the holder: D1's mode
+// and D2's PR. The zero value records neither, which is the recommended
+// setting for a job that is not carrying a pull request.
+//
+// There is no Grace field here on purpose. The grace is one number,
+// DefaultGrace, and the deployed rules bake the same one in; a per-call grace
+// could only disagree with the database it is judged by — a shorter one would
+// make this process attempt takeovers the rules refuse, and the caller would
+// see a bare rtdb.ErrPermission instead of the typed refusal. A caller that
+// believes it needs another grace needs a rules change first, which is what
+// DefaultGrace's own comment says.
 type Options struct {
-	// Grace is how long a lease stays valid without a renewal. Zero means
-	// DefaultGrace. A grace longer than the database's own is a grace this
-	// process would honour for a seat the database has already declared
-	// stale — the rules, not this number, decide whether a takeover may land
-	// — so it is the caller's to set only where it knows why.
-	Grace time.Duration
 	// Mode is what the shepherd is doing, recorded on the lease.
 	Mode string
 	// PR is the pull request the job is carrying, recorded on the lease
 	// (D2: per job, with the PR on the lease).
 	PR int64
-}
-
-func (o Options) grace() time.Duration {
-	if o.Grace <= 0 {
-		return DefaultGrace
-	}
-	return o.Grace
 }
 
 // HeldError is the typed refusal of a takeover: another orchestrator holds
@@ -355,13 +361,13 @@ func Take(ctx context.Context, db DB, path string, h Holder, o Options) (Record,
 	switch {
 	case !found:
 		next.Generation = 1
-	case cur.Free(), !cur.Fresh(now, o.grace()):
+	case cur.Free(), !cur.Fresh(now, DefaultGrace):
 		if err := cur.valid(); err != nil {
 			return Record{}, err
 		}
 		next.Generation = cur.Generation + 1
 	default:
-		return Record{}, &HeldError{Path: path, Found: &cur, Now: now, Until: cur.Expires(o.grace())}
+		return Record{}, &HeldError{Path: path, Found: &cur, Now: now, Until: cur.Expires(DefaultGrace)}
 	}
 	if err := db.PutIfMatch(ctx, path, etag, next); err != nil {
 		if errors.Is(err, rtdb.ErrPrecondition) {
@@ -377,13 +383,19 @@ func Take(ctx context.Context, db DB, path string, h Holder, o Options) (Record,
 // not this holder's any more — the generation moved (someone took over), the
 // holder changed, or the lease was released.
 //
+// The record written back is held, so the holder records what it passes: a
+// shepherd that has moved on to another mode sets held.Mode before it renews,
+// and the new mode is on the lease from that heartbeat on. There is no Options
+// argument for the same reason there is no grace one — a record is written
+// from one value, not from two that could disagree.
+//
 // The generation check and the ETag compare-and-set answer two different
 // cases, and both are needed: the check catches the takeover that happened
 // before this call (the honest, common one, and the one whose refusal names
 // the new holder), and the ETag catches the takeover that lands between this
 // call's read and its write (the race, where nothing but the compare-and-set
 // can decide).
-func Renew(ctx context.Context, db DB, path string, held Record, o Options) (Record, error) {
+func Renew(ctx context.Context, db DB, path string, held Record) (Record, error) {
 	cur, etag, found, now, err := read(ctx, db, path)
 	if err != nil {
 		return Record{}, err
@@ -414,7 +426,7 @@ func Renew(ctx context.Context, db DB, path string, held Record, o Options) (Rec
 // A release does not delete the node: the generation is the fencing token and
 // it must not restart (D15's "the generation stays monotonic"), so the record
 // stays and says nobody is sitting in it.
-func Release(ctx context.Context, db DB, path string, held Record, o Options) error {
+func Release(ctx context.Context, db DB, path string, held Record) error {
 	cur, etag, found, now, err := read(ctx, db, path)
 	if err != nil {
 		return err

@@ -227,7 +227,7 @@ func TestStaleGenerationIsRefused(t *testing.T) {
 		t.Fatalf("the takeover wrote generation %d, want %d", now.Generation, old.Generation+1)
 	}
 
-	_, err := Renew(ctx(t), db, path, old, Options{})
+	_, err := Renew(ctx(t), db, path, old)
 	var le *LostError
 	if !errors.As(err, &le) || !errors.Is(err, ErrLost) {
 		t.Fatalf("the old holder's Renew = %v, want a *LostError", err)
@@ -238,12 +238,12 @@ func TestStaleGenerationIsRefused(t *testing.T) {
 	if !strings.Contains(le.Error(), "stop acting on the job") {
 		t.Errorf("the refusal does not tell the local orchestrator to stop: %q", le.Error())
 	}
-	if err := Release(ctx(t), db, path, old, Options{}); !errors.Is(err, ErrLost) {
+	if err := Release(ctx(t), db, path, old); !errors.Is(err, ErrLost) {
 		t.Errorf("the old holder's Release = %v, want ErrLost: it must not be able to free a seat it does not hold", err)
 	}
 
 	// The new holder's own calls still work, and the seat did not move.
-	renewed, err := Renew(ctx(t), db, path, now, Options{})
+	renewed, err := Renew(ctx(t), db, path, now)
 	if err != nil {
 		t.Fatalf("the new holder's Renew = %v", err)
 	}
@@ -260,8 +260,18 @@ func TestStaleGenerationIsRefused(t *testing.T) {
 // one shepherd": an orchestrator that wants the job while the holder is alive
 // is refused, and the refusal says how long it must wait.
 //
+// The boundary is the point of the third case. The deployed template allows a
+// takeover only while `now - renewed_at > LeaseGraceMs`, so a seat whose grace
+// has run out *exactly* now is still held — and the client has to agree, or it
+// sends a takeover the database refuses and the caller gets a bare
+// rtdb.ErrPermission where this package promises a *HeldError. The fake has no
+// rules to catch that disagreement, which is why the case is here and why the
+// emulator file has its own copy of it.
+//
 // Hand mutation this fails on: inverting the freshness test in Take (every
-// orchestrator may take over whenever it likes).
+// orchestrator may take over whenever it likes), or loosening the boundary to
+// now.Before(expires) (the exactly-at-the-grace case takes over, and the
+// database refuses the write).
 func TestTakeoverIsRefusedWhileTheLeaseIsFresh(t *testing.T) {
 	base := at(time.Now())
 	f := gcpfake.NewRTDB(t)
@@ -279,6 +289,18 @@ func TestTakeoverIsRefusedWhileTheLeaseIsFresh(t *testing.T) {
 	}
 	if want := held.Expires(DefaultGrace); !he.Until.Equal(want) {
 		t.Errorf("the refusal says the lease is fresh until %s, want %s", he.Until, want)
+	}
+
+	// Exactly at the grace: still fresh, and the rules agree — they refuse a
+	// takeover until the grace has been passed, not until it is reached. The
+	// clock is fixed for this case, because ServerNow projects the Date header
+	// forward and so can never return the instant exactly.
+	boundary := base.Add(DefaultGrace)
+	if _, err := Take(ctx(t), atClockDB{db, boundary}, path, holder("resident orchestrator", "uid-central"), Options{}); !errors.As(err, &he) {
+		t.Fatalf("a takeover exactly at the grace = %v, want a *HeldError: the deployed rules refuse it too, so a takeover sent here comes back as a bare rtdb.ErrPermission", err)
+	}
+	if !held.Fresh(boundary, DefaultGrace) {
+		t.Errorf("Record.Fresh says a lease renewed at %s is stale exactly at its expiry %s, and the rules say it is still held", held.Renewed(), held.Expires(DefaultGrace))
 	}
 
 	// One second past it: stale, so the takeover lands.
@@ -302,7 +324,7 @@ func TestReleaseFreesTheSeatAndKeepsTheGenerationMoving(t *testing.T) {
 	path := Path("aurora", "r1")
 	held := mustTake(t, db, path, holder("dimi (laptop)", "uid-local"), Options{})
 
-	if err := Release(ctx(t), db, path, held, Options{}); err != nil {
+	if err := Release(ctx(t), db, path, held); err != nil {
 		t.Fatalf("Release = %v", err)
 	}
 	cur, found, err := Read(ctx(t), db, path)
@@ -313,7 +335,7 @@ func TestReleaseFreesTheSeatAndKeepsTheGenerationMoving(t *testing.T) {
 		t.Fatalf("the released lease is %+v, want a free record at generation %d", cur, held.Generation+1)
 	}
 	// The released holder is refused, at once and without waiting out a grace.
-	if _, err := Renew(ctx(t), db, path, held, Options{}); !errors.Is(err, ErrLost) {
+	if _, err := Renew(ctx(t), db, path, held); !errors.Is(err, ErrLost) {
 		t.Errorf("the released holder's Renew = %v, want ErrLost", err)
 	}
 	// And the next taker takes the free seat without waiting for a grace.
@@ -412,11 +434,11 @@ func TestNoClockRefusesToAct(t *testing.T) {
 			return err
 		}},
 		{"Renew", func() error {
-			_, err := Renew(ctx(t), db, path, Record{Holder: "dimi (laptop)", HolderUID: "uid-local", Generation: 1}, Options{})
+			_, err := Renew(ctx(t), db, path, Record{Holder: "dimi (laptop)", HolderUID: "uid-local", Generation: 1})
 			return err
 		}},
 		{"Release", func() error {
-			return Release(ctx(t), db, path, Record{Holder: "dimi (laptop)", HolderUID: "uid-local", Generation: 1}, Options{})
+			return Release(ctx(t), db, path, Record{Holder: "dimi (laptop)", HolderUID: "uid-local", Generation: 1})
 		}},
 	} {
 		if err := call.do(); !errors.Is(err, ErrNoClock) {
@@ -432,6 +454,21 @@ func TestNoClockRefusesToAct(t *testing.T) {
 type noClockDB struct{ DB }
 
 func (noClockDB) ServerNow() (time.Time, bool) { return time.Time{}, false }
+
+// atClockDB is a database whose clock reads exactly what the test says, for
+// the cases that need a `now` equal to an instant rather than near it.
+// ServerNow cannot produce one: it projects the Date header forward by the
+// real time elapsed since the response arrived, so every reading it gives is a
+// few microseconds past the instant the test asked the fake for. That is the
+// right behaviour in production — the client errs behind the server, never
+// ahead of it — and it is why the grace's boundary is only reachable through a
+// database like this one.
+type atClockDB struct {
+	DB
+	now time.Time
+}
+
+func (c atClockDB) ServerNow() (time.Time, bool) { return c.now, true }
 
 // ------------------------------------------------------ the write path
 
@@ -451,10 +488,10 @@ func TestEveryWriteIsConditional(t *testing.T) {
 	path := Path("aurora", "r1")
 	spy := &spyDB{DB: db}
 	held := mustTake(t, spy, path, holder("dimi (laptop)", "uid-local"), Options{})
-	if _, err := Renew(ctx(t), spy, path, held, Options{}); err != nil {
+	if _, err := Renew(ctx(t), spy, path, held); err != nil {
 		t.Fatal(err)
 	}
-	if err := Release(ctx(t), spy, path, held, Options{}); err != nil {
+	if err := Release(ctx(t), spy, path, held); err != nil {
 		t.Fatal(err)
 	}
 

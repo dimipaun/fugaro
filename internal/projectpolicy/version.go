@@ -214,9 +214,6 @@ const PolicyRulesVersion = 1
 // C1.21 the trap is recorded here and in `internal/budget/rules`'s KNOWN GAP
 // rather than reported.
 //
-// It is not Version: the policy schema and the rules that guard it move
-// independently.
-//
 // Generation 4 is the orchestrators lease (central-orchestrator plan P3,
 // decisions D1, D2, D3): the `orchestrators/<slug>/<job>/lease` subtree — the
 // record a shepherd holds while it acts on a job, and the compare-and-set that

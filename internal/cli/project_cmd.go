@@ -388,10 +388,16 @@ func rulesMarkerPrePolicyText(gen int) string {
 // requirePolicyRules publishes beside it — so this text has one printer,
 // doctor's policy-rules-skew, and it is worded as what is *absent* rather than
 // what is broken: these rules do carry the policy nodes, and what they predate
-// is this release's own document, whose mailbox the mobile app has no grant for
-// until the owner deploys it (mobile plan P2.3).
+// is this release's own document — the mailbox the mobile app has no grant for
+// until the owner deploys it (mobile plan P2.3), the device node D166 binds the
+// user claim to, and the orchestrators lease central-orchestrator P3 adds.
+//
+// The list is what the document adds, so a release that adds a subtree to
+// rules.json.tmpl adds it here too: TestRulesMarkerOlderTextNamesWhatTheDocumentAdds
+// holds the three to the generated document, so the sentence cannot fall behind
+// the template the way it did when the lease was added.
 func rulesMarkerOlderText(gen int) string {
-	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4), and binds that user claim to a device node (mobile plan P6.4, D166): a phone account with no %s/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one — nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand; re-run 'fugaro init --firebase' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4), binds that user claim to a device node (mobile plan P6.4, D166): a phone account with no %s/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one — nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand — and carries the orchestrators lease (central-orchestrator P3: orchestrators/<slug>/<job>/lease, the seat a shepherd holds while it acts on a job; an installation that has not redeployed has no central orchestrators at all, which is that feature's own default); re-run 'fugaro init --firebase' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.PolicyRulesVersion, rules.PathDevices, projectpolicy.RulesVersion)
 }
 

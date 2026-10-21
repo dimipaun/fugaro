@@ -714,7 +714,7 @@ back.
 
 **Before it (free):**
 
-1. The Firebase project exists, billing is linked and `fugaro init --firebase <id> --budget-mode observe` has run (docs/gcp-setup.md, "Turning the shared budget on"). The rules (about 37 KB) were deployed by it: **if that deploy failed on size or syntax, record it** (A13).
+1. The Firebase project exists, billing is linked and `fugaro init --firebase <id> --budget-mode observe` has run (docs/gcp-setup.md, "Turning the shared budget on"). The rules (about 60 KB) were deployed by it: **if that deploy failed on size or syntax, record it** (A13).
 2. `gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/firebase.database,https://www.googleapis.com/auth/userinfo.email`, and your user holds `fugaroTokenMinter` on the signer (the Firebase root grants it to launchers).
 3. Build the base image from this branch (`FUGARO_LIVE_BASE_IMAGE`); the web API key is the Firebase root's `firebase_api_key` output (also the jobs' `FUGARO_FIREBASE_API_KEY`); the database URL is `budget.rtdb_url` in the project config; the signer is `budget.token_signer`.
 
@@ -738,7 +738,7 @@ back.
 - **`createdAt` of a custom-token user** (the sweeper deletes users older than 2 days by it) and **Secure Token's error codes** on a revoked or expired refresh (`TOKEN_EXPIRED`, `USER_NOT_FOUND`, `INVALID_REFRESH_TOKEN`): the runner classifies them as expired, revoked or invalid.
 - **`ETag` of a never-written node:** `null_etag`, as the cap writes assume for an unset cap.
 - **The real `batchGet`/`batchDelete` shapes** of Identity Toolkit used by the sweeper.
-- **The rules at about 37 KB deploy to the real project** and, with a minted real token, a legitimate lease is allowed and released (the emulator proves it, production must agree: A4, A13, A14).
+- **The rules at about 60 KB deploy to the real project** and, with a minted real token, a legitimate lease is allowed and released (the emulator proves it, production must agree: A4, A13, A14).
 - **Contention:** the lease give-up rate with several runs at once.
 
 **If it can't be run** (no API key): the leases are verified for `oauth` (notional) only, and the `api-key` budget behaviour stays documented as unverified.
@@ -2335,7 +2335,7 @@ Fill in at your own terminal. Date, base image, Firebase project, who ran it.
 |---|---|
 | A2 ADC token accepted by the RTDB REST API | |
 | A12/A15 signJwt, custom token, no provider enabled, claims at top level, refresh | |
-| A13 rules at ~37 KB deployed; denials (another run's ledger, `config/mode`) | |
+| A13 rules at ~60 KB deployed; denials (another run's ledger, `config/mode`) | |
 | A4/A14 lease, release, counters under the plain decimal day | |
 | A-F1 lease give-ups / stale denials (count, of leases) | |
 | Run 1 cost (gateway) and the Console's charge | |
