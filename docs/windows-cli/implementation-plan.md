@@ -872,7 +872,8 @@ The gate was passed when all four of the following were true:
    2026-10-20 as that evidence; T6.3 remains the move that states the tier the
    work reached, and this run changed neither T6.3 nor that promise.
 
-**Answering D7–D16 is helpful but does not gate the gate**: each of those
+**Answering D7–D15 is helpful but does not gate the gate** (D16 is answered, and
+answering a decision does not approve a task): each of those
 sizes one task, and a task can be written to its recommended option and
 rebased when the answer arrives. D8 (where the config lives), D12 (the mode
 claim) and D15 (the platform status) are the three worth answering early,

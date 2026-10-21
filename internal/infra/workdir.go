@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // The files and state prefixes of a root's workdir.
@@ -44,27 +46,36 @@ var roots = map[string]bool{"installation": true, "repo": true, "firebase": true
 
 var projectIDRE = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
 
-// xdgDir is $<envVar> when it is absolute (the XDG spec ignores a relative
-// one), else $HOME/<fallback>.
-func xdgDir(getenv func(string) string, envVar, fallback string) (string, error) {
-	if d := getenv(envVar); filepath.IsAbs(d) {
-		return d, nil
+// stateDir and cacheDir are the two directories this package's workdirs are
+// built in, through localcfg.UserDir: $XDG_STATE_HOME and $XDG_CACHE_HOME
+// first, else the platform's own (%LOCALAPPDATA% on Windows), else
+// ~/.local/state and ~/.cache. localcfg owns that rule because it owns the
+// config directory the same way; this package used to carry a copy of the
+// XDG half of it.
+func stateDir(getenv func(string) string) (string, error) {
+	d, err := localcfg.UserDir(getenv, runtime.GOOS, localcfg.DirState)
+	if err != nil {
+		return "", fmt.Errorf("%w, so there is no state directory for the terraform workdirs", err)
 	}
-	home := getenv("HOME")
-	if !filepath.IsAbs(home) {
-		return "", fmt.Errorf("neither %s nor HOME is an absolute path", envVar)
+	return d, nil
+}
+
+func cacheDir(getenv func(string) string) (string, error) {
+	d, err := localcfg.UserDir(getenv, runtime.GOOS, localcfg.DirCache)
+	if err != nil {
+		return "", fmt.Errorf("%w, so there is no cache directory for terraform's provider cache", err)
 	}
-	return filepath.Join(home, fallback), nil
+	return d, nil
 }
 
 // InstallationWorkdir is where fugaro init plans the installation of
 // project: $XDG_STATE_HOME/fugaro/terraform/<project>/installation, by
-// default under ~/.local/state.
+// default under ~/.local/state (%LOCALAPPDATA% on Windows).
 func InstallationWorkdir(getenv func(string) string, project string) (string, error) {
 	if !projectIDRE.MatchString(project) {
 		return "", fmt.Errorf("project %q is not a GCP project ID", project)
 	}
-	state, err := xdgDir(getenv, "XDG_STATE_HOME", filepath.Join(".local", "state"))
+	state, err := stateDir(getenv)
 	if err != nil {
 		return "", err
 	}
@@ -97,9 +108,10 @@ func InstallationOutputsWorkdir(getenv func(string) string, project string) (str
 }
 
 // PluginCache is terraform's provider cache,
-// $XDG_CACHE_HOME/fugaro/terraform-plugins (by default under ~/.cache).
+// $XDG_CACHE_HOME/fugaro/terraform-plugins (by default under ~/.cache, or
+// %LOCALAPPDATA% on Windows).
 func PluginCache(getenv func(string) string) (string, error) {
-	cache, err := xdgDir(getenv, "XDG_CACHE_HOME", ".cache")
+	cache, err := cacheDir(getenv)
 	if err != nil {
 		return "", err
 	}

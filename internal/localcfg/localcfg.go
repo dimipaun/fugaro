@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -668,16 +669,15 @@ var (
 	signerRE          = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$`)
 )
 
-// configDir is $XDG_CONFIG_HOME/fugaro, else ~/.config/fugaro.
+// configDir is $XDG_CONFIG_HOME/fugaro, else the platform's own config
+// directory (UserDir): %APPDATA%\fugaro on Windows, ~/.config/fugaro
+// elsewhere.
 func configDir(getenv func(string) string) (string, error) {
-	if x := getenv("XDG_CONFIG_HOME"); x != "" {
-		return filepath.Join(x, "fugaro"), nil
+	d, err := UserDir(getenv, runtime.GOOS, DirConfig)
+	if err != nil {
+		return "", fmt.Errorf("%w, so there is no project config directory; pass --config", err)
 	}
-	home := getenv("HOME")
-	if home == "" {
-		return "", errors.New("neither XDG_CONFIG_HOME nor HOME is set, so there is no project config directory; pass --config")
-	}
-	return filepath.Join(home, ".config", "fugaro"), nil
+	return filepath.Join(d, "fugaro"), nil
 }
 
 // ProjectsDir is where the project configs live:

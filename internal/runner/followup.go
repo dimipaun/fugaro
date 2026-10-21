@@ -10,7 +10,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -387,7 +386,7 @@ func (r *run) fellBackFresh(ctx context.Context) {
 // it wrote none. It is read as a regular file only, never through a
 // symlink the agent could point at the runner's credentials.
 func (r *run) answer() string {
-	f, err := os.OpenFile(filepath.Join(r.d.StateDir, followupFile), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, err := openNoFollow(filepath.Join(r.d.StateDir, followupFile))
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			r.d.Log.Warn("reading followup.md failed", "err", r.redact(err.Error()))

@@ -128,6 +128,16 @@ func credEscape(s string) string {
 
 // writeCredential writes line to path, mode 0600 even when the file was
 // already there with a looser one.
+//
+// The mode is the POSIX half of what keeps the line — a credential the build
+// clones with — to its owner, and it is not claimed to protect it on Windows:
+// Go's os.Chmod there sets the read-only attribute and nothing else, so what
+// keeps another local user out of the file is the ACL of the directory it is
+// written into. **D12 (file modes) is open** in
+// docs/windows-cli/reconciliation.md, the Windows CLI gets its release in
+// **Slice 5**, and docs/windows-cli/README.md records that a Windows release
+// must not ship without that decision. The long form of this note is at the
+// deployer credential in internal/cli/managed_apply.go.
 func writeCredential(path, line string) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {

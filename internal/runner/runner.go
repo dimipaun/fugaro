@@ -1933,7 +1933,7 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		}
 	}
 	pins := r.stagePins(name)
-	if err := r.writeManagedSettings(pins); err != nil {
+	if err := r.writeManagedSettings(name, pins); err != nil {
 		r.fail("stage " + name + ": " + err.Error())
 		return agent.Result{}, false, err
 	}

@@ -5,6 +5,15 @@
 # a 74 MB clidoc here). `go run` compiles into the build cache and writes
 # nothing, which is what the generators' headers tell a reader to use.
 /clidoc
+# Windows binaries: a bare `GOOS=windows go build ./cmd/fugaro` writes its
+# .exe into the directory it ran in, which is the tree root — and internal/clidoc,
+# internal/infra/tf/faketerraform and internal/pricing/catalog/gencatalog for
+# the generators. 181 MB of them reached the Windows-port pull request that
+# way. Build them with `-o` outside the tree (docs/windows-cli/README.md's
+# command writes to $TMPDIR); this rule keeps one from being staged, and
+# images/repo_pins_test.go's TestRepositoryTracksNoBuiltBinaries is the pin for
+# the case where it was staged anyway.
+*.exe
 # A local terraform init or test run under deploy/terraform. Set TF_DATA_DIR
 # outside the tree instead: go:embed doesn't read .gitignore, and a
 # .terraform/ there would put provider binaries in the fugaro binary.

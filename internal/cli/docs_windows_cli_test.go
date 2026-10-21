@@ -16,8 +16,8 @@ import (
 // states for docs/in-job-review/.
 //
 // The documents are docs-only — the owner approved Slice 0 and Slice 1 of the
-// plan and no other task, and Slice 0 is the part of it that is written — so
-// what a guard can usefully hold is the plan's own shape and the plan's own
+// plan and no other task, and those two are the parts of it that are written —
+// so what a guard can usefully hold is the plan's own shape and the plan's own
 // claims about itself: the status line, the numbered findings and decisions
 // with no gap, the support table naming commands that exist, the census stating
 // the command beside every count, and — the claim that would otherwise be
@@ -49,6 +49,51 @@ const (
 	// windowsCLIPin is this file, by path: the plan names it as the owning guard
 	// test of every documentation task, so the name lives in one place.
 	windowsCLIPin = "internal/cli/docs_windows_cli_test.go"
+
+	// windowsCLIFirstCut is the index's own statement that Slice 1's fixes are
+	// in the tree, and windowsCLIFirstCutCommand the one command that proves
+	// it: the headline's claim is a build, so the document that makes the claim
+	// has to name the build and the command, and a build that stops working has
+	// to be a red guard rather than a stale sentence (implementation-plan.md
+	// T1.5). This is not the status line above it: that one is the plan's own
+	// promise about the folder and moves at T0.3 and T6.3, with the evidence
+	// that licenses the move — and it still reads "no code is implemented",
+	// which is why the index states Slice 1's arrival in this section of its
+	// own.
+	windowsCLIFirstCut        = "**The first cut builds.**"
+	windowsCLIFirstCutCommand = "GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/fugaro.exe ./cmd/fugaro"
+
+	// windowsCLIDecisionsAnswered is the index's sentence about the owner's
+	// answers, which is the claim this merge was about: the branch's copy of the
+	// index still said D1–D15 were open with D16 answered, because the branch
+	// was cut before #764 recorded D1–D6. Whichever way it is written, the two
+	// halves — which decisions are answered and which are open — have to come
+	// from one place, and this is that place. The document carries the sentence
+	// on one line so this can be a plain substring check; the prose after it is
+	// free to wrap.
+	windowsCLIDecisionsAnswered = "**The owner answered D1–D6 and D16 on 2026-10-20 and approved Slice 0 and Slice 1 only**"
+
+	// windowsCLIPOSIXChange is the index's record of the POSIX paths this slice
+	// changes: a relative $XDG_CONFIG_HOME, $XDG_CACHE_HOME or $XDG_STATE_HOME
+	// used to decide the config, the two caches and the acks file; the ADC
+	// lookup used to consult $XDG_CONFIG_HOME; and the acks file's no-home
+	// fallback moved. It is written down where a reader looks rather than
+	// claimed away as parity. The count is in the sentence and round 2's review
+	// is why: it read "the one POSIX behaviour" and named only the first of the
+	// three, so an edit that drops one is red here rather than found by a
+	// reader.
+	windowsCLIPOSIXChange = "**Three POSIX behaviours change in this slice: a relative `$XDG_CONFIG_HOME`, `$XDG_CACHE_HOME` or `$XDG_STATE_HOME` stops deciding where fugaro writes, the ADC lookup stops consulting `$XDG_CONFIG_HOME` at all, and the watch acks file's fallback for a machine that names no usable home directory moves.**"
+
+	// windowsCLIPermsDeferral is the index's record of the one security
+	// question this slice leaves open: the operator's refresh-token file
+	// managed apply writes under %TEMP% is protected by os.Chmod(0600/0700),
+	// which does nothing on Windows. D12 (file modes) is open, so the answer
+	// is not this branch's to take — what is this branch's is that the
+	// deferral is written down where the release slices are planned, because
+	// Slice 5 is a Windows release and it must not ship without the answer.
+	// The sentence names both, so a later edit that drops either one is red
+	// here rather than discovered on a Windows machine.
+	windowsCLIPermsDeferral = "**A Windows release must not ship without D12.**"
 
 	// windowsCLIWSLStatus is wsl.md's opening sentence about the native build,
 	// pinned whole rather than by its fragment. The claim flips on one word —
@@ -104,6 +149,11 @@ func TestDocsWindowsCLIIsWritten(t *testing.T) {
 
 	for _, want := range append([]string{
 		windowsCLIStatus,
+		windowsCLIFirstCut,
+		windowsCLIFirstCutCommand,
+		windowsCLIDecisionsAnswered,
+		windowsCLIPOSIXChange,
+		windowsCLIPermsDeferral,
 		"**Owner:** the Fugaro owner",
 		windowsCLIRevision,
 		// The ranges the index states, so its own summary can be counted.

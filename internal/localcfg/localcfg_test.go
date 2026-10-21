@@ -84,6 +84,22 @@ func TestProjectPathsAndLoad(t *testing.T) {
 	if _, err := ProjectsDir(func(string) string { return "" }); err == nil {
 		t.Fatal("no HOME, no XDG_CONFIG_HOME: ProjectsDir succeeded")
 	}
+	// A Windows shell sets USERPROFILE and no HOME. Before UserDir that was
+	// "neither XDG_CONFIG_HOME nor HOME is set", i.e. no config directory at
+	// all for a Windows user (F5); the profile is the fallback that decides
+	// the path, and the %APPDATA% rule above it is pinned by
+	// TestConfigDirFollowsThePlatform, which runs the Windows rule here.
+	profile := t.TempDir()
+	onlyProfile := func(k string) string {
+		if k == "USERPROFILE" {
+			return profile
+		}
+		return ""
+	}
+	got, err := ProjectsDir(onlyProfile)
+	if err != nil || got != filepath.Join(profile, ".config", "fugaro", "projects") {
+		t.Fatalf("ProjectsDir with only USERPROFILE = %q, %v", got, err)
+	}
 	if _, _, err := LoadProject(get, "aurora"); !errors.Is(err, ErrMissing) || !strings.Contains(err.Error(), "fugaro init") {
 		t.Fatalf("missing file: %v", err)
 	}

@@ -30,6 +30,47 @@ func IsManagedSettingsTmp(name string) bool {
 // the gateway refuses it anyway; denying them keeps the agent from trying.
 var deniedWebTools = []string{"WebSearch", "WebFetch"}
 
+// deniedBinaryReads are denied in a review stage's managed settings: reads
+// of the file kinds the review input never carries as bytes, one rule per
+// extension rather than a brace pattern, since a rule's specifier is a path
+// pattern Claude Code matches and a list of plain extensions is what this
+// settings shape is known to take.
+//
+// The review stage's prompt already says so — reviewinput.go's binaryRule,
+// carried by the built input and by PickPrompt — but a prompt is not a
+// permission. The reviewer runs with --dangerously-skip-permissions and a
+// full Read tool, and one Read of a changed PNG is enough: Claude Code puts
+// what it read into the next Messages body as a base64 image block, and the
+// gateway refuses an image for a model with no image rate
+// (internal/gateway/forward.go), which a model priced by the project's
+// model_prices never has. Run 20261021-002046-31cc ended exactly there —
+// `stage review: images aren't priced for model deepseek/deepseek-v4.1-flash`
+// — after its pull request added two PNGs, which is the failure the built
+// review input fixes on the builder's side and this rule fixes on the
+// reviewer's side. These kinds are the ones the rule is for; a text file the
+// reviewer wants to read is not one of them.
+var deniedBinaryReads = []string{
+	"Read(**/*.png)", "Read(**/*.jpg)", "Read(**/*.jpeg)", "Read(**/*.gif)",
+	"Read(**/*.webp)", "Read(**/*.bmp)", "Read(**/*.ico)", "Read(**/*.pdf)",
+	"Read(**/*.heic)", "Read(**/*.tiff)",
+}
+
+// DenyRules is the permissions deny list a stage's managed settings carry:
+// the web tools when denyWeb, and the review stage's binary reads when
+// review. The two are independent, and how a stage is recognised as a review
+// stage is the caller's business (the runner's config.IsReviewStage): this
+// package knows what a stage may not do, not what a stage is.
+func DenyRules(denyWeb, review bool) []string {
+	var deny []string
+	if denyWeb {
+		deny = append(deny, deniedWebTools...)
+	}
+	if review {
+		deny = append(deny, deniedBinaryReads...)
+	}
+	return deny
+}
+
 type managedSettings struct {
 	Env         map[string]string `json:"env"`
 	Permissions *struct {
@@ -37,11 +78,12 @@ type managedSettings struct {
 	} `json:"permissions,omitempty"`
 }
 
-// WriteManagedSettings replaces path with {"env": env} (and, with denyWeb,
-// a permissions rule denying the web tools), mode 0644, atomically: it
-// writes a file beside it, syncs it and renames it over path. It refuses a
-// symlink or a file that isn't regular at path.
-func WriteManagedSettings(path string, env map[string]string, denyWeb bool) error {
+// WriteManagedSettings replaces path with {"env": env} and, when deny is not
+// empty, a permissions rule carrying it, mode 0644, atomically: it writes a
+// file beside it, syncs it and renames it over path. It refuses a symlink or
+// a file that isn't regular at path. deny is DenyRules' answer for the stage
+// about to run.
+func WriteManagedSettings(path string, env map[string]string, deny []string) error {
 	if fi, err := os.Lstat(path); err == nil {
 		if !fi.Mode().IsRegular() {
 			return fmt.Errorf("%s is not a regular file (%s); refusing to replace it", path, fi.Mode().Type())
@@ -53,10 +95,10 @@ func WriteManagedSettings(path string, env map[string]string, denyWeb bool) erro
 	if s.Env == nil {
 		s.Env = map[string]string{}
 	}
-	if denyWeb {
+	if len(deny) > 0 {
 		s.Permissions = &struct {
 			Deny []string `json:"deny"`
-		}{Deny: deniedWebTools}
+		}{Deny: deny}
 	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
