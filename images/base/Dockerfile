@@ -125,6 +125,12 @@ RUN apt-get update \
 # yq, the Docker CLI (client only: no daemon, no plugins; inert on Cloud Run)
 # and gcloud (prompts, usage reporting and update checks off for every user).
 # The version checks run with HOME=/root and their state is removed.
+# gcloud's bundled Python (amd64 only; the arm tarball has none) loses its
+# pip: gcloud never runs it, and pip vendors its own certifi/urllib3/msgpack
+# (listed in pip/_vendor/bom.cdx.json, which Trivy reads), so a stale pip
+# there fails the CRITICAL scan for code nothing uses (v0.9.6: pip 26.2.1's
+# certifi 2026.6.17, GHSA-6q48-6c7w-9gw2). Its ensurepip wheel stays, for
+# `gcloud config virtualenv`.
 RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
     set -eu; arch=$(dpkg --print-architecture); \
     case "$arch" in amd64|arm64) ;; *) echo "base: unsupported architecture $arch" >&2; exit 1 ;; esac; \
@@ -144,6 +150,9 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
     sh /tmp/fetch.sh "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-${GCLOUD_VERSION}-linux-$(pick x86_64 arm).tar.gz" \
       "$(pick "$GCLOUD_SHA256_AMD64" "$GCLOUD_SHA256_ARM64")" "$tmp/gcloud.tgz"; \
     tar -xzf "$tmp/gcloud.tgz" -C /opt; \
+    bp=/opt/google-cloud-sdk/platform/bundledpythonunix; \
+    rm -rf "$bp"/bin/pip "$bp"/bin/pip3 "$bp"/bin/pip3.* "$bp"/lib/python3.*/site-packages/pip "$bp"/lib/python3.*/site-packages/pip-*.dist-info; \
+    if [ -e "$bp/bin/python3" ] && "$bp/bin/python3" -c 'import pip' 2>/dev/null; then echo "base: gcloud's bundled Python still has pip" >&2; exit 1; fi; \
     printf '[core]\ndisable_usage_reporting = true\ndisable_prompts = true\n[component_manager]\ndisable_update_check = true\n' \
       > /opt/google-cloud-sdk/properties; \
     for b in gcloud gsutil bq; do ln -s "/opt/google-cloud-sdk/bin/$b" "/usr/local/bin/$b"; done; \
@@ -236,7 +245,11 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
 # own Python download (python-build-standalone) is believed pinned by uv's
 # own embedded checksums, not a hand-pinned sha256 here; that embedded
 # pinning itself is not verified in this change (uv's source was not read
-# for it), unlike every other download in this file.
+# for it), unlike every other download in this file. The managed CPython's
+# own pip is removed once graphify is installed: uv installs, nothing runs
+# pip there, and its vendored certifi/urllib3/msgpack (pip/_vendor/
+# bom.cdx.json, read by Trivy) would otherwise age into scan failures, as
+# pip 26.2.1's certifi 2026.6.17 did in v0.9.6 (GHSA-6q48-6c7w-9gw2).
 COPY images/base/graphify/requirements.lock.txt /opt/fugaro/graphify/requirements.lock.txt
 RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
     set -eu; arch=$(dpkg --print-architecture); \
@@ -257,6 +270,12 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
       -r /opt/fugaro/graphify/requirements.lock.txt --require-hashes --compile-bytecode --no-cache; \
     v=$(/opt/fugaro/graphify/venv/bin/graphify --version); echo "$v"; \
     case "$v" in "graphify $GRAPHIFY_VERSION") ;; *) echo "base: graphify --version reports '$v', not the pinned ${GRAPHIFY_VERSION}" >&2; exit 1 ;; esac; \
+    rm -rf /opt/fugaro/graphify/python/cpython-*/bin/pip /opt/fugaro/graphify/python/cpython-*/bin/pip3 /opt/fugaro/graphify/python/cpython-*/bin/pip3.* \
+      /opt/fugaro/graphify/python/cpython-*/lib/python3.*/site-packages/pip /opt/fugaro/graphify/python/cpython-*/lib/python3.*/site-packages/pip-*.dist-info; \
+    for p in /opt/fugaro/graphify/python/cpython-*/bin/python3; do \
+      if "$p" -c 'import pip' 2>/dev/null; then echo "base: $p still has pip" >&2; exit 1; fi; \
+    done; \
+    /opt/fugaro/graphify/venv/bin/graphify --version >/dev/null; \
     printf '#!/bin/sh\n# graphify on its own private Python venv, which is not on PATH (design base-image.md section 6).\n# A caller'"'"'s PYTHONPATH/PYTHONHOME/PYTHONSTARTUP/PYTHONUSERBASE could reach into this private venv and shadow its own numpy/tree-sitter.\nunset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONUSERBASE\nexport PYTHONNOUSERSITE=1\nexec /opt/fugaro/graphify/venv/bin/graphify "$@"\n' \
       > /usr/local/bin/graphify; \
     chmod 0755 /usr/local/bin/graphify; \
