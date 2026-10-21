@@ -678,7 +678,7 @@ func loadCheckoutResolved(ctx context.Context, dir string, lc *localcfg.Config, 
 	}
 	problems := rf.Problems
 	if rf.Cfg != nil {
-		problems = append(config.Check(rf.Cfg, root), computeProblems(rf.Cfg)...)
+		problems = append(config.Check(rf.Cfg, root), computeProblems(rf.Cfg, lc)...)
 	}
 	if len(problems) > 0 {
 		msgs := make([]string, len(problems))

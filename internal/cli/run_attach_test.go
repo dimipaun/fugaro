@@ -1167,19 +1167,27 @@ func TestAttachNamesTheProvidersThatMayReceiveTheFile(t *testing.T) {
 // no provider claims is the run's OWN auth route, and agent.auth decides which
 // one it is (design §8 item 8): vertex — config.applyDefaults' default, so an
 // unset Agent.Auth too — sends Claude calls to Google Vertex AI, api-key to
-// Anthropic's own API, and oauth to Anthropic on a subscription's token. A
-// default-configuration launch therefore must not be told its screenshot goes
-// straight to Anthropic: the request, and the bytes in it, go to Google.
+// Anthropic's own API, oauth to Anthropic on a subscription's token, and
+// cascade to Anthropic with the credential the credentials service attaches
+// (config.AuthCascade, Task C1.1). A default-configuration launch therefore
+// must not be told its screenshot goes straight to Anthropic: the request, and
+// the bytes in it, go to Google.
+//
+// The cascade row is what the round-4 review found missing: the value was
+// legal in a fugaro.yaml and fell through this file's default arm, so a
+// cascade launch was told its bytes go to Google Vertex AI — the one
+// destination a cascade run never takes (docs/credentials-service, D133).
 //
 // Mutation (name the direct route regardless of auth, the way this file did
 // before this test): the vertex and unset cases print "Anthropic (direct)"
-// and fail.
+// and fail. Mutation (drop the cascade arm): the cascade row fails.
 func TestAttachNamesTheRouteTheAuthModeActuallyTakes(t *testing.T) {
 	for _, tc := range []struct{ auth, want string }{
 		{"vertex", attachRouteVertex},
 		{"", attachRouteVertex}, // unset: applyDefaults writes vertex
 		{"api-key", attachDirectAnthropic},
 		{"oauth", attachRouteOAuth},
+		{config.AuthCascade, attachRouteCascade},
 	} {
 		ag := config.Agent{Auth: tc.auth}
 		if got := attachProviders(nil, ag, "acme/app"); strings.Join(got, ",") != tc.want {
@@ -1219,6 +1227,84 @@ func TestAttachOAuthRouteNamesTheReservedSecret(t *testing.T) {
 	attachProviderWarning(&buf, attachProviders(nil, config.Agent{Auth: "oauth"}, "acme/app"))
 	if !strings.Contains(buf.String(), "Anthropic (claude-oauth-token)") {
 		t.Fatalf("the oauth destination line does not name the secret:\n%s", buf.String())
+	}
+}
+
+// TestAttachCascadeRouteNamesTheCredentialsService: a cascade run's calls are
+// carried by the credentials service — tier A's shared subscription token or
+// tier B's API key, chosen and attached inside the service, never a credential
+// of the job's own (docs/credentials-service, D133, D143) — and they still go
+// to Anthropic under Claude's own model IDs, because tier C for Claude is off
+// (config.RouteCascade). So the destination D9's line names for the value is
+// Anthropic with the credentials service's credential, and NOT Google Vertex
+// AI, which is the arm the value fell into before this change.
+//
+// The expected label is written out here rather than compared against
+// attachRouteCascade, on TestAttachOAuthRouteNamesTheReservedSecret's own
+// reason: the table above compares against the constant, so a label that moved
+// would move both sides of that comparison and pass.
+//
+// Mutation (attachRouteFor(config.AuthCascade) -> attachRouteVertex, i.e. the
+// default arm the value used to reach): fails, and so does any wording that
+// names a destination the cascade never takes.
+func TestAttachCascadeRouteNamesTheCredentialsService(t *testing.T) {
+	const want = "Anthropic (via the credentials service)"
+	if attachRouteCascade != want {
+		t.Fatalf("attachRouteCascade = %q, want %q", attachRouteCascade, want)
+	}
+	var buf bytes.Buffer
+	attachProviderWarning(&buf, attachProviders(nil, config.Agent{Auth: config.AuthCascade}, "acme/app"))
+	if !strings.Contains(buf.String(), want) {
+		t.Fatalf("the cascade destination line does not name the credentials service:\n%s", buf.String())
+	}
+	for _, wrong := range []string{attachRouteVertex, "Vertex", "Google"} {
+		if strings.Contains(buf.String(), wrong) {
+			t.Fatalf("a cascade launch names %q, a destination its bytes never reach:\n%s", wrong, buf.String())
+		}
+	}
+}
+
+// TestAttachRouteForCoversEveryAgentAuth: every value config.AgentAuths admits
+// has a destination of its own here, and no value of that list may fall
+// through to the label an unlisted value gets. This is the guard the finding
+// asked for by name: a FIFTH value added to agent.auth fails this test until
+// attachRouteFor names where its bytes go, instead of inheriting the default's
+// destination — the silent Vertex the cascade value was given.
+//
+// The three assertions are the three ways the value list and this file can
+// drift: a listed value with no arm (the unknown label), a listed value
+// answered with the default's own destination, and two listed values sharing
+// one destination (so one of them is being told about the other's bytes).
+//
+// Mutation (drop the cascade arm): the first two assertions fail on cascade.
+// Mutation (add a fifth value to config.AgentAuths, e.g. "codex-oauth"): the
+// first fails on it, naming the value the file has no destination for.
+func TestAttachRouteForCoversEveryAgentAuth(t *testing.T) {
+	seen := map[string]string{}
+	for _, auth := range config.AgentAuths {
+		got := attachRouteFor(auth)
+		if got == "" || strings.Contains(got, attachRouteUnknownMarker) {
+			t.Errorf("attachRouteFor(%q) = %q: agent.auth admits the value and this file has no destination for it", auth, got)
+			continue
+		}
+		if got == attachRouteVertex && auth != config.DefaultAgentAuth {
+			t.Errorf("attachRouteFor(%q) = %q: it falls through to the default's own destination", auth, got)
+		}
+		if prev, dup := seen[got]; dup {
+			t.Errorf("agent.auth %q and %q share the destination %q", prev, auth, got)
+			continue
+		}
+		seen[got] = auth
+	}
+	// An auth outside the list is not sent to Vertex in silence either: the
+	// launcher cannot know where such a value's bytes go, and saying so is the
+	// only honest line. config.AgentAuths is the list every reader reads, so a
+	// value outside it is one no validator admits today.
+	for _, unknown := range []string{"codex-oauth", "openrouter"} {
+		got := attachRouteFor(unknown)
+		if !strings.Contains(got, attachRouteUnknownMarker) {
+			t.Errorf("attachRouteFor(%q) = %q, want the unknown route's own label rather than a destination", unknown, got)
+		}
 	}
 }
 

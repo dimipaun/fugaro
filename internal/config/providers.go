@@ -776,6 +776,15 @@ func checkProviderURL(s string) error {
 // agent.auth api-key. oauth is a subscription credential that cannot leave
 // Anthropic, and vertex is Claude on Vertex; neither can carry a provider
 // key, and a run does not mix credentials.
+//
+// cascade is refused a provider pin for oauth's reason, from the other side: a
+// cascade run's calls are carried by whatever credential the cascade chose, and
+// its tier A is a shared subscription OAuth token (docs/credentials-service, D133)
+// — such a token is never sent to another provider. Config time cannot know
+// which credential a run will be on (tier A is chosen from the repository's
+// admitted accounts, which live in the published policy and not in this file),
+// so a pin a provider serves is refused outright rather than assumed to land on
+// tier B: the run that names a provider model is an api-key run.
 func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 	var ps []Problem
 	if a.Auth == "api-key" {
@@ -791,8 +800,11 @@ func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 			continue
 		}
 		why := "vertex serves Claude only and a run does not mix credentials"
-		if a.Auth == "oauth" {
+		switch a.Auth {
+		case "oauth":
 			why = "an oauth token is a Claude subscription credential and is never sent to another provider"
+		case AuthCascade:
+			why = "a cascade run's tier A is a shared subscription OAuth token, and such a token is never sent to another provider"
 		}
 		ps = append(ps, Problem{Path: r.path, Message: fmt.Sprintf("%s is served by provider %s, which needs agent.auth: api-key (agent.auth is %s: %s)", CodeSpan(r.model), name, a.Auth, why)})
 	}

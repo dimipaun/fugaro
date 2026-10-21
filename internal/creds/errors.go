@@ -71,8 +71,12 @@ func (e *ExhaustedUntil) Error() string {
 //     no time): a node this release cannot read as a hold, which fails closed
 //     rather than being served;
 //   - a candidate is refused by the concurrency cap with no lapse that frees it:
-//     a non-positive limit, which the policy itself refuses and only a
-//     hand-built setting produces (Free reads a negative as no room at all).
+//     a negative limit, which the policy itself refuses and only a hand-built
+//     setting produces (Free reads a negative as no room at all, and SlotFrees
+//     answers no time under it). A limit of 0 is the other shape and never
+//     reaches this message: 0 is D142's documented opt-out — the one value in
+//     the two controls that widens rather than bounds — and Free admits every
+//     candidate under it, so nothing is refused by a cap at all.
 //
 // It is a refusal, never a fallback: the caller answers it typed and issues no
 // credential (D143).
