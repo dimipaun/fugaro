@@ -25,10 +25,11 @@ package cli
 //     shrank -- W2.x renamed it and left it on the map the remaining tasks
 //     work from).
 //   - TestLiveInitCensusRootsAreTheOnlyOnesThatNameIt asserts the same of the
-//     root list itself: every top-level entry that names the command is a live
-//     root, so the walk and the rename's task list cover the same set. A
-//     census that quietly stopped looking at a directory would otherwise pass
-//     by finding less.
+//     root list itself: every top-level entry that names the command -- outside
+//     the two exemption classes, which no walk can act on -- is a live root, so
+//     the walk and the rename's task list cover the same set. A census that
+//     quietly stopped looking at a directory would otherwise pass by finding
+//     less.
 //
 // The census is a *file* census. A listed file that gains a second mention is
 // not a failure, because the rename has to touch that file either way; what
@@ -100,16 +101,32 @@ var datedRecords = []string{
 // retirementText is the second exemption class, and it is not a judgement
 // call: each of these paths names `fugaro init` *as the retired verb*, which
 // is its whole job and which no rename can remove. It is a list of paths that
-// MAY name the command, so a path that does not exist yet contributes nothing
-// -- W1.2 adds the first two, and the third is this file, whose scan pattern
-// is the string. W2.6 asserts that the files naming the command are exactly
-// `datedRecords` plus these four.
+// MAY name the command, so a path that does not exist yet contributes nothing.
+// W2.6 asserts that the files naming the command are exactly `datedRecords`
+// plus these six.
 //
-// The fourth, internal/agent/relay_test.go, joined with #789: its table has a
-// case whose subject *is* the retirement -- given `fugaro init --repo`, the
-// relay's summary must keep only `fugaro`, because `init` is not a subcommand
-// any more. Renaming the argv would delete the case's meaning, so no W2.x task
-// can owe it.
+// The entries are named here rather than counted, because the list is appended
+// to and an ordinal goes stale the moment it is: the sentence "the third is
+// this file" was true for exactly as long as nothing was inserted above it.
+//
+//   - internal/agent/relay_test.go, which joined with #789: its table has a
+//     case whose subject *is* the retirement -- given `fugaro init --repo`,
+//     the relay's summary must keep only `fugaro`, because `init` is not a
+//     subcommand any more. Renaming the argv would delete the case's meaning,
+//     so no W2.x task can owe it.
+//   - The console's two, its README and its test/unit/ipc.test.ts,
+//     which joined with the same commit. Both of the console's mentions are
+//     statements about the retirement: the README's paragraph on the
+//     never-reachable table and the test's CliCommandClass doc both record
+//     that W1.2 "split `fugaro init` into `fugaro setup` and `fugaro update`",
+//     and the test's is the definition of its `retired` class -- a sentence
+//     whose subject is the tombstone, which is the relay test's shape exactly.
+//     A rename here reads "split `fugaro setup` into `fugaro setup` and
+//     `fugaro update`", which is not a rename but a false sentence, and no
+//     W2.x task's file list covers the console's folder to make it.
+//   - internal/cli/retired.go and internal/cli/retired_test.go, W1.2's
+//     tombstone and the test that asserts its message.
+//   - This file, whose scan pattern is the string.
 //
 // internal/cli/testdata/init_retire.golden is deliberately NOT here, although
 // it names the command four times today: it is a transcript, not a retirement
@@ -120,6 +137,12 @@ var datedRecords = []string{
 var retirementText = []string{
 	// #789's relay test: a case whose argv is the retired word on purpose.
 	"internal/agent/relay_test.go",
+	// The console's two: a paragraph and a class doc that record the split
+	// itself. Spelled through consoleDirName for the reason the rest of this
+	// file's console paths are (docs_console_boundary_test.go's mention rule);
+	// the value is the same path a reader opens.
+	consoleDirName + "/README.md",
+	consoleDirName + "/test/unit/ipc.test.ts",
 	// W1.2's tombstone: one message, two names, non-zero exit.
 	"internal/cli/retired.go",
 	// W1.2's test, which asserts that message.
@@ -131,29 +154,26 @@ var retirementText = []string{
 
 // liveRoots is what the census walks. Every top-level entry that names the
 // command is here, and every entry that names it zero times is not -- the
-// second test below asserts that rather than trusting it. `scripts/` is the
-// one entry that is walked and names the command zero times today; it stays
-// because the plan walks it, and a root that finds nothing costs one stat.
+// second test below asserts rather than trusts the second half of that. `scripts/`
+// is the one entry that is walked and names the command zero times today; it
+// stays because the plan walks it, and a root that finds nothing costs one stat.
 //
-// The console's folder joined with #789, which re-read the console's converge
-// rows after W1.2 and left the old word in two of its files: its README's
-// paragraph on the never-reachable table and its TypeScript test's `retired`
-// class. The plan's list of roots predates the console's own plan work, so the
-// folder named the command and was walked by nobody -- which is exactly the
-// hole the roots test exists to find.
+// The console's folder is deliberately NOT a root, and it is the one place
+// where that is a decision rather than a fact about the tree. #789 left the old
+// word in two of the console's files, and both mentions are statements about
+// the retirement itself, so both are in `retirementText` and the console
+// contributes nothing to `pendingRename`. The folder is walked by the roots
+// test instead -- every top-level entry that is not a root is -- and what keeps
+// that walk from reporting its two exempt files is the exemption check, which
+// is exactly the job that check was written for. A *live* mention appearing
+// under the console's folder later therefore fails the roots test, which offers the two
+// remedies the case has: rename it, or add the folder to this list.
 var liveRoots = []string{
 	"README.md",
 	"CONTRIBUTING.md",
 	// A root file rather than a directory, and on the walk because it names
 	// the command: W2.3 renames it in place.
 	"SECURITY.md",
-	// Spelled through consoleDirName, not as one literal, for the reason the
-	// rest of this file's console paths are: docs_console_boundary_test.go's
-	// mention rule reads a console path written as a single literal as a
-	// reference to the console, and this file is not on its one-entry
-	// allow-list. The folder is still walked by name -- consoleDirName is that
-	// name, spelled once, one file over.
-	consoleDirName,
 	"docs",
 	"plugin",
 	".claude",
@@ -183,12 +203,11 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 276 files -- 114 non-test Go files, 117 test files,
-// 37 markdown files, the two goldens, and the six that fall in none of those
+// command, sorted. It is 274 files -- 114 non-test Go files, 117 test files,
+// 36 markdown files, the two goldens, and the five that fall in none of those
 // groups: the website's four (its install data, its two pages and its test
-// script), the getting-started design board the redesign was approved from,
-// website/design-ref/GettingStartedV4.dc.html, and the console's TypeScript
-// test, its test/unit/ipc.test.ts. Read on main at `1d325928`, this
+// script) and the getting-started design board the redesign was approved from,
+// website/design-ref/GettingStartedV4.dc.html. Read on main at `1d325928`, this
 // branch's base, it was **312** files -- 118 non-test Go files, 117 test files,
 // 34 markdown files, 29 Terraform files, the four `.tftest.hcl` fixtures beside
 // them, the two goldens, and eight in none of those groups: the website's four,
@@ -241,16 +260,15 @@ const censusRoot = "../.."
 // it because the rename reached them: the plugin's four -- the setup skill,
 // its decisions and transitions references and the working skill's status
 // reference -- and, with them, plugin/skills_lint_test.go and
-// internal/cli/loop_program_test.go. Three joined it. Two are the console's,
-// and they joined because the same commit left the old word in the console's
-// README, in its paragraph on the never-reachable table, and in its TypeScript
-// test's `retired` class -- which is also why the console's folder became a
-// live root; the console's own plan work postdates the roots list, so the
-// folder named the command and no walk opened it. The third is
-// internal/cli/docs_checkout_test.go,
-// whose comment explains that docs/checkout.md still spells the retired word
-// and that the door carrying the flags today is `fugaro setup`: W2.3 renames
-// the document, and the comment goes with it.
+// internal/cli/loop_program_test.go. One joined it:
+// internal/cli/docs_checkout_test.go, whose comment explains that
+// docs/checkout.md still spells the retired word and that the door carrying the
+// flags today is `fugaro setup`: W2.3 renames the document, and the comment
+// goes with it. The console's two did *not* join it, although the same commit
+// left the old word in the console's README and in its TypeScript test: both
+// mentions are statements about the split itself rather than fix lines, so they
+// went to `retirementText`, with the argument written down there. Listing them
+// here would have promised a rename no task owes and none can carry out.
 //
 // Each task that renames a string takes the file off this list in the same
 // commit, and W2.6 empties it.
@@ -259,8 +277,6 @@ var pendingRename = []string{
 	"CONTRIBUTING.md",
 	"README.md",
 	"SECURITY.md",
-	consoleDirName + "/README.md",
-	consoleDirName + "/test/unit/ipc.test.ts",
 	"docs/backends.md",
 	"docs/base-image-migration.md",
 	"docs/base-image.md",
@@ -936,7 +952,7 @@ func TestCensusOutputAndExemptArePinned(t *testing.T) {
 		path string
 		want bool
 	}{
-		// Every dated root, and the four retirement statements.
+		// Every dated root, and the six retirement statements.
 		{"docs/plans/setup-wizard/implementation-plan.md", true},
 		{"docs/releases/v0.9.0.md", true},
 		{"docs/design/x.md", true},
@@ -947,6 +963,8 @@ func TestCensusOutputAndExemptArePinned(t *testing.T) {
 		{"internal/cli/retired.go", true},
 		{"internal/cli/retired_test.go", true},
 		{"internal/cli/docs_live_init_census_test.go", true},
+		{consoleDirName + "/README.md", true},
+		{consoleDirName + "/test/unit/ipc.test.ts", true},
 		// The releases index beside the records stays live, and a prefix that
 		// stops at a slash is not a prefix that stops mid-word.
 		{"docs/releases/README.md", false},
@@ -1210,12 +1228,20 @@ func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
 // not this test's business either. Without the exemption check the two
 // remedies it offers would both be impossible for such a file -- adding it to
 // liveRoots would make the first test demand it in `pendingRename`, which is
-// to demand renaming a dated record. No dated root sits outside docs/ today;
-// one retirement path, internal/agent/relay_test.go, sits outside docs/ and
-// internal/cli/, and it is skipped here for the same reason the other three
-// are. The hole this closes is latent rather than empty; it is closed because
-// it is the one place where the file's own rule was applied to one half of the
-// line and not the other.
+// to demand renaming a dated record.
+//
+// The check is load-bearing today, and the file it is load-bearing for is
+// worth naming, because the obvious guess is the wrong one. It is NOT
+// internal/agent/relay_test.go: internal/ is a live root, so this walk skips
+// that whole subtree before it reads anything under it, and all four paths in
+// internal/ are reached by the first test rather than by this one. It is the
+// console's pair -- its README and its test/unit/ipc.test.ts -- for
+// the reason the liveRoots comment gives: the folder is not a root, both of its
+// mentions are retirement statements, and this walk is what would otherwise
+// report them. No dated root sits outside docs/ today, so the console pair is
+// the only case the check has; the hole this closes is latent rather than
+// empty, and it is closed because it is the one place where the file's own
+// rule was applied to one half of the line and not the other.
 //
 // Mutation (run, restore): add a line naming the command to a file under a
 // directory that is not a root -- mobile/README.md is one -- and this fails.
