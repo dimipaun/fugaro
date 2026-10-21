@@ -3745,7 +3745,7 @@ all from the **same launch** — are:
 
 | File | Screen |
 |---|---|
-| `console-live.png` | the Live screen: three runs (one implementing, one in review near its deadline, one queued), two repositories, and the day's spend at 34.85% of a $120 cap |
+| `console-live.png` | the Live screen: three runs (one in review with its verification passed, one in review and near its deadline, one queued), two repositories, and the day's spend at 34.85% of a $120 cap |
 | `console-run.png` | the run detail the Live screen's first row names: stages, verification, findings, the log tail |
 | `console-spend.png` | the Spend screen: thirty days of daily spend, the totals and the caps |
 | `console-installations.png` | the picker, opened from the console's own `Installations…` menu item: three installations, each naming the fake, with `acme-platform` the chosen one |
@@ -3803,7 +3803,7 @@ before the run's own words were printed (review of 2026-10-20, high finding).
 
 ### The tests, and the mutations each one was run against
 
-`test/unit/screenshots.test.ts` holds everything the run decides **without a window** — 61
+`test/unit/screenshots.test.ts` holds everything the run decides **without a window** — 63
 tests, and every rule below was seen red against a planted change before it was committed:
 
 | Claim | Mutation it was run against |
@@ -3849,6 +3849,8 @@ tests, and every rule below was seen red against a planted change before it was 
 | every alt figure is the fixture's | `RUN_SCREEN`'s "three findings" → "four findings" — red; "build, test and lint" → "build and test" — red; `SPEND_SCREEN`'s "thirty days" → "thirty-one days" — red; the Live alt's round, deadline flag and queued row each changed — red |
 | the picker's sentence is the renderer's own | the alt's quoted sentence changed to `(reduced)` — red; `viewOf`'s own template reworded in `src/renderer/installations.ts` — red (the alt still quotes the old one) |
 | this file's index names its sections | the allow-list's `// 2.` banner removed — red, naming the header item with no banner |
+| the picture table says what the fixture holds, not what it used to | the Live row's "one in review with its verification passed" put back to "one implementing" — "describes each picture with the fixture's own words" red (the table test compared row names only, so the drift was unchecked; review of 2026-10-21, medium finding) |
+| the build's `include` list is the run's own import graph | `test/support/cliStub.ts` — the *e2e specs'* fake, which nothing the run reaches imports — put back into `tsconfig.screenshots.json`'s `include` — "compiles exactly the files the run reaches" red, naming the entry (review of 2026-10-21, low finding) |
 
 The blank check is driven by a PNG **encoder** written in the test file (`node:zlib`'s
 `deflateSync`, a CRC per chunk, filters 0 and 1 really applied), because the only way to drive

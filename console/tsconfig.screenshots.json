@@ -6,10 +6,10 @@
   // `tsconfig.record-fixture.json` produces the recorder. It is a second config
   // rather than an edit to that one because the two take different trees to
   // different outputs: the recorder takes `src/` and `tools/` to
-  // `.record-fixture/`, and this takes `src/`, `tools/` *and* the e2e suite's
-  // support modules to `.screenshots/` -- the run launches the console through
-  // the specs' own `test/support/launch.ts` and resolves its fake through
-  // `test/support/cliStub.ts`, so those are compiled here rather than copied.
+  // `.record-fixture/`, and this takes `src/`, `tools/`, the e2e suite's launch
+  // path and the unit suite's fake CLI to `.screenshots/` -- the run launches the
+  // console through the specs' own `test/support/launch.ts` and resolves its fake
+  // through `test/unit/stub.ts`, so those are compiled here rather than copied.
   //
   // Both outputs are build artifacts and are gitignored. Nothing here is part
   // of what ships: `package.json`'s `main` is `dist/main/index.js`, built by
@@ -32,20 +32,23 @@
   },
   // `src/` is here because the tool imports the console's own rules rather than
   // copies of them (the installation file's writer, the protocol's two URLs,
-  // the version the console was built against); the two support modules because
-  // the launch path and the resolver are the e2e suite's own; `test/unit/stub.ts`
-  // because the fake CLI is the unit suite's own child.
+  // the version the console was built against); `test/support/launch.ts` because
+  // the launch path is the e2e suite's own; `test/unit/stub.ts` because the fake
+  // CLI is the unit suite's own child.
   //
-  // The two support modules are named rather than globbed as `test/support/**`
+  // `test/support/launch.ts` is named rather than globbed as `test/support/**`
   // for a reason worth writing down: the rest of that directory is *not* built
   // here, and one of them (`built.ts`, which the e2e specs use to run the
   // packaged app) reads `import.meta`, which this build's CommonJS output
   // refuses. A glob would make `npm run screenshots` fail to compile on a module
-  // the run never loads.
+  // the run never loads. `test/support/cliStub.ts` -- the *e2e specs'* fake --
+  // was on this list too and is not any more: nothing the run reaches imports it
+  // (`test/unit/stub.ts` is the fake this tool uses), so it was a module
+  // compiled for a graph that does not contain it (review of 2026-10-21, low
+  // finding). The test file holds this list to the run's own import graph.
   "include": [
     "src/**/*.ts",
     "tools/**/*.ts",
-    "test/support/cliStub.ts",
     "test/support/launch.ts",
     "test/unit/stub.ts"
   ]

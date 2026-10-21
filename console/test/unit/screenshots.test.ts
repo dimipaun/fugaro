@@ -35,8 +35,13 @@
 //      take the pictures (`scripts/console-screenshots.sh` and the `screenshots`
 //      script it documents, which have to do the same work -- including the
 //      build, because what the run launches is the built app), the README's
-//      picture table (one table, the omission in it), and the shell script's
-//      header, which says what the run reaches as well as what it does not;
+//      picture table (one table, the omission in it, and every row's figures
+//      read out of the fixture the row's screen draws -- so the prose a reader
+//      sees cannot drift from the alt text the manifest carries, review of
+//      2026-10-21, medium finding), and the shell script's header, which says
+//      what the run reaches as well as what it does not; the screenshot build's
+//      `include` list is here too, held to the import graph the run actually
+//      reaches from the entry point (review of 2026-10-21, low finding);
 //   8. **the captures' selectors** (`tools/screenshots/screens.ts`): each one is
 //      held to the renderer file that has to draw its class or id, so a renamed
 //      renderer fails here rather than as a `waitForSelector` timeout on the
@@ -51,9 +56,9 @@
 // owner's own run (`scripts/console-screenshots.sh`) is where they are
 // exercised -- see `console/README.md`.
 
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { deflateSync } from 'node:zlib'
 
@@ -354,6 +359,16 @@ function listed(words: readonly string[]): string {
   if (words.length <= 1) return words[0] ?? ''
   return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1] ?? ''}`
 }
+
+/** DEADLINE_PROSE is the document's `deadline` enum in the words a sentence uses
+ * for it -- the README's picture row and the alt text both describe a run "near
+ * its deadline". The enum is the fact; the phrase is how prose says it, so the
+ * mapping is written down here rather than left implicit in a sentence nothing
+ * compares to the fixture (review of 2026-10-21, medium finding). */
+const DEADLINE_PROSE: Readonly<Record<string, string>> = Object.freeze({
+  near: 'near its deadline',
+  over: 'past its deadline',
+})
 
 describe('the fixtures are documents the console accepts', () => {
   it('decodes every live frame through the schema the feed uses', () => {
@@ -1434,8 +1449,10 @@ describe('the line a failed run ends with', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 7. What the README and the shell script promise about the run, held to the
-//    tree.
+// 7. What the README, the shell script and the screenshot build promise about
+//    the run, held to the tree: the commands do the same work, the picture
+//    table's rows are the fixture's own words, and the build's `include` list
+//    is the run's own import graph.
 // ---------------------------------------------------------------------------
 
 describe('what the run’s own documents promise about it', () => {
@@ -1499,6 +1516,96 @@ describe('what the run’s own documents promise about it', () => {
     const last = rows[rows.length - 1]?.index ?? 0
     for (const line of lines.slice(first, last + 1)) {
       expect(line.startsWith('|'), `${line} breaks the picture table in two`).toBe(true)
+    }
+  })
+
+  it('describes each picture with the fixture’s own words', () => {
+    // The finding this holds: the `console-live.png` row said the Live screen
+    // showed "one implementing" run and enumerated two of the three runs, while
+    // the fixture's are review/passed, review/near-deadline and queued -- and the
+    // same picture's alt text, which §4 holds to that fixture, said so. The
+    // table test above compares row *names* only, so the two descriptions of one
+    // picture could drift apart with nothing to notice. Both are now held to the
+    // fixture's own words (review of 2026-10-21, medium finding).
+    const cell = (file: string): string => {
+      const row = readmeLines().find((candidate) => candidate.startsWith(`| \`${file}\` |`)) ?? ''
+      // `| file | text |` -- the third field is the sentence.
+      return row.split('|')[2] ?? ''
+    }
+    const last = frames()[frames().length - 1] as {
+      total: { percent: number; daily_cap_usd: number }
+      repos: readonly unknown[]
+      runs: readonly { stage: string; round: string; verify: string; deadline: string }[]
+    }
+    const [first, second, third] = last.runs
+    const live = cell('console-live.png')
+    expect(live).toContain(`${spelled(last.runs.length)} runs`)
+    expect(live).toContain(`in ${first?.stage} with its verification ${first?.verify}`)
+    expect(live).toContain(`in ${second?.stage} and ${DEADLINE_PROSE[second?.deadline ?? ''] ?? ''}`)
+    expect(live).toContain(`one ${third?.stage}`)
+    expect(live).toContain(`${spelled(last.repos.length)} repositories`)
+    expect(live).toContain(String(last.total.percent))
+    expect(live).toContain(`$${String(last.total.daily_cap_usd)}`)
+    // The other two rows carry figures too, and the same fixture answers them:
+    // the Spend row's days are the report's rows and the picker row's
+    // installations are the seed file's.
+    const report = spendModel()
+    expect(report.rows.length).toBe(30)
+    expect(cell('console-spend.png')).toContain(`${spelled(report.rows.length)} days`)
+    const seed = JSON.parse(fixture(SEED_FILE_NAME)) as {
+      installations: readonly { project: string }[]
+    }
+    const picker = cell('console-installations.png')
+    expect(picker).toContain(`${spelled(seed.installations.length)} installations`)
+    expect(picker).toContain(seed.installations[0]?.project ?? '')
+    // The run row names no figure of its own: it says the detail is the one the
+    // Live screen's first row names, and §3 holds that row, `diagnose.json` and
+    // the log link to one run id.
+  })
+
+  it('compiles exactly the files the run reaches', () => {
+    // The finding this holds: `tsconfig.screenshots.json` compiled
+    // `test/support/cliStub.ts`, which is the e2e specs' fake and is on no path
+    // from this run's entry point -- the run's own fake is `test/unit/stub.ts`
+    // (`tools/screenshots/fixture.ts`), and the config's own header named the
+    // wrong one (review of 2026-10-21, low finding). An include list is a claim
+    // about what the run needs; the graph below is what it needs.
+    const raw = readFileSync(join(CONSOLE_ROOT, 'tsconfig.screenshots.json'), 'utf8')
+    const block = /"include": \[([^\]]*)\]/.exec(raw)?.[1] ?? ''
+    const include = [...block.matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? '')
+    expect(include).toEqual([
+      'src/**/*.ts',
+      'tools/**/*.ts',
+      'test/support/launch.ts',
+      'test/unit/stub.ts',
+    ])
+    // The graph: the entry point the `screenshots` script runs, then every
+    // relative import of it, to a `.ts` file. Nothing here resolves a package or
+    // a path alias, and the tool uses neither -- a specifier this walk cannot
+    // follow would be a hole in it, so they are all relative by construction.
+    const reached = new Set<string>()
+    const queue: string[] = ['tools/screenshots/capture.ts']
+    while (queue.length > 0) {
+      const file = queue.pop() ?? ''
+      if (reached.has(file)) continue
+      reached.add(file)
+      const source = readFileSync(join(CONSOLE_ROOT, file), 'utf8')
+      for (const match of source.matchAll(/from '(\.[^']+)'/g)) {
+        const base = join(dirname(file), match[1] ?? '')
+        for (const candidate of [`${base}.ts`, `${base}/index.ts`]) {
+          if (existsSync(join(CONSOLE_ROOT, candidate))) {
+            queue.push(candidate)
+            break
+          }
+        }
+      }
+    }
+    expect(reached.has('tools/screenshots/capture.ts')).toBe(true)
+    expect(reached.size).toBeGreaterThan(10)
+    // Every *named* file in the include list is on that graph. The two globs are
+    // the tool's own tree, which the compile that runs them holds.
+    for (const entry of include.filter((name) => !name.includes('*'))) {
+      expect(reached.has(entry), `${entry} is compiled but no file the run reaches imports it`).toBe(true)
     }
   })
 

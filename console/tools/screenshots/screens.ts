@@ -41,29 +41,11 @@ export interface OneScreen {
   readonly drawnBy: string
 }
 
-/** SCREENS is the captures of the dashboard's launch, in the order they are
- * taken: the Live screen as it draws on arrival, then the run the Live screen's
- * first row names, then Spend.
- *
- * **The alt text is drafted from the fixture, and says what the picture shows.**
- * It is written here rather than derived from the screen because the fixture is
- * what is being drawn, and a sentence a program assembled from the document
- * would be a worse description than one a person wrote while looking at the
- * fixture. Every fact in it is one the screen actually draws -- the Live screen
- * draws `document.runs`, the two `repos` rows and the `total` block, and
- * nothing else from the frame (`src/renderer/screens/live.ts`); the frame's
+/** LIVE_SCREEN is the dashboard's launch picture, and what the screen it is of
+ * actually draws: `document.runs`, the two `repos` rows and the `total` block,
+ * and nothing else from the frame (`src/renderer/screens/live.ts`). The frame's
  * `finished[]` list is decoded and never drawn, so a sentence that counted it
- * would describe a screen nobody took a picture of.
- *
- * **Every one of those facts is held to the last frame by the unit suite**
- * (`test/unit/screenshots.test.ts`, §4), figures and run story alike: the count
- * of runs and repositories, the day's percent and cap, and the first row's
- * round, stage and verification word. The last of those is also held against
- * `diagnose.json`, because the run-detail picture is of that same run -- a feed
- * row saying `implement` while the detail document says `review` is two
- * pictures of one run that contradict each other (review of 2026-10-20, medium
- * finding).
- */
+ * would describe a screen nobody took a picture of. */
 export const LIVE_SCREEN: OneScreen = Object.freeze({
   file: 'console-live.png',
   drawn: '.live-run',
@@ -91,7 +73,28 @@ export const SPEND_SCREEN: OneScreen = Object.freeze({
   alt: 'The Spend screen for a fictional acme-platform installation: thirty days of daily spend, the account totals, and the per-repository and default daily and per-run caps.',
 })
 
-/** SCREENS is the dashboard's three captures, in the order they are taken. */
+/** SCREENS is the dashboard's three captures, in the order they are taken: the
+ * Live screen as it draws on arrival, then the run the Live screen's first row
+ * names, then Spend.
+ *
+ * **The alt text is drafted from the fixture, and says what the picture shows.**
+ * It is written out rather than derived from the screen because the fixture is
+ * what is being drawn, and a sentence a program assembled from the document
+ * would be a worse description than one a person wrote while looking at the
+ * fixture. Every fact in the three alt texts above is one the screen it
+ * describes actually draws.
+ *
+ * **Every one of those facts is held to the last frame by the unit suite**
+ * (`test/unit/screenshots.test.ts`, §4), figures and run story alike: the count
+ * of runs and repositories, the day's percent and cap, and the first row's
+ * round, stage and verification word. The last of those is also held against
+ * `diagnose.json`, because the run-detail picture is of that same run -- a feed
+ * row saying `implement` while the detail document says `review` is two
+ * pictures of one run that contradict each other (review of 2026-10-20, medium
+ * finding). The same suite reads the README's picture table and the alt texts
+ * against the same fixtures (§7), so the prose a reader sees and the sentence
+ * the manifest carries cannot drift apart.
+ */
 export const SCREENS: readonly OneScreen[] = Object.freeze([LIVE_SCREEN, RUN_SCREEN, SPEND_SCREEN])
 
 /** PICKER_SCREEN is the fourth capture, from the **same launch** as the other
