@@ -109,13 +109,25 @@
  *      is a way of drawing the document's text, and decision 1 still holds every word of it
  *      to `SECURITY.md`.
  *
+ *   8. **The drawing is one picture at two layouts**, and the stylesheet shows one of them at
+ *      a time (the owner's feedback of 2026-10-21: the tall drawing "works well in mobile"
+ *      but "on desktop doesn't fit above the fold", so a desktop shows "a horizontal layout
+ *      of the same drawing"). The tall drawing is the one a phone shows — the same picture
+ *      read top to bottom, at a phone's own width — and the wide one is the run read left to
+ *      right, drawn wide and shallow so the headline above it and the whole of it are inside
+ *      a 1440 × 800 first screen (the arithmetic is in the wide drawing's own comment). Both
+ *      are inline `<svg>` markup by hand, both carry the same labels in the same order, and
+ *      exactly one of them is rendered: the same arrangement, and the same reading, as the
+ *      How It Works drawing (`src/components/RunDiagram.astro`, whose gate reads both halves
+ *      of it). Nothing is a raster image and nothing is fetched.
+ *
  * Nothing in this file fetches anything, reads a clock or starts a process: the page is
- * built from the files in this repository (Global Constraints 4 and 5). The diagram is one
- * inline `<svg>`: the drawing loads nothing — no image file, no font file, no script of its
- * own — and the page adds no script of its own either. The site's one first-party file,
- * `public/scripts/site.js`, is the layout's and loads on every page (the layout is held to
- * that by `website/test/layout.mjs`); nothing in it reads the drawing, which is markup a
- * browser paints.
+ * built from the files in this repository (Global Constraints 4 and 5). The diagram is
+ * inline `<svg>` markup: the drawing loads nothing — no image file, no font file, no script
+ * of its own — and the page adds no script of its own either. The site's one first-party
+ * file, `public/scripts/site.js`, is the layout's and loads on every page (the layout is
+ * held to that by `website/test/layout.mjs`); nothing in it reads the drawing, which is
+ * markup a browser paints.
  */
 import Base from '../layouts/Base.astro'
 import { loadSite } from '../content.ts'
@@ -437,12 +449,24 @@ const DIAGRAM_LIMITS = [
       </h1>
     </div>
 
-    {/* The boundary diagram (the owner's brief of 2026-10-20): one inline SVG of the trust
+    {/* The boundary diagram (the owner's brief of 2026-10-20): inline SVG of the trust
         boundaries, the same facts as a list under it, and the two limits below that. Every
         label is a phrase of SECURITY.md, proved while the page builds (`quoted()` above), and
         the drawing is one picture with a name: `role="img"` and an aria-label, so a screen
         reader reads the name and then the list rather than every label of the drawing as a
         loose string of its own. No script reads it and none is loaded for it.
+
+        **One picture, two layouts** (the owner's feedback of 2026-10-21). The two `<svg>`s
+        below are the same drawing: the tall one is the run read top to bottom, at a phone's
+        own 360-unit width, and the wide one is the run read left to right, drawn wide and
+        shallow for a desktop. Both carry the same labels in the same order, both are
+        `role="img"` with the same aria-label, and the stylesheet renders exactly one of them
+        at a time (`@media (max-width: 70rem)` shows the tall one) — so a reader meets one
+        picture whatever the width, and a screen reader one name. `hidden` is on the tall
+        drawing, which is what keeps a reader whose stylesheet never arrives to the wide one:
+        the two are one picture, and the wide one is the layout that carries the whole of it
+        rather than at a phone's width. No layout is generated from a script and none is a
+        raster image.
 
         **The geometry is a rhythm and an inset, and the gate reads both.** A card's title is
         drawn 26 units below its top edge and its lines 24 units apart, so a three-line card is
@@ -451,16 +475,25 @@ const DIAGRAM_LIMITS = [
         2026-10-20 found two cards whose last line was drawn past their own inset, because the
         gate measured the labels against the box horizontally and never vertically. A card that
         cannot hold its lines on the rhythm is a card that has to grow, and the heights and the
-        `viewBox` grow with it. */}
+        `viewBox` grow with it — in both layouts: the wide drawing is the same cards as the
+        tall one, laid out in a row, and its own widths are derived the same way. */}
     <section class="card security-diagram" data-security-diagram>
       <h2 class="display-md">{DIAGRAM_HEADING}</h2>
       <figure>
+        {/* The tall layout: the run read top to bottom, at 360 units — the 22.5rem the
+            stylesheet caps it at, a phone's own width, which is where a unit is a pixel and
+            every label is drawn at the size
+            the page sets it: `--font-size-xs` at 13 and `--font-size-lg` at 20. This is the
+            layout the page shipped with (the owner's brief of 2026-10-20); the wide one below
+            it is the same picture for a desktop, and `website/test/security.mjs` reads the two
+            as one drawing: the same labels, the same name, and exactly one of them rendered. */}
         <svg
-          class="boundary-drawing"
+          class="boundary-drawing boundary-drawing-tall"
           viewBox="0 0 360 744"
           role="img"
           aria-label={DIAGRAM_LABEL}
           focusable="false"
+          hidden
         >
           {/* Who sends the task: the repository, and the people the document trusts with it.
               The phrase is the longest the drawing draws and it is broken where it is broken
@@ -528,6 +561,118 @@ const DIAGRAM_LIMITS = [
             <polygon class="boundary-arrow-head" points="342,696 336,685 348,685" />
           </g>
           <text class="boundary-line" font-size="13" x="348" y="720" text-anchor="end">{diagramLabel('network egress is unrestricted')}</text>
+        </svg>
+
+        {/* The wide layout: the same run read left to right, in a 1180 × 400 `viewBox` (the
+            owner's feedback of 2026-10-21 — "the image is tall (works well in mobile) but on
+            desktop doesn't fit above the fold, can we do it more horizontally for desktop?").
+            The drawing is the same one the tall `<svg>` above draws: the task's source on the
+            left, the boundary round the four cards in the middle, the pull request on the
+            right and the egress that leaves the boundary below them — the same labels, in the
+            same order, so the two are one picture at two layouts and `website/test/security.mjs`
+            reads them as one.
+
+            **Why it fits a desktop's first screen.** At 1440 × 800 the page's column is 72rem
+            capped and the card's own padding taken out of it, so the drawing is rendered 1056 px
+            wide and 1180 units therefore settle at about 0.895 px each: the whole picture is
+            about 358 px tall, and the room above it — the header, the title band, the step
+            between the two blocks, the card's padding and the section heading — is about 400,
+            which is what puts the headline and the whole drawing inside the 800. A drawing
+            taller than its own width would not: that is the tall one, and that is why a desktop
+            does not show it. The floor under this layout is the other end of the same
+            arithmetic: 14-unit labels in the narrowest column the wide drawing is shown in
+            (70rem, where the column is 1024 px) are 12.15 px, still the size a reader reads at,
+            and below that the stylesheet shows the tall drawing, where a unit is a pixel.
+
+            **The type is an attribute on each line, as in the tall drawing**, and the two
+            layouts differ by one unit of it: 14 here and 13 there — 14 units at 0.895 px is
+            12.5 px on a desktop, and the tall drawing's 13 units are 13 px on a phone. The
+            heading is 21 units where the tall one's is 20, for the same reason. **The lines are
+            broken where the cards have room for them**, which is where the layout's own numbers
+            come from: a card's content is 230 units (262 less its 16-unit inset on each side =
+            26 characters at the gate's estimate), so `permission prompts turned off` and
+            `the agent shares the container` each take two lines here where the tall drawing
+            fits them on one of its wider cards, and the two cards of a row are the height of
+            the longer of the two so the grid stays a grid. The words are the same words in the
+            same order either way: a line split at a space is the phrase the document writes,
+            and `quoted()` above proves each one of them, line by line, while the page builds. */}
+        <svg
+          class="boundary-drawing boundary-drawing-wide"
+          viewBox="0 0 1180 400"
+          role="img"
+          aria-label={DIAGRAM_LABEL}
+          focusable="false"
+        >
+          {/* Who sends the task: the repository, and the people the document trusts with it. */}
+          <rect class="boundary-card" data-pad="16" x="8" y="140" width="262" height="120" rx="12" />
+          <text class="boundary-title" font-size="14" x="24" y="166">{diagramLabel('the source of the task')}</text>
+          <text class="boundary-line" font-size="14" x="24" y="190">{diagramLabel('anyone who can push to it,')}</text>
+          <text class="boundary-line" font-size="14" x="24" y="214">{diagramLabel('launch a run, or is listed')}</text>
+          <text class="boundary-line" font-size="14" x="24" y="238">{diagramLabel('in followup.trusted')}</text>
+
+          {/* Into the boundary, left to right: the arrow is the tall drawing's first one, laid
+              on its side, and it stops 4 units short of the dashed box, which nothing crosses
+              except the arrows that leave it. */}
+          <g class="boundary-arrow">
+            <line x1="276" y1="200" x2="290" y2="200" />
+            <polygon class="boundary-arrow-head" points="302,200 291,194 291,206" />
+          </g>
+
+          {/* The boundary itself, read as two rows of two cards: one container per run, and
+              what the document says is inside it. The dashed box is drawn first so the cards
+              and their labels paint over it. */}
+          <rect class="boundary-boundary" data-pad="20" x="306" y="20" width="576" height="360" rx="16" />
+          <text class="boundary-heading" font-size="21" x="326" y="56">{diagramLabel('one container per run')}</text>
+
+          {/* The first row: the agent and the runner. The agent's card is the runner's height
+              and not its own — one line fewer — so the two sit on the same rhythm, and the room
+              the extra line would take is the grid's. */}
+          <rect class="boundary-card" data-pad="16" x="326" y="76" width="262" height="120" rx="10" />
+          <text class="boundary-title" font-size="14" x="342" y="102">{diagramLabel('the agent')}</text>
+          <text class="boundary-line" font-size="14" x="342" y="126">{diagramLabel('permission prompts')}</text>
+          <text class="boundary-line" font-size="14" x="342" y="150">{diagramLabel('turned off')}</text>
+
+          <rect class="boundary-card" data-pad="16" x="600" y="76" width="262" height="120" rx="10" />
+          <text class="boundary-title" font-size="14" x="616" y="102">{diagramLabel('the runner')}</text>
+          <text class="boundary-line" font-size="14" x="616" y="126">{diagramLabel('the agent shares the')}</text>
+          <text class="boundary-line" font-size="14" x="616" y="150">{diagramLabel('container')}</text>
+          <text class="boundary-line" font-size="14" x="616" y="174">{diagramLabel('can read its /proc')}</text>
+
+          {/* The second row: the identities the run's jobs work under, and the key the container
+              holds. The gateway's card is the tall drawing's own, one line wider here: the
+              document's conditional is one sentence and is drawn as one card, as it is there. */}
+          <rect class="boundary-card" data-pad="16" x="326" y="216" width="262" height="144" rx="10" />
+          <text class="boundary-title" font-size="14" x="342" y="242">{diagramLabel('per-repository identities')}</text>
+          <text class="boundary-line" font-size="14" x="342" y="266">{diagramLabel('their own service accounts')}</text>
+          <text class="boundary-line" font-size="14" x="342" y="290">{diagramLabel('narrow git credentials')}</text>
+
+          <rect class="boundary-card" data-pad="16" x="600" y="216" width="262" height="144" rx="10" />
+          <text class="boundary-title" font-size="14" x="616" y="242">{diagramLabel('the budget gateway')}</text>
+          <text class="boundary-line" font-size="14" x="616" y="266">{diagramLabel('not on by default')}</text>
+          <text class="boundary-line" font-size="14" x="616" y="290">{diagramLabel('the real model key')}</text>
+          <text class="boundary-line" font-size="14" x="616" y="314">{diagramLabel("sits in the agent's")}</text>
+          <text class="boundary-line" font-size="14" x="616" y="338">{diagramLabel('environment')}</text>
+
+          {/* Out of the container: the pull request every run ends with, on the right where the
+              run's left-to-right reading ends. */}
+          <g class="boundary-arrow">
+            <line x1="886" y1="200" x2="898" y2="200" />
+            <polygon class="boundary-arrow-head" points="910,200 899,194 899,206" />
+          </g>
+          <rect class="boundary-card" data-pad="16" x="914" y="164" width="258" height="72" rx="12" />
+          <text class="boundary-title" font-size="14" x="930" y="190">{diagramLabel('ends every run with')}</text>
+          <text class="boundary-line" font-size="14" x="930" y="214">{diagramLabel('a pull request')}</text>
+
+          {/* And out of the boundary, past it: the egress the document says nothing stops, on
+              the same side of the picture the tall drawing puts it — below the run and outside
+              the dashed box. It is drawn last because it is the last thing the tall drawing
+              says: the two layouts carry the same words in the same order, which is how the
+              gate reads them as one picture. */}
+          <g class="boundary-arrow">
+            <path d="M862 300 H 900 V 370" />
+            <polygon class="boundary-arrow-head" points="900,381 894,370 906,370" />
+          </g>
+          <text class="boundary-line" font-size="14" x="1172" y="384" text-anchor="end">{diagramLabel('network egress is unrestricted')}</text>
         </svg>
 
         <ul class="boundary-facts">
@@ -659,21 +804,40 @@ const DIAGRAM_LIMITS = [
     color: var(--text-muted);
   }
 
-  /* The boundary diagram. One `<svg>` with a 360-unit-wide `viewBox`, drawn top to bottom and
-     rendered at the width of the column up to 360 px, so the picture scales as one picture and
-     every label keeps its place in it at every width. The drawing is vertical at all of them:
-     a second, narrower layout below a breakpoint would buy nothing, because the labels are set
-     at the site's smallest type size and scale with the picture below that — nothing reflows,
-     so nothing can collide.
+  /* The boundary diagram. **Two drawings, one picture, and exactly one of them rendered** (the
+     owner's feedback of 2026-10-21: the tall drawing "works well in mobile" but "on desktop
+     doesn't fit above the fold", so a desktop shows "a horizontal layout of the same drawing").
+     The tall `<svg>` is the run read top to bottom in a 360-unit-wide `viewBox`, capped at
+     22.5rem — a phone's own width, where a unit is a pixel — and it is the one a phone shows.
+     The wide `<svg>` is the same run read left to right in a 1180 × 400 one, and it is the one
+     a desktop shows: about 1056 px wide in the page's own column at 1440, which is 0.895 px a
+     unit and about 358 px of picture, so the headline above it and the whole drawing sit inside
+     a 1440 × 800 first screen (the arithmetic is in the drawing's own comment).
+
+     The changeover is the width at which the wide drawing's labels stop being readable rather
+     than the site's chrome breakpoint: its smallest label is 14 units and the narrowest column
+     the page gives the drawing at 70rem is 1024 px — 72rem's own ceiling, an eighth of the
+     site's gutter on each side and the card's `--space-lg` padding inside that — where 14 units
+     are 12.15 px. Below 70rem the page shows the tall drawing, which is the whole picture at
+     the scale a phone reads it at. The two are the same picture in the same order, so nothing
+     is lost at the changeover: `website/test/security.mjs` reads both of them.
+
+     **Only one is in the page at a time**, and `hidden` on the tall one is what a reader whose
+     stylesheet never arrives gets: the wide drawing, which is the layout that carries the whole
+     picture rather than a phone's cut of it. `display: none`/`block` in the query is what
+     switches them, and the two rules are written last, after `.boundary-drawing`'s own
+     `display: block`, because a class rule of the same weight as another is won by the one that
+     comes later.
 
      The size is a `font-size` on each `<text>` and not a declaration here, because it is the
      drawing's own geometry: the gate measures a label against the box it is drawn in
      (`website/test/security.mjs`), and the box it has is a length in the picture's units, so
      the size it is drawn at has to be one too. 13 units is `--font-size-xs` (0.8125rem) and 20
-     is `--font-size-lg` (1.25rem) at the 16 px root the picture's 360 units are laid out
-     against, which is the width it is shown at — the same arrangement, and the same estimate,
-     as the How It Works drawing (`src/components/RunDiagram.astro`). No script reads or writes
-     any of this; the shapes are painted from the classes below and every colour is a token. */
+     is `--font-size-lg` (1.25rem) at the 16 px root the tall picture's 360 units are laid out
+     against, which is the width it is shown at; the wide drawing's own 14 and 21 are the same
+     two sizes at the scale it is rendered at — the same arrangement, and the same estimate, as
+     the How It Works drawing (`src/components/RunDiagram.astro`). No script reads or writes any
+     of this; the shapes are painted from the classes below and every colour is a token. */
   [data-security-diagram] {
     margin: 0;
   }
@@ -682,11 +846,25 @@ const DIAGRAM_LIMITS = [
     margin: 0;
   }
 
-  [data-security-diagram] svg {
+  [data-security-diagram] .boundary-drawing {
     display: block;
     width: 100%;
-    max-width: 22.5rem;
     height: auto;
+  }
+
+  [data-security-diagram] .boundary-drawing-tall {
+    max-width: 22.5rem;
+    display: none;
+  }
+
+  @media (max-width: 70rem) {
+    [data-security-diagram] .boundary-drawing-wide {
+      display: none;
+    }
+
+    [data-security-diagram] .boundary-drawing-tall {
+      display: block;
+    }
   }
 
   [data-security-diagram] text {
