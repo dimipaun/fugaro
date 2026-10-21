@@ -1002,7 +1002,6 @@ signing pipeline with the Linux legs added, 2026-10-20 — it supersedes the sta
 ```
 `docs/pending-workflows/` now holds three pending workflows,
 `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
-
 P4.3) — `docs/pending-workflows/console-linux.yml` — the console's Linux build check, which is
 packed on every pull request and holds no secret — and
 `docs/pending-workflows/console-release-linux.yml` — the console's signing pipeline with the

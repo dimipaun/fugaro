@@ -24,9 +24,13 @@ package cli
 //
 //   - TestDocsMobileReleaseWorkflowIsStagedAndPinned: the triggers are a
 //     release-tag push and a manual dispatch and nothing else, on the tag
-//     pattern the sibling release workflows use; **a tag push runs
-//     `scripts/release-gate.sh` first in each job, as every other tag-triggered
-//     publishing workflow here does, and a manual dispatch skips it**; the
+//     pattern the sibling release workflows use; **every path that can reach a
+//     store passes a gate first** -- a tag push runs `scripts/release-gate.sh`
+//     in each job, as every other tag-triggered publishing workflow here does,
+//     and a manual dispatch that would submit runs a second gate of its own,
+//     which holds a dispatched tag to that same script and a dispatched branch
+//     to being on `main` (a dispatch with `dry_run` set passes neither, because
+//     it submits nothing); the
 //     permissions are `contents: read` plus the `checks: read` that gate needs;
 //     both jobs wait at the `mobile-release` environment; the file names exactly
 //     one secret (`EXPO_TOKEN`), carries no
