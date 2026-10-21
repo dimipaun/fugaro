@@ -28,7 +28,9 @@
 // RESOLVED config through that file in both modes: a build carries the two
 // identities and nothing else new, a dev/lint run gets the static config
 // unchanged. `src/app-config.ids.test.js` owns the refusals, and
-// `src/eas-config.test.js` owns the profiles the build is made from.
+// `src/eas-config.test.js` owns the profiles the build is made from. What
+// `app.json` must **point at** -- the two icons and the splash, the fields a
+// build resolves and no test here reads -- is `src/app-config.icons.test.js`'s.
 
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
