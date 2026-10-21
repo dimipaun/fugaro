@@ -53,10 +53,13 @@
 //     width, with a ceiling of its own scale — meets the phone's column instead. Which *side*
 //     of that width each rule holds on is read too, since the same width read from the other
 //     side shows the wide drawing to the phone it cannot be read on. Both drawings have to be
-//     on the page, and neither may be turned off where the queries are silent: only one of them
-//     is displayed at a time, so a page that lost one of them — or a rule that took it off
-//     outside the changeover — is a page whose reader is shown no run at all. A number typed in
-//     here would keep agreeing with itself after the page's gutter moved.
+//     on the page, and each is held to its own half of the changeover: the stacked drawing must
+//     be off where the queries are silent — above that width the wide one is the one shown — and
+//     the wide drawing must not be, since a wide drawing turned off there leaves a desktop no
+//     run at all, the stacked one being `display: none` above the changeover. Only one of the
+//     two is displayed at a time, so a page that lost one of them, or that turned the wide one
+//     off outside the changeover, is a page whose reader is shown no run. A number typed in here
+//     would keep agreeing with itself after the page's gutter moved.
 //   - **The loop's arrow is drawn, and it joins the stages the run repeats.** The draft draws
 //     `[fix ─► review(2)]`: the arrow leaves `review`, runs up beside the pills and lands back
 //     on `implement`. So the pill the arrow's two ends land on is read from the stage words the
