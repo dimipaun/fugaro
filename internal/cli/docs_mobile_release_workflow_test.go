@@ -87,6 +87,17 @@ const (
 	// agent cannot edit a workflow, so an owner-facing switch has to be a
 	// setting.
 	mobileReleaseAndroidSwitch = "MOBILE_ANDROID_ENABLED"
+	// mobileReleaseAndroidGate is the whole condition the Android job runs on,
+	// and mobileReleaseSubmitGate and mobileReleaseNoticeGate are the whole
+	// conditions on the dry run -- the submission's and the notice's. They are
+	// compared by equality and not by substring because each one is a gate: a
+	// condition that also fired on something else (a tag push, say) would run
+	// what the gate exists to hold back, and `strings.Contains(got, "'true'")`
+	// is green on `== 'true' }} || github.ref_type == 'tag'` exactly as it is on
+	// the gate alone.
+	mobileReleaseAndroidGate = "${{ vars." + mobileReleaseAndroidSwitch + " == 'true' }}"
+	mobileReleaseSubmitGate  = "${{ github.event.inputs.dry_run != 'true' }}"
+	mobileReleaseNoticeGate  = "${{ github.event.inputs.dry_run == 'true' }}"
 	// mobileReleasePinTestName and mobileReleaseReadmeTestName are the two
 	// checks this file adds. The document beside the staged file has to name
 	// both, so the paragraph that tells a reader what is verified cannot outlive
@@ -445,13 +456,13 @@ func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			if !strings.Contains(cmd, "--non-interactive") {
 				t.Errorf("ios step %d submits without `--non-interactive`", i)
 			}
-			if got := step.If; !strings.Contains(got, "github.event.inputs.dry_run") || !strings.Contains(got, "!=") {
-				t.Errorf("ios step %d submits with `if: %s`, which is not the dry-run gate: the submission is what `dry_run` stops before", i, got)
+			if got := step.If; got != mobileReleaseSubmitGate {
+				t.Errorf("ios step %d submits with `if: %s`, not `if: %s`: the submission is what `dry_run` stops before, and a condition with anything else in it (a tag push, say) submits on a dispatch that asked for a dry run", i, got, mobileReleaseSubmitGate)
 			}
 		case mobileReleaseSummaryRE.MatchString(cmd) && strings.Contains(cmd, "Dry run"):
 			dryRuns++
-			if got := step.If; !strings.Contains(got, "github.event.inputs.dry_run") || !strings.Contains(got, "==") {
-				t.Errorf("ios step %d is the dry-run notice with `if: %s`, which does not read the input", i, got)
+			if got := step.If; got != mobileReleaseNoticeGate {
+				t.Errorf("ios step %d is the dry-run notice with `if: %s`, not `if: %s`: the notice says a run submitted nothing, so it has to be the exact complement of the submission's gate", i, got, mobileReleaseNoticeGate)
 			}
 		}
 	}
@@ -478,8 +489,8 @@ func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if !ok {
 		t.Fatalf("%s carries no `android` job: it is written and disabled, so that turning it on is one repository setting rather than a workflow edit", path)
 	}
-	if got := android.If; !strings.Contains(got, "vars."+mobileReleaseAndroidSwitch) || !strings.Contains(got, "'true'") {
-		t.Errorf("the android job's `if` is %q, not a gate on the repository variable %s being exactly true: an unset variable has to skip the job rather than run it, and a job that can run by default is not disabled", got, mobileReleaseAndroidSwitch)
+	if got := android.If; got != mobileReleaseAndroidGate {
+		t.Errorf("the android job's `if` is %q, not exactly %q: the job runs only when the repository variable %s is exactly true, so an unset variable skips it and no second disjunct (a tag push, say) can start a store submission the owner never turned on", got, mobileReleaseAndroidGate, mobileReleaseAndroidSwitch)
 	}
 	if android.Environment != mobileReleaseEnvironment {
 		t.Errorf("the android job's environment is %q, not %q: when the owner turns it on, the store submission it makes needs the same approval the iOS one waits for", android.Environment, mobileReleaseEnvironment)
@@ -498,8 +509,8 @@ func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			}
 		case strings.Contains(cmd, "eas submit ") && strings.Contains(cmd, "--platform android"):
 			androidSubmits++
-			if got := step.If; !strings.Contains(got, "github.event.inputs.dry_run") {
-				t.Errorf("the android job submits with `if: %s`: the dry-run gate has to cover it too, or turning it on makes `dry_run` mean one platform", got)
+			if got := step.If; got != mobileReleaseSubmitGate {
+				t.Errorf("the android job submits with `if: %s`, not `if: %s`: the dry-run gate has to cover it too, and to be the same gate, or turning it on makes `dry_run` mean one platform", got, mobileReleaseSubmitGate)
 			}
 		}
 	}
@@ -687,10 +698,63 @@ func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 		t.Errorf("%s's `%s` section does not say where the store identity comes from (`eas env:exec production`): a reader who cannot find it will look for a secret to create, and there is none", pendingWorkflowsReadmePath, mobileReleaseReadmeHeading)
 	}
 	// The status line is the machine-readable half of "this file is still
-	// pending": the copy-in changes it, and a reader who has just copied the
-	// file in has to be able to see whether they finished.
-	if !strings.Contains(section, "**Status: `mobile-release.yml` is staged and pending.**") {
-		t.Errorf("%s's `%s` section does not open its status as `**Status: `mobile-release.yml` is staged and pending.**`: that line is what the copy-in edits, and the tests above read the staged copy while it exists", pendingWorkflowsReadmePath, mobileReleaseReadmeHeading)
+	// pending": it is what the copy-in edits, and a reader who has just copied
+	// the file in has to be able to see whether they finished. So it is read
+	// against the tree -- the rule TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays
+	// applies to `shared-tests.yml`'s line -- rather than asserted as one fixed
+	// sentence: the copy-in removes the staged copy, and a section that kept
+	// saying "pending" afterwards would be describing a file that is not there.
+	//
+	// What is checked is the section's **opening** line, not the section: the
+	// copy-in procedure below quotes both spellings of it, so a search over the
+	// whole section is satisfied by the quote and would stay green with the live
+	// line saying the opposite. While the staged copy exists the file is still
+	// pending -- including the half-done copy-in, where both copies are present
+	// and the staged one is still the reviewed text, which is the state
+	// readMobileReleaseWorkflowAt reads the staged file in.
+	body := strings.TrimSpace(section[len(mobileReleaseReadmeHeading):])
+	if docExists(t, stagedMobileReleaseWorkflowPath) {
+		want := "**Status: `mobile-release.yml` is staged and pending.**"
+		if !strings.HasPrefix(body, want) {
+			t.Errorf("%s's `%s` section does not open with %s while %s exists: that line is what the copy-in edits, and it has to be the section's opening claim rather than a sentence quoted further down", pendingWorkflowsReadmePath, mobileReleaseReadmeHeading, want, stagedMobileReleaseWorkflowPath)
+		}
+	} else {
+		want := "**Status: `mobile-release.yml` is applied, not pending.**"
+		if !strings.HasPrefix(body, want) {
+			t.Errorf("%s's `%s` section does not open with %s now that %s is gone and %s exists: the copy-in changes that line in the same commit, and a section still opening with \"staged and pending\" would be describing a file that is not there", pendingWorkflowsReadmePath, mobileReleaseReadmeHeading, want, stagedMobileReleaseWorkflowPath, appliedMobileReleaseWorkflowPath)
+		}
+	}
+
+	// The pair of sentences the copy-in writes into the opening line and into
+	// website/README.md names what the directory is left holding, so it is the
+	// pair for making this copy-in first: everything staged beside it except
+	// `mobile-release.yml` itself. It is checked in the tree it describes --
+	// with the console's two files still staged, which is the tree this file is
+	// staged in -- and the section itself says which pair to write in the other
+	// order (the one-file pair in `## console-release-linux.yml`, which that
+	// section prints under its own label and TestStagedLinuxFilesSurviveTheCopyIn
+	// splices in), so a tree where the console's files have already been applied
+	// has no pair here to check.
+	if docExists(t, consoleLinuxWorkflowPath) && docExists(t, consoleReleaseLinuxWorkflowPath) {
+		var want []string
+		for _, name := range pendingWorkflows(t) {
+			if name != filepath.Base(stagedMobileReleaseWorkflowPath) {
+				want = append(want, name)
+			}
+		}
+		for _, pair := range []struct{ what, block, pattern string }{
+			{"the opening line", fencedBlockContaining(t, pendingWorkflowsReadmePath, section, "pending: `shared-tests.yml`"), consolePendingBoldPattern},
+			{"the site's last paragraph", fencedBlockContaining(t, pendingWorkflowsReadmePath, section, "now holds"), consolePendingPathsPattern},
+		} {
+			names, count := consolePendingSentence(t, "the pair in `"+mobileReleaseReadmeHeading+"` for "+pair.what, pair.block, pair.pattern)
+			slices.Sort(names)
+			if !slices.Equal(names, want) {
+				t.Errorf("the pair in `%s` for %s names %q, and applying %s leaves the directory holding %q: the sentences are held to the directory, and one that named a file that is not pending would be red in the owner's commit", mobileReleaseReadmeHeading, pair.what, names, stagedMobileReleaseWorkflowPath, want)
+			}
+			if count != len(want) {
+				t.Errorf("the pair in `%s` for %s says %d pending workflow(s), and applying %s leaves %d (%q): the count and the names are one claim", mobileReleaseReadmeHeading, pair.what, count, stagedMobileReleaseWorkflowPath, len(want), want)
+			}
+		}
 	}
 }
 

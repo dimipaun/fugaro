@@ -6816,6 +6816,36 @@ type copyInSentences struct {
 	opening, site string
 }
 
+// The `## console-release-linux.yml` section prints two pairs of follow-up
+// sentences, each under the sentence that says when it is the one to write,
+// because the two copy-ins of 2026-10-20 can be made in either order: the third
+// file staged that day, `mobile-release.yml`, has a copy-in of its own, and the
+// pair a commit needs names what the directory is left holding.
+const (
+	consoleCopyInMobileStagedLabel  = "**If `mobile-release.yml` is still staged when you make this copy-in**"
+	consoleCopyInMobileAppliedLabel = "**If it has already been copied in**"
+)
+
+// readmeSectionPart returns the part of text that runs from `from` to the start
+// of the first `to` after it, or to the end of text when `to` is empty. A pair
+// of follow-up sentences is read out of the part its own label introduces, so a
+// pair printed under the wrong label -- or a label that lost its pair -- fails
+// where it is read.
+func readmeSectionPart(t *testing.T, what, text, from, to string) string {
+	t.Helper()
+	start := strings.Index(text, from)
+	if start < 0 {
+		t.Fatalf("%s no longer prints %q, the sentence that says when its pair of follow-up sentences is the one to write", what, from)
+	}
+	rest := text[start+len(from):]
+	if to != "" {
+		if end := strings.Index(rest, to); end >= 0 {
+			rest = rest[:end]
+		}
+	}
+	return rest
+}
+
 // releaseLinuxCopyInSentences reads those two sentences out of
 // `## console-release-linux.yml`'s fenced blocks -- the section that describes
 // the commit both copy-ins land in -- and checks the four commands that commit
@@ -6823,8 +6853,14 @@ type copyInSentences struct {
 // both are the README's claim about the tree: a prescribed sentence that the
 // directory would contradict is not something this test should paper over by
 // writing its own.
+//
+// The section prints a pair for each of the two orders the copy-ins can be made
+// in, and this reads the pair for the tree it is run in: `mobile-release.yml`
+// staged beside this section's files means the console copy-in is the first of
+// the two, and the pair that names it is the one this copy-in leaves.
 func releaseLinuxCopyInSentences(t *testing.T) copyInSentences {
 	t.Helper()
+	const what = "docs/pending-workflows/README.md's `console-release-linux.yml` section"
 	doc := readDoc(t, "docs/pending-workflows/README.md")
 	section := consoleReadmeSection(t, doc, "## `console-release-linux.yml`")
 	for _, command := range []string{
@@ -6845,14 +6881,18 @@ func releaseLinuxCopyInSentences(t *testing.T) copyInSentences {
 			t.Fatalf("docs/pending-workflows/README.md's `console-linux.yml` section no longer prints %q, which is a command this test just ran", command)
 		}
 	}
+	pair := readmeSectionPart(t, what, section, consoleCopyInMobileStagedLabel, consoleCopyInMobileAppliedLabel)
+	if !docExists(t, stagedMobileReleaseWorkflowPath) {
+		pair = readmeSectionPart(t, what, section, consoleCopyInMobileAppliedLabel, "")
+	}
 	return copyInSentences{
 		// The marker is the count-free head of the opening-line block rather
 		// than a whole phrase of it: the block states a count ("One file is
 		// pending", "Two files are pending", ...), and a marker that spelled the
 		// count would have to be edited every time a file is staged or applied
 		// -- which is the edit the block itself exists to make in one place.
-		opening: fencedBlockContaining(t, "docs/pending-workflows/README.md", section, "pending: `shared-tests.yml`"),
-		site:    fencedBlockContaining(t, "docs/pending-workflows/README.md", section, "now holds"),
+		opening: fencedBlockContaining(t, what, pair, "pending: `shared-tests.yml`"),
+		site:    fencedBlockContaining(t, what, pair, "now holds"),
 	}
 }
 

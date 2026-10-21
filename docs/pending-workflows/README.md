@@ -628,8 +628,10 @@ in the spliced tree, so a block that is not the text the tests need fails here
 rather than in the owner's commit.
 
 The sentences the second commit needs — with both of 2026-10-20's files applied
-and their staged copies removed — are the pair in
-`## console-release-linux.yml` below. `website/README.md` is never left saying
+and their staged copies removed — are in `## console-release-linux.yml` below,
+which prints **both** of the pairs that commit can need, each under the label
+saying which tree it is for: whether `mobile-release.yml`, the third file staged
+that day, has been copied in by then. `website/README.md` is never left saying
 "one pending workflow" while this one is still here: `readme.mjs` reads the
 directory, not the file's own history.
 
@@ -706,11 +708,17 @@ line and the last section of `website/README.md`, both of which count and name
 the files still pending here, and both of which are held to the directory
 (`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` and
 `website/test/readme.mjs`). With both of 2026-10-20's files applied and their
-staged copies removed, this directory holds two pending workflows again and the
-two sentences become (again, each block is the exact text to write; the
-opening-line block stops at the end of its last sentence, and the
-"**Two other files stay staged here by design**" sentence that follows it is
-unchanged — `console-tests.yml` and `console-release.yml` do stay staged):
+staged copies removed, the two sentences to write depend on one thing:
+**`mobile-release.yml`**, the third file staged on 2026-10-20, has a copy-in of
+its own (`## mobile-release.yml` below) and the two copy-ins can be made in
+either order, so **both pairs are printed here**, each under the sentence that
+says when it is the one to write. The opening-line block stops at the end of its
+last sentence, and the "**Two other files stay staged here by design**" sentence
+that follows it is unchanged — `console-tests.yml` and `console-release.yml` do
+stay staged.
+
+**If `mobile-release.yml` is still staged when you make this copy-in** — the
+order the copy-in proof applies, and the pair that names it as still pending:
 
 ```
 **Two files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
@@ -724,6 +732,29 @@ and TestFlight submission, 2026-10-20; see `## mobile-release.yml` below).
 P4.3) — and `docs/pending-workflows/mobile-release.yml` — the mobile app's iOS build and
 TestFlight submission (2026-10-20), neither of which is this site's:
 ```
+
+**If it has already been copied in**, it is not pending, the directory is left
+holding `shared-tests.yml` alone, and the pair is the one-file one — the same
+pair `## mobile-release.yml` points at for the case where that copy-in comes
+second, because that is the same tree:
+
+```
+**One file is pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below).
+```
+
+```
+`docs/pending-workflows/` now holds one pending workflow,
+`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+P4.3), which is not this site's:
+```
+
+`TestStagedLinuxFilesSurviveTheCopyIn` reads **the pair under the label that
+matches the tree it is run in** — it looks for `mobile-release.yml` staged
+beside this section's files, and takes the pair that tree's copy-in needs — and
+splices that pair into the copy it makes before running this suite there. So
+both orders are checked in the tree each one leaves, and a pair that named a
+file the directory does not hold fails there rather than in the owner's commit.
 
 **What cannot be checked here.** The linux job's steps run on a runner: this
 directory's staged files are read by tests on a machine with no
@@ -744,7 +775,12 @@ opening line says the same. `TestDocsMobileReleaseWorkflowIsStagedAndPinned`
 `TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn` reads this
 section, so the two cannot drift apart silently. (Those names are held to this
 document by that second test, so the paragraph cannot go on naming a check that
-was renamed or deleted.)
+was renamed or deleted.) **That second test also reads this line against the
+tree, in both directions** — the way
+`TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays` reads
+`shared-tests.yml`'s — so the copy-in below changes it to
+`**Status: `mobile-release.yml` is applied, not pending.**`, and a document that
+kept saying "pending" after the file was copied in would be red.
 
 The mobile app's release. `mobile/` is its own artifact outside the Go module
 (D125) with its own release path, and this is that path: **on every `v*` release
@@ -897,12 +933,21 @@ runs. This file is new, so there is no byte-identity clause to keep it — unlik
 `console-tests.yml` and `console-release.yml`, whose staged copies stay on
 purpose.
 
-**Two follow-up edits belong in that same commit**, because two sentences count
-and name the files still pending in this directory and both are held to the
-directory: the last section of `website/README.md` (which `website/test/readme.mjs`
-reads in both directions, count and names) and **this README's own opening line**
-(which `TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` holds to the same
-directory). Applying this file leaves the directory holding `shared-tests.yml`,
+**Three follow-up edits belong in that same commit.** Two are the sentences that
+count and name the files still pending in this directory, and both are held to
+the directory: the last section of `website/README.md` (which
+`website/test/readme.mjs` reads in both directions, count and names) and **this
+README's own opening line** (which
+`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` holds to the same
+directory). The third is **this section's own Status line** — it reads
+`**Status: `mobile-release.yml` is staged and pending.**` while the staged copy
+exists and has to become
+`**Status: `mobile-release.yml` is applied, not pending.**` with it gone, because
+`TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn` reads that line against
+the tree in both directions the way
+`TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays` reads
+`shared-tests.yml`'s, so copying the file in without this edit leaves the suite
+red. Applying this file leaves the directory holding `shared-tests.yml`,
 `console-linux.yml` and `console-release-linux.yml`, so the two sentences that
 commit needs are (each block is the **exact** text to write in place of the
 sentence it replaces; the opening-line block is the whole claim, from its first
@@ -935,13 +980,31 @@ does today, and `website/test/readme.mjs` reads the whole page rather than this
 sentence, so the rest of it needs no edit. It also reads the count as a word and
 compares it as a number, so `three` here is what the directory holds after this
 copy-in; the word `four` is the one this document's opening line carried while
-the file was pending. **The two copy-ins of 2026-10-20 can be made in either
-order**, and the two blocks above are the pair for the order this tree is in
-(`mobile-release.yml` applied, the console's two files still staged). If the
-console's files have been copied in first, this copy-in leaves one pending file
-rather than three, and the pair to write is the one in
-`## console-release-linux.yml` above with `mobile-release.yml` dropped — read the
-count and the names off the directory, which is what both sentences are held to.
+the file was pending.
+
+**The two copy-ins of 2026-10-20 can be made in either order, and the pair
+depends on which one this is.** The two blocks above are the pair for making
+**this** copy-in **first** — the order this tree is in (`mobile-release.yml`
+applied, the console's two files still staged), and the pair
+`TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn` reads out of this section
+and holds to the directory **while the console's two files are still staged
+beside it, which is the tree the pair describes**. If the console's two files
+have been copied in first, this copy-in leaves **one** pending file rather than
+three, and the pair to write is the one-file pair printed under the matching
+label in `## console-release-linux.yml` above — the same pair that section
+prescribes for its own copy-in when this file has already been applied, because
+it is the same tree either way: the directory is left holding `shared-tests.yml`
+alone. (Making both copy-ins in one commit leaves that tree too, so that pair is
+the one to write then as well.) Read the count and the names off the directory,
+which is what both sentences are held to.
+
+**The Status line is the one thing in this section that does not survive the
+copy-in**: it is read against the tree, so the same commit has to change it (the
+third edit above). The two sentences do survive it, when this copy-in is the one
+made first — the directory is left holding the three files the block above names
+— and `website/README.md` is never left saying "one pending workflow" while this
+file is still here: `readme.mjs` reads the directory, not the file's own
+history.
 
 ### Not verified
 
@@ -958,10 +1021,15 @@ read` as the whole permission and no job-level widening; the `mobile-release`
 environment on both jobs; the single `secrets.EXPO_TOKEN` reference and no
 secret-shaped literal; every `uses:` a full 40-hex SHA with its `# vX.Y.Z`; the
 `concurrency` group and `cancel-in-progress: false`; the `dry_run` input and the
-step conditions that read it; both `eas` commands under `eas env:exec production`
-and carrying `--non-interactive`; the summary step writing to
-`$GITHUB_STEP_SUMMARY`; the Android job's `if:` naming `MOBILE_ANDROID_ENABLED`
-and nothing else; and that neither the two identity variable names nor a
+two step conditions that read it, **each compared whole** (`${{ github.event.inputs.dry_run != 'true' }}`
+on both submissions and its exact complement on the notice), so a condition with
+a second disjunct — a tag push, say, which would submit on a dispatch that asked
+for a dry run — is not green here; both `eas` commands under
+`eas env:exec production` and carrying `--non-interactive`; the summary step
+writing to `$GITHUB_STEP_SUMMARY`; the Android job's `if:` compared whole
+against `${{ vars.MOBILE_ANDROID_ENABLED == 'true' }}` — the switch by name and
+nothing else, so no second disjunct can start an Android submission the owner
+never turned on; and that neither the two identity variable names nor a
 reverse-DNS-shaped value appears anywhere in it.
 
 **The one thing in this file that is not pinned to a version is `eas-cli`.** The
