@@ -1138,12 +1138,22 @@ func TestAllowDeleteCommandTrimsWhatAStripExposes(t *testing.T) {
 // character outside that set, and an entry holding one equals no identity a
 // plan produces: the owner reads it as an approval and it clears nothing. It is
 // refused here, loudly, rather than written.
+//
+// The set is closed at BOTH ends, and the last two rows are that upper end:
+// DEL (0x7f), the byte just past printable ASCII and the one a terminal or a
+// copy out of a pager leaves behind without showing anything, and 0x80, a byte
+// of no printable ASCII at all. They are here because the bound was pinned from
+// below only — every other row is a byte under 0x21 — so `c > 0x7e` could be
+// widened to `c > 0x7f`, which admits DEL, and then past that, with this test
+// still green.
 func TestAllowDeleteCommandRefusesAnIdentityNoPlanCouldHaveWritten(t *testing.T) {
 	for _, tc := range []struct{ name, before string }{
 		{"a newline inside the identity", "type=google_storage_bucket\nid=data-bucket"},
 		{"a tab between two parts", "type=google_storage_bucket\tid=data-bucket"},
 		{"two spaces in a row between two parts", "type=google_storage_bucket  id=data-bucket"},
 		{"an escape byte a message carried", "type=google_storage_bucket id=data-\x1bbucket"},
+		{"a DEL byte a copy carried", "type=google_storage_bucket id=data-\x7fbucket"},
+		{"a byte past ASCII a copy carried", "type=google_storage_bucket id=data-\x80bucket"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := allowDeleteRig(t)
