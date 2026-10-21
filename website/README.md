@@ -1484,9 +1484,9 @@ holds no secret) — `docs/pending-workflows/console-release-linux.yml` — the 
 signing pipeline with the Linux legs added, which supersedes the staged `console-release.yml`
 and so is copied over it as well as into `.github/workflows/` — and
 `docs/pending-workflows/mobile-release.yml` — the mobile app's release (2026-10-20: on every
-`v*` tag and by hand it builds the iOS app on EAS and submits it to TestFlight's internal
-testers, behind the `mobile-release` environment and the owner's approval, and its Android
-job is written but disabled). None of the four is this site's: the website's two manual
+`v[0-9]+.[0-9]+.[0-9]+` tag and by hand it builds the app on EAS and submits it to TestFlight's
+internal testers and to Play's internal-testing track, behind the `mobile-release`
+environment and the owner's approval). None of the four is this site's: the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
 owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
 console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:
