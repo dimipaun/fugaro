@@ -824,7 +824,8 @@ added or removed without this sentence moving fails there:
   - **JavaScript per page:** 239,721 bytes. Three times 79,907: the one script the site ships,
     `public/scripts/site.js` (63,925 bytes), plus 25 %. What the file carries is the copy
     control, the menu, the consent gate and **both of the site's sliders** — the console page's,
-    of the feedback-B round above, and the homepage's, of the feedback-A round above that.
+    which the feedback-B round above added, and the homepage's, which the feedback-A round above
+    it added.
     The console's half is the feedback-B round's, and it was the first JavaScript the site had
     gained since the menu (the owner's feedback of 2026-10-21): the bar the markup emits
     `hidden` — a Previous arrow, the count and a Next arrow — is revealed and driven here, the
