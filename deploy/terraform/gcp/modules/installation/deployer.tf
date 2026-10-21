@@ -112,8 +112,9 @@ resource "google_service_account" "fugaro_deployer" {
 # fugaroDeployerStorage is deployer_condition_storage, and so on.
 #
 # NOT VERIFIED LIVE, and recorded as such rather than assumed: a storage
-# object-prefix condition is proved (Check 32, RUN 2026-10-14), a Secret Manager
-# name-prefix condition is Check 52's U3 and is still NOT RUN, and whether
+# object-prefix condition is proved (Check 32, RUN 2026-10-14) and so is a
+# Secret Manager name-prefix condition (Check 52's U3, RUN 2026-10-16: the
+# condition is honoured for secretmanager.versions.access), while whether
 # resource.name is honoured at all — let alone with extract — for an IAM service
 # account, a Cloud Run job, a Cloud Scheduler job, an Artifact Registry
 # repository or an API key is what Check 68 has to measure (its steps 4 and 5,

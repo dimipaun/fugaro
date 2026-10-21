@@ -46,13 +46,13 @@ conditions that can never be satisfied: every request against those types is
 denied, so those five roles grant nothing. That is fail-closed and it is the
 safe direction, but it is not a fence: **after the flag flips, the deployer is
 expected to be fenced for Cloud Storage (proved by Check 32) and for Secret
-Manager, and to hold five roles that do nothing** — and even the Secret Manager
-half is expected rather than proved: that service's name-prefix condition is
-Check 52's U3, which is **NOT RUN** (F5's table below). So the one form this
-repository has measured live is Cloud Storage's, and every other service's is
-expected at best. The feature's own use of those services would then have to be
-reconsidered (§8 point 3), and no document here may claim more than that until
-Check 68 has run.
+Manager, and to hold five roles that do nothing** — and the Secret Manager half
+is **measured, not expected**: that service's name-prefix condition is Check 52's
+U3, **RUN 2026-10-16 and answered yes — the condition is honoured** (F5's table
+below). So the forms this repository has measured live are Cloud Storage's and
+Secret Manager's name prefix, and every other service's is expected at best. The
+feature's own use of those services would then have to be reconsidered (§8 point
+3), and no document here may claim more than that until Check 68 has run.
 
 ## 1. The problem, as the tree records it
 
@@ -101,7 +101,7 @@ separate project, no deny policy.
 | claim | where | status |
 | --- | --- | --- |
 | a Cloud Storage `resource.name.startsWith("projects/_/buckets/<prefix>")` condition admits the prefix and refuses everything else | `docs/gcp-live-checklist.md` Check 32 | RUN 2026-10-14, PASSED |
-| a Secret Manager name-prefix condition | checklist Check 52, U3 | **NOT RUN** |
+| a Secret Manager name-prefix condition | checklist Check 52, U3 | RUN 2026-10-16: **honoured** — the inside read (a secret under the condition's prefix) was allowed and the outside read denied. Answered on a rerun: the first U3 run was invalid, a bug in the check's own script rather than the API's answer |
 | whether `resource.name` is honoured for an IAM service account, a Cloud Run job, a Cloud Scheduler job, an Artifact Registry repository or an API key | checklist Check 68, steps 4 and 5, per service and in both directions | **written, owner-run, NOT RUN** |
 
 ## 2. Requirements the redesign has to meet
