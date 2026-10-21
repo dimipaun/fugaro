@@ -345,11 +345,17 @@ func TestFirebaseRunsThroughTheLoop(t *testing.T) {
 
 // --forget and --config-only never enter the loop: no stages in their JSON.
 func TestForgetAndConfigOnlyDoNotEnterTheLoop(t *testing.T) {
-	for _, flag := range []string{"--config-only", "--forget"} {
+	for _, tc := range []struct{ flag, door string }{
+		{"--config-only", "setup"},
+		// --forget is the update door's flag (W1.2): setup refuses it, and a
+		// rollback is a re-converge, so this row runs the door that takes it.
+		{"--forget", "update"},
+	} {
+		flag := tc.flag
 		r := newInitRig(t)
 		r.stateBucket()
 		r.setPlan(t, forgetPlan()...)
-		out, _, err := executeStdin(t, "", "setup", flag, "--yes", "--json")
+		out, _, err := executeStdin(t, "", tc.door, flag, "--yes", "--json")
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", flag, err, out)
 		}
