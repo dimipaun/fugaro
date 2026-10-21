@@ -66,9 +66,23 @@
  * host's request logs stays where W3.2 put it, now as a line of "What this site does not do"
  * rather than a section of its own.
  *
+ * **The page wears the bold look, out of the site's own shapes.** The owner approved the
+ * redesign on 2026-10-20 (`website/design-ref/`), and the look is written once in
+ * `src/styles/base.css`'s section 2c: the glow and the grid a page opens on, the display
+ * scale, the gradient text and the card. This page renders those and invents nothing of its
+ * own — the headline is `display-xl` with its word in the gradient, the two part headings are
+ * `display-lg`, every subsection under them is a `.card`, and the hero's glow is the layout's
+ * own `.hero-glow`, which is why this page adds no shape to the shared layer. **No word of the
+ * page moved**: a redesign of a statement is a layout and not a rewrite, so every sentence
+ * here is still the one `website/test/privacy.mjs` and `website/test/consent.mjs` hold to the
+ * repository, and the page's own count — which is what `website/README.md` derives the words
+ * ceiling from — is where it was. `website/test/privacy.mjs` holds the look itself: the
+ * headline is on the display scale and in the gradient, the two part headings are too, and no
+ * `h3` of the page is left outside a card.
+ *
  * The page carries no script of its own and no copy of the consent key: the banner is the
  * layout's, rendered here because this page asks for it. The styles are scoped, token-only
- * (no colour literal, so the palette stays W1.2's) and add no behaviour.
+ * (no colour literal, so the palette stays the one in force) and add no behaviour.
  */
 import Base from '../layouts/Base.astro'
 import { loadSite } from '../content.ts'
@@ -86,167 +100,207 @@ const repo = site.facts.repository
 
 <Base title="Privacy" alwaysOffer>
   <article class="privacy">
-    <h1>Privacy</h1>
+    {/* The hero: the page's headline and its one line of lead, over the glow and the grid the
+        bold look draws at the top of a page (`base.css`'s `.hero-glow`, which is decoration
+        and carries no text of its own). */}
+    <div class="privacy-hero">
+      <div class="hero-glow" aria-hidden="true"></div>
+      <h1 class="privacy-title display-xl"><span class="gradient-text">Privacy</span></h1>
 
-    <p class="privacy-lead">
-      What this website does with a visitor's browser, and what the software does with your
-      data.
-    </p>
+      <p class="privacy-lead">
+        What this website does with a visitor's browser, and what the software does with your
+        data.
+      </p>
+    </div>
 
-    <h2>The website</h2>
+    {/* The page's two parts. Both part headings are children of this one box and of nothing
+        else: the gate reads the page's `h2`s and requires the two of them, in this order, at
+        the same level, so a part is a heading and the cards under it rather than a container
+        of its own. */}
+    <div class="privacy-body">
+      <h2 class="privacy-part display-lg">The website</h2>
 
-    {analyticsEnabled ? (
-      <>
-        <h3>What this site collects</h3>
+      {analyticsEnabled ? (
+        <>
+          <div class="card privacy-card">
+            <h3>What this site collects</h3>
+            <p>
+              This site counts visits with <strong>Google Analytics 4</strong>. If you accept,
+              Google's script reports the page's path, without any query, to Google, which
+              processes it for the site, and sets <strong>identifiers</strong> in your browser — a
+              client id, in cookies or similar storage.
+            </p>
+            <p>
+              The site's own code asks for one page view per page: no event, no user id, Google
+              Signals and ads personalisation off. Google Analytics 4 anonymises your IP address
+              by default.
+            </p>
+          </div>
+
+          <div class="card privacy-card">
+            <h3>Consent</h3>
+            <p>
+              Google's script loads only after you accept: until then this page has asked Google
+              nothing. <strong>Accept</strong>, in the banner, loads Google's
+              script once; <strong>Decline</strong> loads nothing, now or on any later page.
+            </p>
+            <p>
+              Dismissing the banner — Escape, or reading on — is a refusal. The answer is kept in
+              this browser, under <code>fugaro:analytics-consent</code> in <code>localStorage</code>.
+            </p>
+            <p>
+              To withdraw, use the banner here: it always offers the choice again. Declining stops
+              reporting at once, on this page too, and deletes Google's cookies
+              (<code>_ga</code> and the rest) from this browser.
+            </p>
+          </div>
+
+          <div class="card privacy-card">
+            <h3>What this site does not do</h3>
+            <ul>
+              <li>It sets no cookie of its own.</li>
+              <li>It has no account, form or comment box.</li>
+              <li>
+                It loads nothing from another origin except Google's script, and only after you
+                accept.
+              </li>
+              <li>
+                It keeps no log of its own. The host's request logs are the host's, and this
+                repository does not control them.
+              </li>
+            </ul>
+          </div>
+        </>
+      ) : (
+        <>
+          <div class="card privacy-card">
+            <p>
+              <strong>This site collects nothing.</strong> It is a set of static pages built from
+              this repository's files: no account, no form, no comment box, and no code of the
+              site's own running on a server. Nothing counts your visit, and nothing about it is
+              sent anywhere. Should measurement ever be switched on, this page changes at the same
+              time, and the site asks you first.
+            </p>
+          </div>
+
+          <div class="card privacy-card">
+            <h3>Analytics</h3>
+            <p>
+              This site has no analytics at all: nothing counts your visit, and no analytics
+              script, cookie or identifier is involved in the page you are reading. There is no
+              consent to give here, and nothing to withdraw.
+            </p>
+          </div>
+
+          <div class="card privacy-card">
+            <h3>What this site does not do</h3>
+            <ul>
+              <li>It sets no cookie, and it loads nothing that could set one.</li>
+              <li>
+                It loads nothing from another origin — no font, no script, no image, no embedded
+                player.
+              </li>
+              <li>It sells nothing, because it collects nothing to sell.</li>
+              <li>
+                It keeps no log of its own. The host's request logs are the host's, and this
+                repository does not control them.
+              </li>
+            </ul>
+          </div>
+        </>
+      )}
+
+      <h2 class="privacy-part display-lg">The software</h2>
+
+      <div class="card privacy-card">
+        <h3>Where it runs</h3>
         <p>
-          This site counts visits with <strong>Google Analytics 4</strong>. If you accept,
-          Google's script reports the page's path, without any query, to Google, which
-          processes it for the site, and sets <strong>identifiers</strong> in your browser — a
-          client id, in cookies or similar storage.
+          The command line tool and the desktop console run on your own machine. They talk to
+          your own Google Cloud project, your own git provider and the model provider you
+          configured, and to nothing the Fugaro project operates. Nothing is reported anywhere:
+          no telemetry, no usage statistics, no crash report, no identifier.
+        </p>
+      </div>
+
+      <div class="card privacy-card">
+        <h3>The update check</h3>
+        <p>
+          The one thing the tool asks outside your own accounts is whether a newer release
+          exists. It asks GitHub, at most once a day: one request to this repository's public
+          release list, carrying nothing about you, with the answer kept on your machine.
+          <code>FUGARO_NO_UPDATE_CHECK=1</code> or <code>update_check: false</code> turns it off;
+          <code>fugaro doctor</code>, which you run yourself, still reports your version.
+        </p>
+      </div>
+
+      <div class="card privacy-card">
+        <h3>The phone app</h3>
+        <p>
+          The phone app is built to sign in to your own Firebase project — the project id you type
+          in for an installation — and to read only what that project's rules grant it. Signing in,
+          it names the paired device to that project, and nothing else of yours goes with it. Its
+          writes go into the mailbox your own installation reads. Its two credentials, a Firebase
+          ID token and the pairing key, live in the device's secure storage, the Keychain or the
+          Keystore, and nowhere else.
         </p>
         <p>
-          The site's own code asks for one page view per page: no event, no user id, Google
-          Signals and ads personalisation off. Google Analytics 4 anonymises your IP address
-          by default.
-        </p>
-
-        <h3>Consent</h3>
-        <p>
-          Google's script loads only after you accept: until then this page has asked Google
-          nothing. <strong>Accept</strong>, in the banner, loads Google's
-          script once; <strong>Decline</strong> loads nothing, now or on any later page.
-        </p>
-        <p>
-          Dismissing the banner — Escape, or reading on — is a refusal. The answer is kept in
-          this browser, under <code>fugaro:analytics-consent</code> in <code>localStorage</code>.
+          <strong>Crash reports and anonymous usage.</strong> The app version that carries these
+          reports sends two things to a Firebase project the Fugaro project operates, and not to
+          your own: crashes, through <strong>Firebase Crashlytics</strong>, and anonymous usage,
+          through <strong>Firebase Analytics</strong>. A crash report holds the crash's logs,
+          diagnostics and app performance data; the usage count says which screens were opened.
+          Firebase gives the app an app-instance identifier of its own, and that travels with both.
+          Google holds all of it, as Firebase's processor, for the Fugaro project, under{' '}
+          <a href="https://firebase.google.com/support/privacy" rel="noopener">Google's Firebase
+          privacy policy</a>.
         </p>
         <p>
-          To withdraw, use the banner here: it always offers the choice again. Declining stops
-          reporting at once, on this page too, and deletes Google's cookies
-          (<code>_ga</code> and the rest) from this browser.
+          Never sent: the contents of any message, anything from your installation or its mailbox,
+          your credentials and your keys. The reports are read to find and fix crashes and to see
+          which screens are used, and for nothing else. The app carries no advertising identifier.
         </p>
-
-        <h3>What this site does not do</h3>
-        <ul>
-          <li>It sets no cookie of its own.</li>
-          <li>It has no account, form or comment box.</li>
-          <li>
-            It loads nothing from another origin except Google's script, and only after you
-            accept.
-          </li>
-          <li>
-            It keeps no log of its own. The host's request logs are the host's, and this
-            repository does not control them.
-          </li>
-        </ul>
-      </>
-    ) : (
-      <>
         <p>
-          <strong>This site collects nothing.</strong> It is a set of static pages built from
-          this repository's files: no account, no form, no comment box, and no code of the
-          site's own running on a server. Nothing counts your visit, and nothing about it is
-          sent anywhere. Should measurement ever be switched on, this page changes at the same
-          time, and the site asks you first.
+          The app versions that carry these reports send them. There is no switch inside the app to
+          turn them off: uninstalling the app stops them, and not installing it avoids them. The
+          command line tool and the console are unaffected: they carry none of these reports.
+          Earlier builds of the app send nothing at all.
         </p>
+      </div>
 
-        <h3>Analytics</h3>
+      <div class="card privacy-card">
+        <h3>Deleting your data</h3>
         <p>
-          This site has no analytics at all: nothing counts your visit, and no analytics
-          script, cookie or identifier is involved in the page you are reading. There is no
-          consent to give here, and nothing to withdraw.
+          Everything else the software holds lives in your own accounts, your own cloud project and
+          your own devices, and removing the installation removes it. The crash reports and
+          anonymous usage above are the exception, and deleting the app does not remove them:
+          Google holds them for the Fugaro project, under the policy linked above. Uninstalling the
+          app stops the sending. It does not take a report already sent out of Google's hands, and
+          the issue tracker is where to ask about one.
         </p>
+      </div>
 
-        <h3>What this site does not do</h3>
-        <ul>
-          <li>It sets no cookie, and it loads nothing that could set one.</li>
-          <li>
-            It loads nothing from another origin — no font, no script, no image, no embedded
-            player.
-          </li>
-          <li>It sells nothing, because it collects nothing to sell.</li>
-          <li>
-            It keeps no log of its own. The host's request logs are the host's, and this
-            repository does not control them.
-          </li>
-        </ul>
-      </>
-    )}
-
-    <h2>The software</h2>
-
-    <h3>Where it runs</h3>
-    <p>
-      The command line tool and the desktop console run on your own machine. They talk to
-      your own Google Cloud project, your own git provider and the model provider you
-      configured, and to nothing the Fugaro project operates. Nothing is reported anywhere:
-      no telemetry, no usage statistics, no crash report, no identifier.
-    </p>
-
-    <h3>The update check</h3>
-    <p>
-      The one thing the tool asks outside your own accounts is whether a newer release
-      exists. It asks GitHub, at most once a day: one request to this repository's public
-      release list, carrying nothing about you, with the answer kept on your machine.
-      <code>FUGARO_NO_UPDATE_CHECK=1</code> or <code>update_check: false</code> turns it off;
-      <code>fugaro doctor</code>, which you run yourself, still reports your version.
-    </p>
-
-    <h3>The phone app</h3>
-    <p>
-      The phone app is built to sign in to your own Firebase project — the project id you type
-      in for an installation — and to read only what that project's rules grant it. Signing in,
-      it names the paired device to that project, and nothing else of yours goes with it. Its
-      writes go into the mailbox your own installation reads. Its two credentials, a Firebase
-      ID token and the pairing key, live in the device's secure storage, the Keychain or the
-      Keystore, and nowhere else.
-    </p>
-    <p>
-      <strong>Crash reports and anonymous usage.</strong> The app version that carries these
-      reports sends two things to a Firebase project the Fugaro project operates, and not to
-      your own: crashes, through <strong>Firebase Crashlytics</strong>, and anonymous usage,
-      through <strong>Firebase Analytics</strong>. A crash report holds the crash's logs,
-      diagnostics and app performance data; the usage count says which screens were opened.
-      Firebase gives the app an app-instance identifier of its own, and that travels with both.
-      Google holds all of it, as Firebase's processor, for the Fugaro project, under{' '}
-      <a href="https://firebase.google.com/support/privacy" rel="noopener">Google's Firebase
-      privacy policy</a>.
-    </p>
-    <p>
-      Never sent: the contents of any message, anything from your installation or its mailbox,
-      your credentials and your keys. The reports are read to find and fix crashes and to see
-      which screens are used, and for nothing else. The app carries no advertising identifier.
-    </p>
-    <p>
-      The app versions that carry these reports send them. There is no switch inside the app to
-      turn them off: uninstalling the app stops them, and not installing it avoids them. The
-      command line tool and the console are unaffected: they carry none of these reports.
-      Earlier builds of the app send nothing at all.
-    </p>
-
-    <h3>Deleting your data</h3>
-    <p>
-      Everything else the software holds lives in your own accounts, your own cloud project and
-      your own devices, and removing the installation removes it. The crash reports and
-      anonymous usage above are the exception, and deleting the app does not remove them:
-      Google holds them for the Fugaro project, under the policy linked above. Uninstalling the
-      app stops the sending. It does not take a report already sent out of Google's hands, and
-      the issue tracker is where to ask about one.
-    </p>
-
-    <h3>Contact</h3>
-    <p>
-      Questions and bug reports go to the repository's{' '}
-      <a href={`${repo}/issues`} rel="noopener">issue tracker</a>. Report a vulnerability
-      through <a href={`${repo}/blob/main/SECURITY.md#reporting-a-vulnerability`} rel="noopener">SECURITY.md</a>'s
-      private route, never in a public issue.
-    </p>
+      <div class="card privacy-card">
+        <h3>Contact</h3>
+        <p>
+          Questions and bug reports go to the repository's{' '}
+          <a href={`${repo}/issues`} rel="noopener">issue tracker</a>. Report a vulnerability
+          through <a href={`${repo}/blob/main/SECURITY.md#reporting-a-vulnerability`} rel="noopener">SECURITY.md</a>'s
+          private route, never in a public issue.
+        </p>
+      </div>
+    </div>
   </article>
 </Base>
 
 <style>
   /* Scoped, so nothing here can reach another page, and token-only: the palette is W1.2's and
-     this file carries no colour literal (website/test/a11y.mjs refuses one outside :root). */
+     this file carries no colour literal (website/test/a11y.mjs refuses one outside :root).
+
+     The look itself is `src/styles/base.css`'s: the display scale, the gradient, the card and
+     the hero's glow are all shapes that file already draws, and what is here is the layout
+     this page gives them — the page's own column, the spacing between its parts, and the one
+     place a shape needed a nudge (a card's heading sits at the card's own edge). Nothing in
+     this block is a new visual idea, which is why no shared file moved for this page. */
   .privacy {
     max-width: var(--measure);
     margin-inline: auto;
@@ -254,22 +308,54 @@ const repo = site.facts.repository
     color: var(--text);
   }
 
-  .privacy h1 {
-    font-size: var(--font-size-3xl);
-    line-height: var(--leading-tight);
-    margin: 0 0 var(--space-md);
+  /* The hero: `base.css`'s glow is absolutely positioned over its parent and masked to fade
+     before the parent's end, so the parent is the positioned, clipped box — the top of the
+     page, down to the lead. The headline and the lead are lifted above the layer. */
+  .privacy-hero {
+    position: relative;
+    overflow: hidden;
+    padding-block: var(--space-2xl) 0;
   }
 
-  .privacy h2 {
-    font-size: var(--font-size-2xl);
+  .privacy-title,
+  .privacy-lead {
+    position: relative;
+  }
+
+  .privacy-lead {
+    max-width: 34rem;
+    margin: var(--space-md) 0 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xl);
     line-height: var(--leading-snug);
+  }
+
+  /* The two parts, and the cards under them. Both part headings are children of this box, so
+     the gate reads them as the page's two `h2`s, in order, at one level (`privacy.mjs`). */
+  .privacy-body {
+    margin-top: var(--space-2xl);
+  }
+
+  .privacy-part {
     margin: var(--space-3xl) 0 var(--space-md);
   }
 
-  .privacy h3 {
+  .privacy-body > .privacy-part:first-child {
+    margin-top: 0;
+  }
+
+  .privacy-card + .privacy-card {
+    margin-top: var(--space-md);
+  }
+
+  /* A card's heading, set the way the site's other cards set theirs (`HomeWhatYouGet.astro`):
+     the heading step of the type scale at the display weight, so a card reads as a card
+     wherever it stands. */
+  .privacy-card h3 {
+    margin: 0 0 var(--space-sm);
     font-size: var(--font-size-xl);
-    line-height: var(--leading-snug);
-    margin: var(--space-2xl) 0 var(--space-sm);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-tight);
   }
 
   .privacy p,
@@ -278,13 +364,7 @@ const repo = site.facts.repository
   }
 
   .privacy li + li {
-    margin-top: var(--space-xs);
-  }
-
-  .privacy-lead {
-    color: var(--text-muted);
-    font-size: var(--font-size-lg);
-    margin: 0 0 var(--space-xl);
+    margin-top: var(--space-2xs);
   }
 
   .privacy ul {
@@ -292,7 +372,7 @@ const repo = site.facts.repository
   }
 
   .privacy code {
-    background: var(--surface);
+    background: var(--panel);
     border-radius: var(--radius-sm);
     padding: 0 var(--space-3xs);
     font-family: var(--font-mono);

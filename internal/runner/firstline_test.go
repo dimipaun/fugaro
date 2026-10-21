@@ -66,8 +66,16 @@ func TestFirstLineStageOrder(t *testing.T) {
 	if c[0].Model != "coder-model" || c[1].Model != "coder-model" || c[2].Model != "coder-model" || c[3].Model != "senior-model" {
 		t.Fatalf("models = %q %q %q %q", c[0].Model, c[1].Model, c[2].Model, c[3].Model)
 	}
-	if c[1].JSONSchema == "" || c[1].Prompt != c[3].Prompt || c[1].SessionID == c[0].SessionID || c[3].SessionID == c[1].SessionID {
+	// The two reviews are given the same prompt, up to the input each round
+	// builds for itself (instructionsOf, reviewinput.go): the fix between
+	// them changed the branch, so the senior's diff is the newer one, and
+	// nothing of the first line's findings is in either.
+	if c[1].JSONSchema == "" || instructionsOf(c[1].Prompt) != instructionsOf(c[3].Prompt) ||
+		c[1].SessionID == c[0].SessionID || c[3].SessionID == c[1].SessionID {
 		t.Fatalf("first-line request = %+v, senior = %+v", c[1], c[3])
+	}
+	if !strings.Contains(c[3].Prompt, "+more") || strings.Contains(c[1].Prompt, "+more") {
+		t.Fatalf("the senior review's diff is not the one the fix left: first-line = %q, senior = %q", c[1].Prompt, c[3].Prompt)
 	}
 	if !c[2].Resume || c[2].SessionID != c[0].SessionID || !strings.Contains(c[2].Prompt, "- fix it") {
 		t.Fatalf("fix request = %+v", c[2])

@@ -30,6 +30,15 @@
  * reads its own data files with — nested maps, sequences of maps, quoted scalars, `[]` and
  * folded block scalars — and it refuses anything else with the line number rather than
  * guessing at it.
+ *
+ * **The page wears the bold look** (the owner's approved boards of 2026-10-20, the shared
+ * shapes in `src/styles/base.css` §2c and the homepage's blocks): the display scale's
+ * headline with the accent's gradient on its last word, one lead paragraph under it, each
+ * answer a card of the site's own `.card`, and the comparison section's panel. The shapes are
+ * `base.css`'s and the colours are the palette's — nothing here names a colour, a radius or a
+ * size of its own (W1.2, D104) — and **not a word of the page moved with them**: the
+ * headline, the lead, the answers and the empty state are the strings they were, so the word
+ * ceilings and every provenance rule the page answers to are the ones they were.
  */
 import Base from '../layouts/Base.astro'
 import { loadSite, REPO_ROOT } from '../content.ts'
@@ -391,114 +400,250 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
 ---
 
 <Base title="FAQ" description="What Fugaro is, where the code runs, what a run costs and what stops it, and what a run cannot change — answered from this repository's own documents.">
-  <h1>Frequently asked questions</h1>
+  {/* The page's three bands: the opening, the answers, the comparison. The room between them
+      is the flex gap rather than a margin on each, so the page has one rhythm and a band that
+      moves moves nothing else. `main` keeps its own gutter and its own top and bottom padding
+      (this page is not one of the two the layout takes its padding off — `base.css`'s content
+      container, part 1, gives that to the pages whose first block is a container of its own),
+      so the room below is added to the layout's rather than replacing it. */}
+  <div class="faq">
+    <div class="faq-head">
+      {/* The board's headline: `base.css`'s display scale, with the accent's gradient on the
+          last word — the same two pieces the homepage's hero sets its tagline in. The split
+          is markup around a word of this page's own heading, so the `h1` a reader receives is
+          the same string it was. */}
+      <h1 class="faq-title display-xl">
+        Frequently asked <span class="gradient-text">questions</span>
+      </h1>
 
-  <p class="lede">
-    Six answers, each naming the document it comes from.
-  </p>
-
-  <div class="questions">
-    {faq.questions.map((entry) => (
-      <article id={entry.id}>
-        <h2>{entry.question}</h2>
-        <p>{entry.answer}</p>
-        <p class="source">
-          Source: <a href={sourceHref(entry.source)} rel="noopener">{entry.source}</a>
-          {entry.moreHref !== '' && (
-            <>
-              {' · '}
-              <a href={entry.moreHref}>{entry.moreLabel}</a>
-            </>
-          )}
-        </p>
-      </article>
-    ))}
-  </div>
-
-  {/* The comparison section (D103). The count is on the element so the page's own test can
-      read the state from the artifact rather than from this template, and the table is
-      rendered only when faq.yaml carries rows: an empty table is a claim that there is
-      nothing to compare, which is not what an empty list means. */}
-  <section id="comparison" data-comparison-rows={String(faq.rows.length)}>
-    <h2>How Fugaro compares</h2>
-
-    {faq.rows.length === 0 ? (
-      <p id="comparison-empty">
-        No comparison is published: a row about another tool is a claim this repository
-        cannot verify, and none has been supplied with a source and a date.
+      <p class="faq-lede">
+        Six answers, each naming the document it comes from.
       </p>
-    ) : (
-      <table>
-        <caption>Comparisons, each with the source and the date it was read (D103).</caption>
-        <thead>
-          <tr>
-            <th scope="col">Tool</th>
-            <th scope="col">What the source says</th>
-            <th scope="col">Source</th>
-            <th scope="col">Read on</th>
-          </tr>
-        </thead>
-        <tbody>
-          {faq.rows.map((row) => (
-            <tr id={row.id}>
-              <th scope="row">{row.name}</th>
-              <td>{row.claim}</td>
-              <td>
-                <a href={row.source} rel="noopener">{row.source}</a>
-              </td>
-              <td>
-                <time datetime={row.date}>{row.date}</time>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    )}
-  </section>
+    </div>
+
+    {/* One card per answer, two to a row where there is room: the question is the card's
+        heading, the answer its body, and the source line its foot — the document each answer
+        is traceable to, which is the one thing this page owes a reader (D102, Global
+        Constraint 6). */}
+    <div class="questions">
+      {faq.questions.map((entry) => (
+        <article class="card question" id={entry.id}>
+          <h2 class="question-title">{entry.question}</h2>
+          <p class="question-answer">{entry.answer}</p>
+          <p class="source">
+            Source: <a href={sourceHref(entry.source)} rel="noopener">{entry.source}</a>
+            {entry.moreHref !== '' && (
+              <>
+                {' · '}
+                <a href={entry.moreHref}>{entry.moreLabel}</a>
+              </>
+            )}
+          </p>
+        </article>
+      ))}
+    </div>
+
+    {/* The comparison section (D103). The count is on the element so the page's own test can
+        read the state from the artifact rather than from this template, and the table is
+        rendered only when faq.yaml carries rows: an empty table is a claim that there is
+        nothing to compare, which is not what an empty list means. Either state is drawn in
+        the board's panel, so the section reads as one block whichever one it is in. */}
+    <section class="comparison" id="comparison" data-comparison-rows={String(faq.rows.length)}>
+      <h2 class="comparison-title display-lg">How Fugaro compares</h2>
+
+      <div class="comparison-panel">
+        {faq.rows.length === 0 ? (
+          <p class="comparison-empty" id="comparison-empty">
+            No comparison is published: a row about another tool is a claim this repository
+            cannot verify, and none has been supplied with a source and a date.
+          </p>
+        ) : (
+          <table>
+            <caption>Comparisons, each with the source and the date it was read (D103).</caption>
+            <thead>
+              <tr>
+                <th scope="col">Tool</th>
+                <th scope="col">What the source says</th>
+                <th scope="col">Source</th>
+                <th scope="col">Read on</th>
+              </tr>
+            </thead>
+            <tbody>
+              {faq.rows.map((row) => (
+                <tr id={row.id}>
+                  <th scope="row">{row.name}</th>
+                  <td>{row.claim}</td>
+                  <td>
+                    <a href={row.source} rel="noopener">{row.source}</a>
+                  </td>
+                  <td>
+                    <time datetime={row.date}>{row.date}</time>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </section>
+  </div>
 </Base>
 
 <style>
   /* The page's own layout, in the site's tokens: no colour is named here, and none is
-     needed — the palette decides every colour the site paints (W1.2, D104). */
-  .lede {
-    max-width: var(--measure);
+     needed — the palette decides every colour the site paints (W1.2, D104). The shapes the
+     boards repeat are `base.css`'s (the display scale, `.gradient-text` and `.card`), so what
+     is this file's own is the three bands' rhythm, the two-column grid the answers sit in,
+     and the room inside a card. */
+
+  /* The three bands, and the room between them: the spacing scale's largest step, which is
+     the rhythm every redesigned page's top-level blocks keep. The top and the bottom are
+     added to `main`'s own padding rather than replacing it: this page keeps the layout's
+     column, and only the pages whose first block is a container of its own take its padding
+     off (`base.css`'s content container). */
+  .faq {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3xl);
+    padding-block: var(--space-2xl) var(--space-xl);
+  }
+
+  /* The opening: the headline and the one paragraph under it. `max-width` on the lead is what
+     keeps it a lead — the board sets its three lines at about half the page's width, and a
+     sentence that ran the whole column would read as the page's first section. */
+  .faq-head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+
+  .faq-title {
+    margin: 0;
+  }
+
+  .faq-lede {
+    margin: 0;
+    max-width: 34rem;
     color: var(--text-muted);
-    font-size: var(--font-size-lg);
+    font-size: var(--font-size-xl);
     line-height: var(--leading-snug);
   }
 
-  .note {
-    max-width: var(--measure);
-    border-left: var(--border-width) solid var(--warn);
-    padding-left: var(--space-sm);
+  /* The answers: one card each, two to a row once there is room for two. The grid rather
+     than a plain list is what makes the six read as one block of the page — they are six
+     answers to six questions, and a reader scanning for their own question sees a set rather
+     than a document.
+
+     **The track's minimum yields to the column, and that is what the `min()` is for.** A bare
+     `minmax(20rem, 1fr)` asks for a 320 px track, and at the narrowest viewport the site is
+     read at (320 px) `main`'s own gutter leaves the column 288 px — so the track would be
+     wider than the column and the answer cards would run off the right of the page, with the
+     document scrolling sideways at the one width there is least room. `min(20rem, 100%)` asks
+     for the two-column shape wherever the column holds it and for the column itself where it
+     does not, which is the phone's single column. (The site's other `auto-fit` grids ask for
+     15rem and 16rem, both under the 288 px the narrowest column has; this page's cards want
+     the wider step, so the minimum is the one that has to give way.) */
+  .questions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+    gap: var(--space-md);
+  }
+
+  @media (min-width: 60rem) {
+    .questions {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  /* The card is `base.css`'s `.card` — the padding, the hairline, the larger radius and the
+     surface tone, written once for the site; what is this page's own is the stack the card's
+     three lines are laid in, and the source line pinned to its foot so that two cards beside
+     each other carry theirs on the same line whatever the answer's length. */
+  .question {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  /* The question is the card's heading and the loudest line in it: the card's own step of the
+     type scale in the display weight and tracking, so a reader scans the six headings rather
+     than reading the answers to find theirs. It is smaller than a section's heading
+     (`base.css`'s `.display-*`), because six of these are read at once and each is a
+     question rather than a section of the page. */
+  .question-title {
+    margin: 0;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-xl);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-tight);
+    line-height: var(--leading-tight);
+    text-wrap: balance;
+  }
+
+  .question-answer {
+    margin: 0;
     color: var(--text-muted);
+    font-size: var(--font-size-base);
+    line-height: var(--leading-normal);
   }
 
-  .questions article {
-    max-width: var(--measure);
-    margin-block: var(--space-lg);
-  }
-
+  /* The card's foot: the document the answer above it is traceable to, laid off the answer by
+     a hairline so it reads as provenance rather than as one more sentence of the answer. */
   .source {
+    margin: auto 0 0;
+    padding-block-start: var(--space-xs);
+    border-top: var(--border-width) solid var(--border);
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
 
-  #comparison table {
-    border-collapse: collapse;
-    width: 100%;
-    max-width: var(--page-max);
+  /* The comparison section, and the panel either state of it is drawn in: the hairline and
+     the larger radius a raised thing on this site has, over a wash of the panel tones — a
+     gradient of palette tokens in `background-image`, because a colour function would be a
+     literal no palette holds and `background` would make the contrast check read a gradient
+     as the one colour the text sits on. */
+  .comparison {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
   }
 
-  #comparison caption {
+  .comparison-title {
+    margin: 0;
+  }
+
+  .comparison-panel {
+    padding: var(--space-2xl) var(--space-lg);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-xl);
+    background-image: linear-gradient(180deg, var(--panel) 0%, var(--surface) 70%);
+  }
+
+  .comparison-empty {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-normal);
+  }
+
+  /* The table, for the day the owner supplies a sourced row: the same hairlines the cards
+     carry, with no wash of its own — the panel already stands the whole block off the page. */
+  .comparison table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+
+  .comparison caption {
     text-align: left;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
     padding-block-end: var(--space-2xs);
   }
 
-  #comparison th,
-  #comparison td {
+  .comparison th,
+  .comparison td {
     text-align: left;
     vertical-align: top;
     border-bottom: var(--border-width) solid var(--border);

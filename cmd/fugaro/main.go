@@ -16,12 +16,15 @@ func main() {
 	// SIGTERM is how Cloud Run asks a task to stop; cancelling the context lets
 	// the runner abandon the current stage and still finalize.
 	ctx, stop := signalContext()
-	// A bare --repo (secrets set/ls, budget set/kill/resume) is rewritten at
-	// the argv boundary before cobra parses anything: pflag cannot express an
-	// optional-value string flag without swallowing the `--repo owner/name`
-	// form (see NormalizeRepoArgs).
+	// Two argv-boundary rewrites happen before cobra parses anything: a bare
+	// --repo (secrets set/ls, budget set/kill/resume), which pflag cannot
+	// express as an optional-value string flag without swallowing the
+	// `--repo owner/name` form (NormalizeRepoArgs), and a leading
+	// -v/--version, which cobra's command resolution would otherwise read as a
+	// flag with a value and use to swallow the token after it
+	// (NormalizeVersionArgs).
 	root := cli.NewRootCmd()
-	root.SetArgs(cli.NormalizeRepoArgs(os.Args[1:]))
+	root.SetArgs(cli.NormalizeArgs(os.Args[1:]))
 	cmd, err := root.ExecuteContextC(ctx)
 	stop()
 	// Before the process can exit: give the background daily update check

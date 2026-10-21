@@ -66,6 +66,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cssDeclarations, cssRules, findAll, filesUnder, parse, textOf, walk } from './lib/html.mjs'
 import { buildCopy } from './lib/build.mjs'
+import { controlTargetFailures } from './lib/controls.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -131,9 +132,16 @@ function readableText(node) {
   return (node.children ?? []).map(readableText).join('')
 }
 
-/** The text of the first element carrying `class="…"`, or null when there is none. */
+/**
+ * The text of the first element whose class list carries `className`, or null when there is
+ * none. The match is on the whole token rather than on the attribute's exact text, because a
+ * page is free to give an element more than one class: the hero's headline is
+ * `class="hero-tagline display-xl"` — its own width and `base.css`'s display step — and a
+ * reader that wanted `class="hero-tagline"` exactly would find nothing there and pass the page
+ * on an empty reading.
+ */
 function classText(html, className) {
-  const m = new RegExp(`<([a-z0-9]+)[^>]*class="${className}"[^>]*>([\\s\\S]*?)</\\1>`).exec(html)
+  const m = new RegExp(`<([a-z0-9]+)[^>]*\\bclass="[^"]*\\b${className}\\b[^"]*"[^>]*>([\\s\\S]*?)</\\1>`).exec(html)
   return m ? text(m[2]) : null
 }
 
@@ -1808,6 +1816,141 @@ test('the picture refusals fire on the defect each one names', () => {
 })
 
 
+// ---- the two blocks the bold redesign adds to the homepage --------------------------------
+
+/**
+ * The homepage's two new blocks, as the lines they quote and the document each line cites: the
+ * run band (`HomeRunBand.astro`) and the grid of what a run leaves behind
+ * (`HomeWhatYouGet.astro`).
+ *
+ * **Both blocks are written the same way**, and this reads that way from the artifact: every
+ * sentence under a name is a line of a document of this repository, carried in `data-source`,
+ * while the blocks' own headings and card names are the owner's board rather than a document's
+ * words. Each component holds its lines at build time through `src/lib/repo-quote.mjs`; this is
+ * the same rule read off the built page, so a citation the markup dropped or pointed at the
+ * wrong document is a red gate and not only a build error (Global Constraint 6).
+ */
+function quotedBlocksOf(html) {
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
+  const doc = parse(html)
+  const linked = (root, name) => [...walk(root)].filter((el) => classes(el).includes(name))
+  const line = (el) => ({
+    source: el.attrs.get('data-source') ?? '',
+    text: decode(readableText(el)).replace(/\s+/g, ' ').trim(),
+  })
+  const out = { run: { sections: 0, lines: [] }, get: { sections: 0, lead: null, lines: [] } }
+  for (const section of findAll(doc, (el) => el.name === 'section' && classes(el).includes('home-run'))) {
+    out.run.sections += 1
+    for (const one of linked(section, 'home-run-step-line')) out.run.lines.push(line(one))
+  }
+  for (const section of findAll(doc, (el) => el.name === 'section' && classes(el).includes('home-get'))) {
+    out.get.sections += 1
+    for (const one of linked(section, 'home-get-lead')) out.get.lead = line(one)
+    for (const one of linked(section, 'home-get-line')) out.get.lines.push(line(one))
+  }
+  return out
+}
+
+/**
+ * Every line of the two new blocks that is not a line of the document it cites, as the lines a
+ * reader of a failure gets. **A line with no `data-source` is the first defect refused**: a
+ * sentence under a name with nothing citing it is a sentence no gate holds, and it reads exactly
+ * like a quotation.
+ */
+export function quotedBlockFailures(html) {
+  const blocks = quotedBlocksOf(html)
+  const out = []
+  const check = (where, one) => {
+    if (!one.source) {
+      out.push(`${where} carries the line ${JSON.stringify(one.text)} and cites no document: every line of these two blocks is a line of this repository, and a line with no \`data-source\` is a line no gate can hold (Global Constraint 6)`)
+      return
+    }
+    const held = quotedSection(one.source)
+    if (held.text === null) {
+      out.push(`${where} cites ${JSON.stringify(one.source)}, and this repository carries no such document or section: a citation naming nothing is a quotation nothing can check`)
+      return
+    }
+    if (!normalize(held.text).includes(normalize(one.text))) {
+      out.push(`${where} carries ${JSON.stringify(one.text)} and cites ${JSON.stringify(one.source)}, which does not write that line: a page renders a fact and never restates one (Global Constraint 6, D102)`)
+    }
+  }
+  for (const one of blocks.run.lines) check('the run band', one)
+  if (blocks.get.lead) check('the “what you get” grid', blocks.get.lead)
+  for (const one of blocks.get.lines) check('the “what you get” grid', one)
+  return out
+}
+
+test('the two blocks the bold redesign adds quote the repository, line by line', () => {
+  // The acceptance a reader can check: the band's four lines and the grid's five, under cards
+  // whose names are the board's, say what the repository says — and the grid's own lead line
+  // with them. The count is asserted first, because a reading that found no line would pass the
+  // page on lines it never read.
+  const html = builtPage('')
+  const blocks = quotedBlocksOf(html)
+  assert.equal(
+    blocks.run.sections,
+    1,
+    `the homepage renders ${blocks.run.sections} \`section.home-run\`, and the bold redesign's homepage carries one (the owner's board \`website/design-ref/HomeV3.dc.html\`, 2026-10-20)`,
+  )
+  assert.equal(
+    blocks.run.lines.length,
+    4,
+    `the run band carries ${blocks.run.lines.length} step line(s), and the run is four steps: the four names \`RunDiagram.astro\` draws, each with the line a document writes for it`,
+  )
+  assert.equal(
+    blocks.get.sections,
+    1,
+    `the homepage renders ${blocks.get.sections} \`section.home-get\`, and the bold redesign's homepage carries one (the owner's board \`website/design-ref/HomeV3.dc.html\`, 2026-10-20)`,
+  )
+  assert.ok(
+    blocks.get.lead !== null,
+    'the “what you get” grid carries no lead line, so the sentence the five cards are the detail of is not read here',
+  )
+  assert.equal(
+    blocks.get.lines.length,
+    5,
+    `the grid carries ${blocks.get.lines.length} card line(s), and the board draws five cards: one per thing a run leaves behind`,
+  )
+
+  const failures = quotedBlockFailures(html)
+  assert.deepEqual(
+    failures,
+    [],
+    `a line of the bold redesign's two new blocks is not a line of the document it cites:\n  ${failures.join('\n  ')}`,
+  )
+})
+
+test('the block reading refuses a line whose citation is dropped or moved, and only those', () => {
+  // The defect the reading above exists for: the same markup with one card's `data-source` taken
+  // off, and one band line's citation pointed at a document that does not write it. Both are
+  // invisible to a reading of the text — the sentences are the repository's either way — so the
+  // plants are what hold the reading to the citation rather than to the words.
+  const html = builtPage('')
+  const control = quotedBlockFailures(html)
+  assert.deepEqual(control, [], 'the shipped page does not pass its own reading, so the plants below would prove nothing')
+
+  const dropped = html.replace(
+    '<p class="home-get-line" data-source="README.md#Safety and cost controls"',
+    '<p class="home-get-line"',
+  )
+  assert.notEqual(dropped, html, 'the fixture did not drop a card’s citation: the page’s own markup carries none to drop')
+  const moved = html.replace(
+    '<p class="home-run-step-line" data-source="README.md#Why Fugaro"',
+    '<p class="home-run-step-line" data-source="README.md#Getting started"',
+  )
+  assert.notEqual(moved, html, 'the fixture did not move a band line’s citation: the page’s own markup carries none to move')
+
+  assert.ok(
+    quotedBlockFailures(dropped).some((one) => /cites no document/.test(one)),
+    'a card line with its `data-source` taken off was not refused, and a line with nothing citing it is the defect this reading exists for',
+  )
+  assert.ok(
+    quotedBlockFailures(moved).some((one) => /which does not write that line/.test(one)),
+    'a band line whose citation was moved to a section that does not write it was not refused',
+  )
+})
+
+
 test("every link on the two pages points at a route the plan's tasks write", () => {
   const routes = plannedRoutes()
 
@@ -1879,70 +2022,37 @@ test('the tokens the pages name are the ones the design layer declares', () => {
   )
 })
 
-/** The homepage's own controls, and what each one is, as a failure names it. */
+/**
+ * The homepage's own controls, and what each one is, as a failure names it. **Every control the
+ * page asks a reader to tap is at least 44 px tall**, and the page's own controls are the hero's
+ * two links in the action row, the run band's link to the page that draws the run, and the one
+ * button in the closing call to action (`HomeRunBand.astro`, `HomeInstall.astro`); the slider's
+ * three tabs are `test/slider.mjs`'s, which reads them at the widths the page is read at, so this
+ * reading is about the controls outside the slider.
+ */
 const CONTROL_TARGETS = [
   ['hero-cta', "the hero's filled call to action"],
   ['hero-cta-quiet', "the hero's quiet call to action"],
-  ['home-install-button', 'the button under the slider'],
+  ['home-run-link', "the run band's link to How it works"],
+  ['home-install-button', 'the button in the closing call to action'],
 ]
 
 /**
- * Every way a homepage control misses the target size the owner's brief of 2026-10-19
- * measures it against, as the lines a reader of a failure gets. **Every control the page asks
- * a reader to tap is at least 44 px tall**, and the page's own controls are the hero's two
- * links in the action row and the one button under the slider (`HomeInstall.astro`); the
- * slider's three tabs are `test/slider.mjs`'s, which reads them at the widths the page is
- * read at, so this reading is about the controls outside the slider.
- *
- * A minimum rather than a measurement, and that is the point: the hero's filled link is its
- * own line height plus its padding, which comes to a fraction of a pixel short of the target
- * with nothing in the markup to say so — a defect no reading of the markup can see and no
- * rendered measurement in this repository can take, which is why the rule declares the minimum
- * and this reading looks for the declaration. A rule inside a media query does not count: the
- * minimum has to hold at every width, so the rule it is declared in is one with no condition
- * over it.
+ * Every way a homepage control misses the target size the owner's brief of 2026-10-19 measures
+ * it against, as the lines a reader of a failure gets. **Every control the page asks a reader
+ * to tap is at least 44 px tall**, and the page's own controls are the hero's two links in the
+ * action row, the run band's link to the page that draws the run, and the one button in the
+ * closing call to action (`HomeRunBand.astro`, `HomeInstall.astro`); the slider's three tabs
+ * are `test/slider.mjs`'s, which reads them at the widths the page is read at, so this reading
+ * is about the controls outside the slider. The reading itself is `test/lib/controls.mjs`'s —
+ * one rule read in two places, since `test/caps-figures.mjs` runs it over the caps page's two
+ * hero actions as well — and the list above is this page's.
  */
-export function controlTargetFailures(css, controls = CONTROL_TARGETS) {
-  const tokens = new Map([...css.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;}]+)/g)].map((m) => [m[1], m[2].trim()]))
-  const px = (value) => {
-    const trimmed = (value ?? '').trim()
-    const named = /^var\((--[a-z0-9-]+)\)$/.exec(trimmed)
-    const resolved = named ? (tokens.get(named[1]) ?? '') : trimmed
-    const m = /^([\d.]+)px$/.exec(resolved.trim())
-    return m ? Number(m[1]) : null
-  }
-  // Whether a position in the stylesheet is inside a block: at the top level every rule is in
-  // force at every width, and a rule inside a media query is not.
-  const depthAt = (index) => {
-    let depth = 0
-    for (let i = 0; i < index; i++) {
-      if (css[i] === '{') depth++
-      else if (css[i] === '}') depth--
-    }
-    return depth
-  }
-
-  const out = []
-  for (const [klass, what] of controls) {
-    const heights = []
-    for (const match of css.matchAll(new RegExp(`\\.${klass}(?![\\w-])[^{}]*\\{([^}]*)\\}`, 'g'))) {
-      if (depthAt(match.index) !== 0) continue
-      const declared = /min-height\s*:\s*([^;}]+)/.exec(match[1])
-      const height = px(declared?.[1])
-      if (height !== null) heights.push(height)
-    }
-    if (!heights.some((height) => height >= 44)) {
-      out.push(
-        `${what} is ${heights.length ? `a ${Math.max(...heights)} px target` : 'no declared target'}, and the owner's brief of 2026-10-19 measures every control the page asks a reader to tap against 44 px`,
-      )
-    }
-  }
-  return out
-}
+export { controlTargetFailures }
 
 test('every control the homepage asks a reader to tap is at least 44 px tall', () => {
   assert.deepEqual(
-    controlTargetFailures(builtCSS(builtPage(''))),
+    controlTargetFailures(builtCSS(builtPage('')), CONTROL_TARGETS),
     [],
     'a control on the homepage is under the 44 px target the owner’s brief of 2026-10-19 measures every control against',
   )
@@ -1962,7 +2072,7 @@ test('a control under the target is refused, wherever its minimum is missing or 
     [
       'the button’s minimum moved into a media query, where it holds at one width and not at every one',
       `${withoutMinimum('home-install-button')}@media (min-width:48rem){.home-install-button{min-height:56px}}`,
-      /the button under the slider is no declared target/,
+      /the button in the closing call to action is no declared target/,
     ],
     [
       'a minimum declared under the target',
@@ -1972,7 +2082,7 @@ test('a control under the target is refused, wherever its minimum is missing or 
   ]
   for (const [what, planted, expected] of cases) {
     assert.notEqual(planted, css, `${what} left the stylesheet as it is, so the plant is not a plant`)
-    const failures = controlTargetFailures(planted)
+    const failures = controlTargetFailures(planted, CONTROL_TARGETS)
     assert.ok(
       failures.some((line) => expected.test(line)),
       `${what} was not refused by the sentence that names it:\n  ${failures.join('\n  ') || '(nothing refused)'}`,

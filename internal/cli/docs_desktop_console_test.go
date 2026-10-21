@@ -738,8 +738,11 @@ func TestDocsDesktopConsoleContractNamesOnlyRealFlags(t *testing.T) {
 		cmd.Flags().VisitAll(func(f *pflag.Flag) { all[f.Name] = true })
 	}
 	// A documented negative: the document names --version in order to say the
-	// root command has no cobra Version field and `fugaro --version` fails
-	// (section 7), so it is checked for absence, the opposite of the rest.
+	// `version` subcommand has no flag of its own and that the root command's
+	// --version is the root's, never the handshake's (§6.7, §8), so it is
+	// checked for absence, the opposite of the rest. The root command is not
+	// one of the commands this document describes -- the console spawns
+	// subcommands -- so its own flag is not in `all` either.
 	documentedAbsent := map[string]bool{"version": true}
 
 	// (1) Every flag token in the document.
@@ -6891,7 +6894,7 @@ func releaseLinuxCopyInSentences(t *testing.T) copyInSentences {
 		// pending", "Two files are pending", ...), and a marker that spelled the
 		// count would have to be edited every time a file is staged or applied
 		// -- which is the edit the block itself exists to make in one place.
-		opening: fencedBlockContaining(t, what, pair, "pending: `shared-tests.yml`"),
+		opening: fencedBlockContaining(t, what, pair, "files are pending"),
 		site:    fencedBlockContaining(t, what, pair, "now holds"),
 	}
 }

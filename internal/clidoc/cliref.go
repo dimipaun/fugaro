@@ -57,22 +57,24 @@ func writeCLIReference(path string) (int, error) {
 // that the tree a generator reads is the tree a reader runs.
 //
 // Cobra adds its `help` command, its `completion` command (with one
-// subcommand per shell) and the `-h, --help` flag of every command inside
+// subcommand per shell), the root command's `-v, --version` flag (from the
+// root's Version field) and the `-h, --help` flag of every command inside
 // Execute, not when the tree is built. A reference generated from the
 // un-executed tree would therefore print "every command and flag `fugaro`
 // ships" while omitting the two commands `fugaro --help` lists under Available
-// Commands and the help flag of every command in the CLI -- a claim the page
+// Commands and the version and help flags of the CLI -- a claim the page
 // does not keep, and one no test can catch, because a test that derives its
 // expectations from the same un-executed tree agrees with the generator's
-// mistake. Calling cobra's own initializers first (all three are exported)
+// mistake. Calling cobra's own initializers first (they are all exported)
 // makes the tree the CLI actually presents.
 //
-// It is idempotent, and it is the same three calls the drift tests in
-// internal/cli make (cliRefRoot) -- if the two ever disagree, the reference
-// names a command that test calls invented.
+// It is idempotent, and it is the same calls the drift tests in internal/cli
+// make (cliRefRoot) -- if the two ever disagree, the reference names a command
+// that test calls invented.
 func Prepare(root *cobra.Command) *cobra.Command {
 	root.InitDefaultHelpCmd()
 	root.InitDefaultCompletionCmd()
+	root.InitDefaultVersionFlag()
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
 		c.InitDefaultHelpFlag()
@@ -99,8 +101,9 @@ func Generate(root *cobra.Command) string {
 	b.WriteString("# Fugaro CLI reference\n\n")
 	b.WriteString("Every command and flag `fugaro` ships, generated from the command tree\n")
 	b.WriteString("(`internal/cli.NewRootCmd`) by `go run ./internal/clidoc`. Cobra's own `help`\n")
-	b.WriteString("and `completion` commands, and the `-h, --help` flag of every command, are\n")
-	b.WriteString("part of what `fugaro --help` lists, so they are here too. Commands the CLI\n")
+	b.WriteString("and `completion` commands, the root's `-v, --version` flag, and the\n")
+	b.WriteString("`-h, --help` flag of every command, are part of what `fugaro --help` lists,\n")
+	b.WriteString("so they are here too. Commands the CLI\n")
 	b.WriteString("hides are not listed: they are internal, and a hidden command is not user\n")
 	b.WriteString("documentation.\n\n")
 

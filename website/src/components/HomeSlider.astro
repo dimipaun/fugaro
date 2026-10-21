@@ -219,6 +219,13 @@ if (
 ---
 
 <section class="home-slider" data-slot="home-slider" aria-label="What Fugaro is and does">
+  {/* The block's own heading, and the line the board of 2026-10-20 draws over the control:
+      what a reader gets out of the three panels under it. It is the site's own sentence
+      rather than a document's — it names what the block shows, and no document of this
+      repository says it — so it is listed with the page's other new lines in the pull
+      request for the owner to veto. */}
+  <h2 class="slider-title">Say it. Get pull requests.</h2>
+
   {/* The three tabs, in the panels' own order: three links to the panels' ids, which is the
       whole of the switching. A fragment link is the one control a page has had since HTML 2 —
       no input, no button, no script — and the stylesheet shows the panel the fragment names
@@ -328,16 +335,37 @@ if (
     padding: 0 var(--space-md) var(--space-3xl);
   }
 
-  /* The tabs: one row, wrapping rather than scrolling on a phone, and each one a 44 px target
-     (the owner's brief's measurement) whether or not it is the selected one. A list with its
-     markers off, because it is a row of three controls and not a list of prose. */
+  /* The block's heading, at the display scale's middle step: the board draws the line over the
+     control at the same weight and tracking as the page's other section headings, one step
+     under the hero's own. It carries the room below it that separates it from the control. */
+  .slider-title {
+    margin: 0 0 var(--space-md);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: clamp(var(--font-size-2xl), 4.4vw, var(--font-size-4xl));
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-display);
+    line-height: var(--leading-tight);
+    text-wrap: balance;
+  }
+
+  /* The tabs: the board's segmented control — one bordered box on the panel, the three labels
+     inside it and the selected one filled with the accent. It is a list with its markers off,
+     because it is a row of three controls and not a list of prose, and it wraps rather than
+     scrolling on a phone (`website/test/slider.mjs` reads both the wrap and the 44 px target
+     every label keeps, selected or not). */
   .tab-bar {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2xs);
     margin: 0 0 var(--space-md);
-    padding: 0;
+    padding: var(--space-3xs);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--panel);
     list-style: none;
+    width: fit-content;
+    max-width: 100%;
   }
 
   .tab {
@@ -345,13 +373,13 @@ if (
     align-items: center;
     min-height: 44px;
     padding: 0 var(--space-md);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-pill);
-    background: var(--ground);
+    border: var(--border-width) solid transparent;
+    border-radius: var(--radius-md);
+    background: transparent;
     color: var(--text-muted);
     font-family: var(--font-sans);
     font-size: var(--font-size-base);
-    font-weight: var(--weight-medium);
+    font-weight: var(--weight-semibold);
     text-decoration: none;
   }
 
@@ -380,6 +408,14 @@ if (
      out of the layout. A reader with no script gets all three of them behind these rules, which
      is the point of the pattern — nothing here is built at runtime.
 
+     **The panel is drawn, since the bold redesign**: one bordered box on the panel tone, with
+     the radius the boards give a section and enough room under its heading that the three
+     panels read as one box whose contents change rather than as three boxes of three heights.
+     `display` is the one property the rules below decide, at every width and never inside a
+     query: the fragment is the whole of the switching (`website/test/base-styles.mjs` refuses
+     a `display` on a panel inside a media query, and `website/test/slider.mjs` refuses a rule
+     that marks a tab for a panel it does not open).
+
      The focus ring is not declared here: `base.css`'s `:focus-visible` rule draws the site's
      ring on every control, and a link is one of them, so a tab the keyboard is on carries the
      ring the rest of the site carries. It is the accent at the token's width and offset, which
@@ -396,20 +432,45 @@ if (
   /* The page's opening panel, while no tab has been chosen: the first one, because a reader who
      has clicked nothing is reading the first thing the block has to say. Written on the id, so
      it is in force whatever order these rules end up in — and out of force the moment any panel
-     is targeted, which is when a tab has been chosen. */
+     is targeted, which is when a tab has been chosen. It is written directly under the rule
+     above, and the two carry the same declaration, which is deliberate: the built stylesheet
+     merges adjacent rules that agree, and `website/test/slider.mjs`'s plant that takes
+     `.panel:target` away expects to find both selectors in one rule. */
   .home-slider:not(:has(.panel:target)) #home-panel-easy {
     display: block;
   }
 
-  /* The panels' own label, at the size the page's other section headings are set in. Each panel
-     carries the label of the tab that opens it, so a reader who arrives on a panel — by tab,
-     by screen reader or in the HTML — reads what they are looking at. */
+  /* The panel's own box: the panel tone, the hairline border and the larger radius, with the
+     room the board gives a panel around its content. It is on every panel rather than on the
+     visible one, so switching a tab changes the contents and not the box.
+
+     It is a rule of its own, and it names `.panel` and nothing else about the block, for two
+     reasons the readings in `website/test/` make concrete. A selector that named the block
+     would be read by `base-styles.mjs`'s `homeRhythmFailures` as the block's own padding, and
+     the slider would read as a block that opens with its own 48 px over it on top of the room
+     the hero leaves below it. And a selector naming a targeted panel would be read by
+     `slider.mjs` as a second rule showing a panel, which is what the plant that removes
+     `.panel:target` has to be able to take away. */
+  .panel {
+    box-sizing: border-box;
+    min-height: 24rem;
+    padding: var(--space-xl) var(--space-lg);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--panel);
+  }
+
+  /* The panels' own label. Each panel carries the label of the tab that opens it, so a reader
+     who arrives on a panel — by tab, by screen reader or in the HTML — reads what they are
+     looking at; since the bold redesign it is set at the display scale's middle step, so the
+     panel opens with a heading rather than with a line of body type. */
   .panel-title {
     margin: 0 0 var(--space-md);
     font-family: var(--font-sans);
-    font-size: var(--font-size-xl);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--tracking-tight);
+    font-size: clamp(var(--font-size-xl), 3vw, var(--font-size-3xl));
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-display);
+    line-height: var(--leading-tight);
     color: var(--text);
   }
 
@@ -424,6 +485,11 @@ if (
     list-style: none;
   }
 
+  /* The step is a card on the panel it is drawn in, since the bold redesign: the surface tone
+     one step above the panel, the hairline border and the larger radius the boards give a card.
+     Its grid, its padding and its border width are what `website/test/base-styles.mjs`'s
+     `sliderLayoutFailures` reads to work out whether the longest step name fits a phone, so the
+     restyle is the tones and the radius and nothing else. */
   .easy-step {
     display: grid;
     grid-template-columns: auto auto minmax(0, 1fr);
@@ -432,8 +498,8 @@ if (
     align-items: center;
     padding: var(--space-sm);
     border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--ground);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
   }
 
   /* The number and the glyph are the row's first two cells and the name and the line are the
@@ -491,7 +557,9 @@ if (
   }
 
   /* The command bar, and the one bar around it: `base.css`'s `.command-block` lays the command
-     at the left and its control at the right, and this rule is the bar's own look. */
+     at the left and its control at the right, and this rule is the bar's own look — the ground
+     the board draws a terminal on, the hairline border and the radius the site's other command
+     bars carry. */
   .watch-block {
     padding: var(--space-2xs) var(--space-sm);
     border: var(--border-width) solid var(--border);
@@ -501,7 +569,7 @@ if (
 
   .watch-command {
     margin: 0;
-    color: var(--text);
+    color: var(--accent-on-dark);
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);
   }

@@ -104,7 +104,7 @@ func executeStdin(t *testing.T, stdin string, args ...string) (string, string, e
 	cmd.SetIn(strings.NewReader(stdin))
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetArgs(NormalizeRepoArgs(args))
+	cmd.SetArgs(NormalizeArgs(args))
 	err := cmd.Execute()
 	return out.String(), errOut.String(), err
 }

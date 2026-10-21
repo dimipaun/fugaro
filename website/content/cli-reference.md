@@ -4,8 +4,9 @@
 
 Every command and flag `fugaro` ships, generated from the command tree
 (`internal/cli.NewRootCmd`) by `go run ./internal/clidoc`. Cobra's own `help`
-and `completion` commands, and the `-h, --help` flag of every command, are
-part of what `fugaro --help` lists, so they are here too. Commands the CLI
+and `completion` commands, the root's `-v, --version` flag, and the
+`-h, --help` flag of every command, are part of what `fugaro --help` lists,
+so they are here too. Commands the CLI
 hides are not listed: they are internal, and a hidden command is not user
 documentation.
 
@@ -20,6 +21,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for fugaro |
+| `-v`, `--version` | bool | `false` | no | version for fugaro |
 
 Subcommands:
 

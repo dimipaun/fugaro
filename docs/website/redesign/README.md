@@ -80,7 +80,7 @@ The owner accepted every recommendation of D180 to D192, as written in `reconcil
 - **D183** the JavaScript is one first-party file, `website/public/scripts/site.js`; no inline script, no CSP edit.
 - **D184** the homepage animation shows the README's documented sequence, held to the file at build time, captioned as the documented sequence.
 - **D185** How It Works uses the brief's four steps, each captioned by a quoted line.
-- **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog) — amended 2026-10-19: the privacy statement's own ceiling is derived from its own count, and every other page stays at 250.
+- **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog) — amended 2026-10-19: the privacy statement's own ceiling is derived from its own count, and every other page stays at 250 — amended 2026-10-21: the number is 500, the bold redesign's homepage being five blocks and 468 words (the reading below).
 - **D187** the fold is checked by the word ceiling plus one owner-run live check (70b).
 - **D189** long-page summaries are rendered from files; **D190** the design lives in the owner's tool, the repository keeps `design.md`, screenshots are regenerated and never committed; **D191** the redesign goes first; **D192** the byte budgets are re-derived in the commit that ships the script.
 
@@ -869,6 +869,46 @@ changes are cited as the feedback's own.
   feedback puts there. The caption below takes two words back off that page — it measures **294**
   words with everything the feedback asks for in place, which is the number `website/README.md`
   derives the ceiling from.
+- **D188's ceiling moves again, from 300 to 500, for the bold redesign's homepage.** The owner's
+  board `design-ref/HomeV3.dc.html` (approved 2026-10-20) draws the homepage as five blocks: the
+  hero, the slider, the run as a band of four steps, the grid of what a run leaves behind, and
+  the closing call to action with the install command. The page that carried three blocks carries
+  five, and the five measure **468 words**, so the page was over 300. The rule is the same one as
+  above and it is the same kind of reading: the number is the smallest round ceiling above the
+  page that carries every block its briefs and its boards require — still a ceiling, and the
+  highest page that gained nothing from the board is How It Works at 279 words. The lead ceiling
+  is untouched and the homepage's lead **fell** from 23 words to **16**: the board's hero prints
+  the request, the promise and the two links, and the illustration the board adds below them is a
+  `figure.hero-shot` the lead reading excludes whole, the way it already excludes the block the
+  first `h2` belongs to. Both changes are read off the built page by `website/test/budget.mjs`,
+  which is where the numbers above come from.
+- **The byte figures are not re-derived, and that is the owner's ruling and not an omission.**
+  The owner ruled on 2026-10-20 that the three figures `website/README.md` states are re-derived
+  **only when the owner asks** — `website/test/budget.mjs` runs D192's exact derivation only with
+  `FUGARO_DERIVE_BUDGETS=1`, so a round that moves a few hundred bytes no longer reds the
+  preview — while the ceilings the pages are measured against hold on every run. They hold here:
+  the gates' own build (the copy `test/lib/build.mjs` builds, which is the build the README's
+  figures name) is **1,035,806 bytes** against the stated **3,705,975**, and it is the docs hub,
+  not the homepage, that is still the heaviest page. The three figures are left as they stand
+  until the owner asks for the re-derivation; the drift is recorded in the pull request body
+  rather than silently absorbed.
+- **The site's green is its own value, and not the console's `--ok`.** The bold look's success
+  tone was first written as the board's own green, `#4CC38A` — which is also the console's
+  `--ok`, and `docs/design/console-styling.md` §3.2 records that colour as one of six the
+  console **invents** because "the website has no equivalent". `internal/cli`'s
+  `TestDocsConsoleStylingTokenProvenance` holds that sentence true by refusing those six literals
+  anywhere in `website/src/styles/palette-logo.css`, the palette in force, so the first value was
+  a red Go test rather than a judgement call. The palette's green is **`#43C08A`**: the same hue
+  family, the same contrast on the ground, the panel and the surface (read by
+  `website/test/a11y.mjs` like every other designed pair), and not the console's literal. The
+  other three palettes keep the console's value; the reading is about the palette the site
+  actually imports, which is also the only one the Go test reads.
+- **What this round could not verify, again.** The visual match to the owner's board is the
+  owner's check at the preview: this run cannot open an image, no browser was driven, and no
+  screenshot is committed. What the gates read is the artifact, the stylesheet and the numbers
+  above — the homepage's five blocks and their rhythm (`base-styles.mjs`), the lead and the words
+  (`budget.mjs`), the controls' 44 px minimum (`home.mjs`), the contrast of every designed pair
+  (`a11y.mjs`), and the slider's panels (`slider.mjs`).
 - **The diagram's fourth caption said more than the repository says.** It read "each commit is
   pushed within about a minute while the agent works", which is not what a reader of the picture
   takes it to mean: what opens the pull request is the run's **first checkpoint push** — within

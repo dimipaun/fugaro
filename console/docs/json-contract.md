@@ -569,11 +569,17 @@ the command resolves the checkout's origin), `--json`, plus the cloud flags.
 **Command:** `internal/cli/root.go` `newVersionCmd`, **`cobra.NoArgs` with no
 `Flags()` at all**. It prints **one line of plain text** — the `Version`
 variable (`Version`, `var Version = "dev"`), i.e. the release tag of a
-built binary. There is **no `--json` and no flag of any kind**, which is why
-the handshake is the one spawn that carries no `--project` (§8), and why the
-root command sets no cobra `Version` field (`fugaro --version` fails). The
-console parses the human line, pinned by a test against the real output
-(design §4.3 gap 2).
+built binary. **The subcommand has no `--json` and no flag of any kind**, which
+is why the handshake is the one spawn that carries no `--project` (§8). The
+root command does answer `--version` and `-v` now, printing the same line
+through the same template (`internal/cli/root.go`'s `versionTemplate`), and a
+leading one of those is the whole command — the argv boundary reduces it to the
+flag before cobra resolves anything, so `fugaro --version run` prints the
+version and runs nothing — but
+**the handshake stays `fugaro version`**: the console's argv is pinned to the
+subcommand every CLI version in its supported range has, while the root flag is
+newer than some of them. The console parses the human line, pinned by a test
+against the real output (design §4.3 gap 2).
 
 ### 6.8 `fugaro config list --json`
 
@@ -824,16 +830,17 @@ and **not** off this document or the design:
 | `secrets ls` | yes (`secretsOptions.addFlags`) |
 | `accounts ls` | yes (`newAccountsLsCmd`) |
 | `doctor` | yes (`newDoctorCmd`) |
-| **`version`** | **no — it takes no flags at all** (`internal/cli/root.go`) |
+| **`version`** | **no — it takes no flags at all** (`internal/cli/root.go`; the root's `--version`/`-v` is the root's own, not this subcommand's — §6.7) |
 | **`config list`** | **no — it reads the operator's local project configs, not a cloud** (`internal/cli/config_list.go`, §6.8) |
 | **`plan graph`** | **no — it reads the graph artifact in the checkout, not a cloud** (`internal/cli/plan.go`, §6.9) |
 
 So the console passes `--project <name>` (and `--config <path>` when the
 installation is not the ambient one) on **every spawn except the handshake**,
-which runs `fugaro version` bare. A console that appended `--project` to
-`version` would fail its own version check on the first launch, on every
-machine. `docs/gcp-live-checklist.md`'s Check 43 guard states the same
-exception. `TestDocsDesktopConsoleContractNamesTheFlagInventory` asserts this
+which runs `fugaro version` bare (never the root's `--version`, which older
+CLIs in the console's supported range do not have — §6.7). A console that
+appended `--project` to `version` would fail its own version check on the first
+launch, on every machine. `docs/gcp-live-checklist.md`'s Check 43 guard states
+the same exception. `TestDocsDesktopConsoleContractNamesTheFlagInventory` asserts this
 table against the live constructors.
 
 ## 9. What the console may do with all this

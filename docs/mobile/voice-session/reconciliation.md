@@ -459,11 +459,17 @@ source. **And 112 is proposed by another work**: `docs/windows-cli/` — **merge
 check in the register's sense — a first run on a real Windows machine, from a
 downloaded archive, by the owner, in three terminals … and **not claimed and not
 written** by this pull request"*; the command is
-`git grep -n 'Check 112' origin/main -- docs/windows-cli/`. The register's own
-rules: *"A reserved number is never reused and never renumbered"*, and
-*"the phase that ships the check writes them"*, and a check *"is never run before
-its text is in the register"* — and the rule that decides between two claims,
-*"whichever of two open claims merges second renumbers itself"*.
+`git grep -n 'Check 112' origin/main -- docs/windows-cli/`. The four rules this
+finding rests on, each attributed to the file it is in rather than lumped as the
+register's: the register's own are *"a reserved number is never reused or
+renumbered"* and the rule that decides between two claims, *"whichever of two
+open claims merges second renumbers itself"*
+([../../gcp-live-checklist.md](../../gcp-live-checklist.md)); *"the phase that
+ships the check writes them"* is
+[../../design/voice.md](../../design/voice.md) §5.3's convention — the one the
+project-centric plan sets and the console plan follows, and **not** a sentence of
+the register's; and *"A check is never run before its text is in the register"* is
+[docs/mobile/implementation-plan.md](../implementation-plan.md)'s own sentence.
 
 **Consequence.** The register's collision rule decides it: **#757 is on `main`
 and this branch is not, so this branch merges second and yields 112.** This work
@@ -506,8 +512,11 @@ read is still a number this tree should not take.
 
 **Evidence.** [spec.md](spec.md)'s header (*"Platforms: iOS and Android, via Expo
 (development builds only, no Expo Go)"*). `grep -rn 'Expo Go' docs/ mobile/`
-finds nothing; `docs/coordinator/README.md`'s table stops at D192; no D200 row
-exists. `mobile/package.json` declares no `expo-dev-client` (only `eas.json`'s
+finds the phrase nowhere outside this folder: its seven hits are this folder
+citing the brief — the spec's header, [README.md](README.md)'s number table and
+this document's own rows — and the ruling itself is in no other file.
+`docs/coordinator/README.md`'s table stops at D192; no D200 row exists.
+`mobile/package.json` declares no `expo-dev-client` (only `eas.json`'s
 `build.development.developmentClient: true`).
 
 **Consequence.** The ruling is **taken as given** — the plan depends on it,
@@ -896,12 +905,12 @@ Nothing in this table is asserted anywhere above or in the plan.
 |---|---|---|---|
 | U1 | That `TelephonyCallback.CallStateListener` requires `READ_PHONE_STATE` | The API reference's "Requires permission" line does not render to a reader without JavaScript, and no other first-party page states it plainly | `developer.android.com/reference/android/telephony/TelephonyCallback.CallStateListener` read in a browser, or a device |
 | U2 | Whether Play treats `READ_PHONE_STATE` as needing a declaration or a Data safety answer of its own | Play's *Permissions and APIs that Access Sensitive Information* page describes declaration forms for **SMS and Call Log** and does not name this permission | The Play Console's own *App content* forms, which show what they ask for |
-| U3 | That `AudioManager.MODE_IN_COMMUNICATION` makes the platform apply echo cancellation | The reference documents the mode as a name and nothing more (P20); AEC is the separate `AcousticEchoCanceler`, and even that page says the platform inserts one *"on some devices … according to the `MediaRecorder.AudioSource` used"* | A device, by measurement — it is part of Check 86's subject and check 112's |
+| U3 | That `AudioManager.MODE_IN_COMMUNICATION` makes the platform apply echo cancellation | The reference documents the mode as a name and nothing more (P20); AEC is the separate `AcousticEchoCanceler`, and even that page says the platform inserts one *"on some devices … according to the `MediaRecorder.AudioSource` used"* | A device, by measurement — it is part of Check 86's subject and check 113's |
 | U4 | That `@bacons/apple-targets` 5.0.0 works with the Expo SDK in `mobile/package.json` (`^58.0.16`) | The package's peer range is `expo >= 52`, but it pins `@expo/prebuild-config ~55.0.6`, an older line than SDK 58's; nothing in this tree has run it | `npx expo prebuild -p ios --clean` after the widget part, and EAS Build |
 | U5 | Whether EAS's capability sync enables **App Groups** on the extension's App ID as well as the app's | Expo's page says App Groups is supported and that EAS syncs capabilities from entitlements; it does not say, in as many words, that it does so for a second target's identifier | The first `eas build --profile internal` after the widget part, and the Apple portal afterwards |
 | U6 | That the app's `WHEN_UNLOCKED_THIS_DEVICE_ONLY` Keychain item behaves as documented on a real device (F24) | `mobile/README.md` records the constant as unexercised; no device has run the store | A device, while the phone is locked mid-session |
-| U7 | That the iOS "I'm back" earcon can be played with the audio session in the state the resume leaves it | Depends on the resume path this work has not built, and on a real call | A device, in check 112 |
-| U8 | The exact behaviour of a **Live Activity started from a `LiveActivityIntent`** when the app process is launched but not opened (P3) — in particular whether a session that was never foregrounded can pass Android's analog on iOS | Apple's page states the process is launched without opening the app; it does not say what the app may then do with the microphone | A device, in check 113 |
+| U7 | That the iOS "I'm back" earcon can be played with the audio session in the state the resume leaves it | Depends on the resume path this work has not built, and on a real call | A device, in check 113 |
+| U8 | The exact behaviour of a **Live Activity started from a `LiveActivityIntent`** when the app process is launched but not opened (P3) — in particular whether a session that was never foregrounded can pass Android's analog on iOS | Apple's page states the process is launched without opening the app; it does not say what the app may then do with the microphone | A device, in check 114 |
 | U9 | That the Android emulator's `gsm call` cannot model the call case | Stated here as a reading of the platform's audio-focus behaviour, not measured | The owner's first Android check run |
 | U10 | Whether an `internal`-profile EAS build (store distribution) can be installed on the owner's device **with** the extension's new identifiers before the Apple portal steps of §6.1 are done | Depends on Apple's and EAS's behaviour at build time | The first `eas build --profile internal` after the widget part |
 

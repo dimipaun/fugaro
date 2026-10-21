@@ -52,7 +52,13 @@
 //     column puts that label at 12 px or more, and the tall drawing — drawn at a phone's own
 //     width, with a ceiling of its own scale — meets the phone's column instead. Which *side*
 //     of that width each rule holds on is read too, since the same width read from the other
-//     side shows the wide drawing to the phone it cannot be read on. A number typed in here
+//     side shows the wide drawing to the phone it cannot be read on. Both drawings have to be
+//     on the page, and each is held to its own half of the changeover: the stacked drawing must
+//     be off where the queries are silent — above that width the wide one is the one shown — and
+//     the wide drawing must not be, since a wide drawing turned off there leaves a desktop no
+//     run at all, the stacked one being `display: none` above the changeover. Only one of the
+//     two is displayed at a time, so a page that lost one of them, or that turned the wide one
+//     off outside the changeover, is a page whose reader is shown no run. A number typed in here
 //     would keep agreeing with itself after the page's gutter moved.
 //   - **The loop's arrow is drawn, and it joins the stages the run repeats.** The draft draws
 //     `[fix ─► review(2)]`: the arrow leaves `review`, runs up beside the pills and lands back
@@ -814,6 +820,17 @@ export function runDiagramFailures(html, css, docs = sources()) {
   if (!tallShown.plain.includes('none')) {
     out.push(`the tall drawing is \`display: ${tallShown.plain.join(', ') || '(nothing declared)'}\` above the width the two drawings change over at, and only one of the two drawings is shown at a time: the run is drawn twice and read once (the owner's draft of 2026-10-19)`)
   }
+  // The wide drawing's half of the same reading. `wideShown.plain` was collected and never
+  // looked at, so the drawing turned off **where no query asks** passed: the query's own
+  // `display: none` written onto the base rule as well leaves a desktop with no drawing at all,
+  // since the stacked one is `display: none` above the changeover, and the two `switched`
+  // readings below went on agreeing with themselves. The read is `includes('none')` and not
+  // "the page declares an unconditional display", because the wide `<svg>` carries `.run-svg`
+  // and no display rule of its own: what is refused is a rule that takes it off where the
+  // queries are silent, and a page that declares nothing there is a page that shows it.
+  if (wideShown.plain.includes('none')) {
+    out.push(`the wide drawing is \`display: ${wideShown.plain.join(', ')}\` outside the media query the two drawings change over in, and the wide drawing is the one shown where that query does not hold — the stacked drawing is \`display: none\` above that width —: a drawing turned off where no query asks for it leaves the desktop with no run at all, both drawings off at once (the owner's draft of 2026-10-19)`)
+  }
   if (switchAt === null) {
     out.push(`the two drawings change over at ${widths.length === 0 ? 'no width this check can read' : `${widths.length} different widths (${widths.map((at) => (at === null ? 'one it cannot read' : `${at} px`)).join(', ')})`}: one drawing is shown at a time, so the page's stylesheet declares the single width that swaps them, and the whole reason that width is where it is is the label size below (the owner's draft of 2026-10-19)`)
   } else {
@@ -842,6 +859,15 @@ export function runDiagramFailures(html, css, docs = sources()) {
     return { smallest, units: box[2], px: (smallest * column) / box[2] }
   }
   const wide = diagram.drawings.find((drawing) => drawing.wide)
+  // And the wide drawing is *there*, which is the other half nothing read. The stacked drawing
+  // is held to existing below; the wide one was held to nothing, so a page built with the wide
+  // `<svg>` dropped still passed every reading in this file — the stages, the labels, the loop's
+  // arrow and the list under the picture are read out of whichever drawings the page carries,
+  // and every one of them is true of the stacked drawing alone. Above the changeover that
+  // drawing is `display: none`, so what such a page draws for a desktop is nothing.
+  if (!wide) {
+    out.push(`the page carries no wide drawing, and the two drawings are one picture at two scales with only one of them shown at a time: above the width they change over at the stacked drawing is \`display: none\`, so a page that lost the wide one draws no run for the reader a desktop is (the owner's draft of 2026-10-19)`)
+  }
   if (wide && switchAt !== null) {
     const read = scaledInto(wide, switchColumn)
     if (read && !(read.px >= floor)) {
@@ -909,6 +935,156 @@ function lengthInPx(value, css) {
   const px = /^([\d.]+)px$/.exec(text)
   if (px) return Number(px[1])
   return NaN
+}
+
+// ---- the opening and the close -----------------------------------------------------------
+
+/**
+ * The page's opening and its close, as the elements they render: the opening's pill, its
+ * headline and the lines it quotes, the links a reader acts on, then the closing band's
+ * heading, its line and its link. A block the page does not render is `null`; a list is empty.
+ */
+export function openingOf(html) {
+  const doc = parse(html)
+  const one = (name) => findAll(doc, (el) => has(el, name))[0] ?? null
+  const inner = (el) => textOf(el).trim().replace(/\s+/g, ' ')
+  const lines = (root) =>
+    root === null
+      ? []
+      : [...walk(root)]
+          .filter((el) => el.attrs.has('data-source'))
+          .map((el) => ({ source: el.attrs.get('data-source'), text: inner(el) }))
+  const links = (root) =>
+    root === null
+      ? []
+      : [...walk(root)]
+          .filter((el) => el.name === 'a' && el.attrs.get('href'))
+          .map((el) => ({ href: el.attrs.get('href'), text: inner(el) }))
+  const hero = one('how-hero')
+  const close = one('how-close')
+  const headline = hero === null ? null : ([...walk(hero)].find((el) => el.name === 'h1') ?? null)
+  const pill = hero === null ? null : ([...walk(hero)].find((el) => has(el, 'pill')) ?? null)
+  const heading = close === null ? null : ([...walk(close)].find((el) => el.name === 'h2') ?? null)
+  return {
+    hero: hero !== null,
+    close: close !== null,
+    pill: pill === null ? null : inner(pill),
+    headline: headline === null ? null : inner(headline),
+    lead: lines(hero),
+    heroLinks: links(hero),
+    heading: heading === null ? null : inner(heading),
+    closeLines: lines(close),
+    closeLinks: links(close),
+  }
+}
+
+/**
+ * What the page's opening and its close say that the repository does not. The board
+ * (`website/design-ref/HowItWorksV3.dc.html`) draws the opening as the page's own name, the
+ * headline the picture below is named with, one line of what a run is, and the two links a
+ * reader acts on, and it closes the page on the same promise and the one link that acts on it.
+ *
+ * Every line of both blocks either is the repository's own — and is held to the document its
+ * `data-source` names, exactly as the diagram's labels are — or is one of the board's own
+ * marketing lines, which no document of this repository writes and which the pull request
+ * lists for the owner to veto (the closing band's heading is the one of those this page
+ * ships). A sentence written for the page and rendered without a source is the defect this
+ * gate is for: it is a claim about how a run works that no document of this repository makes.
+ */
+export function openingFailures(html, docs = sources()) {
+  const out = []
+  const opening = openingOf(html)
+  if (!opening.hero) {
+    return ['the page renders no opening (a `section.how-hero`), and the board draws one: the page opens with its own name, the headline the picture is named with, one line of what a run is, and the two links a reader acts on (the owner\'s board website/design-ref/HowItWorksV3.dc.html)']
+  }
+
+  // The headline, held to the picture it names: the two are one sentence, so a reader is told
+  // the same thing by the heading and by the drawing under it.
+  const name = runDiagramOf(html).drawings[0]?.name ?? ''
+  if (opening.headline === null) {
+    out.push('the page\'s opening carries no `h1`, and the headline is the line the picture below it is named with: a reader who lands here is told what the page is about by its first heading (W1.11)')
+  } else if (name === '') {
+    out.push(`the page's headline reads ${JSON.stringify(opening.headline)} and the page renders no named drawing to hold it to, and the headline is the sentence the picture below it is named with (the owner's board HowItWorksV3)`)
+  } else if (!comparable(name).startsWith(comparable(opening.headline))) {
+    out.push(`the page's headline reads ${JSON.stringify(opening.headline)} and the drawing below it is named ${JSON.stringify(name)}, which does not open with it: the page's first line and its picture are one sentence (the owner's board HowItWorksV3)`)
+  }
+
+  // The pill: the page's own name, which is the name the site's menu gives this page.
+  const menu = [...html.matchAll(/<a\b[^>]*aria-current="page"[^>]*>([\s\S]*?)<\/a>/g)].map((match) => match[1].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim())
+  if (opening.pill === null) {
+    out.push('the page\'s opening carries no pill, and the board opens it with the page\'s own name, which is the word the menu gives this page (the owner\'s board HowItWorksV3)')
+  } else if (!menu.includes(opening.pill)) {
+    out.push(`the page's pill reads ${JSON.stringify(opening.pill)} and the site's menu names this page ${JSON.stringify(menu)}, and the pill is the page's own name rather than a second name for it (the owner's board HowItWorksV3; src/layouts/Base.astro)`)
+  }
+
+  // Every quoted line of the opening and of the close, held to the document it names. The
+  // opening and the close are sentences rather than the clauses the diagram's labels are, so
+  // the page sets a label's first letter as a sentence's — that one letter may move, and
+  // nothing else: `comparable` is otherwise case-sensitive, so a line rewritten rather than
+  // re-capitalised is still refused.
+  const asLine = (text) => {
+    const line = comparable(text)
+    return [line, line.charAt(0).toLowerCase() + line.slice(1), line.charAt(0).toUpperCase() + line.slice(1)]
+  }
+  const held = (line, where) => {
+    const doc = docs[line.source]
+    if (doc === undefined) {
+      out.push(`${where} attributes its text to ${JSON.stringify(line.source)}, and a quoted line is quoted from a document of this repository (Global Constraint 6)`)
+      return
+    }
+    if (!asLine(line.text).some((reading) => comparable(doc).includes(reading))) {
+      out.push(`${where} reads ${JSON.stringify(line.text)}, which is not a line of ${line.source}: every line of this page is the repository's own words rather than a sentence written for the page (Global Constraint 6, D102)`)
+    }
+  }
+  for (const line of opening.lead) held(line, 'a line of the page\'s opening')
+  for (const line of opening.closeLines) held(line, 'the line of the page\'s closing band')
+  if (opening.lead.length === 0) {
+    out.push('the page\'s opening says what a run is in no quoted line at all, and the line under the headline is the diagram\'s own labels: the opening is the run in the repository\'s words (Global Constraint 6, D102)')
+  }
+
+  // And the other half of that: a block of text in either place that is quoted from nothing at
+  // all. The board draws the opening as the page's own name (the pill), the headline, the two
+  // links, and the run in the repository's words; the close is a heading, a quoted line and a
+  // link. A paragraph in either block that quotes no document is a sentence written for the
+  // page, which is the defect this gate exists for — it is how a claim about how a run works
+  // gets onto the site with no document behind it.
+  const prose = (root, own, where) => {
+    for (const el of root === null ? [] : walk(root)) {
+      if (!['p', 'li', 'blockquote', 'figcaption'].includes(el.name)) continue
+      if (classes(el).some((name) => own.includes(name))) continue
+      if (el.attrs.has('data-source') || [...walk(el)].some((child) => child.attrs.has('data-source'))) continue
+      out.push(`${where} renders a block of text of its own (${JSON.stringify(textOf(el).trim().replace(/\s+/g, ' ').slice(0, 80))}) and quotes no document for it: every line of this page is the repository's own words, and a sentence written for the page is a claim no document of this repository makes (Global Constraint 6, D102)`)
+    }
+  }
+  const blocks = parse(html)
+  const block = (name) => findAll(blocks, (el) => has(el, name))[0] ?? null
+  prose(block('how-hero'), ['pill', 'how-pill', 'how-actions'], 'the page\'s opening')
+  prose(block('how-close'), [], 'the page\'s closing band')
+
+  // The links a reader acts on: the board's two in the opening, and the one the close repeats.
+  const wants = [
+    { links: opening.heroLinks, href: '/getting-started/', where: 'the page\'s opening' },
+    { links: opening.heroLinks, href: '/caps-and-costs/', where: 'the page\'s opening' },
+    { links: opening.closeLinks, href: '/getting-started/', where: 'the page\'s closing band' },
+  ]
+  for (const want of wants) {
+    if (!want.links.some((link) => link.href === want.href && link.text !== '')) {
+      out.push(`${want.where} carries no link to \`${want.href}\`, and the board draws one: the opening is the way to install Fugaro and the page that says what a run costs, and the close repeats the first (the owner's board HowItWorksV3)`)
+    }
+  }
+
+  // The close: the promise the page opened with, a heading of the board's own, and the link.
+  if (!opening.close) {
+    out.push('the page renders no closing band (a `section.how-close`), and the board draws one: the page closes on the promise it opened with and the one link that acts on it (the owner\'s board HowItWorksV3)')
+  } else {
+    if (opening.heading === null) {
+      out.push('the page\'s closing band carries no heading, and the board closes the page on a heading of its own (the owner\'s board HowItWorksV3)')
+    }
+    if (opening.closeLines.length === 0) {
+      out.push('the page\'s closing band carries no quoted line, and the line under its heading is the repository\'s own promise (Global Constraint 6, D102)')
+    }
+  }
+  return out
 }
 
 // ---- the gate ----------------------------------------------------------------------------
@@ -1012,6 +1188,15 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       'a diagram holding no drawing',
       page.replace(/<svg class="run-svg run-wide"[\s\S]*?<\/svg>/, '<span>a run, described</span>').replace(/<svg class="run-svg run-tall"[\s\S]*?<\/svg>/, ''),
       /holds no drawing/,
+    ],
+    [
+      'a diagram that lost the wide drawing',
+      // The wide drawing alone taken out, the stacked one left: above the width the two change
+      // over at the stacked drawing is `display: none`, so the reader a desktop is gets no run.
+      // Only one drawing is displayed at a time, which is why "one drawing is still there" is
+      // not the same page as "the run is drawn at every width".
+      page.replace(/<svg class="run-svg run-wide"[\s\S]*?<\/svg>/, ''),
+      /carries no wide drawing/,
     ],
     [
       'a drawing with no name',
@@ -1148,7 +1333,9 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
     // The list under the picture: a fact dropped from it, and one reordered.
     [
       'a fact dropped from the list',
-      page.replace(/<li class="run-fact"[^>]*><strong class="run-fact-name"[^>]*>Pull request<\/strong>[\s\S]*?<\/li>/, ''),
+      // The card's own markup: the item, its number and its name — the number the bold
+      // redesign draws inside every card, read past rather than spelled out here.
+      page.replace(/<li class="run-fact"[^>]*>[\s\S]*?<strong class="run-fact-name"[^>]*>Pull request<\/strong>[\s\S]*?<\/li>/, ''),
       /the list under the picture reads/,
     ],
     // A second drawing that says something else: the phone is told a different run.
@@ -1232,6 +1419,17 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       replaceOnce('{display:none}.run-tall', '{display:block}.run-tall'),
       /the wide drawing is `display: block`/,
     ],
+    // And the wide drawing off where no query asks for it: the query's own `display: none`
+    // written onto the base rule as well, which is the changeover undone in the one direction
+    // the tall rule cannot see — the stacked drawing is still turned off above that width, so
+    // the two rules together leave a desktop reader with no drawing at all. The rule is written
+    // in front of the query rather than found and rewritten, because the only `.run-wide` rule
+    // the page carries is inside it.
+    [
+      'a wide drawing turned off at every width',
+      replaceOnce('@media (width<=59.25rem){', '.run-wide{display:none}@media (width<=59.25rem){'),
+      /the wide drawing is `display: none`/,
+    ],
     // The same width read from the other side: `(width>=59.25rem)` names the width the page
     // changes over at and changes over the wrong way — the stacked drawing is shown to the
     // desktop and the shrunk wide one to the phone the floor exists for. Both rules are still
@@ -1268,6 +1466,129 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
     !namedStage('deploy') && namedStage('verify') && namedStage('fix') && namedStage('writeback'),
     'the stage names the repository carries are not read as they are: `verify` and `fix` are stages of the run and `deploy` is not, and this is the reading the gate holds the drawing to',
   )
+})
+
+test('How It Works opens on the run in the repository\'s words and closes on the same promise', () => {
+  const page = readFileSync(path.join(DIST, 'how-it-works', 'index.html'), 'utf8')
+  const failures = openingFailures(page)
+  assert.deepEqual(
+    failures,
+    [],
+    `the page's opening is not the one the owner's board draws:\n  ${failures.join('\n  ')}`,
+  )
+})
+
+test('every opening refusal fires on the defect it names', (t) => {
+  // The same proof the diagram's gate carries: the built page passes, and each fixture that
+  // breaks one thing in the opening makes exactly that thing's line appear. Without these the
+  // gate would pass on a page whose lead is a sentence written for it, which is the defect it
+  // exists for (Global Constraint 6, D102).
+  const page = readFileSync(path.join(DIST, 'how-it-works', 'index.html'), 'utf8')
+  const docs = sources()
+  const verdict = (html) => openingFailures(html, docs)
+  assert.deepEqual(verdict(page), [], 'the built page does not pass the gate its own fixtures are drawn from')
+
+  /** A fragment of the built page replaced, when the built page carries it. */
+  const rewritten = (pattern, to) => {
+    const found = typeof pattern === 'string' ? page.includes(pattern) : pattern.test(page)
+    assert.ok(found, `this fixture rewrites ${pattern}, and the built page does not carry it`)
+    return page.replace(pattern, to)
+  }
+
+  const cases = [
+    ['a page with no opening', rewritten('class="how-hero"', 'class="how-hero-x"'), /renders no opening/],
+    [
+      'an opening with no headline',
+      rewritten(/<h1 class="page-title display-xl"[\s\S]*?<\/h1>/, ''),
+      /opening carries no `h1`/,
+    ],
+    // The headline and the picture are one sentence: the heading renamed is the page telling a
+    // reader one thing and its own drawing telling them another.
+    [
+      'a headline the picture is not named with',
+      rewritten('>How a task becomes <span class="gradient-text"', '>How a run becomes <span class="gradient-text"'),
+      /headline reads .*which does not open with it/,
+    ],
+    [
+      'an opening with no pill',
+      rewritten(/<p class="pill how-pill"[\s\S]*?<\/p>/, ''),
+      /opening carries no pill/,
+    ],
+    [
+      'a pill that is not the page\'s own name',
+      rewritten('>How it works</p>', '>How a run works</p>'),
+      /pill reads .*and the site's menu names this page/,
+    ],
+    // The lead: a line of the diagram's labels paraphrased, and the same paragraph with every
+    // source taken off it — a sentence written for the page and rendered as though it were the
+    // repository's.
+    [
+      'a line of the opening that is not the document it names',
+      rewritten('>One execution per task, then gone<', '>One execution per task, then deleted<'),
+      /a line of the page's opening reads .*not a line of README.md#How it works/,
+    ],
+    [
+      'an opening whose lines name no document',
+      // Both refusals are true of it — the opening quotes nothing, and so it renders a block
+      // of its own — and the case names both rather than one of them.
+      page.replace(/(<section class="how-hero"[\s\S]*?)<\/section>/, (whole, body) => `${body.replace(/ data-source="[^"]*"/g, '')}</section>`),
+      /opening says what a run is in no quoted line at all|opening renders a block of text of its own/,
+    ],
+    [
+      'an opening with no way to install it',
+      rewritten(/<a class="how-cta" href="\/getting-started\/"[^>]*>Get started<\/a><a class="how-cta-quiet"/, '<a class="how-cta-quiet"'),
+      /opening carries no link to `\/getting-started\/`/,
+    ],
+    [
+      'an opening with nothing about what a run costs',
+      rewritten(/<a class="how-cta-quiet" href="\/caps-and-costs\/"[^>]*>Caps and costs<\/a>/, ''),
+      /opening carries no link to `\/caps-and-costs\/`/,
+    ],
+    // The closing band taken off the page: both refusals are true of it — there is no band,
+    // and so no link in it — and the case names both rather than one of them.
+    // A sentence written for the page and quoted from nothing: the defect this gate exists
+    // for, planted where a page this new would grow one.
+    [
+      'an opening that says something of its own',
+      rewritten('<p class="how-actions"', '<p class="how-claim">Fugaro is fast, safe and cheap.</p><p class="how-actions"'),
+      /opening renders a block of text of its own .*and quotes no document for it/,
+    ],
+    [
+      'a closing band that says something of its own',
+      rewritten('</p></div><a class="how-cta"', '</p><p class="how-claim">It costs nothing to try.</p></div><a class="how-cta"'),
+      /closing band renders a block of text of its own .*and quotes no document for it/,
+    ],
+    [
+      'a page with no closing band',
+      rewritten('class="how-close"', 'class="how-close-x"'),
+      /renders no closing band|closing band carries no link to `\/getting-started\/`/,
+    ],
+    [
+      'a closing band with no heading',
+      rewritten(/<h2 class="how-close-title[^"]*"[^>]*>[\s\S]*?<\/h2>/, ''),
+      /closing band carries no heading/,
+    ],
+    [
+      'a closing line that is not the document it names',
+      rewritten('>In your own cloud project</p>', '>In our own cloud project</p>'),
+      /the line of the page's closing band reads .*not a line of README.md#Why Fugaro/,
+    ],
+    [
+      'a closing band with no way to act on it',
+      rewritten(/(<section class="how-close"[\s\S]*?)<a class="how-cta"[^>]*>Get started<\/a>/, '$1'),
+      /closing band carries no link to `\/getting-started\/`/,
+    ],
+  ]
+  for (const [what, broken, expected] of cases) {
+    const lines = verdict(broken)
+    // Every line has to be the refusal the case names: a fixture that breaks one thing and a
+    // gate that refuses it for another reason is a case that proves nothing.
+    assert.deepEqual(
+      [...new Set(lines.map((line) => (expected.test(line) ? 'fired' : line)))],
+      ['fired'],
+      `${what}: the refusal did not fire, and this is what it said instead:\n${lines.join('\n')}`,
+    )
+  }
 })
 
 // ---- the pins, re-derived here -----------------------------------------------------------
