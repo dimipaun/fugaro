@@ -69,6 +69,16 @@
 //     head turned round lands on the right pill pointing the wrong way — and no part of the
 //     arrow may be drawn across a pill. An arrow deleted from the drawing, or redrawn between
 //     two other stages, is a run the page does not describe.
+//   - **Every shape of the drawing is painted, from the palette, and every label is legible
+//     where it is drawn** (`runPaintFailures` below). The drawing shipped as a series of black
+//     rectangles — the owner's reading of the preview, 2026-10-21 — because its shapes are
+//     markup the component generates and hands to `set:html`, which Astro's scope attribute
+//     never reaches, so every scoped `.run-card[cid]`-shaped paint rule was dead and SVG's own
+//     default fill (black) is what a reader saw. A gate that asked whether a rule with that
+//     class exists passed over all of it. This reading resolves each shape's paint from the
+//     rules that can reach it, refuses a shape left on SVG's default or painted with a colour
+//     literal rather than a palette token, and computes the contrast of each label against the
+//     surface it is drawn on.
 //
 // Standard library only; no network (Global Constraint 4).
 
@@ -77,6 +87,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { DIST, REPO, builtPages, cssDeclarations, cssRules, findAll, parse, textOf, walk } from './lib/html.mjs'
+import { ancestorsOf, classesOf, ruleReaches } from './lib/selectors.mjs'
+import { contrastRatio, paletteTokensInForce, parseColour } from './lib/colour.mjs'
 
 // ---- the repository's own words ---------------------------------------------------------
 
@@ -914,6 +926,267 @@ function different(values) {
   return new Set(values).size > 1
 }
 
+// ---- the drawing's paint: what a reader actually sees -------------------------------------
+//
+// **The defect this reading exists for (2026-10-21).** The owner read the preview and said the
+// diagram under "The run, end to end" was "a series of black rectangles". It was: the shapes of
+// the drawing are markup this component generates and hands to `set:html`, and Astro appends the
+// component's `data-astro-cid-…` to **every** compound of a scoped selector — so the built
+// stylesheet declared `.run-card[data-astro-cid-…]` while every `<rect>` the drawing writes
+// carries no scope attribute. All eleven paint rules were dead. Nothing else was wrong: the
+// markup was right, the labels were right, the geometry was right, and every gate in this file
+// passed, because every one of them reads the *drawing* and none read the *paint*. What a reader
+// saw instead of the palette was SVG's own defaults — `fill: black`, `stroke: none` — which is
+// black cards, black labels, and arrows that are stroke alone and so were not drawn at all.
+//
+// So this reading resolves each shape's paint the way a browser would: the last declaration of a
+// rule that can reach the element, or the element's own presentation attribute when no rule
+// declares the property, or SVG's initial value when neither does. It refuses a shape left on
+// that initial value, a shape whose paint is not a colour the palette holds, a `var()` written
+// into a presentation attribute (which is not a colour there — `var()` is valid in CSS only, and
+// an invalid presentation attribute is dropped, leaving the shape black), and a label whose
+// colour and the surface it is drawn on do not clear the ratio the site holds body text to.
+//
+// A rule that can reach the element is `lib/selectors.mjs`'s reading, the same one the changelog
+// gate makes of its code chips: a rule whose selector names a scope the element does not carry
+// is not in force, however its class reads. That is what makes this gate fail on the defect as
+// it shipped rather than pass on it.
+
+/** The SVG shapes a drawing paints, and the properties a colour may arrive on. A `<text>` is
+ *  filled and a `<line>` has no fill at all, so each of those is painted by its one property;
+ *  a `<rect>` and a `<path>` are painted by either — the cards and the arrowheads by their
+ *  fill, the loop's own line by its stroke, with `fill: none` declared over it. */
+const PAINT_PROPERTIES = { text: ['fill'], line: ['stroke'], rect: ['fill', 'stroke'], path: ['fill', 'stroke'] }
+
+/** WCAG 2.1 AA for body text: the ratio every label of the drawing is held to. The labels are
+ *  12 px and up (the floor `runDiagramFailures` holds the drawings to), which is not "large
+ *  text", so the ratio is the body one and not the 3:1 UI one. */
+const LABEL_CONTRAST = 4.5
+
+/** The palette token a paint value names, or `null` when it names no bare token. */
+const tokenOf = (value) => /^var\(\s*(--[a-zA-Z0-9-]+)\s*\)$/.exec(value.trim())?.[1] ?? null
+
+/** An opaque hex colour as `[r, g, b]`, or `null` for anything else (`none`, a colour function,
+ *  a named colour). `parseColour` asserts rather than returning, so the guard is the reader. */
+const rgbOf = (value) => (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test((value ?? '').trim()) ? parseColour(value, 'a colour of the drawing') : null)
+
+/**
+ * The paint an element ends up with for one property, as `{ value, from }` — the last
+ * declaration of a rule that can reach the element (the page's rules for one shape are one class
+ * deep and do not compete on specificity, so the cascade order is the file's order), or the
+ * element's own presentation attribute when no rule declares the property — and `null` when
+ * nothing does, which is SVG's initial value: black for `fill`, none for `stroke`, and not a
+ * colour this page chose.
+ *
+ * A rule inside a conditional block is not read: the drawing's own rules sit in none, and a
+ * shape painted only under some condition is a shape whose paint this reading cannot state,
+ * which the refusal below reports rather than passes.
+ */
+function paintInForce(css, el, property) {
+  let found = null
+  for (const rule of cssRules(css)) {
+    const selector = (rule.selector ?? '').trim()
+    if (selector.startsWith('@') || (rule.conditions ?? []).length > 0) continue
+    if (!ruleReaches(selector, el)) continue
+    for (const [name, value] of cssDeclarations(rule.body ?? '')) {
+      if (name === property) found = { value: value.trim(), from: `\`${selector}\``, source: 'rule' }
+    }
+  }
+  if (found !== null) return found
+  const attribute = el.attrs.get(property)
+  return attribute === undefined
+    ? null
+    : { value: attribute.trim(), from: `its own \`${property}="${attribute}"\` attribute`, source: 'attribute' }
+}
+
+/**
+ * What a declared paint value is worth: the palette token it names and its colour, `null` when it
+ * is `none` or is not a colour the palette in force holds.
+ *
+ * Two writings are colours of the palette: the token (`var(--surface)`, which is how the page's
+ * stylesheet paints) and the token's own literal (`#121a26`, which is how a value written straight
+ * into the markup would read). Both are resolved through the palette, so that a colour the
+ * drawing paints is one the contrast reading below can compute a pair from, and the palette is
+ * still the one place a colour is decided.
+ */
+function paintColour(reading, palette, values) {
+  if (reading === null || reading.value === 'none') return null
+  const token = tokenOf(reading.value)
+  if (token !== null) {
+    const value = palette.get(token.replace(/^--/, ''))
+    if (value === undefined) return null
+    return { token, value, rgb: parseColour(value, `the palette's \`${token}\``) }
+  }
+  const rgb = rgbOf(reading.value)
+  if (rgb === null || !values.has(reading.value.toLowerCase())) return null
+  return { token: null, value: reading.value, rgb }
+}
+
+/**
+ * The same reading, refused where it cannot paint: a `var()` is a colour in a stylesheet and not
+ * in a presentation attribute, so a shape carrying `fill="var(--surface)"` is a shape painted
+ * nothing at all. Both the refusal below and the contrast reading go through this, so that the
+ * two agree on what the drawing is painted with.
+ */
+function painted(reading, palette, values) {
+  if (reading === null || reading === undefined) return null
+  if (reading.source === 'attribute' && tokenOf(reading.value) !== null) return null
+  return paintColour(reading, palette, values)
+}
+
+/** The `<text>` elements of a drawing, as the geometry `textBox` measures them at. */
+function drawnText(el) {
+  return {
+    text: textOf(el).trim(),
+    x: Number(el.attrs.get('x')),
+    y: Number(el.attrs.get('y')),
+    size: Number(el.attrs.get('font-size')),
+    anchor: el.attrs.get('text-anchor') ?? 'start',
+  }
+}
+
+/**
+ * The surface a label of the drawing is drawn on: the stage pill the label sits in, or — for
+ * every other label — the card the box is drawn on. The pill is read by the drawing's own
+ * geometry, the way `stagePills` reads which stage a word belongs to, so a label's ground is a
+ * fact about where the drawing put it rather than about the class it carries.
+ */
+function labelGround(text, css, palette, values) {
+  const box = ancestorsOf(text).find((el) => el.name === 'g' && (has(el, 'run-box') || has(el, 'run-band-box')))
+  if (box === undefined) return null
+  const rects = [...walk(box)].filter((el) => el.name === 'rect')
+  const card = rects.find((el) => has(el, 'run-card') || has(el, 'run-band'))
+  const drawn = drawnText(text)
+  const pill = rects
+    .filter((el) => has(el, 'run-stage-pill'))
+    .find((el) =>
+      inPill(
+        textBox(drawn),
+        drawn,
+        { x0: Number(el.attrs.get('x')), x1: Number(el.attrs.get('x')) + Number(el.attrs.get('width')), y0: Number(el.attrs.get('y')), y1: Number(el.attrs.get('y')) + Number(el.attrs.get('height')) },
+      ),
+    )
+  return painted(paintInForce(css, pill ?? card, 'fill'), palette, values)
+}
+
+/** How a label's colour is named in a failure: its token when it has one, its literal when it
+ *  is written as the palette's own value. */
+const named = (colour) => (colour.token === null ? colour.value ?? '' : `\`${colour.token}\``)
+
+/**
+ * Every way the built page's run drawing is left unpainted or unreadable, as the lines a reader
+ * of the failure gets: a shape no rule reaches (the defect of 2026-10-21), a shape painted with
+ * something that is not a colour the palette holds — a literal that is not one of its values, a
+ * colour function, or a `var()` written into a presentation attribute, where it is invalid — and
+ * a label whose colour against the surface it is drawn on is under the ratio the site's own text
+ * is held to.
+ *
+ * Pure, over the page's markup and its stylesheet, so the built page is checked with it and the
+ * refusals below are proved with it.
+ */
+export function runPaintFailures(html, css, palette = paletteTokensInForce()) {
+  const out = []
+  const values = new Set([...palette.values()].map((value) => value.toLowerCase()))
+  const figures = findAll(parse(html), (el) => el.name === 'figure' && classes(el).includes('run-diagram'))
+  if (figures.length === 0) {
+    return ['the page renders no run diagram, and this reading is about the shapes of one: the site\'s picture of a run is the drawing on How It Works (the owner\'s draft of 2026-10-19)']
+  }
+
+  for (const figure of figures) {
+    for (const svg of walk(figure)) {
+      if (svg.name !== 'svg') continue
+      const where = `the ${has(svg, 'run-wide') ? 'wide' : has(svg, 'run-tall') ? 'tall' : '(unclassed)'} drawing`
+      // The shapes are read class by class: one line per shape would be a hundred lines of the
+      // same sentence, and a reader of the failure wants the rule to fix.
+      const groups = new Map()
+      const note = (el, line) => {
+        const key = `<${el.name} class="${classes(el).join(' ')}">`
+        if (!groups.has(key)) groups.set(key, { count: 0, lines: new Set() })
+        const group = groups.get(key)
+        group.count += 1
+        group.lines.add(line)
+      }
+
+      for (const shape of walk(svg)) {
+        const properties = PAINT_PROPERTIES[shape.name]
+        if (properties === undefined) continue
+        const readings = properties.map((property) => ({ property, ...(paintInForce(css, shape, property) ?? { value: null, from: null }) }))
+        const declared = readings.filter((reading) => reading.value !== null)
+
+        for (const reading of declared) {
+          // `var()` is CSS's own syntax and an SVG presentation attribute is not CSS: an invalid
+          // attribute is dropped, and the shape falls back to SVG's initial value — black for
+          // `fill`, none for `stroke`. This is the trap a fix written in the markup falls into,
+          // and it is refused whatever token it names, because the token is not read there at all.
+          if (reading.source === 'attribute' && tokenOf(reading.value) !== null) {
+            note(
+              shape,
+              `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), and \`var()\` is not a colour in an SVG presentation attribute: it is CSS's own syntax, an invalid attribute is dropped, and the shape falls back to SVG's initial value, which for \`fill\` is black and for \`stroke\` is none. The colour belongs in a class in the page's stylesheet, where the token resolves`,
+            )
+            continue
+          }
+          // A colour of the palette, and nothing at all, are the two values there is nothing to
+          // say about: the first is the shape painted the way the site paints, and the second is
+          // one property of a shape another property may still paint.
+          if (painted(reading, palette, values) !== null || reading.value === 'none') continue
+          // A token the palette does not hold is a colour nothing in force decides, and the one
+          // reading that could say what the shape is painted would be a second palette.
+          const token = tokenOf(reading.value)
+          if (token !== null) {
+            note(
+              shape,
+              `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), and the palette in force declares no \`${token}\` (${[...palette.keys()].map((name) => `--${name}`).join(', ')}): a shape painted with a token that is not there resolves to nothing, and SVG's initial value takes over — a black fill, no stroke`,
+            )
+            continue
+          }
+          // A colour the palette does not hold is still a colour: the shape is visible, and the
+          // refusal is about where the value came from rather than about a reader seeing nothing.
+          if (rgbOf(reading.value) !== null) {
+            note(
+              shape,
+              `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), which is not one of the palette's own colours (${[...new Set(palette.values())].join(', ')}): every colour the site paints comes from the palette in force, so that it is one value to change and one pair the contrast check can read`,
+            )
+            continue
+          }
+          note(
+            shape,
+            `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), which this reading cannot turn into a colour: a colour function, a named colour or a \`currentColor\` is a value no contrast check can compute, and the palette in force holds opaque hex literals`,
+          )
+        }
+
+        const isPainted = declared.some((reading) => painted(reading, palette, values) !== null)
+        if (!isPainted && declared.length === 0) {
+          note(
+            shape,
+            `no rule of the page's stylesheet can reach it and it declares no \`fill\` or \`stroke\` of its own: SVG's initial values are a black fill and no stroke at all, so the shape is painted black — the drawing's cards and its labels are rectangles of black — or, where it is stroke alone, not drawn at all. The shapes of this drawing arrive through \`set:html\`, which Astro's scope attribute never reaches: a scoped \`.run-…[data-astro-cid-…]\` rule cannot match them, and the paint rules need \`:global()\` around the shape's own compound (the owner's reading of the preview, 2026-10-21)`,
+          )
+        } else if (!painted) {
+          note(shape, `it declares ${declared.map((reading) => `\`${reading.property}: ${reading.value}\``).join(' and ')} and no colour at all, so it is drawn as nothing (the owner's reading of the preview, 2026-10-21)`)
+        }
+      }
+
+      // And the labels: what each one is filled with, and what it is drawn on.
+      for (const text of [...walk(svg)].filter((el) => el.name === 'text')) {
+        const fill = painted(paintInForce(css, text, 'fill'), palette, values)
+        if (fill === null) continue // its paint is refused above, where every shape is read
+        const ground = labelGround(text, css, palette, values)
+        if (ground === null) continue // the surface under it is refused above, with the rect
+        const ratio = contrastRatio(fill.rgb, ground.rgb)
+        if (ratio >= LABEL_CONTRAST) continue
+        note(
+          text,
+          `it is drawn in ${named(fill)} on ${named(ground)}, which is ${ratio.toFixed(1)}:1 — under the ${LABEL_CONTRAST}:1 the site's own text is held to (WCAG 2.1 AA, \`website/test/a11y.mjs\`), and a label a reader cannot read is a label the drawing does not say`,
+        )
+      }
+
+      for (const [key, group] of groups) {
+        out.push(`${where} draws ${group.count} ${key} ${group.count === 1 ? 'shape' : 'shapes'}, and ${[...group.lines].join('; ')}`)
+      }
+    }
+  }
+  return out
+}
+
 /**
  * The phone the drawings are held to: the width the tall drawing is drawn at, and the
  * viewport whose column every phone number below is taken at. It is the one number written
@@ -1101,6 +1374,72 @@ test('How It Works is one diagram of the run, named for a screen reader and quot
     const failures = runDiagramFailures(page.html, pageCss(page.html))
     assert.deepEqual(failures, [], `${page.rel}: the run diagram is not the one the owner's draft of 2026-10-19 asks for:\n  ${failures.join('\n  ')}`)
   }
+})
+
+test('every shape of the run drawing is painted from the palette, and every label is legible where it is drawn', () => {
+  // The reading the owner's own finding of 2026-10-21 asks for: the drawing was a series of
+  // black rectangles, and every gate in this file passed over it, because they read the drawing
+  // and none of them read the paint.
+  const page = builtPages().find((entry) => entry.rel === path.join('how-it-works', 'index.html'))
+  assert.ok(page, 'the built site has no How It Works page, and the run\'s drawing is on it')
+  const failures = runPaintFailures(page.html, pageCss(page.html))
+  assert.deepEqual(failures, [], `${page.rel}: the run drawing is not painted the way the site paints:\n  ${failures.join('\n  ')}`)
+})
+
+test('every paint refusal fires on the defect it names', (t) => {
+  // The reading's own proof, and the defect of 2026-10-21 is its first case: the page as it is
+  // built passes, and each fixture that breaks one thing about the paint makes exactly that
+  // thing's line appear.
+  const page = readFileSync(path.join(DIST, 'how-it-works', 'index.html'), 'utf8')
+  const css = pageCss(page)
+  const verdict = (stylesheet, html = page) => runPaintFailures(html, stylesheet)
+  assert.deepEqual(verdict(css), [], 'the built page does not pass the reading its own fixtures are drawn from')
+
+  // **The defect as it shipped.** Astro appends the component's scope attribute to every
+  // compound of a scoped selector, so `.run-card` was built as `.run-card[data-astro-cid-…]` —
+  // and the shapes, which arrive through `set:html`, carry no scope attribute for that to
+  // match. This plant rebuilds exactly that shape out of the page's own stylesheet, which is
+  // why the fix is read here and not in the source: the source's `.run-diagram :global(.run-card)`
+  // and the dead `.run-card[data-astro-cid-…]` are one edit apart.
+  const scope = /\.run-diagram\[(data-astro-cid-\w+)\]/.exec(css)?.[1]
+  assert.ok(scope, 'the page\'s stylesheet carries no rule scoped to the drawing\'s own component, and the plant below rebuilds the dead shape from one')
+  const rescoped = css.replace(new RegExp(`\\.run-diagram\\[${scope}\\] \\.run-([\\w-]+)`, 'g'), '.run-$1[' + scope + ']')
+  assert.notEqual(rescoped, css, 'the plant did not change the page\'s stylesheet, so the case below proves nothing about the scoped shape')
+
+  // The same defect one declaration at a time. Each plant rewrites the page's *own* rule for a
+  // class — found by the class and the property, not by a selector typed in here, so a fix that
+  // renames a rule cannot leave a fixture pointing at nothing.
+  const rule = (klass) => new RegExp(`(\\.run-diagram\\[${scope}\\] \\.${klass}(?![\\w-])[^{}]*\\{[^{}]*?\\b(?:fill|stroke)\\s*:\\s*)([^;}]+)`)
+  const repaint = (klass, value) => {
+    const changed = css.replace(rule(klass), `$1${value}`)
+    assert.notEqual(changed, css, `the page's stylesheet no longer paints \`.${klass}\` with a declaration this fixture can rewrite`)
+    return changed
+  }
+  // And the same colour written where it cannot be one: a `var()` is CSS's own syntax, an SVG
+  // presentation attribute is not CSS, and a shape whose only paint is that attribute falls
+  // back to SVG's initial value. The rule that paints the card is taken out so that the
+  // attribute is the paint in force, which is what a fix written in the markup would leave.
+  const noFillRule = css.replace(new RegExp(`(\\.run-diagram\\[${scope}\\] \\.run-card\\{[^{}]*?)fill:[^;]+;`), '$1')
+  assert.notEqual(noFillRule, css, 'the page\'s stylesheet no longer paints `.run-card` with a `fill` this fixture can take out')
+  const attributeVar = page.replace(/<rect class="run-card"/, '<rect fill="var(--surface)" class="run-card"')
+
+  const cases = [
+    ['the scoped paint rules the drawing shipped with (2026-10-21)', { html: page, css: rescoped }, /no rule of the page's stylesheet can reach it/],
+    ['a card painted with a literal the palette does not hold', { html: page, css: repaint('run-card', '#000000') }, /which is not one of the palette's own colours/],
+    ['a card painted through a var() in its presentation attribute', { html: attributeVar, css: noFillRule }, /`var\(\)` is not a colour in an SVG presentation attribute/],
+    ['a label painted on the surface it is drawn on', { html: page, css: repaint('run-small', 'var(--border)') }, /under the 4\.5:1 the site's own text is held to/],
+    ['a label drawn in a colour no contrast check can compute', { html: page, css: repaint('run-name', 'currentColor') }, /this reading cannot turn into a colour/],
+  ]
+  for (const [what, fixture, wanted] of cases) {
+    const failures = verdict(fixture.css, fixture.html)
+    assert.ok(
+      failures.some((line) => wanted.test(line)),
+      `${what}: the reading passed over it — ${wanted} is not among the lines it gave (${failures.length === 0 ? 'it gave none' : failures.join('; ')})`,
+    )
+  }
+  // And the page as it is built is still the page that passes, so the plants above are the only
+  // thing that changed.
+  assert.deepEqual(verdict(css), [], 'the reading refuses the built page after its own fixtures ran')
 })
 
 test('every run-diagram refusal fires on the defect it names', (t) => {
@@ -1347,9 +1686,12 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
   ]
   // The page as it is built, with one of the diagram's own rules rewritten: the fixtures the
   // markup cannot reach are declarations, and Astro scopes a component's rule with its own
-  // `[data-astro-cid-…]`, so the rule is found rather than spelled out here.
+  // `[data-astro-cid-…]`, so the rule is found rather than spelled out here. A rule's selector is
+  // read to its end rather than assumed to be the class alone: the paint rules of this drawing are
+  // `.run-diagram[cid] .run-card`, and a reader that wanted the class to sit next to the brace
+  // would find none of them.
   const ruleText = (klass) => {
-    const match = new RegExp(`(?:^|[},])\\s*(\\.${klass}(?:\\[[^\\]]*\\])?\\{([^}]*)\\})`).exec(css)
+    const match = new RegExp(`(?:^|[},])\\s*([^{}]*\\.${klass}(?![\\w-])[^{}]*\\{([^}]*)\\})`).exec(css)
     assert.ok(match, `the built stylesheet carries no \`${klass}\` rule, and the cases below rewrite it`)
     return [match[1], match[2]]
   }
