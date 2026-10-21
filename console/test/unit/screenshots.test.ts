@@ -56,7 +56,7 @@
 // owner's own run (`scripts/console-screenshots.sh`) is where they are
 // exercised -- see `console/README.md`.
 
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -708,7 +708,9 @@ describe('a launch is checked against the store it seeds', () => {
       // check itself and not only about the launch.
       const reports = fixture.reports()
       expect(reports.length).toBeGreaterThan(0)
-      for (const report of reports) expect(report.cwd).toBe(isolation.userData)
+      // A child's cwd is the kernel's, so on macOS /var shows as /private/var:
+      // compare real paths, which still means "inside the scratch tree".
+      for (const report of reports) expect(realpathSync(report.cwd)).toBe(realpathSync(isolation.userData))
     } finally {
       rmSync(isolation.scratch, { recursive: true, force: true })
     }
