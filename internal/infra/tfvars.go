@@ -3,7 +3,12 @@ package infra
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
 	"maps"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -221,6 +226,94 @@ func Credentials(lc *localcfg.Config, image string) (CredentialsServiceSpec, err
 		Image:        image,
 		BundleSecret: gcp.ProjectSecretID(lc.Name, CredentialsBundleName),
 	}, nil
+}
+
+// SetCredentialsService returns the installation root's tfvars vars — as
+// InstallationVars wrote them — with credentials_service set to svc, and
+// every other entry byte-for-byte what it was.
+//
+// It is a read-modify-write of the ONE key and never a rebuild of the
+// document, because the tfvars that are on disk when the credentials stage
+// runs are not what InstallationVars(spec) would produce: the run that wrote
+// them had run discovery, so they carry the module's project_secrets (the
+// live project-wide containers), adopt_legacy_registry and the run's imports
+// — values only that run's discovery knew. Rewriting the document from the
+// stage's own spec would plan the destruction of every project secret the
+// discovery had found.
+func SetCredentialsService(vars []byte, svc CredentialsServiceSpec) ([]byte, error) {
+	raw, err := json.Marshal(svc)
+	if err != nil {
+		return nil, err
+	}
+	return setVarsKey(vars, "credentials_service", raw)
+}
+
+// CarriedCredentialsService returns vars with the credentials_service entry
+// that root's workdir already carried, when vars carry none of their own.
+//
+// The variable is the credentials stage's alone (C1.20), and every ordinary
+// run of init rewrites the tfvars from its spec — which never sets the key.
+// Carried forward exactly as it was, present or absent, an installation that
+// has opted in keeps the service across an ordinary run's rewrite; without
+// that, the next plain `fugaro init` would plan the service, its account and
+// its grant away (a plan the bundle container's prevent_destroy refuses,
+// so the run fails rather than applies anything). An installation that never
+// opted in carries no key and is unchanged, and the runbook's opt-out — the
+// owner deleting the key by hand — is respected for the same reason: the
+// entry is taken as it is found.
+func CarriedCredentialsService(vars []byte, root string) ([]byte, error) {
+	old, err := os.ReadFile(filepath.Join(root, VarsFile))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return vars, nil // no workdir yet: nothing to carry
+	case err != nil:
+		return nil, err
+	}
+	prev, err := varsDoc(old)
+	if err != nil {
+		// A tfvars that cannot be read is not a reason to write a plan that
+		// drops the service: fail rather than carry nothing forward.
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	svc, ok := prev["credentials_service"]
+	if !ok || svc == nil {
+		return vars, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	doc["credentials_service"] = svc
+	return sortedJSON(doc)
+}
+
+// varsDoc decodes an installation tfvars document, keeping numbers as
+// json.Number so that encoding it again writes the same digits.
+func varsDoc(vars []byte) (map[string]any, error) {
+	dec := json.NewDecoder(bytes.NewReader(vars))
+	dec.UseNumber()
+	var doc map[string]any
+	if err := dec.Decode(&doc); err != nil {
+		return nil, err
+	}
+	return doc, nil
+}
+
+// setVarsKey returns the tfvars document vars with key set to the raw JSON
+// value raw, every other entry unchanged, in sortedJSON's own bytes.
+func setVarsKey(vars []byte, key string, raw json.RawMessage) ([]byte, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, err
+	}
+	var val any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&val); err != nil {
+		return nil, err
+	}
+	doc[key] = val
+	return sortedJSON(doc)
 }
 
 // InstallationNames are the installation's singleton names.

@@ -79,6 +79,7 @@ type initOptions struct {
 	forget, yes, asJSON                 bool
 	nonInteractive                      bool
 	provisionBatch                      bool   // --provision-batch: provision the Batch backend's installation-level root (owner-run, typed confirmation)
+	provisionCredentials                bool   // --provision-credentials: turn the credentials service on in the installation root (owner-run, typed confirmation)
 	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
 	allowFork                           bool   // --allow-fork: the plugin-wiring stage may move a fork's marketplace ref
 	allowDelete                         []string
@@ -428,6 +429,7 @@ secrets stage is behind the same gate.`,
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.provisionBatch, "provision-batch", false, "after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so --yes never covers it and it is typed at a real terminal; nothing runs it by default, and no run can use the backend until the enable task. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
+	f.BoolVar(&o.provisionCredentials, "provision-credentials", false, "after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service that is the one identity reading the model credentials (its own account, one Secret Manager bundle secret), running this release's image pinned by digest through the installation's remote repository. Every repository root re-applied after this stops mounting each job's model credential and asks the service instead, so a service that is down is runs that cannot start; it needs the installation's Firebase rules (fugaro init --firebase) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor, --provision-batch)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). Never covers creating a project, billing, a secret, an unlisted repository, the Firestore location, a billable first image build or replacing an image tag (typed at a real terminal). Under a coding agent's environment variable (CLAUDECODE and the like) init applies nothing, --yes included (except init --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one non-interactive opt-in to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes never covers it, and a coding agent's environment refuses it; any other origin takes the typed confirmation)")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
@@ -1070,10 +1072,10 @@ func (o *initOptions) check() error {
 			return userErr("--anchor only writes the gcp_project line of an onboarded repository's checkout; it excludes %s", strings.Join(set, ", "))
 		}
 	}
-	if o.provisionBatch {
-		// It is an apply of a root the user has to confirm by typing the
-		// project's name, so a flag that only reads or only stops has no room
-		// beside it: a run that named --provision-batch and printed vars would
+	if o.provisionBatch || o.provisionCredentials {
+		// Both are applies of the installation's own root, each confirmed by
+		// typing the project's name, so a flag that only reads or only stops
+		// has no room beside them: a run that named one and printed vars would
 		// look like it had provisioned something.
 		var set []string
 		for _, f := range []struct {
@@ -1086,7 +1088,15 @@ func (o *initOptions) check() error {
 			}
 		}
 		if len(set) > 0 {
-			return userErr("--provision-batch provisions the installation's Batch compute backend, which is an apply: it excludes %s", strings.Join(set, ", "))
+			flags, what := "--provision-batch", "provisions the installation's Batch compute backend"
+			if o.provisionCredentials {
+				flags, what = "--provision-credentials", "turns the installation's credentials service on"
+				if o.provisionBatch {
+					flags = "--provision-batch and --provision-credentials"
+					what = "provision the installation's Batch compute backend and turn its credentials service on"
+				}
+			}
+			return userErr("%s %s, which is an apply: it excludes %s", flags, what, strings.Join(set, ", "))
 		}
 	}
 	if o.forget && len(o.allowDelete) > 0 {
@@ -1609,6 +1619,18 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (
 	vars, err := infra.InstallationVars(spec)
 	if err != nil {
 		return nil, err
+	}
+	if spec.CredentialsService == nil {
+		// The credentials service's opt-in is the credentials stage's alone
+		// (C1.20): this spec never carries it, and the tfvars are rewritten
+		// from the spec on every run, so an installation that has opted in
+		// would lose the key here and plan the service's removal — a plan the
+		// bundle container's prevent_destroy refuses, so every ordinary run of
+		// fugaro init after the opt-in would fail instead of applying. The key
+		// is carried forward exactly as the workdir has it, present or absent.
+		if vars, err = infra.CarriedCredentialsService(vars, wd.Root); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
 	}
 	if err := wd.WriteVars(vars); err != nil {
 		return nil, userErr("writing the tfvars: %v", err)
@@ -2309,6 +2331,13 @@ func (r *initRun) printResult() error {
 
 // checkRepo refuses flag combinations that mean nothing for --repo.
 func (o *initOptions) checkRepo() error {
+	if o.provisionCredentials {
+		// Like --provision-batch, and for the same reason: this run validates
+		// here and never reaches check(). --repo onboards a repository's own
+		// root and --provision-credentials applies the installation's, which
+		// is why the flag's help says it excludes --repo.
+		return userErr("--provision-credentials turns the installation's credentials service on, which is an apply of the installation's own root: it excludes --repo (run fugaro init --provision-credentials for the installation, then fugaro init --repo in each checkout, which is the step that drops the jobs' model-secret accessors and grants their accounts an invoker on the service)")
+	}
 	if o.provisionBatch {
 		// This run validates here and never reaches check(), so the pair has
 		// to be refused here as well: --repo onboards a repository's own root
