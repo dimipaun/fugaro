@@ -345,11 +345,14 @@ const entries = [...guides, referenceEntry]
 
   /* The opening band: the headline and the lead, then the room the guides start after and the
      hairline that separates the two bands. The page's own vertical rhythm is here and not in
-     `main`'s padding, which the layout gives every page. */
+     `main`'s padding, which the layout gives every page: the room above the headline is the
+     bold look's, and it is what makes the first screen of this page read as a band of the
+     site rather than as a heading the layout happened to place. */
   .docs-hero {
     display: flex;
     flex-direction: column;
     gap: var(--space-md);
+    padding-top: var(--space-2xl);
     padding-bottom: var(--space-2xl);
     border-bottom: var(--border-width) solid var(--border);
   }
