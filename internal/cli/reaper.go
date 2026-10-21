@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -12,6 +13,25 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/batch"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+)
+
+const (
+	// envReaperJob is the marker that says a `fugaro reaper` is running where
+	// it is meant to: inside the Cloud Run job the compute module creates, with
+	// no shell and no operator. reaper.tf sets it, and nothing else does --
+	// deliberately, because the two variables that name the pass's project and
+	// region (envGCPProject, envRegion) are the HISTORY job's, and any process
+	// with those two in its environment would otherwise reach the environment
+	// path and sweep a project for real from a shell. Requiring a variable only
+	// this job sets is what tells the two apart: the job is the only thing an
+	// automated, deleting pass may be.
+	envReaperJob = "FUGARO_REAPER_JOB"
+	// reaperJobMarker is the value envReaperJob must have. It is a marker and
+	// not a credential: a marker is checked for the value the job sets and
+	// nothing else, and "1" is what Terraform sets. An empty variable is not
+	// the marker (an environment a shell happened to export empty is not a
+	// reaper job), and neither is any other value.
+	reaperJobMarker = "1"
 )
 
 // newReaperCmd is `fugaro reaper`: one pass of internal/backend/batch's
@@ -71,7 +91,11 @@ func newReaperCmd() *cobra.Command {
 			"naming it in the report, which is what this command prints and what its own Cloud Run\n" +
 			"job logs.\n\n" +
 			"Run it as the installation's reaper account. --dry-run prints the same report and\n" +
-			"deletes nothing.",
+			"deletes nothing.\n\n" +
+			"Where no project config is selected the pass reads the reaper job's own environment\n" +
+			"(FUGARO_GCP_PROJECT and FUGARO_REGION, which Terraform sets on the job), and deletes\n" +
+			"only inside the Cloud Run job that also sets FUGARO_REAPER_JOB: anywhere else that\n" +
+			"environment is a dry run, so an operator's shell never sweeps their project.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runReaper(cmd.Context(), cmd, o, dryRun)
@@ -88,9 +112,15 @@ func runReaper(ctx context.Context, cmd *cobra.Command, o cloudOptions, dryRun b
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
-	opts, err := reaperPass(ctx, o, os.Getenv, dryRun)
+	opts, note, err := reaperPass(ctx, o, os.Getenv, dryRun)
 	if err != nil {
 		return err
+	}
+	if note != "" {
+		// The note is what tells an operator who ran this by hand that the
+		// pass they are watching is a dry run: it is the difference between a
+		// report and a deletion, so it goes to stderr before the report.
+		fmt.Fprintln(cmd.ErrOrStderr(), note)
 	}
 	r, err := batch.NewReaper(ctx, opts)
 	if err != nil {
@@ -117,7 +147,8 @@ func runReaper(ctx context.Context, cmd *cobra.Command, o cloudOptions, dryRun b
 
 // reaperPass is what the one pass runs with: the selected project config, or
 // -- where nothing was named that could select one -- the reaper job's own
-// environment.
+// environment. The second return value is a note for the operator ("" when
+// there is none), which today is the environment path's "this is a dry run".
 //
 // The order is the whole of it. A config that selects and carries a batch:
 // block is the pass's configuration, which is `fugaro reaper --dry-run` on an
@@ -131,22 +162,50 @@ func runReaper(ctx context.Context, cmd *cobra.Command, o cloudOptions, dryRun b
 // passed over. Where the environment cannot answer either, the selection's own
 // error is the one returned: it is the one that says what an operator can do
 // about it.
-func reaperPass(ctx context.Context, o cloudOptions, getenv func(string) string, dryRun bool) (batch.ReaperOptions, error) {
+//
+// --gcp-project and --region are refused here rather than ignored. They only
+// ever modify a SELECTED config (selectProject's announce, through
+// localcfg.Config.Override), so on the environment path they would name a
+// project the pass then swept the environment's instead of -- the operator's
+// flag dropped without a word, and a report about a project nobody asked
+// about. Neither answer is "honour it": the environment path has no config to
+// apply the flag to, and its own project and region are Terraform's. So the
+// combination is refused, with the two ways out named.
+func reaperPass(ctx context.Context, o cloudOptions, getenv func(string) string, dryRun bool) (batch.ReaperOptions, string, error) {
 	_, lc, err := selectProject(ctx, o)
 	if err == nil {
 		if lc.Batch == nil {
-			return batch.ReaperOptions{}, userErr("project %s has no Batch configuration (its project config has no batch: block), and the reaper only sweeps an installation that runs Batch: its queue deadline and run budget are derived from that installation's own task timeouts, so there is nothing here for it to judge", lc.Name)
+			return batch.ReaperOptions{}, "", userErr("project %s has no Batch configuration (its project config has no batch: block), and the reaper only sweeps an installation that runs Batch: its queue deadline and run budget are derived from that installation's own task timeouts, so there is nothing here for it to judge", lc.Name)
 		}
-		return reaperOptions(lc, dryRun), nil
+		return reaperOptions(lc, dryRun), "", nil
 	}
 	if o.config != "" || o.project != "" || getenv("FUGARO_CONFIG") != "" || getenv(envProject) != "" {
-		return batch.ReaperOptions{}, err
+		return batch.ReaperOptions{}, "", err
 	}
-	opts, envErr := reaperEnvOptions(getenv, dryRun)
+	if o.gcpProject != "" || o.region != "" {
+		return batch.ReaperOptions{}, "", userErr("%s cannot be honoured here: nothing selected a project config to apply it to (--gcp-project and --region override the selected config's own gcp_project and region), and on the reaper's job-environment path the project and the region come from %s and %s, which Terraform sets on the Cloud Run job. Name a project config -- --config, FUGARO_CONFIG, a checkout's fugaro.yaml, or the one project config -- to sweep a project, or drop the flag and use --dry-run to see what this job's own environment would sweep", strings.Join(reaperFlagNames(o), " and "), envGCPProject, envRegion)
+	}
+	opts, forced, envErr := reaperEnvOptions(getenv, dryRun)
 	if envErr != nil {
-		return batch.ReaperOptions{}, err
+		return batch.ReaperOptions{}, "", err
 	}
-	return opts, nil
+	if forced {
+		return opts, fmt.Sprintf("fugaro: note: %s is not %s, so this is not the reaper's own job and the pass is a DRY RUN: it prints what it would delete and deletes nothing. The Cloud Run job sets %s=%s (the compute module's reaper.tf); add --dry-run to say so yourself.", envReaperJob, reaperJobMarker, envReaperJob, reaperJobMarker), nil
+	}
+	return opts, "", nil
+}
+
+// reaperFlagNames names the endpoint flags an operator actually passed, for
+// the refusal above: "it is refused" says nothing about which flag to drop.
+func reaperFlagNames(o cloudOptions) []string {
+	var names []string
+	if o.gcpProject != "" {
+		names = append(names, "--gcp-project "+o.gcpProject)
+	}
+	if o.region != "" {
+		names = append(names, "--region "+o.region)
+	}
+	return names
 }
 
 // reaperEnvOptions is the pass of a reaper that runs from its own job's
@@ -165,10 +224,24 @@ func reaperPass(ctx context.Context, o cloudOptions, getenv func(string) string,
 // selection's error rather than this one: an environment that names no project
 // and no region is not a Batch configuration, and both messages would be true,
 // but the selection's says what the operator can do.
-func reaperEnvOptions(getenv func(string) string, dryRun bool) (batch.ReaperOptions, error) {
+//
+// The project and the region are the HISTORY job's variables, and that is a
+// problem for a pass that deletes: any shell with FUGARO_GCP_PROJECT and
+// FUGARO_REGION exported -- an operator's own, following the history job's
+// documentation -- would take this path and sweep a live project for real. So
+// this path deletes only where the marker the Cloud Run job sets is present
+// (envReaperJob): without it the pass is forced to a dry run, and says so. The
+// second return value reports that the forcing happened, so the caller can
+// tell the operator; --dry-run on the command line is never touched by any of
+// this (a dry run stays a dry run, marker or not).
+func reaperEnvOptions(getenv func(string) string, dryRun bool) (batch.ReaperOptions, bool, error) {
 	gcpProject, region := getenv(envGCPProject), getenv(envRegion)
 	if gcpProject == "" || region == "" {
-		return batch.ReaperOptions{}, userErr("the reaper job needs %s and %s in its environment (Terraform sets both on the job), and there is no project config here to read them from", envGCPProject, envRegion)
+		return batch.ReaperOptions{}, false, userErr("the reaper job needs %s and %s in its environment (Terraform sets both on the job), and there is no project config here to read them from", envGCPProject, envRegion)
+	}
+	forced := false
+	if !dryRun && getenv(envReaperJob) != reaperJobMarker {
+		dryRun, forced = true, true
 	}
 	w := reaperEnvWiring{}
 	if reaperEnvTest != nil {
@@ -184,7 +257,7 @@ func reaperEnvOptions(getenv func(string) string, dryRun bool) (batch.ReaperOpti
 			Compute: reaperComputeRoot,
 			NoAuth:  w.noAuth,
 		},
-	}, nil
+	}, forced, nil
 }
 
 // reaperEnvTimeouts is the task-timeout source of a pass that runs from the

@@ -147,6 +147,10 @@ func newReaperEnvRig(t *testing.T) *reaperRig {
 	isolateProjects(t, t.TempDir())
 	t.Setenv(envGCPProject, "proj-1234")
 	t.Setenv(envRegion, "us-east5")
+	// The rig IS the reaper's own Cloud Run job, so it carries the marker the
+	// job sets: without it the pass is a dry run and deletes nothing
+	// (TestReaperCommandFromAShellTakesNoAction is the other side of that).
+	t.Setenv(envReaperJob, reaperJobMarker)
 	return rig
 }
 
@@ -412,9 +416,12 @@ func TestReaperCommandFromTheReaperJobsOwnEnvironment(t *testing.T) {
 func TestReaperEnvOptions(t *testing.T) {
 	env := map[string]string{envGCPProject: "proj-1234", envRegion: "us-east5"}
 	getenv := func(k string) string { return env[k] }
-	o, err := reaperEnvOptions(getenv, true)
+	o, forced, err := reaperEnvOptions(getenv, true)
 	if err != nil {
 		t.Fatalf("reaperEnvOptions: %v", err)
+	}
+	if forced {
+		t.Error("reaperEnvOptions reported a forced dry run for a pass that asked for one")
 	}
 	if o.GCPProject != "proj-1234" || o.Region != "us-east5" {
 		t.Errorf("project/region = %s/%s, want the environment's proj-1234/us-east5", o.GCPProject, o.Region)
@@ -446,15 +453,31 @@ func TestReaperEnvOptions(t *testing.T) {
 	old := reaperEnvTest
 	reaperEnvTest = &reaperEnvWiring{batch: "https://batch.example.com/", noAuth: true}
 	t.Cleanup(func() { reaperEnvTest = old })
-	wired, err := reaperEnvOptions(getenv, false)
+	// No marker: this environment is an operator's shell, not the reaper job,
+	// so a pass that asked to delete is forced to a dry run.
+	wired, forced, err := reaperEnvOptions(getenv, false)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !forced || !wired.DryRun {
+		t.Errorf("reaperEnvOptions without %s: forced=%v, DryRun=%v, want a forced dry run", envReaperJob, forced, wired.DryRun)
 	}
 	if wired.Endpoints.Batch != "https://batch.example.com/" || !wired.Endpoints.NoAuth {
 		t.Errorf("endpoints = %+v, want the test wiring's own", wired.Endpoints)
 	}
-	if wired.DryRun {
-		t.Error("dry-run is set on a pass that did not ask for it")
+	// And with the job's marker the pass deletes, which is what the Cloud Run
+	// job is for: the marker is the only difference between the two.
+	withMarker := map[string]string{}
+	for k, v := range env {
+		withMarker[k] = v
+	}
+	withMarker[envReaperJob] = reaperJobMarker
+	job, forced, err := reaperEnvOptions(func(k string) string { return withMarker[k] }, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forced || job.DryRun {
+		t.Errorf("reaperEnvOptions with %s=%s: forced=%v, DryRun=%v, want a real pass", envReaperJob, reaperJobMarker, forced, job.DryRun)
 	}
 	if _, err := batch.NewReaper(context.Background(), wired); err != nil {
 		t.Errorf("the derived options are not a pass at all: %v", err)
@@ -466,7 +489,7 @@ func TestReaperEnvOptions(t *testing.T) {
 			part[k] = v
 		}
 		delete(part, missing)
-		if _, err := reaperEnvOptions(func(k string) string { return part[k] }, false); err == nil {
+		if _, _, err := reaperEnvOptions(func(k string) string { return part[k] }, false); err == nil {
 			t.Errorf("reaperEnvOptions accepted an environment with no %s", missing)
 		}
 	}
@@ -534,5 +557,178 @@ func TestReaperCommandNeedsNoBatchBackend(t *testing.T) {
 	if _, err := localcfg.Parse([]byte("version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: my-runs\n" +
 		"backend: cloud-batch\nrepos:\n  acme/app: { provider: github, workflows: [web] }\n")); err == nil {
 		t.Error("localcfg accepts `backend: cloud-batch`, which only the enable task may do")
+	}
+}
+
+// TestReaperRefusesTheProjectsOutOfBounds: the deny-list is in NewReaper, so it
+// is on BOTH ways a project reaches the command -- a project config's
+// gcp_project and the reaper job's own environment. Both are checked here end
+// to end, with a job and a VM in the fakes that a pass would delete: a command
+// that got past the refusal is caught deleting rather than passing quietly.
+func TestReaperRefusesTheProjectsOutOfBounds(t *testing.T) {
+	for _, project := range []string{"edge-devel-dimi", "fugaro-belong"} {
+		t.Run("config:"+project, func(t *testing.T) {
+			rig := newReaperRig(t, true)
+			rig.addQueuedJob(t, theRun, reaperQueueDeadline()+time.Hour)
+			rig.addLeakedVM(t, otherRun, reaperMaxAge()+time.Hour)
+			// The rig's config, pointed at the out-of-bounds project: every
+			// other field is a well-formed installation's, so the refusal can
+			// only be the project.
+			path := os.Getenv("FUGARO_CONFIG")
+			b, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			edited := strings.Replace(string(b), "gcp_project: proj-1234", "gcp_project: "+project, 1)
+			if edited == string(b) {
+				t.Fatalf("the rig's config does not name gcp_project the way this test edits it: %s", b)
+			}
+			if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			out, _, err := execute(t, "reaper")
+			if err == nil {
+				t.Fatalf("fugaro reaper swept the out-of-bounds project %s", project)
+			}
+			if code := ExitCode(err); code != ExitUserError {
+				t.Errorf("exit code = %d, want %d (a user error: the project is what is wrong)", code, ExitUserError)
+			}
+			if !strings.Contains(err.Error(), "out of bounds") {
+				t.Errorf("refusal = %q, want it to name the rule (out of bounds)", err)
+			}
+			if out != "" {
+				t.Errorf("stdout = %q, want nothing: the pass never ran", out)
+			}
+			if len(rig.bf.Deletes()) != 0 || len(rig.cf.Deletes()) != 0 {
+				t.Errorf("the refused command deleted %v and %v", rig.bf.Deletes(), rig.cf.Deletes())
+			}
+		})
+
+		t.Run("environment:"+project, func(t *testing.T) {
+			rig := newReaperEnvRig(t)
+			rig.addQueuedJob(t, theRun, reaperQueueDeadline()+time.Hour)
+			rig.addLeakedVM(t, otherRun, reaperMaxAge()+time.Hour)
+			// The job's own environment, naming the out-of-bounds project. The
+			// Cloud Run job's marker is set too, so the refusal cannot be the
+			// marker's read-only path doing the work.
+			t.Setenv(envGCPProject, project)
+			t.Setenv(envReaperJob, reaperJobMarker)
+
+			out, _, err := execute(t, "reaper")
+			if err == nil {
+				t.Fatalf("fugaro reaper swept the out-of-bounds project %s from the job's environment", project)
+			}
+			if code := ExitCode(err); code != ExitUserError {
+				t.Errorf("exit code = %d, want %d (a user error: the project is what is wrong)", code, ExitUserError)
+			}
+			if !strings.Contains(err.Error(), "out of bounds") {
+				t.Errorf("refusal = %q, want it to name the rule (out of bounds)", err)
+			}
+			if out != "" {
+				t.Errorf("stdout = %q, want nothing: the pass never ran", out)
+			}
+			if len(rig.bf.Deletes()) != 0 || len(rig.cf.Deletes()) != 0 {
+				t.Errorf("the refused command deleted %v and %v", rig.bf.Deletes(), rig.cf.Deletes())
+			}
+		})
+	}
+}
+
+// TestReaperCommandFromAShellTakesNoAction: the environment path's two
+// variables are the history job's, so an operator's shell that exports them
+// (the history job's own documentation tells them to) would otherwise reach
+// this path and delete for real. Only the reaper's own Cloud Run job carries
+// envReaperJob, and without it the pass is a dry run -- forced, and said out
+// loud on stderr, because a report an operator reads as a sweep is the failure
+// this guards against.
+func TestReaperCommandFromAShellTakesNoAction(t *testing.T) {
+	rig := newReaperEnvRig(t)
+	job := rig.addQueuedJob(t, theRun, reaperQueueDeadline()+time.Hour)
+	vm := rig.addLeakedVM(t, otherRun, reaperMaxAge()+time.Hour)
+	t.Setenv(envReaperJob, "")
+
+	out, errOut, err := execute(t, "reaper")
+	if err != nil {
+		t.Fatalf("fugaro reaper from a shell: %v", err)
+	}
+	if !strings.Contains(errOut, envReaperJob) || !strings.Contains(errOut, "DRY RUN") {
+		t.Errorf("stderr = %q, want a note naming %s and the forced dry run", errOut, envReaperJob)
+	}
+	loc := "projects/proj-1234/locations/us-east5"
+	for _, want := range []string{
+		"would delete job " + loc + "/jobs/" + job + " (",
+		"would delete VM " + vm + " (",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout = %q, want it to say %q: the report is what a dry run is for", out, want)
+		}
+	}
+	if len(rig.bf.Deletes()) != 0 || len(rig.cf.Deletes()) != 0 {
+		t.Errorf("a pass with no %s deleted %v and %v", envReaperJob, rig.bf.Deletes(), rig.cf.Deletes())
+	}
+
+	// --dry-run says the same thing without the note: a pass that asked never
+	// gets a note about being forced.
+	out, errOut, err = execute(t, "reaper", "--dry-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errOut != "" {
+		t.Errorf("stderr = %q, want nothing: --dry-run asked for the dry run", errOut)
+	}
+	if !strings.Contains(out, "would delete job ") {
+		t.Errorf("stdout = %q, want the dry run's report", out)
+	}
+	// And a marker that is not the one the job sets is not the marker.
+	t.Setenv(envReaperJob, "true")
+	if _, _, err := execute(t, "reaper"); err != nil {
+		t.Fatal(err)
+	}
+	if len(rig.bf.Deletes()) != 0 || len(rig.cf.Deletes()) != 0 {
+		t.Errorf("%s=true was read as the job's marker: deleted %v and %v", envReaperJob, rig.bf.Deletes(), rig.cf.Deletes())
+	}
+}
+
+// TestReaperRefusesFlagsTheEnvironmentPathCannotHonour: --gcp-project and
+// --region modify a SELECTED config and nothing else, so where nothing selected
+// one they used to be dropped in silence -- `fugaro reaper --gcp-project
+// other-proj` exited 0 having swept the environment's project. A flag that is
+// never honoured is refused instead, and the refusal names both ways out.
+func TestReaperRefusesFlagsTheEnvironmentPathCannotHonour(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"gcp-project", []string{"--gcp-project", "other-proj"}, "--gcp-project other-proj"},
+		{"region", []string{"--region", "us-central1"}, "--region us-central1"},
+		{"both", []string{"--gcp-project", "other-proj", "--region", "us-central1"}, "--gcp-project other-proj and --region us-central1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newReaperEnvRig(t)
+			job := rig.addQueuedJob(t, theRun, reaperQueueDeadline()+time.Hour)
+			out, _, err := execute(t, append([]string{"reaper"}, tc.args...)...)
+			if err == nil {
+				t.Fatalf("fugaro reaper %v exited 0: the flag was ignored and the environment's project swept", tc.args)
+			}
+			if code := ExitCode(err); code != ExitUserError {
+				t.Errorf("exit code = %d, want %d (a user error: the flag is what is wrong)", code, ExitUserError)
+			}
+			for _, want := range []string{tc.want, envGCPProject, envRegion, "--dry-run"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal = %q, want it to name %q", err, want)
+				}
+			}
+			if out != "" {
+				t.Errorf("stdout = %q, want nothing: the pass never ran", out)
+			}
+			if len(rig.bf.Deletes()) != 0 || len(rig.cf.Deletes()) != 0 {
+				t.Errorf("the refused command deleted %v and %v", rig.bf.Deletes(), rig.cf.Deletes())
+			}
+			if len(rig.bf.IDs()) != 1 || rig.bf.IDs()[0] != job {
+				t.Errorf("the job under test is not the one the rig made: %v", rig.bf.IDs())
+			}
+		})
 	}
 }
