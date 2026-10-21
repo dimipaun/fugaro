@@ -169,7 +169,10 @@ type View struct {
 	// in the same order, whichever reader produced them.
 	Records []Record `json:"records"`
 	// Collisions is every pair of in-flight records that share a file or a
-	// service, sorted by the pair's labels.
+	// service, in Records' own order rather than sorted by label: by the
+	// earlier of the two records, then by the later (collisions() below).
+	// The two sections of the view are then read the same way, and a
+	// reader can predict the order without running the code.
 	Collisions []Collision `json:"collisions"`
 }
 

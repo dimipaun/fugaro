@@ -9,13 +9,19 @@
           "branch": "fugaro/20261013-140000-eeee",
           "base_branch": "main",
           "declared_by": "someone@example.com",
-          "files": []
+          "files": [
+            "internal/cli/exec.go"
+          ]
         }
       ],
       "branch": "fugaro/20261013-140000-eeee",
       "in_flight": true,
-      "files": [],
-      "services": []
+      "files": [
+        "internal/cli/exec.go"
+      ],
+      "services": [
+        "internal"
+      ]
     },
     {
       "pr": {
@@ -161,6 +167,26 @@
     }
   ],
   "collisions": [
+    {
+      "a": "20261013-140000-eeee",
+      "b": "#12",
+      "files": [
+        "internal/cli/exec.go"
+      ],
+      "services": [
+        "internal"
+      ]
+    },
+    {
+      "a": "20261013-140000-eeee",
+      "b": "#14",
+      "files": [
+        "internal/cli/exec.go"
+      ],
+      "services": [
+        "internal"
+      ]
+    },
     {
       "a": "#12",
       "b": "#14",

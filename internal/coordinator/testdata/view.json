@@ -96,7 +96,8 @@
       "terminal": false,
       "branch": "fugaro/20261013-140000-eeee",
       "base_branch": "main",
-      "declared_by": "someone@example.com"
+      "declared_by": "someone@example.com",
+      "files": ["internal/cli/exec.go"]
     }
   ]
 }

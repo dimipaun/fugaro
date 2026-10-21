@@ -57,14 +57,32 @@ func recordOf(v View, label string) (Record, bool) {
 // touched it. The fixture's #12 and #14 both changed
 // internal/coordinator/view.go; #16 changed it too and is merged, so it
 // collides with neither.
+//
+// The pairs are also ORDERED, and the fixture is built so that the order says
+// which one: the running run 20261013-140000-eeee has no pull request, so its
+// record is labelled by its run ID and sortRecords lists it before every
+// numbered one -- while its label sorts AFTER every `#n`. A view that sorted
+// its collisions by label would put #12 and #14 first; the view in this
+// package lists the pairs by their records' own order, so the run's two
+// collisions come first. Both orders name the same three pairs, which is why
+// this assertion is the one that can tell them apart.
 func TestCoordinatorViewCollisionsNameBothRecords(t *testing.T) {
 	v := loadView(t)
-	if len(v.Collisions) != 1 {
-		t.Fatalf("collisions = %d, want exactly 1: %+v", len(v.Collisions), v.Collisions)
+	var got []string
+	for _, c := range v.Collisions {
+		got = append(got, c.A+" and "+c.B)
 	}
-	c := v.Collisions[0]
-	if c.A != "#12" || c.B != "#14" {
-		t.Errorf("the collision names %s and %s, want #12 and #14", c.A, c.B)
+	want := []string{
+		"20261013-140000-eeee and #12",
+		"20261013-140000-eeee and #14",
+		"#12 and #14",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("the collisions are %q, want %q: one pair per pair of in-flight records, in the order the records are listed", got, want)
+	}
+	c, ok := collisionOf(v, "#12", "#14")
+	if !ok {
+		t.Fatalf("the collision between #12 and #14 is missing: %+v", v.Collisions)
 	}
 	if want := []string{"internal/cli/exec.go", "internal/coordinator/view.go"}; !slices.Equal(c.Files, want) {
 		t.Errorf("the collision's files = %q, want %q", c.Files, want)
@@ -77,6 +95,17 @@ func TestCoordinatorViewCollisionsNameBothRecords(t *testing.T) {
 			t.Errorf("the merged pull request #16 is in a collision: %+v", c)
 		}
 	}
+}
+
+// collisionOf is the view's collision between the two labelled records, in
+// either order, and whether the view holds one.
+func collisionOf(v View, a, b string) (Collision, bool) {
+	for _, c := range v.Collisions {
+		if (c.A == a && c.B == b) || (c.A == b && c.B == a) {
+			return c, true
+		}
+	}
+	return Collision{}, false
 }
 
 // A pull request no run behind it is listed as such. It is work somebody has
