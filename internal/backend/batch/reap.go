@@ -271,10 +271,9 @@ func actionVerb(k ActionKind, dryRun bool) string {
 
 // outOfBoundsProjects are the GCP projects no pass of this reaper may touch,
 // whatever path named them. The first is the installation the plan puts out of
-// bounds -- no agent and no automated run touches it, which is why the
-// console's fixture recorder refuses it by name too
-// (console/tools/record-fixture/index.ts's BELONG_PROJECT) -- and the second is
-// the same installation under the project id it answers to now.
+// bounds -- no agent and no automated run touches it, which is why the desktop
+// console's fixture recorder refuses it by name too (its BELONG_PROJECT) -- and
+// the second is the same installation under the project id it answers to now.
 //
 // A deletion the reaper makes is a deletion of someone's billing or someone's
 // data, and this list is the one place where "the installation's own project"
