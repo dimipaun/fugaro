@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
@@ -401,7 +403,20 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 	if j := strings.Index(body, "\n## 5."); j >= 0 {
 		body = body[:j]
 	}
-	rows, commands, checked := 0, 0, 0
+	rows, commands, checked, skipped := 0, 0, 0, 0
+	// Six rows are `git grep`, and the census states its commands run from the
+	// repository root. A tree that is not the root of a git work tree is not
+	// that root, and `git grep` there fails -- exit 128, nothing on stdout --
+	// rather than printing a figure. That tree is not hypothetical: it is the
+	// copy docs_desktop_console_test.go's TestStagedLinuxFilesSurviveTheCopyIn
+	// makes and runs this family inside, a copy of the files deliberately
+	// without `.git` (the copy-in proof needs no repository, no branch and no
+	// index). So a row whose command reads the tree through git is skipped
+	// there and every row that reads the files directly still runs; the count
+	// is logged below rather than swallowed, because a skip is a row this run
+	// did not check.
+	_, statErr := os.Stat(filepath.Join(censusRoot, ".git"))
+	workTree := statErr == nil
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "|") {
@@ -436,8 +451,12 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 			t.Errorf("%s: census row %q carries no command inside its code span", rigorModesRecon, line)
 			continue
 		}
+		if !workTree && rigorModesCommandNeedsGit(cmd) {
+			skipped++
+			continue
+		}
 		c := exec.Command(sh, "-c", cmd)
-		c.Dir = "../.." // the census states its commands run from the repository root
+		c.Dir = censusRoot // the census states its commands run from the repository root
 		out, err := c.Output()
 		// `grep` and `git grep` exit 1 when they match nothing, which is what a
 		// row stating 0 legitimately does; the figure is the output, so only a
@@ -462,6 +481,23 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 	if checked == 0 {
 		t.Errorf("%s: no census command was run: the figures are the point", rigorModesRecon)
 	}
+	if skipped > 0 {
+		t.Logf("%d of %d census rows were not run: their commands read the tree through git, and %s is not the root of a git work tree (the copy-in proof runs this family in a copy of the files, without a repository)", skipped, rows, censusRoot)
+	}
+}
+
+// rigorModesCommandNeedsGit reports whether a census command reads the tree
+// through git rather than reading its files directly. `git grep` is the only
+// such command in the census today, and it appears in three positions -- at the
+// front, inside a `{ …; }` group, and inside a pipe -- so the word is matched
+// rather than the prefix: a row that grows a `git` anywhere is covered instead
+// of only the ones spelled at the front. The word boundary is what keeps
+// `.gitignore` and `.gitattributes` out of it, which are paths a census command
+// may perfectly well read without a repository.
+var rigorModesNeedsGitRE = regexp.MustCompile(`\bgit\b`)
+
+func rigorModesCommandNeedsGit(cmd string) bool {
+	return rigorModesNeedsGitRE.MatchString(cmd)
 }
 
 // rigorModesCommand is the shell command inside a census row's code span, with
