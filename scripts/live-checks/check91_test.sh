@@ -724,6 +724,11 @@ test_repo_taken() {
   expect_contains "$err" "never adopts, writes into or deletes a repository it did not create" "repository taken: the stop"
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "repositories create" "repository taken: nothing created"
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "builds submit" "repository taken: nothing pushed"
+  # The other half of "never adopts, writes into or deletes": a repository that
+  # was already there is not this check's, so the Restore must not name it in a
+  # delete either. Asserting only that nothing was created would stay green for
+  # a Restore that deletes a repository the run never made.
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "delete" "repository taken: nothing deleted — the repository is not this check's to remove"
 }
 
 test_happy_path() {

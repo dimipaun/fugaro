@@ -503,7 +503,14 @@ func TestCheck91ScriptKeepsItsPromises(t *testing.T) {
 // delete. This is the property the register's "never adopts" paragraph states.
 func TestCheck91ScriptNeverDeletesWhatItDidNotCreate(t *testing.T) {
 	text := readRepoFile(t, check91Script)
-	restore := text[strings.Index(text, "restore_run() {"):]
+	// A checked index: strings.Index answers -1 for a renamed function, and
+	// text[-1:] panics, which reports a renamed restore_run as a crash rather
+	// than as the missing function it is.
+	at := strings.Index(text, "restore_run() {")
+	if at < 0 {
+		t.Fatalf("%s has no restore_run(): what it deletes cannot be read", check91Script)
+	}
+	restore := text[at:]
 	if j := strings.Index(restore, "\ncleanup() {"); j >= 0 {
 		restore = restore[:j]
 	}
@@ -517,4 +524,44 @@ func TestCheck91ScriptNeverDeletesWhatItDidNotCreate(t *testing.T) {
 			t.Errorf("%s: the Restore lacks %q", check91Script, want)
 		}
 	}
+	// Every delete sits INSIDE the guard that decides it -- after the guard's
+	// opening line and before that guard's own closing `fi` -- not merely
+	// somewhere below the guard's text. A test that only asked "does the guard
+	// appear above the delete" stays green for a delete moved below its `fi`,
+	// and that is exactly the shape that deletes what this run did not create:
+	// the record the guard reads is the only thing that makes a resource this
+	// check's.
+	for _, c := range []struct{ guard, del string }{
+		{`if [ -f "$SERVICE_MINE" ]; then`, "gcloud run services delete"},
+		{`if [ "$BUILD_ATTEMPTED" = yes ]; then`, "gcloud artifacts docker images delete"},
+		{`if [ -f "$REPO_MINE" ]; then`, "gcloud artifacts repositories delete"},
+	} {
+		if !insideGuard(restore, c.guard, c.del) {
+			t.Errorf("%s: %q is not inside a %q guard, so a run that did not create that resource would delete it", check91Script, c.del, c.guard)
+		}
+	}
+}
+
+// insideGuard reports whether del appears between one of guard's opening lines
+// and that guard's own closing `fi` -- the next `fi` at the two-space indent
+// the guards in restore_run use. Every occurrence of guard is tried, so a guard
+// text that legitimately appears more than once (BUILD_ATTEMPTED gates both the
+// image delete and the staged-source removal) is not a failure as long as one
+// of them holds del.
+func insideGuard(body, guard, del string) bool {
+	for off := 0; off < len(body); {
+		i := strings.Index(body[off:], guard)
+		if i < 0 {
+			return false
+		}
+		block := body[off+i:]
+		if j := strings.Index(block, "\n  fi\n"); j >= 0 {
+			block = block[:j]
+		}
+		if strings.Contains(block, del) {
+			return true
+		}
+		off += i + len(guard)
+	}
+	return false
 }
