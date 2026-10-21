@@ -323,16 +323,20 @@ func TestTheSameIdentityOnTwoMachinesIsStillTwoHolders(t *testing.T) {
 // stop and it gives up a seat it holds (a job with no shepherd), carry on and it
 // may be acting on a job that is someone else's.
 //
-// The answer is a *UnsureError carrying Until, the instant past which the seat
-// is certainly not the caller's (renewed_at + grace, on the database's clock),
-// and MayAct, which compares that instant against the same clock. Both halves
-// are asserted here: the deadline is the held record's expiry, and it is judged
-// against the database's clock and not this machine's.
+// The answer is a *UnsureError carrying Until, the instant past which this
+// holder must stop acting on the job — the held lease's expiry (renewed_at +
+// grace, on the database's clock) less ServerClockSlack — and MayAct, which
+// compares that instant against the same clock. Both halves are asserted here:
+// the deadline is the held record's expiry less the margin, it is judged
+// against the database's clock and not this machine's, and the margin is
+// exactly the slack the reading of that clock can be behind by.
 //
 // Hand mutation this fails on: returning the bare error from a failed Renew
 // (the caller has no deadline and no typed value to branch on), computing Until
-// from the local clock, or making MayAct true past Until (a holder acts on a
-// seat the database has already handed to someone else).
+// from the local clock, dropping the `Add(-ServerClockSlack)` margin (a holder
+// acts for up to a second past the instant the database lets a takeover land),
+// or making MayAct true past Until (a holder acts on a seat the database has
+// already handed to someone else).
 func TestAFailedHeartbeatSaysHowLongTheHolderMayAct(t *testing.T) {
 	base := at(time.Now())
 	f := gcpfake.NewRTDB(t)
@@ -352,8 +356,14 @@ func TestAFailedHeartbeatSaysHowLongTheHolderMayAct(t *testing.T) {
 	if !errors.Is(err, rtdb.ErrUnavailable) {
 		t.Errorf("the refusal lost its cause (%v): a caller must still be able to tell an outage from a rule refusal", err)
 	}
-	if want := held.Expires(DefaultGrace); !ue.Until.Equal(want) {
-		t.Errorf("the heartbeat says the caller may act until %s, want the held lease's expiry %s", ue.Until, want)
+	// The deadline is the held lease's expiry less the margin, and the margin
+	// is the slack a reading of the database's clock can be behind by: the Date
+	// header carries whole seconds, so an un-adjusted deadline would let this
+	// holder act for up to a second after the database considered the seat
+	// takeable — the window in which two orchestrators act on one job.
+	expires := held.Expires(DefaultGrace)
+	if want := expires.Add(-ServerClockSlack); !ue.Until.Equal(want) {
+		t.Errorf("the heartbeat says the caller may act until %s, want the held lease's expiry (%s) less the clock slack (%s) = %s", ue.Until, expires, ServerClockSlack, want)
 	}
 	if ue.Held.Generation != held.Generation {
 		t.Errorf("the heartbeat says the caller holds generation %d, want %d", ue.Held.Generation, held.Generation)
@@ -370,12 +380,18 @@ func TestAFailedHeartbeatSaysHowLongTheHolderMayAct(t *testing.T) {
 		t.Errorf("MayAct is false at %s, before the seat expires at %s: the caller would give up a seat it still holds", base, ue.Until)
 	}
 	if !ue.MayAct(atClockDB{db, ue.Until.Add(-time.Millisecond)}) {
-		t.Errorf("MayAct is false 1 ms before %s, the instant the seat stops being the caller's", ue.Until)
+		t.Errorf("MayAct is false 1 ms before %s, the instant this holder stops acting on the job", ue.Until)
 	}
-	// At the deadline itself it stops, and that is the same instant the
-	// deployed rules let a takeover land (Record.Fresh's boundary).
+	// At the deadline itself it stops.
 	if ue.MayAct(atClockDB{db, ue.Until}) {
-		t.Errorf("MayAct is true exactly at %s, the instant the seat stops being the caller's", ue.Until)
+		t.Errorf("MayAct is true exactly at %s, the instant this holder stops acting on the job", ue.Until)
+	}
+	// And the seat's own expiry — the instant the deployed rules let another
+	// orchestrator take it over, Record.Fresh's boundary — is past the deadline
+	// by the margin: a caller whose deadline was the raw expiry would still be
+	// acting here, and this one must not be.
+	if ue.MayAct(atClockDB{db, expires}) {
+		t.Errorf("MayAct is true at %s, the instant the deployed rules let another orchestrator take the seat over: the slack is what keeps this holder out of the window between then and a reading of the database's clock reaching it", expires)
 	}
 	// And a database that has never told its clock fails closed.
 	if (&UnsureError{Path: path, Held: held, Until: ue.Until}).MayAct(noClockDB{db}) {
@@ -400,8 +416,8 @@ func TestAFailedHeartbeatSaysHowLongTheHolderMayAct(t *testing.T) {
 	if !errors.Is(err, rtdb.ErrPermission) {
 		t.Errorf("the refusal lost its cause (%v): a caller must still be able to tell a rule refusal from an outage", err)
 	}
-	if want := held.Expires(DefaultGrace); !ue.Until.Equal(want) {
-		t.Errorf("the refused heartbeat says the caller may act until %s, want %s", ue.Until, want)
+	if want := held.Expires(DefaultGrace).Add(-ServerClockSlack); !ue.Until.Equal(want) {
+		t.Errorf("the refused heartbeat says the caller may act until %s, want the held lease's expiry less the clock slack, %s", ue.Until, want)
 	}
 	f.Deny("")
 
