@@ -289,9 +289,17 @@ const doc = (path: string, fragment: string): string =>
         the paths themselves, and the sentence about them closes it (`website/test/fold.mjs`'s
         rule 2 reads the section's direct paragraphs). */}
     <div class="gs-hero">
-      {/* The page's own name as the board's eyebrow pill: the label a reader navigates by,
-          and the one heading above the headline. */}
-      <p class="eyebrow gs-eyebrow">Getting started</p>
+      {/* The page's own name as the board's eyebrow pill: the label a reader navigates by, drawn
+          above the headline the way the board draws it. It is a `div` and not a `<p>`, and the
+          element is the whole of that choice: the owner's Check 70b reads the lead of a page as
+          `main`'s **first paragraph** (`docs/gcp-live-checklist.md`, step 1), and a paragraph
+          above the `h1` would make that measurement this label's bottom rather than the lead's —
+          on the one page whose above-the-fold claim the check is for. The label is not prose, so
+          nothing is lost by it, and the page's first paragraph stays the sentence under the
+          headline. `pill` is on it because the board's eyebrow is a pill: `base.css`'s `.eyebrow`
+          is the type and `.pill` the box (the rule below is what puts the accent back on a label
+          the pill would otherwise mute). */}
+      <div class="eyebrow pill gs-eyebrow">Getting started</div>
 
       <h1 class="display-xl gs-title">
         Install Fugaro. <span class="gradient-text">One line.</span>
@@ -599,14 +607,15 @@ const doc = (path: string, fragment: string): string =>
     }
 
     /* The board's eyebrow pill: the page's own name, above the headline. `base.css`'s
-       `.eyebrow` is the type and `.pill` the box, and this rule is what puts the accent back
-       on the label the pill would otherwise mute. */
+       `.eyebrow` is the type and `.pill` the box — both classes are on the element in the
+       markup, which is what makes this rule match it and what keeps the pill's own muted
+       colour off the label: the accent is put back here, and it is the pair a reader reads
+       the label in (`--accent-on-dark` on the pill's `--panel`, a body-text pair in every
+       palette). The tracking and the upper case are `.eyebrow`'s and are not repeated. */
     .pill.gs-eyebrow {
       align-self: flex-start;
       margin: 0;
       color: var(--accent-on-dark);
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
     }
 
     .gs-title {
