@@ -1943,18 +1943,7 @@ const (
 // covers.
 func repoRootInputs(t *testing.T, agent string) Inputs {
 	t.Helper()
-	lc := parseLC(t, `version: 1
-name: aurora
-gcp_project: proj-1234
-region: us-east5
-runs_bucket: fugaro-runs-proj-1234
-registry_host: us-east5-docker.pkg.dev/proj-1234
-base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
-repos:
-  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456" }
-claude_accounts:
-  bmb: { allow_data_to: [acme/webapp] }
-`)
+	lc := parseLC(t, repoRootLC)
 	out := installationOutputs()
 	out.Launchers = []string{"user:launcher@example.com"}
 	out.Operators = []string{"user:operator@example.com"}
@@ -1969,6 +1958,46 @@ workflows:
       - { name: npm-token, env: NPM_TOKEN }
 `
 	return Inputs{LC: lc, Repo: "acme/webapp", Cfg: parseCfg(t, []byte(cfg)), Installation: out}
+}
+
+// repoRootLC is repoRootInputs' local config, named so that a fixture can
+// build on it (the credentials fixture appends a model provider).
+const repoRootLC = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456" }
+claude_accounts:
+  bmb: { allow_data_to: [acme/webapp] }
+`
+
+// repoRootAPIKeyLC is repoRootLC with one model provider allowed to send this
+// repository's code to it, so an api-key workflow mounts that provider's key
+// beside the Anthropic one.
+const repoRootAPIKeyLC = repoRootLC + `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+    allow_data_to: ["acme/webapp"]
+`
+
+// repoRootCredentialsAPIKeyInputs is the api-key shape of the opt-in fixture:
+// the installation has a credentials service, and the one workflow mounts the
+// Anthropic API key (agent.auth api-key) and a provider's key — the other two
+// clauses of the drop, which the oauth fixture never exercises.
+func repoRootCredentialsAPIKeyInputs(t *testing.T) Inputs {
+	t.Helper()
+	in := repoRootInputs(t, `agent: { auth: api-key }`)
+	in.LC = parseLC(t, repoRootAPIKeyLC)
+	in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	return in
 }
 
 // repoRootSpec is the golden fixture's spec for the agent block given.
@@ -2097,19 +2126,62 @@ func TestRepoAddressesVertexIsNotUnderOAuth(t *testing.T) {
 // real root is planned from, and the address list that plan produced.
 const repoRootGoldenDir = "testdata"
 
-// repoRootFixtures are the two fixture specs, keyed by the golden's name.
-// A third is how the guard grows: add the key here with the agent spec it
+// repoRootFixture is one golden fixture: the agent block its spec is planned
+// from, and whether the installation has opted in to the credentials service
+// (D146, D147) — the flag that decides whether the job accounts keep their
+// model-secret accessors and whether each job gains its invoker grant on the
+// service.
+type repoRootFixture struct {
+	agent string
+	// credentialsService sets the fixture's Installation.CredentialsService,
+	// the installation output the repository root reads.
+	credentialsService bool
+}
+
+// repoRootFixtures are the fixture specs, keyed by the golden's name.
+// A fourth is how the guard grows: add the key here with the fixture it
 // plans from, add testdata/<name>.tfvars.json (TestRepoRootFixtureTfvars
 // writes it under -update), then on a machine with terraform run
 // `go test -tags terraform ./internal/infra -run TestRealRepoRootAddresses
 // -update` to write testdata/<name>_addresses.golden. CI (untagged) then
 // compares Addresses() against it on every run. Every address the modules
-// declare is named by Addresses() and by both goldens: #362's
+// declare is named by Addresses() and by every golden: #362's
 // module.repo.google_artifact_registry_repository_iam_member.build_ghcr was
 // the last one the untagged guard caught as missing, and naming it in
 // Addresses() and regenerating the goldens from the real plan is what closed
 // that gap.
-var repoRootFixtures = map[string]string{"repo_root": repoRootOAuthAgent, "repo_root_vertex": repoRootVertexAgent}
+//
+// repo_root_credentials is the opt-in fixture: the same oauth spec with the
+// installation's credentials service set, so the addresses the mirror drops
+// (the job's accessors on the model credentials) and the one it adds (the
+// job's invoker grant on the service) are both compared with a real plan.
+// Before it, google_cloud_run_v2_service_iam_member.credentials was a
+// conditionalResources hole and the drop was pinned by nothing at all
+// (independent security review of the implementation, m2).
+var repoRootFixtures = map[string]repoRootFixture{
+	"repo_root":             {agent: repoRootOAuthAgent},
+	"repo_root_vertex":      {agent: repoRootVertexAgent},
+	"repo_root_credentials": {agent: repoRootOAuthAgent, credentialsService: true},
+}
+
+// repoRootFixtureSpec builds one fixture's spec by name, the opt-in
+// included.
+func repoRootFixtureSpec(t *testing.T, name string) RepoSpec {
+	t.Helper()
+	f, ok := repoRootFixtures[name]
+	if !ok {
+		t.Fatalf("no fixture named %q", name)
+	}
+	in := repoRootInputs(t, f.agent)
+	if f.credentialsService {
+		in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	}
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rs
+}
 
 // TestRepoRootFixtureTfvars keeps the committed tfvars fixtures and the Go
 // fixture that plans from them in step: the golden address list belongs to
@@ -2117,8 +2189,8 @@ var repoRootFixtures = map[string]string{"repo_root": repoRootOAuthAgent, "repo_
 // regeneration fails here rather than silently changing what the golden
 // pins.
 func TestRepoRootFixtureTfvars(t *testing.T) {
-	for name, agent := range repoRootFixtures {
-		spec := repoRootSpec(t, agent)
+	for name := range repoRootFixtures {
+		spec := repoRootFixtureSpec(t, name)
 		got, err := RepoRootVars(spec, RepoRootOptions{})
 		if err != nil {
 			t.Fatal(err)
@@ -2161,7 +2233,7 @@ func addressesGolden(t *testing.T, name string) []string {
 // address the real root's plan produces for the fixture spec must be in
 // Addresses, and the other way round.
 func TestRepoAddressesMatchTheRealPlanGolden(t *testing.T) {
-	spec := repoRootSpec(t, repoRootFixtures["repo_root"])
+	spec := repoRootFixtureSpec(t, "repo_root")
 	want := addressesGolden(t, "repo_root")
 	if len(want) == 0 {
 		t.Fatal("the golden is empty")
@@ -2177,7 +2249,7 @@ func TestRepoAddressesMatchTheRealPlanGolden(t *testing.T) {
 // contain, google_project_iam_member.vertex[0], and the named-account
 // variants it does not have.
 func TestRepoAddressesMatchTheVertexGolden(t *testing.T) {
-	spec := repoRootSpec(t, repoRootFixtures["repo_root_vertex"])
+	spec := repoRootFixtureSpec(t, "repo_root_vertex")
 	want := addressesGolden(t, "repo_root_vertex")
 	if len(want) == 0 {
 		t.Fatal("the golden is empty")
@@ -2186,6 +2258,153 @@ func TestRepoAddressesMatchTheVertexGolden(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("Addresses() differs from repo_root_vertex_addresses.golden:\nmissing: %v\nunexpected: %v",
 			missingFrom(want, got), missingFrom(got, want))
+	}
+}
+
+// The opt-in fixture pins the other two branches of the address set: with the
+// installation's credentials service set, the job accounts keep no accessor on
+// a model credential (the oauth fixture mounts claude-oauth-token twice, once
+// per account) and each gains roles/run.invoker on the service. Both are
+// compared with a real plan of the modules, so a change in modules/workflow
+// that the mirror does not follow fails here (review m2: the invoker grant was
+// a conditionalResources hole and the drop was pinned by nothing).
+func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
+	spec := repoRootFixtureSpec(t, "repo_root_credentials")
+	want := addressesGolden(t, "repo_root_credentials")
+	if len(want) == 0 {
+		t.Fatal("the golden is empty")
+	}
+	got := spec.Addresses()
+	if !slices.Equal(got, want) {
+		t.Errorf("Addresses() differs from repo_root_credentials_addresses.golden:\nmissing: %v\nunexpected: %v",
+			missingFrom(want, got), missingFrom(got, want))
+	}
+}
+
+// TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn is the mirror's
+// own guard, and it needs no golden: it plans the same fixture twice, with the
+// opt-in off and on, and asserts the difference is exactly the two sets
+// modules/workflow/sa.tf moves — the job's accessors on the credentials the
+// service holds, gone, and the job's invoker grant on the service, added — in
+// both shapes the modules distinguish: the oauth token (once per Claude
+// account, the default and the named one) and, for an api-key workflow, the
+// Anthropic key and a provider's key. The GitHub App's private key is a
+// credential of the second kind (C2.3): it is dropped by name, so it goes in
+// every shape, and the build account's own accessor on it is not the job's and
+// does not move (D148, F3).
+//
+// It then runs the same two address lists through Retirements, both
+// directions, because that is what the drop is FOR: the state an installation
+// applied with the service off must be read as exactly those accessors to
+// retire, and the state of one that turns the opt-in off again as exactly the
+// invoker grants — never a job, never a secret container. With the mirror's
+// branch disabled every test stayed green (independent security review of the
+// implementation, m2), which is what this pins.
+func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
+	svc := &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	for _, tc := range []struct {
+		name     string
+		in       Inputs
+		wantGone []string
+		wantAdd  []string
+	}{
+		{
+			name: "oauth",
+			in:   repoRootInputs(t, repoRootOAuthAgent),
+			wantGone: []string{
+				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["claude-oauth-token"]`,
+				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["github-app-key"]`,
+				`module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.job["claude-oauth-token-bmb"]`,
+				`module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.job["github-app-key"]`,
+			},
+			wantAdd: []string{
+				`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`,
+				`module.repo.module.workflow["web_bmb"].google_cloud_run_v2_service_iam_member.credentials[0]`,
+			},
+		},
+		{
+			name: "api-key",
+			in:   repoRootCredentialsAPIKeyInputs(t),
+			wantGone: []string{
+				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["anthropic-api-key"]`,
+				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["github-app-key"]`,
+				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["openrouter-api-key"]`,
+			},
+			wantAdd: []string{
+				`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			off := tc.in
+			off.Installation.CredentialsService = nil
+			offSpec, err := Repo(off)
+			if err != nil {
+				t.Fatal(err)
+			}
+			on := tc.in
+			on.Installation.CredentialsService = svc
+			onSpec, err := Repo(on)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The fixture's own premises: the model credentials really are
+			// mounted with the service off, or the deltas below would pass
+			// vacuously.
+			for _, a := range tc.wantGone {
+				if !slices.Contains(offSpec.Addresses(), a) {
+					t.Fatalf("the fixture does not produce %s with the service off: the test would be vacuous", a)
+				}
+			}
+			offAddrs, onAddrs := offSpec.Addresses(), onSpec.Addresses()
+			var gone, added []string
+			for _, a := range offAddrs {
+				if !slices.Contains(onAddrs, a) {
+					gone = append(gone, a)
+				}
+			}
+			for _, a := range onAddrs {
+				if !slices.Contains(offAddrs, a) {
+					added = append(added, a)
+				}
+			}
+			slices.Sort(tc.wantGone)
+			slices.Sort(tc.wantAdd)
+			if !slices.Equal(gone, tc.wantGone) {
+				t.Errorf("with the credentials service on, Addresses() drops %v, want exactly %v: the credentials the service holds are its to hold (D145, C2.3), and nothing else moves", gone, tc.wantGone)
+			}
+			if !slices.Equal(added, tc.wantAdd) {
+				t.Errorf("with the credentials service on, Addresses() adds %v, want exactly %v: the job's one invoker grant on the service (D135)", added, tc.wantAdd)
+			}
+			// The retirement directions: what an installation that applied
+			// with the service off must be told to retire when it turns it
+			// on, and the other way round.
+			rets := Retirements(offAddrs, onSpec)
+			var retAddrs []string
+			for _, r := range rets {
+				retAddrs = append(retAddrs, r.Address)
+			}
+			slices.Sort(retAddrs)
+			if !slices.Equal(retAddrs, tc.wantGone) {
+				t.Errorf("turning the service on retires %v, want exactly the service-held accessors %v: a retirement the mirror invents is a delete the operator is asked to allow", retAddrs, tc.wantGone)
+			}
+			back := Retirements(onAddrs, offSpec)
+			retAddrs = retAddrs[:0]
+			for _, r := range back {
+				retAddrs = append(retAddrs, r.Address)
+			}
+			slices.Sort(retAddrs)
+			if !slices.Equal(retAddrs, tc.wantAdd) {
+				t.Errorf("turning the service off retires %v, want exactly the invoker grants %v", retAddrs, tc.wantAdd)
+			}
+			// And the grants that must never be a retirement candidate: the
+			// job itself and the secret containers.
+			for _, r := range slices.Concat(rets, back) {
+				if strings.Contains(r.Address, "google_cloud_run_v2_job.this") || strings.Contains(r.Address, "google_secret_manager_secret.") {
+					t.Errorf("the drop retires %s, which the service's arrival does not remove", r.Address)
+				}
+			}
+		})
 	}
 }
 
@@ -2206,20 +2425,20 @@ var moduleResources = []string{"gcp/modules/repo", "gcp/modules/workflow"}
 // instance key is not in the declaration: it is for_each's, at apply time.
 var moduleResourceRE = regexp.MustCompile(`(?m)^resource\s+"([^"]+)"\s+"([^"]+)"`)
 
-// conditionalResources are the declared resources Addresses() may legitimately
-// not produce for either fixture, each with the reason it is off. Every entry
-// is a hole in this guard, so it takes a reason: a resource that is merely
-// missing because nobody regenerated the golden does not belong here.
-var conditionalResources = map[string]string{}
-
 // TestAddressesCoversEveryModuleResource is the drift guard the goldens
 // cannot be: every resource the repo and workflow modules declare must show
-// up in the union of the two fixtures' Addresses(), or a retirement would be
+// up in the union of the fixtures' Addresses(), or a retirement would be
 // predicted for something the plan really produces.
+//
+// It has no exemption list. It had one entry —
+// google_cloud_run_v2_service_iam_member.credentials, off in both fixtures
+// because neither opted in — and the opt-in fixture closed it: an exemption
+// is a hole in the guard, and the day a resource is only ever produced under
+// a branch nothing plans, the guard is silent about it.
 func TestAddressesCoversEveryModuleResource(t *testing.T) {
 	var addrs []string
-	for _, agent := range repoRootFixtures {
-		addrs = append(addrs, repoRootSpec(t, agent).Addresses()...)
+	for name := range repoRootFixtures {
+		addrs = append(addrs, repoRootFixtureSpec(t, name).Addresses()...)
 	}
 	if len(addrs) == 0 {
 		t.Fatal("the fixtures produce no address")
@@ -2250,16 +2469,12 @@ func TestAddressesCoversEveryModuleResource(t *testing.T) {
 				if produced(typ, name) {
 					continue
 				}
-				if why, ok := conditionalResources[typ+"."+name]; ok {
-					t.Logf("%s.%s is declared but no fixture produces it: %s", typ, name, why)
-					continue
-				}
 				t.Errorf("%s declares %s.%s, and no fixture's Addresses() has an address for it.\n"+
 					"A retirement is computed as the state minus those addresses, so this resource would be\n"+
 					"retired -- printed as a change that removes it -- on every fugaro init --repo.\n"+
 					"Add it to Addresses() (internal/infra/spec.go), regenerate the goldens\n"+
 					"(go test -tags terraform ./internal/infra -run TestRealRepoRootAddresses -update),\n"+
-					"or list it in conditionalResources with the reason it is off in both fixtures.",
+					"or add a fixture that turns its branch on (repoRootFixtures, spec_test.go).",
 					file, typ, name)
 			}
 		}

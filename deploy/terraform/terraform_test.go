@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
@@ -415,6 +416,73 @@ func TestPreventDestroy(t *testing.T) {
 		if counts[typ] == 0 {
 			t.Errorf("no %s block found", typ)
 		}
+	}
+}
+
+// The service holds no data of its own, and the container beside it is the
+// one thing worth keeping, so turning the opt-in off is NOT "a removal a plan
+// may make": with the container in state, `credentials_service = null` fails
+// the whole plan ("Instance cannot be destroyed") and applies nothing, and the
+// service, its account and its grant cannot be removed in that plan either.
+// Opting out is two owner steps — forget the container with `terraform state
+// rm` (which deletes nothing in GCP), then an ordinary plan that removes the
+// service — and C1.22's runbook carries them. This test pins the file's
+// account of that, because the first version of the comment claimed the
+// opposite (independent security review of this file, M2) and nothing else in
+// the tree states the order. deletion_protection = false is what makes step
+// two possible; the container's prevent_destroy is what keeps a credential
+// from being deleted by a plan. The first step's address is pinned exactly as
+// an owner types it — module-prefixed and quoted (re-review N1), because the
+// first version of it named a resource the root's state does not hold.
+func TestCredentialsServiceOptOutIsTwoSteps(t *testing.T) {
+	const path = "gcp/modules/installation/credentials.tf"
+	data, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	text := string(data)
+	// The address carries the module prefix, because the container is a
+	// resource of `module "installation"` (roots/installation/main.tf) and not
+	// of the root: `terraform state rm` on the bare address names nothing in
+	// the root's state and is refused. internal/infra/forget.go's
+	// LogBucketAddress and TagMoverRoleAddress are the same shape for the same
+	// root. It is single-quoted because `[0]` is a glob to zsh, which fails the
+	// command with "no matches found" rather than passing it through
+	// (independent security review of this file, re-review N1).
+	const step = "terraform state rm 'module.installation.google_secret_manager_secret.credentials_bundle[0]'"
+	if !strings.Contains(text, step) {
+		t.Errorf("%s does not document the opt-out's first step (%q): without it a reader is left with the plan failure and no path", path, step)
+	}
+	// The two forms that must not come back: the unprefixed address (the
+	// review's N1 — it names nothing in the root), and the prefixed one
+	// unquoted (zsh refuses it before terraform ever sees it).
+	for _, wrong := range []string{
+		"terraform state rm google_secret_manager_secret.credentials_bundle[0]",
+		"terraform state rm module.installation.google_secret_manager_secret.credentials_bundle[0]",
+	} {
+		if strings.Contains(text, wrong) {
+			t.Errorf("%s carries the opt-out's first step as %q: the address needs the module prefix and single quotes, %q", path, wrong, step)
+		}
+	}
+	if strings.Contains(text, "is therefore a removal a plan may make") || strings.Contains(text, "removal a plan may make, not a refusal") {
+		t.Errorf("%s still claims the opt-out is a removal a plan may make: it is not, the container's prevent_destroy refuses the whole plan", path)
+	}
+	// The two installation steps are not the whole opt-out: the invoker grants
+	// and the dropped model-secret accessors are in the REPOSITORY roots, so a
+	// reader who stops here leaves every one of them declaring a service that
+	// is gone (re-review N2). The file has to say so.
+	const repoStep = "re-applied too, and before these two steps"
+	if !strings.Contains(text, repoStep) {
+		t.Errorf("%s does not say that every repository root is re-applied as part of the opt-out (%q): the invoker grants and the dropped model-secret accessors live in the repository roots, and one left declaring a service that is gone cannot apply", path, repoStep)
+	}
+	// The two lifecycle settings the two steps depend on.
+	containers := resourceBlocks(t, path, data, "google_secret_manager_secret")
+	if len(containers) != 1 || !hasAttr(containers[0].body, "prevent_destroy", "true") {
+		t.Errorf("%s: the bundle container must be exactly one secret with prevent_destroy = true (got %d blocks), which is what makes the state rm step necessary", path, len(containers))
+	}
+	services := resourceBlocks(t, path, data, "google_cloud_run_v2_service")
+	if len(services) != 1 || !hasAttr(services[0].body, "deletion_protection", "false") {
+		t.Errorf("%s: the service must be exactly one Cloud Run service with deletion_protection = false (got %d blocks), so the second step can remove it", path, len(services))
 	}
 }
 
@@ -1156,8 +1224,10 @@ var (
 	// TestComputePreloadBuilderRoleAreExactlyTheBuild), and the
 	// build-submitter id is the installation's own role.
 	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|var\.build_submitter_role|google_project_iam_custom_role\.(launcher|build_submitter|token_minter|job_runner|reaper|preload_builder)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
-	// The member expressions an IAM member may use.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.history\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
+	// The member expressions an IAM member may use. google_service_account
+	// .credentials[0] is the credentials service's own account (C1.18): the
+	// one member its bundle's secretAccessor grant names.
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials)\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
 
 	// A custom role of this project, spelled as the literal path
 	// "projects/${var.project}/roles/<id>" rather than read from the role
@@ -3458,5 +3528,313 @@ func TestRootManagedDeployerScopedDefaultsOff(t *testing.T) {
 	body := code[m[1]:matchBrace(code, m[1]-1)]
 	if !hasAttr(body, "default", "false") {
 		t.Errorf("the root's managed_deployer_scoped must default to false; fugaro init never sets it in 0.8.6:\n%s", body)
+	}
+}
+
+// squash collapses runs of whitespace, so an assertion about an attribute's
+// value does not also pin the alignment of the block it is in.
+func squash(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// TestCredentialsServiceGrantsAreTheOneBundle is the owner's Q6 ruling of
+// 2026-10-19 as a property of the source — and it is the guard the tftest
+// runs cannot be: a run plans the module with one set of variables, so a
+// *second* grant, or a condition on the one grant, is invisible to it the
+// moment the run's variables do not reach it.
+//
+// Q6: the credentials service's reach in Secret Manager is ONE container and
+// ONE accessor grant on it, to the service's own account, and nothing that
+// makes the grant's reach depend on a naming convention — no
+// secretmanager.googleapis.com/secretId condition, no name-prefix fence, no
+// per-credential grant. The container is created here; its document is
+// written only by the owner-run `fugaro creds set` (C1.25), so no value and
+// no version is anywhere in this file.
+//
+// The mutation is any of the shapes Q6 replaced: a second
+// google_secret_manager_secret_iam_member (the per-credential grants of the
+// earlier attempt, PR #674), a `condition` block on the one grant, or a
+// project-level role for the service's account.
+func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
+	const path = "gcp/modules/installation/credentials.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+
+	secrets := resourceBlocks(t, path, b, "google_secret_manager_secret")
+	if len(secrets) != 1 {
+		t.Fatalf("%s declares %d secret containers, want the one bundle and no other (Q6)", path, len(secrets))
+	}
+	container := squash(secrets[0].body)
+	if !strings.Contains(container, "secret_id = var.credentials_service.bundle_secret") {
+		t.Errorf("%s: the bundle's secret_id must be the variable's — the name the loader reads — and never a second spelling of it:\n%s", path, container)
+	}
+	if strings.Contains(container, "fugaro_secret") {
+		t.Errorf("%s: the bundle container must carry no fugaro_secret label: that label is what discovery reads to decide which logical secret of the project's set a container holds, and this one is one document with one writer (internal/infra/discover.go's liveProjectSecrets):\n%s", path, container)
+	}
+	if strings.Contains(container, "condition") {
+		t.Errorf("%s: the bundle container carries a condition:\n%s", path, container)
+	}
+
+	grants := resourceBlocks(t, path, b, "google_secret_manager_secret_iam_member")
+	if len(grants) != 1 {
+		t.Fatalf("%s declares %d secret accessor grants, want exactly one — on the bundle, for the service's account (Q6)", path, len(grants))
+	}
+	grant := squash(grants[0].body)
+	for _, want := range []string{
+		`role = "roles/secretmanager.secretAccessor"`,
+		"secret_id = google_secret_manager_secret.credentials_bundle[0].secret_id",
+		"member = google_service_account.credentials[0].member",
+		"count = local.credentials_service_on ? 1 : 0",
+	} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("%s: the one bundle grant does not hold %q:\n%s", path, want, grant)
+		}
+	}
+	if strings.Contains(grant, "condition") {
+		t.Errorf("%s: the bundle grant carries a condition. Q6 replaced the name-prefix fence and the secretId filter with one unconditioned grant on one container; the service's own ID-token check is what decides who is served:\n%s", path, grant)
+	}
+
+	// The rest of the file, in one place. Every one of these is a way the
+	// service's reach could grow without a second resource to notice.
+	for _, bad := range []struct{ needle, why string }{
+		{"secretmanager.googleapis.com/secretId", "a secretId condition is the per-secret filter Q6 replaced"},
+		{"allUsers", "an unauthenticated invoker on the service"},
+		{"allAuthenticatedUsers", "an invoker on the service for every Google account"},
+		{"google_cloud_run_v2_service_iam_member", "an invoker grant here: the job accounts' grants live in modules/workflow/sa.tf, one per job, and the installation root grants nobody"},
+		{"google_service_account_iam_member", "an actAs grant on the service's account: anyone who could deploy a revision as it could read every model credential the installation holds"},
+		{"google_project_iam_member", "a project-level role for the service's account: it reads one secret and nothing else"},
+		{"google_secret_manager_secret_version", "a version: values are written by the owner-run fugaro creds set, never by Terraform"},
+	} {
+		if strings.Contains(code, bad.needle) {
+			t.Errorf("%s mentions %s: %s", path, bad.needle, bad.why)
+		}
+	}
+
+	// The account's lifecycle precondition is the one `condition` this file
+	// is allowed to carry, and it is taken out before the sweep below so the
+	// sweep is an assertion about conditions rather than a search that
+	// happens to pass: any other one — on the service, on the container, on
+	// the grant — is a finding.
+	const precondition = "condition     = var.credentials_service != null"
+	if strings.Count(code, "precondition") != 1 || !strings.Contains(code, precondition) {
+		t.Fatalf("%s: the account's lifecycle precondition is the only `precondition` in this file, and it must stay that way:\n%s", path, code)
+	}
+	// A `condition` attribute or block, wherever it stands: "precondition"
+	// does not match, and neither does a comment (the code is stripped).
+	if rest := strings.Replace(code, precondition, "", 1); regexp.MustCompile(`(?m)^\s*condition\s*[={]`).MatchString(rest) {
+		t.Errorf("%s: a condition outside the account's precondition. Q6 replaced the name-prefix fence and the secretId filter with one unconditioned grant on one container:\n%s", path, rest)
+	}
+
+	if !strings.Contains(code, "service_account = google_service_account.credentials[0].email") {
+		t.Errorf("%s: the service must run as its own account", path)
+	}
+	// IAM is required, stated rather than implied: this is the fence every
+	// caller passes through before the container runs.
+	if !strings.Contains(squash(code), "invoker_iam_disabled = false") {
+		t.Errorf("%s: the service must set invoker_iam_disabled = false explicitly, so a change of the provider's default cannot open it silently", path)
+	}
+}
+
+// TestServiceHeldSecretsMatchTheCredentialsService pins the four literals in
+// modules/workflow/sa.tf — the two model-credential variable names, the
+// provider-key prefix and the one service-held logical name — to
+// internal/config, and the drop they drive to the opt-in. Terraform cannot ask
+// Go, so the module spells the names out; this test is what keeps the two
+// spellings one rule (the TestLauncherConditionPreconditionMatchesGo
+// precedent).
+//
+// The mutation is any one of the lists: rename a reserved key in Go and the
+// module's literal keeps dropping the accessor of a variable no job has, while
+// the renamed one keeps it — the job's account then reads a credential the
+// service was supposed to be the only holder of. The App key's clause (C2.3)
+// is the one the model lists cannot cover: it is a reserved logical name, not
+// a variable, so dropping it needs its own list, and a module that spells it
+// wrong leaves the job's account with the private key of the installation's
+// GitHub App.
+func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
+	const path = "gcp/modules/workflow/sa.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+
+	// quotedList is the strings in the list literal the pattern captures.
+	quotedList := func(pattern, what string) []string {
+		t.Helper()
+		m := regexp.MustCompile(pattern).FindStringSubmatch(code)
+		if m == nil {
+			t.Fatalf("%s declares no %s list", path, what)
+		}
+		var got []string
+		for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+			got = append(got, q[1])
+		}
+		slices.Sort(got)
+		return got
+	}
+	equal := func(what string, got, want []string, goName string) {
+		t.Helper()
+		w := slices.Clone(want)
+		slices.Sort(w)
+		if !slices.Equal(got, w) {
+			t.Errorf("%s: %s = %v, config.%s = %v", path, what, got, goName, want)
+		}
+	}
+
+	equal("model_secret_env_names",
+		quotedList(`model_secret_env_names\s*=\s*\[([^\]]*)\]`, "model_secret_env_names"),
+		config.ModelSecretEnvs, "ModelSecretEnvs")
+	equal("service_held_secret_names",
+		quotedList(`service_held_secret_names\s*=\s*\[([^\]]*)\]`, "service_held_secret_names"),
+		config.ServiceHeldSecretNames, "ServiceHeldSecretNames")
+
+	p := regexp.MustCompile(`model_secret_env_prefix\s*=\s*"([^"]*)"`).FindStringSubmatch(code)
+	if p == nil || p[1] != config.ProviderKeyEnvPrefix {
+		t.Errorf("%s: model_secret_env_prefix = %v, config.ProviderKeyEnvPrefix = %q", path, p, config.ProviderKeyEnvPrefix)
+	}
+
+	// And the drop itself, clause by clause: a mount is a credential the
+	// service holds exactly when its VARIABLE is one of the model names, OR
+	// carries the provider-key prefix, OR its LOGICAL NAME is one the service
+	// holds. Pinning the whole expression is the point — the two model halves
+	// are what the review's mutation m1 removed, and with the prefix clause
+	// gone every FUGARO_PROVIDER_KEY_* secret keeps its job accessor, which is
+	// the one thing the opt-in exists to take away; the name clause (C2.3) is
+	// the App key, whose variable is a reserved name the model lists must never
+	// grow to cover (D145 keeps Bitbucket's token with the job, F7).
+	if !strings.Contains(squash(code), "env => contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix) || contains(local.service_held_secret_names, logical)") {
+		t.Errorf("%s: is_service_held must be `contains(model_secret_env_names, env) || startswith(env, model_secret_env_prefix) || contains(service_held_secret_names, logical)`; a missing clause leaves that credential's accessor with the job (review m1, C2.3):\n%s", path, code)
+	}
+
+	// The drop is gated on the opt-in, in the same expression that reads the
+	// names: with credentials_service null the set is the workflow's own
+	// secret_env and nothing changes (D147).
+	if !strings.Contains(squash(code), "logical if var.credentials_service == null || !local.is_service_held[env]") {
+		t.Errorf("%s: the job's secret set must be the workflow's own secret_env while the credentials service is off, and drop the credentials it holds only when it is on:\n%s", path, code)
+	}
+
+	// And the grant the job gains: one invoker grant, on the one service the
+	// installation names, to the job's own account, unconditioned.
+	grants := resourceBlocks(t, path, b, "google_cloud_run_v2_service_iam_member")
+	if len(grants) != 1 {
+		t.Fatalf("%s declares %d invoker grants on the credentials service, want the job's one", path, len(grants))
+	}
+	grant := squash(grants[0].body)
+	for _, want := range []string{
+		"count = var.credentials_service == null ? 0 : 1",
+		"name = var.credentials_service.name",
+		"location = var.credentials_service.region",
+		`role = "roles/run.invoker"`,
+		"member = google_service_account.job.member",
+	} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("%s: the job's invoker grant on the credentials service does not hold %q:\n%s", path, want, grant)
+		}
+	}
+	if strings.Contains(grant, "condition") {
+		t.Errorf("%s: the job's invoker grant carries a condition; the service's own ID-token check is what decides which of the accounts IAM admits are served (Q6):\n%s", path, grant)
+	}
+}
+
+// TestCredentialsServiceIsOptIn pins the opt-in and the wiring: both
+// declarations default to null (D147: with the service off nothing changes,
+// and an installation that has not opted in must plan what it planned
+// before), the installation root passes its variable to the module, the
+// repository root carries it in the installation object, and the repo module
+// passes it to each workflow — which is the only place the job's invoker
+// grant and the model-secret drop can come from.
+//
+// The mutation is any one of the four: a default of `{}` or a required
+// variable creates the service for every installation; a dropped pass-down
+// leaves the workflow module with null and the job with the model-secret
+// accessor it was supposed to lose, silently.
+func TestCredentialsServiceIsOptIn(t *testing.T) {
+	for _, tc := range []struct{ path, what string }{
+		{"gcp/roots/installation/variables.tf", "the installation root's"},
+		{"gcp/modules/installation/variables.tf", "the installation module's"},
+	} {
+		b, err := fs.ReadFile(FS, tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := stripComments(string(b))
+		i := regexp.MustCompile(`(?m)^\s*variable\s+"credentials_service"\s*\{`).FindStringIndex(code)
+		if i == nil {
+			t.Errorf("%s declares no credentials_service variable", tc.path)
+			continue
+		}
+		body := code[i[1]:matchBrace(code, i[1]-1)]
+		if !hasAttr(body, "default", "null") {
+			t.Errorf("%s credentials_service must default to null (D147): with it unset nothing is created and every job keeps its model-secret accessors:\n%s", tc.what, body)
+		}
+	}
+	for _, tc := range []struct{ path, want, what string }{
+		{"gcp/roots/installation/main.tf", "credentials_service = var.credentials_service", "the installation root must pass its own variable to the module"},
+		{"gcp/modules/repo/workflows.tf", "credentials_service = var.installation.credentials_service", "the repo module must pass the installation's service down to each workflow, or the job's invoker grant and the model-secret drop never exist"},
+	} {
+		b, err := fs.ReadFile(FS, tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(squash(stripComments(string(b))), tc.want) {
+			t.Errorf("%s: %s (want %q)", tc.path, tc.what, tc.want)
+		}
+	}
+	rb, err := fs.ReadFile(FS, "gcp/roots/repo/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(squash(stripComments(string(rb))), "credentials_service = optional(object({ name = string region = string }))") {
+		t.Error("gcp/roots/repo/variables.tf: the installation object must accept credentials_service, or the repo root cannot carry the installation's service")
+	}
+}
+
+// The service's image must be a DIGEST, and the validation that says so must
+// be exercised by a run that plans the tag form and expects the refusal. Why
+// it is a security rule and not a preference: the service's account reads
+// every credential in the bundle, and the registry grants
+// roles/artifactregistry.writer to every operator, so a mutable tag would let
+// an operator push the code that the next owner apply runs as that account
+// (independent security review of this file, M1). The terraform test is the
+// guard that bites — this test is what fails if someone deletes the refusal
+// runs while leaving the validation, or loosens the validation while leaving
+// the runs, either of which would take the digest requirement with it.
+func TestCredentialsServiceImageMustBeADigest(t *testing.T) {
+	const path = "gcp/modules/installation/variables.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	i := regexp.MustCompile(`(?m)^\s*variable\s+"credentials_service"\s*\{`).FindStringIndex(code)
+	if i == nil {
+		t.Fatalf("%s declares no credentials_service variable", path)
+	}
+	body := code[i[1]:matchBrace(code, i[1]-1)]
+	if !strings.Contains(body, "@sha256:[0-9a-f]{64}") {
+		t.Errorf("%s: the credentials_service validation must require an image pinned by digest (a regex ending in @sha256: and 64 lower-case hex digits); a tag is mutable and any operator may push to the installation's registry:\n%s", path, body)
+	}
+	if strings.Contains(body, "length(var.credentials_service.image) > 0") {
+		t.Errorf("%s: the credentials_service validation still accepts any non-empty image, which is the shape M1 found", path)
+	}
+	const tftest = "gcp/roots/installation/tests/installation.tftest.hcl"
+	tb, err := fs.ReadFile(FS, tftest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(tb)
+	if !strings.Contains(text, "@sha256:") {
+		t.Errorf("%s: no run in the installation root's terraform test carries a digest image, so nothing exercises the validation above", tftest)
+	}
+	n := 0
+	for _, m := range regexp.MustCompile(`(?m)^\s*expect_failures\s*=\s*\[([^\]]*)\]`).FindAllStringSubmatch(text, -1) {
+		if strings.Contains(m[1], "var.credentials_service") {
+			n++
+		}
+	}
+	if n < 2 {
+		t.Errorf("%s: %d runs expect var.credentials_service to fail; the tag form and the truncated-digest form must each be planned and refused (M1)", tftest, n)
 	}
 }

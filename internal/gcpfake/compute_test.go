@@ -130,3 +130,36 @@ func doDelete(t *testing.T, f *Compute, project, zone, name string) int {
 	defer resp.Body.Close()
 	return resp.StatusCode
 }
+
+// The three read-only gets `fugaro doctor` makes about a Batch installation
+// answer the project the fake was told about and NOT_FOUND for anything else,
+// as the API does: a family, network or subnetwork the test did not add is a
+// fact the caller reports, not a call the fake refuses.
+func TestComputeFakeServesTheDoctorGets(t *testing.T) {
+	f := NewCompute(t)
+	f.Project = "p"
+	f.AddImageFamily("fugaro-base")
+	f.AddNetwork("fugaro")
+	f.AddSubnetwork("r", "fugaro")
+
+	if code, body := getJSON(t, f.URL+"/compute/v1/projects/p/global/images/family/fugaro-base"); code != http.StatusOK || body["family"] != "fugaro-base" {
+		t.Fatalf("a present family: %d %v", code, body)
+	}
+	if code, _ := getJSON(t, f.URL+"/compute/v1/projects/p/global/images/family/other"); code != http.StatusNotFound {
+		t.Fatalf("an absent family answered %d, want 404", code)
+	}
+	if code, _ := getJSON(t, f.URL+"/compute/v1/projects/p/global/networks/fugaro"); code != http.StatusOK {
+		t.Fatalf("a present network answered %d, want 200", code)
+	}
+	if code, _ := getJSON(t, f.URL+"/compute/v1/projects/p/regions/r/subnetworks/fugaro"); code != http.StatusOK {
+		t.Fatalf("a present subnetwork answered %d, want 200", code)
+	}
+	// The region is part of the subnetwork's identity, as it is in the API.
+	if code, _ := getJSON(t, f.URL+"/compute/v1/projects/p/regions/other/subnetworks/fugaro"); code != http.StatusNotFound {
+		t.Fatalf("a subnetwork read in another region answered %d, want 404", code)
+	}
+	// And another project's gets are NOT_FOUND, as the instance paths are.
+	if code, _ := getJSON(t, f.URL+"/compute/v1/projects/other/global/images/family/fugaro-base"); code != http.StatusNotFound {
+		t.Fatalf("another project's family answered %d, want 404", code)
+	}
+}

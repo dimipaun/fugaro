@@ -140,6 +140,27 @@ type InstallationOutputs struct {
 	// roles) and its Cloud Run job.
 	HistoryServiceAccount string `json:"history_service_account"`
 	HistoryJob            string `json:"history_job"`
+	// CredentialsService is the installation's credentials service, or null
+	// while it has not opted in (D146, D147) — which is every installation
+	// today, and the reason nothing here changes until an owner runs C1.20's
+	// stage. The repository roots read the same object from the tfvars'
+	// installation.credentials_service (RepoInstallation).
+	CredentialsService *CredentialsService `json:"credentials_service"`
+}
+
+// CredentialsService is the installation's credentials service (D146): the
+// Cloud Run service that alone holds the model credentials. One type serves
+// both ends of the contract — the installation root's output of that name and
+// the repository root's installation.credentials_service — because both carry
+// the same two values.
+//
+// Null means the installation has not opted in (D147), and null is what every
+// reader gates on: with it off, every job keeps its model-secret accessors,
+// no job account holds an invoker grant, and no run reaches a service.
+type CredentialsService struct {
+	// Name is the Cloud Run service's name, Region the region it runs in.
+	Name   string `json:"name"`
+	Region string `json:"region"`
 }
 
 // RoleIDs are the custom roles' full names, projects/<p>/roles/<id>.
@@ -263,6 +284,11 @@ type RepoInstallation struct {
 	RoleIDs                 RepoRoleIDs `json:"role_ids"`
 	Launchers               []string    `json:"launchers"`
 	Operators               []string    `json:"operators"`
+	// CredentialsService is the installation's credentials service, or absent
+	// while it has not opted in (D146, D147): the workflow module grants each
+	// job account roles/run.invoker on it and drops that job's model-secret
+	// accessors (D135, D145).
+	CredentialsService *CredentialsService `json:"credentials_service,omitempty"`
 }
 
 // RepoRoleIDs are the custom roles a repository root grants.
@@ -899,6 +925,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
 			Launchers:               c.inst.Launchers,
 			Operators:               c.inst.Operators,
+			CredentialsService:      c.inst.CredentialsService,
 		},
 		GitHubAppID:              c.appID,
 		RepoURL:                  c.repoURL,
@@ -1239,7 +1266,20 @@ func (rs RepoSpec) Addresses() []string {
 		add(p + "google_storage_bucket_iam_member.job")
 		add(p + "google_storage_bucket_iam_member.job_tokens")
 		for _, logical := range uniqueSecrets(ws) {
+			// The credentials the service holds are its to hold once the
+			// installation has opted in (D145): modules/workflow/sa.tf drops
+			// the job's accessor on each — the model credentials by C1.18, the
+			// GitHub App's private key by C2.3 — and C1.20/C2.2 drop its
+			// mount, so the mirror must not name a grant the spec no longer
+			// produces — it would read as one that survives a retirement.
+			if rs.Installation.CredentialsService != nil && mountsServiceHeldSecret(ws, logical) {
+				continue
+			}
 			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
+		}
+		if rs.Installation.CredentialsService != nil {
+			// The job account's roles/run.invoker on the service (D135).
+			add(p + "google_cloud_run_v2_service_iam_member.credentials[0]")
 		}
 		if ws.Vertex {
 			add(p + "google_project_iam_member.vertex[0]")
@@ -1253,6 +1293,35 @@ func (rs RepoSpec) Addresses() []string {
 	}
 	slices.Sort(out)
 	return slices.Compact(out)
+}
+
+// mountsServiceHeldSecret reports whether the logical secret name is one
+// whose credential the credentials service holds for ws: every secret_env
+// entry naming it carries such a credential (config.IsServiceHeldSecretEnv —
+// a model credential by its variable, the GitHub App's private key by its
+// name), so the service holds it once an installation opts in (D145, D146) and
+// the job's account keeps no accessor on it (C1.18, C2.3).
+//
+// It is the same question modules/workflow/sa.tf's job_secret_names asks, one
+// mount at a time, and it is written the same way — a name survives if ANY
+// entry that mounts it is not one the service holds — so the mirror
+// (RepoSpec.Addresses) and the Terraform cannot disagree about which grants
+// the spec produces. One secret mounted under two variables, one of them a
+// credential the service holds, is a shape config already refuses
+// (ReservedSecrets, ProviderBySecret), and this answers the same way either
+// way.
+func mountsServiceHeldSecret(ws WorkflowSpec, name string) bool {
+	held := false
+	for env, logical := range ws.SecretEnv {
+		if logical != name {
+			continue
+		}
+		if !config.IsServiceHeldSecretEnv(env, name) {
+			return false
+		}
+		held = true
+	}
+	return held
 }
 
 // Schedule is the check's daily cron schedule: a minute between 05:00 and

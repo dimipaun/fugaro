@@ -166,11 +166,13 @@ type Request struct {
 	// managed project's own allowlist (Task 1.1), with the projects, region
 	// and buckets of this installation.
 	Cover Cover
-	// AllowDelete are the addresses the owner's own object approves, read
-	// fail-closed by the caller (infra/managed.GuardAllowList). An empty list
-	// allows no delete and no replace at all, which is what the gate then
-	// refuses.
-	AllowDelete []string
+	// AllowDelete is the owner's own object, read fail-closed by the caller
+	// (infra/managed.GuardAllowList): for each address they approve, the
+	// identity of the object that was at it when they approved it (Task 6.3).
+	// An empty list allows no delete and no replace at all, and so does an
+	// entry about another object than the one a plan removes; either is what
+	// the gate then refuses.
+	AllowDelete []tf.DeleteEntry
 	// Session is what the applying command's OWN command line named as
 	// addresses it may delete or replace. fugaro managed apply registers no
 	// such flag, so the production value is nil, and internal/cli asserts that
@@ -254,12 +256,17 @@ type RefusedError struct {
 // first line is every refusal, listed or not.
 //
 // Every part of it that can come from somewhere else is one bounded field
-// first (safetext.Field): an address and a rule's own words are read out of a
-// plan and out of objects other people wrote, and a newline, a C1 control or a
-// bidi override carried through them would be this program printing text of
-// someone else's choosing — in text the session that reads it acts on — and a
-// value of any length would push the rest out of sight. The advice is this
-// program's own and is rendered as it is.
+// first (safetext.Field): an address is read out of a plan and out of objects
+// other people wrote, and a newline, a C1 control or a bidi override carried
+// through it would be this program printing text of someone else's choosing —
+// in text the session that reads it acts on — and a value of any length would
+// push the rest out of sight. A rule's own words are rendered by refusalWhy and
+// not by Field: the two gates that judge a change against the owner's delete
+// list are bounded already where the rule built them (refusalWhyMax), and
+// Field's own cut would fall inside the identity a removal rule prints for its
+// reader to approve, which is the one part of the line that has to reach the
+// terminal whole — every other gate's why is one Field, as it was. The advice
+// is this program's own and is rendered as it is.
 func (e *RefusedError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s, so nothing is applied (%d refusal(s))", ErrRefused, len(e.Verdict.Refusals))
@@ -278,7 +285,7 @@ func (e *RefusedError) Error() string {
 			b.WriteString(safetext.Field(r.Address))
 			b.WriteString(": ")
 		}
-		b.WriteString(safetext.Field(r.Why))
+		b.WriteString(refusalWhy(r.Why))
 	}
 	if len(e.Verdict.Refusals) == 0 {
 		b.WriteString(": the verdict refused and listed nothing, which is a refusal all the same")
@@ -301,13 +308,21 @@ func (e *RefusedError) Error() string {
 
 func (e *RefusedError) Unwrap() error { return ErrRefused }
 
-// DeleteAdvice is the one sentence a managed project's deletion refusal ends
-// with, and the sentence a managed `fugaro init`'s guard refusal ends with too
-// (internal/cli passes it through tf.GuardWith): what to do, and who can do it.
+// DeleteAdvice is the one sentence a managed apply's deletion refusal ends
+// with: what to do, and who can do it. It is not a managed `fugaro init`'s
+// sentence — init's guard is tf.Guard over its own `--allow-delete` addresses,
+// fugaro's own roots, and its refusal ends with internal/cli's
+// initManagedDeleteAdvice, which does not point at this list at all: the list
+// approves deletes in the project's agent-authored root, which is what a
+// managed apply applies, and nothing init plans.
 // The owner's own object is named by its whole address, the command that writes
 // it is named, and no address of an applying command's own is accepted — so the
-// loop a refusal starts is refusal → the owner copies the address → fugaro
-// allow-delete → the next plan passes (D74).
+// loop a refusal starts is refusal → the owner copies the entry the refusal's
+// own line printed, an address AND the identity of the object the plan removes
+// (tf.RemoveIdentityText) → fugaro allow-delete → the next plan passes (D74,
+// and the entries rule of Task 6.3: what is listed is an entry, so the sentence
+// does not promise that an address alone can be approved, which is a command
+// that would refuse it).
 //
 // It names no flag and no agent marker, and that is the rule rather than the
 // wording: a refusal is read by the session it refuses — in a managed project
@@ -326,7 +341,7 @@ func DeleteAdvice(gcpProject string) string {
 		where = "the owner's own list at gs://fugaro-runs-" + safetext.Field(gcpProject) + "/fugaro/allow-delete.json"
 	}
 	return "the addresses a managed project may delete or replace are " + where +
-		", which the owner writes with their own credentials and the owner-run command fugaro allow-delete, and no address named on the command line of an applying command approves one: an address the owner approves is listed there"
+		", which the owner writes with their own credentials and the owner-run command fugaro allow-delete, and no address named on the command line of an applying command approves one: what the owner approves is an entry — an address AND the identity of the object the plan removes, which the refusal above printed — so an address alone is not an approval"
 }
 
 // Apply is the managed apply: the gate's verdict is the whole of the decision,
@@ -613,13 +628,15 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 }
 
 // advice is the sentence a refusal ends with, when the mode has one: a
-// refused plan whose guard refused a delete or replace the owner's list would
-// admit if it named the address (Verdict.Listable) ends with DeleteAdvice,
-// since that is the one thing its reader can act on. Nothing else gets it: a
-// refusal from the cover or the cost list alone says what the plan is, not who
-// may approve it, and a guard refusal made only of what no list clears — an
-// object moved here from another address, an action the guard does not know,
-// a change with no actions — would send the owner to list an address and the
+// refused plan whose guard refused a delete or replace a new entry in the
+// owner's list would admit — one naming the address AND the identity of the
+// object the plan removes (Verdict.Listable, whose rule is tf.ListableEntries')
+// — ends with DeleteAdvice, since that is the one thing its reader can act on.
+// Nothing else gets it: a refusal from the cover or the cost list alone says
+// what the plan is, not who may approve it, and a guard refusal made only of
+// what no entry clears — an object moved here from another address, an action
+// the guard does not know, a change with no actions, a removal whose before
+// view identifies nothing — would send the owner to record an entry and the
 // next plan would be refused the same way. No advice rather than the wrong one.
 func (r Request) advice(v Verdict) string {
 	if len(v.Listable) == 0 {

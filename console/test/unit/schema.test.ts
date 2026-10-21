@@ -263,9 +263,15 @@ const FULL_ROW: JSONDoc = Object.freeze({
   project_layer: { name: 'base', sha256: 'a'.repeat(64) },
   config_sha256: 'b'.repeat(64),
   run_id: '20261015-120000-aa01',
-  status: 'succeeded',
+  status: 'failed',
   stage: 'done',
-  reason: '',
+  reason: 'the Batch job was preempted: its Spot VM was reclaimed before the run finalized',
+  // The read side's derivation, written on a row whose status was derived while
+  // reading (`runview.DerivedPreempted`, the CLI's 2026-10-21 ruling): a Cloud
+  // Batch job the platform preempted, on a run whose record was never
+  // finalized. It sits beside `status` rather than replacing it, which is what
+  // keeps the status vocabulary a reader switches on intact.
+  derived: 'preempted',
   halt: { by: 'redacted@example.invalid', at: '2026-10-15T11:00:00Z', reason: 'budget kill <project>' },
   batch: '2026-10-15',
   requested_by: 'redacted@example.invalid',
@@ -333,11 +339,14 @@ const DEGRADED_REAL: JSONDoc = Object.freeze({
 })
 
 /** FULL_LIVE_RUN is a `JSONRun` as `watch --json` writes one: **every** key the
- * struct can write (`internal/watch/json.go`), 0.9.0's five among them. The
- * committed fixture predates those five, so a document built from it alone
- * cannot catch a `RUN_KEYS` that is missing them -- which is how the Live
- * screen's own feed came to be refused whole, while this suite stayed green.
- * This row is `first`'s own first run plus the keys the recording predates. */
+ * struct can write (`internal/watch/json.go`), 0.9.0's five and 0.10.0's two
+ * among them. The committed fixture predates them all, so a document built from
+ * it alone cannot catch a `RUN_KEYS` that is missing one -- which is how the
+ * Live screen's own feed came to be refused whole, while this suite stayed
+ * green. This row is `first`'s own first run plus the keys the recording
+ * predates, and the test below holds it to that: the row's key set is compared
+ * with `RUN_KEYS` itself, so a key added to the list and not to the row is a
+ * failure rather than a fixture that quietly stopped covering it. */
 const FULL_LIVE_RUN: JSONDoc = Object.freeze({
   run: '20261015-120000-aa01',
   slug: 'slug-6a7c7d06',
@@ -366,6 +375,12 @@ const FULL_LIVE_RUN: JSONDoc = Object.freeze({
   provider: 'github',
   account: 'redacted@example.invalid',
   launched_by: 'redacted@example.invalid',
+  // 0.10.0 (credentials-service C1.21): the name of the credential the run's
+  // cascade is spending on -- a name, never a value -- and the instant a run
+  // held up for one expects to resume at. Both are `JSONRun`'s alone: a
+  // finished run is spending on nothing and waiting for nothing.
+  credential: 'acme-personal',
+  waiting_until: '2026-10-15T12:15:00Z',
 })
 
 /** FULL_FINISHED_RUN is a `JSONFinished` as `watch --json` writes one: every key
@@ -469,12 +484,31 @@ describe('both document shapes decode', () => {
     const row = result.value.runs[0]
     expect(row?.run).toBe('20261015-120000-aa01')
     expect(row?.runId).toBe('20261015-120000-aa01')
-    expect(row?.status).toBe('succeeded')
+    expect(row?.status).toBe('failed')
     expect(row?.cost.modelUsd.value).toBe(12.5)
     expect(row?.cost.modelBasis).toBe('api-list')
     // The optional keys it does not read are accepted rather than refused.
     expect(row?.workflow).toBe('web')
     expect(row?.prUrl).toBe('https://example.invalid/r-4c25cf20/r-f1aa9214/pull/412')
+  })
+
+  it('accepts the read side\'s derived status, which is additive', () => {
+    // `derived` arrived with the read-side preemption derivation (2026-10-21):
+    // a row whose record was never finalized and whose Cloud Batch job the
+    // platform preempted reads `status: "failed"`, `derived: "preempted"`.
+    // `closed()` refuses a key the shape does not list, so a `RECORD_KEYS`
+    // without it turns every document carrying one preempted run into the skew
+    // state -- `title`'s omission and `launched_by`'s, a third time.
+    const result = decodeDocument(DEGRADED_REAL, 'a degraded document')
+    expect(result.ok, result.ok ? '' : result.skew.because).toBe(true)
+    // The key is optional, so the *shape* is unchanged for every row that is
+    // not derived; and it is a string the CLI writes from its own table, which
+    // is why it is exempt from the text classes rather than classified as one.
+    expect(wireTextClass('derived')).toBeUndefined()
+    expect(NON_TEXT_STRING_KEYS).toContain('derived')
+    // And it is not the status: the vocabulary a reader switches on is intact.
+    expect(RECORD_KEYS).toContain('status')
+    expect(RECORD_KEYS).toContain('derived')
   })
 
   it('decodes a live document carrying every key `JSONRun` and `JSONFinished` can write', () => {
@@ -498,6 +532,9 @@ describe('both document shapes decode', () => {
     // both structs (`internal/watch/json.go`) and neither list had them. No
     // test noticed, because the committed fixture is a recording from before the
     // fields -- so the console was green while refusing every 0.9.0 document.
+    // 0.10.0's `credential` and `waiting_until` (credentials-service C1.21) are
+    // the second round of the same drift: this branch added them to `JSONRun`,
+    // and both console jobs went red on the comparison below.
     for (const [name, list] of [
       ['JSONRun', RUN_KEYS],
       ['JSONFinished', FINISHED_KEYS],
@@ -505,12 +542,29 @@ describe('both document shapes decode', () => {
       const fromTheStruct = structTags(WATCH_SOURCE, name).map((tag) => tag.key)
       expect([...list].sort(), name).toEqual([...fromTheStruct].sort())
       expect(list.length, name).toBe(fromTheStruct.length)
-      // The five keys this pin exists for, named: a struct that lost one would
-      // otherwise make the comparison agree with a list that lost it too.
+      // The five keys the 0.9.0 pin exists for, named: a struct that lost one
+      // would otherwise make the comparison agree with a list that lost it too.
       for (const found of ['job', 'profile', 'provider', 'account', 'launched_by']) {
         expect(fromTheStruct, `${name} carries ${found}`).toContain(found)
       }
     }
+    // 0.10.0's two are named as well, and they are `JSONRun`'s alone -- a
+    // finished run spends nothing and waits for nothing -- so they are asserted
+    // here rather than in the loop above, which walks both structs. Naming them
+    // is what keeps the comparison from agreeing with two lists that lost one
+    // together, which is exactly what happened to the five.
+    const runKeys = structTags(WATCH_SOURCE, 'JSONRun').map((tag) => tag.key)
+    for (const found of ['credential', 'waiting_until']) {
+      expect(runKeys, `JSONRun carries ${found}`).toContain(found)
+      expect(FINISHED_KEYS, `JSONFinished does not carry ${found}`).not.toContain(found)
+    }
+    // The fixture above claims to carry every key of the shape, and a claim in a
+    // comment is what let the drift happen twice: the row's own key set is held
+    // to the list, so a key added to `RUN_KEYS` and forgotten here fails this
+    // test instead of quietly falling out of the classification walk below,
+    // which can only see the keys its documents carry.
+    expect([...Object.keys(FULL_LIVE_RUN)].sort()).toEqual([...RUN_KEYS].sort())
+    expect([...Object.keys(FULL_FINISHED_RUN)].sort()).toEqual([...FINISHED_KEYS].sort())
     // And the lists are closed like every other shape here: a key neither struct
     // writes is a refusal on each of them, not a row with a field nobody read.
     for (const [list, path] of [
@@ -950,8 +1004,12 @@ describe('every wire string is classified', () => {
     // And every key of a realistic `JSONRun`/`JSONFinished`: 0.9.0's `job`,
     // `profile`, `provider`, `account` and `launched_by` are in no document of
     // the corpus, so without this row the map could claim to be total over the
-    // wire while missing exactly the keys a 0.9.0 CLI writes.
+    // wire while missing exactly the keys a 0.9.0 CLI writes. 0.10.0's
+    // `credential` and `waiting_until` are in no document of the corpus either,
+    // for the same reason: the recording predates them.
     expect(stringLeaves(LIVE_REAL).map((leaf) => leaf.key)).toContain('launched_by')
+    expect(stringLeaves(LIVE_REAL).map((leaf) => leaf.key)).toContain('credential')
+    expect(stringLeaves(LIVE_REAL).map((leaf) => leaf.key)).toContain('waiting_until')
     expect(unclassified(LIVE_REAL)).toEqual([])
   })
 
@@ -979,6 +1037,21 @@ describe('every wire string is classified', () => {
     expect(wireTextClass('job')).toBe('label')
     expect(wireTextClass('profile')).toBe('label')
     expect(wireTextClass('provider')).toBe('label')
+    // 0.10.0's two (credentials-service C1.21). `credential` is a **name** -- a
+    // label, the class an identifier a policy or the service wrote carries, and
+    // not `person`: it names an account's token, not a person. It goes through
+    // the free-text rules all the same, so a value that is a value rather than a
+    // name is drawn as the token marker, which is the direction this must fail
+    // in: the contract's promise is the name and never the value, and this layer
+    // is what keeps that promise true of a document some other writer produced.
+    expect(wireTextClass('credential')).toBe('label')
+    expect(wireTextClass('credential')).not.toBe('sentence')
+    // `waiting_until` is not text at all: an RFC 3339 instant a reader compares
+    // with `now` -- and whose **presence** is the state ("this run is held up"),
+    // which is a fact to read and not a string to draw -- so it is a stamp like
+    // `now` and `at`, and the recorder shifts it like one.
+    expect(wireTextClass('waiting_until')).toBeUndefined()
+    expect(NON_TEXT_STRING_KEYS).toContain('waiting_until')
     expect(wireTextClass('pr_url')).toBe('url')
     expect(wireTextClass('round')).toBe('label')
     expect(wireTextClass('round')).not.toBe('sentence')

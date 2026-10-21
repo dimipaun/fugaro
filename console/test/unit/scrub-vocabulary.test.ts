@@ -1,6 +1,7 @@
-// The scrub's vocabularies and its clock (owner review of PR #643, items 1 and 2).
+// The scrub's vocabularies, its key tables and its clock (owner review of PR
+// #643, items 1 and 2; review of PR #754).
 //
-// Three things are held here, and each names the mutation it catches:
+// Four things are held here, and each names the mutation it catches:
 //
 //   - **the vocabularies are the CLI's.** Every value the Go source writes into
 //     the field is ACCEPTED, and a value outside the list is refused. The
@@ -13,10 +14,15 @@
 //   - **the verify shape is what verify.go writes**, exactly: every tail
 //     `Record.Summary` can append, the `FAILED` spelling, the truncation the
 //     registry makes, and a refusal of a line the writer cannot produce.
+//   - **the run-key tables are the live shapes'.** A row carrying every key of
+//     `RUN_KEYS` or `FINISHED_KEYS` is scrubbed, not refused as `an unknown
+//     key`; the mutation is a table missing one of the seven keys the 0.9.0 and
+//     0.10.0 releases added, which is what review of PR #754 found (and a
+//     near-miss key is still refused, so the tables stay closed).
 //   - **the clock shift is per run and drawn, not committed.** Nothing here
 //     asserts a particular offset -- that is the point of the change -- so the
-//     tests hold consistency (now, day, run IDs, kill.at agree with the ages)
-//     and non-reproducibility, never a fixed value.
+//     tests hold consistency (now, day, run IDs, kill.at and waiting_until agree
+//     with the ages) and non-reproducibility, never a fixed value.
 //
 // Every input is a SYNTHETIC document written in this file. No recording of a
 // real installation is read, and none is written.
@@ -27,6 +33,7 @@ import {
   CONNECTION_REASONS, INVENTED_CONNECTION_REASON, TIME_SHIFT_RANGE_MS, VERIFY_CLIP_RUNES, VOCAB,
   isKnownVerifySummary, isVerifySummary, randomTimeShiftMs, scrubDocument, timeShiftFromDraw,
 } from '../../tools/scrub-fixture/scrub'
+import { FINISHED_KEYS, RUN_KEYS } from '../../src/shared/schema'
 
 /** raw is the smallest document the scrub accepts: one run, one repo, a total
  * that recomputes. Its values are invented here and identify nothing. */
@@ -94,7 +101,7 @@ describe('the scrub: the CLI vocabulary it copies', () => {
   })
 
   it('accepts the config vocabulary auth can carry, vertex included, and the dash for none', () => {
-    for (const auth of ['vertex', 'api-key', 'oauth', '-']) {
+    for (const auth of ['vertex', 'api-key', 'oauth', 'cascade', '-']) {
       const doc = raw()
       at(doc, 'runs', 0)['auth'] = auth
       expect(at(scrubDocument(doc, 0), 'runs', 0)['auth']).toBe(auth)
@@ -384,6 +391,94 @@ describe('the scrub: the nullable Go fields', () => {
       holder(doc)[path.endsWith('age_seconds') ? 'age_seconds' : 'percent'] = 'many'
       expect(() => scrubDocument(doc, 0), path).toThrow(/not a number/)
     }
+  })
+})
+
+describe('the scrub: the keys the live run shapes write', () => {
+  /**
+   * NEWER_KEYS is the keys whose rule this block is about: the five 0.9.0 keys
+   * (`job`, `profile`, `provider`, `account`, `launched_by`) and the two 0.10.0
+   * ones (`credential`, `waiting_until`). A recording that carries them was
+   * refused **whole**, as `an unknown key at $.runs[0].credential`, because
+   * `applyRules` copies a key only through its own rule and the scrub's two run
+   * tables had none of the seven -- so the documented record -> scrub -> commit
+   * workflow could not be run at all on a current recording, and the key lists
+   * in `src/shared/schema.ts`, which carry all seven, could not say so.
+   *
+   * The six text keys must be *replaced*: `account` and `launched_by` are
+   * people and `credential` names a token's account, so a rule that passed the
+   * value through would publish it. `waiting_until` is a stamp and must be
+   * shifted with the rest of the clock, which is what the `src/shared/schema.ts`
+   * comment beside it claims.
+   */
+  const NEWER_TEXT_KEYS = ['job', 'profile', 'provider', 'account', 'launched_by', 'credential'] as const
+  const NEWER_STAMP_KEYS = ['waiting_until'] as const
+  const SHIFT = 30 * 60 * 1000
+  const WAITING = '2026-03-01T13:00:00Z'
+
+  /**
+   * LIVE_VALUES is one plausible wire value for every key of `RUN_KEYS` and
+   * `FINISHED_KEYS` that `raw()` does not already carry, typed the way
+   * `internal/watch/json.go` types it: `queued`, `stuck` and `failed` are
+   * bools, `pr_number` an int, `waiting_until` an instant, the rest strings.
+   * `fill` refuses a key with no value here, so the test cannot pass by having
+   * nothing to say about one.
+   */
+  const LIVE_VALUES: Readonly<Record<string, unknown>> = {
+    recipe: 'example-recipe', halted: 'example halt reason', queued: true, stuck: true,
+    workflow: 'example-workflow', requested_by: 'redacted@example.invalid',
+    job: 'x-job', profile: 'x-profile', provider: 'x-provider', account: 'x-account',
+    launched_by: 'x-launcher', credential: 'x-credential', waiting_until: WAITING,
+    status: 'succeeded', outcome: 'ready', failed: false,
+    pr_url: 'https://example.invalid/example-owner/example-repo/pull/1', pr_number: 1,
+  }
+
+  /** fill gives a row every key of `keys`, keeping the value it already has and
+   * inventing the rest from LIVE_VALUES. */
+  function fill(row: Record<string, unknown>, keys: readonly string[]): void {
+    for (const key of keys) {
+      if (key in row) continue
+      if (!(key in LIVE_VALUES)) throw new Error(`this test has no value for ${key}`)
+      row[key] = LIVE_VALUES[key]
+    }
+  }
+
+  it('scrubs a run carrying every key of JSONRun, rather than refusing one as unknown', () => {
+    const doc = raw()
+    const row = at(doc, 'runs', 0)
+    fill(row, RUN_KEYS)
+    const out = at(scrubDocument(doc, SHIFT), 'runs', 0)
+    // every key the shape writes comes out the other side: a rule the scrub has
+    // not got is a key it refuses, and one it has but the shape does not is a
+    // key this assertion would see as extra
+    expect(Object.keys(out).sort()).toEqual([...RUN_KEYS].sort())
+    for (const key of NEWER_TEXT_KEYS) expect(out[key], key).not.toBe(row[key])
+    expect(out['waiting_until']).toBe('2026-03-01T13:30:00Z')
+  })
+
+  it('scrubs a finished run carrying every key of JSONFinished', () => {
+    const doc = raw()
+    // one finished row, built out of the run row for the keys the two shapes
+    // share (`run`, `slug`, `repo`, `title`, `age_seconds`), so the row carries
+    // no key of its own that JSONFinished does not have
+    const run = at(doc, 'runs', 0)
+    const finished: Record<string, unknown> = {}
+    for (const key of FINISHED_KEYS) if (key in run) finished[key] = run[key]
+    doc['finished'] = [finished]
+    fill(finished, FINISHED_KEYS)
+    const out = at(scrubDocument(doc, SHIFT), 'finished', 0)
+    expect(Object.keys(out).sort()).toEqual([...FINISHED_KEYS].sort())
+    for (const key of ['job', 'profile', 'provider', 'account', 'launched_by']) {
+      expect(out[key], key).not.toBe(finished[key])
+    }
+  })
+
+  it('still refuses a run key neither shape writes', () => {
+    // the other direction, and the one the rules must not have cost: the tables
+    // are closed, so a near miss is refused by name rather than copied through
+    const doc = raw()
+    at(doc, 'runs', 0)['credential_name'] = 'x'
+    expect(() => scrubDocument(doc, SHIFT)).toThrow(/an unknown key at \$\.runs\[0\]\.credential_name/)
   })
 })
 
