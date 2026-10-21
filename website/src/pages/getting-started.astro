@@ -31,11 +31,13 @@
  *      steps below are `docs/gcp-setup.md`'s preconditions and its short path, in the order
  *      that document puts them, one line each, and each names the document that carries the
  *      detail rather than repeating it. No secret value is named, and no step is invented.
- *      **`fugaro setup` is the wizard, and it asks the rest**: the project, the billing
- *      account, Firebase, the installation and the first repository are its own questions, so
- *      the page does not list them as things a reader has to arrange first. The two commands
- *      the steps name are rendered from `install.yaml`'s plugin path, so a rename there moves
- *      the steps with it.
+ *      **`fugaro setup` asks, so the page does not list what it asks**: the GCP project, the
+ *      region, whether to create it or adopt one and the installation's name are the wizard's
+ *      own prompts (the four questions `internal/cli/setup.go` asks on a first run, with
+ *      `--gcp-project`, `--region`, `--create-project` and `--name` as their flags), and the
+ *      billing link, the API enabling and the secrets are confirmations it takes, not steps a
+ *      reader does first. The two commands the steps name are rendered from `install.yaml`'s
+ *      plugin path, so a rename there moves the steps with it.
  *   3. **`#details`: everything else, where it was.** The paths the cards do not carry —
  *      cosign, `go install`, the plugin — keep their own notes, citations and commands.
  *
@@ -439,10 +441,10 @@ const doc = (path: string, fragment: string): string =>
       `docs/gcp-setup.md` is the runbook that walks them through it. The three steps below are
       that runbook's own preconditions and short path in its own order, one line each, and
       every one of them links to the document that carries it — the page states what to do
-      and the document states how, so the two cannot drift. **The project, the billing
-      account, Firebase and the installation are not steps here**, because the wizard asks
-      for them: a page that listed them would be a fourth copy of questions `install.yaml`'s
-      first command answers. The two commands the steps name are rendered from
+      and the document states how, so the two cannot drift. **The project, the region and the
+      installation's name are not steps here**, because `fugaro setup` asks for them and
+      confirms the rest: a page that listed them would be a fourth copy of questions the
+      command the step names answers. The two commands the steps name are rendered from
       `install.yaml`'s plugin path rather than typed here. No secret is named here, and no
       value is anywhere on this site. */}
   <section id="setup">
@@ -475,9 +477,11 @@ const doc = (path: string, fragment: string): string =>
         <div class="gs-step-body">
           <h3 class="gs-step-name">Run <code>{installCommand}</code></h3>
           <p class="gs-step-line">
-            In your own terminal. It asks the rest: the project, the billing account,{' '}
-            <a href={doc('docs/gcp-setup.md', 'turning-the-shared-budget-on-m9b')}>Firebase</a>, the
-            installation and the first repository.
+            In your own terminal. It asks for the GCP project, the region, whether to create it or
+            adopt one, and the name; the rest is a confirmation you type, and secrets come at
+            hidden prompts.{' '}
+            <a href={doc('docs/gcp-setup.md', 'turning-the-shared-budget-on-m9b')}>The shared budget</a>{' '}
+            is optional.
           </p>
         </div>
         <a
@@ -818,7 +822,7 @@ const doc = (path: string, fragment: string): string =>
     }
 
     /* The two steps that are a command a reader runs are the green ones — the tone the site
-       uses for "this is the one that finishes it" — and the three before them are the accent. */
+       uses for "this is the one that finishes it" — and the one before them is the accent. */
     .gs-step[data-state='run'] .gs-step-number {
       color: var(--ok);
     }
