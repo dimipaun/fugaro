@@ -238,6 +238,25 @@
         }
       }
     },
+    "orchestrators": {
+      "$slug": {
+        "$job": {
+          "lease": {
+            ".read": "USER",
+            ".write": "USER && newData.exists()",
+            ".validate": "newData.hasChildren(['holder', 'holder_uid', 'generation', 'renewed_at']) && $slug.length <= {{.MaxKeyLength}} && $job.length <= {{.MaxKeyLength}}",
+            "holder": { ".validate": "STR && (newData.parent().child('holder_uid').val() == '' ? newData.val() == '' : newData.val().length > 0)" },
+            "holder_uid": { ".validate": "STR && (newData.val() == '' || newData.val() == auth.uid)" },
+            "generation": { ".validate": "newData.isNumber() && newData.val() % 1 == 0 && newData.val() >= 1 && newData.val() <= {{.MaxGeneration}} && ((!data.exists() && NEW == 1) || (LEASEKEEP && NEW == OLD) || ((LEASETAKE || LEASERELEASE) && NEW == OLD + 1))" },
+            "renewed_at": { ".validate": "TIMESTAMP && NEW > 0 && NEW <= now" },
+            "mode": { ".validate": "STR" },
+            "pr": { ".validate": "AMOUNT && NEW >= 1" },
+            "$other": { ".validate": false }
+          },
+          "$other": { ".validate": false }
+        }
+      }
+    },
     "outcomes": {
       "$day": {
         "$slug": {

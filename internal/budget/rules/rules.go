@@ -155,6 +155,25 @@ const (
 	MaxPublicKey = 4096
 	// MaxBootLength bounds a heartbeat's boot id: the schema's BOOT_MAX.
 	MaxBootLength = 64
+	// LeaseGraceMs is how long a lease keeps its seat without a renewal, in
+	// epoch milliseconds: internal/lease's DefaultGrace (10 minutes, D2), the
+	// same number runstore.ClaimTTL and shared/lease's CLAIM_TTL use. It is
+	// baked into the rules because the *database* is what decides whether a
+	// takeover may land: a client whose grace disagreed with this one would
+	// either take a seat the database still considers held (and be refused) or
+	// refuse a takeover the database would have allowed. The two numbers are
+	// held together by internal/lease's
+	// TestTheRulesCarryTheLeaseAndTheGraceWeApply, which reads the generated
+	// document rather than this constant — what has to agree is the deployed
+	// rules, not a second copy of the number.
+	LeaseGraceMs int64 = 600_000
+	// MaxGeneration bounds a lease's fencing token (internal/lease's
+	// Record.Generation): the largest integer a double represents exactly
+	// (2^53-1), the line MaxTimestamp is held to and for the same reason — the
+	// rules compare the new value with the old one plus one, and past that line
+	// the database's arithmetic rounds. The token moves by one per takeover, so
+	// a bound no lease reaches is not a limitation.
+	MaxGeneration int64 = 1<<53 - 1
 )
 
 // The character patterns the rules apply, each the shared schema's own regex
@@ -206,6 +225,8 @@ func Generate() ([]byte, error) {
 		"MaxTimestamp":       MaxTimestamp,
 		"MaxAgentNameLength": MaxAgentNameLength,
 		"MaxOptionLength":    MaxOptionLength,
+		"LeaseGraceMs":       LeaseGraceMs,
+		"MaxGeneration":      MaxGeneration,
 	}); err != nil {
 		return nil, fmt.Errorf("rules: template: %w", err)
 	}
@@ -639,6 +660,31 @@ func wordMacro(m string, depth int) (string, error) {
 		return "$i.matches(" + indexPattern(MaxAgents) + ")", nil
 	case "PERRUNOK":
 		return perRunOK(depth)
+	case "LEASEKEEP":
+		// A holder renewing its own seat (D2): the generation does not move,
+		// and the writer is the identity already recorded on the lease. Both
+		// halves are needed — the first says the node has a holder to compare
+		// with, the second that this writer is that holder — and together they
+		// are the heartbeat's half of the fencing token: a holder whose
+		// generation has moved on is not the recorded uid any more, so its
+		// renewal is refused here rather than after the write.
+		return "(data.exists() && newData.parent().child('holder_uid').val() == auth.uid && data.parent().child('holder_uid').val() == auth.uid)", nil
+	case "LEASETAKE":
+		// A takeover of a free or stale seat (D1, D2, D3): the seat is
+		// nobody's (a released lease keeps its node, with an empty
+		// holder_uid) or its holder has not renewed for the grace, judged
+		// against the database's own `now` and not against any clock the
+		// writer brought with it. The writer records itself, which is what
+		// makes the generation it takes over refusable at its own next call.
+		return fmt.Sprintf("(newData.parent().child('holder_uid').val() == auth.uid && (data.parent().child('holder_uid').val() == '' || now - data.parent().child('renewed_at').val() > %d))", LeaseGraceMs), nil
+	case "LEASERELEASE":
+		// A holder giving the seat up (D15): the generation moves on and the
+		// record stays, with an empty holder_uid, so the released holder's
+		// token is stale at once and the next taker's is not one the released
+		// holder ever held. Only the recorded holder may release, for
+		// LEASEKEEP's reason: a lease nobody holds must not be freeable by
+		// whoever asks.
+		return "(newData.parent().child('holder_uid').val() == '' && data.parent().child('holder_uid').val() == auth.uid)", nil
 	case "GLOBALDAILY":
 		return "root.child('config/caps/global/dailyMicros').val()", nil
 	case "RUNDELTA":
