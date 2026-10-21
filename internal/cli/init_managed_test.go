@@ -285,7 +285,8 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 	// the fact still lands, once.
 	//
 	// Against a *different* Firebase project the flag is refused before
-	// anything is called (TestCreateWithOtherFirebaseRefused); this is the
+	// anything is called (TestFirebaseProjectPairingRuleIsUnchanged); this is
+	// the
 	// accepted combination, and until this case existed no test ran it.
 	t.Run("--create-project with Firebase on the created project", func(t *testing.T) {
 		r := newCreatedFBRig(t)

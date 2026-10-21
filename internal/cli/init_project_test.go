@@ -567,17 +567,6 @@ func TestExistingProjectBannersSayExisting(t *testing.T) {
 	r.nothingDone(t, "no typed confirmation")
 }
 
-func TestCreateWithOtherFirebaseRefused(t *testing.T) {
-	r := newProjectRig(t)
-	_, _, err := r.run(t, true, newProj+"\n", "--create-project", "--firebase-project", "other-fp-1234")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other-fp-1234") {
-		t.Errorf("err = %v", err)
-	}
-	if n := len(r.crm.Requests()); n != 0 {
-		t.Errorf("%d calls", n)
-	}
-}
-
 // A create that times out says what to wait for, and a taken ID's text
 // first asks whether an earlier run created it.
 func TestCreatedButNotReadableSaysWait(t *testing.T) {
@@ -736,10 +725,11 @@ func TestTheDeclinedProjectPromptNamesTheDoorTheReaderIsAt(t *testing.T) {
 // TestFirebaseProjectPairingRuleIsUnchanged: a project this run creates is its
 // own Firebase project, and --firebase-project is the one way to say it is
 // another one — which is refused, naming both ids, before anything is created
-// (D7, F4). This is TestCreateWithOtherFirebaseRefused, ported onto the new
-// name: the rule is the one --firebase-project had, and the port is the point, because
-// a rename that quietly dropped the pairing rule would leave the creation
-// building a budget backend in a project it does not create.
+// (D7, F4). It is the case that was TestCreateWithOtherFirebaseRefused, ported
+// onto the new name rather than kept beside it: the rule is the one --firebase
+// had, and the port is the point, because a rename that quietly dropped the
+// pairing rule would leave the creation building a budget backend in a project
+// it does not create.
 func TestFirebaseProjectPairingRuleIsUnchanged(t *testing.T) {
 	r := newProjectRig(t)
 	_, _, err := r.run(t, true, newProj+"\n", "--create-project", "--firebase-project", "other-fp-1234")
