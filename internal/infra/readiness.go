@@ -206,41 +206,49 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		if dn, ok := ex.DisplayNames[name]; ok {
 			ws.ServiceAccount.DisplayName = dn
 		}
-		// The GitHub App's private key is not mounted once the installation
-		// has opted into the credentials service (D145, D146; C2.3, review
-		// finding F1). The job's account keeps no accessor on it then
-		// (modules/workflow/sa.tf, C2.3), so a container that still declared
-		// FUGARO_GITHUB_APP_PRIVATE_KEY would be created with a secret
-		// reference it cannot resolve — every GitHub run of that
-		// installation, broken by the opt-in that was meant to be the
-		// careful one. The service mints the run's installation tokens
-		// instead (C2.1, C2.2), and C2.2 is what stops the job READING the
-		// key, so the two ship in one release.
+		// A credential the credentials service holds and the job has given up
+		// is not mounted once the installation has opted in (D145, D146; C2.3,
+		// review finding F1). The job's account keeps no accessor on it then
+		// (modules/workflow/sa.tf), so a container that still declared the
+		// mount would be created with a secret reference it cannot resolve —
+		// the job is one Cloud Run refuses to create, and every run of that
+		// installation fails. The grant and the mount go together, always.
+		//
+		// Which names those are is config.ServiceHeldSecretNames, and it is
+		// empty on this branch: the GitHub App's private key joins it in the
+		// release that also stops the job READING the key (C2.2, the runner's
+		// fetch of the run's installation tokens from the service). Until then
+		// the job keeps both its accessor and its mount, and a GitHub run of an
+		// installation that opted in works exactly as it did before — which is
+		// what the flip's absence has to mean, since C2.1's mint and C2.2's
+		// fetch are not in this tree yet.
 		//
 		// It is dropped HERE rather than where the pre-readiness spec builds
 		// its mounts, and that is the whole point of the placement: the App
-		// key's CONTAINER, its operator grants and its project-wide
-		// resolution are not the job's and must survive the drop — the build
-		// account reads it to clone (`fugaro image build`, the daily check,
-		// D148/F3), the service mints from it (C2.1), and an operator stores
-		// its versions. Dropping the mount from the spec that feeds
-		// rs.Secrets, ProjectSecretCandidates and NeedsBuild would take all
-		// four away with it. Readiness is where the plan's mounts are decided
-		// (dropMount above does the same for the optional Anthropic key), and
-		// the workflows' jobs are the only containers it touches: the check
-		// job runs as the BUILD account and keeps its mount
-		// (CheckSpec.SecretEnv, which the build account's own accessor
-		// matches).
+		// key's CONTAINER, its operator grants and its project-wide resolution
+		// are not the job's and must survive the drop — the build account reads
+		// it to clone (`fugaro image build`, the daily check, D148/F3), the
+		// service mints from it (C2.1), and an operator stores its versions.
+		// Dropping the mount from the spec that feeds rs.Secrets,
+		// ProjectSecretCandidates and NeedsBuild would take all four away with
+		// it. Readiness is where the plan's mounts are decided (dropMount above
+		// does the same for the optional Anthropic key), and the workflows'
+		// jobs are the only containers it touches: the check job runs as the
+		// BUILD account and keeps its mount (CheckSpec.SecretEnv, which the
+		// build account's own accessor matches).
 		//
-		// With the opt-in off nothing is dropped: the job mounts exactly what
-		// it mounted before this package knew about the service.
+		// With the opt-in off nothing is dropped, list or no list: the job
+		// mounts exactly what it mounted before this package knew about the
+		// service.
 		//
-		// The MODEL credentials' mounts are deliberately not dropped here
-		// yet: C1.20 is the task that drops them ("no model secret mounted
-		// when the service is on"), and it needs the runner to read each from
-		// the service first (C1.15).
+		// The MODEL credentials' mounts are deliberately not dropped here yet:
+		// C1.20 is the task that drops them ("no model secret mounted when the
+		// service is on"), and it needs the runner to read each from the
+		// service first (C1.15).
 		if spec.Installation.CredentialsService != nil {
-			dropMount(ws, config.GitHubAppKeySecret)
+			for _, logical := range config.ServiceHeldSecretNames {
+				dropMount(ws, logical)
+			}
 		}
 		type gate struct {
 			kind   MissingKind

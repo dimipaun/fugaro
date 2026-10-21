@@ -1629,16 +1629,25 @@ run "credentials_service_off_job" {
 #
 # The MOUNT goes with the accessor, and C2.3 is the task that removes both
 # (review finding F1): the plan had C2.2 removing the mount, but C2.2's file
-# list — gitprov and runner — never touches internal/infra/spec.go, so no
-# task owned it, and an installation that turned the opt-in on in between
-# would have had every GitHub run created with a secret reference the job's
-# account cannot resolve. Accessor and mount are now one rule and one release.
-# FUGARO_GITHUB_APP_PRIVATE_KEY is therefore NOT in this container, while the
-# workflow's own npm-token still is: the drop is by logical name and only the
-# App key's name is in service_held_secret_names. The model credentials' own
-# mounts stay (credentials_service_on_job and _on_provider_keys pin those)
-# because C1.20, not this task, removes them.
-run "credentials_service_on_github_app_key" {
+# list — gitprov and runner — never touches internal/infra/spec.go, so no task
+# owned it, and the accessor could not be removed on its own anyway — a mount
+# the job's account cannot resolve is a job Cloud Run refuses to create.
+#
+# Both halves are keyed on service_held_secret_names, and on this branch that
+# list is EMPTY: C2.3's drop is written and inert until the runner stops reading
+# the key (C2.2, the second half of the review finding), so the opt-in changes
+# nothing about this container — FUGARO_GITHUB_APP_PRIVATE_KEY keeps its
+# accessor and its mount, and only the service's invoker grant appears. The
+# model credentials' own accessors still go (credentials_service_on_job and
+# _on_provider_keys pin that) because their half of the list is identified by
+# variable and C1.18/C1.20 are already landed.
+#
+# This run is the guard on the gate: filling service_held_secret_names in the
+# module without the release that stops the runner reading the key (C2.2, and
+# config.ServiceHeldSecretNames with it) would fail every assertion here — the
+# accessor and the mount would go while the job still reads the key, which is
+# the break the review found.
+run "credentials_service_on_github_app_key_stays" {
   command = plan
 
   module {
@@ -1670,43 +1679,88 @@ run "credentials_service_on_github_app_key" {
 
   assert {
     condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
-      npm-token = "fugaro-acme-webapp-npm-token-bacfa0e910c36bb9"
+      github-app-key = "fugaro-acme-webapp-github-app-key-35b331db19bcc682"
+      npm-token      = "fugaro-acme-webapp-npm-token-bacfa0e910c36bb9"
     })
-    error_message = "with the credentials service on, the job account must hold no accessor on the GitHub App's private key — the service mints the run's tokens (D145) — and must keep the rest of its own secret_env"
-  }
-  assert {
-    condition = alltrue([for m in google_secret_manager_secret_iam_member.job :
-    m.secret_id != "fugaro-acme-webapp-github-app-key-35b331db19bcc682"])
-    error_message = "the App key's container is in the job's accessor set whatever key the map is indexed by: the drop is by the logical name, and the container must be gone"
+    error_message = "with the credentials service on and the runner still reading the App key, the job account keeps its accessor on it: taking it away would leave the container mounting a secret it cannot resolve, and Cloud Run refuses to create that job (review finding F1)"
   }
   assert {
     condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 1
-    error_message = "the job account still gains its one invoker grant on the service in this shape too"
+    error_message = "the job account gains its one invoker grant on the service in this shape too"
   }
   assert {
-    condition = length([for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e
-    if length(e.value_source) > 0 && e.name == "FUGARO_GITHUB_APP_PRIVATE_KEY"]) == 0
-    error_message = "C2.3 drops the accessor and the mount together (review finding F1): a mount the job's account cannot resolve is a job Cloud Run refuses to create, so an installation that opted in would have had every GitHub run broken"
+    condition = tomap({ for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e.name => e.value_source[0].secret_key_ref[0].secret
+      if length(e.value_source) > 0 }) == tomap({
+      FUGARO_GITHUB_APP_PRIVATE_KEY = "fugaro-acme-webapp-github-app-key-35b331db19bcc682"
+      NPM_TOKEN                     = "fugaro-acme-webapp-npm-token-bacfa0e910c36bb9"
+    })
+    error_message = "with the credentials service on and the runner still reading the App key, the container mounts exactly what it mounts with the opt-in off — the App key among them: the mount cannot go before C2.2's fetch (review finding F1)"
   }
-  # The one remaining secret mount is the workflow's own, so the drop above is
-  # the App key and nothing else.
+}
+
+# The shape the spec generates once C2.2's release lands: the opt-in on and the
+# App key's mount already gone from the workflow's secret_env, which is what
+# internal/infra's Readiness drops (its drop, and the module's job_mounts, are
+# the same rule written in the two places). Nothing mounts the App key, so
+# nothing grants an accessor on it, and the job is creatable — the end state
+# C2.3's pair of rules reaches from whichever side moves first.
+run "credentials_service_on_with_the_app_key_mount_dropped" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project             = var.github.project
+    fugaro_project      = var.github.fugaro_project
+    region              = var.github.region
+    name                = "web"
+    repo_label          = var.github.repo.label
+    workflow            = merge(var.github.repo.workflows.web, { secret_env = { NPM_TOKEN = "npm-token" } })
+    secrets             = var.github.repo.secrets
+    runs_bucket         = var.github.installation.runs_bucket
+    job_runner_role     = var.github.installation.role_ids.job_runner
+    credentials_service = { name = "fugaro-credentials", region = "us-east5" }
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-webapp-we-76331eb3@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-webapp-we-76331eb3@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-webapp-we-76331eb3@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      npm-token = "fugaro-acme-webapp-npm-token-bacfa0e910c36bb9"
+    })
+    error_message = "the job's accessors are exactly what it mounts: with the App key's mount gone from the workflow, no grant on it is left behind (C2.3, review finding F1)"
+  }
   assert {
     condition = tomap({ for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e.name => e.value_source[0].secret_key_ref[0].secret
     if length(e.value_source) > 0 }) == tomap({ NPM_TOKEN = "fugaro-acme-webapp-npm-token-bacfa0e910c36bb9" })
-    error_message = "with the credentials service on the container mounts the workflow's own npm-token and no other secret: the App key's mount goes with the accessor it lost, and the model credentials' mounts are C1.20's to remove"
+    error_message = "the container mounts the workflow's own npm-token and nothing else, so the job Cloud Run creates has no secret reference its account cannot resolve (review finding F1)"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 1
+    error_message = "the job account still gains its one invoker grant on the service"
   }
 }
 
 # The same github workflow with the opt-in OFF: the App key keeps its accessor
-# AND its mount, so the drop above is gated on the installation's opt-in and
-# not on the name alone (D147: with the opt-in off, nothing changes).
+# AND its mount, so nothing here is gated on the name alone (D147: with the
+# opt-in off, nothing changes), and an installation that never opts in gets
+# exactly the plan it got before this module knew about the service.
 #
-# The mount assertion is not decoration: with the gate deleted from job_mounts
-# — `contains(service_held_secret_names, logical)` alone, no
-# `credentials_service == null` — the run above still passed, because dropping
-# the mount always is the same plan as dropping it when the opt-in is on. Only
-# this run tells the two apart, and it is the half of the rule an installation
-# that never opts in depends on.
+# The mount assertion is the half of the rule that installation depends on.
+# With the empty list it cannot tell the `credentials_service == null` clause
+# apart from its absence — nothing is dropped either way — so that clause is
+# pinned where it is written, by TestServiceHeldSecretsMatchTheCredentialsService
+# in deploy/terraform, which reads the module source.
 run "credentials_service_off_github_app_key" {
   command = plan
 

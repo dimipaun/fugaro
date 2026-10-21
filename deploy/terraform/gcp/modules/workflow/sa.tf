@@ -79,9 +79,20 @@ locals {
   #
   # TestServiceHeldSecretsMatchTheCredentialsService pins these four literals
   # and both expressions below to Go.
-  model_secret_env_names    = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
-  model_secret_env_prefix   = "FUGARO_PROVIDER_KEY_"
-  service_held_secret_names = ["github-app-key"]
+  model_secret_env_names  = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+  model_secret_env_prefix = "FUGARO_PROVIDER_KEY_"
+
+  # The App key's name, and it is EMPTY until the release that also stops the
+  # job reading the key (C2.2, review finding F1): config.ServiceHeldSecretNames
+  # is the switch, this literal is held to it by the guard test, and Go's
+  # internal/infra mirrors the same list. With the name in it and the runner
+  # still reading FUGARO_GITHUB_APP_PRIVATE_KEY, this module would take the
+  # job's accessor away from a container that still mounts the key — a job
+  # Cloud Run refuses to create, so every GitHub run of an installation that
+  # opted in would fail. Until then the job keeps the accessor and the mount,
+  # and a GitHub run works exactly as it did before this file knew about the
+  # service.
+  service_held_secret_names = []
 
   # One entry per mount, so the drop below is per mount and never per name.
   is_service_held = {
@@ -108,7 +119,11 @@ locals {
   # and, once it is on, every mount except the GitHub App's private key. A
   # mount the job's account has no accessor on is not a weaker mount, it is a
   # job Cloud Run refuses to create, so the mount has to go with the accessor
-  # (C2.3, review finding F1).
+  # (C2.3, review finding F1). Go's internal/infra drops the same mount from
+  # the spec this module's tfvars are generated from, which is the drop that
+  # fires in practice; this local is the rule written down where the accessor
+  # is decided, so a tfvars that still names the key cannot be applied into a
+  # job with no way to read it.
   #
   # Only the App key goes here, and not the model credentials the accessor
   # drop above covers as well, because the two are removed by different tasks
@@ -120,6 +135,10 @@ locals {
   # service mint the installation tokens, so C2.3 drops accessor and mount
   # together. service_held_secret_names is the App key alone, which is
   # exactly the difference; is_service_held would take the model mounts too.
+  #
+  # Like service_held_secret_names, this is inert while the list is empty
+  # (review finding F1): with the opt-in on and the list filled, the App key's
+  # mount goes in the same plan as its accessor.
   #
   # The check job is not this module: it runs as the build account, which
   # keeps its accessor on the App key and clones with it (D148, F3).

@@ -3638,11 +3638,11 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 
 // TestServiceHeldSecretsMatchTheCredentialsService pins the four literals in
 // modules/workflow/sa.tf — the two model-credential variable names, the
-// provider-key prefix and the one service-held logical name — to
-// internal/config, and the drop they drive to the opt-in. Terraform cannot ask
-// Go, so the module spells the names out; this test is what keeps the two
-// spellings one rule (the TestLauncherConditionPreconditionMatchesGo
-// precedent).
+// provider-key prefix and the service-held logical names (empty on this branch,
+// the App key alone once C2.2's release fills them) — to internal/config, and
+// the drop they drive to the opt-in. Terraform cannot ask Go, so the module
+// spells the names out; this test is what keeps the two spellings one rule (the
+// TestLauncherConditionPreconditionMatchesGo precedent).
 //
 // The mutation is any one of the lists: rename a reserved key in Go and the
 // module's literal keeps dropping the accessor of a variable no job has, while
@@ -3658,6 +3658,15 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 // job_mounts — the container's own env — drops what it may not mount, which is
 // the App key and only the App key, because C1.20 is the task that takes the
 // model credentials' mounts away with the runner's switch to the service.
+//
+// Both of those rules are keyed on service_held_secret_names, and the list is
+// EMPTY on this branch (review finding F1): the App key joins it in the release
+// that also stops the runner reading the key (C2.2), and until then the job
+// keeps the accessor and the mount it needs to run. The pin below is what keeps
+// the module's literal and config.ServiceHeldSecretNames one value, so that
+// release fills both in one commit — with the module's list filled and Go's
+// empty, the plan drops a grant the spec still produces (and the tftest run
+// credentials_service_on_github_app_key_stays fails).
 func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	const path = "gcp/modules/workflow/sa.tf"
 	b, err := os.ReadFile(path)
@@ -3748,8 +3757,9 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	// its account may not read is not a job with one credential too many, it
 	// is a job Cloud Run refuses to create -- every GitHub run of an
 	// installation that opted in would fail. The two are one expression's
-	// halves here, and the tftest run credentials_service_on_github_app_key
-	// plans them together.
+	// halves here, and the tftest run credentials_service_on_github_app_key_
+	// stays plans the state this branch ships them in: neither moves, because
+	// the list is empty and the job still reads the key.
 	if !strings.Contains(squash(code), "env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical)") {
 		t.Errorf("%s: job_mounts must keep every mount while the credentials service is off and drop the service-held ones (the App key) once it is on, by logical name:\n%s", path, code)
 	}
