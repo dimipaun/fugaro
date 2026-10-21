@@ -285,7 +285,7 @@ func (e *RefusedError) Error() string {
 			b.WriteString(safetext.Field(r.Address))
 			b.WriteString(": ")
 		}
-		b.WriteString(refusalWhy(r.Why, printsRemovalIdentity(r.Gate)))
+		b.WriteString(refusalWhy(r.Why))
 	}
 	if len(e.Verdict.Refusals) == 0 {
 		b.WriteString(": the verdict refused and listed nothing, which is a refusal all the same")
