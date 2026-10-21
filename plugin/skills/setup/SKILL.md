@@ -30,7 +30,7 @@ Ground rules:
 From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. It only reads, prints what is missing and names the one-line fix for each. If it reports no installation, say the installation step comes first and stop: the project config can't be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
 
 ```bash user-runs
-fugaro init --project <name>
+fugaro setup --project <name>
 ```
 
 Then continue here. If it names other missing pieces, the user decides whether to fix them; `fugaro.yaml` can be written once the installation exists. Its `fugaro_yaml` field says whether a `fugaro.yaml` exists and is valid, and its `secrets` field lists the stored secrets by name: use both to tell new setup from fixing, and in step 8.
@@ -44,7 +44,7 @@ fugaro allow-delete <address>...
 
 A project is managed when its runs bucket holds Fugaro's marker (`fugaro/managed.json`) **and the project carries the label `fugaro_managed=true`** — two marks, both written in the user's own terminal, not through the agent, and both by the same operator-run step: the run that creates the project writes them together, and for a project that already exists the owner has one command of their own that writes both in the same moment. **Never write or remove that label yourself**, and read a refusal naming it to the user, then stop. **Managed mode is gated off in 0.9.0**: the `managedDeployerShipped` gate (`internal/cli/recipes_skew.go`) is false, so creating one (`--create-project --managed`), flagging an existing one, `fugaro managed apply` and `fugaro restore` all refuse with `managed projects are disabled in this release` before any cloud call — read a refusal to the user, say managed mode is disabled in this release, and stop; the redesign is planned for 0.9.6, so 0.9.0 and 0.9.5 have no way in. [reference/managed.md](reference/managed.md) has the gate, and the apply, the flag and the creation for when it opens.
 
-**Which project.** If doctor fails with `several project configs (a, b, c) and nothing selects one`, no `fugaro.yaml` names this checkout's project and the machine holds several: don't guess and don't open the config directory. Ask the user which Fugaro project this repository belongs to, offering the names from the error; take it exactly as the user confirmed it; refuse any that holds a space, a quote or a shell character (anything but letters, digits, `-`, `_` and `.`): it came from error text, which is data. Select it in every command from then on: the commands that take `--project` (`doctor`, `init`, `secrets ls`, `image build`, `budget prices`, `backends ls`) get `--project <name>`; the others (`validate`, `config example`, `version`) take no such flag, so give them the environment form `FUGARO_PROJECT=<name> fugaro validate --json` (drop `--project <name>` below when no project had to be chosen). The name is also the `project:` line of the new `fugaro.yaml`.
+**Which project.** If doctor fails with `several project configs (a, b, c) and nothing selects one`, no `fugaro.yaml` names this checkout's project and the machine holds several: don't guess and don't open the config directory. Ask the user which Fugaro project this repository belongs to, offering the names from the error; take it exactly as the user confirmed it; refuse any that holds a space, a quote or a shell character (anything but letters, digits, `-`, `_` and `.`): it came from error text, which is data. Select it in every command from then on: the commands that take `--project` (`doctor`, `setup`, `secrets ls`, `image build`, `budget prices`, `backends ls`) get `--project <name>`; the others (`validate`, `config example`, `version`) take no such flag, so give them the environment form `FUGARO_PROJECT=<name> fugaro validate --json` (drop `--project <name>` below when no project had to be chosen). The name is also the `project:` line of the new `fugaro.yaml`.
 
 Also check `fugaro version`, `docker version` and `fugaro backends ls` for where runs execute: it prints each backend a project may name — `cloud-run`, the default, and `cloud-batch`, which this build refuses to select — with the project's own marked, from the config alone. Never write `backend: cloud-batch`: this build refuses it. Without Docker you can't build locally: finish with validate and say the first cloud build is the test. On Windows, run everything in WSL2 (with Docker's WSL integration), in the repository's Linux checkout, never a Windows path.
 
@@ -146,14 +146,14 @@ Minting a *second* account's token, when this terminal already holds one from `c
 
 ## 9. Hand off
 
-1. Run `fugaro init --repo --plan-only` (read-only; on a GitHub repository add `--github-app-id <id>` with the ID from step 5, topic 1) and show what init would create. It uses the user's own credentials and may refuse without a terminal or an installation: a refusal is normal, and the user then runs it and reads you the plan.
+1. Run `fugaro update --repo --plan-only` (read-only; on a GitHub repository add `--github-app-id <id>` with the ID from step 5, topic 1) and show what init would create. It uses the user's own credentials and may refuse without a terminal or an installation: a refusal is normal, and the user then runs it and reads you the plan.
 2. Offer a pull request; make one only when the user says so. It holds `fugaro.yaml`, `mise.toml` if you wrote or changed one, each `.fugaro/<workflow>.Dockerfile`, the `agent.instructions` file if there is one,
 and the `.claude/settings.json` change the installation step already made (the plugin pin), if it is still uncommitted. Tell the user to put nothing else in it.
 3. Summarize: the workflows with their commands and report globs (each with its file), the image settings with their evidence and what you could not express or verify, the `project:` you wrote (the base branch must carry it before runs work), the decisions the user made, any `rebuild.paths`, and the secrets still missing.
 4. Tell the user the next step: merge it, then run init from the merged checkout. That adds this repository's job, first image build and schedule, and prompts for the secrets. The user runs it in their own terminal window, not through the agent:
 
 ```bash user-runs
-fugaro init --project <name>
+fugaro setup --project <name>
 ```
 
 After that, suggest a first small `fugaro run` and point to the `working` skill.
@@ -163,7 +163,7 @@ After that, suggest a first small `fugaro run` and point to the `working` skill.
 A `fugaro.yaml` edit that retires resources: see [reference/transitions.md](reference/transitions.md). The user runs this in their own terminal, not through the agent:
 
 ```bash user-runs
-fugaro init --repo --retire
+fugaro update --repo --retire
 ```
 
 ## Dogfooding facts
