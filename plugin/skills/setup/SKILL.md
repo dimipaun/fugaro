@@ -8,7 +8,7 @@ description: Set the current repository up for Fugaro with the user — investig
 
 # Set a repository up for Fugaro
 
-**The cloud side is already done: the wizard did it.** The user ran `setup` in their own terminal; this skill writes `fugaro.yaml` and opens the pull request, after the wizard, on the installation step 1 checks.
+**The cloud side is already done: the wizard did it.** The user ran `setup` in their own terminal; this skill writes `fugaro.yaml` and opens the pull request, on the installation the wizard left behind.
 
 You are writing this repository's `fugaro.yaml` with the user: how Fugaro builds and tests it in a container, its services, and the team's choices. Fugaro's engine never guesses these: you read the repository, propose, and the user decides.
 
