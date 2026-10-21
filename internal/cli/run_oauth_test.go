@@ -148,7 +148,7 @@ func TestRunTokenVariantJobMissingNeverFallsBackToDefault(t *testing.T) {
 	writeBuildRecord(t, f, otherSlug, "svc", release065)
 	// No AddJob for the "svc_acme-personal" variant: it does not exist yet.
 	_, _, err := execute(t, "run", "--run-id", "20261012-100000-ffff", "--token", "acme-personal", "A task")
-	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "fugaro update --repo") {
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "fugaro init --repo") {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
@@ -316,7 +316,7 @@ func TestFollowUpTokenOverrideRefusedWhenVariantJobMissing(t *testing.T) {
 	// No AddJob for "web_acme-personal": it does not exist yet.
 	seedAppFollowUpRoot(t, f, "")
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "more work")
-	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "fugaro update --repo") {
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "fugaro init --repo") {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {

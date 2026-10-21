@@ -52,7 +52,7 @@ func TestHostileCloneNeedsOwnConfirmation(t *testing.T) {
 		if stateOf(res, "plugin") != initflow.NeedsYou || stateOf(res, "repository") != initflow.Blocked || len(res.Left) != 1 {
 			t.Fatalf("%+v: stages %+v left %v", o, res.Stages, res.Left)
 		}
-		if l := res.Left[0].Text; !strings.HasSuffix(l, "init --onboard-repo acme/app") || strings.Contains(l, "\n") || strings.Contains(l, "&&") {
+		if l := res.Left[0].Text; !strings.HasSuffix(l, "setup --onboard-repo acme/app") || strings.Contains(l, "\n") || strings.Contains(l, "&&") {
 			t.Errorf("the opt-in line: %q", l)
 		}
 		if !strings.Contains(res.Stages[0].Detail, "repository stage was not reached") {

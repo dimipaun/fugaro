@@ -1844,7 +1844,7 @@ func TestPlanRepoGatesOnAPublishedPolicy(t *testing.T) {
 	if gate == "" {
 		t.Fatalf("missing = %v, want the Firebase gate for a published policy", missing)
 	}
-	for _, want := range []string{projectpolicy.PathShared(), infra.RTDBURLEnv, infra.FirebaseAPIKeyEnv, "fugaro update --firebase", "update --repo"} {
+	for _, want := range []string{projectpolicy.PathShared(), infra.RTDBURLEnv, infra.FirebaseAPIKeyEnv, "fugaro init --firebase", "init --repo"} {
 		if !strings.Contains(gate, want) {
 			t.Errorf("the gate does not say %q: %s", want, gate)
 		}

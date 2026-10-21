@@ -130,7 +130,7 @@ func TestWrongNameAtTheRunPromptAppliesNothing(t *testing.T) {
 	if !asNeedsYou(err, &ny) || *screens != 1 {
 		t.Fatalf("err %v, screens %d", err, *screens)
 	}
-	if !strings.Contains(strings.Join(ny.Left.Commands, " "), "init") || !strings.Contains(ny.Left.Text, "type the project's name") || strings.Contains(ny.Left.Text+out.String(), "--yes") {
+	if !strings.Contains(strings.Join(ny.Left.Commands, " "), "setup") || !strings.Contains(ny.Left.Text, "type the project's name") || strings.Contains(ny.Left.Text+out.String(), "--yes") {
 		t.Errorf("left %+v\n%s", ny.Left, out)
 	}
 	if ok, err := r.askOrdinary("applies B", ""); ok || !asNeedsYou(err, &ny) {
