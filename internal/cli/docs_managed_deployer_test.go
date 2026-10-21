@@ -985,7 +985,7 @@ func TestChecklistCheck68HardStopCountsAgree(t *testing.T) {
 // note carried the pre-redesign reason — the deployer's scoped role "is not an
 // IAM condition GCP accepts yet", with the redesign still ahead ("after the
 // fence is redesigned") — while the paragraph two above it, docs/release.md's
-// bullet and docs/design/managed-projects.md's 0.9.6 note all state the reason
+// bullet and docs/design/managed-projects.md's 0.10.0 note all state the reason
 // this tree actually has: the redesign is written and in the tree, and what is
 // missing is the live measurement (Check 68, written and NOT RUN). An operator
 // reading the note is deciding whether the gate can be opened, so a reason the
@@ -1009,7 +1009,7 @@ func TestGcpSetupSaysWhyTheManagedGateIsClosed(t *testing.T) {
 		"measured live",
 		"Check 68",
 		"NOT RUN",
-		"0.9.6",
+		"0.10.0",
 	} {
 		if !strings.Contains(note, want) {
 			t.Errorf("%s's disabled note does not say %q: the gate is closed because the redesigned fence has not been measured live (Check 68 is written and NOT RUN), and the note is where an operator reads that", path, want)

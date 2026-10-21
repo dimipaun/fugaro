@@ -33,12 +33,12 @@ func TestDocsGCPManagedLabelSaysItsClaims(t *testing.T) {
 		// and 0.9.0 still ships with it off, which is what makes a project
 		// marked then a project of another mode (owner's ruling, round-2
 		// review; the redesign moved to 0.9.5 by the owner's ruling of
-		// 2026-10-19, and to 0.9.6 by the owner's ruling of 2026-10-20).
+		// 2026-10-19, and to 0.10.0 by the owner's ruling of 2026-10-20).
 		"the managed path is off from 0.8.6 on": "managed mode is turned off from 0.8.6 on, and 0.9.0 still ships with it off",
 		// And the release the redesigned path does ship in, which is
-		// neither 0.9.0 nor 0.9.5: the owner's ruling of 2026-10-20 moved it to 0.9.6.
-		"the redesign ships in 0.9.6": "the owner's ruling of 2026-10-20 moved to **0.9.6**",
-		"all four ways in refuse":     "`fugaro init --create-project --managed`, `fugaro managed flag`, `fugaro managed apply` and `fugaro restore`, each before it reads or writes anything",
+		// neither 0.9.0 nor 0.9.5: the owner's ruling of 2026-10-20 moved it to 0.10.0.
+		"the redesign ships in 0.10.0": "the owner's ruling of 2026-10-20 moved to **0.10.0**",
+		"all four ways in refuse":      "`fugaro init --create-project --managed`, `fugaro managed flag`, `fugaro managed apply` and `fugaro restore`, each before it reads or writes anything",
 		// The flag ships in the 0.9.0 binary and refuses there (review M2).
 		"the flag refuses in 0.9.0": "the 0.9.0 binary carries that command, and it refuses with `managed projects are disabled in this release` until then",
 		// A creation without --managed writes the label too, on purpose —

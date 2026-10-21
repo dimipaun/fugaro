@@ -129,11 +129,20 @@ const catalogSince = "0.7.5"
 const catalogShipped = false
 
 // managedDeployerShipped is false until the release that ships a managed
-// deployer IAM can actually create: 0.9.6, by the owner's ruling of
+// deployer IAM can actually create: 0.10.0, by the owner's ruling of
 // 2026-10-20, which moved the redesign off 0.9.5 (the ruling of 2026-10-19 had
 // moved it off 0.9.0, where the ruling of 2026-10-18 put it: "Gate it off by
-// default; redesign for 0.9.0"). 0.9.0 and 0.9.5 therefore ship with the
-// scoped half still gated off, as 0.8.6 and 0.8.7 do. The deployer's
+// default; redesign for 0.9.0") and renumbered the release it lands in. The
+// renumbering is the one thing to read twice here: the same ruling first
+// placed the redesign in 0.9.6, the number the next release was then expected
+// to ship under, and then renumbered that release to 0.10.0 — one placement
+// under two numbers, not two placements. cascadeSince's own comment in this
+// file and docs/release.md's bullet for it record the renumbering in as many
+// words ("the line named 0.9.6 while the release was expected to ship as
+// 0.9.6, and the owner renumbered it"), on integration-0.9.6, the branch this
+// work merges into; 0.9.5 is the last release tagged, so no 0.9.6 was ever
+// cut. 0.9.0 and 0.9.5 therefore ship with the scoped half still gated off, as
+// 0.8.6 and 0.8.7 do. The deployer's
 // scoped half is now seven per-service custom roles, each bound exactly once
 // under its own condition, whose 0.8.6 shape GCP rejected as written (one
 // role, 17 logical operators where IAM allows 12, resource.name.contains() is
