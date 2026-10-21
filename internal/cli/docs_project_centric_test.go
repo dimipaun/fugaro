@@ -1702,7 +1702,10 @@ func TestChecklistHasCheck50(t *testing.T) {
 		}
 		for _, m := range flagRE.FindAllStringSubmatch(commandPart(line), -1) {
 			if !cmdHasFlag(cmd, m[1]) {
-				t.Errorf("the Check 50 section's %q shows --%s, which that command does not declare: the owner would meet 'unknown flag' at that step", cmd.CommandPath(), m[1])
+				// The line as the doc writes it, and the command it resolves
+				// to: the two differ only for the retired spelling, and naming
+				// both is what says which door the flag was looked for on.
+				t.Errorf("the Check 50 section's %q shows --%s, which %s does not declare: the owner would meet 'unknown flag' at that step", commandPart(line), m[1], cmd.CommandPath())
 			}
 		}
 	}
@@ -2129,7 +2132,11 @@ func commandPart(line string) string {
 func fugaroCommandFor(line string) *cobra.Command {
 	rest := strings.TrimPrefix(strings.TrimSpace(stripCommandPrefix(commandPart(line))), "fugaro ")
 	cur := NewRootCmd()
-	for _, f := range strings.Fields(rest) {
+	// The doc's own spelling is kept for the messages that quote the line; the
+	// words walked here are the door's: `fugaro init` is the retired word this
+	// section still uses for `fugaro setup`, and holding a line's flags to a
+	// tombstone that declares none would fail every line of the check.
+	for _, f := range docCommandWords(strings.Fields(rest)) {
 		if strings.HasPrefix(f, "-") {
 			break
 		}

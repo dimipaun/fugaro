@@ -118,6 +118,28 @@ var trackedDocCommands = map[string]func() *cobra.Command{
 	"fugaro artifacts get": newArtifactsGetCmd,
 }
 
+// docCommandWords is the command words a doc's `fugaro …` line names, with the
+// retired spelling resolved to the door that carries them today: the docs still
+// write `fugaro init`, which since W1.2 is a hidden tombstone with no flags at
+// all, so a line's flags are held to `fugaro setup` — the front door those
+// docs mean — rather than to a command that exists only to say it moved. The
+// rename of the prose is W2.3's and W2.4's (trackedDocCommands above does the
+// same translation for the phrase-keyed checks); until they land, every
+// doc-versus-tree check resolves the old word this way, and none of them may
+// quietly stop checking the flags beside it.
+//
+// Only the command word is translated. The words after it are left as the doc
+// writes them, so a path that no longer resolves still fails the check that
+// resolves it.
+func docCommandWords(words []string) []string {
+	if len(words) == 0 || words[0] != "init" {
+		return words
+	}
+	out := append([]string{}, words...)
+	out[0] = "setup"
+	return out
+}
+
 // mustBeAbsentFlags lists, per tracked command phrase, flag names a doc may
 // mention while saying the command does NOT have them (a documented
 // negative, such as gcp-setup.md and release.md's "there is still no --json
