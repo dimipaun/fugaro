@@ -1498,13 +1498,30 @@ what it says — and the strip of tabs is the one part of it that is gone.
   that moved the bytes.
 - **The bytes.** The block is only on the homepage, so its own bytes land there and nowhere
   else: **2,186 onto the homepage's HTML** — 1,054 of stylesheet and 1,132 of markup — and
-  **10,971 onto the script**, which every page loads once. The page weight (the console page,
-  still the heaviest) moves by the script alone, 399,902 → **410,873**; the site figure by both,
-  1,402,356 → **1,415,513**; and all three of the README's byte budgets are re-derived in the
-  commit that ships the script (D192). The count of files in `dist/` stays **28** and the count
-  of pages **11**, and the homepage's own words go 468 → **461**, because a dot is a circle with
-  no text in it: the three labels the tabs showed are now the dots' names, which a screen reader
-  reads and the page does not draw.
+  **13,211 onto the script**, which every page loads once. The page weight (the console page,
+  still the heaviest) moves by the script alone and by the fourth item Home put in the header's
+  row, 411,896 → **425,277**; the site figure by those and by the star's 8 and Home's 1,870,
+  1,412,642 → **1,429,917**; and all three of the README's byte budgets are re-derived in the
+  commit that ships the script (D192). The figures are the merged round's: the console page's
+  slider (#841) landed on `main` while this round was open, and the two rounds' bytes are one
+  build. The count of files in `dist/` stays **28** and the count of pages **11**, and the
+  homepage's own words go 468 → **461**, because a dot is a circle with no text in it: the three
+  labels the tabs showed are now the dots' names, which a screen reader reads and the page does
+  not draw.
+- **The two sliders are one script file, and they share four names and nothing else.** The
+  console page's slider (#841) landed on `main` while this round was open, so
+  `public/scripts/site.js` carries both: **one query** for `[data-slider]` in `start()`, and every
+  block it finds handed to both drivers — the console's `slider(section)`, which returns at once
+  from a block with no `.screens-track` in it, and this round's `panels(block)`, which returns at
+  once from a block with no panels. What the two share is what the two blocks have to agree on:
+  the block's attribute, the two step-control attributes, the six seconds a slide stands
+  (`AUTO_MS`) and the reduced-motion query (`LESS_MOTION`), declared once with the console's
+  section, with `calm()` reading that one query for this slider. **Their clocks stay their own**,
+  because what they drive is not the same thing: the console's is a snapping scroll container
+  whose position is read back from `scrollLeft`, and this one is a set of panels the block names
+  in `data-active`. Two of this round's names had to move: its `slider()` is the console's
+  function, so it is `panels(block)`, and its page-visibility reading is `pageShown()` because
+  the console's section already has a `shown()` of its own — the slide its track is on.
 - **The live check, and the one line of it that had to change with the page.**
   `docs/gcp-live-checklist.md`'s check 70b reads the block, so its Method now reads `SLIDES` out
   of the component and the clock out of the script, and its step 2 reads dots rather than tabs.
@@ -1516,7 +1533,9 @@ what it says — and the strip of tabs is the one part of it that is gone.
 - **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
   browser was driven for this round and this run cannot see a picture. What was read is the built
   artifact, the stylesheet and the script, through the gates above, with `(cd website && npm run
-  check)` green over all 423 cases. **Whether the slider reads as a slider — the look of the
-  dots, the feel of the six seconds, whether the motion is too fast or too slow — is the owner's
-  check** (70a–70c, P9, D190), and the number to move first if it is wrong is `AUTO_MS` in
+  check)` green over all 430 cases — 429 pass and one skipped. That is the round as merged with
+  the console page's slider (#841): the two sliders are one script file now, and the merge's own
+  run is what the count is. **Whether the slider reads as a slider — the look of the dots, the
+  feel of the six seconds, whether the motion is too fast or too slow — is the owner's check**
+  (70a–70c, P9, D190), and the number to move first if it is wrong is `AUTO_MS` in
   `public/scripts/site.js`.
