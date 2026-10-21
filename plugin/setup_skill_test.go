@@ -844,16 +844,17 @@ func TestSetupSkillSaysWhoWritesTheManagedMarks(t *testing.T) {
 // feature is described: decisions.md's checkout topic says `cloneShipped` is
 // open, pinned by TestSetupSkillOffersClone. So both files must name the
 // constant, where it lives, that it is false, the refusal a user will see, and
-// when the gate opens: the redesign is planned for 0.9.5, by the owner's ruling
-// of 2026-10-19, which moved it off 0.9.0 — the release the skill is read in.
+// when the gate opens: the redesign is planned for 0.10.0, by the owner's ruling
+// of 2026-10-20, which moved it off 0.9.5 (the ruling of 2026-10-19 had moved
+// it off 0.9.0) — the release the skill is read in is 0.9.0.
 // The release name is the half a reader acts on: without it, "disabled in this
 // release" reads as a temporary state of the tree rather than as 0.9.0's own
 // behaviour, which docs/gcp-setup.md:622, docs/design/managed-projects.md:3 and
-// internal/cli/recipes_skew.go all name as 0.9.5.
+// internal/cli/recipes_skew.go all name as 0.10.0.
 //
 // Mutations (each verified, planted and reverted): drop the gate paragraph from
 // reference/managed.md, and change SKILL.md's "is false" to "is open" — both
-// fail here. Dropping "planned for 0.9.5" from either file fails it too.
+// fail here. Dropping "planned for 0.10.0" from either file fails it too.
 func TestSetupSkillSaysManagedIsGatedOff(t *testing.T) {
 	for name, doc := range map[string]string{
 		"SKILL.md":             setupFiles(t)["skills/setup/SKILL.md"],
@@ -864,11 +865,49 @@ func TestSetupSkillSaysManagedIsGatedOff(t *testing.T) {
 			"internal/cli/recipes_skew.go",
 			"is false",
 			"managed projects are disabled in this release",
-			"planned for 0.9.5",
+			"planned for 0.10.0",
 		} {
 			if !strings.Contains(doc, want) {
 				t.Errorf("%s never says %q: the managed mode's gate is closed in this release (managedDeployerShipped is false, internal/cli/recipes_skew.go), so the skill has to say where the gate stands beside the workflow it describes", name, want)
 			}
+		}
+	}
+}
+
+// TestSetupSkillSaysWhyManagedIsGatedOff: reference/managed.md carried the
+// pre-redesign reason — the fence the binding carries "is not an IAM condition
+// GCP accepts yet", with the redesign still ahead ("once the fence is
+// redesigned") — while the branch lands exactly that redesign and corrects the
+// reason everywhere else it touches (docs/release.md's bullet,
+// docs/design/managed-projects.md's 0.10.0 note, deployer.tf's header). A skill
+// is what the user's agent repeats, so a reason the branch removed is a reason
+// the agent will state to its user.
+//
+// SKILL.md is not read here: it states the gate's state and the release, and
+// never carried the old reason. The pinned string
+// TestSetupSkillSaysManagedIsGatedOff holds ("planned for 0.10.0") is kept by
+// the reworded sentence.
+//
+// Mutations (verified, run and restored): the old reason sentence put back into
+// reference/managed.md, and "once the fence is redesigned" put back — both fail
+// here.
+func TestSetupSkillSaysWhyManagedIsGatedOff(t *testing.T) {
+	doc := setupFiles(t)["skills/setup/reference/managed.md"]
+	for _, want := range []string{
+		"measured live",
+		"Check 68",
+		"NOT RUN",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("reference/managed.md does not say %q: the gate is closed because the redesigned fence has not been measured live (Check 68 is written and NOT RUN), and the skill is where the agent reads why", want)
+		}
+	}
+	for _, wrong := range []string{
+		"is not an IAM condition GCP accepts",
+		"once the fence is redesigned",
+	} {
+		if strings.Contains(doc, wrong) {
+			t.Errorf("reference/managed.md still states %q: this branch lands the redesign (seven roles, one per service, one binding each), so the fence's old defect is history and the reason the gate is closed is the missing live measurement", wrong)
 		}
 	}
 }

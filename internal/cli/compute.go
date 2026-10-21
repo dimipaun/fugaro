@@ -23,7 +23,18 @@ import (
 // lc is the selected project config, nil when there is none: with nothing
 // selected the answer is Cloud Run's, because the backend is an installation
 // fact and an unknown installation is on the default (localcfg.Config.Backend).
+//
+// A config selected for ANOTHER project judges nothing here, which is the
+// guard budgetProblems, providerProblems and cascadeProblems all carry: which
+// backend a workflow's resources are sized against is a fact about the
+// installation the file's own project names, and judging a file naming project
+// B against checkout A's would refuse a valid file — or admit an invalid one —
+// on limits that are not its own. A nil lc is not that case and keeps Cloud
+// Run's answer, which is why this tests lc rather than reading through it.
 func computeProblems(cfg *config.Config, lc *localcfg.Config) []config.Problem {
+	if lc != nil && lc.Name != cfg.Project {
+		return nil
+	}
 	var ps []config.Problem
 	onBatch := lc != nil && lc.Backend() == backend.CloudBatch
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {

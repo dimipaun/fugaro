@@ -402,9 +402,10 @@ func TestDeleteHintsAPIs(t *testing.T) {
 
 // managed_deployer_scoped is left out of the tfvars unless the installation
 // opts in, so a default installation's tfvars are the same bytes as before the
-// variable existed and its plan has no scoped deployer role or binding (0.8.6
-// gates them off: deploy/terraform/gcp/modules/installation/deployer.tf). The
-// opt-in writes the key, which must be a variable of the installation root.
+// variable existed and its plan has no scoped deployer role or binding (0.10.0
+// gates the seven of each off: deploy/terraform/gcp/modules/installation/
+// deployer.tf). The opt-in writes the key, which must be a variable of the
+// installation root.
 func TestInstallationManagedDeployerScopedIsOptIn(t *testing.T) {
 	lc := parseLC(t, m4LocalConfig+m5Additions)
 	s, err := Installation(lc, InstallOptions{})

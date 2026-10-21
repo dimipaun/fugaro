@@ -57,12 +57,21 @@ import (
 
 // batchValidateProblems are validate's offline checks for an installation on
 // the Batch backend. It returns nothing for every other project -- the checks
-// are about a backend no other installation selects -- and it is deliberately
-// a pure function of the project config, the fugaro.yaml and the recipe the
-// checkout resolves, so it is testable without a project (the backend name
-// cannot be selected in this build).
+// are about a backend no other installation selects, and about an installation
+// whose project is the one the file is being judged for -- and it is
+// deliberately a pure function of the project config, the fugaro.yaml and the
+// recipe the checkout resolves, so it is testable without a project (the
+// backend name cannot be selected in this build).
+//
+// The project guard is the one budgetProblems, providerProblems, cascadeProblems
+// and computeProblems carry: a config selected for another project is not this
+// file's installation, so the backend it names, the machine type a run's VM is
+// and the task timeout it holds are not facts this file can be refused on. It
+// reads as the same `lc == nil ||` prefix because a nil config is the same
+// case -- there is no installation here to judge against, and the checks below
+// read lc rather than test it.
 func batchValidateProblems(lc *localcfg.Config, cfg *config.Config, rcp *recipe.Recipe) []config.Problem {
-	if lc == nil {
+	if lc == nil || lc.Name != cfg.Project {
 		return nil
 	}
 

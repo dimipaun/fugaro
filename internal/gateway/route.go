@@ -221,7 +221,18 @@ func (s *Server) upstreamQuery(r *http.Request) string {
 
 // carriesToken: v holds the gateway token in any case, or percent-encoded
 // (a bad escape is left as it is, so it cannot hide one).
+//
+// A Server with no token carries no token: strings.Contains(v, "") is true for
+// every v, so without this arm scrubToken deletes every header it is handed and
+// upstreamQuery drops every query -- the caller's allow-list would never be
+// exercised on a Server built without Start, which is the shape a test that
+// wants only the allow-list reaches for. Every started gateway has a token
+// (Start makes one), so this is a property of the function rather than a route
+// case.
 func (s *Server) carriesToken(v string) bool {
+	if s.token == "" {
+		return false
+	}
 	tok := strings.ToLower(s.token)
 	lv := strings.ToLower(v)
 	return strings.Contains(lv, tok) || strings.Contains(strings.ToLower(lenientUnescape(lv)), tok)

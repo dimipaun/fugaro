@@ -1521,6 +1521,13 @@ func newValidateCmd() *cobra.Command {
 				// (agent.recipe, else the default): its mode is what decides
 				// whether a run of this repository produces artifacts, which
 				// is the boundary Global Constraint 13 keeps.
+				//
+				// "Every other project" is two facts and both are in the
+				// helper: the Batch checks return nothing for an installation
+				// that is not on cloud-batch, and all three judge only the
+				// installation of the project THIS file names -- a config
+				// selected for another project is not one they read, the guard
+				// budgetProblems, providerProblems and cascadeProblems carry.
 				problems = append(problems, computeCheckoutProblems(cfg, filepath.Dir(path), lc)...)
 				// The project config, and the two route tables the rules below
 				// read: routes, the run's own — the owner's with the checkout

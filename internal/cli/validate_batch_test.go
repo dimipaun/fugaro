@@ -325,6 +325,89 @@ workflows:
 	}
 }
 
+// TestComputeProblemsJudgeOnlyTheFilesOwnProject: the backend, the machine
+// type a VM is and the size a workflow may ask for are facts about the
+// installation the FILE's project names, so a project config selected for
+// another project judges nothing here. It is the guard budgetProblems,
+// providerProblems and cascadeProblems all carry, and the shape `fugaro
+// validate` in project A's checkout hands these checks for a file that names
+// project B: without it the file is refused on limits that are not its
+// installation's (the one call site, computeCheckoutProblems).
+//
+// Mutation (drop the `lc != nil && lc.Name != cfg.Project` early return): the
+// foreign-project cases below fail.
+func TestComputeProblemsJudgeOnlyTheFilesOwnProject(t *testing.T) {
+	// One config per backend, each refused on that backend and accepted on the
+	// other, so the "own project" arm is a case the check really does fire on:
+	// 8 CPUs/32Gi is a Cloud Run job task and more than an e2-standard-4's task
+	// share (TestComputeProblemsUsesTheBackendsOwnLimits), and 3 CPUs is not
+	// one of Cloud Run's sizes while being inside an e2-standard-8's share.
+	const (
+		batchRefused = `version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  web:
+    commands: { build: "true", test: "true" }
+    resources: { cpu: 8, memory: 32Gi }
+`
+		cloudRunRefused = `version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  web:
+    commands: { build: "true", test: "true" }
+    resources: { cpu: 3, memory: 4Gi }
+`
+	)
+	for _, tc := range []struct{ backendName, machineType, yaml string }{
+		{backend.CloudBatch, "e2-standard-4", batchRefused},
+		{backend.CloudRun, "", cloudRunRefused},
+	} {
+		cfg := batchValidateConfig(t, tc.yaml)
+		if ps := computeProblems(cfg, batchValidateRig(t, tc.machineType, tc.backendName)); len(ps) == 0 {
+			t.Fatalf("backend %q: the rig's own project accepts these resources, so this case proves nothing", tc.backendName)
+		}
+		foreign := batchValidateRig(t, tc.machineType, tc.backendName)
+		foreign.Name = "somewhere-else"
+		if ps := computeProblems(cfg, foreign); len(ps) != 0 {
+			t.Errorf("backend %q: a config selected for another project judged this file: %v", tc.backendName, ps)
+		}
+	}
+}
+
+// TestBatchValidateProblemsJudgeOnlyTheFilesOwnProject is the same guard on the
+// Batch checks: the machine type, the task timeout and the artifact boundary
+// are all read from the installation the file's project names, so another
+// project's config -- which is to say, no installation of this file's at all,
+// the same state as a nil lc -- refuses nothing here.
+//
+// Mutation (drop the `lc.Name != cfg.Project` half of the early return): the
+// foreign-project cases below fail.
+func TestBatchValidateProblemsJudgeOnlyTheFilesOwnProject(t *testing.T) {
+	cfg := batchValidateConfig(t, batchValidateYAML)
+	impl := &recipe.Recipe{Name: "impl", Mode: recipe.ModeImplement}
+	art := &recipe.Recipe{Name: "deliver", Mode: recipe.ModeArtifact}
+	// A machine type this build cannot price, so the check has something to say
+	// about the rig's own project.
+	own := batchValidateRig(t, "e2-micro", backend.CloudBatch)
+	if ps := batchValidateProblems(own, cfg, impl); len(ps) == 0 {
+		t.Fatal("the rig's own project is not refused for an unpriceable machine type, so this case proves nothing")
+	}
+	foreign := batchValidateRig(t, "e2-micro", backend.CloudBatch)
+	foreign.Name = "somewhere-else"
+	for name, rcp := range map[string]*recipe.Recipe{"an implement recipe": impl, "the artifact boundary": art} {
+		if ps := batchValidateProblems(foreign, cfg, rcp); len(ps) != 0 {
+			t.Errorf("%s: a config selected for another project judged this file: %v", name, ps)
+		}
+	}
+	// And the unreadable-recipe arm is the nil-config arm, which is the same
+	// state: no installation of this file's to fail closed against.
+	if ps := batchValidateProblems(foreign, cfg, nil); len(ps) != 0 {
+		t.Errorf("a config selected for another project refused an unresolved recipe: %v", ps)
+	}
+}
+
 // TestTheCheckoutReadRunsTheBatchChecksToo: a resolved checkout is read
 // through loadCheckoutResolved by `fugaro image refresh`, image build and the
 // layer commands, and that read called computeProblems alone. computeProblems

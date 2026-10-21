@@ -71,10 +71,12 @@ type InstallOptions struct {
 	// by a project config that records a Firebase project.
 	BudgetBackend bool
 	// ManagedDeployerScoped opts the installation in to the managed
-	// deployer's scoped role and its conditioned binding (the module's
-	// managed_deployer_scoped). Nothing sets it while internal/cli's
-	// managedDeployerShipped is false (0.8.6): the binding's fmgd- fence is
-	// not an IAM condition GCP accepts yet (deployer.tf's header).
+	// deployer's seven per-service roles and their seven conditioned
+	// bindings (the module's managed_deployer_scoped). Nothing sets it
+	// while internal/cli's managedDeployerShipped is false (0.8.6): the
+	// redesign is applied but unmeasured -- Check 68 has not been run, and
+	// the fmgd- fence has not been seen stored by IAM (deployer.tf's
+	// header).
 	ManagedDeployerScoped bool
 }
 
@@ -134,8 +136,9 @@ type InstallationSpec struct {
 	ProjectJobs map[string]ProjectJob `json:"project_jobs,omitempty"`
 	// ManagedDeployerScoped is the module's managed_deployer_scoped: left out
 	// unless set, so an installation that does not opt in writes the same
-	// tfvars as before the variable existed and plans without the scoped
-	// deployer role and its binding (InstallOptions.ManagedDeployerScoped).
+	// tfvars as before the variable existed and plans without the seven
+	// per-service deployer roles and their seven conditioned bindings
+	// (InstallOptions.ManagedDeployerScoped).
 	ManagedDeployerScoped bool `json:"managed_deployer_scoped,omitempty"`
 	// CredentialsService is the installation's credentials service (D146,
 	// D147), left out until an owner runs init's credentials stage (C1.20) —

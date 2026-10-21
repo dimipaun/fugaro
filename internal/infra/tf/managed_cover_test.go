@@ -2,6 +2,7 @@ package tf
 
 import (
 	"encoding/json"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -157,6 +158,53 @@ func TestManagedAllowedTypesIsDecided(t *testing.T) {
 	if got := ManagedAllowedTypes(); !slices.IsSorted(got) || len(got) != len(managedTypes) {
 		t.Errorf("ManagedAllowedTypes is %v: not the list's own keys", got)
 	}
+}
+
+// TestManagedCoverCommentsCountTheDroppedTypes: both comments in
+// managed_cover.go that say how many entries managedDropped has read "twelve"
+// while the map grew to seventeen, and nothing noticed — a count in prose is a
+// second copy of a fact the map already holds, and the map is the copy that
+// cannot be wrong. This reads the two sentences and the map against each
+// other.
+//
+// Mutation (put "twelve" back in either sentence, or add an entry to
+// managedDropped without touching them): this fails.
+func TestManagedCoverCommentsCountTheDroppedTypes(t *testing.T) {
+	src, err := os.ReadFile("managed_cover.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	word, ok := droppedCountWord(len(managedDropped))
+	if !ok {
+		t.Skipf("managedDropped has %d entries, more than this check spells in words; enlarge droppedCountWord", len(managedDropped))
+	}
+	// Flattened with the comment markers dropped, because the file wraps both
+	// sentences: the number and the words after it are on different lines.
+	flat := strings.Join(strings.Fields(strings.ReplaceAll(string(src), "//", " ")), " ")
+	for _, tail := range []string{"entries in managedDropped", "entries of managedDropped"} {
+		at := strings.Index(flat, tail)
+		if at < 0 {
+			t.Errorf("managed_cover.go no longer says %q: this test's marker has moved", tail)
+			continue
+		}
+		before := strings.Fields(flat[:at])
+		if got := before[len(before)-1]; got != word {
+			t.Errorf("managed_cover.go says %q before %q, and managedDropped has %d entries (%s): the count in the comment is a second copy of what the map holds", got, tail, len(managedDropped), word)
+		}
+	}
+}
+
+// droppedCountWord spells a small count the way managed_cover.go's comments do,
+// so the comparison is against the sentence rather than against a digit the
+// file never prints.
+func droppedCountWord(n int) (string, bool) {
+	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven",
+		"eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+		"sixteen", "seventeen", "eighteen", "nineteen", "twenty"}
+	if n < 0 || n >= len(words) {
+		return "", false
+	}
+	return words[n], true
 }
 
 // managedKeptFixture is one resource per type the list keeps: the type's own

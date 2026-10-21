@@ -1232,11 +1232,11 @@ var (
 	// A custom role of this project, spelled as the literal path
 	// "projects/${var.project}/roles/<id>" rather than read from the role
 	// resource's own name attribute. Task 1.5 step 5: the creating apply plans
-	// the deployer's two roles, and a project grant whose role is computed
-	// cannot be told from the scoped one, whose IAM condition is the whole
-	// fence around the account — so the five project grants planned by that
-	// same apply (the deployer's two, the launchers', the build submitters'
-	// and the history account's) name their role literally instead. var.project
+	// the deployer's eight roles, and a project grant whose role is computed
+	// cannot be told from a conditioned one, whose IAM condition is the whole
+	// fence around the account — so the project grants planned by that same
+	// apply (the deployer's eight, the launchers', the build submitters' and
+	// the history account's) name their role literally instead. var.project
 	// is known at plan time, and the ID must be one the modules create
 	// (tf.FugaroRoles), checked below.
 	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.project\}/roles/([A-Za-z0-9_.]+)"$`)
@@ -1529,18 +1529,19 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 				}
 				continue
 			}
-			// The deployer's two roles (installation/deployer.tf, D75) hold
+			// The deployer's roles (installation/deployer.tf, D75) hold
 			// permissions this ban exists to keep out of Fugaro's own custom
 			// roles: IAM, serviceusage and apikeys permissions, and a
 			// resource-level setIamPolicy. That is the owner's answer of
 			// 2026-10-16, and the bound on them is elsewhere and is exact:
-			// tf.RolePermissions pins both lists permission for permission
+			// tf.RolePermissions pins every list permission for permission
 			// (internal/infra/tf/cover_test.go) with a fixture that refuses a
-			// widening, and both are bound to one account, the scoped one only
-			// under the managed-prefix condition. The deployer is not an
-			// installation role: it holds nothing project-wide but creation
-			// and reads.
-			if blk.name == "google_project_iam_custom_role.fugaro_deployer" || blk.name == "google_project_iam_custom_role.fugaro_deployer_scoped" {
+			// widening, and each of the eight is bound to one account, the
+			// seven conditioned ones only under the managed-prefix fence of
+			// their own service (docs/design/managed-deployer-fence.md). The
+			// deployer is not an installation role: it holds nothing
+			// project-wide but creation and reads.
+			if strings.HasPrefix(blk.name, "google_project_iam_custom_role.fugaro_deployer") {
 				continue
 			}
 			if blk.name == "google_project_iam_custom_role.token_minter" {
@@ -3624,6 +3625,31 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 	// does not match, and neither does a comment (the code is stripped).
 	if rest := strings.Replace(code, precondition, "", 1); regexp.MustCompile(`(?m)^\s*condition\s*[={]`).MatchString(rest) {
 		t.Errorf("%s: a condition outside the account's precondition. Q6 replaced the name-prefix fence and the secretId filter with one unconditioned grant on one container:\n%s", path, rest)
+	}
+
+	// Every resource in the file is gated on the one boolean, which is what the
+	// header's "keeps the four resources of this file in step" means: a resource
+	// added without it is created in an installation that never opted in.
+	// TestCredentialsServiceResourcesAreCounted reads the same promise from the
+	// other end — the sentence's number against the file — and this sweep is
+	// kept beside it because it reads the gate itself, the exact expression and
+	// not the boolean's name, so a resource that mentions the boolean without
+	// counting on it is caught here and not there.
+	gated := 0
+	for _, m := range resourceHeader.FindAllStringSubmatchIndex(code, -1) {
+		end := matchBrace(code, m[1]-1)
+		if end < 0 {
+			t.Fatalf("%s: unbalanced braces in %s.%s", path, code[m[2]:m[3]], code[m[4]:m[5]])
+		}
+		body := squash(code[m[1]:end])
+		if !strings.Contains(body, "count = local.credentials_service_on ? 1 : 0") {
+			t.Errorf("%s: %s.%s is not gated on local.credentials_service_on, so it is created in an installation that never opted in:\n%s", path, code[m[2]:m[3]], code[m[4]:m[5]], body)
+			continue
+		}
+		gated++
+	}
+	if gated != len(resourceHeader.FindAllString(code, -1)) {
+		t.Fatalf("%s: %d of the file's resources were read as gated; the sweep above is not covering the file", path, gated)
 	}
 
 	if !strings.Contains(code, "service_account = google_service_account.credentials[0].email") {
