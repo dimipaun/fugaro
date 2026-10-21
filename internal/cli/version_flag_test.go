@@ -45,7 +45,9 @@ func TestVersionFlagPrintsTheSubcommandLine(t *testing.T) {
 		t.Fatalf("fugaro version: %v", err)
 	}
 	if want != "dev\n" {
-		t.Fatalf("fugaro version printed %q, want the development build's %q", want, "dev\n")
+		// Not fatal: the byte-for-byte comparison below is the point of this
+		// test, and it has to run even when the subcommand's own line moved.
+		t.Errorf("fugaro version printed %q, want the development build's %q", want, "dev\n")
 	}
 	for _, arg := range []string{"--version", "-v"} {
 		t.Run(arg, func(t *testing.T) {
