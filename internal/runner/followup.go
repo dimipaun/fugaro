@@ -375,13 +375,13 @@ func (r *run) promptData() followup.PromptData {
 // fellBackFresh records that the saved session couldn't be resumed after
 // all, and gathers a fresh session's context for the retry.
 //
-// Both session fields are cleared, not sessionID alone: the stage that failed
-// with ErrNoSession had already recorded the session it was asked to resume
+// The session is cleared, and it has to be: the stage that failed with
+// ErrNoSession had already recorded the session it was asked to resume
 // (noteSession takes the requested ID when the agent reports none, which is
 // what a process that died before its result event does), and saveSession
-// uploads savedSession. Left behind, it would be re-uploaded at writeback —
-// with this run's head and Pushed flag — if the fresh retry ends before the
-// agent reports a session of its own (a refusal at the top of stageOnce, an
+// uploads it. Left behind, it would be re-uploaded at writeback — with this
+// run's head and Pushed flag — if the fresh retry ends before the agent
+// reports a session of its own (a refusal at the top of stageOnce, an
 // exhausted budget, a cancel), and a later follow-up would resume a
 // conversation that never saw this branch's commits.
 func (r *run) fellBackFresh(ctx context.Context) {
@@ -389,7 +389,7 @@ func (r *run) fellBackFresh(ctx context.Context) {
 	r.follow.restored = restored{Note: "the saved session could not be resumed"}
 	r.freshContext(ctx)
 	r.rec.FollowUp.Session, r.rec.FollowUp.SessionNote = "fresh", r.follow.restored.Note
-	r.sessionID, r.savedSession = "", ""
+	r.sessionID, r.reviewSession = "", ""
 	r.save(ctx)
 }
 

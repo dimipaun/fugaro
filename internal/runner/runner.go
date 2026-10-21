@@ -264,14 +264,14 @@ type run struct {
 	cacheBase string      // the base-image part of every cache key
 	toolchain string      // the toolchain part of every cache key (toolchainHash)
 	// sessionID is the session the latest implement or fix stage's result
-	// reported: the one the next fix resumes.
+	// reported: the one the next fix resumes, and the one saveSession
+	// uploads as the run's session.
 	sessionID string
-	// savedSession is the session of the latest stage of any kind, review
-	// stages included (C1.17, D138), and what saveSession uploads. It moves
-	// with every stage that reports one, while sessionID moves with the work
-	// stages alone: a fix continues the work, not the review of it, but what
-	// a follow-up wants to resume is the last thing the run did.
-	savedSession string
+	// reviewSession is the session the latest review stage ran in (C1.17,
+	// D138). It is saved too, under its own objects, and never becomes the
+	// run's session: a review runs in a session of its own, and a follow-up
+	// resumes the work, not the review of it.
+	reviewSession string
 	// follow is a follow-up's state; nil for a first run.
 	follow *followState
 	// pr is the early draft pull request's state (prflow.go).

@@ -44,22 +44,23 @@ var commitRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // errSessionTooLarge means the session file is over MaxSessionBytes.
 var errSessionTooLarge = errors.New("session file is larger than its cap")
 
-// noteSession remembers the session a stage ran in, for a work stage: the
-// one the next fix resumes and the one writeback saves.
+// noteSession remembers the session a work stage ran in: the one the next fix
+// resumes, and the one writeback saves as the run's session.
 func (r *run) noteSession(req agent.Request, res agent.Result) {
 	if id := r.stageSession(req, res); id != "" {
-		r.sessionID, r.savedSession = id, id
+		r.sessionID = id
 	}
 }
 
-// noteReviewSession remembers the session a review stage ran in, for the
-// save alone (C1.17, D138). A review runs in a session of its own
-// (agentLoop hands each one a fresh ID), so it is never what the next fix
-// resumes — a fix continues the work, not the review of it — but it is what
-// the run last did, and a follow-up resumes that.
+// noteReviewSession remembers the session a review stage ran in, for the save
+// alone (C1.17, D138). A review runs in a session of its own (agentLoop hands
+// each one a fresh ID), so it is never what the next fix resumes — a fix
+// continues the work, not the review of it — and it is saved beside the work
+// session rather than in its place: what a follow-up must resume is the
+// conversation that built the branch, not the one that read it.
 func (r *run) noteReviewSession(req agent.Request, res agent.Result) {
 	if id := r.stageSession(req, res); id != "" {
-		r.savedSession = id
+		r.reviewSession = id
 	}
 }
 
@@ -104,22 +105,29 @@ func (r *run) sessionDir() (home, rel string, err error) {
 	return home, rel, nil
 }
 
-// saveSession uploads the session of the latest stage — implement, fix or
-// review. Nothing here fails the run: a session that can't be saved is a
-// warning, and the next follow-up starts fresh.
+// saveSession uploads the run's sessions. The work chain's (implement or fix)
+// goes to session/<id>.jsonl + session/session.json, exactly as before C1.17:
+// it is what a follow-up resumes. A review stage's, which is a session of its
+// own, is saved too (D138), beside it as session/review/<id>.jsonl +
+// session/review.json — never in its place, or a follow-up would continue the
+// reviewer's conversation instead of the work. Nothing here fails the run: a
+// session that can't be saved is a warning, and the next follow-up starts
+// fresh.
 func (r *run) saveSession(ctx context.Context) {
-	// savedSession is the session of the run's latest stage, and the only
-	// one this uploads: noteSession writes it (with sessionID, the work
-	// chain's) and noteReviewSession writes it alone, and fellBackFresh
-	// clears both when the session it named could not be resumed — the one
-	// case where uploading it would hand a later follow-up a conversation
-	// this branch never had. So there is nothing to fall back to when it is
-	// empty: a run whose stages all reported none has neither set.
-	id := r.savedSession
+	r.saveOneSession(ctx, r.sessionID, false)
+	r.saveOneSession(ctx, r.reviewSession, true)
+}
+
+// saveOneSession reads, redacts and uploads one session: the work session, or
+// (review) the latest review stage's, under its own two objects.
+func (r *run) saveOneSession(ctx context.Context, id string, review bool) {
 	if id == "" {
 		return
 	}
 	log := r.d.Log.With("session", id)
+	if review {
+		log = log.With("stage", "review")
+	}
 	data, err := r.readSessionFile(id)
 	switch {
 	case errors.Is(err, errSessionTooLarge):
@@ -149,7 +157,11 @@ func (r *run) saveSession(ctx context.Context) {
 	}
 	m := runstore.SessionMeta{Version: 1, ID: id, HeadSHA: head, Pushed: r.rec.PushedHead != "",
 		WorkDir: r.d.WorkDir, Bytes: int64(len(data))}
-	if err := r.d.Store.PutSession(ctx, m, data); err != nil {
+	put := r.d.Store.PutSession
+	if review {
+		put = r.d.Store.PutReviewSession
+	}
+	if err := put(ctx, m, data); err != nil {
 		log.Warn("storing the session failed; the next follow-up starts fresh", "err", r.redact(err.Error()))
 		return
 	}
