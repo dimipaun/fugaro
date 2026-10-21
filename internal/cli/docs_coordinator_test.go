@@ -94,7 +94,7 @@ package cli
 //    twenty-four -- which is the same silent-overclaim the citation census
 //    exists to catch in the document.
 //
-// Mutation (verified, run and restored) -- 76, one per way these documents can
+// Mutation (verified, run and restored) -- 88, one per way these documents can
 // rot, each planted and reverted. The count is a digit and not a word, and
 // there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
 // reads it and counts the list under it: one arrow per mutation, so a number
@@ -105,6 +105,13 @@ package cli
 //
 //	TestDocsCoordinatorIsWritten
 //	  delete the README's status sentence -> fails, naming it;
+//	  put the README's status sentence back to what it replaced ("plan written; no
+//	  code is implemented; approval gate open") -> fails: the line is pinned
+//	  whole, and the state it names is the one this round ended, so a rewrap that
+//	  keeps the branch and drops the release is exactly the edit it catches;
+//	  delete the README's gate-passed sentence -> fails: it is the permission a
+//	  builder acts on, and the parts it does NOT open are named in the same
+//	  sentence, so the pin has to hold the whole of it;
 //	  delete the reconciliation's "The owner answered all sixteen" sentence ->
 //	  fails;
 //	  delete the README's "All sixteen questions are answered" sentence -> fails;
@@ -134,7 +141,35 @@ package cli
 //	  write a decision's recommendation as option (B), leaving the alternative
 //	  labelled (B) too -> fails: the letter is checked, not only the word, so a
 //	  decision whose recommendation moved is not quietly still "recommended";
-//	  drop the README's "written, not answered" state -> fails.
+//	  put the README's "written, not answered" state back for D193–D197 -> fails:
+//	  the owner answered all five on 2026-10-21, and the index has to say so.
+//	TestDocsCoordinatorDecisionsAreAnswered
+//	  record D196 as option (A) -> fails: it is the one decision answered AGAINST
+//	  the recommendation, and it is the one that allocates work between two
+//	  plans, so a document that files it under (A) describes the plan's own
+//	  recommendation as the owner's ruling;
+//	  delete D194's answer paragraph -> fails, naming D194: four answers and one
+//	  decision still reading as open is a plan whose parts are half-gated, and
+//	  the per-decision loop is what makes the missing one a failure rather than a
+//	  shorter document;
+//	  put the section's "**None is answered.**" sentence back -> fails: it is the
+//	  claim that kept every part behind the gate, and the reconciliation may not
+//	  deny an approval the plan records;
+//	  delete the "**Amended 2026-10-21**" note under Q10 -> fails: Q10(A) is the
+//	  owner's answer of 2026-10-19 and is left as it was given, so the amendment
+//	  is the only thing saying D196 changed what the plan does;
+//	  drop D196's answer from its gate-table row -> fails: the table is where a
+//	  reader learns what each part waits on, and an answer recorded in the
+//	  reconciliation and missing from the row leaves P7 reading as blocked;
+//	  revert the plan's gate to the sentence it replaced ("No part of this plan
+//	  starts before the owner passes this gate") -> fails: the permission and the
+//	  state are the pair, and the old sentence is a plan nobody may start;
+//	  delete "**P7 and P8 still wait**" from every place the plan writes it (it
+//	  carries the sentence four times, and the pin reads the document, so
+//	  removing one of the four is deliberately not a mutation) -> fails: the
+//	  failure mode of a gate sentence is that it widens, and a reader who takes
+//	  "passed" without the second half starts P7 on a front door nobody has
+//	  reviewed.
 //	TestDocsCoordinatorPlanIsWritten
 //	  move P4 after P5 -> fails: the parts are an order, not a list;
 //	  delete the "## What the owner must answer before any part starts" heading ->
@@ -143,7 +178,16 @@ package cli
 //	  naming the decision: the table is read from its own section, so naming the
 //	  decision somewhere else in the plan does not stand in for its row;
 //	  restore the old status line ("reconciliation only; ... no plan is
-//	  approved") -> fails.
+//	  approved") -> fails;
+//	  put the reading D196 replaced back into P7 ("the coordinator as a role it
+//	  plays", one of the six phrases the check matches) -> fails: the plan
+//	  carried that reading in four places, so it is matched as a phrase rather
+//	  than pinned as a line, and a rewrite that fixes three of them fails here;
+//	  delete "**its own resident service**" -> fails: whose service the front
+//	  door is, is the whole of what D196 decided;
+//	  drop "**whichever part lands first admits it and the other cites it**" ->
+//	  fails: the two plans share one allow-list admission, and the part that
+//	  lands second must cite it rather than add it again.
 //	TestDocsCoordinatorPlanCitationsExist
 //	  rename a cited path in the plan to `internal/coordinatorX/` -> fails,
 //	  naming it;
