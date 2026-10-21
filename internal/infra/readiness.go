@@ -112,6 +112,36 @@ func dropMount(ws WorkflowSpec, logical string) {
 	}
 }
 
+// dropModelMounts removes from a job's mounts every variable that carries a
+// model credential (config.IsModelSecretEnv: the Claude OAuth token, the
+// Anthropic key, a provider's key). It is what an installation that has opted
+// in to the credentials service (D146, D147) gets: the service holds those
+// credentials and reads them as its own account, modules/workflow/sa.tf drops
+// the job account's accessor on each, and a job that still MOUNTED one would
+// not deploy at all — Cloud Run checks the mounting account's read access on
+// every secret it is given, so the mount and the grant have to go together
+// (C1.20; the module's local.job_secret_names is the other half of the same
+// rule).
+//
+// It is deliberately not dropMount: that one also deletes the name from
+// SecretIDs, and here the CONTAINER has to stay. The job's model secret is
+// declared in the repository root's own secrets.tf (rs.Secrets, filled from
+// SecretIDs), it carries prevent_destroy, and it may still hold the value the
+// installation used before it opted in: dropping it from the spec would plan
+// its destruction (which prevent_destroy refuses, failing the whole plan) and
+// make Retirements report a live container as retired. Only the mount goes;
+// the container is left exactly where it is.
+func dropModelMounts(ws *WorkflowSpec) {
+	for env := range ws.SecretEnv {
+		if config.IsModelSecretEnv(env) {
+			delete(ws.SecretEnv, env)
+		}
+	}
+	if ws.Env != nil {
+		ws.Env[runner.SecretEnvsVar] = redactionEnvs(ws.SecretEnv)
+	}
+}
+
 // Readiness decides, from what exists, what the plan may deploy. It
 // returns a deep copy of spec with the gates applied (spec itself is not
 // changed, and shares no map or slice with the result) and what is still
