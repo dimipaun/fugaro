@@ -53,15 +53,18 @@ const ManagedPrefix = "fmgd-"
 
 // managedTypes are the resource types a plan in a managed project may contain
 // — Task 1.1's decision, one entry of managedTypeReasons per line. Every entry
-// is also an entry of allowedTypes: a type no module declares has no place on
-// either list, and adding one here without deciding it there fails
-// TestManagedAllowedTypesIsDecided.
+// is also an entry of allowedTypes: adding one here without deciding it there
+// fails TestManagedAllowedTypesIsDecided. allowedTypes carries one entry no
+// module declares yet (admittedAheadOfTheirModule, cover.go), the central
+// orchestrator's service; it is on this list for the same reason and one more,
+// stated in its reason below.
 var managedTypes = map[string]bool{
 	"google_apikeys_key":                             true,
 	"google_artifact_registry_repository":            true,
 	"google_artifact_registry_repository_iam_member": true,
 	"google_cloud_run_v2_job":                        true,
 	"google_cloud_run_v2_job_iam_member":             true,
+	"google_cloud_run_v2_service":                    true,
 	"google_cloud_scheduler_job":                     true,
 	"google_project_service":                         true,
 	"google_secret_manager_secret":                   true,
@@ -82,6 +85,7 @@ var managedTypeReasons = map[string]string{
 	"google_artifact_registry_repository_iam_member": "inherited: a grant on a repository the plan itself created; the deployer's artifactregistry.repositories.setIamPolicy is conditioned on the prefix",
 	"google_cloud_run_v2_job":                        "inherited: the workload a managed project runs. Its name must carry the prefix and its service account must be set and be one of the managed project's own — a job with no account runs as the project's default compute account, which holds Editor by default",
 	"google_cloud_run_v2_job_iam_member":             "inherited: invoker grants on the plan's own jobs; the deployer's run.jobs.setIamPolicy is conditioned on the prefix",
+	"google_cloud_run_v2_service":                    "admitted ahead of its module, with allowedTypes (central-orchestrator P1, D19): the central orchestrator's resident service is one per installation, not one per managed project, so no managed plan is expected to hold one today. It is decided here rather than left to fail closed later because a type on allowedTypes and not here asks a managed plan for its own typed confirmation, and the same conditions that bound a job bound a service: its name must carry the prefix and its template's service account must be set and be one of the managed project's own — a service with no account runs as the project's default compute account, which holds Editor by default. The prefix keeps Fugaro's own orchestrator (fugaro-orchestrator) out of reach. Accepted exposure, and it is the reason this entry is a decision rather than a formality: the deployer's two roles hold run.jobs.* and no run.services.* (D75), so a managed plan holding a service could not be applied by the deployer as it stands — the entry admits a type the deployer cannot yet create, and giving it run.services.* is a widening of D75's role lists that is the owner's decision and not this part's",
 	"google_cloud_scheduler_job":                     "inherited: the schedule a managed project runs; its name and the OIDC or OAuth account it calls as must both carry the prefix, so it can neither reach Fugaro's own jobs nor run as an account the plan did not create",
 	"google_project_service":                         "inherited: a managed plan may enable an API. The deployer holds serviceusage.services.enable, get and list only, never disable, so a plan that disables a service by deleting its google_project_service cannot be applied — and the delete needs the owner's own list whatever the type is. Accepted exposure: enabling an API can make Google itself add project-level IAM grants for that API's default service accounts (the Compute Engine default account's Editor, a service agent's role), grants no plan shows; not usable today, because no type the list admits can run as those accounts — a job or a scheduler must run as a prefixed account of the plan's own, and a grant on an account is conditioned on the prefix",
 	"google_secret_manager_secret":                   "inherited: the container, never a version. The deployer holds no secretmanager.versions.access, so a managed plan can create a secret and cannot read one, and update or delete only a prefixed one",
@@ -149,6 +153,7 @@ var managedNames = map[string]string{
 	"google_artifact_registry_repository_iam_member": "repository",
 	"google_cloud_run_v2_job":                        "name",
 	"google_cloud_run_v2_job_iam_member":             "name",
+	"google_cloud_run_v2_service":                    "name",
 	"google_cloud_scheduler_job":                     "name",
 	"google_secret_manager_secret":                   "secret_id",
 	"google_secret_manager_secret_iam_member":        "secret_id",
@@ -186,9 +191,9 @@ var managedGrantRules = map[string]bool{
 //   - the type: managedTypes rather than allowedTypes, so the twelve entries
 //     of managedDropped ask for a confirmation instead;
 //   - the resource: every name a managed resource carries must carry
-//     ManagedPrefix, and the accounts a job or a scheduler runs as must be the
-//     managed project's own, so a plan cannot reach Fugaro's resources, the
-//     runs bucket or the default compute account;
+//     ManagedPrefix, and the accounts a job, a service or a scheduler runs as
+//     must be the managed project's own, so a plan cannot reach Fugaro's
+//     resources, the runs bucket or the default compute account;
 //   - the grant: a role is granted only on such a resource, only to a member
 //     the review listed or a managed account, and only with the role spelled
 //     out — a managed plan creates no custom role, so a computed role could be
@@ -211,7 +216,7 @@ var managedGrantRules = map[string]bool{
 // the delete rule would later allow (managedBucketLock, managedObjectLock).
 //
 // And one rule under all six: every value the cover reads — a name, the
-// account a job, a scheduler or a grant is on, a member, a role — must be
+// account a job, a service, a scheduler or a grant is on, a member, a role — must be
 // known at plan time. A computed one is refused, never trusted for what it
 // references (managedNames says why).
 //
@@ -892,6 +897,22 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 		switch {
 		case email == "":
 			return "a job with no service account, which would run as the project's default compute account"
+		case !c.managedAccount("serviceAccount:" + email):
+			return "runs as " + email + ", which is not a service account of the managed project carrying the prefix " + ManagedPrefix
+		}
+	case "google_cloud_run_v2_service":
+		// The same rule as the job's, one level shallower: a service's
+		// template is the revision's own, where a job's carries the task's
+		// template inside it. A service with no service account runs as the
+		// project's default compute account, which holds Editor by default:
+		// unset is refused, not read as "no account to check".
+		if unknownAt(rc.Change.AfterUnknown, "template", 0, "service_account") {
+			return "a service whose service account is not known"
+		}
+		email := str(at(a["template"], "service_account"))
+		switch {
+		case email == "":
+			return "a service with no service account, which would run as the project's default compute account"
 		case !c.managedAccount("serviceAccount:" + email):
 			return "runs as " + email + ", which is not a service account of the managed project carrying the prefix " + ManagedPrefix
 		}

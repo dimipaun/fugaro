@@ -26,7 +26,11 @@ var allowedTypes = map[string]bool{
 	"google_billing_budget":                          true,
 	"google_cloud_run_v2_job":                        true,
 	"google_cloud_run_v2_job_iam_member":             true,
-	"google_cloud_scheduler_job":                     true,
+	// Admitted ahead of the module that declares it (admittedAheadOfTheirModule
+	// says why): the central orchestrator's resident service, one per
+	// installation (docs/central-orchestrator, P1/D19).
+	"google_cloud_run_v2_service": true,
+	"google_cloud_scheduler_job":  true,
 	// The Batch backend's own root (design compute-backend §8.1 task 6) is a
 	// root of its own, applied by its own stage behind --provision-batch and
 	// its own typed confirmation: these three types are the NAT, its router
@@ -58,6 +62,33 @@ var allowedTypes = map[string]bool{
 	"google_storage_bucket":                   true,
 	"google_storage_bucket_iam_member":        true,
 	"google_storage_bucket_object":            true,
+}
+
+// admittedAheadOfTheirModule are the entries of allowedTypes no module under
+// deploy/terraform/gcp declares yet, with the decision that admitted each one
+// ahead of its module. TestAllowedTypesCoverTheModules reads it, in every
+// direction: a type here is excused from the reverse half of that test
+// ("nothing is allowed that no module uses"), it must carry its reason, and it
+// fails the day a module declares the type — so an exception retires itself
+// rather than becoming a hole.
+//
+// It holds one entry, and it is central-orchestrator P1 (D19, answered
+// 2026-10-20): the installation gains ONE Cloud Run service, the resident front
+// door the spec's sessions connect to, and its type is admitted deliberately
+// before the module that declares it — P4 of
+// docs/central-orchestrator/implementation-plan.md, which wires the service
+// into the installation root and is where the checks on what a service may say
+// (its image, the account it runs as, its ingress) belong, as the job's do in
+// attributes below. Until P4 lands the admission is inert: no module in this
+// tree declares the type, so no plan any stage of init produces can hold one.
+//
+// The invoker grant beside it, google_cloud_run_v2_service_iam_member, is
+// deliberately NOT admitted, here or in grantRules: that table is a role
+// allowlist which has to match the grants a module writes
+// (TestGrantRulesAreTheModules), so the type and the roles it may carry are one
+// decision, taken with the module that grants.
+var admittedAheadOfTheirModule = map[string]string{
+	"google_cloud_run_v2_service": "one Cloud Run service per installation, the central orchestrator's resident front door (docs/central-orchestrator, D19 answered 2026-10-20; the module that creates it is P4's). It is admitted here first so that plan is judged on what it says rather than refused for a type nobody had decided on",
 }
 
 // who says what kind of principal a module grants a role to: People are the

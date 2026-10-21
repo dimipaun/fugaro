@@ -399,10 +399,24 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 	if err != nil || n < 20 {
 		t.Fatalf("read %d module files: %v", n, err)
 	}
-	// The reverse: nothing is allowed that no module uses.
+	// The reverse: nothing is allowed that no module uses — except the entries
+	// admitted ahead of their module, each of which must say why and must stop
+	// being one the day a module declares the type (admittedAheadOfTheirModule).
 	for t := range allowedTypes {
-		if !usedTypes[t] {
+		why, admitted := admittedAheadOfTheirModule[t]
+		switch {
+		case usedTypes[t] && admitted:
+			tt.Errorf("type %s is admitted ahead of its module (%s), and a module declares it now: the exception has done its work and comes out", t, why)
+		case usedTypes[t]:
+		case admitted && why == "":
+			tt.Errorf("type %s is admitted ahead of its module with no reason: an admission is a decision", t)
+		case !admitted:
 			tt.Errorf("type %s is allowed but no module declares it", t)
+		}
+	}
+	for t := range admittedAheadOfTheirModule {
+		if !allowedTypes[t] {
+			tt.Errorf("type %s is admitted ahead of its module but is not an allowed type", t)
 		}
 	}
 	for r := range allowedRoles {
