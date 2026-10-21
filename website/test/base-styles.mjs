@@ -1926,12 +1926,14 @@ test('the rhythm reading refuses a block whose rule cannot reach it', () => {
  *   - **nothing draws a box around an empty slot.** `:empty { display: none }` is what takes
  *     it out of the page while it holds nothing, and any rule that gives the slot itself a
  *     height, a padding, a border, a background or a margin is the blank rectangle coming
- *     back. Rules about what is *inside* the slot (`> img`) are the other half and are let
- *     through;
- *   - **the image that lands in it is sized already.** A rule for the slot's own `img` is here,
- *     so the later task's change is one `<img>` line in the markup and no CSS that nobody has
- *     looked at;
- *   - **and the image that landed is sized so it scales.** The screenshot is a 1459 x 441
+ *     back. Rules about what is *inside* the slot (a `>` in the selector) are the other half
+ *     and are let through;
+ *   - **the pictures that land in it are sized already.** The slot renders the site's shared
+ *     slider — the same `ScreenshotSlider.astro` the console page's slider is, since
+ *     2026-10-21 — and the rule that sizes a slide's picture is that component's own. This
+ *     reader finds it by the class the slot's own `<img>` elements carry in the built page,
+ *     so the slot's four pictures are held to the same reading whichever component draws them;
+ *   - **and the picture that landed is sized so it scales.** The screenshot is a 1459 x 441
  *     logical capture of a terminal, and the owner's brief for putting it on the page asks for
  *     the page at 1280, 768 and 375 px: a fixed width is the picture running past a phone's
  *     edge — the column is 327 px at 375 — and a fixed height is the same picture squashed into
@@ -1964,15 +1966,30 @@ export function watchSlotFailures(css, html) {
       )
     }
   }
-  const sizes = own.filter((rule) => /(^|[^\w-])img(?![\w-])/.test(rule.selector))
-  if (sizes.length === 0) {
+  // The pictures the slot renders, read from the markup rather than written here: since the
+  // slot became the shared slider it holds a `<img>` per slide, and the rule that sizes them is
+  // the slider's own (`ScreenshotSlider.astro`), which every slide of both pages' sliders
+  // shares. The classes are read from the built page, so a reading that named one would not
+  // follow the component if it renamed its own.
+  const pictures = [...walk(slot)].filter((el) => el.name === 'img')
+  const classes = [
+    ...new Set(pictures.flatMap((el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean))),
+  ]
+  const sizes = allRules(css).filter((rule) =>
+    classes.some((name) => new RegExp(`\\.${name}(?![\\w-])`).test(rule.selector)),
+  )
+  if (pictures.length === 0 || sizes.length === 0) {
     out.push(
-      "no rule sizes the image that goes into the watch screenshot's slot (`.watch-shot > img`): the image is a separate task's to add, and the rule that draws it belongs beside the slot so that adding it is one line of markup (review round 3, item 3b)",
+      `no rule sizes the pictures the watch screenshot's slot renders (${
+        pictures.length === 0
+          ? 'the slot holds no image at all'
+          : `the slot's images carry ${classes.map((name) => `\`${name}\``).join(', ')} and no rule names ${classes.length === 1 ? 'it' : 'them'}`
+      }): the slot renders the site's shared slider, whose own rule is what sizes a slide's picture, and a picture nothing sizes is a picture laid out at its file's own pixels (review round 3, item 3b)`,
     )
     return out
   }
-  // The width the picture is laid out at, as the widest declaration any rule of the slot's own
-  // makes about it: a percentage of the column is one that tracks the column at every viewport.
+  // The width the picture is laid out at, as the widest declaration any of those rules makes
+  // about it: a percentage of the column is one that tracks the column at every viewport.
   const percents = sizes.flatMap((rule) => {
     const declared = declarations(rule)
     return ['width', 'max-width']
@@ -1987,7 +2004,7 @@ export function watchSlotFailures(css, html) {
       }, and the picture is a 1459 px-wide capture of a terminal: at 375 px the column it sits in is 327 px, so a width that is not a percentage of that column is the screenshot running past the phone's edge, which is the horizontal scroll the owner's brief for this asset asks the page not to have (owner spec 2026-10-18, item 5)`,
     )
   }
-  // And no rule of the slot's own gives the picture a fixed length at all — the check above
+  // And none of the slider's own rules gives the picture a fixed length at all — the check above
   // reads the declarations there are, and this one reads the ones a breakpoint could add: a
   // `width` in pixels inside a media query overrides the percentage above at exactly the
   // viewports that query answers, which is where the overflow would live.
@@ -2025,34 +2042,35 @@ test('the watch slot reserves no space until the image lands, and the image scal
   const css = pageCss(home)
   assert.deepEqual(watchSlotFailures(css, home), [], 'the watch slot as it ships breaks one of the rules the cases below are about')
 
-  // The slot's two rules, each planted: the rule that takes an empty slot out of the page, and
-  // the rule that sizes the image in it.
+  // The slot's own rule and the slider's rule that sizes the pictures in it, each planted: the
+  // one that takes an empty slot out of the page, and the one the slot's `<img>` elements are
+  // laid out by.
   const nothingPainted = css.replace(
     /\.watch-shot\[data-astro-cid-[a-z0-9]+\]:empty\{display:none\}/,
     '.watch-shot[data-astro-cid-6fbtmsuw]:empty{display:block}',
   )
   assert.notEqual(nothingPainted, css, "this fixture turns the slot's `:empty` rule into one that still draws it, and the built stylesheet no longer carries that rule")
-  const noImageRule = css.replace(/\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img[^{]*\{[^}]*\}/, '')
-  assert.notEqual(noImageRule, css, "this fixture removes the rule that sizes the image in the slot, and the built stylesheet no longer carries one")
+  const noImageRule = css.replace(/\.screen-image\[data-astro-cid-[a-z0-9]+\]\{[^}]*\}/, '')
+  assert.notEqual(noImageRule, css, "this fixture removes the rule that sizes the pictures in the slot, and the built stylesheet no longer carries one")
   // And the picture's own sizing, each planted the way the defect reads on the page: a width
   // in pixels is the screenshot wider than the phone's column, and a height in pixels is the
   // same screenshot squashed into a box that is not its shape.
-  const fixedWidth = css.replace(/(\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{)width:100%/, '$1width:1459px')
-  const fixedHeight = css.replace(/(\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{width:100%;)height:auto/, '$1height:441px')
+  const fixedWidth = css.replace(/(\.screen-image\[data-astro-cid-[a-z0-9]+\]\{[^}]*?)width:100%/, '$1width:1459px')
+  const fixedHeight = css.replace(/(\.screen-image\[data-astro-cid-[a-z0-9]+\]\{[^}]*?)height:auto/, '$1height:441px')
   assert.notEqual(fixedWidth, css, "this fixture fixes the watch screenshot's width in pixels, and the built stylesheet no longer sizes it with a percentage")
   assert.notEqual(fixedHeight, css, "this fixture fixes the watch screenshot's height in pixels, and the built stylesheet no longer lets it follow the file's ratio")
   // The same defect one breakpoint down: the base rule still tracks the column, and a media
   // query answers a phone with a fixed width instead — the shape a "just for small screens"
   // override takes, and the one a check that read only the declarations in front of it would
   // miss.
-  const imgSelector = /(\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\])/.exec(css)?.[1]
-  assert.ok(imgSelector, "this fixture needs the rule that sizes the image in the watch slot, and the built stylesheet no longer carries one to read its selector from")
+  const imgSelector = /(\.screen-image\[data-astro-cid-[a-z0-9]+\])/.exec(css)?.[1]
+  assert.ok(imgSelector, "this fixture needs the rule that sizes the pictures in the watch slot, and the built stylesheet no longer carries one to read its selector from")
   const phoneWidth = `${css}\n@media (max-width:40rem){${imgSelector}{width:900px}}`
   const cases = [
     ['the slot left in the page while it is empty', nothingPainted, /takes the watch screenshot's slot out of the page/],
     ['the screenshot fixed in width inside a breakpoint', phoneWidth, /a length in units is a box the picture does not grow out of/],
     ['a box drawn around the empty slot', `${css}\n.watch-shot{min-height:140px}`, /gives the watch screenshot's slot a `min-height/],
-    ['the image rule removed with the slot still empty', noImageRule, /no rule sizes the image that goes into the watch screenshot's slot/],
+    ['the rule that sizes the slot\'s pictures removed', noImageRule, /no rule sizes the pictures the watch screenshot's slot renders/],
     ['the screenshot given a fixed width', fixedWidth, /the picture is a 1459 px-wide capture of a terminal/],
     ['the screenshot given a fixed height', fixedHeight, /the picture's height has to follow the file's own ratio/],
   ]

@@ -944,17 +944,24 @@ export function loadTypicalCosts(minRuns: number): TypicalCostsFacts {
 }
 
 // ---------------------------------------------------------------------------------------
-// website/data/console-screens.yaml — the console's screenshots (owner feedback 2026-10-19).
+// website/data/{console,home}-screens.yaml — the sliders' slides, and the pictures in them
+// (the console's: owner feedback 2026-10-19; the homepage's: the zoom work of 2026-10-21, D246).
+//
+// **One reader for two files, because the two files are the same document.** The console page's
+// slider and the homepage's "See it" panel render the same component from rows of the same
+// shape, so the validation is one function and each page names its file and gets its rows. A
+// row's `file` is a NAME and its `dir` is the one of the two directories under `public/` that
+// serves it — `screenshots` unless the row says otherwise, which is why every console row (and
+// every homepage row but the watch capture) carries no `dir` at all.
 // ---------------------------------------------------------------------------------------
 
 /**
- * One screenshot of the console: the file, the two texts a reader gets for it, and its own
- * pixel dimensions.
+ * One slide: the file, the two texts a reader gets for it, and its own pixel dimensions.
  */
-export interface ConsoleScreen {
-  /** The file's name under `public/screenshots/`, as the data file writes it. */
+export interface Screen {
+  /** The file's name under `public/<dir>/`, as the data file writes it. */
   file: string
-  /** The site path the browser fetches: derived here from `file`, and written down nowhere. */
+  /** The site path the browser fetches: derived here from `file` and `dir`, written nowhere. */
   src: string
   /** What a reader gets when the picture does not arrive, and what a screen reader reads. */
   alt: string
@@ -966,17 +973,29 @@ export interface ConsoleScreen {
   height: number
 }
 
-/** website/data/console-screens.yaml, validated. */
-export interface ConsoleScreensFacts {
-  screens: ConsoleScreen[]
+/** One of the two screenshots data files, validated. */
+export interface ScreensFacts {
+  screens: Screen[]
 }
 
 const SCREENS_FILE = 'website/data/console-screens.yaml'
+const HOME_SCREENS_FILE = 'website/data/home-screens.yaml'
 
 /** Where a screenshot's file lives under `public/`, and the site path it is served at. */
 const SCREENS_DIR = 'screenshots'
 
+/**
+ * The directories under `public/` a row's `file` may name, and the default. The console's rows
+ * are all captures of the console and live in `screenshots/`; the homepage's last slide is the
+ * owner's `fugaro watch` capture, which has been at `public/images/fugaro-watch.png` since PR
+ * #622 and is not one of the console's four. **A row names one of these two and never a path**:
+ * the site path is composed here from the pair, so no data file carries a URL (Global
+ * Constraint 9), and a `dir` that is neither is refused by name rather than fetched.
+ */
+const SCREEN_DIRS = ['images', 'screenshots']
+
 const SCREENS_KEYS = ['screens', 'version']
+const SCREEN_KEYS = ['alt', 'caption', 'dir', 'file', 'height', 'width']
 
 /**
  * The formats the slider serves. A console screenshot is a raster image, and these are the
@@ -1008,23 +1027,68 @@ const SCREEN_FORMATS = ['avif', 'jpeg', 'jpg', 'png', 'webp']
  * not serve, an `alt` or a `caption` nobody could read, and a size that is not a positive
  * whole number of pixels.
  */
-export function loadConsoleScreens(): ConsoleScreensFacts {
-  const file = SCREENS_FILE
-  const doc = asMap(
-    parseYAML(readBytes(path.join(DATA_DIR, 'console-screens.yaml'), "the console's screenshots: the files, their alt text, their captions and their sizes (the owner's feedback of 2026-10-19)"), file),
-    file,
-    'the document',
-  )
+export function loadConsoleScreens(): ScreensFacts {
+  return {
+    screens: screensOf(
+      'console-screens.yaml',
+      "the console's screenshots: the files, their alt text, their captions and their sizes (the owner's feedback of 2026-10-19)",
+    ),
+  }
+}
+
+/**
+ * The homepage's "See it" slides, in the order the panel's slider shows them (the owner's
+ * feedback of 2026-10-21, and the brief's "replace the single Fugaro Watch screenshot with a
+ * slider"; D246, D251, D252).
+ *
+ * **The rows are the console's own three screenshots and then the watch capture**, which is the
+ * order the brief asks for — "lead with the desktop console and give it the most space … Fugaro
+ * Watch moves to the end as a 'for the terminal crowd' slide" — and the three leading rows'
+ * `alt` and `caption` are the `console-screens.yaml` rows' own, verbatim: one picture has one
+ * `alt` text and one caption, and a second page that paraphrased them would be a second copy of
+ * the sentence that drifts first (`website/test/home.mjs` holds the three to the console file).
+ * The last row is `public/images/fugaro-watch.png`, which is the same file the panel has always
+ * shown, and its caption is the brief's own example for that slide.
+ */
+export function loadHomeScreens(): ScreensFacts {
+  return {
+    screens: screensOf(
+      'home-screens.yaml',
+      "the homepage slider's slides: the console's screenshots and the `fugaro watch` capture, with their alt text, their captions and their sizes (the brief of 2026-10-21)",
+    ),
+  }
+}
+
+/**
+ * One screenshots data file, read and validated: the name under `website/data/` and the
+ * sentence that says what the file is for, because that sentence is what an unreadable file's
+ * error names. Both callers above are this function with a different name, which is what keeps
+ * the two pages' rows the same shape — and therefore what keeps one component's rendering of
+ * them the same.
+ */
+function screensOf(name: string, why: string): Screen[] {
+  const file = `website/data/${name}`
+  const doc = asMap(parseYAML(readBytes(path.join(DATA_DIR, name), why), file), file, 'the document')
   refuseUnknownKeys(doc, SCREENS_KEYS, file)
 
   if (asInt(doc.version, file, 'version') !== 1) {
     throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
   }
 
-  const screens = asList(doc.screens, file, 'screens').map((entry, index) => {
+  return asList(doc.screens, file, 'screens').map((entry, index) => {
     const what = `screens[${index}]`
     const screen = asMap(entry, file, what)
-    refuseUnknownKeys(screen, ['alt', 'caption', 'file', 'height', 'width'], `${file} ${what}`)
+    refuseUnknownKeys(screen, SCREEN_KEYS, `${file} ${what}`)
+
+    // The directory the row's file is served from: one of the two under `public/`, and
+    // `screenshots` for a row that names none — which is every console row, and the reason a
+    // row's shape did not change when the homepage's file arrived.
+    const dir = screen.dir === undefined ? SCREENS_DIR : asString(screen.dir, file, `${what}.dir`)
+    if (!SCREEN_DIRS.includes(dir)) {
+      throw new Error(
+        `${file}: ${what}.dir is ${JSON.stringify(dir)}, and a picture this site serves lives in one of ${SCREEN_DIRS.map((one) => `public/${one}/`).join(' or ')}: the site path the browser fetches is composed from the pair, so a directory that is neither is a file no page can reach.`,
+      )
+    }
 
     const name = asString(screen.file, file, `${what}.file`)
     // A NAME and not a path: the site path is `/${SCREENS_DIR}/${name}` below, and a name
@@ -1032,13 +1096,13 @@ export function loadConsoleScreens(): ConsoleScreensFacts {
     // a URL written into a data file (Global Constraint 9).
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
       throw new Error(
-        `${file}: ${what}.file is ${JSON.stringify(name)}, and it is the file's NAME under website/public/${SCREENS_DIR}/ — letters, digits, dots, dashes and underscores, with no directory, no scheme and no space. The site path the browser fetches is derived from the name, so a name that is a path or a URL is a fact this file is not allowed to carry (Global Constraint 9).`,
+        `${file}: ${what}.file is ${JSON.stringify(name)}, and it is the file's NAME under website/public/${dir}/ — letters, digits, dots, dashes and underscores, with no directory, no scheme and no space. The site path the browser fetches is derived from the name, so a name that is a path or a URL is a fact this file is not allowed to carry (Global Constraint 9).`,
       )
     }
     // The dot is required before the format is read. With no dot at all `lastIndexOf` answers
     // -1 and `slice(0)` hands back the whole name, so a name that IS a served format — `png`,
     // `jpg`, `webp` — would pass a check that only asks whether the extension is one of them,
-    // and the row would render a picture at `/screenshots/png`. There is no dot, so there is
+    // and the row would render a picture at `/<dir>/png`. There is no dot, so there is
     // no extension and no picture either.
     const dot = name.lastIndexOf('.')
     const format = dot === -1 ? '' : name.slice(dot + 1).toLowerCase()
@@ -1078,10 +1142,8 @@ export function loadConsoleScreens(): ConsoleScreensFacts {
       )
     }
 
-    return { file: name, src: `/${SCREENS_DIR}/${name}`, alt, caption, width, height }
+    return { file: name, src: `/${dir}/${name}`, alt, caption, width, height }
   })
-
-  return { screens }
 }
 
 // ---------------------------------------------------------------------------------------

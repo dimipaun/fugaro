@@ -910,8 +910,13 @@ function stubPage(html, { hash = '', hidden = false, calm = false, script = SCRI
 
   const block = document.querySelectorAll('[data-slider]')[0] ?? null
   assert.ok(block, 'the built homepage carries no `[data-slider]` block for the script to find')
-  const dots = block.querySelectorAll('[data-slider-dot]')
-  const slides = block.querySelectorAll('[data-slider-slide]')
+  // The block's OWN dots and slides. The "See it" panel holds a slider of its own — the console
+  // page's component, whose slides and dots carry the same two hooks (D246) — so the block's
+  // readings are taken with `ownOf`'s rule here too: a case that counted the inner block's four
+  // dots as this block's would be reading a slider the script did not move.
+  const own = (selector) => block.querySelectorAll(selector).filter((el) => el.closest('[data-slider]') === block)
+  const dots = own('[data-slider-dot]')
+  const slides = own('[data-slider-slide]')
   const back = block.querySelector('[data-slider-prev]')
   const on = block.querySelector('[data-slider-next]')
   const pending = () => timers.filter((timer) => !timer.cancelled)

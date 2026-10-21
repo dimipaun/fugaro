@@ -46,19 +46,30 @@
  * draft's own three lines, each with the repository's sentence about it under it, held to
  * README.md at build time the way the flow's captions are held to theirs (Global Constraint
  * 6). *Why Fugaro?* is `Benefits.astro` unchanged: the README's four reasons, with their icons,
- * in the order the README argues them. *See it* is the real `fugaro watch` capture — the
- * owner's own screenshot of the screen running on their installation — with the one command
- * the reader is asked for under it.
+ * in the order the README argues them. *See it* is the console and then the real `fugaro watch`
+ * capture — the owner's own screenshot of the screen running on their installation — with the
+ * one command the reader is asked for under it.
  *
- * **The screenshot is a plain `<img>` and not `ScreenshotSlider.astro`.** That component is
- * the console page's: it renders `website/data/console-screens.yaml`, it carries the console's
- * own heading, ids and captions, and it is a scroller rather than a slide deck. Reusing it here
- * would mean a second reader of a file this page has nothing to do with; the draft asks for one
- * picture, large, and one picture is an `<img>` with its `alt` and its own width and height —
- * 2918 x 882 px taken at 2x, so 1459 x 441 logical, which is what lets the browser reserve the
- * box before the file arrives and the block under it hold still. Its dots are the shape this
- * block's dots are drawn in, and the two are separate rules rather than one shared class: the
- * console's slider is a scroller whose dots are anchors into it, and this one is the script's.
+ * **The "See it" panel is a slider of its own, and it is `ScreenshotSlider.astro`** (the brief
+ * of 2026-10-21: "replace the single Fugaro Watch screenshot with a slider"; D246, D251, D252).
+ * The panel used to hold one `<img>` — the owner's `fugaro watch` capture — and it now holds the
+ * console page's component, rendering `website/data/home-screens.yaml`: the console's own three
+ * screenshots first, because the brief asks the desktop console to lead and take the most space,
+ * and the watch capture last as the "for the terminal crowd" slide. That component was the
+ * console page's alone until this round; the three facts about the page it is rendered on — its
+ * heading, its `data-slot` and its slide-id prefix — are props now, and the homepage passes its
+ * own. **What the panel keeps is the slot**: `div[data-slot="watch-screenshot"]` is still the
+ * element after the panel's heading, it is still the one the design record points at, and the
+ * slider renders inside it.
+ *
+ * **Two sliders, one script, and they are told apart by what they hold.** The block above is a
+ * deck of three panels; the slider inside the third panel is a scroll container of four slides.
+ * Both are `[data-slider]`, both carry the same interior hooks (`[data-slider-track]`,
+ * `[data-slider-slide]`, `[data-slider-dot]`, the two step controls, the count), and both are
+ * driven by the one file — the console's driver moves the track and reads its position back, and
+ * the homepage's driver moves panels by name. `site.js`'s `own()` is what keeps each driver on
+ * its own block's elements, and `website/test/slider.mjs` reads the block's three panels and
+ * three dots with the same rule, so the case and the script cannot count differently.
  *
  * **Why the panel is the block and the section inside it is not.** The benefits panel renders
  * `Benefits.astro`'s section, which carries its own gutter and its own room below (that is the
@@ -70,9 +81,19 @@
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { REPO_ROOT } from '../content.ts'
+import { REPO_ROOT, loadHomeScreens } from '../content.ts'
 import { copyControlHTML } from '../lib/copy-control.mjs'
 import Benefits from './Benefits.astro'
+import ScreenshotSlider from './ScreenshotSlider.astro'
+
+/**
+ * The slides the "See it" panel shows, read from `website/data/home-screens.yaml` through the
+ * content pipeline: the console's own three screenshots and then the `fugaro watch` capture,
+ * with each row's `alt`, caption and own pixel size (D246, D251, D252). Read here rather than
+ * handed in as a prop, because the panel is the only caller and the file is the panel's — the
+ * way this component already reads the README.md sections its steps quote.
+ */
+const HOME_SCREENS = loadHomeScreens().screens
 
 /**
  * A string with its markdown markers and its whitespace removed: how a caption and the section
@@ -352,13 +373,12 @@ if (
           nothing under the picture moves when the file lands. `loading="lazy"`: the panel is
           the third slide and the picture is not on the first screen. */}
       <div class="watch-shot" data-slot="watch-screenshot">
-        <img
-          src="/images/fugaro-watch.png"
-          alt="The fugaro watch screen: a spend bar at $55.44 counted of $100.00, a burn flagged FAST, a table of seven runs with their stage, age and spend, and four runs ready for review."
-          width="1459"
-          height="441"
-          loading="lazy"
-          decoding="async"
+        <ScreenshotSlider
+          screens={HOME_SCREENS}
+          heading="Screenshots"
+          slot="home-screens"
+          idPrefix="home-screen"
+          label="Screenshots of Fugaro. Scroll sideways to see the rest."
         />
       </div>
 
@@ -674,21 +694,15 @@ if (
     line-height: var(--leading-normal);
   }
 
-  /* The screenshot's slot, and the picture in it. The slot takes no space while it is empty —
-     the rule the asset's own task left behind, kept so a slot that lost its image again is not
-     a blank rectangle — and the image is the column's width with its own aspect ratio, so a
-     phone scales it down rather than scrolling sideways. */
+  /* The slides' slot, and nothing of its own: the slider inside it is `ScreenshotSlider.astro`,
+     which draws its own frame, its own track, its own dots and its own captions (the owner's
+     feedback of 2026-10-21, D246). The slot takes no space while it is empty — the rule the
+     asset's own task left behind, kept so a slot that lost its slides again is not a blank
+     rectangle — and it is the hook `website/test/home.mjs` reads the rows of. The rule that
+     drew the single `<img>` this slot used to hold is gone with the `<img>`: a picture drawn by
+     a rule nothing renders is a rule that says the panel shows something it does not. */
   .watch-shot:empty {
     display: none;
-  }
-
-  .watch-shot > img {
-    display: block;
-    width: 100%;
-    height: auto;
-    margin: 0 0 var(--space-sm);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-md);
   }
 
   /* The command bar, and the one bar around it: `base.css`'s `.command-block` lays the command

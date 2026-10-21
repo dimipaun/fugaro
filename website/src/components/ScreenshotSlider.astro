@@ -95,7 +95,7 @@
  * all in the document — which is the site's rule (D183) and the reason the fallback is a
  * property of the markup rather than a promise about the script.
  */
-import type { ConsoleScreen } from '../content.ts'
+import type { Screen } from '../content.ts'
 
 /**
  * **The slider is shared, and the three props on the right are what make it so** (D246, the
@@ -115,7 +115,7 @@ interface Props {
    * The slides, in the order the data file lists them. An empty list renders the section at
    * all: there is no picture to draw and no frame to draw it in.
    */
-  screens: ConsoleScreen[]
+  screens: Screen[]
   /** The section's own heading, which is also what names it for a screen reader. */
   heading?: string
   /**
