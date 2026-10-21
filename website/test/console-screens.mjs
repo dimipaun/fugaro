@@ -9,10 +9,14 @@
 // two-slide one, each a build of a copy of the repository with a fixture written into its
 // data file:
 //
-//   1. **An empty list renders no slider and no placeholder.** The built console page
-//      carries no element the component would draw, no `<img>` and no new heading: the page
-//      a reader gets today is the page it was before the component existed, so a list with
-//      nothing in it costs a reader nothing (`website/data/console-screens.yaml`).
+//   1. **An empty list draws the frame with labelled placeholder slides.** The console has no
+//      screenshot yet — the owner takes them from the released console — and the redesign's
+//      board draws the slider frame on the page anyway, so the empty state is the frame: the
+//      same track, the same snap points, the same dots and the same caption line, with each
+//      slide saying which of how many it is and that the real screenshot goes there. Nothing
+//      in it is fetched — no `<img>`, no `src`, no URL — and the day a row lands in
+//      `website/data/console-screens.yaml` the frame renders that row instead, which is the
+//      whole point of drawing it: the real slider is a data change, not a rewrite.
 //   2. **Two slides render two slides, two dots, and the data file's own text.** Every
 //      `<img>`'s `src`, `alt`, `width` and `height` and every caption is the row's, read out
 //      of the data file rather than typed into the component (Global Constraint 6), and the
@@ -97,11 +101,6 @@ function hasClass(el, name) {
   return (el.attrs.get('class') ?? '').split(/\s+/).includes(name)
 }
 
-/** The built page's elements, once: what the cases below read instead of the page string. */
-function elementsOf(html) {
-  return [...walk(parse(html))]
-}
-
 /** The built console page of a build that is expected to have succeeded. */
 function consolePage(built) {
   assert.equal(built.status, 0, `the build failed:\n${built.output}`)
@@ -160,10 +159,10 @@ function buildWithScreens(t, contents) {
 }
 
 // ---------------------------------------------------------------------------------------
-// 1. The empty list: the state this checkout ships, and no slider at all.
+// 1. The empty list: the state this checkout ships, and the frame it draws.
 // ---------------------------------------------------------------------------------------
 
-test('an empty list renders the console page with no slider and no placeholder', (t) => {
+test('an empty list draws the slider frame with labelled placeholder slides', (t) => {
   // The premise: this checkout's own data file carries no slide, so the build below is the
   // state the owner will see until they add one. A fixture that quietly grew a row would
   // make this case assert nothing about the state it names.
@@ -171,40 +170,119 @@ test('an empty list renders the console page with no slider and no placeholder',
   assert.match(
     data,
     /^screens:\s*\[\s*\]\s*$/m,
-    `${SCREENS_YAML} does not carry an empty \`screens: []\`, and this case is the empty state the slider has to render as no slider at all`,
+    `${SCREENS_YAML} does not carry an empty \`screens: []\`, and this case is the empty state the frame draws`,
   )
 
   const built = buildCopy(t, () => {})
   const page = consolePage(built)
 
-  assert.equal(
-    sliderOf(page),
-    null,
-    `the console page carries a slider with no screenshot to show: an empty list is rendered as nothing, and a section with a heading and no picture in it is the placeholder the owner did not ask for (${SCREENS_YAML})`,
+  const slider = sliderOf(page)
+  assert.ok(
+    slider,
+    `the console page carries no element marked data-slot="${SLOT}" while ${SCREENS_YAML} carries no slide: the frame is drawn with placeholder slides, and a page with no frame is a page whose slider has to be built the day the first screenshot lands`,
   )
-  // Read as a document and not as a string: the component's stylesheet is inlined into the
-  // page whether or not the section rendered, so the class names are in the page's
-  // `<style>` either way. The elements are what says whether the slider is there.
-  const elements = elementsOf(page)
-  for (const name of ['screens-track', 'screens-dots']) {
+  const inside = [...walk(slider)]
+
+  // The frame is the component's own, not a second one: the track and the dots are the same
+  // elements with the same properties they have when the data file has rows in it. That is
+  // what makes the real slider a data change — a placeholder branch that drew its own box
+  // would be a second slider to keep working.
+  const track = inside.find((el) => hasClass(el, 'screens-track'))
+  assert.ok(track, 'the empty frame carries no track element, so there is nothing the slides sit in')
+  assert.equal(track.attrs.get('tabindex'), '0', 'the empty frame\'s track is not focusable, so a keyboard cannot scroll it')
+  assert.ok(
+    (track.attrs.get('aria-label') ?? '').trim() !== '',
+    'the empty frame\'s track has no accessible name: a focusable scroll container is announced as an unnamed group',
+  )
+
+  const slides = inside.filter((el) => el.name === 'li' && hasClass(el, 'screen'))
+  assert.ok(
+    slides.length > 1,
+    `the empty frame draws ${slides.length} slide(s): the frame is a slider with placeholder slides in it, and a slider with one slide is a slider with nowhere to go`,
+  )
+
+  // The dots are the frame's own control, and they are the slides' own order read twice:
+  // dot n names slide n, exactly as they do with real rows (case 2 asserts the same thing
+  // about a build with two of them).
+  const dots = inside.filter((el) => el.name === 'a' && hasClass(el, 'screen-dot'))
+  assert.equal(dots.length, slides.length, `the empty frame carries ${dots.length} dot(s) for ${slides.length} placeholder slide(s)`)
+  for (const [index, slide] of slides.entries()) {
+    const id = slide.attrs.get('id')
+    assert.ok(id, `the ${index + 1}th placeholder slide carries no id, so no dot can reach it`)
+    assert.equal(
+      dots[index].attrs.get('href'),
+      `#${id}`,
+      `the ${index + 1}th dot points at ${JSON.stringify(dots[index].attrs.get('href'))} and the ${index + 1}th slide is #${id}: a dot that points elsewhere sends a reader to the wrong slide`,
+    )
     assert.ok(
-      !elements.some((el) => hasClass(el, name)),
-      `the built page carries an element of class "${name}" with an empty list: the slider renders no markup at all, and a track or a row of dots with nothing in it is the placeholder the owner did not ask for`,
+      (dots[index].attrs.get('aria-label') ?? '').trim() !== '',
+      `the ${index + 1}th dot has no accessible name, and it carries no text: a screen reader announces it as a link and nothing else`,
     )
   }
-  // And no picture anywhere in the page's own content. Scoped to the `<article>` because the
-  // layout's header carries the site's logo on every page: "the console page draws no
-  // placeholder" is a statement about the console's content, not about the chrome around it.
-  const article = elements.find((el) => el.name === 'article')
-  assert.ok(article, 'the console page carries no <article>, so there is nothing to say "no picture" about')
-  assert.ok(
-    ![...walk(article)].some((el) => el.name === 'img'),
-    'the console page renders an <img> while its data file carries no screenshot: the slider invents no picture and draws no placeholder (D190)',
+
+  // **Every placeholder says what it is**, because the one thing a placeholder must not be is
+  // a box a reader cannot tell from a broken picture: each slide says which of how many it is,
+  // and each one says the real screenshot goes there rather than showing one.
+  const labels = inside.filter((el) => el.name === 'p' && hasClass(el, 'screen-placeholder-label'))
+  assert.equal(labels.length, slides.length, `the empty frame carries ${labels.length} placeholder label(s) for ${slides.length} slide(s)`)
+  for (const [index, label] of labels.entries()) {
+    const text = textOf(label).trim()
+    assert.ok(
+      text.includes(`${index + 1} / ${slides.length}`),
+      `the ${index + 1}th placeholder says ${JSON.stringify(text)}, which does not say which of the ${slides.length} slides it is: a placeholder a reader cannot place is a box with a number missing`,
+    )
+  }
+  const notes = inside.filter((el) => el.name === 'p' && hasClass(el, 'screen-placeholder-note'))
+  assert.equal(notes.length, slides.length, `the empty frame carries ${notes.length} placeholder note(s) for ${slides.length} slide(s)`)
+  for (const note of notes) {
+    assert.ok(
+      textOf(note).trim() !== '',
+      'a placeholder note is empty: the slide says where it is in the row and not what will be in it',
+    )
+  }
+
+  // Each placeholder is inside the slide it belongs to, with a caption line under it, which is
+  // the shape a real slide has — so the frame does not move when a picture lands in it.
+  const captions = inside.filter((el) => el.name === 'figcaption')
+  assert.equal(captions.length, slides.length, `the empty frame carries ${captions.length} caption(s) for ${slides.length} slide(s)`)
+  for (const [index, slide] of slides.entries()) {
+    assert.ok(
+      [...walk(slide)].includes(labels[index]),
+      `the ${index + 1}th placeholder is not inside the ${index + 1}th slide, so it reads as a note about the slide before it`,
+    )
+    assert.ok(
+      [...walk(slide)].includes(captions[index]),
+      `the ${index + 1}th caption is not inside the ${index + 1}th slide, so it reads as a caption about nothing`,
+    )
+    assert.ok(
+      textOf(captions[index]).trim() !== '',
+      `the ${index + 1}th placeholder slide carries an empty caption line, so the frame changes height the day a caption lands in it`,
+    )
+  }
+
+  // **And nothing in the frame is fetched.** A placeholder is drawn, not loaded: no `<img>`,
+  // no `src`, no `srcset` and no URL anywhere in the slider — the console's screenshots are
+  // the owner's to take, and a frame that pointed at a file nobody has taken would be a
+  // broken picture on the page (Global Constraint 9: no file under `website/` carries a URL).
+  assert.deepEqual(
+    inside.filter((el) => el.name === 'img').map((el) => el.attrs.get('src') ?? '(no src)'),
+    [],
+    'the empty frame renders an <img>: the placeholder is drawn by the stylesheet, and a picture with no file behind it is a broken image on the page',
   )
+  assert.deepEqual(
+    inside.filter((el) => el.attrs.has('src') || el.attrs.has('srcset')).map((el) => el.name),
+    [],
+    'the empty frame carries a src or srcset: nothing in the placeholder state loads a file',
+  )
+  assert.ok(
+    !/(https?:|\/images\/)/.test(textOf(slider)),
+    'the empty frame\'s own text carries a URL or a path: a placeholder says a screenshot goes here, and it names no file',
+  )
+
   // And the page is otherwise the page it was: the sections a reader met before the slider
-  // existed are all still there, so "no slider" is not "no page".
+  // existed are all still there, so the frame is not the whole page.
   for (const id of ['downloads', 'console-facts']) {
-    assert.ok(page.includes(`id="${id}"`), `the console page lost its #${id} section while the slider rendered nothing`)
+    assert.ok(page.includes(`id="${id}"`), `the console page lost its #${id} section`)
   }
 })
 
