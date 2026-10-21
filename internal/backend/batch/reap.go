@@ -541,6 +541,51 @@ func (r *Reaper) location() string {
 	return "projects/" + r.o.GCPProject + "/locations/" + r.o.Region
 }
 
+// jobNameInOwnLocation reports whether a job's own name is under the location
+// this pass asked about: projects/<project>/locations/<region>/jobs/<id>, for
+// this installation's own project and region.
+//
+// It is the check every name this pass acts on has to pass, because a job is
+// acted on by the listing's own j.Name, verbatim: jobs.get (deleteQueued's
+// read-back) and jobs.delete take that string as it stands, so a name outside
+// this installation's location would send a read -- and a delete, which is the
+// destructive verb of the five in this file's header -- somewhere else.
+// Nothing about the listing makes that impossible: the reaper asks for its
+// location and filters by a label, and a server that answers a listing with a
+// job of another location is answering a question that was not asked.
+//
+// The project segment is accepted in BOTH spellings Batch has for it: the
+// project ID this installation was configured with, and the project NUMBER.
+// The number is not a loosening of "this installation's own project": Batch
+// answers a created job's name with the number (design §2.3, which is why
+// Backend.canonical rewrites the project back to the ID, and why the fake
+// carries its ProjectNumber knob and TestExecutionRewritesTheProjectNumber
+// pins it), and a listing scoped to projects/<id>/locations/<region> can only
+// carry this project's number. No project ID is all digits -- an ID starts
+// with a lowercase letter, the rule batch.go's own name checks spell -- so a
+// numeric segment is a project number and never an ID of someone else's
+// project.
+func (r *Reaper) jobNameInOwnLocation(name string) bool {
+	id, ok := backend.BatchCodec().Parse(name)
+	if !ok || id.Region != r.o.Region {
+		return false
+	}
+	return id.GCPProject == r.o.GCPProject || digitsOnly(id.GCPProject)
+}
+
+// digitsOnly reports whether s is one or more ASCII digits.
+func digitsOnly(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // Reap is one pass: the job pass, then the instance pass.
 //
 // The order is the design's (§3.4): the job pass decides every job before the
@@ -1167,6 +1212,17 @@ func (r *Reaper) listJobs(ctx context.Context) ([]*batch.Job, error) {
 		for _, j := range resp.Jobs {
 			if j == nil || !managedJob(j) {
 				continue
+			}
+			// A job this pass may act on must be named under the location it
+			// asked about (jobNameInOwnLocation has the whole of it). A
+			// listing that answers a job outside it is not the listing this
+			// pass asked for, so nothing in it can be read as fact -- the pass
+			// ends, as it does on a partial listing, and the caller retries.
+			// The name is not printed: it is the one value this pass must not
+			// act on, and the message names the location instead, which is
+			// what an operator can check against the installation.
+			if !r.jobNameInOwnLocation(j.Name) {
+				return nil, fmt.Errorf("listing jobs in %s: the API answered a job whose name is not under %s/jobs/, so this listing is not the one this pass asked for: refusing to reap anything from it", r.location(), r.location())
 			}
 			out = append(out, j)
 		}

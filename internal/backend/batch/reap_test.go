@@ -837,6 +837,79 @@ func TestReaperRefusesAPartialJobListing(t *testing.T) {
 	}
 }
 
+// TestReaperRefusesAJobListedOutsideItsLocation: the reaper asks one location
+// for its jobs and acts on every name it answers with verbatim -- jobs.get
+// (deleteQueued's read-back) and jobs.delete take j.Name exactly as the
+// listing returned it. A listing that answers a job of another location is
+// therefore not the listing this pass asked for: the name would send those
+// calls somewhere else, and the runs the job claims would be the one thing the
+// job pass could not hand to the instance pass -- a job it never attributed is
+// a run whose VMs it never owned, which is exactly what the instance pass
+// deletes. So the pass ends before anything is deleted, with an error rather
+// than a report, as it does on a partial listing.
+//
+// The fake's ProjectNumber knob is what makes the API answer with a name that
+// is not this installation's: it is documented as "replaces the project ID in
+// every name the fake returns, as the real API may", and here it is set to
+// another project's ID rather than to a number -- the same rendering with the
+// one value the reaper must refuse. That a NUMBER is accepted is the other
+// half, TestReaperAcceptsTheProjectNumberSpelling.
+//
+// The error is also read for what it must NOT carry: the name is the one value
+// this pass must not act on, and a message that printed it would read as a job
+// to go and fix rather than as a listing that is not the one that was asked
+// for.
+//
+// Mutation (drop the check): the pass deletes the stuck job and the leaked VM
+// and returns no error, so the first and last assertions fail together.
+func TestReaperRefusesAJobListedOutsideItsLocation(t *testing.T) {
+	rt := newReaperTest(t, nil)
+	rt.bf.ProjectNumber = "another-project"
+	stuck := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
+	rt.vm("vm-1", runLabels(t, "20260927-100002-abcd"), rt.old())
+	_, err := rt.r.Reap(context.Background())
+	if err == nil {
+		t.Fatal("Reap on a listing that answers a job of another location: want an error")
+	}
+	if want := rt.r.location(); !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want it to name the location this pass asked about (%s)", err, want)
+	}
+	if strings.Contains(err.Error(), "another-project") {
+		t.Fatalf("error = %v, want no value from the listing: the name is the thing this pass must not act on", err)
+	}
+	if got := rt.bf.Deletes(); len(got) != 0 {
+		t.Fatalf("jobs.delete = %v on a listing from outside the location, want none", got)
+	}
+	if st := rt.bf.State(stuck); st != "RUNNING" {
+		t.Fatalf("the stuck job's state is %q, want RUNNING: nothing may be deleted from a listing that is not the one this pass asked for", st)
+	}
+	if got := rt.cf.Deletes(); len(got) != 0 {
+		t.Fatalf("instances.delete = %v on a listing from outside the location, want none: a job this pass never placed is a run it never owned", got)
+	}
+}
+
+// TestReaperAcceptsTheProjectNumberSpelling is the boundary of the check
+// above, and the reason it is not "the name must start with the project ID":
+// Batch answers a job's name with the project NUMBER (design §2.3 -- the
+// backend's own canonical rewrites it back, and TestExecutionRewritesTheProjectNumber
+// pins the create-time half of it), so a check that refused the number would
+// refuse every listing from an API that spells the project that way, and the
+// reaper -- a safety net that must run unattended -- would reap nothing at all
+// and say so on every pass. A numeric project segment is a project number and
+// not a project ID (an ID starts with a letter), and a listing scoped to this
+// installation's location can only carry this project's number.
+//
+// Mutation (compare the project segment to the configured ID exactly): this
+// fails, with the pass refusing its own listing.
+func TestReaperAcceptsTheProjectNumberSpelling(t *testing.T) {
+	rt := newReaperTest(t, nil)
+	rt.bf.ProjectNumber = "123456789"
+	rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
+	if _, err := rt.r.Reap(context.Background()); err != nil {
+		t.Fatalf("Reap with the project number in the listing's names: %v, want a pass that runs: Batch answers names with the number, so refusing it would refuse every listing", err)
+	}
+}
+
 // TestReaperJudgesStucknessByTimeInState is the destructive case the age of a
 // job cannot answer: a run may sit in the queue far longer than the queue
 // deadline -- the deadline is the previous pass's, and a reaper that was not
