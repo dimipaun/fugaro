@@ -28,7 +28,7 @@ var liveCheckScripts = []struct {
 // the other's result, so they run CONCURRENTLY, each under its own deadline --
 // and the deadline is here rather than left to the package's -timeout, whose
 // message would name the package and not the script that hung. Each script's
-// test takes about four minutes alone and about five side by side on a loaded
+// test takes about five minutes alone and about five side by side on a loaded
 // machine; eight minutes leaves room for that and still fires before Go's
 // default 10-minute package timeout, and well inside CI's -timeout 20m and the
 // 15-minute verify command, so a hang is reported by name rather than as a

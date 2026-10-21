@@ -971,6 +971,31 @@ test_child_flags_disable_tools_and_are_documented() {
   [ "$n" -ge 3 ] || fail "child flags: only $n child(ren) recorded a context, the run changed shape"
 }
 
+# ANTHROPIC_LOG and DEBUG are not routing variables, but both change what the
+# client prints or writes (ANTHROPIC_LOG writes request bodies to a file of its
+# choosing), and this child's output is captured into a file the check reads and
+# pastes back: a debug log of a call carrying CLAUDE_CODE_OAUTH_TOKEN is exactly
+# the surface this check exists to keep the token off. Both are set on the RUN's
+# environment here — the check does not refuse them in the owner's shell, it
+# only removes them from the child — so the child's own environment is where
+# their absence has to show.
+test_child_is_not_started_with_debug_logging() {
+  local ctx=$work/debugenv/context
+  run90 debugenv ok "" FAKE_CLAUDE_CONTEXT="$ctx" ANTHROPIC_LOG=1 DEBUG=1
+  expect_status "$status" 0 "debug logging: the run"
+  [ -s "$ctx" ] || {
+    fail "debug logging: no child recorded its context, so this test proves nothing"
+    return 0
+  }
+  local line n=0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    expect_absent "$line" "ANTHROPIC_LOG" "debug logging: the child can see ANTHROPIC_LOG (line $n)"
+    expect_absent "$line" "DEBUG" "debug logging: the child can see DEBUG (line $n)"
+  done <"$ctx"
+  [ "$n" -ge 3 ] || fail "debug logging: only $n child(ren) recorded a context, the run changed shape"
+}
+
 # The placeholder is a per-run secret: the proxy refuses any request whose
 # Authorization is not it, so it is what keeps a page the browser loaded from
 # having the REAL token attached to its request. It reaches the proxy through a
@@ -1155,6 +1180,7 @@ test_version_probe_is_capped_and_once
 test_internal_error_is_aborted_not_viable
 test_token_length_is_not_printed
 test_child_flags_disable_tools_and_are_documented
+test_child_is_not_started_with_debug_logging
 test_placeholder_is_never_in_a_process_argv
 test_managed_settings_reads_every_directory_it_names
 test_default_managed_settings_names_both_platforms
