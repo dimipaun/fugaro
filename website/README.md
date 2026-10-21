@@ -493,14 +493,16 @@ added or removed without this sentence moving fails there:
     facts, so the word ceiling did not move either.
   - **The diagram's changeover, its ceiling and its arrow** (the review of the round above).
     The review read the drawing the way a reader meets it, and found three things the round's
-    own gate did not hold. It moved the site figure alone, 981,544 → **982,707**, by **37
-    bytes** — the rules that say where the two drawings change over and how wide the stacked
-    one is drawn. The two drawings change over at **59.25 rem** now rather than at the site's
-    48 rem chrome breakpoint: the wide drawing's smallest label is 16 units of a 1200-unit
-    picture, so at a 768 px viewport the column scaled it to 9.6 px, and a label a reader
-    cannot read is the whole reason the stacked drawing exists. The stacked drawing carries a
-    ceiling of its own scale — 22.5 rem, one unit to the pixel — so a tablet is shown the
-    phone's picture rather than that picture stretched to the column, and
+    own gate did not hold. It moved the site figure alone, 981,544 → **982,707**, by **1,163
+    bytes**: **37** of them are the rules that say where the two drawings change over and how
+    wide the stacked one is drawn, and the other **1,126** are the `--repo` round's bytes,
+    which that round left un-derived — the bullet below re-derives from the build and names
+    this same move as the 1,126 plus the 37 (D192). The two drawings change over at **59.25
+    rem** now rather than at the site's 48 rem chrome breakpoint: the wide drawing's smallest
+    label is 16 units of a 1200-unit picture, so at a 768 px viewport the column scaled it to
+    9.6 px, and a label a reader cannot read is the whole reason the stacked drawing exists. The
+    stacked drawing carries a ceiling of its own scale — 22.5 rem, one unit to the pixel — so a
+    tablet is shown the phone's picture rather than that picture stretched to the column, and
     `website/test/how-it-works.mjs` holds that ceiling, the changeover and the floor at the
     column the page's own stylesheet gives each drawing, and reads which *side* of that width
     each rule holds on rather than only the width: `(width<=59.25rem)` and `(width>=59.25rem)`
