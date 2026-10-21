@@ -133,20 +133,20 @@ type Session struct {
 	// credsKeysProbed is checkCascadeKeys's own once: a heartbeat carrying
 	// the cascade's children was refused and the probe has run.
 	credsKeysProbed bool
-	haltOnce       sync.Once
-	halted         bool
-	used           func() Micros
-	leased         map[int64]bool // days this run holds a lease on
-	granted        Micros         // everything the leases granted
-	released       Micros         // everything released
-	unrel          Micros         // a release that failed, to try again at Finish
-	pend           pending
-	started        bool
-	stopped        bool
-	exp            bool // exp written
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	caps           Caps // the last config read, for the heartbeat's limits
+	haltOnce        sync.Once
+	halted          bool
+	used            func() Micros
+	leased          map[int64]bool // days this run holds a lease on
+	granted         Micros         // everything the leases granted
+	released        Micros         // everything released
+	unrel           Micros         // a release that failed, to try again at Finish
+	pend            pending
+	started         bool
+	stopped         bool
+	exp             bool // exp written
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	caps            Caps // the last config read, for the heartbeat's limits
 
 	advised       map[Reason]bool // observe-mode advisories already logged
 	notionalTotal Micros          // an oauth run's notional so far
