@@ -238,6 +238,7 @@ func TestUnknownFlagsStillError(t *testing.T) {
 		{"-x"},
 		{"version", "--json"},   // the subcommand has no --json (and gains none here)
 		{"cancel", "--version"}, // the root's flag is the root's, not every command's
+		{"run", "--version"},    // and it is only a leading flag that the boundary rewrites
 	} {
 		_, _, err := execute(t, args...)
 		if err == nil {
