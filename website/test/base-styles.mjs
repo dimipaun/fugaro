@@ -2762,6 +2762,31 @@ export function navFailures(html, rel) {
   // Two groups, not three: D182 wrote three, and the owner's feedback of 2026-10-21 dropped the
   // Reference group — Console under Product, Docs and Changelog under Project.
   if (groups.length !== 2) fail(`the menu carries ${groups.length} groups: the nav is two groups (Product and Project) since the owner's feedback of 2026-10-21 dropped the Reference group (D182)`)
+  // The count is not the contract on its own: the two groups are **named**, and each lists the
+  // routes the owner's feedback of 2026-10-21 leaves it with. A rename in `NAV_GROUPS`
+  // (Project → Company) keeps the count at two and would leave every gate green while D182's
+  // amendment, the fixture below and check 70a's steps all tell the reader to look for
+  // "Product" and "Project" — so the names and the routes are held here, with the count.
+  const GROUPS_WANTED = [
+    ['Product', ['/how-it-works/', '/getting-started/', '/caps-and-costs/', '/console/']],
+    ['Project', ['/docs/', '/security/', '/faq/', '/community/', '/changelog/']],
+  ]
+  groups.forEach((group, at) => {
+    const wanted = GROUPS_WANTED[at]
+    if (wanted === undefined) return
+    const [label, routes] = wanted
+    const details = group.children.find((el) => el.name === 'details')
+    const summary = details && details.children.find((el) => el.name === 'summary')
+    const list = details && details.children.find((el) => el.name === 'ul')
+    const drawn = summary ? textOf(summary).trim() : ''
+    if (drawn !== label) {
+      fail(`the menu's group ${at + 1} is labelled ${JSON.stringify(drawn)}, and the two groups are ${JSON.stringify(GROUPS_WANTED.map(([want]) => want))}: the owner's feedback of 2026-10-21 names them (Console under Product, the rest under Project — D182)`)
+    }
+    const hrefs = list ? [...walk(list)].filter((el) => el.name === 'a').map((el) => el.attrs.get('href') ?? '') : []
+    if (hrefs.join(' ') !== routes.join(' ')) {
+      fail(`the *${label}* group lists ${JSON.stringify(hrefs)}, and the owner's feedback of 2026-10-21 leaves it ${JSON.stringify(routes)} (D182)`)
+    }
+  })
   // One `name` across the groups makes them an exclusive set, without script: opening one
   // dropdown closes the one already open, so two never hang over each other on a wide row.
   const names = new Set(groups.flatMap((group) => group.children.filter((el) => el.name === 'details').map((el) => el.attrs.get('name') ?? '')))
@@ -2911,6 +2936,14 @@ test('every menu refusal fires on the defect it names', () => {
       'an item that is neither Home nor a group',
       fixturePage({ nav: fixtureNav().replace('</ul></nav>', '<li class="site-nav-extra"><a href="/privacy/">Privacy</a></li></ul></nav>') }),
       /the menu's list carries 4 item\(s\)/,
+    ],
+    // The two groups are named and hold the owner's feedback's links, so a rename and a route
+    // that leaves its group are each refused even though the count is still two.
+    ['a group renamed', fixturePage({ nav: fixtureNav().replace('<summary>Project</summary>', '<summary>Company</summary>') }), /group 2 is labelled "Company"/],
+    [
+      'a route dropped out of its group',
+      fixturePage({ nav: fixtureNav().replace('<li><a href="/changelog/">Changelog</a></li>', '') }),
+      /the \*Project\* group lists/,
     ],
     ['a group with no summary', fixturePage({ nav: fixtureNav().replace('<summary>Product</summary>', '') }), /no <summary> with words on it/],
     ['groups that are not one exclusive set', fixturePage({ nav: fixtureNav().replace('<details name="site-nav-group"><summary>Product', '<details><summary>Product') }), /share one non-empty name/],

@@ -102,7 +102,7 @@
   var OPEN_MENUS = '.site-nav details[open]'
 
   // The menu's submenus: one `<details>` per group, whose `<summary>` is the control that
-  // announces the group's state. There are three of them and no other menu control at any
+  // announces the group's state. There are two of them and no other menu control at any
   // width — the labels are the menu on a phone as much as on a wide viewport (the owner's
   // brief of 2026-10-19, item 1) — and each one opens and closes by its own click.
   var GROUP_DETAILS = '.site-nav-group details'

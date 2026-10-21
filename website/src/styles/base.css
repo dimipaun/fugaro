@@ -337,7 +337,7 @@ a.skip-link:focus {
   text-underline-offset: 0.35em;
 }
 
-/* The wide viewport: the same three labels, and each one's list becomes a dropdown under it
+/* The wide viewport: the same two labels, and each one's list becomes a dropdown under it
  * rather than a drawer across the header. */
 @media (min-width: 48rem) {
   .site-header {
@@ -361,7 +361,8 @@ a.skip-link:focus {
    * header's own padding is still narrow, so a list opening rightwards from the last group
    * would run past the viewport and give the page a sideways scroll. Anchored right, no
    * group's list can reach that edge — and the wordmark at the other end leaves far more room
-   * than a three-item list needs at any width from 48rem up. */
+   * than either group's list needs at any width from 48rem up (four items under *Product*,
+   * five under *Project*). */
   .site-nav-group {
     position: relative;
   }
@@ -392,7 +393,7 @@ a.skip-link:focus {
 }
 
 /* The menu's first item, the way home (the owner's feedback of 2026-10-21: "I think we need a
- * 'Home' as the first menu"). It is a link where the three items beside it are `<details>`
+ * 'Home' as the first menu"). It is a link where the two items beside it are `<details>`
  * disclosures, and it is drawn in the same box a link inside a list is — the rule above gives
  * it the 44 px height, the muted colour and the small label — with the inline padding of the
  * labels it shares the header's row with: the phone's 4 px, which the wide rule below opens to

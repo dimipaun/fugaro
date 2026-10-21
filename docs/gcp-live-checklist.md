@@ -312,7 +312,7 @@ and a reserved number is never reused or renumbered.
 **Check 70 is the website redesign's, proposed as 70a–70c**
 (`docs/website/redesign/implementation-plan.md` §4 and §8, written by its parts P3,
 P5 and P6), in the same sub-lettering convention. All three are written below:
-**70a** (the mobile header on one row, the three group labels by keyboard) by **P3**, **70b**
+**70a** (the mobile header on one row, the two group labels by keyboard) by **P3**, **70b**
 (the gist above the fold) by **P5** — merged in #603, and written here after 70a and
 70c because that is the order the parts landed, not the order of the numbers — and
 **70c** (the copy control in a real browser, with a real clipboard) by **P6** — so the
