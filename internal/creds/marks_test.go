@@ -568,6 +568,38 @@ func TestUnknownStateFailsClosed(t *testing.T) {
 	if _, ok := m.Ready(now, Settings{}); ok {
 		t.Fatal("a mark in an unknown state has a time at which it becomes usable")
 	}
+
+	// And the writers refuse it too, which is the half the readers cannot
+	// cover: a mark this release cannot read must not be REWRITTEN into one it
+	// can, because the hold the unknown state stands for would then be a hold
+	// of this release's making — released by the next successful probe, which
+	// clears a backed-off mark outright where D142's window is off (tier B).
+	// Broken has exactly this guard in both writers (M4) and ProbeSucceeded
+	// refuses every state but backed_off; an unknown one had neither.
+	for name, got := range map[string]Mark{
+		"Exhaust, with a reset the upstream reported": Exhaust(m, now, now.Add(time.Hour), Settings{}),
+		"Exhaust, with no reset (the backoff case)":   Exhaust(m, now, time.Time{}, Settings{}),
+		"ProbeFailed": ProbeFailed(m, now, Settings{}),
+	} {
+		if got != m {
+			t.Errorf("%s on an unknown state left %+v; want the node untouched (%+v)", name, got, m)
+		}
+	}
+	// The chain the reviewer measured, end to end: no sequence of the writers
+	// this release has turns the node into an available credential. The tiers
+	// are here because forTier is what decides whether D142's window is in
+	// force, and the reviewer's reading turned on it: on tier B the window is
+	// off, so a successful probe would have cleared the fabricated backoff
+	// outright.
+	for _, tier := range []Tier{TierA, TierB} {
+		for _, base := range []Settings{{}, noWindow()} {
+			set := base.forTier(tier)
+			after := ProbeSucceeded(ProbeFailed(Exhaust(m, now, time.Time{}, set), now, set), now, set)
+			if after.Usable(now, set) {
+				t.Errorf("an unknown state became usable through the writers (tier %v, %+v): %+v", tier, base, after)
+			}
+		}
+	}
 }
 
 // The zero mark and an explicitly available one are the same credential: no
