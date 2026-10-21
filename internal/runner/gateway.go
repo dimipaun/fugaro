@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -41,6 +44,41 @@ const allowRoutingSettingsEnv = "FUGARO_TEST_ALLOW_ROUTING_SETTINGS"
 // vertexRegionPrefix starts Claude Code's per-model Vertex region overrides.
 const vertexRegionPrefix = "VERTEX_REGION_"
 
+// credentialsServiceURLEnv is where a job learns the URL of its
+// installation's credentials service (C1.15, D146/D147): the installation's
+// own Cloud Run service, which the owner opts into and which the job is
+// given an invoker grant on (C1.18). It is set on the job only when the
+// installation has the service on, so its presence is the "the service is
+// on" fact a cascade run is built on, and its absence is what refuses one
+// (rather than a run reaching for a service that is not there).
+const credentialsServiceURLEnv = "FUGARO_CREDENTIALS_SERVICE_URL"
+
+// metadataHostEnv and the metadata path below are the job's own identity:
+// the Google ID token the metadata server mints for the credentials
+// service's URL, which Cloud Run IAM admits for run.invoker (D135). The host
+// variable is the platform's own knob (google.golang.org's client libraries
+// read the same one for the same reason, and the job's env is where the
+// platform puts it), so a test can point this at a stand-in without any
+// test-only switch in this file.
+const (
+	metadataHostEnv      = "GCE_METADATA_HOST"
+	defaultMetadataHost  = "metadata.google.internal"
+	metadataIdentityPath = "/computeMetadata/v1/instance/service-accounts/default/identity"
+	// maxIDTokenBytes bounds a token this job will present, and is
+	// internal/credsvc's own bound on one it will read (auth.go's
+	// maxTokenBytes): a token longer than it, or one that is not a single
+	// clean value, is refused here rather than sent to be refused there.
+	maxIDTokenBytes = 8 << 10
+)
+
+// metadataClient is the client the metadata request is made with: a bound on
+// the whole exchange, because the metadata server is the platform's own
+// link-local address and an answer that takes longer than this is not one
+// this run waits for. (Nothing is retried: the gateway never retries, and a
+// call that cannot present its identity fails like any other upstream
+// error.)
+var metadataClient = &http.Client{Timeout: 10 * time.Second}
+
 // gatewayOn reports whether the agent's calls go through the gateway. It is
 // GatewayOn — the same predicate for the readers that hold a mode and an auth
 // rather than a run — read off the run, and it is the only place that happens:
@@ -73,30 +111,9 @@ func (r *run) startGateway(ctx context.Context) error {
 		// than leaving its calls waiting.
 		o.Mode, o.Lease = gateway.Enforce, sess.Lease()
 	}
-	up := gateway.Upstream{BaseURL: r.d.GatewayUpstream}
-	switch r.cfg.Agent.Auth {
-	case "api-key":
-		up.Kind, up.APIKey = "anthropic", envLookup(r.d.Env, "ANTHROPIC_API_KEY")
-		r.addSecret(up.APIKey)
-	case "vertex":
-		up.Kind = "vertex"
-		up.VertexProject = envLookup(r.d.Env, "ANTHROPIC_VERTEX_PROJECT_ID")
-		up.VertexLocations = vertexLocations(r.d.Env)
-		switch {
-		case r.d.VertexTokens != nil:
-			up.Token = r.d.VertexTokens
-		case r.d.GatewayUpstream != "":
-			// A test upstream must never be paired with real credentials.
-			return errors.New("starting the gateway: a test upstream needs a test token source")
-		default:
-			ts, err := google.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
-			if err != nil {
-				return fmt.Errorf("starting the gateway: Vertex credentials: %w", err)
-			}
-			up.Token = ts
-		}
-	default:
-		return fmt.Errorf("starting the gateway: auth %q never goes through it", r.cfg.Agent.Auth)
+	up, err := r.gatewayUpstream(ctx)
+	if err != nil {
+		return err
 	}
 	o.Upstream = up
 	routes, err := r.gatewayRoutes()
@@ -121,6 +138,186 @@ func (r *run) startGateway(ctx context.Context) error {
 	r.stageExtra = r.endGatewayStage
 	r.mu.Unlock()
 	return nil
+}
+
+// gatewayUpstream is where this run's gateway sends its calls and with what
+// credential: the run's own auth, spelled once. startGateway builds its
+// options from it, and the two are separate so that what a run does with
+// each auth is one function a reader -- and a test -- can ask without
+// starting a gateway.
+//
+// The auths are the three the gateway serves. api-key and vertex are the
+// job's own credential (the run's key, or the job's own Vertex identity);
+// cascade is the credentials service (C1.15, service.go), which holds the
+// credential and attaches it per call, so the job has none and must never
+// reach for one (D143). An auth with no arm is refused rather than guessed
+// at: the gateway is the only thing between the agent and a model, and an
+// upstream nobody chose is a credential nobody chose.
+func (r *run) gatewayUpstream(ctx context.Context) (gateway.Upstream, error) {
+	up := gateway.Upstream{BaseURL: r.d.GatewayUpstream}
+	switch r.cfg.Agent.Auth {
+	case "api-key":
+		up.Kind, up.APIKey = "anthropic", envLookup(r.d.Env, "ANTHROPIC_API_KEY")
+		r.addSecret(up.APIKey)
+	case "vertex":
+		up.Kind = "vertex"
+		up.VertexProject = envLookup(r.d.Env, "ANTHROPIC_VERTEX_PROJECT_ID")
+		up.VertexLocations = vertexLocations(r.d.Env)
+		switch {
+		case r.d.VertexTokens != nil:
+			up.Token = r.d.VertexTokens
+		case r.d.GatewayUpstream != "":
+			// A test upstream must never be paired with real credentials.
+			return gateway.Upstream{}, errors.New("starting the gateway: a test upstream needs a test token source")
+		default:
+			ts, err := google.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
+			if err != nil {
+				return gateway.Upstream{}, fmt.Errorf("starting the gateway: Vertex credentials: %w", err)
+			}
+			up.Token = ts
+		}
+	case config.AuthCascade:
+		return r.serviceUpstream()
+	default:
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: auth %q never goes through it", r.cfg.Agent.Auth)
+	}
+	return up, nil
+}
+
+// serviceUpstream is the credentials service's upstream for a cascade run
+// (C1.15, D135): the service's URL from the job's environment, and the two
+// identities every call carries -- the job's Google ID token, minted from
+// the metadata server for the service's own URL, and the run's own Firebase
+// ID token. No credential of the job's is anywhere in it: the whole point of
+// the cascade is that the job holds none (D143).
+//
+// Everything it refuses, it refuses before a call is made, because each of
+// these is a run that cannot be served at all:
+//
+//   - a local run. `fugaro exec` is unchanged by the cascade (D149): it uses
+//     the developer's own environment, has no installation identity and no
+//     network path to a private service, and gains nothing by being routed
+//     through one. A cascade auth locally is a mistake in the file, said so
+//     rather than reached for.
+//   - a job with no credentials service. The installation has not opted in
+//     (D147), so there is no service to call and no credential anywhere this
+//     run may use.
+//   - a run with no budget identity. The run's own token is what the service
+//     verifies the run with (C1.10); without it the service can only refuse,
+//     and a cascade run is always admitted by the budget backend (C1.19), so
+//     this is a fact about how the run was started and not about the service.
+//   - a test upstream. Deps.GatewayUpstream redirects the api-key and vertex
+//     kinds to a stand-in; a cascade run's destination is the installation's
+//     own service and nothing else, so a test that set both is told rather
+//     than silently sent to the service.
+//
+// The job's name is read the way the rest of the run reads it (jobName:
+// from the platform's own report of the execution, never from an environment
+// a launcher can write). It is a claim the service holds to the job-name
+// rule and decides nothing from -- which job called is decided from the
+// verified service-account email (C1.10) -- and the gateway refuses a
+// service upstream without a valid one, so a run that cannot name its job
+// stops here.
+func (r *run) serviceUpstream() (gateway.Upstream, error) {
+	if r.d.Local {
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: agent.auth is %s and this is a local run: %s runs on the developer's own credentials and never through the credentials service (D149). Use agent.auth api-key or oauth locally", config.AuthCascade, execName)
+	}
+	url := envLookup(r.d.Env, credentialsServiceURLEnv)
+	if url == "" {
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: agent.auth is %s and this job has no credentials service: %s is not set, so the installation has not opted into one (D147) and this run has no credential of its own to fall back to (D143)", config.AuthCascade, credentialsServiceURLEnv)
+	}
+	if r.d.GatewayUpstream != "" {
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: a cascade run's upstream is the installation's own credentials service (%s), not a test upstream", credentialsServiceURLEnv)
+	}
+	r.mu.Lock()
+	sess := r.sess
+	r.mu.Unlock()
+	if sess == nil {
+		return gateway.Upstream{}, errors.New("starting the gateway: a cascade run has no run identity: the budget backend is what admitted it, and the credentials service verifies the run by the identity that admitted it")
+	}
+	job, err := r.jobName()
+	if err != nil {
+		return gateway.Upstream{}, errors.New(r.redact(err.Error()))
+	}
+	if job == "" {
+		return gateway.Upstream{}, errors.New("starting the gateway: a cascade run has no Cloud Run job name to report")
+	}
+	return gateway.Upstream{
+		Kind:    gateway.KindService,
+		BaseURL: url,
+		Service: &gateway.Service{
+			Job:        job,
+			RunIDToken: sess.IDToken(),
+			IDToken:    func(ctx context.Context) (string, error) { return metadataIDToken(ctx, r.d.Env, url) },
+		},
+	}, nil
+}
+
+// execName is what a local invocation is called, for the sentences that have
+// to name it.
+const execName = "fugaro exec"
+
+// metadataIDToken mints the job service account's Google ID token for
+// audience from the metadata server: the credential Cloud Run IAM admits for
+// run.invoker on the credentials service (D135, F30). The audience is the
+// service's own URL, which is the whole of the check Cloud Run makes.
+//
+// It is minted per call rather than cached. The metadata server is the
+// platform's own link-local endpoint, so the round trip is a millisecond
+// against a model call's seconds; what a cache would buy is a token this run
+// keeps using after the platform stopped issuing it -- a revoked service
+// account, a job whose identity changed -- and what the run needs is the
+// shortest-lived credential the platform will give it.
+//
+// The body is never read into an error and never logged: on success it is
+// the token, and on failure it is the metadata server's own text about a
+// request this code made. Only the status is reported.
+func metadataIDToken(ctx context.Context, env []string, audience string) (string, error) {
+	host := envLookup(env, metadataHostEnv)
+	if host == "" {
+		host = defaultMetadataHost
+	}
+	u := "http://" + host + metadataIdentityPath + "?audience=" + url.QueryEscape(audience)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", errors.New("the metadata request could not be built")
+	}
+	req.Header.Set("Metadata-Flavor", "Google")
+	resp, err := metadataClient.Do(req)
+	if err != nil {
+		return "", errors.New("the metadata server could not be reached")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("the metadata server answered %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxIDTokenBytes+1))
+	if err != nil {
+		return "", errors.New("the metadata server's answer could not be read")
+	}
+	tok := strings.TrimSpace(string(b))
+	// One clean header value, at the bound the service reads a presented
+	// token by: a token with a newline in it, or one longer than that bound,
+	// is refused here rather than sent to be refused there.
+	if len(tok) > maxIDTokenBytes || !printableToken(tok) {
+		return "", errors.New("the metadata server answered with no usable identity token")
+	}
+	return tok, nil
+}
+
+// printableToken reports whether tok is one clean header value: non-empty and
+// printable ASCII with no space (internal/credsvc's rule for a presented
+// token, auth.go's maxTokenBytes and wire.go's printableHeaderValue).
+func printableToken(tok string) bool {
+	if tok == "" {
+		return false
+	}
+	for i := 0; i < len(tok); i++ {
+		if tok[i] < 0x21 || tok[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 // vertexLocations are the locations a Vertex call may name: the job's

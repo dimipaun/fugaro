@@ -637,6 +637,17 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	}
 	resp, err := s.client.Do(up)
 	if err != nil {
+		if s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
+			// C1.15 (service.go), D143: an unreachable credentials service
+			// halts the run -- it never falls back to a credential of the
+			// job's own, which this upstream has none of. Nothing reached
+			// the upstream: nothing to charge. Anything did: the service may
+			// have been generating, so the whole reservation.
+			if !sent.Load() {
+				return zeroOutcome(p.model, false)
+			}
+			return reserved
+		}
 		// No status. Nothing reached the upstream: nothing to charge.
 		// Anything did: the upstream may be generating, so the whole
 		// reservation.
@@ -661,6 +672,18 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		return zeroOutcome(p.model, true)
 	}
 	*status = resp.StatusCode
+	if s.o.Upstream.Kind == KindService {
+		// C1.15 (service.go): what the service said about this call is read
+		// here, where it leaves the upstream and before a byte of it reaches
+		// the agent -- the tier the call settles by, the credential's name,
+		// the switch, and the refusals that are the service's own answer and
+		// are never relayed. A model answer (2xx, or a model error the
+		// service relayed) is not touched: it goes on to the pump below.
+		if st, done := s.serviceAnswer(w, resp, true); done {
+			*status = st
+			return zeroOutcome(p.model, true)
+		}
+	}
 
 	src, closeSrc, decoded, readable := decodeBody(resp)
 	defer closeSrc()
@@ -868,6 +891,18 @@ func (s *Server) upstreamRequest(ctx context.Context, r *http.Request, rt route,
 		up.Header = h
 		return up, sent, nil
 	}
+	if s.o.Upstream.Kind == KindService {
+		// C1.15 (service.go): the job's Google ID token and the run's own,
+		// and no credential of the job's -- which the upstream has none of
+		// (validate). Both are attached inside serviceUpstream, in the one
+		// place they are written.
+		h, err := s.serviceUpstream(ctx, rt, r.Header)
+		if err != nil {
+			return nil, nil, err
+		}
+		up.Header = h
+		return up, sent, nil
+	}
 	up.Header = forwardHeaders(r.Header)
 	s.scrubToken(up.Header)
 	switch s.o.Upstream.Kind {
@@ -922,8 +957,17 @@ var hopByHop = map[string]bool{
 
 // dropResponseHeaders never reach the agent: they identify the
 // organization behind the real key, or set state on the gateway's origin.
+//
+// The credentials service's answer headers are three more of them (C1.15,
+// service.go), and they are dropped for every upstream kind rather than only
+// under a service one: the tier is what C1.16 charges the call by, the name
+// is which of the project's credentials answered, and the switch is which
+// credential a call moved between. The agent is the one party that must never
+// learn the set of credentials its project holds (D143), and every later
+// upstream kind that answers with them would have to remember this list.
 var dropResponseHeaders = map[string]bool{
 	"Anthropic-Organization-Id": true, "Set-Cookie": true, "Set-Cookie2": true,
+	HeaderTier: true, HeaderCredential: true, HeaderSwitch: true,
 }
 
 func copyResponseHeaders(dst, src http.Header, decoded bool) {
@@ -1131,12 +1175,28 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 	}
 	resp, err := s.client.Do(up)
 	if err != nil {
+		if s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
+			// C1.15 (service.go), D143: as a Messages call's, an unreachable
+			// service halts the run rather than being retried or fallen back
+			// from. A count holds no reservation, so there is nothing to
+			// settle either way.
+			return
+		}
 		if r.Context().Err() == nil {
 			writeError(w, http.StatusBadGateway, "api_error", "fugaro: the upstream request failed")
 		}
 		return
 	}
 	defer resp.Body.Close()
+	if s.o.Upstream.Kind == KindService {
+		// C1.15 (service.go): a count is free and settles nothing, so its
+		// answer is not asked for a tier -- but a refusal is the service's
+		// own answer here too, and is acted on rather than copied to the
+		// agent (D143). A model answer passed through.
+		if _, done := s.serviceAnswer(w, resp, false); done {
+			return
+		}
+	}
 	src, closeSrc, decoded, _ := decodeBody(resp)
 	defer closeSrc()
 	copyResponseHeaders(w.Header(), resp.Header, decoded)

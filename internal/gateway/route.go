@@ -111,6 +111,12 @@ func validateRoutes(u Upstream, routes []Route) error {
 		// upstream takes no routes at all, whatever they name.
 		return fmt.Errorf("gateway: the OAuth upstream takes no routes: %w", errOAuthOnRoute)
 	}
+	if u.Kind == KindService {
+		// C1.15 (service.go): a route is reached with the job's own key for
+		// the provider, and a cascade run has no key of its own (D143). A
+		// service upstream takes no routes at all, whatever they name.
+		return fmt.Errorf("gateway: the service upstream takes no routes: %w", errServiceOnRoute)
+	}
 	if u.Kind != "anthropic" {
 		return fmt.Errorf("gateway: routes need the anthropic upstream, not %q (a run does not mix credentials)", u.Kind)
 	}
