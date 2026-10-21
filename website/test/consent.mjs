@@ -128,6 +128,14 @@ const DOCUMENT_SELECTORS = new Map([
   ['[data-copy]', (el) => el.attrs.has('data-copy')],
   ['[data-copy-button]', (el) => el.attrs.has('data-copy-button')],
   ['[data-copy-status]', (el) => el.attrs.has('data-copy-status')],
+  // The site's sliders: one block per page, found by its own attribute and by nothing else —
+  // the console page's screenshot slider and the homepage's. `site.js` asks for this on every
+  // page it starts on, and the pages these cases run are the built ones, which include both.
+  // Nothing below reads a slider — a slider has nothing to do with consent — but the query is
+  // made on every page, and the stub's rule is that a selector is taught here rather than
+  // answered with nothing. What is inside a block is asked of the block, not of the document
+  // (the map below).
+  ['[data-slider]', (el) => el.attrs.has('data-slider')],
   ['.site-nav details[open]', (el) => el.name === 'details' && el.attrs.has('open')],
   // The keyboard's way into a group asks for the groups themselves, whatever the device answers
   // (the pointer's half above asks for the open ones). Every shipped page carries the menu, and
@@ -136,12 +144,33 @@ const DOCUMENT_SELECTORS = new Map([
   ['.site-nav-group details', (el) => el.name === 'details'],
 ])
 
+/** Whether a stub element carries a class, by token (`screen` is not `screens-track`). */
+function hasClass(name) {
+  return (el) => (el.attrs.get('class') ?? '').split(/\s+/).includes(name)
+}
+
 // The selectors the site's one script file asks an *element* for, on the same terms as the
 // document's map above: refused rather than matched to nothing. The menu's keyboard half reads
 // each group's own control to know what opens it.
 const ELEMENT_SELECTORS = new Map([
   ['[data-consent]', (el) => el.attrs.has('data-consent')],
   ['summary', (el) => el.name === 'summary'],
+  // The console slider's own hooks, read inside the section the script finds it by: the track it
+  // scrolls, the slides it counts, the dots it marks, and the bar it reveals. Every one of
+  // them is asked for on a page that carries a slider, so every one of them is taught here.
+  ['.screens-track', hasClass('screens-track')],
+  ['.screen', hasClass('screen')],
+  ['.screen-dot', hasClass('screen-dot')],
+  ['[data-slider-bar]', (el) => el.attrs.has('data-slider-bar')],
+  ['[data-slider-counter]', (el) => el.attrs.has('data-slider-counter')],
+  // The homepage slider's own three: the slides (the panels, each one carrying its name) and
+  // the dots. They are asked of the block rather than of the document, which is why they are
+  // here and not in the map above — and the two step controls, which both sliders read, are
+  // taught below.
+  ['[data-slider-slide]', (el) => el.attrs.has('data-slider-slide')],
+  ['[data-slider-dot]', (el) => el.attrs.has('data-slider-dot')],
+  ['[data-slider-prev]', (el) => el.attrs.has('data-slider-prev')],
+  ['[data-slider-next]', (el) => el.attrs.has('data-slider-next')],
 ])
 
 // The address a stubbed page is "at", and the page it was reached from: both carry a query

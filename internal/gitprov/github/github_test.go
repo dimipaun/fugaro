@@ -256,7 +256,7 @@ const headSHA = "0123456789abcdef0123456789abcdef01234567"
 
 func TestGitHubPullRequestOpen(t *testing.T) {
 	got, err := open(t, "pull_open.json").PullRequest(ctx, 12)
-	want := gitprov.PRInfo{Number: 12, URL: "https://github.com/acme/web/pull/12", State: gitprov.PROpen, Draft: true, Title: "Add search",
+	want := gitprov.PRInfo{Number: 12, URL: "https://github.com/acme/web/pull/12", State: gitprov.PROpen, Draft: true, Title: "Add search", Base: "main",
 		AuthorID: "900001", SourceBranch: branchName, SourceRepo: "acme/web", HeadSHA: headSHA}
 	if err != nil || got != want {
 		t.Fatalf("got  %+v, %v\nwant %+v", got, err, want)
@@ -291,7 +291,7 @@ func TestGitHubPullRequestFork(t *testing.T) {
 // fails, wanting Fork=false but getting true.
 func TestGitHubFetchPRHeadOpenSameRepo(t *testing.T) {
 	got, err := open(t, "pull_open_head.json").FetchPRHead(ctx, 12)
-	want := gitprov.PRHead{SHA: headSHA, Fork: false, Open: true, AuthorID: "900001", AuthorLogin: "fugaro-app[bot]",
+	want := gitprov.PRHead{SHA: headSHA, Base: "main", Fork: false, Open: true, AuthorID: "900001", AuthorLogin: "fugaro-app[bot]",
 		Association: "NONE", Self: true, SourceRepo: "acme/web"}
 	if err != nil || got != want {
 		t.Fatalf("got %+v, %v, want %+v", got, err, want)
@@ -320,7 +320,7 @@ func TestGitHubFetchPRHeadMerged(t *testing.T) {
 // this test fails, wanting Fork=true but getting false.
 func TestGitHubFetchPRHeadFork(t *testing.T) {
 	got, err := open(t, "pull_real_fork_head.json").FetchPRHead(ctx, 12)
-	want := gitprov.PRHead{SHA: headSHA, Fork: true, Open: true, AuthorID: "900002", AuthorLogin: "outsider",
+	want := gitprov.PRHead{SHA: headSHA, Base: "main", Fork: true, Open: true, AuthorID: "900002", AuthorLogin: "outsider",
 		Association: "CONTRIBUTOR", SourceRepo: "outsider/web"}
 	if err != nil || got != want {
 		t.Fatalf("got %+v, %v, want %+v", got, err, want)

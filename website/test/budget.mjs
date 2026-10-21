@@ -87,7 +87,7 @@
 //     JavaScript — which is why the case below reads the artifact rather than trusting this
 //     line, and why D192 requires the README's figure to be re-derived in the same commit that
 //     changes the script.
-//   - Page weight per page: the heaviest page — the console page today, at 399,732 bytes, since
+//   - Page weight per page: the heaviest page — the console page today, since
 //     the four screenshots landed and its weight is its HTML plus the pictures it renders, where
 //     it was `docs/index.html` before them, whose HTML is the whole generated CLI reference —
 //     plus the first-party files the page fetches: the script above and the logo and icons the
@@ -109,7 +109,8 @@
 // same deltas — `main`'s fix rounds and this branch's redesign's own; the `fugaro watch`
 // picture landing on the homepage; the menu's drawer coming out and the script's comments going
 // back in step with it; the console's release turning `features.console_downloads` on;
-// Getting Started's three bands; the console's screenshot slider; the run on How It Works
+// Getting Started's three bands; the console's screenshot slider and the review round that made
+// its moves instant and its first reading the track's; the run on How It Works
 // becoming one vertical timeline; the caps-and-costs rework; the changelog's product
 // summaries; the homepage's prompt line, benefits, pull request caption, the benefits'
 // block rule and the four icons and the type step the points were given after it; the privacy
@@ -752,30 +753,90 @@ test('a budget raised without re-deriving it is refused', () => {
 // the changelog still reads no tag, which is what makes the statement true. **The pair is read
 // here from the README and from nowhere else**: the figures a reader sees are stated in one
 // place, and this file's prose repeats none of them.
+//
+// **And the one figure the two shapes are stated as is the site's own**, which is the second
+// half of the same claim and the correction of 2026-10-21: the paragraph says the two shapes are
+// *this* build, so the figure it states is the byte count the whole-site budget above derives
+// from — and the pair being equal to itself is not that. A round that re-derived the site figure
+// and left both shapes where they were would agree with itself a round behind, which is the
+// drift this case exists for and the one it could not see: the two numbers were read against
+// each other and against nothing else for as long as they have existed. The build figure beside
+// the whole-site budget is the README's own, read here rather than written here, so the pair is
+// held to the site without a byte of it appearing in this file.
 const PAIR =
   /\*\*([\d,]+) bytes in a checkout with no tags\*\*[\s\S]*?\*\*([\d,]+) bytes with the\s+tags this repository's own clone carries\*\*/
 
+/** Every way the README's two checkout shapes depart from what the paragraph claims, as lines. */
+export function pairFailures(readme) {
+  const out = []
+  const n = (s) => Number(s.replace(/,/g, ''))
+  const pair = PAIR.exec(readme)
+  if (!pair) {
+    out.push(
+      'website/README.md no longer states the site\'s two checkout shapes in the form this case reads — "**N bytes in a checkout with no tags** … **N bytes with the tags this repository\'s own clone carries**" — so the pair is not held anywhere: that paragraph is the one place the two figures are written, and a rewrite that drops one of them leaves the other stated with nothing reading it',
+    )
+    return out
+  }
+  const [noTags, clone] = [n(pair[1]), n(pair[2])]
+  if (clone !== noTags) {
+    out.push(
+      `website/README.md states the no-tags build as ${noTags} bytes and the clone build as ${clone}: no page reads the checkout's git state, so the two shapes are one build and a re-derivation that moves one of them moves the other`,
+    )
+  }
+
+  const site = DERIVATIONS.site.exec(readme)
+  if (!site) {
+    out.push(
+      'website/README.md does not write the whole-site budget as "N bytes. Three times T (every file in `dist/`, B bytes": that B is the build the two checkout shapes claim to be, and without it the pair is a figure nothing can disagree with',
+    )
+  } else if (n(site[3]) !== noTags || n(site[3]) !== clone) {
+    out.push(
+      `the two checkout shapes are stated as ${noTags} and ${clone} bytes and the whole-site budget derives from a ${n(site[3])}-byte build: the paragraph claims the two shapes are one build — this one — so a pair that agrees with itself a round behind is the drift this case is for, and it is re-derived in the commit that moves those bytes (D192)`,
+    )
+  }
+  return out
+}
+
 test('the site’s two checkout shapes are stated as one figure, and the changelog reads no tag', () => {
   const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
-  const n = (s) => Number(s.replace(/,/g, ''))
-
-  const pair = PAIR.exec(readme)
-  assert.ok(
-    pair,
-    'website/README.md no longer states the site\'s two checkout shapes in the form this case reads — "**N bytes in a checkout with no tags** … **N bytes with the tags this repository\'s own clone carries**" — so the pair is not held anywhere: that paragraph is the one place the two figures are written, and a rewrite that drops one of them leaves the other stated with nothing reading it',
-  )
-  const [noTags, clone] = [n(pair[1]), n(pair[2])]
-  assert.equal(
-    clone,
-    noTags,
-    `website/README.md states the no-tags build as ${noTags} bytes and the clone build as ${clone}: no page reads the checkout's git state, so the two shapes are one build and a re-derivation that moves one of them moves the other`,
-  )
+  const failures = pairFailures(readme)
+  assert.deepEqual(failures, [], `website/README.md's two checkout shapes do not hold:\n  ${failures.join('\n  ')}`)
 
   const changelog = readFileSync(path.join(SITE, 'src', 'lib', 'changelog.mjs'), 'utf8')
   assert.doesNotMatch(
     changelog,
     /node:child_process|['"]tag['"]\s*,\s*['"]--list['"]/,
     'src/lib/changelog.mjs reads the checkout\'s git state again: the site\'s two checkout shapes would build two figures, and the README\'s one-figure pair would be false',
+  )
+})
+
+test('a pair of checkout shapes a round behind is refused, whether the two agree or not', () => {
+  // The reading above is only worth its lines if it disagrees with the two ways the pair goes
+  // wrong: one shape moved and the other left behind — the drift the pair was written for, and
+  // the one the case above could see — and **both moved together with neither of them the
+  // site's own build**, which is the drift it could not. The second is what this repository did
+  // on 2026-10-21: a round re-derived the site figure and left the pair where it had been.
+  const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  const site = Number(DERIVATIONS.site.exec(readme)[3].replace(/,/g, ''))
+  const restate = (noTags, clone) =>
+    readme.replace(PAIR, `**${noTags} bytes in a checkout with no tags** and to **${clone} bytes with the tags this repository's own clone carries**`)
+  assert.deepEqual(pairFailures(readme), [])
+
+  assert.match(
+    pairFailures(restate(site - 1, site)).join('\n'),
+    /the two shapes are one build and a re-derivation that moves one of them moves the other/,
+    'two shapes stated as different figures are not refused, and no page reads the checkout\'s git state: the two are one build',
+  )
+  assert.match(
+    pairFailures(restate(site - 1, site - 1)).join('\n'),
+    /a pair that agrees with itself a round behind/,
+    'two shapes stated as the same stale figure are not refused: a pair the site has moved past is a figure a reader is told is this build and is not',
+  )
+  // And a paragraph rewritten out of the form this case reads is held, not passed over.
+  assert.match(
+    pairFailures(readme.replace(PAIR, 'and the two shapes build alike')).join('\n'),
+    /no longer states the site's two checkout shapes/,
+    'a README that stops stating the pair at all is not refused, so the figures a reader sees would be held by nothing',
   )
 })
 

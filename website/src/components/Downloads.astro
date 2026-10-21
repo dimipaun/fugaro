@@ -44,23 +44,23 @@
  *
  * **What a reader gets.** The release's own sentence about the console (macOS only, one
  * universal disk image and one archive, signed and Apple-notarised, the CLI first because the
- * CLI is the data plane), one link per published asset with the SHA-256 the release recorded
- * for its bytes beside it, and the command that prints the checksum of the file a reader
- * downloaded — in a command block, so a reader copies it rather than selecting it by hand
- * (D183, P6). All of it comes from the data file: the checksum is the one fact here that is not
- * derived, because it is a fact about bytes and no build can compute it.
+ * CLI is the data plane) and one link per published asset with the SHA-256 the release recorded
+ * for its bytes beside it. All of it comes from the data file: the checksum is the one fact
+ * here that is not derived, because it is a fact about bytes and no build can compute it.
+ *
+ * **The section carried a verification command until 2026-10-21 and does not any more.** It
+ * printed `shasum -a 256 Fugaro.Console-*` in a command block under the cards (P6's shape), and
+ * the owner, reading the live page on 2026-10-21, struck it: *"nuke this part: `shasum -a 256
+ * Fugaro.Console-*`"*. So the command block, its copy control and the `released.verify` line the
+ * data file carried are all gone, and **the checksums stay** — each one is still printed beside
+ * the link it belongs to, which is what a reader compares a download against. The data file
+ * refuses the key coming back (`src/lib/console-downloads.mjs`), so a round that wants the
+ * command again is a round that changes this file, the loader and this comment together.
  *
  * The facts come in as props rather than being read here, because the module owns the one
  * reader for them: `website/src/pages/console.astro` loads and validates
  * `website/content/downloads.json`, and this component renders what it was handed.
- *
- * **The verify command stands under the cards rather than inside one of them**, which is the
- * one place this section is laid out differently from the board: the board puts it in the macOS
- * card because macOS is the only card with a download in it, and the command's glob
- * (`Fugaro.Console-*`) covers whatever a reader downloaded from this section — so it belongs to
- * the section and not to one platform's card. It is listed in the pull request for the owner.
  */
-import { copyControlHTML } from '../lib/copy-control.mjs'
 
 interface DownloadFacts {
   /**
@@ -104,10 +104,10 @@ interface Props {
   note: string
   /**
    * The data file's `released` block: what the console is once it has shipped (macOS only,
-   * signed and notarised, the CLI first) and the command that verifies a download. Rendered
-   * while `available` is true, and rendered from the data file rather than written here.
+   * signed and notarised, the CLI first). Rendered while `available` is true, and rendered
+   * from the data file rather than written here.
    */
-  released: { text: string; verify: string }
+  released: { text: string; source: string }
   /**
    * The data file's `downloads` entries: the release's published names, which the data file
    * carries from the day they are known and not only once the console ships. They are rendered
@@ -275,14 +275,6 @@ const cards: Card[] = [
             </li>
           ))}
         </ul>
-
-        {/* The command that checks a download, in the site's own command block so a reader
-            copies it rather than selecting it by hand (D183, P6). It stands under the cards
-            because its glob covers whatever a reader downloaded from any of them. */}
-        <div class="command-block" data-copy>
-          <Fragment set:html={copyControlHTML('Copy the checksum verification command')} />
-          <pre><code>{released.verify}</code></pre>
-        </div>
       </>
     ) : (
       <div class="downloads-unreleased">
@@ -307,14 +299,34 @@ const cards: Card[] = [
 
   /* The cards: one per platform, wrapping to one column on a phone. The grid is the site's
      own shape (`repeat(auto-fit, minmax(…, 1fr))`, as the home page's two grids are), so a
-     second platform's card needs no rule of its own. */
+     second platform's card needs no rule of its own. It is what a viewport with no room for
+     the cards side by side gets, and the wide block below is what a desktop gets. */
   .download-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    /* Equal heights: the cards of one row are one row of a grid, so they are as tall as the
+       tallest of them rather than as tall as their own text. Stated rather than left to the
+       grid's own default, because it is the thing the owner read the cards for on 2026-10-21
+       ("the cards should also keep equal heights") and a declaration is what a gate can read
+       (`website/test/console.mjs`). */
+    align-items: stretch;
     gap: var(--space-md);
     margin: var(--space-lg) 0;
     padding: 0;
     list-style: none;
+  }
+
+  /* **One row on a desktop** (the owner's feedback of 2026-10-21: the platform cards "should
+     fit in ONE row on desktop (wrap only on narrow screens)"). Every card the data file draws
+     goes on one line at the same width, however many there are: no minimum column width to
+     run out of, and no count written here for the data file to outgrow. Below this width the
+     base rule above wraps them, which is what a phone and a narrow window get. */
+  @media (min-width: 60rem) {
+    .download-cards {
+      grid-template-columns: none;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr);
+    }
   }
 
   .download-card {
@@ -376,9 +388,22 @@ const cards: Card[] = [
     font-weight: var(--weight-semibold);
   }
 
+  /* The checksum: 64 characters with nowhere to break, so its rule is about wrapping rather
+     than about hiding it — the owner's feedback of 2026-10-21 was that the cards should "not
+     show the long checksum text breaking awkwardly (keep the checksum, wrap it cleanly with
+     word-break and a monospace smaller size)". So it is `word-break: break-all` (the same
+     declaration as before, kept and now held by a gate), the monospace stack rather than the
+     page's sans, one step below the running text's size, and it takes its own line under the
+     link it belongs to (`flex-basis: 100%` in the row above): a hash that starts where the
+     link ends breaks into columns of whatever room is left, which is the "awkwardly" the
+     owner read. The family is stated rather than inherited from `code`'s own rule in
+     `base.css`, because this is the one run of text on the page whose job is character-by-
+     character comparison. */
   .download-sha256 {
+    flex: 1 1 100%;
     color: var(--text-muted);
-    font-size: var(--font-size-sm);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
     word-break: break-all;
   }
 

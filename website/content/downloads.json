@@ -8,7 +8,6 @@
   },
   "released": {
     "text": "The console ships for macOS only: one universal disk image and one archive, signed and notarised by Apple. Install the CLI first, because the CLI is the data plane. Windows and Linux builds do not exist yet.",
-    "verify": "shasum -a 256 Fugaro.Console-*",
     "source": "docs/design/desktop-console.md D1 D4"
   },
   "not_released": {

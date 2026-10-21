@@ -353,7 +353,11 @@ func (r *run) freshContext(ctx context.Context) {
 			r.follow.rootTask = t.Task
 		}
 	}
-	base := r.cfg.Git.BaseBranch
+	// The branch's diff against the run's own base of work — the branch the
+	// pull request targets now (diffbase.go, diffBase), not the run's
+	// configuration base, which is stale the moment the pull request is
+	// retargeted.
+	base := r.diffBase()
 	stat, err := sessionGit(ctx, r.repo, "diff", "--stat", "origin/"+base+"...HEAD")
 	if err != nil {
 		r.d.Log.Warn("reading the branch's diff stat failed", "err", r.redact(err.Error()))
@@ -365,7 +369,7 @@ func (r *run) freshContext(ctx context.Context) {
 func (r *run) promptData() followup.PromptData {
 	f := r.follow
 	return followup.PromptData{
-		PR: r.spec.PR, PRURL: f.pr.URL, Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
+		PR: r.spec.PR, PRURL: f.pr.URL, Branch: r.rec.Branch, Base: r.diffBase(), StateDir: r.d.StateDir,
 		Instructions: r.spec.Task, Resumed: f.restored.Resumed, MovedCommits: f.restored.Moved,
 		RootTask: f.rootTask, DiffStat: f.diffStat, PreviousAnswer: f.prevAnswer, Nonce: f.nonce, Redact: r.redactor(),
 	}

@@ -401,6 +401,12 @@ type pullDetail struct {
 			FullName string `json:"full_name"`
 		} `json:"repo"` // null when the head repository (a fork) was deleted
 	} `json:"head"`
+	// Base is the branch the pull request targets now (PRInfo.Base): GitHub
+	// reports it on the same response, and a retargeted pull request (an
+	// integration or release branch) is exactly what a run must not guess.
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
 }
 
 func (p *Provider) getPull(ctx context.Context, number int) (pullDetail, gitprov.PRInfo, error) {
@@ -418,7 +424,7 @@ func (p *Provider) getPull(ctx context.Context, number int) (pullDetail, gitprov
 	// Where GitHub refuses drafts, the adapter marks them with DraftPrefix.
 	draft := d.Draft || strings.HasPrefix(d.Title, gitprov.DraftPrefix)
 	info := gitprov.PRInfo{Number: d.Number, URL: d.HTMLURL, Draft: draft, Title: d.Title, Body: d.Body, AuthorID: d.User.id(),
-		SourceBranch: d.Head.Ref, HeadSHA: d.Head.SHA}
+		SourceBranch: d.Head.Ref, HeadSHA: d.Head.SHA, Base: d.Base.Ref}
 	if d.Head.Repo != nil {
 		info.SourceRepo = d.Head.Repo.FullName
 	}
@@ -469,7 +475,7 @@ func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead,
 	slug, known := p.appSlug(ctx)
 	self := known && d.User.login() == slug+"[bot]" && !fork
 	return gitprov.PRHead{
-		SHA: info.HeadSHA, Fork: fork, Open: info.State == gitprov.PROpen,
+		SHA: info.HeadSHA, Base: info.Base, Fork: fork, Open: info.State == gitprov.PROpen,
 		AuthorID: d.User.id(), AuthorLogin: d.User.login(),
 		Association: d.AuthorAssociation, Collaborator: collaborator(d.AuthorAssociation),
 		Self: self, SourceRepo: info.SourceRepo,
