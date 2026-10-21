@@ -1341,7 +1341,7 @@ record_client_limit_wording() {
   # is carried when there is any.
   local printed
   printed=$(head -c 300 "$SCRATCH/swap.out" 2>/dev/null | tr -d '\r' | tr '\n' ' ' || true)
-  fact "client-limit-wording" PASS "the client printed no wording for the limit${printed:+ (what it did print: ${printed})}, so U4's third part stays UNVERIFIED"
+  fact "client-limit-wording" INFO "the client printed no wording for the limit${printed:+ (what it did print: ${printed})}, so U4's third part stays UNVERIFIED"
 }
 
 # The usage limit is looked for, never provoked: whatever an error response
