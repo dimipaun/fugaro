@@ -753,7 +753,8 @@ func TestInitRepoBuildsThenDeploys(t *testing.T) {
 
 // A repository whose agent authenticates through Vertex AI is recorded as
 // such, so fugaro update enables the Vertex AI API; the first one says to
-// rerun fugaro update.
+// rerun `fugaro init`, the sentence internal/cli prints today and W2.1 renames
+// -- the assertion below quotes it as it stands.
 func TestInitRepoRecordsVertex(t *testing.T) {
 	r := newInitRepoRig(t, "acme/sandbox", "https://bitbucket.org/acme/sandbox.git", func(y string) string {
 		return strings.Replace(y, "auth: oauth", "auth: vertex", 1)
@@ -1075,7 +1076,8 @@ func exists(t *testing.T, b *blobx.Bucket, key string) bool {
 
 // After the installation's --forget (state rm), its state keeps its
 // outputs but manages nothing: fugaro update --repo refuses to plan against it,
-// and says to run fugaro setup first.
+// and says to run `fugaro init` first -- the sentence internal/cli prints
+// today, which is W2.1's to rename; the assertion below quotes it as it stands.
 func TestInitRepoRefusesForgottenInstallation(t *testing.T) {
 	r := sandboxRig(t)
 	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": installationOutputs(t)}, "show": map[string]any{"stdout": stateEmpty}})
@@ -1090,7 +1092,8 @@ func TestInitRepoRefusesForgottenInstallation(t *testing.T) {
 
 // An installation applied before the tag mover role existed outputs no
 // role_ids.tag_mover: fugaro update --repo refuses to plan a grant of a role that
-// isn't there, and says to run fugaro setup first.
+// isn't there, and says to run `fugaro init` first -- W2.1's sentence, quoted
+// by the assertion below as internal/cli prints it today.
 func TestInitRepoRefusesInstallationWithoutTagMover(t *testing.T) {
 	r := sandboxRig(t)
 	var outs map[string]map[string]any
@@ -1443,7 +1446,8 @@ func TestInitRepoEnablesResourceManager(t *testing.T) {
 }
 
 // fugaro update --repo with the Storage API disabled fails as a remote error
-// at the state bucket, not as "no installation: run fugaro setup first".
+// at the state bucket, not as the no-installation refusal ("run `fugaro init`
+// first" -- W2.1's sentence, and the assertion below quotes it as it stands).
 func TestInitRepoStorageDisabledIsRemote(t *testing.T) {
 	r := sandboxRig(t)
 	r.su.Disable("storage.googleapis.com", r.gcs.Server)

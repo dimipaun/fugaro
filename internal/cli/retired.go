@@ -26,7 +26,7 @@ import (
 // It is not named `retirementText`, although that is the phrase this file's
 // own comment uses for it: `retirementText` is the census's
 // (internal/cli/docs_live_init_census_test.go, W0.2), where it is the list of
-// the three paths that may name the retired command. Two package-level
+// the four paths that may name the retired command. Two package-level
 // declarations of one name do not compile, so the tombstone's sentence and the
 // census's list cannot share it, and the census keeps it because the plan
 // names the exemption class, not this string.

@@ -280,8 +280,8 @@ func projectJobTokenBinding(saID string) gcpfake.Binding {
 // TestDoctorJobTokenGrantProjectJob is the same check for a shared project job
 // account (plan task 3.2 step 2; budget-token-channel.md §7.2). Its grants are
 // the widened pair — objectUser on the three prefixes, objectViewer on the
-// whole of tokens/ — and its cure is the installation's fugaro init, not a
-// repository's fugaro init --repo: the account is created by the installation
+// whole of tokens/ — and its cure is the installation's fugaro update, not a
+// repository's fugaro update --repo: the account is created by the installation
 // root, and nothing in a repository's checkout can re-apply it.
 func TestDoctorJobTokenGrantProjectJob(t *testing.T) {
 	sa := gcp.ProjectServiceAccountID("standard", "github", "")
@@ -303,7 +303,7 @@ func TestDoctorJobTokenGrantProjectJob(t *testing.T) {
 			t.Fatalf("finding = %+v (%v), want a warning", c, ok)
 		}
 		if !strings.Contains(c.Problem, "tokens/") || !strings.Contains(c.Fix, "fugaro update") || strings.Contains(c.Fix, "--repo") {
-			t.Fatalf("finding = %+v, want it to name tokens/ and the installation's fugaro init", c)
+			t.Fatalf("finding = %+v, want it to name tokens/ and the installation's fugaro update", c)
 		}
 		if s, _ := doctorCheckByID(o.Checks, "runs-bucket-iam"); !s.OK {
 			t.Fatalf("the project job's own runs/ grant made runs-bucket-iam warn: %+v", s)

@@ -199,7 +199,7 @@ const statusClientClosed = 499
 // Anything else, including timeouts and transport errors, is ambiguous.
 //
 // shared says the job was the spec's own (a shared project job), which has a
-// different fix from a repository's: no `fugaro update` creates one.
+// different fix from a repository's: no `fugaro update --repo` creates one.
 func launchError(job string, shared bool, err error) error {
 	var ge *googleapi.Error
 	if errors.As(err, &ge) {

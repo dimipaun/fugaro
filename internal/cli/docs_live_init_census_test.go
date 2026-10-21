@@ -49,11 +49,11 @@ package cli
 // for that reason. W2.6's claim that the live tree names the retired command
 // nowhere is only worth making if the scan can see the wrapped spellings it is
 // claiming about, and W2.2's sweep is where that was cashed: the plan gives
-// that task's file list from a line-based `grep`, so three of its files
-// (internal/gcpfake/firebasemgmt.go, internal/infra/managed/untrusted_test.go
-// and internal/localcfg/localcfg.go) are on the list without being on that
-// command's output, exactly as the two above are on it without being on this
-// task's.
+// that task's file list from a line-based `grep`, so two of the files it
+// renamed -- internal/gcpfake/firebasemgmt.go and
+// internal/infra/managed/untrusted_test.go -- are on the list without being on
+// that command's output, exactly as the two internal/cli files above are on it
+// without being on the 48-file list the plan gives W2.1.
 //
 // W2.6 -- the task that empties the census -- flips this file's terminal
 // assertion from "the walk found something" to "`pendingRename` is empty", and
@@ -122,11 +122,14 @@ var datedRecords = []string{
 // decides, and this file fits the rule.
 //
 // internal/cli/testdata/init_retire.golden is deliberately NOT here, although
-// it names the command four times today: it is a transcript, not a retirement
-// statement, and all four are strings W2.1 renames, so W1.2/W2.1 regenerate it
-// with TestInitRepoRetireTranscriptGolden -update-retire exactly like the other
-// two goldens. An exemption for a file the rename empties is the "wrong in one
-// direction" case Global Constraint 7 forbids.
+// it named the command four times before W2.2: it is a transcript, not a
+// retirement statement, and the three it names today are internal/cli's own
+// strings -- W2.1's -- so W1.2/W2.1 regenerate it with
+// TestInitRepoRetireTranscriptGolden -update-retire exactly like the other two
+// goldens. The fourth was internal/localcfg's build.service_account warning,
+// which W2.2 renamed in the commit that renamed the string it quotes. An
+// exemption for a file the rename empties is the "wrong in one direction" case
+// Global Constraint 7 forbids.
 var retirementText = []string{
 	// W1.2's tombstone: one message, two names, non-zero exit.
 	"internal/cli/retired.go",
@@ -253,8 +256,9 @@ const censusRoot = "../.."
 // Every file on it outside internal/cli that named the command is renamed
 // there: 64 non-test Go files (the 60 the census command names, the bare
 // `init --repo` of internal/backend/backend.go,
-// internal/config/project_secrets.go and internal/runner/policy.go, and the two
-// wrapped-only ones above) and 43 test files (the 37 the command names, the 5
+// internal/config/project_secrets.go and internal/runner/policy.go, and the one
+// wrapped-only file above, internal/gcpfake/firebasemgmt.go) and 43 test files
+// (the 37 the command names, the 5
 // the `init --repo` pattern adds, and
 // internal/infra/managed/untrusted_test.go, which only the walk sees). A
 // forty-fourth is internal/cli's own -- managed_apply_test.go asserts a
