@@ -171,19 +171,19 @@
         <li style="display: flex; gap: 28px; align-items: flex-start; background: #121A26; border: 1px solid #24303F; border-radius: 20px; padding: 28px 32px">
           <div aria-hidden="true" style="font-size: 72px; line-height: 0.85; font-weight: 900; letter-spacing: -0.05em; color: #4CC38A; width: 80px; flex: none">04</div>
           <div style="flex: 1">
-            <h3 style="margin: 0; font-size: 28px; font-weight: 850; letter-spacing: -0.015em">Run <code style="font-family: ui-monospace, Menlo, monospace; color: #4CC38A; background: #0A0E16; border: 1px solid #24303F; border-radius: 8px; padding: 2px 10px">fugaro init</code></h3>
+            <h3 style="margin: 0; font-size: 28px; font-weight: 850; letter-spacing: -0.015em">Run <code style="font-family: ui-monospace, Menlo, monospace; color: #4CC38A; background: #0A0E16; border: 1px solid #24303F; border-radius: 8px; padding: 2px 10px">fugaro setup</code></h3>
             <p style="margin: 8px 0 0; font-size: 18px; line-height: 1.5; color: #9FB2C4">In your own terminal. It asks for the secrets the runs mount, at hidden prompts.</p>
           </div>
-          <a href="https://github.com/dimipaun/fugaro/blob/HEAD/docs/gcp-setup.md#the-short-path-fugaro-init-then-fugarosetup" style="color: #6FD8F5; font-weight: 700; font-size: 16px; white-space: nowrap; align-self: center">The short path</a>
+          <a href="https://github.com/dimipaun/fugaro/blob/HEAD/docs/gcp-setup.md#the-short-path-fugaro-setup-then-fugarosetup" style="color: #6FD8F5; font-weight: 700; font-size: 16px; white-space: nowrap; align-self: center">The short path</a>
         </li>
 
         <li style="display: flex; gap: 28px; align-items: flex-start; background: #121A26; border: 1px solid #24303F; border-radius: 20px; padding: 28px 32px">
           <div aria-hidden="true" style="font-size: 72px; line-height: 0.85; font-weight: 900; letter-spacing: -0.05em; color: #4CC38A; width: 80px; flex: none">05</div>
           <div style="flex: 1">
             <h3 style="margin: 0; font-size: 28px; font-weight: 850; letter-spacing: -0.015em">Run <code style="font-family: ui-monospace, Menlo, monospace; color: #4CC38A; background: #0A0E16; border: 1px solid #24303F; border-radius: 8px; padding: 2px 10px">/fugaro:setup</code></h3>
-            <p style="margin: 8px 0 0; font-size: 18px; line-height: 1.5; color: #9FB2C4">In your coding agent. Merge, then run <code style="font-family: ui-monospace, Menlo, monospace; color: #E6EEF5">fugaro init</code> again.</p>
+            <p style="margin: 8px 0 0; font-size: 18px; line-height: 1.5; color: #9FB2C4">In your coding agent. Merge, then run <code style="font-family: ui-monospace, Menlo, monospace; color: #E6EEF5">fugaro setup</code> again.</p>
           </div>
-          <a href="https://github.com/dimipaun/fugaro/blob/HEAD/docs/gcp-setup.md#the-short-path-fugaro-init-then-fugarosetup" style="color: #6FD8F5; font-weight: 700; font-size: 16px; white-space: nowrap; align-self: center">The short path</a>
+          <a href="https://github.com/dimipaun/fugaro/blob/HEAD/docs/gcp-setup.md#the-short-path-fugaro-setup-then-fugarosetup" style="color: #6FD8F5; font-weight: 700; font-size: 16px; white-space: nowrap; align-self: center">The short path</a>
         </li>
       </ol>
     </section>
@@ -218,8 +218,8 @@ grep " fugaro_${V}_" checksums.txt | sha256sum -c -         # Linux</code></pre>
               <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6FD8F5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6l-6 6 6 6"></path><path d="M16 6l6 6-6 6"></path></svg>
               <h3 style="margin: 0; font-size: 24px; font-weight: 850">Plugin</h3>
             </div>
-            <p style="margin: 0; font-size: 16px; color: #9FB2C4">The agent's skills; <code style="font-family: ui-monospace, Menlo, monospace; color: #E6EEF5">fugaro init</code> wires them into the checkout.</p>
-            <pre style="margin: 0; background: #0A0E16; border: 1px solid #24303F; border-radius: 14px; padding: 14px 18px; font-family: ui-monospace, Menlo, monospace; font-size: 14px; line-height: 1.8; color: #E6EEF5"><code>fugaro init
+            <p style="margin: 0; font-size: 16px; color: #9FB2C4">The agent's skills; <code style="font-family: ui-monospace, Menlo, monospace; color: #E6EEF5">fugaro setup</code> wires them into the checkout.</p>
+            <pre style="margin: 0; background: #0A0E16; border: 1px solid #24303F; border-radius: 14px; padding: 14px 18px; font-family: ui-monospace, Menlo, monospace; font-size: 14px; line-height: 1.8; color: #E6EEF5"><code>fugaro setup
 /fugaro:setup
 fugaro upgrade --local</code></pre>
             <span style="font-size: 14px; color: #9FB2C4">From <code style="font-family: ui-monospace, Menlo, monospace; color: #E6EEF5">README.md</code> · macOS, Linux</span>

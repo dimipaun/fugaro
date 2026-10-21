@@ -44,9 +44,10 @@ func wizardRun(t *testing.T, stdin string, o *initOptions) (*initRun, *strings.B
 
 // wizardAnswers is the line that answers each of the wizard's questions, by
 // the flag that answers the same question without a terminal: the default
-// answer for the ones that have a suggestion, and a real value for the GCP
-// project (there is none to suggest in this environment, so Enter is not an
-// answer).
+// answer for the ones whose suggestion Enter takes, and a typed value for the
+// GCP project — its suggestion is fugaro-<name> (D4), and typing another id is
+// what keeps these runs at an id of the test's own choosing rather than one
+// built from the temporary directory's name.
 var wizardAnswers = map[string]string{
 	"--create-project": "\n",
 	"--gcp-project":    "proj-1234\n",

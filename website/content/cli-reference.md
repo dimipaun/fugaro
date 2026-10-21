@@ -2416,9 +2416,11 @@ account's credentials it stops and names the two flags.
 
 On a first run it asks its questions once, in this order, each with a
 suggestion Enter takes, and writes the local config, so later runs ask
-nothing: the GCP project's ID (--gcp-project; suggested from
-GOOGLE_CLOUD_PROJECT or the credentials' quota project, never gcloud's default
-project), the region (--region; us-east5), whether to create the GCP project
+nothing: the GCP project's ID (--gcp-project; a new project named after this
+one, fugaro-<name>, which Enter takes — and, offered second when it differs, the
+project GOOGLE_CLOUD_PROJECT or the credentials' quota project names, the one
+you are already working in; never gcloud's default project), the region
+(--region; us-east5), whether to create the GCP project
 or adopt one that already exists (--create-project; "create", what Enter
 takes, is a new fugaro-<name> project, and "adopt" leaves one that is already
 there exactly as it is), and the project's name (--name; from the
