@@ -1210,8 +1210,15 @@ func TestManagedApplyRefusalsMapToExitCodes(t *testing.T) {
 func TestManagedApplyWithoutADCCredentialsIsAUserError(t *testing.T) {
 	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject}
 	// An account with no ADC anywhere: no credential file, no gcloud
-	// directory, and no home to look in either.
-	for _, k := range []string{"GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG", "XDG_CONFIG_HOME", "HOME", "USERPROFILE"} {
+	// directory, and no home to look in either. %APPDATA% is blanked with the
+	// rest because that is where gcloud keeps its config directory on Windows
+	// (adcpath.go's gcloudConfigDir): a Windows machine running this test with
+	// its own %APPDATA%\gcloud\application_default_credentials.json in place
+	// would find credentials and fail here for the wrong reason. On Linux —
+	// where this runs today — the variable is never read, so blanking it
+	// changes nothing now and is what makes the row true on Windows later
+	// (Slice 3's T3.5).
+	for _, k := range []string{"GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG", "XDG_CONFIG_HOME", "APPDATA", "HOME", "USERPROFILE"} {
 		t.Setenv(k, "")
 	}
 	u := deployerImpersonationURL("https://iamcredentials.example.test", managedmode.DeployerAccount(initProject))
