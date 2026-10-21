@@ -27,8 +27,8 @@ variables {
   # the installation's region fails the apply, and a test whose region matched
   # would never see it.
   scheduler_region = "us-east4"
-  network        = "projects/proj-1234/global/networks/default"
-  subnetwork     = "projects/proj-1234/regions/us-east5/subnetworks/default"
+  network          = "projects/proj-1234/global/networks/default"
+  subnetwork       = "projects/proj-1234/regions/us-east5/subnetworks/default"
   names = {
     job_prefix            = "fugaro-"
     reaper_account_id     = "fugaro-reaper"

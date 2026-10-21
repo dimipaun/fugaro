@@ -3653,10 +3653,17 @@ restore cannot find.
    generation labelled `fugaro=managed` with `base-release`, and
    `gcloud compute images describe-from-family <family>` names it. Then, in
    order: **(a)** re-run the schedule by hand
-   (`gcloud scheduler jobs run <preload_scheduler_job> --location <region>`)
-   and confirm the build **builds nothing** — the newest generation is this
-   build's own, matches the family's current release and is inside
-   `preload_refresh_days`, so the run is one API call and no image. **(b)**
+   (`gcloud scheduler jobs run <preload_scheduler_job> --location
+   <scheduler_region>` — the **scheduler** region, which is not the
+   installation's whenever Cloud Scheduler does not serve it: the sandbox's
+   us-east5 is one it does not, so the job lives in the nearest location it
+   does serve (us-east4, `internal/backend/gcp`'s `SchedulerRegion`), and
+   `--location <region>` would name a job that is not there. The stage's own
+   retry and its "start it yourself" line name the same one,
+   `infra.RunSchedulerJob` and `computeStage.Apply`) and confirm the build
+   **builds nothing** — the newest generation is this build's own, matches
+   the family's current release and is inside `preload_refresh_days`, so the
+   run is one API call and no image. **(b)**
    Make the newest generation read as stale — `gcloud compute images update
    <name> --update-labels=base-release=stale`, in the sandbox project only —
    and re-run the schedule: a **new generation** appears in the same family,

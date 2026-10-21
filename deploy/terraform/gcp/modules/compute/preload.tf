@@ -135,8 +135,8 @@ locals {
 # current and inside preload_refresh_days costs one API call and nothing
 # else, and anything else is built beside it, in the same family.
 resource "google_cloud_scheduler_job" "preload_rebuild" {
-  project     = var.project
-  name        = var.names.preload_scheduler_job
+  project = var.project
+  name    = var.names.preload_scheduler_job
   # The scheduler region, not the installation's: Cloud Scheduler does not
   # serve every Cloud Run region, and this module's documented installation
   # (us-east5) is one it does not. The call below is to a global API
