@@ -49,9 +49,12 @@ re-numbered, and no sentence was added. **If a later reader finds a difference b
 **The spec is a good idea whose deployment section describes a surface Fugaro has never
 had, and whose credential section depends on work that does not exist.** There is no Cloud
 Run **service** anywhere in this repository — every workload is a Cloud Run *job*, and the
-type is not only absent but **refused**: `internal/infra/tf/cover.go`'s `allowedTypes` admits
+type is not only absent but **refused**: `internal/infra/tf/cover.go`'s `allowedTypes` admitted
 only `google_cloud_run_v2_job` and `google_cloud_run_v2_job_iam_member`, and
-`Cover.NotCovered` makes any other type a typed confirmation at `fugaro init` (#1). There is
+`Cover.NotCovered` made any other type a typed confirmation at `fugaro init` (#1) — the
+reading at the base commit, and still the outcome for a service: P1 admitted the service type
+to that list and refuses every service by name in the same file's `attributes`, until P4
+writes the checks a service owes. There is
 no WebSocket in either direction (#3), no lease record of any kind (#6), no merge path that a
 service could use (#22), no public sign-in provider — `internal/cli/init_firebase.go`'s
 `refusePublicSignUp` refuses every one of them (#32) — no notification sender (#34), no alert

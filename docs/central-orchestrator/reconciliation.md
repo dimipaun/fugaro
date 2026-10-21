@@ -1025,9 +1025,8 @@ than of the platform.
 "per central orchestrator" as *one service per installation in v1*, with several
 orchestrators as a later scaling question**; the resource type (`google_cloud_run_v2_service`)
 is added to `internal/infra/tf/cover.go`'s `allowedTypes` and `internal/infra/tf/managed_cover.go`'s
-`managedTypes` **deliberately**, with its own cost row (`internal/infra/tf/managed_cost.go`
-already prices the type) and — corrected below, as P1 landed — covered by the run's one typed
-confirmation rather than asking one of its own. **Alternative:** one service
+`managedTypes` **deliberately**, with its own typed confirmation and its cost row
+(`internal/infra/tf/managed_cost.go` already prices the type). **Alternative:** one service
 per named orchestrator from the start — cost: N services' worth of grants, secrets and cost
 rows for a feature whose sessions are idle, and a policy surface (`fugaro orchestrator add`)
 that now multiplies infrastructure.
@@ -1035,22 +1034,24 @@ that now multiplies infrastructure.
 **Answered 2026-10-20 — the recommendation, as written above.** The owner's answer: **one
 Cloud Run service per installation in v1**, and the service type is **admitted deliberately**
 to the Terraform cover lists — `internal/infra/tf/cover.go`'s `allowedTypes` and
-`internal/infra/tf/managed_cover.go`'s `managedTypes` — with **its own cost row** and, as
-corrected below, **covered by the run's one typed confirmation** rather than asking its own.
-Why: the installation is the tree's unit (a Fugaro project, #54), and one
+`internal/infra/tf/managed_cover.go`'s `managedTypes` — with **its own typed confirmation and
+its own cost row**. Why: the installation is the tree's unit (a Fugaro project, #54), and one
 service per named orchestrator buys N grants, N secrets and N cost rows for sessions that are
 idle almost always.
 
-**Corrected 2026-10-21, by P1.** Both the recommendation and the answer above said the type
-comes in *"with its own typed confirmation"*. That is not what admitting a type to
-`allowedTypes` does, and no such step exists or can: a type **on** the list is covered by the
-run's one typed confirmation — `internal/cli/init_review.go`'s `notCovered` delegates to the
-run's `tf.Cover`, and `tf.Cover` reads `allowedTypes` — while a type **off** the list is the
-one that asks its own. The same sentence is false on the managed side for the opposite
-reason: a managed plan is never asked, because a refusal there is final (`internal/managed`'s
-gate refuses before anything is typed, and `internal/cli`'s managed apply renders it as
-"nothing was applied"). P1 admitted the type and changed nothing on the confirmation path, so
-the decision is implemented as the admission and corrected here as the confirmation.
+**P1 landed the admission on 2026-10-21; the confirmation the answer names lands with P4.**
+The type is on both lists, so a plan holding a service is judged rather than refused for a
+type nobody had decided on — and no service is covered by the run's one typed confirmation
+yet: the checks on what a service may say (its image, its ingress, whether its invoker check
+is on, the account it runs as, its scaling) are the module's, and the module is P4, so until
+it lands `attributes` refuses every service by name. A step that applies such a plan therefore
+asks **its own** typed confirmation, which is the wording above and what
+`internal/cli/init_review.go`'s review path shows ("this step is not covered by the run
+confirmation: …; it asks for its own"). P4 is where those checks are written, and where what a
+service plan asks once they exist is decided. The managed list is a separate question with the
+opposite answer: a type **off** it is refused outright rather than sent to a confirmation —
+that gate's refusal is final, and `internal/managed` returns it before anything is typed —
+which is why the type is decided on both lists rather than on one.
 
 ### D20 — Where the agent runs
 **Recommendation: the agent runs in a **job**, and the resident service is a consumer plus a
@@ -1259,7 +1260,7 @@ this work's to make.
 
 | # | What is unverified | Why | What would settle it |
 | --- | --- | --- | --- |
-| U1 | That a Cloud Run **service** can be admitted to the installation's Terraform without breaking `fugaro setup`'s confirmation model | `internal/infra/tf/cover.go`'s `allowedTypes` is a code constant; no service exists to try | adding the type to `allowedTypes`, where the run's one typed confirmation covers it like every other covered type (P1, 2026-10-21, corrected above: the type does not ask a confirmation of its own), and an owner-run plan — the second half is still unverified |
+| U1 | That a Cloud Run **service** can be admitted to the installation's Terraform without breaking `fugaro setup`'s confirmation model | `internal/infra/tf/cover.go`'s `allowedTypes` is a code constant; no service exists to try | adding the type to `allowedTypes` (P1, 2026-10-21): a plan holding a service is refused by the checks the type owes, and by name, rather than as a type nobody had decided on, and until P4 writes those checks no service is covered — so the plan asks its own typed confirmation, as the answer above says — and an owner-run plan — the second half is still unverified |
 | U2 | WebSocket support through the Cloud Run front end (upgrade headers, idle timeout, maximum connection duration) | the credentials service's plan records the same class as unverified for streaming (`docs/credentials-service/reconciliation.md` U5, its Check 91) | an owner-run live check on a deployed service |
 | U3 | RTDB `If-Match`/ETag behaviour under concurrent writers at the rate a lease implies (one heartbeat a minute per job, plus takeovers) | `internal/rtdb/client.go`'s `PutIfMatch` is used for admin writes (*"ETags work on one location: this is for single-node admin writes"*), not for a hot path | an emulator test plus a live check |
 | U4 | Whether the RTDB rules can express the lease's generation check without a `RulesVersion` bump colliding with another work's | the rules template is generated and versioned (`internal/budget/rules/rules.go`'s template, `internal/projectpolicy/version.go`'s `RulesVersion`) | writing the rule and regenerating the golden |
