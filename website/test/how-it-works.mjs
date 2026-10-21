@@ -1013,16 +1013,19 @@ function different(values) {
 
 /** The SVG shapes a drawing paints, and the properties a colour may arrive on. A `<text>` is
  *  filled and a `<line>` has no fill at all, so each of those is painted by its one property;
- *  a `<rect>` and a `<path>` are painted by either — the cards and the arrowheads by their
- *  fill, the loop's own line by its stroke, with `fill: none` declared over it. */
-const PAINT_PROPERTIES = { text: ['fill'], line: ['stroke'], rect: ['fill', 'stroke'], path: ['fill', 'stroke'] }
+ *  a `<rect>`, a `<circle>` and a `<path>` are painted by either — the cards and the arrowheads
+ *  by their fill, the loop's own line by its stroke, with `fill: none` declared over it. */
+const PAINT_PROPERTIES = { text: ['fill'], line: ['stroke'], rect: ['fill', 'stroke'], path: ['fill', 'stroke'], circle: ['fill', 'stroke'] }
 
 /** What a drawing holds besides the shapes it paints: the two `<svg>` roots, the groups the
- *  geometry is nested in, and the words a screen reader reads. An element of any other name is
- *  refused rather than skipped — a `<polygon>`, a `<circle>` or a `<marker>` added to the drawing
- *  is a shape this reading does not know how to resolve the paint of, and a shape it cannot read
- *  is exactly where an unpainted one would hide. */
-const DRAWING_CONTAINERS = new Set(['svg', 'g', 'title', 'desc', 'defs'])
+ *  geometry is nested in, the words a screen reader reads, and — for the zoom levels — the one
+ *  `<defs>` that holds the shared `<symbol>`s and the `<use>` references that draw them. A
+ *  `<symbol>` needs no paint of its own (it is never rendered where it stands) and a `<use>` is
+ *  painted by the shapes of the `<symbol>` it names, which this reading reads where they are.
+ *  An element of any other name is refused rather than skipped — a `<polygon>`, an `<ellipse>`
+ *  or a `<marker>` added to a drawing is a shape this reading does not know how to resolve the
+ *  paint of, and a shape it cannot read is exactly where an unpainted one would hide (ZF42). */
+const DRAWING_CONTAINERS = new Set(['svg', 'g', 'title', 'desc', 'defs', 'symbol', 'use'])
 
 /** WCAG 2.1 AA for body text: the ratio every label of the drawing is held to. The labels are
  *  12 px and up (the floor `runDiagramFailures` holds the drawings to), which is not "large
@@ -1166,6 +1169,85 @@ const named = (colour) => (colour.token === null ? colour.value ?? '' : `\`${col
  * Pure, over the page's markup and its stylesheet, so the built page is checked with it and the
  * refusals below are proved with it.
  */
+/**
+ * Every way one shape of a drawing is left unpainted or painted with something the palette does
+ * not hold, as the lines a reader of the failure gets. One reading serves every drawing of the
+ * site — the run's picture and the four zoom levels — so that two drawings cannot be held to two
+ * different rules about what a colour is.
+ *
+ * A shape kind the reading has not been taught is refused by name: a drawing that grows an
+ * element is a drawing whose paint no check holds until the reading knows how that element takes
+ * its colour (ZF42, the gap the defect of 2026-10-21 came through).
+ */
+function paintRefusals(shape, css, palette, values) {
+  const lines = []
+    const properties = PAINT_PROPERTIES[shape.name]
+    if (properties === undefined) {
+      if (!DRAWING_CONTAINERS.has(shape.name)) {
+        lines.push(
+          `it is a \`<${shape.name}>\`, and this reading knows how a drawing's \`<rect>\`, \`<circle>\`, \`<path>\`, \`<line>\` and \`<text>\` are painted and nothing else. A shape it cannot read is a shape whose paint no check holds, which is the gap the defect of 2026-10-21 came through: teach this reading the element and how it takes its colour`,
+        )
+      }
+      return lines
+    }
+    const readings = properties.map((property) => ({ property, ...(paintInForce(css, shape, property) ?? { value: null, from: null }) }))
+    const declared = readings.filter((reading) => reading.value !== null)
+
+    for (const reading of declared) {
+      // `var()` is CSS's own syntax and an SVG presentation attribute is not CSS: an invalid
+      // attribute is dropped, and the shape falls back to SVG's initial value — black for
+      // `fill`, none for `stroke`. This is the trap a fix written in the markup falls into,
+      // and it is refused whatever token it names, because the token is not read there at all.
+      if (reading.source === 'attribute' && tokenOf(reading.value) !== null) {
+        lines.push(
+          `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), and \`var()\` is not a colour in an SVG presentation attribute: it is CSS's own syntax, an invalid attribute is dropped, and the shape falls back to SVG's initial value, which for \`fill\` is black and for \`stroke\` is none. The colour belongs in a class in the page's stylesheet, where the token resolves`,
+        )
+        continue
+      }
+      // A colour of the palette, and nothing at all, are the two values there is nothing to
+      // say about: the first is the shape painted the way the site paints, and the second is
+      // one property of a shape another property may still paint.
+      if (painted(reading, palette, values) !== null || reading.value === 'none') continue
+      // A token the palette does not hold is a colour nothing in force decides, and the one
+      // reading that could say what the shape is painted would be a second palette.
+      const token = tokenOf(reading.value)
+      if (token !== null) {
+        lines.push(
+          `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), and the palette in force declares no \`${token}\` (${[...palette.keys()].map((name) => `--${name}`).join(', ')}): a shape painted with a token that is not there resolves to nothing, and SVG's initial value takes over — a black fill, no stroke`,
+        )
+        continue
+      }
+      // A colour the palette does not hold is still a colour: the shape is visible, and the
+      // refusal is about where the value came from rather than about a reader seeing nothing.
+      if (rgbOf(reading.value) !== null) {
+        lines.push(
+          `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), which is not one of the palette's own colours (${[...new Set(palette.values())].join(', ')}): every colour the site paints comes from the palette in force, so that it is one value to change and one pair the contrast check can read`,
+        )
+        continue
+      }
+      lines.push(
+        `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), which this reading cannot turn into a colour: a colour function, a named colour or a \`currentColor\` is a value no contrast check can compute, and the palette in force holds opaque hex literals`,
+      )
+    }
+
+    const isPainted = declared.some((reading) => painted(reading, palette, values) !== null)
+    if (!isPainted && declared.length === 0) {
+      lines.push(
+        `no rule of the page's stylesheet can reach it and it declares no \`fill\` or \`stroke\` of its own: SVG's initial values are a black fill and no stroke at all, so the shape is painted black — the drawing's cards and its labels are rectangles of black — or, where it is stroke alone, not drawn at all. The shapes of this drawing arrive through \`set:html\`, which Astro's scope attribute never reaches: a scoped \`.run-…[data-astro-cid-…]\` rule cannot match them, and the paint rules need \`:global()\` around the shape's own compound (the owner's reading of the preview, 2026-10-21)`,
+      )
+    } else if (!isPainted && declared.every((reading) => reading.value === 'none')) {
+      // Every paint the shape declares is `none`, so it is drawn as nothing — the other half
+      // of the defect, and the half a reader sees as an absent arrow rather than a black card.
+      // `none` is the one declared value no refusal above speaks for, so this is where it is
+      // said; a shape whose paint is a colour this reading refuses has that line already, and
+      // this one would only repeat it.
+      lines.push(
+        `it declares ${declared.map((reading) => `\`${reading.property}: ${reading.value}\``).join(' and ')} and no colour at all, so it is drawn as nothing: a stroke-only shape is not drawn without a stroke and a card is not drawn without a fill, which is the same defect as the black rectangles read the other way round — a rule that paints the shape is what has to declare the colour (the owner's reading of the preview, 2026-10-21)`,
+      )
+    }
+  return lines
+}
+
 export function runPaintFailures(html, css, palette = paletteTokensInForce()) {
   const out = []
   const values = new Set([...palette.values()].map((value) => value.toLowerCase()))
@@ -1190,79 +1272,8 @@ export function runPaintFailures(html, css, palette = paletteTokensInForce()) {
       }
 
       for (const shape of walk(svg)) {
-        const properties = PAINT_PROPERTIES[shape.name]
-        if (properties === undefined) {
-          if (!DRAWING_CONTAINERS.has(shape.name)) {
-            note(
-              shape,
-              `it is a \`<${shape.name}>\`, and this reading knows how a drawing's \`<rect>\`, \`<path>\`, \`<line>\` and \`<text>\` are painted and nothing else. A shape it cannot read is a shape whose paint no check holds, which is the gap the defect of 2026-10-21 came through: teach this reading the element and how it takes its colour`,
-            )
-          }
-          continue
-        }
-        const readings = properties.map((property) => ({ property, ...(paintInForce(css, shape, property) ?? { value: null, from: null }) }))
-        const declared = readings.filter((reading) => reading.value !== null)
-
-        for (const reading of declared) {
-          // `var()` is CSS's own syntax and an SVG presentation attribute is not CSS: an invalid
-          // attribute is dropped, and the shape falls back to SVG's initial value — black for
-          // `fill`, none for `stroke`. This is the trap a fix written in the markup falls into,
-          // and it is refused whatever token it names, because the token is not read there at all.
-          if (reading.source === 'attribute' && tokenOf(reading.value) !== null) {
-            note(
-              shape,
-              `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), and \`var()\` is not a colour in an SVG presentation attribute: it is CSS's own syntax, an invalid attribute is dropped, and the shape falls back to SVG's initial value, which for \`fill\` is black and for \`stroke\` is none. The colour belongs in a class in the page's stylesheet, where the token resolves`,
-            )
-            continue
-          }
-          // A colour of the palette, and nothing at all, are the two values there is nothing to
-          // say about: the first is the shape painted the way the site paints, and the second is
-          // one property of a shape another property may still paint.
-          if (painted(reading, palette, values) !== null || reading.value === 'none') continue
-          // A token the palette does not hold is a colour nothing in force decides, and the one
-          // reading that could say what the shape is painted would be a second palette.
-          const token = tokenOf(reading.value)
-          if (token !== null) {
-            note(
-              shape,
-              `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), and the palette in force declares no \`${token}\` (${[...palette.keys()].map((name) => `--${name}`).join(', ')}): a shape painted with a token that is not there resolves to nothing, and SVG's initial value takes over — a black fill, no stroke`,
-            )
-            continue
-          }
-          // A colour the palette does not hold is still a colour: the shape is visible, and the
-          // refusal is about where the value came from rather than about a reader seeing nothing.
-          if (rgbOf(reading.value) !== null) {
-            note(
-              shape,
-              `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), which is not one of the palette's own colours (${[...new Set(palette.values())].join(', ')}): every colour the site paints comes from the palette in force, so that it is one value to change and one pair the contrast check can read`,
-            )
-            continue
-          }
-          note(
-            shape,
-            `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), which this reading cannot turn into a colour: a colour function, a named colour or a \`currentColor\` is a value no contrast check can compute, and the palette in force holds opaque hex literals`,
-          )
-        }
-
-        const isPainted = declared.some((reading) => painted(reading, palette, values) !== null)
-        if (!isPainted && declared.length === 0) {
-          note(
-            shape,
-            `no rule of the page's stylesheet can reach it and it declares no \`fill\` or \`stroke\` of its own: SVG's initial values are a black fill and no stroke at all, so the shape is painted black — the drawing's cards and its labels are rectangles of black — or, where it is stroke alone, not drawn at all. The shapes of this drawing arrive through \`set:html\`, which Astro's scope attribute never reaches: a scoped \`.run-…[data-astro-cid-…]\` rule cannot match them, and the paint rules need \`:global()\` around the shape's own compound (the owner's reading of the preview, 2026-10-21)`,
-          )
-        } else if (!isPainted && declared.every((reading) => reading.value === 'none')) {
-          // Every paint the shape declares is `none`, so it is drawn as nothing — the other half
-          // of the defect, and the half a reader sees as an absent arrow rather than a black card.
-          // `none` is the one declared value no refusal above speaks for, so this is where it is
-          // said; a shape whose paint is a colour this reading refuses has that line already, and
-          // this one would only repeat it.
-          note(
-            shape,
-            `it declares ${declared.map((reading) => `\`${reading.property}: ${reading.value}\``).join(' and ')} and no colour at all, so it is drawn as nothing: a stroke-only shape is not drawn without a stroke and a card is not drawn without a fill, which is the same defect as the black rectangles read the other way round — a rule that paints the shape is what has to declare the colour (the owner's reading of the preview, 2026-10-21)`,
-          )
-        }
+        for (const line of paintRefusals(shape, css, palette, values)) note(shape, line)
       }
-
       // And the labels: what each one is filled with, and what it is drawn on.
       for (const text of [...walk(svg)].filter((el) => el.name === 'text')) {
         const fill = painted(paintInForce(css, text, 'fill'), palette, values)
