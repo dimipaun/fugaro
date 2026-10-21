@@ -1,10 +1,14 @@
 package cli
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 )
@@ -318,5 +322,138 @@ func TestInitCredentialsStageFillsTheDigest(t *testing.T) {
 		// Again the installation stage's own: a development build's run adds
 		// no apply of its own.
 		t.Errorf("a development build applied: %v", applies)
+	}
+}
+
+// credsRefreshYAML is acme/app's fugaro.yaml with the one value the drift
+// note's credentials clause is about: agent.auth: cascade, the mode whose
+// credential comes from the installation's credentials service at call time
+// (C1.1 offers it, C1.19 refuses a launch without the service).
+const credsRefreshYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: cascade }\nworkflows:\n" +
+	"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n" +
+	"  api: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+
+// upgradeRigWithCascade is upgradeRigWithGitHubAppID's rig for a checkout of
+// that file: jobConfigCopyNote calls infra.Workflow and openCloudFor
+// directly, unstubbed, so it needs a real repository entry and a runs bucket
+// with the installation's project marker.
+func upgradeRigWithCascade(t *testing.T) *anchorModeRig {
+	t.Helper()
+	fakeTerraform(t)
+	upgradeEnv(t, "0.5.1")
+	r := newAnchorModeRig(t, credsRefreshYAML, false)
+	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app], github_app_id: \"12345\" }\n")
+	runs := t.TempDir()
+	r.appendConfig(t, "bucket_url: file://"+runs+"\n")
+	marker, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: "aurora", GCPProject: "proj-1234"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(runs, "fugaro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runs, "fugaro", "project.json"), marker, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// TestUpgradeNoteNamesTheStage (plan C1.20): a version upgrade is where the
+// operator of a cascade repository learns that two OWNER-RUN steps stand
+// between the file they just edited and a run that works — the note names
+// both, in the order they have to run, and never suggests that upgrading
+// does any of it.
+//
+// The clause is orthogonal to the drift the rest of the note is about, so it
+// is owed even when every deployed job's env copy matches (the case here),
+// and that is what makes it its own reason to speak: without it the whole
+// note would stay silent for exactly the operators who need it.
+//
+// Mutation (verified, run and restored): make jobConfigCopyCredentialsNote
+// return "": this test fails, finding no clause at all.
+func TestUpgradeNoteNamesTheStage(t *testing.T) {
+	r := upgradeRigWithCascade(t)
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, "api", nil)
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"note: the deployed job's environment matches the local project config",
+		"agent.auth: cascade",
+		"must mount no model credential at all",
+		"fugaro init --provision-credentials",
+		"fugaro init --firebase",
+		"fugaro init --repo .",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the note lacks %q:\n%s", want, out)
+		}
+	}
+	// The service is the one identity that reads every model credential, so
+	// the note must not read as something an upgrade does on its own.
+	if strings.Contains(out, "agent.auth: oauth") {
+		t.Errorf("the note reports the wrong auth mode:\n%s", out)
+	}
+}
+
+// The clause is silent for every other auth: a repository whose jobs mount
+// their own credential has nothing to be told about the service, and a note
+// that named it anyway would be noise the operator learns to skip.
+func TestUpgradeNoteCredentialsClauseIsSilentWithoutCascade(t *testing.T) {
+	for _, auth := range []string{"", "oauth", "api-key"} {
+		cfg := &config.Config{}
+		cfg.Agent.Auth = auth
+		if got := jobConfigCopyCredentialsNote(cfg); got != "" {
+			t.Errorf("the clause speaks for agent.auth %q: %q", auth, got)
+		}
+	}
+	cfg := &config.Config{}
+	cfg.Agent.Auth = config.AuthCascade
+	if got := jobConfigCopyCredentialsNote(cfg); !strings.Contains(got, "fugaro init --provision-credentials") {
+		t.Errorf("the clause does not name the stage for %s: %q", config.AuthCascade, got)
+	}
+}
+
+// The flag is refused where it could only mislead, exactly as --provision-batch
+// is: with --repo (another root's run) and with every flag that only reads or
+// only stops, so a run that named --provision-credentials always means the
+// apply it names. The check is asked directly: a --repo run resolves the
+// checkout before it validates anything.
+func TestProvisionCredentialsFlagIsRefusedWhereItCannotApply(t *testing.T) {
+	for _, o := range []*initOptions{{provisionCredentials: true, repo: true}, {provisionCredentials: true, forget: true},
+		{provisionCredentials: true, printVars: true}, {provisionCredentials: true, configOnly: true},
+		{provisionCredentials: true, publishConfig: true}, {provisionCredentials: true, anchor: true}} {
+		err := o.check()
+		if err == nil || !strings.Contains(err.Error(), "--provision-credentials") {
+			t.Errorf("%+v: err = %v, want it refused", o, err)
+		}
+	}
+}
+
+// The two owner-run applies do NOT exclude one another, and the flag's help
+// says so: they are applies of different roots (the installation's credentials
+// service, the Batch backend's own state), each with its own typed
+// confirmation, so naming both means both — a refusal would be a rule with no
+// reason behind it, and a help text that claimed one would be a rule the code
+// does not have.
+func TestProvisionCredentialsAndBatchAreIndependentApplies(t *testing.T) {
+	o := &initOptions{provisionBatch: true, provisionCredentials: true}
+	if err := o.check(); err != nil {
+		t.Fatalf("--provision-batch --provision-credentials was refused: %v", err)
+	}
+	// ...and a read-only flag beside them is still refused, naming both
+	// applies rather than only one of them.
+	both := &initOptions{provisionBatch: true, provisionCredentials: true, printVars: true}
+	err := both.check()
+	if err == nil || !strings.Contains(err.Error(), "--provision-batch and --provision-credentials") {
+		t.Errorf("err = %v, want the refusal to name both applies", err)
+	}
+	// The --repo path refuses it as the single flag does (checkRepo).
+	ro := &initOptions{provisionCredentials: true, repo: true}
+	if err := ro.checkRepo(); err == nil || !strings.Contains(err.Error(), "--provision-credentials") {
+		t.Errorf("fugaro init --repo --provision-credentials: err = %v, want a refusal naming the flag", err)
 	}
 }
