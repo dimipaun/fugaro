@@ -236,6 +236,12 @@ conn.request("POST", "/v1/messages", body, {
 resp = conn.getresponse()
 resp.read()
 if resp.status != 200:
+    if mode == "quiet-limit":
+        # A client that says NOTHING about the limit: it exits non-zero with no
+        # text at all, so the only sight of the limit is on the wire and U4's
+        # third part is not measurable. This is the shape that separates
+        # "the client told us" from "nobody told us".
+        sys.exit(1)
     # What the REAL client prints, reason phrase and all: "API Error: 502 ...
     # <what the proxy said>". That text is what the block quotes, so a test can
     # read what the client was told about a failure it cannot otherwise see.
@@ -297,6 +303,28 @@ CHMOD_EOF
   chmod +x "$1/bin/chmod"
 }
 
+# write_fake_rm_failing_on_token DIR — an `rm` that refuses the TOKEN FILE and
+# hands every other removal to the real one. It plants the one cleanup failure
+# the `restore` row exists to name: a token file that survives holds the
+# setup-token value, so the row has to say FAIL and name the path, and it must
+# never print "the token file is removed" over one that is still there.
+write_fake_rm_failing_on_token() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/rm" <<RM_EOF
+#!/bin/sh
+# The token file and the scratch directory it lives in: refusing both is what
+# leaves a token file on disk with the directory still around it, which is the
+# shape the Restore has to report rather than paper over.
+for a in "\$@"; do
+  case "\$a" in
+  *token* | */chk90.*) echo "fake rm: refusing to remove \$a" >&2; exit 1 ;;
+  esac
+done
+exec "$REAL_RM" "\$@"
+RM_EOF
+  chmod +x "$1/bin/rm"
+}
+
 # write_fake_rm DIR — an `rm` that takes its time and says when it started, so a
 # test can send a signal while the CLEANUP is running. It hands every removal to
 # the real `rm`; only the moment is the fake's.
@@ -352,6 +380,12 @@ class H(http.server.BaseHTTPRequestHandler):
         if MODE == "limit" and kind == "placeholder":
             return error(self, 429, "rate_limit_error",
                          "fake upstream: usage limit", {"retry-after": "60"})
+        # A swap call the upstream ANSWERED and refused: the proxy did attach the
+        # real credential (an unauthenticated request is 401'd before this), and
+        # the call failed anyway. It is the shape the swap's FAIL branch is for,
+        # and the only one that may produce the NOT VIABLE verdict.
+        if MODE == "swap-error" and kind == "placeholder":
+            return error(self, 500, "api_error", "fake upstream: the swapped call failed")
         missing = [h for h in REQUIRE if not self.headers.get(h)]
         if missing:
             return error(self, 400, "invalid_request_error",
@@ -411,6 +445,9 @@ run90() {
   write_fake_env "$dir"
   write_fake_ps "$dir"
   write_fake_upstream "$dir"
+  # The one fake a test cannot add AFTER the run starts: a test that needs a
+  # stand-in for `rm` (a cleanup removal that fails) names its writer here.
+  [ -z "${RUN90_FAKE_RM:-}" ] || "$RUN90_FAKE_RM" "$dir"
   start_upstream "$dir" "$mode" "$require" || return 1
   : >"$dir/claude.calls"
   status=0
@@ -590,17 +627,37 @@ CASES
 }
 
 test_swap_fails() {
-  # The client cannot use the credential the swap path gives it: the swap call
-  # fails while the control and the observed control succeeded.
-  run90 swapfail ok "" FAKE_CLAUDE_FAIL_ON=placeholder
+  # The swap call REACHED the proxy and the upstream refused it while the
+  # control and the observed control succeeded. That is a measurement, and it is
+  # the only shape that may say NOT VIABLE.
+  run90 swapfail swap-error ""
   expect_status "$status" 1 "swap fails"
   expect_contains "$out" "FACT swap: FAIL" "swap fails: the fact"
+  expect_contains "$out" "the proxy forwarded 1 request" "swap fails: the block says the request reached the proxy"
   expect_contains "$out" "FACT tier-a: FAIL — NOT VIABLE" "swap fails: tier A"
   expect_contains "$out" "Global Constraint 4" "swap fails: the consequence is named"
   expect_contains "$out" "CHECK 90 RESULT END (exit 1)" "swap fails: the end line"
   expect_contains "$err" "the remaining steps are skipped" "swap fails: no further prompts"
   [ -d "$(sed -n 's/^check90: scratch directory: \([^ ]*\) .*/\1/p' "$work/swapfail/err" | head -n 1)" ] \
     && fail "swap fails: the scratch directory survived"
+  return 0
+}
+
+# The other shape of a failed swap call, and the one this branch used to
+# misjudge: the client failed WITHOUT the proxy having seen a request. Nothing
+# was swapped, so nothing about the swap was measured — "could not tell", exit
+# 2, exactly like the rc == 0 twin — and NOT "the TIER A tasks are dropped",
+# which is a claim about a swap that never happened.
+test_swap_fails_before_reaching_the_proxy() {
+  run90 swapfail-noproxy ok "" FAKE_CLAUDE_FAIL_ON=placeholder
+  expect_status "$status" 2 "swap failed before the proxy"
+  expect_contains "$out" "FACT swap: INFO" "swap failed before the proxy: no verdict on the swap"
+  expect_contains "$out" "the proxy forwarded no request" "swap failed before the proxy: the block says so"
+  expect_absent "$out" "NOT VIABLE" "swap failed before the proxy: tier A is not judged"
+  expect_contains "$out" "CHECK 90 RESULT END (exit 2)" "swap failed before the proxy: the end line"
+  expect_contains "$err" "Nothing is concluded about tier A" "swap failed before the proxy: the stop says so"
+  [ -d "$(sed -n 's/^check90: scratch directory: \([^ ]*\) .*/\1/p' "$work/swapfail-noproxy/err" | head -n 1)" ] \
+    && fail "swap failed before the proxy: the scratch directory survived"
   return 0
 }
 
@@ -624,9 +681,33 @@ test_limit_is_recorded() {
   expect_contains "$out" "FACT tier-a: PASS — VIABLE" "usage limit: tier A survives a rate limit"
   expect_contains "$out" "429" "usage limit: the status is named in the verdict"
   expect_contains "$out" "FACT headers-required: INFO" "usage limit: the drop list was not measured"
+  # U4's third part, which the register promises and the block used to leave
+  # out: what the CLIENT ITSELF printed for the limit, not just the upstream's
+  # error object. It is the client's own output, so it carries the client's
+  # wording ("API Error: 429 ...").
+  expect_contains "$out" "FACT client-limit-wording: PASS" "usage limit: the client's own wording is recorded"
+  expect_contains "$out" "API Error: 429" "usage limit: and it is what the client printed"
   expect_absent "$out" "NOT VIABLE" "usage limit: no verdict against the swap"
   expect_absent "$out" "INCONCLUSIVE" "usage limit: the verdict is not an inconclusive one"
   assert_no_sentinel "$work/limit" "usage limit"
+  return 0
+}
+
+# The other half of that promise: the register's row 90 and step 7 both say
+# U4's third part is recorded ONLY if the client reports one, and stays
+# UNVERIFIED when the limit is seen on the wire alone. So a run where the
+# client printed nothing about the limit must NOT read as a recording of it --
+# the row is INFO, and it says in those words that the part is UNVERIFIED. The
+# old code had no row at all here, so neither answer was pinned; a PASS here
+# would be the block claiming the client's wording when it said nothing.
+test_limit_the_client_never_spoke_about_is_unverified() {
+  run90 limit-silent limit "" FAKE_CLAUDE_MODE=quiet-limit
+  expect_status "$status" 0 "silent limit: the run still judges the swap"
+  expect_contains "$out" "FACT usage-limit: PASS" "silent limit: the limit is still recorded from the wire"
+  expect_contains "$out" "FACT client-limit-wording: INFO" "silent limit: the client's wording was not measured"
+  expect_contains "$out" "U4's third part stays UNVERIFIED" "silent limit: the row says which part is unverified"
+  expect_absent "$out" "FACT client-limit-wording: PASS" "silent limit: a silent client is not a recording"
+  assert_no_sentinel "$work/limit-silent" "silent limit"
   return 0
 }
 
@@ -955,8 +1036,14 @@ test_swap_the_proxy_never_saw() {
 # loopback -- is refused, so the real token is never attached to it.
 test_foreign_request_is_refused() {
   run90 foreign ok "" FAKE_CLAUDE_MODE=foreign
-  expect_status "$status" 1 "foreign: the swap call fails"
-  expect_contains "$out" "FACT swap: FAIL" "foreign: the fact"
+  # The proxy refused the request and forwarded nothing, so the upstream was
+  # never reached and NOTHING about the swap was measured: "could not tell",
+  # exit 2. It used to be recorded as NOT VIABLE — "the TIER A tasks are
+  # dropped" — on evidence that says nothing about the swap at all.
+  expect_status "$status" 2 "foreign: could not tell"
+  expect_contains "$out" "FACT swap: INFO" "foreign: no verdict on the swap"
+  expect_contains "$out" "the proxy refused 1 request(s)" "foreign: the refusal is what the block names"
+  expect_absent "$out" "NOT VIABLE" "foreign: tier A is not judged"
   local log=$work/foreign/logs/proxy-swap.log
   [ -s "$log" ] || {
     fail "foreign: the swap phase left no proxy log, so this test proves nothing"
@@ -1101,6 +1188,49 @@ test_internal_error_is_aborted_not_viable() {
   local sc
   sc=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
   if [ -d "$sc" ]; then fail "internal error: the scratch directory survived the stop"; fi
+  return 0
+}
+
+# The `restore` row's honesty, which nothing pinned: a cleanup removal that
+# FAILS. A token file that survives holds the setup-token value, so the row must
+# say FAIL and name the path — it must never print "the token file is removed"
+# over one that is still there — and the scratch directory that failed to go is
+# named with it. The row's other claim ("the proxy is stopped") is read from
+# what stop_proxy found rather than assumed, and this run is one where the proxy
+# really was started and really did stop.
+test_a_token_file_that_survives_is_a_failure() {
+  RUN90_FAKE_RM=write_fake_rm_failing_on_token run90 tokenrm ok ""
+  expect_status "$status" 0 "token file survives: the verdict is still the swap's"
+  expect_contains "$out" "FACT restore: FAIL" "token file survives: the row is a FAIL"
+  expect_contains "$out" "the TOKEN FILE IS STILL THERE" "token file survives: the row names it"
+  expect_absent "$out" "the token file is removed" "token file survives: the row does not claim it is gone"
+  expect_contains "$out" "the scratch directory is STILL THERE" "token file survives: the directory is named too"
+  expect_contains "$out" "the proxy is stopped" "token file survives: the proxy's own claim is the measured one"
+  # The run could not remove them, so the test does — with the real `rm`, which
+  # is what the fake stands in for. Nothing else cleans this up.
+  local sc
+  sc=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$work/tokenrm/err" | head -n 1)
+  if [ -n "$sc" ] && [ -d "$sc" ]; then "$REAL_RM" -rf "$sc"; fi
+  return 0
+}
+
+# CHECK90_KEEP_LOGS is a convenience for a failed run, and it must not become
+# the way this check writes into a checkout. The guard used to `cd` into the
+# target and ask git, which fails when the directory does not exist YET — the
+# ordinary case, `CHECK90_KEEP_LOGS=logs` from a repository — so the guard never
+# fired and the logs were copied into the working tree. The question is asked of
+# the nearest ancestor that exists.
+test_keep_logs_refuses_a_checkout_even_when_the_directory_is_not_there_yet() {
+  command -v git >/dev/null 2>&1 || return 0
+  local dir=$work/keeplogs
+  mkdir -p "$dir/repo"
+  git -C "$dir/repo" init -q 2>/dev/null || return 0
+  run90 keeplogs ok "" CHECK90_KEEP_LOGS="$dir/repo/logs"
+  expect_status "$status" 0 "keep logs: the run"
+  expect_contains "$err" "not copying logs into" "keep logs: the refusal is said"
+  if [ -e "$dir/repo/logs" ]; then
+    fail "keep logs: the logs were copied into a checkout at $dir/repo/logs — the guard only held for a directory that already existed"
+  fi
   return 0
 }
 
@@ -1494,7 +1624,9 @@ test_block_format
 test_env_guards
 test_settings_guard
 test_swap_fails
+test_swap_fails_before_reaching_the_proxy
 test_limit_is_recorded
+test_limit_the_client_never_spoke_about_is_unverified
 test_control_failure_is_inconclusive
 test_dry_run_makes_no_call
 test_token_is_never_on_a_command_line
@@ -1513,6 +1645,8 @@ test_a_non_timeout_failure_is_not_recorded_as_a_timeout
 test_version_probe_is_capped_and_once
 test_internal_error_is_aborted_not_viable
 test_token_length_is_not_printed
+test_a_token_file_that_survives_is_a_failure
+test_keep_logs_refuses_a_checkout_even_when_the_directory_is_not_there_yet
 test_child_flags_disable_tools_and_are_documented
 test_child_is_not_started_with_debug_logging
 test_placeholder_is_never_in_a_process_argv

@@ -1,10 +1,36 @@
 # Check 91 — the step-by-step text (appendix)
 
 This is the step-by-step text the register's Check 91 section used to carry, kept
-because it is what explains a result. The check itself is run as one script,
-`scripts/live-checks/check91.sh`, which does every step below and prints a
-`CHECK 91 RESULT` block; read this when a fact in that block is not `PASS` and you
-want to know what the step it names did.
+because it is what explains a result. **It is the MANUAL procedure** — the blocks
+below are meant to be pasted into your own shell, one step at a time — and it is
+**not** a description of the script. What you actually run is
+`scripts/live-checks/check91.sh`, which performs the same steps itself and prints
+the `CHECK 91 RESULT` block. Read this when a fact in that block is not `PASS` and
+you want to know what the step it names did; where the two differ, **the script is
+what ran**, and the differences that matter when you are reading a block are
+these:
+
+- **The exit statuses.** Every stop in the blocks below is `exit 1`, because a
+  pasted block stops the shell it is pasted into. The script exits `1` for a
+  stop too, but it always prints the block first, with an `aborted` fact naming
+  the reason, and `2` is never a stop of its own.
+- **The scratch directory.** The blocks below remember it in `$CHK91_RECORD` (a
+  file under `$HOME`), because each block is sourced separately. The script holds
+  it in one shell and writes no such file; its scratch directory carries a marker
+  file the script re-checks before removing it.
+- **The service's state, and the repository's.** Every `gcloud ... describe` in
+  the script distinguishes a resource that is **not there** (gcloud's
+  `NOT_FOUND`) from one whose state **cannot be read** (an expired session, a
+  transient API error, a permission the account lacks). A describe that failed
+  for any other reason is **not** the answer "it is not there": the guard stops
+  rather than adopting a service it did not create, and a run that did create one
+  keeps its ownership record so the Restore still deletes it. The blocks below
+  show the plain `describe` a human runs, where the two cases are told apart by
+  reading the message.
+- **The build's error.** The script keeps `gcloud builds submit`'s stderr and
+  puts its last 30 lines in the block as a `build-error` fact, with anything
+  credential-shaped replaced by `<redacted>`, because the block is pasted into a
+  pull request. Below, you read that output yourself at the terminal.
 
 The register's section is `docs/gcp-live-checklist.md`, "Check 91".
 

@@ -2639,6 +2639,14 @@ func notAdmittedSentence(r string) string {
 // and these listings reach this sentence exactly for the names the config does
 // not know. The canonical form is the one that stands on its own.
 //
+// The name must also be one `repos add` accepts after its own canonicalising:
+// a last segment of exactly ".git" is not, because task.CanonicalRepo strips a
+// trailing ".git" (after lower-casing) and is then left with an empty one, so
+// 'github/acme/.git' is printed by the shape rules above and refused by the
+// command. "github/acme/app.git" IS accepted (the command stores
+// "github/acme/app"), so the rule is about the last segment and not the
+// suffix.
+//
 // The name is bounded too, at projectpolicy.MaxPatternLen bytes (the alphabet
 // is ASCII, so bytes are characters) — the bound `repos add` applies to the
 // argument through ValidPattern, and not a bound of this package's own. It is
@@ -2664,6 +2672,19 @@ func enrollableArg(name string) (string, bool) {
 		if !repoIdentSegment(seg) {
 			return "", false
 		}
+	}
+	// A name whose LAST segment is exactly ".git" is refused by `repos add`,
+	// and this gate has to refuse it too or it prints a command the program
+	// itself answers with `"github/acme/.git" is not a repository: the
+	// repository must look like owner/name`. task.CanonicalRepo strips a
+	// trailing ".git" — after ASCII-lowering, so ".GIT" goes the same way —
+	// and then requires every segment to be non-empty: "github/acme/.git"
+	// becomes "github/acme/" and fails. Only the last segment, and only the
+	// whole segment: "github/acme/app.git" is a name the command accepts (it
+	// stores "github/acme/app"), and a ".git" segment in the middle is left
+	// alone.
+	if strings.EqualFold(segs[len(segs)-1], ".git") {
+		return "", false
 	}
 	return shellword.Quote(name), true
 }

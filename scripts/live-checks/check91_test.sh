@@ -141,6 +141,28 @@ def rm(name):
         pass
 
 
+def describe_fails(kind):
+    """Whether this run says the DESCRIBE QUERY itself fails, as a real one does when
+    the session's credentials have expired, the API answers with a transient error, or
+    the account lacks the permission. It is NOT the same answer as a resource that is
+    not there, and the two are told apart by the MESSAGE: a describe of an absent
+    resource prints NOT_FOUND (below), anything else is 'the call failed' -- which is
+    not evidence of absence, and reading it as absence is how the check would adopt a
+    resource it did not create or take back the record of one it did."""
+    want = os.environ.get("FAKE_GCLOUD_DESCRIBE_FAILS", "")
+    return want == "all" or kind in want.split(",")
+
+
+def describe_failed(cmd):
+    sys.stderr.write("ERROR: (gcloud.%s) UNAVAILABLE: the fake gcloud was told to fail this describe\n" % cmd)
+    sys.exit(1)
+
+
+def describe_absent(cmd):
+    sys.stderr.write("ERROR: (gcloud.%s) NOT_FOUND: Requested entity was not found.\n" % cmd)
+    sys.exit(1)
+
+
 def listfails(kind):
     """Whether this run says the list QUERY itself fails, as a real one does when the
     session's credentials have expired or the API answers with a transient error. It is
@@ -165,8 +187,26 @@ if mode == "hang":
     time.sleep(600)
 
 if args[:2] == ["run", "services"] and args[2:3] == ["describe"]:
+    if describe_fails("services"):
+        describe_failed("run.services.describe")
+    # `after-deploy` fails only the describes that come once a deploy has been
+    # ATTEMPTED: the guard's describe (which runs on a service that is not there
+    # yet) still answers, and the one that decides whether a failed deploy left
+    # something behind does not. That is the shape that tells the record-keeping
+    # rule apart from the guard's.
+    if describe_fails("after-deploy") and state("deploy-attempted"):
+        describe_failed("run.services.describe")
+    # The two describes the step makes AFTER a successful deploy are told apart
+    # from the guard's by their --format, so a test can plant a failure in
+    # exactly one of them: `url` is the one that reads status.url, `config` the
+    # one that reads the container's spec.
+    fmt = flag("--format") if has("--format") else ""
+    if "status.url" in fmt and describe_fails("url"):
+        describe_failed("run.services.describe")
+    if "spec.template" in fmt and describe_fails("config"):
+        describe_failed("run.services.describe")
     if not state("service"):
-        sys.exit(1)
+        describe_absent("run.services.describe")
     if has("--format"):
         fmt = flag("--format")
         if "status.url" in fmt:
@@ -207,23 +247,41 @@ if args[:2] == ["run", "services"] and args[2:3] == ["update"]:
     sys.exit(0)
 
 if args[:2] == ["run", "deploy"]:
+    # `yes` fails and makes NOTHING (a deploy refused before it started); `after`
+    # makes the service and THEN fails, which is the shape the ownership record
+    # exists for -- the service is there and is being billed, and a run that
+    # took its record back would leave it behind for good.
+    touch("deploy-attempted")
     if os.environ.get("FAKE_GCLOUD_DEPLOY_FAILS") == "yes":
         sys.stderr.write("ERROR: (gcloud.run.deploy) the fake gcloud was told to fail this deploy\n")
         sys.exit(1)
     touch("service")
+    if os.environ.get("FAKE_GCLOUD_DEPLOY_FAILS") == "after":
+        sys.stderr.write("ERROR: (gcloud.run.deploy) the fake gcloud was told to fail this deploy AFTER making the service\n")
+        sys.exit(1)
     print("Deploying container to Cloud Run service [fugaro-chk91]... done.")
     if HANG_ON == "deploy":
         time.sleep(HANG_SECONDS)
     sys.exit(0)
 
 if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["describe"]:
-    sys.exit(0 if (state("repo") or os.environ.get("FAKE_GCLOUD_REPO_EXISTS") == "yes") else 1)
+    if describe_fails("repositories"):
+        describe_failed("artifacts.repositories.describe")
+    if state("repo") or os.environ.get("FAKE_GCLOUD_REPO_EXISTS") == "yes":
+        sys.exit(0)
+    describe_absent("artifacts.repositories.describe")
 
 if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["create"]:
+    # `yes` fails and makes nothing; `after` makes the repository and THEN fails,
+    # the twin of the deploy's `after` above: the repository is this run's and
+    # the record of it has to stay so the Restore deletes it.
     if os.environ.get("FAKE_GCLOUD_CREATE_FAILS") == "yes":
         sys.stderr.write("ERROR: (gcloud.artifacts.repositories.create) the fake gcloud was told to fail this create\n")
         sys.exit(1)
     touch("repo")
+    if os.environ.get("FAKE_GCLOUD_CREATE_FAILS") == "after":
+        sys.stderr.write("ERROR: (gcloud.artifacts.repositories.create) the fake gcloud was told to fail this create AFTER making the repository\n")
+        sys.exit(1)
     if HANG_ON == "repo-create":
         time.sleep(HANG_SECONDS)
     sys.exit(0)
@@ -277,7 +335,14 @@ if args[:1] == ["builds"]:
                          "have storage.objects.get access to the Google Cloud Storage object. "
                          "Permission 'storage.objects.get' denied on resource "
                          "(or it may not exist).\n")
+        # The shapes a build's error really carries, all of them fakes: a
+        # Bearer header, a Basic one (base64, so it does not even look like a
+        # secret), and the two OAuth fields the token endpoints answer with.
+        # Every one of them must be gone from the row before it is printed.
         sys.stderr.write("authorization: Bearer FAKE-NOT-A-REAL-CREDENTIAL-9d3f\n")
+        sys.stderr.write("Authorization: Basic RkFLRS1OT1QtQS1SRUFMLUJFQVJFUg==\n")
+        sys.stderr.write("client_secret=FAKE-NOT-A-REAL-CLIENT-SECRET-4b21\n")
+        sys.stderr.write("refresh_token: FAKE-NOT-A-REAL-REFRESH-TOKEN-7c05\n")
         sys.exit(1)
     touch("image")
     print("BUILD SUCCESS")
@@ -1006,7 +1071,14 @@ test_a_failed_build_records_what_it_said() {
   # The excerpt is FILTERED, not trusted: an authorization header can appear in
   # a build's error, and the block is pasted into a PR.
   expect_contains "$out" "<redacted>" "failed build: what was filtered is marked"
-  expect_absent "$out" "FAKE-NOT-A-REAL-CREDENTIAL-9d3f" "failed build: an authorization header's value never reaches the block"
+  expect_absent "$out" "FAKE-NOT-A-REAL-CREDENTIAL-9d3f" "failed build: a Bearer header's value never reaches the block"
+  # The other shapes a build's error carries. A Basic header is base64 and
+  # looks like nothing in particular, and the two OAuth fields are named, not
+  # bearer-shaped: all three went into the block unredacted before this, in the
+  # row the register promises is safe to paste into a PR.
+  expect_absent "$out" "RkFLRS1OT1QtQS1SRUFMLUJFQVJFUg==" "failed build: a Basic header's value never reaches the block"
+  expect_absent "$out" "FAKE-NOT-A-REAL-CLIENT-SECRET-4b21" "failed build: a client_secret never reaches the block"
+  expect_absent "$out" "FAKE-NOT-A-REAL-REFRESH-TOKEN-7c05" "failed build: a refresh_token never reaches the block"
   local calls
   calls=$(cat "$dir/logs/gcloud.calls")
   expect_absent "$calls" "run deploy" "failed build: nothing is deployed"
@@ -1186,10 +1258,30 @@ test_failed_create_takes_its_record_back() {
   if [ -d "$scratch" ]; then fail "failed create: the scratch directory survived"; fi
 }
 
-# A deploy that reported failure but left the service there is the dangerous
-# half: the record must STAY, because the service is this check's and is being
-# billed, and the Restore has to delete it.
-test_failed_deploy_keeps_the_record_it_made() {
+# The other half of the same rule for the REPOSITORY: a create that reported
+# failure but left the repository there. The record must STAY -- the repository
+# is this run's, it holds the image, and a run that took the record back would
+# leave it in the project with nothing naming it. (The `yes` shape above is the
+# one that takes the record back; this is the one that must not.)
+test_failed_create_that_made_the_repository_keeps_its_record() {
+  local dir=$work/createfail-after
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_CREATE_FAILS=after
+  expect_status "$status" 1 "failed create that made it: the verdict"
+  expect_contains "$err" "the repository create reported failure, but fugaro-chk91 IS there now" \
+    "failed create that made it: the stop"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_contains "$calls" "artifacts repositories delete fugaro-chk91" \
+    "failed create that made it: the repository this run made IS deleted by the Restore"
+  expect_contains "$out" "FACT restore: PASS" "failed create that made it: the Restore ran"
+  if [ -d "$scratch" ]; then fail "failed create that made it: the scratch directory survived"; fi
+}
+
+# A deploy that reported failure and really made no service takes its record
+# back: the Restore must not name -- and certainly must not delete -- a service
+# that is not there.
+test_failed_deploy_that_made_nothing_takes_its_record_back() {
   local dir=$work/deployfail
   prepare "$dir"
   run91 "$dir" FAKE_GCLOUD_DEPLOY_FAILS=yes
@@ -1211,6 +1303,125 @@ test_failed_deploy_keeps_the_record_it_made() {
   expect_contains "$calls" "artifacts repositories delete fugaro-chk91" \
     "failed deploy: the repository this run made is still deleted"
   expect_contains "$out" "FACT restore: PASS" "failed deploy: the Restore ran"
+}
+
+# The dangerous half of the deploy, and the branch this test's name used to
+# claim while exercising the safe one: the deploy reported failure but the
+# service IS there. It is this check's — the record was written before the
+# deploy started — it is being billed, and the Restore has to delete it.
+test_failed_deploy_keeps_the_record_it_made() {
+  local dir=$work/deployfail-after
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_DEPLOY_FAILS=after
+  expect_status "$status" 1 "failed deploy that made it: the verdict"
+  expect_contains "$err" "the deploy reported failure, but fugaro-chk91 IS there now" \
+    "failed deploy that made it: the stop"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_contains "$calls" "run services delete fugaro-chk91" \
+    "failed deploy that made it: the service this run made IS deleted by the Restore"
+  expect_contains "$out" "FACT restore: PASS" "failed deploy that made it: the Restore ran"
+  if [ -d "$scratch" ]; then fail "failed deploy that made it: the scratch directory survived"; fi
+}
+
+# A describe that failed for a reason OTHER than NOT_FOUND is not the answer
+# "it is not there". Read as one, it lets a pre-existing service pass the guard,
+# be adopted by the create-or-update deploy and then be DELETED by the Restore;
+# the guard stops instead, and the block says so rather than claiming a verdict
+# on the swap of a service it never looked at.
+test_an_unreadable_describe_is_not_an_absent_resource() {
+  local dir=$work/describe-unreadable
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_DESCRIBE_FAILS=services
+  expect_status "$status" 1 "unreadable describe: the verdict"
+  expect_contains "$err" "whether fugaro-chk91 is already in fugaro-dev/us-east5 cannot be read" \
+    "unreadable describe: the guard stops"
+  expect_contains "$err" "NOT_FOUND" "unreadable describe: the reason is named"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_absent "$calls" "repositories create" "unreadable describe: nothing was created"
+  expect_absent "$calls" "builds submit" "unreadable describe: nothing was built"
+  expect_absent "$calls" "run deploy" "unreadable describe: nothing was deployed"
+  expect_absent "$calls" "delete" "unreadable describe: nothing was deleted"
+  if [ -d "$scratch" ]; then fail "unreadable describe: the scratch directory survived"; fi
+}
+
+# The same rule one step later: the repository guard's describe fails
+# transiently, so whether a repository of this name is already there cannot be
+# read. The run stops BEFORE the create — a repository it did not make would be
+# written into and then deleted by the Restore — rather than treating the failed
+# call as an empty project.
+test_an_unreadable_repository_describe_stops_before_the_create() {
+  local dir=$work/repo-describe-unreadable
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_DESCRIBE_FAILS=repositories
+  expect_status "$status" 1 "unreadable repository describe: the verdict"
+  expect_contains "$err" "whether a repository named fugaro-chk91 is already in fugaro-dev/us-east5 cannot be read" \
+    "unreadable repository describe: the guard stops"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_absent "$calls" "repositories create" "unreadable repository describe: nothing was created"
+  expect_absent "$calls" "delete" "unreadable repository describe: nothing was deleted"
+  if [ -d "$scratch" ]; then fail "unreadable repository describe: the scratch directory survived"; fi
+}
+
+# And the record-keeping half of the same rule: the deploy reported failure and
+# the describe that would say whether the service is there cannot be read. The
+# record is KEPT, because a deploy that reported failure may still be serving
+# and being billed, and the record is the only thing that makes the Restore
+# delete it.
+test_an_unreadable_describe_after_a_failed_deploy_keeps_the_record() {
+  local dir=$work/deployfail-unreadable
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_DEPLOY_FAILS=yes FAKE_GCLOUD_DESCRIBE_FAILS=after-deploy
+  expect_status "$status" 1 "unreadable describe after a failed deploy: the verdict"
+  expect_contains "$err" "whether fugaro-chk91 is there now cannot be read" \
+    "unreadable describe after a failed deploy: the record is kept"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_contains "$calls" "run services delete fugaro-chk91" \
+    "unreadable describe after a failed deploy: the record's service IS named by the Restore"
+  if [ -d "$scratch" ]; then fail "unreadable describe after a failed deploy: the scratch directory survived"; fi
+}
+
+# The two describes the step makes AFTER a successful deploy are guarded too.
+# Unguarded, under `set -Eeuo pipefail` a transient failure ends the run with
+# gcloud's own exit status, NO `aborted` fact, and `service-config` /
+# `unauthenticated-request` reading FAIL -- not reached: a block that ends
+# "exit 1" -- a failed fact, per the register -- with nothing naming the cause.
+# The service IS deployed and IS this check's at that point, so the stop says
+# so and the Restore deletes it.
+test_a_url_describe_that_fails_after_the_deploy_does_not_end_the_run_bare() {
+  local dir=$work/url-unreadable
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_DESCRIBE_FAILS=url
+  expect_status "$status" 1 "unreadable url describe: the verdict"
+  expect_contains "$err" "the deployed service's URL cannot be read" \
+    "unreadable url describe: the cause is named"
+  expect_contains "$err" "IS deployed and IS this check's" \
+    "unreadable url describe: the stop says the Restore still deletes it"
+  # The block comes back WITH the reason in it. Unguarded, this run would end
+  # with gcloud's own exit status and no `aborted` fact at all -- a block whose
+  # rows read FAIL -- not reached with nothing saying why.
+  expect_contains "$out" "CHECK 91 RESULT" "unreadable url describe: the block still comes back"
+  expect_contains "$out" "FACT aborted: FAIL" "unreadable url describe: the block says what stopped it"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "run services delete fugaro-chk91" \
+    "unreadable url describe: the service this run made IS deleted by the Restore"
+  if [ -d "$scratch" ]; then fail "unreadable url describe: the scratch directory survived"; fi
+}
+
+test_a_config_describe_that_fails_after_the_deploy_does_not_end_the_run_bare() {
+  local dir=$work/cfg-unreadable
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_DESCRIBE_FAILS=config
+  expect_status "$status" 1 "unreadable config describe: the verdict"
+  expect_contains "$err" "the deployed service's own configuration cannot be read" \
+    "unreadable config describe: the cause is named"
+  expect_contains "$out" "CHECK 91 RESULT" "unreadable config describe: the block still comes back"
+  expect_contains "$out" "FACT aborted: FAIL" "unreadable config describe: the block says what stopped it"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "run services delete fugaro-chk91" \
+    "unreadable config describe: the service this run made IS deleted by the Restore"
+  if [ -d "$scratch" ]; then fail "unreadable config describe: the scratch directory survived"; fi
 }
 
 # A signal during the cold-start wait has to end the run AT ONCE, and take the
@@ -1560,7 +1771,14 @@ test_second_interrupt_during_cleanup_does_not_kill_it
 test_identity_token_is_never_on_a_command_line
 test_ownership_record_precedes_the_create
 test_failed_create_takes_its_record_back
+test_failed_create_that_made_the_repository_keeps_its_record
+test_failed_deploy_that_made_nothing_takes_its_record_back
 test_failed_deploy_keeps_the_record_it_made
+test_an_unreadable_describe_is_not_an_absent_resource
+test_an_unreadable_repository_describe_stops_before_the_create
+test_an_unreadable_describe_after_a_failed_deploy_keeps_the_record
+test_a_url_describe_that_fails_after_the_deploy_does_not_end_the_run_bare
+test_a_config_describe_that_fails_after_the_deploy_does_not_end_the_run_bare
 test_interrupt_during_the_idle_wait_is_prompt
 test_long_stream_request_carries_its_own_cap
 test_every_body_row_mints_its_own_token

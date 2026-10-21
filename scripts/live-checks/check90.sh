@@ -195,6 +195,10 @@ need_tools() {
 SCRATCH=""
 SCRATCH_MARKER=".chk90-mine"
 PROXY_PID=""
+# What `stop_proxy` found when it stopped the proxy: empty until then,
+# `never-started`, `stopped`, or `still-running:<pid>`. The Restore's row reads
+# it rather than assuming the kill worked.
+PROXY_STATE=""
 TOKEN_FILE=""
 # The 0600 file the run's placeholder lives in, handed to the proxy by NAME so
 # the value is never in that process's argv (see start_proxy and the proxy's
@@ -253,7 +257,23 @@ cleanup() {
 keep_logs() {
   [ -n "${CHECK90_KEEP_LOGS:-}" ] || return 0
   [ -d "$SCRATCH" ] || return 0
-  if (cd "$CHECK90_KEEP_LOGS" 2>/dev/null && git rev-parse --show-toplevel >/dev/null 2>&1); then
+  # The guard has to hold for a directory that does not exist YET, which is the
+  # ordinary case (`CHECK90_KEEP_LOGS=logs` from a checkout, before anything
+  # made it): `cd` fails on one, the `&&` short-circuits, and the check then
+  # makes the directory and copies the logs into the working tree — against this
+  # check's invariant that it never writes into a checkout. So the question is
+  # asked of the nearest ancestor that DOES exist, which is where git would
+  # find the work tree from the target anyway.
+  local probe=$CHECK90_KEEP_LOGS parent
+  while [ ! -d "$probe" ]; do
+    parent=${probe%/*}
+    case "$parent" in
+    "$probe") probe=. ;;  # a bare name: it would be made under the current directory
+    "") probe=/ ;;
+    *) probe=$parent ;;
+    esac
+  done
+  if (cd "$probe" 2>/dev/null && git rev-parse --show-toplevel >/dev/null 2>&1); then
     say "not copying logs into $CHECK90_KEEP_LOGS: it is inside a git work tree"
     return 0
   fi
@@ -300,10 +320,39 @@ remove_scratch() {
   if [ ! -e "$SCRATCH" ]; then SCRATCH_REMOVED=yes; fi
 }
 
+# stop_proxy — and RECORD which of the three things happened, because the
+# Restore's row used to assert "the proxy is stopped" without ever looking: a
+# proxy that outlived the kill is still holding the port and still has the
+# token in its own memory, and the owner has to be told that rather than read a
+# PASS over it. `stopped` is the answer only after kill -0 says the process is
+# gone; `never-started` is for a run that stopped before the proxy came up (and
+# for the `stop_proxy` at the top of `start_proxy`, which is what makes a
+# per-phase restart read correctly).
 stop_proxy() {
-  if [ -n "$PROXY_PID" ] && kill -0 "$PROXY_PID" 2>/dev/null; then
-    kill "$PROXY_PID" 2>/dev/null || true
-    wait "$PROXY_PID" 2>/dev/null || true
+  if [ -n "$PROXY_PID" ]; then
+    if kill -0 "$PROXY_PID" 2>/dev/null; then
+      kill "$PROXY_PID" 2>/dev/null || true
+      # A bounded wait, not `wait`: `wait` blocks until the child is gone, so a
+      # proxy that ignored the signal would hang the whole cleanup — and the
+      # row below, the one that says out loud that a process holding the
+      # owner's token is still running, would never be reached. The loop is one
+      # `kill -0` in the ordinary case (the proxy dies on the signal at once).
+      local i=0
+      while [ "$i" -lt 50 ] && kill -0 "$PROXY_PID" 2>/dev/null; do
+        sleep 0.1
+        i=$((i + 1))
+      done
+      if kill -0 "$PROXY_PID" 2>/dev/null; then
+        PROXY_STATE="still-running:${PROXY_PID}"
+      else
+        PROXY_STATE=stopped
+        wait "$PROXY_PID" 2>/dev/null || true
+      fi
+    else
+      PROXY_STATE=stopped
+    fi
+  elif [ -z "$PROXY_STATE" ]; then
+    PROXY_STATE=never-started
   fi
   PROXY_PID=""
 }
@@ -367,7 +416,20 @@ finish() {
     [ "$SCRATCH_REMOVED" = yes ] && [ "$TOKEN_REMOVED" = yes ] || restore=FAIL
     local token_note="the token file is removed"
     [ "$TOKEN_REMOVED" = yes ] || token_note="the TOKEN FILE IS STILL THERE at $TOKEN_FILE (mode 600, holding the setup-token value) — remove it yourself"
-    facts="${facts}"$'\n'"restore|$restore|the proxy is stopped, ${token_note}, and the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself")"
+    # The proxy is one of the three things this row claims, so it is READ, not
+    # assumed: `stop_proxy` records what it found. A proxy that outlived the
+    # kill is a FAIL of this row like a surviving token file is — it holds the
+    # token in its own memory and the port it was given.
+    local proxy_note
+    case "$PROXY_STATE" in
+    stopped) proxy_note="the proxy is stopped" ;;
+    still-running:*)
+      restore=FAIL
+      proxy_note="THE PROXY IS STILL RUNNING (pid ${PROXY_STATE#still-running:}) — kill it yourself; it was started with your token in its memory"
+      ;;
+    *) proxy_note="no proxy was started, so there is none to stop" ;;
+    esac
+    facts="${facts}"$'\n'"restore|$restore|${proxy_note}, ${token_note}, and the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself")"
   fi
   if [ -z "$PRINTED" ]; then
     PRINTED=1
@@ -1081,6 +1143,17 @@ attempts_in() { # attempts_in LOGFILE
   n=$(grep -c '^FACT request ' "$1" 2>/dev/null || true)
   printf '%s' "${n:-0}"
 }
+# refused_in LOGFILE — how many requests the proxy REFUSED without forwarding
+# (a Host that is not its own loopback address, a target that is not a path, or
+# a credential that is not this run's placeholder). A swap call can fail with
+# nothing forwarded because of one of these, and naming them is what tells that
+# apart from a proxy that was never reached at all: both leave the upstream
+# untouched, and only one of them is a refusal this run can point at.
+refused_in() { # refused_in LOGFILE
+  local n
+  n=$(grep -c '^FACT refused ' "$1" 2>/dev/null || true)
+  printf '%s' "${n:-0}"
+}
 header_names_of() { # header_names_of LOGFILE — the names the swap call forwarded
   # `|| true` at the end of the pipeline: an empty log (the proxy saw no
   # request) leaves grep with nothing to match, grep exits 1, and `set -e` under
@@ -1169,17 +1242,29 @@ step_swap() {
     fact "headers-required" INFO "not measured: the swapped call was answered with a rate limit, so the per-header drops did not run and this list is NOT measured. Re-run when the subscription is not rate-limited to get the list Task C1.7 is written against"
     fact "tier-a" PASS "VIABLE — the swapped call reached the upstream and the credential was accepted (429 is a rate limit, not a refusal), so subscription traffic survives the header swap. The call did not complete, so the answer's content was not measured"
     save_usage_limit "$log"
+    # A limit WAS met here — that is what this branch is — so the client's own
+    # wording for it is U4's third part and belongs in the block even if the
+    # upstream's 429 carried no error object for save_usage_limit to read. The
+    # call is a no-op when save_usage_limit already recorded it.
+    record_client_limit_wording
     save_optional_headers "$log"
     return 0
   fi
   if [ "$rc" -eq 0 ]; then
     if [ "$attempts" -lt 1 ]; then
-      # The client exited 0 without the proxy having seen a request: nothing was
-      # swapped, and nothing about the swap was measured. That is "could not
-      # tell", never "not viable" — and never a PASS (the review's M3).
-      fact "swap" INFO "the call exited 0, but the proxy saw no request: there was no swap to judge"
-      fact "swap-credential-header" INFO "credential-header: ${h:-missing} (the proxy saw ${attempts} request(s))"
-      stop "the swap call exited 0 without the proxy having seen a single request (${attempts}), so no credential was swapped and this run measured nothing. Nothing is concluded about tier A"
+      # The client exited 0 without the proxy having forwarded a request:
+      # nothing was swapped, and nothing about the swap was measured. That is
+      # "could not tell", never "not viable" — and never a PASS (the review's
+      # M3). A request the proxy REFUSED is named here too: it is the other way
+      # to end up with nothing forwarded, and it is a different fact about the
+      # run.
+      local refused note
+      refused=$(refused_in "$log")
+      note=""
+      [ "$refused" -lt 1 ] || note=" (the proxy refused ${refused} request(s) that did not carry this run's placeholder, and forwarded none of them)"
+      fact "swap" INFO "the call exited 0, but the proxy forwarded no request${note}: there was no swap to judge"
+      fact "swap-credential-header" INFO "credential-header: ${h:-missing} (the proxy forwarded ${attempts} request(s))"
+      stop "the swap call exited 0 without the proxy having forwarded a single request (${attempts}${note}), so no credential was swapped and this run measured nothing. Nothing is concluded about tier A"
     fi
     if [ -z "$ok" ] || [ "$h" != authorization ]; then
       fact "swap" FAIL "the proxy performed the swap and the call still failed: upstream answer '${answer:-none}', credential-header '${h:-missing}', after $((ended - started))s. That is a measurement, not a missing one"
@@ -1189,10 +1274,28 @@ step_swap() {
       save_usage_limit "$log"
       return 0
     fi
-    fact "swap" PASS "the call succeeded with the proxy's own credential attached ($((ended - started))s; the proxy saw ${attempts} request(s) and answered ${ok})"
+    fact "swap" PASS "the call succeeded with the proxy's own credential attached ($((ended - started))s; the proxy forwarded ${attempts} request(s) and answered ${ok})"
     fact "swap-credential-header" PASS "credential-header: ${h}"
   else
-    fact "swap" FAIL "the call failed through the proxy while the control succeeded: upstream answer '${answer:-none}', after $((ended - started))s. The client said: $(head -c 300 "$SCRATCH/swap.out" | tr '\n' ' ')"
+    if [ "$attempts" -lt 1 ]; then
+      # The same shape as the `rc == 0` twin above, and it must read the same
+      # way: the client failed WITHOUT the proxy having forwarded a request, so
+      # no credential was swapped and nothing about the swap was measured. This
+      # branch used to record tier-a NOT VIABLE for it — "the TIER A tasks are
+      # dropped" — which is the one wrong answer here: a request that never
+      # reached the proxy says nothing about whether the swap works, and the
+      # client's own exit status is a fact about the client, not about the
+      # swap. It is a hard stop, so it exits 2 (the header's contract: 1 is a
+      # VERDICT and only the swap's own FAIL produces it).
+      local refused note
+      refused=$(refused_in "$log")
+      note=""
+      [ "$refused" -lt 1 ] || note=" (the proxy refused ${refused} request(s) that did not carry this run's placeholder, and forwarded none of them)"
+      fact "swap" INFO "the call exited ${rc}, but the proxy forwarded no request${note}: there was no swap to judge"
+      fact "swap-credential-header" INFO "credential-header: ${h:-missing} (the proxy forwarded ${attempts} request(s))"
+      stop "the swap call failed (exit ${rc}) without the proxy having forwarded a single request (${attempts}${note}), so no credential was swapped and this run measured nothing. The client's own failure is not a fact about the swap. Nothing is concluded about tier A"
+    fi
+    fact "swap" FAIL "the call failed through the proxy while the control succeeded: upstream answer '${answer:-none}', after $((ended - started))s, and the proxy forwarded ${attempts} request(s). The client said: $(head -c 300 "$SCRATCH/swap.out" | tr '\n' ' ')"
     fact "swap-credential-header" INFO "credential-header: $(header_of "$log")"
     fact "headers-required" FAIL "not recorded: the swap call did not complete"
     fact "tier-a" FAIL "NOT VIABLE — subscription traffic did not survive the header swap (Global Constraint 4: the TIER A tasks are dropped and the service ships the B-only cascade)"
@@ -1201,6 +1304,44 @@ step_swap() {
   fi
   save_usage_limit "$log"
   save_optional_headers "$log"
+}
+
+# record_client_limit_wording — what CLAUDE CODE ITSELF printed when it met the
+# limit, which is U4's third part and the text the skill's loose "usage limit"
+# match would have read (the register's row 90, and step 7's own FACT). It is
+# the client's own output, not the upstream's error object: the block used to
+# carry the object's type and message and nothing the client said, which is not
+# what the register promises. $SCRATCH/swap.out holds both of the child's
+# streams (claude_call redirects 2>&1 into it), the child was handed the
+# per-run PLACEHOLDER and never the token, and the text is bounded to 300
+# characters and flattened to one line so the block stays a block.
+#
+# Recorded once: the two paths that observe a limit (an error object, and a
+# 4xx/5xx status with no object) can both call it, and the block is a set of
+# facts keyed by name.
+record_client_limit_wording() {
+  if grep -q '^client-limit-wording|' "$FACTS_FILE" 2>/dev/null; then return 0; fi
+  # The lines the CLIENT printed about the limit, matched on the client's own
+  # wording and on the status, never on the upstream object's fields: a run
+  # that saw a limit only on the wire must not have the object's `type` read
+  # back as if the client had said it. `|| true` because a pipeline whose
+  # `grep` matches nothing fails under `pipefail`, and there is nothing here to
+  # fail at.
+  local text
+  text=$(grep -iE 'usage limit|rate ?limit|429|too many requests|quota|overloaded' "$SCRATCH/swap.out" 2>/dev/null \
+    | head -n 3 | tr -d '\r' | tr '\n' ' ' | head -c 300 || true)
+  if [ -n "$text" ]; then
+    fact "client-limit-wording" PASS "what the client itself printed when it met the limit: ${text}"
+    return 0
+  fi
+  # Nothing the client said about it. U4's third part is then NOT measured, and
+  # this says so rather than calling the client's silence a recording of it —
+  # step 7 and the register both promise that part stays UNVERIFIED when the
+  # client never reported one. What it did print is still worth reading, so it
+  # is carried when there is any.
+  local printed
+  printed=$(head -c 300 "$SCRATCH/swap.out" 2>/dev/null | tr -d '\r' | tr '\n' ' ' || true)
+  fact "client-limit-wording" PASS "the client printed no wording for the limit${printed:+ (what it did print: ${printed})}, so U4's third part stays UNVERIFIED"
 }
 
 # The usage limit is looked for, never provoked: whatever an error response
@@ -1217,12 +1358,17 @@ save_usage_limit() { # save_usage_limit LOGFILE
       reset=$(sed -n 's/^FACT response [0-9]* .*headers: //p' "$log" | tr ',' '\n' |
         grep -E 'retry-after|ratelimit|reset' | tr '\n' ' ' || true)
       fact "usage-limit" PASS "status $status, reset headers: ${reset:-none seen} (no error object came back; U3 stays open until a reset-carrying answer is seen)"
+      # A 4xx/5xx through the proxy is the closest thing to a limit this run
+      # saw, and the client's own wording for it is U4's third part just as it
+      # is when the upstream sent an error object.
+      record_client_limit_wording
     else
       fact "usage-limit" PASS "none observed — none was provoked; U3 stays open and the plan's 15-minute default back-off applies"
     fi
     return 0
   fi
   fact "usage-limit" PASS "$line (the error object's own type and message, the only body fields this check ever reads)"
+  record_client_limit_wording
   local reset
   reset=$(sed -n 's/^FACT response [0-9]* .*headers: //p' "$log" | tr ',' '\n' |
     grep -E 'retry-after|ratelimit|reset' | tr '\n' ' ' || true)
@@ -1411,8 +1557,11 @@ tier_a() {
 
 # The block's shape does not depend on how far the run got: the keys below are
 # printed in this order whatever happened, one that was never reached reads
-# FAIL — not reached, and any other recorded key (the per-header drops) follows,
-# sorted. That is what makes the block safe to diff between two runs.
+# FAIL — not reached, and any other recorded key follows in the order the run
+# recorded it (nothing here sorts them): the per-header drops in the order they
+# were measured, then `client-limit-wording` when a limit was met, and `aborted`
+# wherever the stop that wrote it happened. That is what makes the block safe to
+# diff between two runs.
 BLOCK_KEYS=(claude-version env-cleared managed-settings-dir settings-routing
   token-file token-validity control ca-bundle observed-control swap swap-credential-header
   stream headers-observed headers-required headers-optional usage-limit

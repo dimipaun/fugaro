@@ -465,10 +465,44 @@ guard_project() {
   fact "project-region" PASS "${P}/${L} (installation fugaro, sandbox only; never belong)"
 }
 
+# describe_state CMD... — run a `gcloud ... describe` and print WHICH of three
+# things happened: `there` (exit 0), `not-there` (the resource is absent), or
+# `unreadable` (the describe failed for any other reason).
+#
+# The STATUS alone cannot tell the last two apart — gcloud exits 1 both for a
+# resource that is not there and for an expired session, a transient API error,
+# or a permission this account does not hold — so the MESSAGE does, exactly
+# like the staged-source check's `matched no objects` in the Restore. Reading
+# an unreadable describe as "not there" is how this check would adopt a service
+# or a repository it did not create (the guard passes, the create-or-update
+# deploy writes into it, and the Restore DELETES it), and how a run that did
+# create one would take its ownership record back on a transient failure and
+# leave a billing service behind. "It is not there" is a claim about the
+# project; "the call failed" is not a claim about anything.
+#
+# Always exits 0 (printf's status), so the caller can hold the word in a
+# variable without the ERR trap or errexit seeing the describe's own status.
+describe_state() {
+  local err=$SCRATCH/describe.err rc=0
+  "$@" >/dev/null 2>"$err" || rc=$?
+  if [ "$rc" = 0 ]; then
+    printf 'there'
+  elif grep -qiE 'not.?found|could not be found|does not exist|no such|\b404\b' "$err"; then
+    printf 'not-there'
+  else
+    printf 'unreadable'
+  fi
+}
+
 guard_service() {
   # Hard stop 4: the service is not already there — unless it is the one this
   # check deployed, recorded in service-mine right after the deploy.
-  if gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" >/dev/null 2>&1; then
+  local st
+  st=$(describe_state gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}")
+  if [ "$st" = unreadable ]; then
+    stop "whether ${SVC} is already in ${P}/${L} cannot be read: the describe failed for a reason other than NOT_FOUND (an expired session, a transient API error, or a permission this account does not hold), and a failed call is not the answer 'it is not there'. This guard is what stops this check adopting a service it did not create — one it would then update and its Restore would DELETE — so the run stops here rather than guessing. Run 'gcloud run services describe ${SVC} --project=${P} --region=${L}' by hand and read its answer, then run this check again. Nothing was created"
+  fi
+  if [ "$st" = there ]; then
     [ -f "$SERVICE_MINE" ] \
       || stop "${SVC} already exists in ${P}/${L}, and it is not this check's. This check deletes what it creates and never adopts a service it did not create; delete it yourself if you know it is yours, or give this check a different name, then run again"
   fi
@@ -633,10 +667,18 @@ DOCKER_EOF
 # Cloud Build's text names objects, accounts and paths — that is what makes it
 # worth reading — and it can also quote a signed URL, an authorization header
 # or a token, which is not. The text is filtered rather than trusted.
+# The scheme word is part of the shape, not a barrier to it: `Authorization:
+# Basic <base64>` put a five-character word between the header name and the
+# value, and the single rule this used to be required eight value characters
+# immediately after the name, so Basic, Digest and a `client_secret=` or a
+# `refresh_token:` went through untouched. A credential name is redacted when
+# it is followed by a scheme word or by a value, whichever comes first.
 redact_secrets() {
   printf '%s' "$1" | sed -E \
-    -e 's/([Aa]uthorization|[Bb]earer|[Aa]ccess_token|access_token=)[: =]*[A-Za-z0-9._~+\/-]{8,}/\1 <redacted>/g' \
-    -e 's/([?&](X-Goog-Signature|X-Goog-Credential|Signature|sig|token)=)[^ &]+/\1<redacted>/g' \
+    -e 's/(([Pp]roxy-)?[Aa]uthorization[[:space:]]*:?[[:space:]]*)([Bb]asic|[Bb]earer|[Dd]igest)?[[:space:]]*[A-Za-z0-9._~+\/=-]{6,}/\1<redacted>/g' \
+    -e 's/([Bb]earer[[:space:]]+)[A-Za-z0-9._~+\/=-]{6,}/\1<redacted>/g' \
+    -e 's/([Aa]ccess[_-]?[Tt]oken|[Cc]lient[_-]?[Ss]ecret|[Rr]efresh[_-]?[Tt]oken|[Aa]pi[_-]?[Kk]ey|[Tt]oken)[[:space:]]*[:=][[:space:]]*[A-Za-z0-9._~+\/=-]{4,}/\1=<redacted>/g' \
+    -e 's/([?&](X-Goog-Signature|X-Goog-Credential|Signature|sig|token|client_secret|refresh_token)=)[^ &]+/\1<redacted>/g' \
     -e 's/(ya29|eyJ|AIza|ghp_|gho_|github_pat_)[A-Za-z0-9._-]+/<redacted>/g'
 }
 
@@ -660,7 +702,12 @@ build_error_excerpt() {
 step_build_deploy() {
   [ "$(cat "$REPO_EXISTED" 2>/dev/null || true)" = no ] \
     || stop "$REPO_EXISTED does not say the repository ${SVC} was absent when this check started, and this check writes only into a repository it created itself. Read the baseline's answer and run again"
-  if gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null 2>&1; then
+  local repo_state
+  repo_state=$(describe_state gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}")
+  if [ "$repo_state" = unreadable ]; then
+    stop "whether a repository named ${SVC} is already in ${P}/${L} cannot be read: the describe failed for a reason other than NOT_FOUND, and a failed call is not the answer 'it is not there' — a repository this check did not create would be written into and then DELETED by its Restore. Run 'gcloud artifacts repositories describe ${SVC} --project=${P} --location=${L}' by hand and read its answer, then run this check again. Nothing was created"
+  fi
+  if [ "$repo_state" = there ]; then
     [ -f "$REPO_MINE" ] \
       || stop "a repository named ${SVC} is in ${P}/${L} and it is not this check's — this check creates its own and never adopts one, so it does not push the image tag into it or delete it. Nothing was written"
   else
@@ -679,10 +726,18 @@ step_build_deploy() {
       # A create that reported failure may still have made the repository — that
       # is exactly what the record before it is for — so the project is asked
       # which of the two happened. The record is taken back only when the
-      # repository really is not there; a repository that IS there keeps its
-      # record and the Restore deletes it.
-      if gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null 2>&1; then
+      # repository really is NOT THERE; a repository that IS there keeps its
+      # record and the Restore deletes it, and so does one whose state cannot be
+      # read: a describe that failed for a reason other than NOT_FOUND is not
+      # evidence that the repository is absent, and taking the record back on
+      # one would leave a repository this run made with nothing naming it.
+      local made
+      made=$(describe_state gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}")
+      if [ "$made" = there ]; then
         stop "the repository create reported failure, but ${SVC} IS there now, so it is this check's: the record says so and this run's Restore deletes it. Nothing else ran"
+      fi
+      if [ "$made" = unreadable ]; then
+        stop "the repository create reported failure and whether ${SVC} is there now cannot be read (the describe failed for a reason other than NOT_FOUND), so the record of it is KEPT: a create that reported failure may still have made the repository, and the record is what makes this run's Restore delete it. Check 'gcloud artifacts repositories describe ${SVC} --project=${P} --location=${L}' by hand; if the repository is there, delete it yourself. Nothing else ran"
       fi
       rm -f "$REPO_MINE" || true
       stop "the repository create failed and ${SVC} is not there, so this run made no repository: the record of it is removed again"
@@ -732,18 +787,33 @@ step_build_deploy() {
   if ! gcloud run deploy "${SVC:?}" --project="${P:?}" --region="${L:?}" --image="${IMG:?}" \
     --no-allow-unauthenticated --timeout=3600 --min-instances=0 --max-instances=1 \
     --set-env-vars SSE_MINUTES=20 --quiet >&2; then
-    if gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" >/dev/null 2>&1; then
+    local deployed
+    deployed=$(describe_state gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}")
+    if [ "$deployed" = there ]; then
       stop "the deploy reported failure, but ${SVC} IS there now, so it is this check's: the record says so and this run's Restore deletes it, and the image and the repository go with it"
+    fi
+    if [ "$deployed" = unreadable ]; then
+      stop "the deploy reported failure and whether ${SVC} is there now cannot be read (the describe failed for a reason other than NOT_FOUND), so the record of it is KEPT: a deploy that reported failure may still be serving and being billed, and the record is what makes this run's Restore delete it. Check 'gcloud run services describe ${SVC} --project=${P} --region=${L}' by hand; if the service is there, delete it yourself. Nothing else ran"
     fi
     rm -f "$SERVICE_MINE" || true
     stop "the deploy failed and ${SVC} is not there, so nothing of this check's is running: the record is removed again, and the repository and the image it created are deleted by this run's Restore"
   fi
-  URL=$(gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" --format='value(status.url)')
+  # Both describes below are GUARDED, like every other describe here: this
+  # script installs no ERR trap, so under `set -Eeuo pipefail` a transient
+  # failure would end the run with gcloud's own exit status, no `aborted` fact,
+  # and `service-config`/`unauthenticated-request` reading FAIL — not reached —
+  # a block that says a fact failed without saying why. The service IS deployed
+  # and IS this check's at this point (the record says so), so the stop says
+  # that too: the Restore deletes it.
+  local url_err=$SCRATCH/url.err
+  URL=$(gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" --format='value(status.url)' 2>"$url_err") \
+    || stop "the deployed service's URL cannot be read: 'gcloud run services describe ${SVC} --format=value(status.url)' failed with $(tail -n 1 "$url_err" | tr -d '\r' | tr '\n' ' '). The service IS deployed and IS this check's — the record says so, and this run's Restore deletes it, with the image and the repository. Nothing else ran"
   [ -n "$URL" ] || stop "the service has no URL"
   mint_idt || stop "no identity token can be minted here, so no request can be authorised"
-  local cfg
+  local cfg cfg_err=$SCRATCH/cfg.err
   cfg=$(gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" \
-    --format='value(spec.template.spec.containers[0].image,spec.template.spec.timeoutSeconds,spec.template.metadata.annotations)' 2>/dev/null | tr '\n' ' ')
+    --format='value(spec.template.spec.containers[0].image,spec.template.spec.timeoutSeconds,spec.template.metadata.annotations)' 2>"$cfg_err" | tr '\n' ' ') \
+    || stop "the deployed service's own configuration cannot be read: 'gcloud run services describe ${SVC} --format=value(spec.template...)' failed with $(tail -n 1 "$cfg_err" | tr -d '\r' | tr '\n' ' '). The service IS deployed and IS this check's — the record says so, and this run's Restore deletes it, with the image and the repository. Nothing else ran"
   fact "service-config" PASS "image ${cfg:-$IMG}; --timeout=3600 --min-instances=0 --max-instances=1 --no-allow-unauthenticated; URL ${URL}"
 
   # An unauthenticated call must be refused: that is what says the service is
