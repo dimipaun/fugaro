@@ -13,7 +13,10 @@
 #
 # Usage:      bash scripts/live-checks/check91.sh
 #             bash scripts/live-checks/check91.sh --dry-run   (guards and files
-#             only: nothing is created, built, deployed or deleted)
+#             only: nothing is created, built, deployed or deleted; it prints
+#             the commands a real run would run and the cleanup commands)
+#             CHECK91_BUILD_SA=<account>@fugaro-dev.iam.gserviceaccount.com  (optional:
+#             names the build service account when the installation has several)
 # Needs:      bash, mktemp, gcloud, curl, fugaro, and a curl built with HTTP/2.
 #             Nothing is installed and nothing is fetched; if one of those is
 #             missing the script stops with one line naming it.
@@ -21,6 +24,15 @@
 #             The project is HARD-CODED and `fugaro doctor` must answer that
 #             this is the fugaro-dev installation. Never belong, never another
 #             project: you must not run it against any other installation.
+# Build as:   NOT the project's default Compute service account (which on
+#             fugaro-dev has had roles/editor removed and holds nothing on the
+#             staging bucket or on Artifact Registry). The build runs as one of
+#             the installation's own build service accounts (fugaro-b-*), read
+#             from the project before anything is created; BEFORE any write the
+#             script prints which account that is and the roles it needs, reads
+#             the project's and the bucket's IAM policy, and stops with each
+#             missing grant as a copy-paste command for YOU to run. The script
+#             never grants IAM itself.
 # Creates:    one throwaway Cloud Run service (fugaro-chk91), the Artifact
 #             Registry repository its image tag needs, and the image. The
 #             Restore deletes all three and asserts three counts read 0. A
@@ -192,6 +204,10 @@ WAIT_PID=""
 STAGING_PREFIX=""
 STAGING_ARG=""
 BUILD_ATTEMPTED=no
+# The service account the build runs as, resolved read-only by
+# guard_build_identity before anything is created.
+BUILD_SA=""
+BUILD_CONFIG=
 # The cleanup flag finish sets: a second Ctrl-C while the Restore is running
 # must not kill the shell that is running it (see finish).
 CLEANUP_RUNNING=no
@@ -206,6 +222,7 @@ scratch_up() {
   REPO_MINE="$SCRATCH/repo-mine"
   SERVICE_MINE="$SCRATCH/service-mine"
   AUTH_CONF="$SCRATCH/idt.conf"
+  BUILD_CONFIG="$SCRATCH/cloudbuild.yaml"
   # Nameable by this run alone: the scratch directory's own name is unique and
   # is deleted with it, so two runs of this check never share a staging prefix.
   STAGING_PREFIX="gs://${P}_cloudbuild/chk91-source/${SCRATCH##*/}/"
@@ -659,7 +676,20 @@ COPY relay.py /relay.py
 CMD ["python3", "/relay.py"]
 DOCKER_EOF
   fact "relay" PASS "relay.py and Dockerfile written into the scratch directory: one container, two listeners (the fake SSE upstream on loopback, the relay the caller reaches); SSE_MINUTES from the environment, X-Relay on the stream"
-  say "wrote $SCRATCH/relay.py and $SCRATCH/Dockerfile"
+  # The build's own config, so the build can run as a named service account
+  # with logging that needs no bucket of its own (CLOUD_LOGGING_ONLY, as the
+  # product's own builds set): `--tag` has no way to say either, and a build as
+  # another account without a logs setting is refused unless gcloud creates a
+  # logs bucket, which this check never does.
+  cat >"$BUILD_CONFIG" <<BUILD_EOF
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${IMG}", "."]
+images: ["${IMG}"]
+options:
+  logging: CLOUD_LOGGING_ONLY
+BUILD_EOF
+  say "wrote $SCRATCH/relay.py, $SCRATCH/Dockerfile and $BUILD_CONFIG"
 }
 
 # redact_secrets TEXT: TEXT with anything credential-shaped replaced. The build
@@ -746,23 +776,12 @@ step_build_deploy() {
   gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null \
     || stop "no registry repository ${SVC} in ${P}/${L} for the image tag ${IMG} to build into"
   say "building ${IMG} (gcloud builds submit). If it offers to CREATE anything — the staging bucket, an API, a grant — say NO, stop, and report it: those are the installation's and are not this check's to accept"
-  # Give the source upload a prefix of this run's own, so the Restore can name
-  # and remove exactly what this check put in the installation's staging bucket
-  # (m11). The bucket must be there and readable FIRST, and an unreadable one
-  # is a STOP rather than a fallback: `gcloud builds submit` CREATES
-  # gs://<project>_cloudbuild when it is missing, and that bucket is the
-  # installation's own (it is in the project's Terraform, not this check's). A
-  # run that let gcloud make it would have created a project-level resource
-  # with no ownership record and no Restore that could delete it — and it
-  # would still have left the source tarball unnameable, for a lifecycle rule
-  # to sweep away. Nothing is guarded more narrowly than this: the check's rule
-  # is that it creates only what it deletes.
-  if ! gcloud storage ls "gs://${P}_cloudbuild/" >/dev/null 2>&1; then
-    fact "build-staging" FAIL "gs://${P}_cloudbuild/ could not be listed here (it is not there, or this account cannot read it), so the build was NOT started: 'gcloud builds submit' would create that staging bucket for this run's source, and the bucket is the installation's — this check creates only what its own Restore deletes. Nothing was created, built or deployed"
-    stop "gs://${P}_cloudbuild/ cannot be listed, and 'gcloud builds submit' would CREATE it to stage this run's source: a bucket is the installation's own (Terraform-managed, not this check's), so this check never creates one and has no record by which to remove it. Two things YOU can do, both of them the installation's IAM and neither of them this check's to change: grant the identity a build runs as — Cloud Build runs one as the project's Compute Engine default service account, <project-number>-compute@developer.gserviceaccount.com, unless the request names another — objectViewer on that bucket (gcloud storage buckets add-iam-policy-binding gs://${P}_cloudbuild --member=serviceAccount:NUMBER-compute@developer.gserviceaccount.com --role=roles/storage.objectViewer), or run 'fugaro init', which is what puts the installation's own build identity and staging in place. Then run this check again. Nothing was created, built or deployed by this run"
-  fi
-  STAGING_ARG="--gcs-source-staging-dir=${STAGING_PREFIX}"
-  fact "build-staging" PASS "this run stages the build's source under ${STAGING_PREFIX}, inside the installation's own staging bucket (which was listed before the build, so gcloud creates nothing), and its Restore deletes that prefix again"
+  # The build's identity, its roles and the staging bucket were all read and
+  # checked by guard_build_identity BEFORE the repository was created above;
+  # STAGING_ARG gives the source upload a prefix of this run's own, so the
+  # Restore can name and remove exactly what this check put in the bucket.
+  [ -n "$BUILD_SA" ] && [ -n "$STAGING_ARG" ] \
+    || stop "the build identity or the staging prefix was not resolved before the repository was created; this check never builds as an unnamed account"
   BUILD_ATTEMPTED=yes
   # The build's own output: stdout stays on the owner's stderr (that is the
   # progress line a slow build prints), and stderr is ALSO kept in a file, so a
@@ -774,9 +793,10 @@ step_build_deploy() {
   # Unquoted on purpose: STAGING_ARG is one word or nothing, and an empty
   # argument must not reach gcloud as an empty string.
   # shellcheck disable=SC2086
-  gcloud builds submit --project="${P:?}" --tag="${IMG:?}" $STAGING_ARG "$SCRATCH" >&2 2>"$SCRATCH/build.err" || build_rc=$?
+  gcloud builds submit --project="${P:?}" --config="$BUILD_CONFIG" \
+    --service-account="projects/${P}/serviceAccounts/${BUILD_SA}" $STAGING_ARG "$SCRATCH" >&2 2>"$SCRATCH/build.err" || build_rc=$?
   if [ "$build_rc" != 0 ]; then
-    fact "build-error" FAIL "gcloud builds submit exited ${build_rc} and the build did not run: $(build_error_excerpt). Likely causes, most likely first: the identity the build ran as cannot read the source this run staged at ${STAGING_PREFIX} — Cloud Build runs a build as the project's Compute Engine default service account unless the request names another, and that account holds no read grant on the installation's staging bucket by default (the grant is the installation's IAM, not this check's to change); the Cloud Build API is not enabled in ${P}; or a step of the Dockerfile failed. Nothing was deployed, and the repository, the image and the staged source are deleted by this run's Restore"
+    fact "build-error" FAIL "gcloud builds submit (as ${BUILD_SA}) exited ${build_rc}: $(build_error_excerpt). Likely causes, most likely first: the identity the build ran as cannot read the source this run staged at ${STAGING_PREFIX} (storage.objects.get; roles/storage.objectViewer on gs://${P}_cloudbuild); it cannot WRITE the image to Artifact Registry (artifactregistry.repositories.uploadArtifacts; roles/artifactregistry.writer on the project, since ${SVC} is created by this run); YOUR account lacks roles/iam.serviceAccountUser on it; a grant that was read before the build has not taken effect; the Cloud Build API is not enabled in ${P}; or a step of the Dockerfile failed. The grants are the installation's IAM, not this check's to change. Nothing was deployed, and the repository, the image and the staged source are deleted by this run's Restore"
     stop "the build failed (exit ${build_rc}), so nothing was deployed: the block's build-error row carries what gcloud said and the likely causes"
   fi
   # Same rule as the repository's record above: a deploy that is interrupted is
@@ -1061,19 +1081,158 @@ guard_xtrace() {
   fact "xtrace" PASS "this shell is not tracing, so no trace of this run can carry the identity token"
 }
 
+# ------------------------------------------------------------ build identity
+# The roles the build's service account must hold, one place so the guard, its
+# printout and the docs agree. Accepted = the role named or one that contains it.
+ROLES_AR='roles/artifactregistry.writer roles/artifactregistry.repoAdmin roles/artifactregistry.admin roles/owner roles/editor'
+ROLES_BUCKET='roles/storage.objectViewer roles/storage.objectUser roles/storage.objectAdmin roles/storage.admin roles/owner roles/editor'
+ROLES_LOG='roles/logging.logWriter roles/logging.admin roles/owner roles/editor'
+
+# sa_roles KIND — the roles BUILD_SA holds on the project or on the staging
+# bucket, one per line. Read-only. Non-zero when the policy cannot be read: a
+# failed read is not the answer "it holds nothing".
+sa_roles() {
+  local kind=$1 err=$SCRATCH/policy.err
+  case "$kind" in
+  project)
+    gcloud projects get-iam-policy "${P:?}" --flatten='bindings[].members' \
+      --filter="bindings.members=serviceAccount:${BUILD_SA}" --format='value(bindings.role)' 2>"$err"
+    ;;
+  bucket)
+    gcloud storage buckets get-iam-policy "gs://${P:?}_cloudbuild" --flatten='bindings[].members' \
+      --filter="bindings.members=serviceAccount:${BUILD_SA}" --format='value(bindings.role)' 2>"$err"
+    ;;
+  esac
+}
+
+# holds ROLES... — reads the role lines on stdin; true when any of ROLES is there.
+holds() {
+  local have want r
+  have=$(cat)
+  for want in "$@"; do
+    for r in $have; do
+      [ "$r" = "$want" ] && return 0
+    done
+  done
+  return 1
+}
+
+# guard_build_identity: resolve the account the build runs as, say up front what
+# it is and what it needs, and read whether it holds that. All reads; the first
+# cloud WRITE of this run comes after it. A missing grant is printed as a
+# command for the owner and ends the run — the script never grants IAM itself.
+guard_build_identity() {
+  local cand=${CHECK91_BUILD_SA:-} lerr=$SCRATCH/sa.err list n st
+  if [ -n "$cand" ]; then
+    case "$cand" in
+    *@"${P}".iam.gserviceaccount.com) ;;
+    *) stop "CHECK91_BUILD_SA=${cand} is not a service account of ${P} (it must end in @${P}.iam.gserviceaccount.com): this check builds inside the sandbox project only. Nothing was created" ;;
+    esac
+    st=$(describe_state gcloud iam service-accounts describe "$cand" --project="${P:?}")
+    case "$st" in
+    there) BUILD_SA=$cand ;;
+    not-there) stop "CHECK91_BUILD_SA=${cand} does not exist in ${P}. Per installation fugaro (${P}), run by YOU: gcloud iam service-accounts create ${cand%%@*} --project=${P} --display-name='Check 91 throwaway build account' — then run this check again. Nothing was created" ;;
+    *) stop "whether ${cand} exists cannot be read (the describe failed for a reason other than NOT_FOUND: an expired session, a transient error or a missing permission). Nothing was created" ;;
+    esac
+  else
+    list=$(gcloud iam service-accounts list --project="${P:?}" --filter='email~^fugaro-b-' --format='value(email)' 2>"$lerr") \
+      || stop "the installation's build service accounts cannot be listed in ${P}: gcloud iam service-accounts list failed with $(tail -n 1 "$lerr" | tr -d '\r' | tr '\n' ' '). Nothing was created"
+    n=$(printf '%s\n' "$list" | grep -c . || true)
+    if [ "$n" = 0 ]; then
+      stop "installation fugaro (${P}) has no build service account (fugaro-b-*), and this check will NOT fall back to the project's default Compute service account (it holds nothing on the staging bucket or on Artifact Registry there, and its grants are not this check's to widen). Fix, per REPOSITORY, run by YOU: 'fugaro init --repo' in a checkout of a repository set up for this installation — it creates that repository's build account. Or, per INSTALLATION (${P}), a dedicated one: gcloud iam service-accounts create fugaro-chk91-build --project=${P} --display-name='Check 91 throwaway build account' — then run: CHECK91_BUILD_SA=fugaro-chk91-build@${P}.iam.gserviceaccount.com bash scripts/live-checks/check91.sh. Nothing was created"
+    elif [ "$n" != 1 ]; then
+      stop "installation fugaro (${P}) has ${n} build service accounts (fugaro-b-*: $(printf '%s' "$list" | tr '\n' ' ')): pick one and run again with CHECK91_BUILD_SA=<that account>. Nothing was created"
+    fi
+    BUILD_SA=$list
+  fi
+
+  say "BUILD IDENTITY (read from ${P} before anything is created): the image build runs as ${BUILD_SA}, never as the default Compute service account."
+  say "  It needs: roles/artifactregistry.writer on the repository this run creates (${SVC}), which does not exist yet, so the grant is project-level (artifactregistry.repositories.uploadArtifacts);"
+  say "            roles/storage.objectViewer on gs://${P}_cloudbuild (it reads the staged source); roles/logging.logWriter (build logs; the build itself still runs without it)."
+  say "  YOU need roles/iam.serviceAccountUser on it (project owners have it). This script reads these grants below and never writes IAM."
+
+  local missing="" pr br rc=0
+  pr=$(sa_roles project) || rc=$?
+  if [ "$rc" != 0 ]; then
+    stop "the project's IAM policy cannot be read (gcloud projects get-iam-policy ${P} failed with $(tail -n 1 "$SCRATCH/policy.err" | tr -d '\r' | tr '\n' ' ')), so whether ${BUILD_SA} holds its roles is unknown. Nothing was created"
+  fi
+  # shellcheck disable=SC2086
+  if ! printf '%s\n' "$pr" | holds $ROLES_AR; then
+    missing="${missing}  [per installation fugaro (${P}), run by YOU] gcloud projects add-iam-policy-binding ${P} --member=serviceAccount:${BUILD_SA} --role=roles/artifactregistry.writer --condition=None
+"
+  fi
+  rc=0
+  br=$(sa_roles bucket) || rc=$?
+  if [ "$rc" != 0 ]; then
+    stop "the staging bucket's IAM policy cannot be read (gcloud storage buckets get-iam-policy gs://${P}_cloudbuild failed with $(tail -n 1 "$SCRATCH/policy.err" | tr -d '\r' | tr '\n' ' ')), so whether ${BUILD_SA} can read the staged source is unknown. Nothing was created"
+  fi
+  # shellcheck disable=SC2086
+  if ! printf '%s\n' "$br" | holds $ROLES_BUCKET; then
+    missing="${missing}  [per installation fugaro (${P}), run by YOU] gcloud storage buckets add-iam-policy-binding gs://${P}_cloudbuild --member=serviceAccount:${BUILD_SA} --role=roles/storage.objectViewer
+"
+  fi
+  local log_missing=""
+  # shellcheck disable=SC2086
+  if ! printf '%s\n' "$pr" | holds $ROLES_LOG; then
+    log_missing="  [per installation fugaro (${P}), run by YOU, optional] gcloud projects add-iam-policy-binding ${P} --member=serviceAccount:${BUILD_SA} --role=roles/logging.logWriter --condition=None
+"
+  fi
+  if [ -n "$missing" ]; then
+    say "MISSING GRANTS for ${BUILD_SA} (this script never grants IAM; run these yourself, wait a minute or two for them to take effect, then run this check again; revoke the project-level one afterwards if the installation does not want it kept):"
+    printf '%s%s' "$missing" "$log_missing" >&2
+    fact "build-identity" FAIL "the build would run as ${BUILD_SA}, which lacks a required grant (see the stop): nothing was created, built or deployed"
+    stop "${BUILD_SA} lacks a role the build needs; the commands are printed above. Nothing was created, built or deployed"
+  fi
+  if [ -n "$log_missing" ]; then
+    say "NOTE: ${BUILD_SA} has no roles/logging.logWriter, so its build logs will not be written (the build still runs). To grant it:"
+    printf '%s' "$log_missing" >&2
+  fi
+  fact "build-identity" PASS "the build runs as ${BUILD_SA}: roles/artifactregistry.writer (project), roles/storage.objectViewer on gs://${P}_cloudbuild$([ -n "$log_missing" ] && printf '; roles/logging.logWriter NOT held (logs only)' || printf ', roles/logging.logWriter') were read from the IAM policies before anything was created"
+
+  # The staging bucket must be there and listable by YOU BEFORE the build:
+  # `gcloud builds submit` CREATES gs://<project>_cloudbuild when it is
+  # missing, and that bucket is the installation's (Terraform-managed), not
+  # this check's — this run would have no record of having made it and no
+  # Restore that could remove it. So an unreadable staging bucket is a STOP
+  # before anything is created, never a fallback to gcloud's default staging.
+  if ! gcloud storage ls "gs://${P}_cloudbuild/" >/dev/null 2>&1; then
+    fact "build-staging" FAIL "gs://${P}_cloudbuild/ could not be listed here (it is not there, or this account cannot read it), so the build was NOT started: 'gcloud builds submit' would create that staging bucket for this run's source, and the bucket is the installation's — this check creates only what its own Restore deletes. Nothing was created, built or deployed"
+    stop "gs://${P}_cloudbuild/ cannot be listed, and 'gcloud builds submit' would CREATE it to stage this run's source: a bucket is the installation's own (Terraform-managed, not this check's), so this check never creates one and has no record by which to remove it. Fix, per INSTALLATION fugaro (${P}), run by YOU: if the bucket exists, give YOUR account read on it (gcloud storage buckets add-iam-policy-binding gs://${P}_cloudbuild --member=user:YOUR-EMAIL --role=roles/storage.objectViewer); if it does not exist, create it once (gcloud storage buckets create gs://${P}_cloudbuild --project=${P} --location=${L} --uniform-bucket-level-access). Then run this check again. Nothing was created, built or deployed by this run"
+  fi
+  STAGING_ARG="--gcs-source-staging-dir=${STAGING_PREFIX}"
+  fact "build-staging" PASS "this run stages the build's source under ${STAGING_PREFIX}, inside the installation's own staging bucket (which was listed before anything was created, so gcloud creates nothing), and its Restore deletes that prefix again"
+}
+
+# print_plan: what a real run would run, in order, and what its Restore would
+# delete. Printed by --dry-run; nothing here is run.
+print_plan() {
+  say "dry run: NOTHING below was run. A real run would run, in this order:"
+  say "  [network, writes] gcloud artifacts repositories create ${SVC} --project=${P} --location=${L} --repository-format=docker"
+  say "  [network, writes] gcloud builds submit --project=${P} --config=${BUILD_CONFIG} --service-account=projects/${P}/serviceAccounts/${BUILD_SA} ${STAGING_ARG} ${SCRATCH}"
+  say "  [network, writes] gcloud run deploy ${SVC} --project=${P} --region=${L} --image=${IMG} --no-allow-unauthenticated --timeout=3600 --min-instances=0 --max-instances=1"
+  say "  [network] the probes: identity-token requests with curl to the service's URL (cold start, stream, 59-minute stream, body sizes)"
+  say "and its Restore (also from the exit trap) would run:"
+  say "  [network, deletes] gcloud run services delete ${SVC} --project=${P} --region=${L}"
+  say "  [network, deletes] gcloud artifacts docker images delete ${IMG} --project=${P} --delete-tags"
+  say "  [network, deletes] gcloud artifacts repositories delete ${SVC} --project=${P} --location=${L}"
+  say "  [network, deletes] gcloud storage rm -r ${STAGING_PREFIX}"
+  say "What needed the network and your credentials in THIS dry run: fugaro doctor, the describes of the service and the repository, the build-account list, the two IAM policy reads and the staging-bucket list (all reads). Local only: the scratch directory and the files in it (relay.py, Dockerfile, cloudbuild.yaml)."
+}
+
 main() {
   need_tools
   scratch_up
   guard_xtrace
   guard_http2
   guard_project
+  guard_build_identity
   write_relay
   guard_service
   baseline
 
   if [ -n "$DRY_RUN" ]; then
-    say "dry run: guards, the baseline and the files only — nothing created, built, deployed or deleted"
-    fact "dry-run" PASS "guards, the baseline and the relay files only"
+    print_plan
+    fact "dry-run" PASS "guards, the baseline and the relay files only; the commands a real run would run and its cleanup commands were printed, not run"
     return 0
   fi
 
@@ -1091,7 +1250,7 @@ main() {
 # recorded it (nothing here sorts them, and `aborted` is appended by the stop
 # that ended the run, so it comes after the keys recorded up to that point).
 # That is what makes the block safe to diff between two runs.
-BLOCK_KEYS=(fugaro-version project-region baseline scratch service-config
+BLOCK_KEYS=(fugaro-version project-region build-identity build-staging baseline scratch service-config
   unauthenticated-request cold-start stream-unbuffered stream-longest
   body-limit-http1 body-limit-http2-front-end http2-end-to-end relay restore
   restore-counts scratch-removed restore-token-file)

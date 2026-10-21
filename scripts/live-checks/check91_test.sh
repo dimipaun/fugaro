@@ -317,6 +317,34 @@ if args[:2] == ["artifacts", "docker"] and args[2:3] == ["images"]:
             print("us-east5-docker.pkg.dev/fugaro-dev/fugaro-chk91/fugaro-chk91:chk91")
     sys.exit(0)
 
+if args[:2] == ["iam", "service-accounts"]:
+    # The installation's build accounts. FAKE_GCLOUD_BUILD_SAS is a space-separated
+    # list of account ids ("none" for no account at all); the default is one.
+    ids = os.environ.get("FAKE_GCLOUD_BUILD_SAS", "fugaro-b-sandbox-abc123").split()
+    ids = [] if ids == ["none"] else ids
+    if args[2:3] == ["list"]:
+        for i in ids:
+            print(i + "@fugaro-dev.iam.gserviceaccount.com")
+        sys.exit(0)
+    if args[2:3] == ["describe"]:
+        if args[3].split("@")[0] in ids or args[3].startswith("fugaro-b-"):
+            sys.exit(0)
+        describe_absent("iam.service-accounts.describe")
+
+if args[:2] == ["projects", "get-iam-policy"] or args[:3] == ["storage", "buckets", "get-iam-policy"]:
+    # The build account's roles, on the project and on the staging bucket.
+    # FAKE_GCLOUD_PROJECT_ROLES / FAKE_GCLOUD_BUCKET_ROLES are space-separated.
+    if os.environ.get("FAKE_GCLOUD_POLICY_FAILS") == "yes":
+        sys.stderr.write("ERROR: (gcloud.get-iam-policy) PERMISSION_DENIED: the fake gcloud was told to fail this read\n")
+        sys.exit(1)
+    if args[0] == "projects":
+        roles = os.environ.get("FAKE_GCLOUD_PROJECT_ROLES", "roles/artifactregistry.writer roles/logging.logWriter")
+    else:
+        roles = os.environ.get("FAKE_GCLOUD_BUCKET_ROLES", "roles/storage.objectViewer")
+    for r in roles.split():
+        print(r)
+    sys.exit(0)
+
 if args[:1] == ["builds"]:
     # The source is uploaded before the build runs, so an object is in the
     # staging bucket from that moment on — that is what the Restore's
@@ -753,6 +781,82 @@ test_every_advertised_knob_is_read() {
   done
 }
 
+# The build runs as the installation's build account, and the grants it needs
+# are READ before anything is created. A missing grant is printed as a command
+# for the owner and ends the run; the script itself writes no IAM.
+test_build_identity_preflight() {
+  local dir=$work/buildid calls
+  prepare "$dir"
+  run91 "$dir" CHECK91_DRY_RUN=1
+  expect_status "$status" 0 "build identity: the dry run"
+  expect_contains "$err" "BUILD IDENTITY" "build identity: it is printed up front"
+  expect_contains "$err" "fugaro-b-sandbox-abc123@fugaro-dev.iam.gserviceaccount.com" "build identity: the account is named"
+  expect_contains "$err" "roles/artifactregistry.writer" "build identity: the AR role is listed"
+  expect_contains "$err" "roles/storage.objectViewer" "build identity: the bucket role is listed"
+  expect_contains "$err" "roles/logging.logWriter" "build identity: the logging role is listed"
+  expect_contains "$out" "FACT build-identity: PASS" "build identity: the fact"
+
+  # Missing AR writer and bucket read: the commands are printed, nothing created.
+  prepare "$dir/miss"
+  run91 "$dir/miss" FAKE_GCLOUD_PROJECT_ROLES="roles/viewer" FAKE_GCLOUD_BUCKET_ROLES=""
+  expect_status "$status" 1 "missing grants: the run stops"
+  expect_contains "$err" "MISSING GRANTS" "missing grants: said"
+  expect_contains "$err" "[per installation fugaro (fugaro-dev), run by YOU] gcloud projects add-iam-policy-binding fugaro-dev --member=serviceAccount:fugaro-b-sandbox-abc123@fugaro-dev.iam.gserviceaccount.com --role=roles/artifactregistry.writer" "missing grants: the AR command"
+  expect_contains "$err" "gcloud storage buckets add-iam-policy-binding gs://fugaro-dev_cloudbuild --member=serviceAccount:fugaro-b-sandbox-abc123@fugaro-dev.iam.gserviceaccount.com --role=roles/storage.objectViewer" "missing grants: the bucket command"
+  expect_contains "$out" "FACT build-identity: FAIL" "missing grants: the fact"
+  calls=$(cat "$dir/miss/logs/gcloud.calls")
+  expect_absent "$calls" "repositories create" "missing grants: nothing created"
+  expect_absent "$calls" "builds submit" "missing grants: nothing built"
+  expect_absent "$calls" "add-iam-policy-binding" "missing grants: the script itself grants nothing"
+  expect_absent "$calls" "set-iam-policy" "missing grants: the script itself grants nothing (set)"
+
+  # A policy that cannot be read is not "holds nothing".
+  prepare "$dir/unread"
+  run91 "$dir/unread" FAKE_GCLOUD_POLICY_FAILS=yes
+  expect_status "$status" 1 "unreadable policy: the run stops"
+  expect_contains "$err" "cannot be read" "unreadable policy: said"
+  expect_absent "$(cat "$dir/unread/logs/gcloud.calls")" "repositories create" "unreadable policy: nothing created"
+
+  # No build account: stop with the fix, never fall back to the Compute account.
+  prepare "$dir/none"
+  run91 "$dir/none" FAKE_GCLOUD_BUILD_SAS=none
+  expect_status "$status" 1 "no build account: the run stops"
+  expect_contains "$err" "has no build service account" "no build account: said"
+  expect_contains "$err" "gcloud iam service-accounts create fugaro-chk91-build --project=fugaro-dev" "no build account: the per-installation fix"
+  expect_contains "$err" "per REPOSITORY" "no build account: the per-repository fix is labelled"
+  expect_absent "$(cat "$dir/none/logs/gcloud.calls")" "repositories create" "no build account: nothing created"
+  expect_absent "$(cat "$dir/none/logs/gcloud.calls")" "builds submit" "no build account: nothing built"
+
+  # Several: the owner picks; a foreign project's account is refused.
+  prepare "$dir/many"
+  run91 "$dir/many" FAKE_GCLOUD_BUILD_SAS="fugaro-b-a fugaro-b-b"
+  expect_status "$status" 1 "several accounts: the run stops"
+  expect_contains "$err" "CHECK91_BUILD_SA" "several accounts: the knob is named"
+  prepare "$dir/foreign"
+  run91 "$dir/foreign" CHECK91_BUILD_SA=x@other-project.iam.gserviceaccount.com
+  expect_status "$status" 1 "foreign account: refused"
+  expect_contains "$err" "is not a service account of fugaro-dev" "foreign account: said"
+}
+
+# The dry run prints what a real run would run and its cleanup, and says what
+# needed the network.
+test_dry_run_prints_the_plan() {
+  local dir=$work/dryplan
+  prepare "$dir"
+  run91 "$dir" CHECK91_DRY_RUN=1
+  expect_status "$status" 0 "dry plan: the run"
+  expect_contains "$err" "gcloud artifacts repositories create fugaro-chk91" "dry plan: the create"
+  expect_contains "$err" "gcloud builds submit --project=fugaro-dev --config=" "dry plan: the build"
+  expect_contains "$err" "--service-account=projects/fugaro-dev/serviceAccounts/fugaro-b-sandbox-abc123@" "dry plan: the build account"
+  expect_contains "$err" "gcloud run deploy fugaro-chk91" "dry plan: the deploy"
+  expect_contains "$err" "gcloud run services delete fugaro-chk91" "dry plan: the service cleanup"
+  expect_contains "$err" "gcloud artifacts repositories delete fugaro-chk91" "dry plan: the repository cleanup"
+  expect_contains "$err" "gcloud storage rm -r gs://fugaro-dev_cloudbuild/chk91-source/" "dry plan: the staged source cleanup"
+  expect_contains "$err" "needed the network" "dry plan: says which parts needed the network"
+  expect_contains "$err" "Local only" "dry plan: says which parts are local"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "builds submit" "dry plan: nothing was built"
+}
+
 # The guard asks one question — does doctor's project: line name fugaro-dev —
 # and doctor's exit status is not the answer to it. doctor exits 1 whenever any
 # check of its own failed (emitDoctor returns ExitUserError, doctor.go), and
@@ -1007,8 +1111,12 @@ test_staged_source_is_removed() {
   expect_status "$status" 0 "staged source: the run"
   local calls
   calls=$(cat "$dir/logs/gcloud.calls")
-  expect_contains "$calls" "builds submit --project=fugaro-dev --tag=us-east5-docker.pkg.dev/fugaro-dev/fugaro-chk91/fugaro-chk91:chk91 --gcs-source-staging-dir=gs://fugaro-dev_cloudbuild/chk91-source/" \
+  expect_contains "$calls" "--gcs-source-staging-dir=gs://fugaro-dev_cloudbuild/chk91-source/" \
     "staged source: the build is given a per-run staging prefix"
+  expect_contains "$calls" "builds submit --project=fugaro-dev --config=" "build identity: the build uses the check's own config (CLOUD_LOGGING_ONLY)"
+  expect_contains "$calls" "--service-account=projects/fugaro-dev/serviceAccounts/fugaro-b-sandbox-abc123@fugaro-dev.iam.gserviceaccount.com" \
+    "build identity: the build names the installation's build account, never the default Compute account"
+  expect_absent "$calls" "compute@developer" "build identity: the default Compute account is never named"
   expect_contains "$calls" "storage rm -r gs://fugaro-dev_cloudbuild/chk91-source/" \
     "staged source: the prefix is removed by the Restore"
   expect_contains "$out" "FACT restore-staged-source: PASS" "staged source: the fact"
@@ -1034,20 +1142,19 @@ test_unreadable_staging_bucket_stops_before_the_build() {
   # check's to change: the bucket and the build identity are the installation's
   # IAM. A stop that named only "create the bucket" would send the owner to
   # create a project-level resource the installation's Terraform owns.
-  expect_contains "$err" "grant the identity a build runs as" "unreadable staging bucket: the stop names the grant that makes the build work"
-  expect_contains "$err" "<project-number>-compute@developer.gserviceaccount.com" "unreadable staging bucket: the stop names the identity Cloud Build runs a build as by default"
-  expect_contains "$err" "roles/storage.objectViewer" "unreadable staging bucket: the stop names the role that grants it"
-  expect_contains "$err" "run 'fugaro init'" "unreadable staging bucket: the stop names the installation's own remedy"
+  expect_contains "$err" "gcloud storage buckets add-iam-policy-binding gs://fugaro-dev_cloudbuild --member=user:" "unreadable staging bucket: the stop names the real grant for the owner"
+  expect_contains "$err" "gcloud storage buckets create gs://fugaro-dev_cloudbuild" "unreadable staging bucket: and the create, for a bucket that is not there"
+  expect_absent "$err" "fugaro init'" "unreadable staging bucket: init gives no grant, so it is not offered as the remedy"
   local calls
   calls=$(cat "$dir/logs/gcloud.calls")
   expect_absent "$calls" "builds submit" "unreadable staging bucket: nothing is built"
   expect_absent "$calls" "run deploy" "unreadable staging bucket: nothing is deployed"
   expect_absent "$calls" "storage rm" "unreadable staging bucket: nothing is deleted from a bucket this run did not write to"
   expect_absent "$calls" "storage buckets create" "unreadable staging bucket: this check never creates the installation's bucket"
-  # The repository it created before the stop is still deleted: a stop is not a
-  # reason to leave something of this check's in the project.
-  expect_contains "$calls" "repositories delete fugaro-chk91" "unreadable staging bucket: the repository this run made is deleted"
-  expect_contains "$out" "FACT restore: PASS" "unreadable staging bucket: the Restore ran"
+  # The preflight is read-only and runs before anything is created, so the
+  # stop leaves nothing behind.
+  expect_absent "$calls" "repositories create" "unreadable staging bucket: nothing was created"
+  expect_contains "$out" "FACT restore: PASS — nothing of this check's was created" "unreadable staging bucket: nothing to restore"
   if [ -d "$scratch" ]; then fail "unreadable staging bucket: the scratch directory survived"; fi
 }
 
@@ -1062,10 +1169,13 @@ test_a_failed_build_records_what_it_said() {
   prepare "$dir"
   run91 "$dir" FAKE_GCLOUD_BUILD_FAIL=yes
   expect_status "$status" 1 "failed build: the run stops"
-  expect_contains "$out" "FACT build-error: FAIL — gcloud builds submit exited 1" "failed build: the row says which command failed"
+  expect_contains "$out" "FACT build-error: FAIL — gcloud builds submit (as fugaro-b-sandbox-abc123@fugaro-dev.iam.gserviceaccount.com) exited 1" "failed build: the row says which command failed"
   expect_contains "$out" "INVALID_ARGUMENT" "failed build: gcloud's own error is in the block"
   expect_contains "$out" "does not have storage.objects.get access" "failed build: the reason the source could not be read is in the block"
   expect_contains "$out" "the identity the build ran as cannot read the source this run staged at gs://fugaro-dev_cloudbuild/chk91-source/" "failed build: the first likely cause names the staged source"
+  expect_contains "$out" "artifactregistry.repositories.uploadArtifacts" "failed build: the Artifact Registry write permission is named"
+  expect_contains "$out" "gcloud builds submit (as fugaro-b-sandbox-abc123@fugaro-dev.iam.gserviceaccount.com)" "failed build: the row names the account"
+  expect_absent "$out" "the build did not run" "failed build: a build that ran and failed is not described as one that did not run"
   expect_contains "$out" "the Cloud Build API is not enabled" "failed build: the second cause is named"
   expect_contains "$out" "a step of the Dockerfile failed" "failed build: the third cause is named"
   # The excerpt is FILTERED, not trusted: an authorization header can appear in
@@ -1750,6 +1860,8 @@ test_never_belong() {
 
 test_curl_cutting_the_stream
 test_dry_run
+test_build_identity_preflight
+test_dry_run_prints_the_plan
 test_project_guard
 test_every_advertised_knob_is_read
 test_doctor_failing_its_own_checks_is_not_a_stop

@@ -739,6 +739,29 @@ test_dry_run_makes_no_call() {
   expect_contains "$(cat "$dir/out")" "FACT dry-run: PASS" "dry run: the fact"
 }
 
+# CHECK90_UPSTREAM may only name a loopback address: it is where the real token
+# is sent, so a value that names any other host is refused before anything
+# runs, whatever else is set (the guard whose mutation the review found alive).
+test_non_loopback_upstream_is_refused() {
+  local dir=$work/upstream up st
+  mkdir -p "$dir/home" "$dir/tmp" "$dir/managed"
+  write_fake_claude "$dir"
+  for up in example.com:443 api.anthropic.com 10.0.0.5:8080 127.0.0.1.evil.example:443 "[::2]:443"; do
+    : >"$dir/claude.calls"
+    st=0
+    printf '%s\n' "$SENTINEL" | env \
+      ${GUARD_UNSET[@]} \
+      PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" CHECK90_DRY_RUN=1 \
+      CHECK90_MANAGED_SETTINGS_DIR="$dir/managed" CHECK90_UPSTREAM="$up" \
+      FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
+      bash "$script" >"$dir/out" 2>"$dir/err" || st=$?
+    [ "$st" = 2 ] || fail "non-loopback upstream $up: expected exit 2, got $st"
+    expect_contains "$(cat "$dir/err")" "CHECK90_UPSTREAM may only name a loopback address" "non-loopback upstream $up: the refusal is said"
+    expect_absent "$(cat "$dir/out" "$dir/err")" "$SENTINEL" "non-loopback upstream $up: the token is printed nowhere"
+    if [ -s "$dir/claude.calls" ]; then fail "non-loopback upstream $up: claude was run anyway"; fi
+  done
+}
+
 test_sigint_cleans_up() {
   local dir=$work/sigint
   mkdir -p "$dir/home" "$dir/tmp" "$dir/managed"
@@ -1629,6 +1652,7 @@ test_limit_is_recorded
 test_limit_the_client_never_spoke_about_is_unverified
 test_control_failure_is_inconclusive
 test_dry_run_makes_no_call
+test_non_loopback_upstream_is_refused
 test_token_is_never_on_a_command_line
 test_streaming_call_is_capped
 test_sigint_cleans_up
