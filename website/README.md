@@ -159,11 +159,14 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,387,679 bytes in a checkout with no tags** and to **1,387,679 bytes with the
+  commit builds to **1,412,642 bytes in a checkout with no tags** and to **1,412,642 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
-  a round's bytes behind) and refuses it unless the two are one figure. The derivation stays
+  a round's bytes behind) and refuses it unless the two are one figure — and unless that one
+  figure is the site's own, which is the byte count the whole-site budget above derives from:
+  the paragraph's claim is that the two shapes are *this* build, so a pair that agrees with
+  itself a round behind is the same drift by the other door. The derivation stays
   where it is all the same — a copy of the repository built by the gates is the artifact the
   gates can measure in every environment, `dist/` or no `dist/`.
 
@@ -743,18 +746,43 @@ added or removed without this sentence moving fails there:
     before it. The console page's words go 303 → **299**: the struck command was four of them, and
     the bar the script drives adds none (an arrow's name is an `aria-label`, which is not text a
     reader reads). No file was added or removed, so the count of files in `dist/` stays 28.
+  - **The feedback-B review round** (the review of the round above, 2026-10-21) re-derived the
+    script's figure and the two that follow it from it, and **the whole move is the script's own
+    bytes**: `site.js` goes 49,561 → **50,714 bytes** (+1,153), the page weight 410,743 →
+    **411,896** and the site figure 1,411,489 → **1,412,642**, both by the same 1,153. No page's
+    markup moved at all — `dist/console/index.html` is **31,649 bytes** in both builds — and no
+    file was added or removed, so the count of files in `dist/` stays 28 and the console page's
+    words stay **299**. The 1,153 bytes are the three corrections the review asked for: the move
+    the script asks the track for is **`behavior: 'instant'`** rather than `'auto'` — which
+    CSSOM-View resolves to the track's computed `scroll-behavior: smooth`, so the move was
+    animated, the count and the mark narrating slides the reader was passing through and a second
+    Next press advancing from a position a `scroll` event had already put back; the **first
+    reading is the track's**, so a page opened on a shared `#console-screen-3` link or a restored
+    scroll position counts and marks the slide it is showing rather than the first; and the
+    comments on both, which are the larger part of the 1,153. The tests grew with them —
+    `test/lib/dom.mjs` now records what the script asks the track for and can open a page at a
+    slide, which is one more plant (`behavior: 'auto'`, refused by name) and one more case (the
+    page that arrives scrolled, with the count hardcoded to the first slide refused beside it) —
+    and **the pair the site's two checkout shapes are stated as is now held to the site's own
+    build figure**, because the pair was a round behind in this same review: `test/budget.mjs`
+    read those two numbers against each other and against nothing else, so a pair that agreed
+    with itself and disagreed with the site passed the case that exists to catch exactly it.
 
-  - **JavaScript per page:** 185,856 bytes. Three times 61,952: the one script the site ships,
-    `public/scripts/site.js` (49,561 bytes), plus 25 %. What the file carries is the copy
+  - **JavaScript per page:** 190,179 bytes. Three times 63,393: the one script the site ships,
+    `public/scripts/site.js` (50,714 bytes), plus 25 %. What the file carries is the copy
     control, the menu, the consent gate and the console page's slider. **The slider's half is
-    this round's, and it is the only JavaScript the site has gained since the menu** (the owner's
-    feedback of 2026-10-21): the bar the markup emits `hidden` — a Previous arrow, the count and
+    the feedback-B round's, and it is the only JavaScript the site has gained since the menu**
+    (the owner's feedback of 2026-10-21): the bar the markup emits `hidden` — a Previous arrow,
+    the count and
     a Next arrow — is revealed and driven here, the count (`n / N`) and the dot the reader is on
     are written from the track's own scroll position (so a trackpad swipe reads the same as a
     press), an arrow or a dot press moves the track round its ends, and a slide advances every
     six seconds while nobody is reading — stopping for a pointer over the slider, a focus inside
     it, a tab in the background, and a visitor whose system asks for less motion
-    (`prefers-reduced-motion: reduce`, read at load and watched after it).
+    (`prefers-reduced-motion: reduce`, read at load and watched after it). **The review round
+    above is the file's last 1,153 bytes**: a move the browser may not animate (`behavior:
+    'instant'`, since `'auto'` is the track's own `scroll-behavior: smooth`) and a first reading
+    taken from the track rather than from the first slide.
     `test/console-screens.mjs` runs the file in `test/lib/dom.mjs`'s stub browser to hold that
     half, and refuses a planted defect in each part of it. What the file carries of the menu, in
     the detail `test/nav-hover.mjs` holds it
@@ -778,10 +806,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,540,287 bytes. Three times 513,429: the heaviest page, the
-    console page, at 410,743 bytes (its HTML, the four screenshots it renders, and the files
+  - **Page weight per page:** 1,544,610 bytes. Three times 514,870: the heaviest page, the
+    console page, at 411,896 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,293,086 bytes. Three times 1,764,362 (every file in `dist/`, 1,411,489
+  - **Whole site:** 5,297,409 bytes. Three times 1,765,803 (every file in `dist/`, 1,412,642
     bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -1496,8 +1524,17 @@ prefers-reduced-motion)"* — and all of that is `public/scripts/site.js`:
   of truth, so a reader's own swipe moves the reading exactly as an arrow press does.
 - **The presses**: an arrow moves one slide, wrapping at either end, and a dot press is taken over
   from its anchor and made the same move — one slide at a time, with the count and the mark
-  following. The move is not animated: the count is the scroll position, and a move the browser
-  animated would be a move during which the two disagree.
+  following. The move is not animated, and the script asks for that in the only way a browser
+  takes: `behavior: 'instant'` on the scroll, because `'auto'` is resolved by CSSOM-View to the
+  box's own computed `scroll-behavior` — which the track declares `smooth` — and so *is* the
+  animation. The count is the scroll position, and a move the browser animated would be a move
+  during which the two disagree: the reader would be told a number and shown a mark for slides
+  they are passing through, and a second press would advance from a position a `scroll` event had
+  already put back.
+- **The first reading**, taken from the track like every later one: a reader who arrives already
+  scrolled — a shared `#console-screen-3` deep link, or a scroll position the browser restored —
+  opens with the count and the mark of the slide they are on, rather than `1 / N` and the first
+  dot until the first `scroll` event corrected them.
 - **The autoplay**: one slide every six seconds, stopped while the pointer is over the slider,
   while the focus is inside it, while the tab is hidden, and never started at all for a visitor
   whose system answers `prefers-reduced-motion: reduce` — a setting read at load and watched
@@ -1513,10 +1550,16 @@ and the dot that each row produces. **The script's half is held by running the s
 browser: `test/lib/dom.mjs` — the harness `test/copy.mjs` used to keep to itself, moved out of that
 file so that the two gates that run `site.js` run it in the one stub — is driven through every move
 above (the arrows, a dot press, a reader's own scroll, the pointer, the focus, the tab and the
-motion preference), and then through eleven planted defects, one per part of the half: a bar nobody
+motion preference), and then through twelve planted defects, one per part of the half: a bar nobody
 reveals, a count never written, an autoplay of the wrong interval or none at all, each of the four
 stops removed, an arrow that goes past the end instead of round it, a dot press the script does not
-take over, and a count that ignores the reader's own scrolling — each one refused by name.
+take over, a count that ignores the reader's own scrolling, and a move that leaves its landing to
+the stylesheet's animation — each one refused by name. Two readings have a case of their own: the
+page a reader arrives on already scrolled (`scroll:` in the stub, the deep link and the restored
+position), which the same stub answers by opening the page at that slide, and the moves themselves,
+whose `scrollTo` the stub records — `track.scrollLeft` cannot tell an instant landing from an
+animated one, because it lands where it is sent either way, and what the script *asked* the track
+for is the half that can.
 
 ## The rule this directory is written to
 

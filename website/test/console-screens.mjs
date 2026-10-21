@@ -694,7 +694,10 @@ test('the slider is the browser\'s own scrolling, with nothing of its own to run
 // 5a. The bar in the markup: the two arrows, the count, `hidden`, and only while there is
 //     somewhere to go.
 // 5b. The same bar with `public/scripts/site.js` run against it — what it counts, where a press
-//     takes the track, and what stops the autoplay — each reading proved by a planted defect.
+//     takes the track, how the move lands, and what stops the autoplay — each reading proved by
+//     a planted defect.
+// 5c. The same script on a page that arrives already scrolled: the first reading is the track's
+//     like every other one, so a deep link into a slide opens telling the truth.
 // ---------------------------------------------------------------------------------------
 
 /** The hooks the bar is written in: what the script finds it by, named once. */
@@ -891,6 +894,23 @@ function scriptFailures(page, { width = STUB_WIDTH } = {}) {
     start()
     if (running().length !== 1) fail(`${what} stopped the autoplay and letting it go did not start it again: a slider that stops for the pointer and never resumes is a slider that stopped`)
   }
+
+  // **And every move above asked for an instant landing.** `track.scrollLeft` cannot tell the
+  // two apart — the stub lands where it is sent either way — but the browser can, and this is
+  // where the difference lives: `behavior: 'auto'` is resolved by CSSOM-View to the box's own
+  // computed `scroll-behavior`, which the track declares `smooth`, so a move asked for that way
+  // is animated. During one, the count and the dot narrate slides the reader is passing through
+  // and a second Next press advances from a position a `scroll` event has already put back.
+  // `page.scrolls` is what the script asked the track for, in its own words.
+  const asked = page.scrolls ?? []
+  const smooth = asked.filter((call) => (call.init ?? {}).behavior !== 'instant')
+  if (asked.length === 0) {
+    fail('the script never asked the track for a position: every move above went by the track\'s own scrolling, and a press that leaves the landing to the stylesheet is a press nothing counts')
+  } else if (smooth.length) {
+    fail(
+      `the script moved the track ${smooth.length} time(s) without asking for an instant landing (behavior: ${JSON.stringify((smooth[0].init ?? {}).behavior ?? null)}), and the track declares scroll-behavior: smooth: the move is animated, so the count and the dots tell the reader about slides they are passing through and two quick Next presses advance one slide`,
+    )
+  }
   return out
 }
 
@@ -932,7 +952,7 @@ test('a slider the script does not drive is refused, plant by plant', (t) => {
     },
     {
       what: 'a count the script never writes',
-      plant: (src) => src.replace('    if (bar) bar.hidden = false\n    paint()', '    if (bar) bar.hidden = false'),
+      plant: (src) => src.replace('    if (bar) bar.hidden = false\n    index = shown()\n    paint()', '    if (bar) bar.hidden = false'),
       wants: /at load: the count reads ""/,
     },
     {
@@ -980,6 +1000,11 @@ test('a slider the script does not drive is refused, plant by plant', (t) => {
       plant: (src) => src.replace('      var at = shown()', '      var at = index'),
       wants: /after the reader scrolled the track themselves/,
     },
+    {
+      what: 'a move the browser is free to animate',
+      plant: (src) => src.replace("behavior: 'instant'", "behavior: 'auto'"),
+      wants: /without asking for an instant landing/,
+    },
   ]
   for (const { what, plant, wants } of defects) {
     const planted = plant(SCRIPT_SOURCE)
@@ -990,6 +1015,51 @@ test('a slider the script does not drive is refused, plant by plant', (t) => {
       `${what} was not refused (${wants}); the reading said:\n  ${failures.join('\n  ') || '(nothing)'}`,
     )
   }
+})
+
+test('a page that arrives already scrolled opens on the slide it is showing', (t) => {
+  // A reader can land on the third screenshot without touching anything: the dots are anchors,
+  // so `#console-screen-3` is a link somebody can share, and a browser that restores a scroll
+  // position lands the same way. The reading the page opens with is then the one reading that
+  // could be taken from nothing but the track — the slide the track is on — and a count and a
+  // mark that start at the first slide are wrong until the first `scroll` event corrects them,
+  // which on a page nobody touches is never.
+  const built = buildCopy(t, () => {})
+  const html = consolePage(built)
+  const at = 2
+  const loaded = (script) => fakeDOM(html, { width: STUB_WIDTH, scroll: { [TRACK]: at * STUB_WIDTH }, script })
+
+  const page = loaded(SCRIPT_SOURCE)
+  const slider = page.find('[data-slider]')[0]
+  const dots = slider.querySelectorAll(DOT)
+  assert.ok(dots.length > at, `the console page renders ${dots.length} slide(s), and this case needs a third one to open on`)
+  assert.equal(
+    (slider.querySelector(COUNTER).textContent ?? '').trim(),
+    `${at + 1} / ${dots.length}`,
+    `a page loaded with the track already on slide ${at + 1} opens reading ${JSON.stringify((slider.querySelector(COUNTER).textContent ?? '').trim())}: the count is the track's own position, and the first reading is taken from the track like every later one`,
+  )
+  assert.equal(
+    dots[at].getAttribute('aria-current'),
+    'true',
+    'the dot the reader arrived on does not carry aria-current="true": a screen reader is told which screenshot is on screen, and a page that opens on the third one says the first',
+  )
+  assert.deepEqual(
+    dots.map((dot) => (dot.getAttribute('aria-current') === 'true' ? 'current' : '.')),
+    dots.map((_, i) => (i === at ? 'current' : '.')),
+    'the mark on the dots of a page that arrives scrolled is not on the slide the track is showing',
+  )
+
+  // The plant: the same page with the first reading taken from the starting index rather than
+  // from the track — which is what the count hardcoded to `1 / N` is, and the case above is only
+  // worth its lines if it disagrees with it.
+  const planted = SCRIPT_SOURCE.replace('    index = shown()\n    paint()', '    paint()')
+  assert.notEqual(planted, SCRIPT_SOURCE, 'the planted edit changed nothing, so this fixture proves nothing')
+  const stale = loaded(planted).find('[data-slider]')[0].querySelector(COUNTER)
+  assert.equal(
+    (stale.textContent ?? '').trim(),
+    `1 / ${dots.length}`,
+    `the planted script did not open on the first slide (it read ${JSON.stringify((stale.textContent ?? '').trim())}), so it is not the reading this case is written against`,
+  )
 })
 
 // ---------------------------------------------------------------------------------------

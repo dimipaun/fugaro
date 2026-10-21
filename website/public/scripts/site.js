@@ -573,14 +573,20 @@
     // The move lands where it was asked to land — no animation — and that is deliberate: the
     // count and the dots are the track's own position, so a move the browser animates would be
     // a move during which the position is between two slides while the reading had already
-    // moved on, and a jump across several slides would narrate every one it passed. The
-    // reader's own motion is the stylesheet's (`scroll-behavior: smooth` on the track, which
-    // the base layout's reduced-motion rule neutralises) and so is a dot's anchor with no
-    // script.
+    // moved on, and a jump across several slides would narrate every one it passed. **It is
+    // `'instant'` and not `'auto'`**: CSSOM-View resolves `'auto'` to the box's computed
+    // `scroll-behavior`, which the track declares `smooth` — so `'auto'` is the animation this
+    // is written to avoid, and the count would narrate the slides a move passed through while a
+    // reader pressing Next twice in a row advanced one slide, the second press having read a
+    // position a `scroll` event had already put back. A browser too old to know the word reads
+    // it as a value the dictionary does not have and takes the default, which is what the
+    // reader's own motion gets anyway. That motion stays the stylesheet's — `scroll-behavior:
+    // smooth` on the track, which the base layout's reduced-motion rule neutralises — and so is
+    // a dot's anchor with no script.
     function show(to) {
       index = (to + slides.length) % slides.length
       var left = index * (track.clientWidth || 0)
-      if (typeof track.scrollTo === 'function') track.scrollTo({ left: left, behavior: 'auto' })
+      if (typeof track.scrollTo === 'function') track.scrollTo({ left: left, behavior: 'instant' })
       else track.scrollLeft = left
       paint()
     }
@@ -658,9 +664,17 @@
     }
 
     // The bar the markup emitted `hidden`, revealed now that something drives it — and the
-    // reading drawn before the first frame, so the count is `1 / N` from the start rather than
+    // reading drawn before the first frame, so the count is written from the start rather than
     // empty until the first move.
+    //
+    // The first reading is the track's, like every other one: a page that arrives already
+    // scrolled — a shared `#console-screen-3` deep link, or a scroll position the browser
+    // restored — opens on that slide, and a count hardcoded to the first one would tell that
+    // reader `1 / N` and mark the first dot until the first `scroll` event corrected it.
+    // `shown()` answers `index` when the track reports no width, so a browser that lays nothing
+    // out yet leaves the starting index as it was.
     if (bar) bar.hidden = false
+    index = shown()
     paint()
     settle()
   }

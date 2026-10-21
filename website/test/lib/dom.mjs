@@ -103,7 +103,11 @@ export class FakeElement {
   set scrollLeft(value) {
     this.dom.scrolled.set(this.node, Number(value))
   }
+  // Recorded as well as applied: where the track ended up is what a case asserts, and what the
+  // script asked for is the other half — a move is `behavior: 'instant'` or it is the
+  // stylesheet's animation, and nothing in `scrollLeft` afterwards can tell the two apart.
   scrollTo(init) {
+    this.dom.scrolls.push({ node: this.node, init })
     if (init && typeof init.left === 'number') this.scrollLeft = init.left
   }
   contains(other) {
@@ -174,12 +178,14 @@ export class FakeCustomEvent {
  *
  * `clipboard` is `'ok'`, `'refuse'` or `'absent'`; `undrawn` answers which elements a case wants
  * treated as not rendered; `storage` is the `localStorage` the page starts with; `width` is the
- * width every element reports (the slider's track is the one that reads it); `reduce` is the
- * visitor's motion preference; `hidden` is whether the tab is in the background; and
- * `matchMedia: false` is a browser old enough to have none. `script` is the source run in the
- * page, which is the file the site ships unless a case hands in a defect planted in it.
+ * width every element reports (the slider's track is the one that reads it); `scroll` is where
+ * the page's scroll boxes already are when it loads, by selector — a deep link into a slide, or
+ * a position the browser restored; `reduce` is the visitor's motion preference; `hidden` is
+ * whether the tab is in the background; and `matchMedia: false` is a browser old enough to have
+ * none. `script` is the source run in the page, which is the file the site ships unless a case
+ * hands in a defect planted in it.
  */
-export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage = {}, width = 0, reduce = false, hidden = false, matchMedia = true, script = SCRIPT_SOURCE } = {}) {
+export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage = {}, width = 0, scroll = {}, reduce = false, hidden = false, matchMedia = true, script = SCRIPT_SOURCE } = {}) {
   const root = parse(html)
   const wrapped = new Map()
   const written = []
@@ -195,10 +201,12 @@ export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage
   const mediaLists = []
   const byId = new Map()
   const scrolled = new Map()
+  const scrolls = []
   for (const el of walk(root)) if (el.attrs.has('id')) byId.set(el.attrs.get('id'), el)
   const dom = {
     width,
     scrolled,
+    scrolls,
     scrollOf: (node) => scrolled.get(node) ?? 0,
     wrap(node) {
       if (!wrapped.has(node)) wrapped.set(node, new FakeElement(node, dom))
@@ -312,6 +320,15 @@ export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage
       return list
     }
   }
+  // Where the scroll boxes already are when the page loads: `{ '.screens-track': 2000 }` is a
+  // reader arriving on the third slide, by deep link or by a restored position, and it is set
+  // before the script runs because that is the only moment it can be — a page's first reading of
+  // its own scroll position is the one this is here for.
+  for (const [selector, left] of Object.entries(scroll)) {
+    const node = [...walk(root)].find((el) => dom.matches(el, selector))
+    assert.ok(node, `the page carries no ${selector} to have scrolled`)
+    scrolled.set(node, Number(left))
+  }
   vm.runInNewContext(script, { window, document, navigator, CustomEvent: FakeCustomEvent })
   return {
     document,
@@ -320,6 +337,8 @@ export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage
     intervals,
     appended,
     store,
+    /** Every `scrollTo` the script made, in order: what it asked the track for, and how. */
+    scrolls,
     find: (selector) => document.querySelectorAll(selector),
     /** The timers still running: what a case fires, and what it holds a stop to. */
     running: () => intervals.filter((timer) => !timer.cancelled),
