@@ -576,12 +576,14 @@ func Workflow(in Inputs, name string) (WorkflowSpec, error) {
 // GitHub's App key is a project's, mounted by every repository the App serves,
 // and its logical name is config.GitHubAppKeySecret — the same constant
 // config.IsServiceHeldSecretEnv and the workflow module's
-// service_held_secret_names answer "is this the App key?" with, so this file
-// spells no git credential as a literal (review finding F3).
+// service_held_secret_names answer "is this the App key?" with. Both names
+// come from config, whose constants are what every other reader of them spells
+// (review finding F3: this function was the one place that wrote the App key
+// out as a literal).
 func GitSecret(provider string) (string, bool) {
 	switch provider {
 	case gitprov.KindBitbucket:
-		return "bitbucket-token", true
+		return config.BitbucketSecret, true
 	case gitprov.KindGitHub:
 		return config.GitHubAppKeySecret, true
 	}
