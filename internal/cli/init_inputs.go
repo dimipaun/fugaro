@@ -27,11 +27,15 @@ import (
 // with every flag still missing named in one message. Once the local config
 // exists nothing is asked.
 //
-// The GCP project's suggestion comes only from GOOGLE_CLOUD_PROJECT or the
-// quota project of the application default credentials. It never comes from
-// gcloud's configured default project (the standing rule: a default project
-// is how a command lands in the wrong project), so neither gcloud's
-// properties file nor CLOUDSDK_CORE_PROJECT is read here.
+// The GCP project's ID is the one question with two suggestions (D4): the
+// default is a project to create, named after this one — `fugaro-<name>`,
+// defaultGCPProject — and, when it differs, the project this machine is
+// already working in (suggestGCPProject: GOOGLE_CLOUD_PROJECT or the quota
+// project of the application default credentials) is offered second, with the
+// one line saying why. That second suggestion never comes from gcloud's
+// configured default project (the standing rule: a default project is how a
+// command lands in the wrong project), so neither gcloud's properties file nor
+// CLOUDSDK_CORE_PROJECT is read here.
 
 const defaultRegion = "us-east5"
 
@@ -123,13 +127,67 @@ func adcQuotaProject() string {
 	return c.Quota
 }
 
-// suggestGCPProject is the GCP project ID to suggest, or "": never gcloud's
-// configured default project.
+// suggestGCPProject is the GCP project ID the credentials name — the project
+// this machine is already working in — or "": never gcloud's configured
+// default project. It is the wizard's **second** suggestion for the ID (D4),
+// offered after the one below.
 func suggestGCPProject() string {
 	if v := os.Getenv("GOOGLE_CLOUD_PROJECT"); infra.ValidProjectID(v) {
 		return v
 	}
 	return adcQuotaProject()
+}
+
+// defaultGCPProject is the ID a first run suggests for a new GCP project: the
+// Fugaro project's own name, prefixed (reconciliation F3, D4, answered
+// 2026-10-20 as recommended). The wizard's default is therefore a name to
+// *create* — fugaro-<name> — where the suggestion it used to make was a
+// project to adopt.
+//
+// The prefix is not negotiable and the name is sanitised and cut to what an ID
+// holds (6 to 30 characters, infra.ValidProjectID), so Enter is always a legal
+// answer; "" is the answer for a name that leaves nothing to build one from,
+// and the question then suggests nothing. The buckets derive from the ID, so a
+// project that takes this default runs in fugaro-runs-fugaro-<name>: the
+// double prefix is accepted, and nothing about bucket naming moves (D4).
+//
+// It is never suggestGCPProject(): a project this machine already works in is
+// a project to adopt, and the wizard offers it as the second suggestion.
+func defaultGCPProject(name string) string {
+	n := sanitiseName(name)
+	if n == "" {
+		return ""
+	}
+	id := "fugaro-" + n
+	if len(id) > 30 {
+		id = strings.Trim(id[:30], "-")
+	}
+	if !infra.ValidProjectID(id) {
+		return ""
+	}
+	return id
+}
+
+// projectIDSuggestions is what the ID question offers: the default this run
+// would create — fugaro- plus the name this run would itself suggest (--name,
+// the selected config's name, else suggestName) — and, when the credentials
+// name a different project, that one second, with the line saying why.
+//
+// A checkout's fugaro.yaml naming a project does **not** become the ID's
+// default, for the reason the name question has none from it either (a cloned
+// repository's file can say anything): the name is then typed, and so is the
+// ID built from it.
+func projectIDSuggestions(ctx context.Context, name, fromCheckout string) (def, alt, why string) {
+	switch {
+	case name != "":
+		def = defaultGCPProject(name)
+	case fromCheckout == "":
+		def = defaultGCPProject(suggestName(ctx))
+	}
+	if c := suggestGCPProject(); c != "" && c != def {
+		return def, c, "you are already working in " + pluginwire.Printable(c)
+	}
+	return def, "", ""
 }
 
 // missingInput is one input a first run lacks.
@@ -223,7 +281,8 @@ func (r *initRun) gatherInputs(ctx context.Context) error {
 		fmt.Fprintln(r.w, "fugaro setup: this is the first run here; each answer has a suggestion, press Enter to accept it.")
 	}
 	if o.cloud.gcpProject == "" {
-		v, err := r.prompt("GCP project ID", suggestGCPProject(), func(s string) error {
+		def, alt, why := projectIDSuggestions(ctx, name, fromCheckout)
+		v, err := r.promptChoice("GCP project ID", def, alt, why, func(s string) error {
 			if !infra.ValidProjectID(s) {
 				return errors.New("a project ID is 6 to 30 of a-z, 0-9 and '-', starting with a letter")
 			}
@@ -336,13 +395,29 @@ func readInstallationName(ctx context.Context, lc *localcfg.Config) string {
 }
 
 // prompt asks label with def as the suggestion and returns the validated
-// answer. Three unusable answers, or the end of input, refuse the run.
+// answer. Three unusable answers, or the end of input, refuse the run. It is
+// promptChoice with no second suggestion, and the questions that offer one
+// answer are unchanged by it.
 func (r *initRun) prompt(label, def string, valid func(string) error) (string, error) {
+	return r.promptChoice(label, def, "", "", valid)
+}
+
+// promptChoice is prompt with a second suggestion: def is what Enter takes,
+// and alt — offered after it, with the one line saying why, when it is neither
+// empty nor def itself — is an answer a person may type instead. Only the GCP
+// project's ID is asked this way (D4): a project to create, or the project the
+// machine is already working in, are both reasonable answers and only the
+// person knows which one they mean.
+func (r *initRun) promptChoice(label, def, alt, why string, valid func(string) error) (string, error) {
 	for range 3 {
+		second := ""
+		if alt != "" && alt != def {
+			second = fmt.Sprintf(" (or %s: %s)", pluginwire.Printable(alt), why)
+		}
 		if def != "" {
-			fmt.Fprintf(r.w, "%s [%s]: ", label, def)
+			fmt.Fprintf(r.w, "%s [%s]%s: ", label, def, second)
 		} else {
-			fmt.Fprintf(r.w, "%s: ", label)
+			fmt.Fprintf(r.w, "%s%s: ", label, second)
 		}
 		line, err := r.in.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
