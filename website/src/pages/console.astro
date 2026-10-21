@@ -31,8 +31,9 @@
  *     `TestWebsiteLinksNoConsoleWhileTheFlagIsOff`), and the `repository` every download
  *     URL is composed from.
  *   - `website/data/console-screens.yaml` — the console's screenshots, read through
- *     `loadConsoleScreens()`. The list is empty until the owner takes the pictures, and the
- *     slider draws its frame with placeholder slides while it is.
+ *     `loadConsoleScreens()`: the four fixture captures the owner asked for on 2026-10-21
+ *     ("console page: screenshots missing"), served from `public/screenshots/`. The slider
+ *     renders the rows it is handed, and a list with no row in it draws no slider at all.
  *
  * **The headline is the data file's name, split and not rewritten.** The board draws the
  * console's name in two lines with the last two words in the accent's gradient, so the line is
@@ -74,9 +75,9 @@ import { loadConsoleDownloads } from '../lib/console-downloads.mjs'
 const site = loadSite()
 const facts = loadConsoleDownloads(SITE_ROOT, site.facts.features.consoleDownloads, site.facts.repository)
 
-// The screenshots, above the downloads (owner feedback 2026-10-19). The list is empty until
-// the owner takes the pictures, and an empty list draws the slider's frame with placeholder
-// slides: the frame is what a reader sees, and a picture is what the data file adds to it.
+// The screenshots, above the downloads (owner feedback 2026-10-19; the four captures landed on
+// 2026-10-21). The slider renders the data file's rows — the pictures, their alt text and their
+// captions — and a data file with no row in it renders no slider section at all.
 const { screens } = loadConsoleScreens()
 
 /**

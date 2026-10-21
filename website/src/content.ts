@@ -952,7 +952,7 @@ export function loadTypicalCosts(minRuns: number): TypicalCostsFacts {
  * pixel dimensions.
  */
 export interface ConsoleScreen {
-  /** The file's name under `public/images/console/`, as the data file writes it. */
+  /** The file's name under `public/screenshots/`, as the data file writes it. */
   file: string
   /** The site path the browser fetches: derived here from `file`, and written down nowhere. */
   src: string
@@ -974,7 +974,7 @@ export interface ConsoleScreensFacts {
 const SCREENS_FILE = 'website/data/console-screens.yaml'
 
 /** Where a screenshot's file lives under `public/`, and the site path it is served at. */
-const SCREENS_DIR = 'images/console'
+const SCREENS_DIR = 'screenshots'
 
 const SCREENS_KEYS = ['screens', 'version']
 
@@ -993,15 +993,17 @@ const SCREEN_FORMATS = ['avif', 'jpeg', 'jpg', 'png', 'webp']
 /**
  * The console's screenshots, in the order the slider shows them.
  *
- * **An empty list is a legal document and not a failure**, and that is the one place this
- * reader differs from the install and site readers beside it: the console's screenshots are
- * the owner's to take from the released console, no build can make one (D190), and the file
- * ships empty until they do. So `screens: []` is read as the state it is — the console page
- * renders no slider and no placeholder — and it is the state `website/test/console-screens.mjs`
- * builds the page in.
+ * **The four rows this file ships are the owner's own pictures** (the owner's feedback of
+ * 2026-10-21: "console page: screenshots missing"): the Live, Run, Spend and Installations
+ * screens, captured from the console's build as fixture data and served from
+ * `public/screenshots/`, with the `alt` text `public/screenshots/MANIFEST.json` records beside
+ * them. **An empty list stays a legal document and not a failure**, which is the one place this
+ * reader differs from the install and site readers beside it: no build can make a screenshot
+ * (D190), so `screens: []` is read as the state it is — the console page renders no slider at
+ * all — and `website/test/console-screens.mjs` is the file that reads both states.
  *
  * Everything else is refused by name: a `file` that is a path or a URL rather than a name
- * under `public/images/console/` (the site path is derived from it, so a URL here would be a
+ * under `public/screenshots/` (the site path is derived from it, so a URL here would be a
  * second copy of a fact the build composes — Global Constraint 9), a format the slider does
  * not serve, an `alt` or a `caption` nobody could read, and a size that is not a positive
  * whole number of pixels.

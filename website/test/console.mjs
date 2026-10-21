@@ -257,18 +257,31 @@ function assertEveryDownloadLinkIsAListedAsset(pages, data = downloadsData()) {
 }
 
 /**
- * The page's text as a reader sees it: Astro escapes the characters below, and a test that
+ * The page's TEXT as a reader sees it: Astro escapes the characters below, and a test that
  * compared escaped text with the data file would fail on an apostrophe rather than on a
  * claim.
+ *
+ * **Tags are left alone**, and that is what keeps the reader ahead of the page: an attribute
+ * may legitimately carry an escaped `&quot;` of its own — the slider's screenshot `alt` texts
+ * do, quoting the console's own status line — and decoding inside a tag would hand the strict
+ * reader a document whose attribute value ends at the wrong quote. What a text comparison is
+ * about is the text between the tags, so that is the half this decodes.
  */
 function decode(html) {
   return html
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#8212;/g, '—')
-    .replace(/&amp;/g, '&')
+    .split(/(<[^>]*>)/)
+    .map((part) =>
+      part.startsWith('<')
+        ? part
+        : part
+            .replace(/&#39;/g, "'")
+            .replace(/&quot;/g, '"')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&#8212;/g, '—')
+            .replace(/&amp;/g, '&'),
+    )
+    .join('')
 }
 
 test('the console page renders the facts its data file carries', async (t) => {
@@ -1078,17 +1091,6 @@ test('the links carry the name the release serves, not the name the build wrote'
   }
 })
 
-/**
- * The slider's placeholder lines that are long enough for the case below to read (40
- * characters or more, which is where that reader starts). They are the page's own words and
- * no document's — `website/src/components/ScreenshotSlider.astro` draws the frame while
- * `website/data/console-screens.yaml` carries no screenshot — and the shorter one ("A line
- * naming the screen goes here.", the caption's placeholder) is under the reader's floor and
- * needs no entry here. A placeholder that grows past 40 characters and is not added to this
- * list fails the case below, which is the point: the exemption is a decision somebody makes.
- */
-const PLACEHOLDER_LINES = ['Real console screenshot goes here (not taken yet)']
-
 test('the page states nothing its data file does not carry', async (t) => {
   const built = buildWith(t, () => {})
   const page = decode(builtPage(built))
@@ -1126,28 +1128,11 @@ test('the page states nothing its data file does not carry', async (t) => {
     // page's sentence as much as the released one is, and a page that paraphrased it would be
     // restating a fact — the rule this case is. Absent, it adds nothing to the list.
     ...(data.linux === undefined ? [] : [data.linux.text]),
-    // The slider's placeholder lines, which are the page's own and no document's: the console
-    // has no screenshot yet, so the frame says so in its own words — the same exception the
-    // home page's illustration caption is (`website/test/home.mjs`), and the one text run on
-    // this page a data file could not carry. They are listed here by hand, they are asserted
-    // to be on the page below so that the exception cannot outlive them, and they are listed
-    // in the pull request for the owner to veto.
-    ...PLACEHOLDER_LINES,
   ]
   for (const sentence of rendered) {
     assert.ok(
       sources.includes(sentence),
       `the page renders ${JSON.stringify(sentence)}, which ${DOWNLOADS_JSON} does not carry: a page renders a fact; it never restates one`,
-    )
-  }
-
-  // The one exception above is a live one: a placeholder line the page has stopped drawing is
-  // an exemption that would let the next long sentence through unread, so it is asserted to be
-  // on the page here rather than trusted.
-  for (const line of PLACEHOLDER_LINES) {
-    assert.ok(
-      rendered.includes(line),
-      `${DOWNLOADS_JSON} is not the only source this case allows: ${JSON.stringify(line)} is exempted as a placeholder line and the page does not render it, so the exemption outlived the text it was written for`,
     )
   }
 })
