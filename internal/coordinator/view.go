@@ -203,22 +203,54 @@ func ReleaseOf(branch string) string {
 	return rel
 }
 
-// ServiceOf is the service a path belongs to: the first segment of the path,
-// so "internal/coordinator/view.go" belongs to the service "internal" and
-// "schemas/result.schema.json" to "schemas". A path with no separator belongs to
-// no service — it sits in the repository's own root — and answers "".
+// ServiceOf is the service a path belongs to, and the rule is about the
+// path's *shape*: it reads two segments where the tree under the first one
+// holds more than one unit, and one everywhere else.
 //
-// This is a *derivation* and it is the whole of the rule: the view's files
+//   - "internal", "cmd" and "pkg" are the three trees this repository
+//     partitions that way — internal/cli/exec.go is the CLI, and
+//     internal/coordinator/view.go is the coordinator, not both "internal" —
+//     so a path under one of them belongs to its first two segments:
+//     "internal/coordinator", "cmd/fugaro", "pkg/budget".
+//   - Every other path belongs to its first segment: "schemas" for
+//     schemas/result.schema.json, "website" for website/content/cli-reference.md.
+//   - A path with no separator belongs to no service — it sits in the
+//     repository's own root — and answers "", as "" does for an empty path and
+//     for one that starts with a separator.
+//
+// This is the whole of the rule, and it is a *derivation*: the view's files
 // come from a run's own record of the paths it changed
 // (runstore.ChangedFiles), and nothing in the tree declares a service yet.
 // The intent records P4 adds are where a declared service arrives; until
-// then the first segment is what turns a set of paths into the
-// "who is changing which service" the spec's §10 asks for.
+// then this is what turns a set of paths into the "who is changing which
+// service" the spec's §10 asks for.
+//
+// The two-segment half is what keeps the answer useful at this repository's
+// size: with the first segment alone, every path under internal/ — which is
+// most of the tree — collapsed into one "service", and two pull requests
+// working in different packages were reported as colliding on it. It is a
+// naming rule and not a walk: the view reads no working copy, and a
+// two-segment path whose second segment is a file ("internal/notes.go") is
+// answered with its own two segments rather than with "internal", so that
+// two such files are not merged into one unit by a rule that never looked at
+// the tree.
 func ServiceOf(path string) string {
-	if i := strings.IndexByte(path, '/'); i > 0 {
-		return path[:i]
+	i := strings.IndexByte(path, '/')
+	if i <= 0 {
+		return ""
 	}
-	return ""
+	first := path[:i]
+	if first != "internal" && first != "cmd" && first != "pkg" {
+		return first
+	}
+	rest := path[i+1:]
+	if j := strings.IndexByte(rest, '/'); j >= 0 {
+		return path[:i+1+j]
+	}
+	if rest == "" {
+		return first
+	}
+	return path
 }
 
 // Join builds the view of one repository from its pull requests and its runs.

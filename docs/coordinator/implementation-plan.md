@@ -281,8 +281,15 @@ credential and no write; its GitHub access is the per-repository read the CLI al
 
 **Status: built.** On the long-lived `coordinator` branch, in this plan's own commit message. The
 package, the join, the collision rule, the fixtures, the command and its registration are in the
-tree, with the command's own ten tests and the package's seven; the plan's status line above moved
-with them. The one thing this part does NOT do is stated where a reader meets it rather than
+tree, with the command's own twelve tests and the package's ten; the plan's status line above moved
+with them. The review of this part left four things, and they are in that count: the service a path
+belongs to is two segments under the trees that hold more than one unit (`internal/`, `cmd/`) and
+one segment everywhere else — the first segment alone put nearly every path in this repository in
+the one service `internal`, so every pair of pull requests working in unrelated packages was
+reported as colliding — the pull requests are read a few at a time rather than one after another,
+the command's own help and the reference say which pull requests it can list at all, and a run
+whose stored task and result records are half-written is listed as work in flight rather than
+dropped. The one thing this part does NOT do is stated where a reader meets it rather than
 here: `gitprov.Provider` reads one pull request by number and cannot list a repository's
 (reconciliation **#10**), so this part's pull requests are the numbers the runs name, and **P2** is
 the part that replaces the reader — behind the same input to the join, as D193 asks.

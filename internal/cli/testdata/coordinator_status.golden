@@ -11,9 +11,8 @@ n+ in FILES is a run whose changed-file set is short of the one it changed
 them, are the ones the run recorded and not necessarily all of them.
 
 COLLISIONS
-20261013-120000-cccc and #12: service internal
-20261013-120000-cccc and #14: service internal
-#12 and #14: internal/coordinator/view.go; service internal
+20261013-120000-cccc and #12: service internal/cli
+#12 and #14: internal/coordinator/view.go; service internal/coordinator
 
 declared by is the launcher each run's own launch record wrote about itself
 (launch.json's launched_by): a declaration, and never a verified identity

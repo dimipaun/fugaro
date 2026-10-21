@@ -111,8 +111,14 @@ func newCoordinatorStatusCmd() *cobra.Command {
 			"each pull request, the runs behind it, the branch and target release it declares,\n" +
 			"the files and services those runs touched, and every pair of work still in\n" +
 			"flight that touches the same file or service.\n\n" +
-			"A pull request the store holds no run for is listed as having none: it is work\n" +
-			"somebody has open, and dropping it is the one thing this view must not do.\n\n" +
+			"The pull requests listed are the ones this repository's runs name, and that is\n" +
+			"the whole of the list this reader can produce: gitprov reads one pull request\n" +
+			"by number and has no call that lists a repository's (finding #10), so a pull\n" +
+			"request no run names is never asked for. The rule the join is written to — a\n" +
+			"pull request no run names is listed as having none, because it is work\n" +
+			"somebody has open and dropping it is the one thing this view must not do — is\n" +
+			"not reached by this command today, and P2 is the part that reads widely\n" +
+			"enough to reach it.\n\n" +
 			"The launcher of a run is printed as what it is — the string the run's own launch\n" +
 			"record wrote about itself — and never as an identity.\n\n" +
 			"This command reads and writes nothing: no store of the coordinator's own, no\n" +
@@ -265,7 +271,14 @@ var openCoordinatorProvider = func(env []string, warn func(string)) (gitprov.Ope
 	return open, err
 }
 
-// coordinatorPullRequests reads the pull requests the runs name, one at a
+// coordinatorPRWorkers bounds the pull-request reads that are in flight at
+// once. The numbers are a handful and each read is one round trip, so the
+// bound is about what the host and the installation token will take rather
+// than about this process: it is small, and smaller than lsWorkers, because
+// the same App credential also mints the token behind every one of them.
+const coordinatorPRWorkers = 4
+
+// coordinatorPullRequests reads the pull requests the runs name, a few at a
 // time.
 //
 // gitprov.Provider reads one pull request by number and has no call that lists
@@ -277,10 +290,18 @@ var openCoordinatorProvider = func(env []string, warn func(string)) (gitprov.Ope
 // written against the pull requests and not against this reader, so that swap
 // changes the implementation rather than the shape (D193).
 //
+// The reads are concurrent and the view is not: each answer is written to its
+// own slot, so the pull requests are in the order the runs named them however
+// the goroutines interleave, and the join's own sort is fed the same slice in
+// the same order on every run. Both adapters are safe to call this way — the
+// GitHub one serialises its token and identity lookups and the Bitbucket one
+// its identity lookup, and both read through httpjson on one http.Client.
+//
 // A read that fails fails the command. A view missing the pull requests the
 // host would not answer for would be a partial view presented as a whole one,
-// which is the failure mode this command exists to avoid; the numbers are read
-// in order, so the error names the first one that could not be read.
+// which is the failure mode this command exists to avoid; the failures are
+// collected by number, so the error names the first number that could not be
+// read whatever finished first.
 //
 // The credential values the opener returns are used for nothing but redaction:
 // no failure this command prints may carry one (agent.Redact; the opener's own
@@ -303,20 +324,27 @@ func coordinatorPullRequests(ctx context.Context, repo, kind string, runs []coor
 	if err != nil {
 		return nil, remote(errors.New(agent.Redact(err.Error(), secrets)))
 	}
-	out := make([]coordinator.PullRequest, 0, len(numbers))
-	for _, n := range numbers {
-		info, err := p.PullRequest(ctx, n)
+	out := make([]coordinator.PullRequest, len(numbers))
+	errs := make([]error, len(numbers))
+	parallelN(len(numbers), coordinatorPRWorkers, func(i int) {
+		info, err := p.PullRequest(ctx, numbers[i])
 		if err != nil {
-			return nil, remote(fmt.Errorf("reading pull request %d of %s: %s", n, repo, agent.Redact(err.Error(), secrets)))
+			errs[i] = fmt.Errorf("reading pull request %d of %s: %s", numbers[i], repo, agent.Redact(err.Error(), secrets))
+			return
 		}
-		out = append(out, coordinator.PullRequest{
+		out[i] = coordinator.PullRequest{
 			Number: info.Number,
 			URL:    info.URL,
 			Title:  info.Title,
 			Branch: info.SourceBranch,
 			Draft:  info.Draft,
 			State:  string(info.State),
-		})
+		}
+	})
+	for _, err := range errs {
+		if err != nil {
+			return nil, remote(err)
+		}
 	}
 	return out, nil
 }

@@ -58,6 +58,13 @@ func recordOf(v View, label string) (Record, bool) {
 // internal/coordinator/view.go; #16 changed it too and is merged, so it
 // collides with neither.
 //
+// The fixture's #18 is the control, and it is the reason the fixture carries
+// it: its run changed internal/gitprov/github/apptoken.go, so #18 is in flight
+// and shares no file with any other record — and it shares no *service* with
+// them either, which is the half this file's own test would not have caught
+// before ServiceOf took two segments under internal/: under the first-segment
+// rule every record here was "internal" and #18 collided with all four.
+//
 // The pairs are also ORDERED, and the fixture is built so that the order says
 // which one: the running run 20261013-140000-eeee has no pull request, so its
 // record is labelled by its run ID and sortRecords lists it before every
@@ -87,12 +94,23 @@ func TestCoordinatorViewCollisionsNameBothRecords(t *testing.T) {
 	if want := []string{"internal/cli/exec.go", "internal/coordinator/view.go"}; !slices.Equal(c.Files, want) {
 		t.Errorf("the collision's files = %q, want %q", c.Files, want)
 	}
-	if want := []string{"internal"}; !slices.Equal(c.Services, want) {
+	// The shared *service* is each package the two records' paths sit in, not
+	// the trunk they sit under: the pair shares internal/cli and
+	// internal/coordinator, and a rule that answered "internal" here would
+	// collide every pair of pull requests in this repository with every other.
+	if want := []string{"internal/cli", "internal/coordinator"}; !slices.Equal(c.Services, want) {
 		t.Errorf("the collision's services = %q, want %q", c.Services, want)
 	}
 	for _, c := range v.Collisions {
 		if c.A == "#16" || c.B == "#16" {
 			t.Errorf("the merged pull request #16 is in a collision: %+v", c)
+		}
+		// #18 is in flight and shares no file with any other record, so a
+		// collision naming it can only have come from a service: under the
+		// first-segment rule it collided with every record here, and this is
+		// where that shows.
+		if c.A == "#18" || c.B == "#18" {
+			t.Errorf("the pull request #18, whose one changed path is in a package of its own, collides: %+v", c)
 		}
 	}
 }
@@ -266,9 +284,25 @@ func TestCoordinatorReleaseOfAndServiceOf(t *testing.T) {
 			t.Errorf("ReleaseOf(%q) = %q, want %q", tc.branch, got, tc.want)
 		}
 	}
+	// The service of a path is its first two segments under the three trees
+	// that hold more than one unit, and its first segment everywhere else. The
+	// cases that look odd are the rule's own edges: "internal" and "internals"
+	// are not the tree, "internal/" and "internal/notes.go" have no second
+	// *directory* and are answered from the path's shape rather than from a
+	// tree the view never reads.
 	for _, tc := range []struct{ path, want string }{
-		{"internal/coordinator/view.go", "internal"},
+		{"internal/coordinator/view.go", "internal/coordinator"},
+		{"internal/cli/exec.go", "internal/cli"},
+		{"internal/notes.go", "internal/notes.go"},
+		{"internal/", "internal"},
+		{"internal", ""},
+		{"internals/x.go", "internals"},
+		{"cmd/fugaro/main.go", "cmd/fugaro"},
+		{"cmd/", "cmd"},
+		{"pkg/budget/store.go", "pkg/budget"},
 		{"schemas/result.schema.json", "schemas"},
+		{"website/content/cli-reference.md", "website"},
+		{"docs/coordinator/README.md", "docs"},
 		{"go.mod", ""},
 		{"", ""},
 		{"/absolute/path.go", ""},
@@ -276,5 +310,95 @@ func TestCoordinatorReleaseOfAndServiceOf(t *testing.T) {
 		if got := ServiceOf(tc.path); got != tc.want {
 			t.Errorf("ServiceOf(%q) = %q, want %q", tc.path, got, tc.want)
 		}
+	}
+}
+
+// Two records in flight collide on a *service* as well as on a file, and the
+// service is ServiceOf's answer. The failure this test is written against is
+// the rule's earlier shape — the first segment alone — under which every path
+// under internal/, which is most of this repository, collapsed into the one
+// service "internal": two pull requests working in packages that share no file
+// at all were reported as colliding, and the view's whole claim to say
+// something useful about who is touching what came down to "somebody else is
+// editing this repository".
+//
+// #2 and #3 are in internal/cli together and collide on it, with no file
+// between them; #1 is the pair's control, and the assertion is that it collides
+// with neither.
+func TestCoordinatorViewDifferentPackagesDoNotCollide(t *testing.T) {
+	v := Join("acme/app", nil, []Run{
+		{ID: "20261014-100000-aaaa", PR: 1, Status: "running", Files: []string{"internal/gitprov/github/apptoken.go"}},
+		{ID: "20261014-110000-bbbb", PR: 2, Status: "running", Files: []string{"internal/cli/exec.go"}},
+		{ID: "20261014-120000-cccc", PR: 3, Status: "running", Files: []string{"internal/cli/runs.go"}},
+	})
+	var got []string
+	for _, c := range v.Collisions {
+		got = append(got, c.A+" and "+c.B)
+	}
+	if want := []string{"#2 and #3"}; !slices.Equal(got, want) {
+		t.Fatalf("the collisions are %q, want %q: two packages under internal/ are two services, and two records collide only when they touch one", got, want)
+	}
+	if c := v.Collisions[0]; !slices.Equal(c.Files, []string{}) || !slices.Equal(c.Services, []string{"internal/cli"}) {
+		t.Errorf("the collision of #2 and #3 = files %q, services %q; want no files and the one shared service internal/cli",
+			c.Files, c.Services)
+	}
+}
+
+// A record's runs are its runs newest first, and the view says so: a run ID
+// starts with its mint time, so the newest is the one behind #9's `declared
+// by` cell and the one the table's reader is shown first. The failure this
+// guards is the store's order, which is not the view's: handed the runs
+// oldest first, a view that kept them would name the oldest launcher and read
+// as a record nobody has touched since.
+func TestCoordinatorViewRunsAreNewestFirst(t *testing.T) {
+	v := Join("acme/app", nil, []Run{
+		{ID: "20261012-090000-0000", PR: 9, Status: "succeeded", Terminal: true, Files: []string{}},
+		{ID: "20261014-090000-bbbb", PR: 9, Status: "running", Files: []string{}},
+		{ID: "20261013-090000-aaaa", PR: 9, Status: "succeeded", Terminal: true, Files: []string{}},
+	})
+	r, ok := recordOf(v, "#9")
+	if !ok {
+		t.Fatalf("the view dropped #9: %+v", v.Records)
+	}
+	var ids []string
+	for _, run := range r.Runs {
+		ids = append(ids, run.ID)
+	}
+	want := []string{"20261014-090000-bbbb", "20261013-090000-aaaa", "20261012-090000-0000"}
+	if !slices.Equal(ids, want) {
+		t.Errorf("#9 holds runs %q, want %q: a record's runs are newest first, whatever order the reader returned them in", ids, want)
+	}
+}
+
+// The release a record declares is its branch's, and its base branch's when
+// the branch declares none: a pull request targeting release/v0.12.0 is work
+// for that release even though the run's own branch — fugaro/… — never names
+// one, and a record that reported no release would leave that work out of the
+// release view the spec's §9 asks for. The branch wins when both declare one:
+// the branch is what the pull request is.
+func TestCoordinatorViewReleaseFromTheBaseBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		branch     string
+		baseBranch string
+		want       string
+	}{
+		{"the base branch declares it", "fugaro/20261014-100000-aaaa", "release/v0.12.0", "0.12.0"},
+		{"the branch wins over the base", "release/v0.11.0", "release/v0.12.0", "0.11.0"},
+		{"neither declares one", "fugaro/20261014-100000-aaaa", "main", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := Join("acme/app", nil, []Run{{
+				ID: "20261014-100000-aaaa", PR: 4, Status: "running",
+				Branch: tc.branch, BaseBranch: tc.baseBranch, Files: []string{},
+			}})
+			r, ok := recordOf(v, "#4")
+			if !ok {
+				t.Fatalf("the view dropped #4: %+v", v.Records)
+			}
+			if r.Release != tc.want {
+				t.Errorf("#4 declares release %q, want %q", r.Release, tc.want)
+			}
+		})
 	}
 }

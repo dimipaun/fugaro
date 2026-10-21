@@ -977,8 +977,14 @@ each pull request, the runs behind it, the branch and target release it declares
 the files and services those runs touched, and every pair of work still in
 flight that touches the same file or service.
 
-A pull request the store holds no run for is listed as having none: it is work
-somebody has open, and dropping it is the one thing this view must not do.
+The pull requests listed are the ones this repository's runs name, and that is
+the whole of the list this reader can produce: gitprov reads one pull request
+by number and has no call that lists a repository's (finding #10), so a pull
+request no run names is never asked for. The rule the join is written to — a
+pull request no run names is listed as having none, because it is work
+somebody has open and dropping it is the one thing this view must not do — is
+not reached by this command today, and P2 is the part that reads widely
+enough to reach it.
 
 The launcher of a run is printed as what it is — the string the run's own launch
 record wrote about itself — and never as an identity.
