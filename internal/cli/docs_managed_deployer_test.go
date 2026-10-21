@@ -373,7 +373,14 @@ func TestChecklistHasCheck68(t *testing.T) {
 	// interpolation over a multi-line string prefixes only its first line, and
 	// the rest would diff unprefixed — a false alarm on a correct policy.
 	for _, want := range []string{
-		"--key-id=fmgd-chk68-key",
+		"--key-id=\"${KEY_MAIN:?}\"",
+		"--key-id=\"${KEY_NEG:?}\"",
+		`KEY_MAIN="fmgd-chk68-key-${CHK68_RAND}"`,
+		`KEY_NEG="chk68-neg-key-${CHK68_RAND}"`,
+		`[ -e "$CHK68_TMP/tfvars.before.json" ]`,
+		`APPLY_RC=${PIPESTATUS[0]}`,
+		"Check 68 binding stop",
+		"Check 68 policy stop",
 		`split(" || ")`,
 		`(.condition.expression | split(" || "))[]`,
 		`s/\\"/"/g`,
@@ -396,7 +403,7 @@ func TestChecklistHasCheck68(t *testing.T) {
 		t.Error("Check 68 splits the policy's expression with gsub into a multi-line string: the role key lands on the first clause only, so a role with two clauses (storage) diffs a correct policy as a mismatch")
 	}
 	if strings.Contains(section, "--display-name=\"fmgd-chk68-key\"") &&
-		!strings.Contains(section, "--key-id=fmgd-chk68-key") {
+		!strings.Contains(section, "--key-id=\"${KEY_MAIN:?}\"") {
 		t.Error("Check 68 creates the API key without --key-id, so its ID is server-generated and its positive action can never succeed")
 	}
 	// 3c. The Cloud Run job's runtime account, which is the third way a probe
@@ -735,6 +742,7 @@ func TestChecklistCheck68GuardRefusesProdPerValue(t *testing.T) {
 		{"only the installation is a production id", "fugaro-prod", "fugaro-dev", "fugaro-dev", "fugaro-prod"},
 		{"only the typed project is a production id", "fugaro", "fugaro-prod", "fugaro-dev", "fugaro-prod"},
 		{"only the config's project is a production id", "fugaro", "fugaro-dev", "fugaro-prod", "fugaro-prod"},
+		{"another production id (substring rule)", "fugaro", "acme-prod-1", "fugaro-dev", "acme-prod-1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -799,7 +807,7 @@ func TestChecklistCheck68ApiKeyCreatesHideTheKeyString(t *testing.T) {
 		if !strings.Contains(s, "--api-target=service=") {
 			t.Errorf("%s's Check 68 runs %q with no `--api-target`: an API key with no target list is unrestricted, a credential for every API that accepts one, and this check needs no API of it at all — steps 4 and 5 create the key and update its display name", path, s)
 		}
-		if !strings.Contains(s, "--key-id=") {
+		if !strings.Contains(s, "--key-id=\"${KEY_") {
 			t.Errorf("%s's Check 68 runs %q without `--key-id`: the fence keys on the key's NAME, and every command that acts on the key names it by the ID this create chose — with a server-generated uid neither the check's positive action nor its cleanup can name the key", path, s)
 		}
 		// The three flags are on the create's own line, which is why one line is
@@ -807,6 +815,12 @@ func TestChecklistCheck68ApiKeyCreatesHideTheKeyString(t *testing.T) {
 		// line is a create this test would read as missing every one of them.
 		if strings.HasSuffix(s, "\\") {
 			t.Errorf("%s's Check 68 splits %q over more than one line: the three flags it is held to are read off one line here, and a command whose own line carries none of them is a command whose default output and unrestricted target list nothing in this file would catch", path, s)
+		}
+	}
+	for _, line := range strings.Split(section, "\n") {
+		s := strings.TrimSpace(line)
+		if strings.HasPrefix(s, "gcloud services api-keys update") && !strings.Contains(s, "--format=none") {
+			t.Errorf("%s's Check 68 runs %q without `--format=none`", path, s)
 		}
 	}
 	if creates != 2 {
@@ -1511,11 +1525,11 @@ func TestChecklistCheck68NegativeDirectionNamesAgree(t *testing.T) {
 		"fmgd-chk68-repo", "fmgd-chk68-key", "fmgd-chk68-job", "fmgd-chk68-sched",
 		"xfmgd-chk68-bucket", "xfmgd-chk68-secret", "xfmgd-chk68-job",
 		"chk68-neg-secret", "chk68-neg-sa", "chk68-neg-repo",
-		"chk68-neg-key", "chk68-neg-job", "chk68-neg-sched",
+		"chk68-neg-key", "chk68-neg-job", "chk68-neg-sched", "${KEY_MAIN:?}", "${KEY_NEG:?}",
 	}
 	negatives := []string{
 		"chk68-neg-secret", "chk68-neg-sa", "chk68-neg-repo",
-		"chk68-neg-key", "chk68-neg-job", "chk68-neg-sched",
+		"${KEY_NEG:?}", "chk68-neg-job", "chk68-neg-sched",
 	}
 
 	// 1. No sandbox name anywhere: the section used to carry six ${SANDBOX_*:?}

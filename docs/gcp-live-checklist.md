@@ -4482,6 +4482,8 @@ CHK68_RAND=$(cat "$CHK68_TMP/rand" 2>/dev/null) \
 [ -n "$CHK68_RAND" ] \
   || { echo "Check 68 stopped: could not draw the random suffix the two throwaway buckets carry (${CHK68_TMP}/rand)" >&2; exit 1; }
 BUCKET_MAIN="fmgd-chk68-bucket-${CHK68_RAND}"    # the positive direction's bucket
+KEY_MAIN="fmgd-chk68-key-${CHK68_RAND}"          # the positive direction's API key; suffixed because a deleted key is only soft-deleted for 30 days and its ID may not be reused
+KEY_NEG="chk68-neg-key-${CHK68_RAND}"             # the negative direction's API key, suffixed for the same reason
 BUCKET_MISS="xfmgd-chk68-bucket-${CHK68_RAND}"   # the near miss: contains the prefix, does not start with it
 # The check's own throwaway resources, deleted at the END of this run — on a
 # stop, or after the last step. A probe that fails, or a step that stops the
@@ -4589,8 +4591,8 @@ cleanup_chk68() {
   chk68_try gcloud iam service-accounts delete "chk68-neg-sa@${P:?}.iam.gserviceaccount.com" --project="${P:?}" --quiet
   chk68_try gcloud artifacts repositories delete fmgd-chk68-repo --project="${P:?}" --location="${L:?}" --quiet
   chk68_try gcloud artifacts repositories delete chk68-neg-repo --project="${P:?}" --location="${L:?}" --quiet
-  chk68_try gcloud services api-keys delete fmgd-chk68-key --project="${P:?}" --quiet
-  chk68_try gcloud services api-keys delete chk68-neg-key --project="${P:?}" --quiet
+  chk68_try gcloud services api-keys delete "${KEY_MAIN:?}" --project="${P:?}" --quiet
+  chk68_try gcloud services api-keys delete "${KEY_NEG:?}" --project="${P:?}" --quiet
   chk68_try gcloud run jobs delete fmgd-chk68-job --project="${P:?}" --region="${L:?}" --quiet
   chk68_try gcloud run jobs delete xfmgd-chk68-job --project="${P:?}" --region="${L:?}" --quiet
   chk68_try gcloud run jobs delete chk68-neg-job --project="${P:?}" --region="${L:?}" --quiet
@@ -4656,7 +4658,10 @@ Then add `"managed_deployer_scoped": true` to that same workdir `terraform.tfvar
 
 ```bash
 if chk68_step 1; then
-cp "$W/gcp/roots/installation/terraform.tfvars.json" "$CHK68_TMP/tfvars.before.json"
+# The backup is taken ONCE: a re-run of this step (after a stop) must not copy the
+# already-opened file over the original, or step 7 would restore the open gate.
+[ -e "$CHK68_TMP/tfvars.before.json" ] \
+  || cp "$W/gcp/roots/installation/terraform.tfvars.json" "$CHK68_TMP/tfvars.before.json"
 jq '. + {managed_deployer_scoped: true}' "$CHK68_TMP/tfvars.before.json" \
   > "$W/gcp/roots/installation/terraform.tfvars.json"     # jq, not a text edit: the file stays valid JSON whatever it held
 grep -n 'managed_deployer_scoped' "$W/gcp/roots/installation/terraform.tfvars.json"   # the gate, now true
@@ -4704,6 +4709,10 @@ SWAP=$(jq -r '.resource_changes[] | select(.change.actions == ["delete","create"
 echo "plan: ${ADD} to add, ${CHG} to change, ${DEL} to destroy, ${OTHER} outside the gate, ${SWAP} to replace or forget"
 { [ "$ADD" = 14 ] && [ "$CHG" = 0 ] && [ "$DEL" = 0 ] && [ "$OTHER" = 0 ] && [ "$SWAP" = 0 ]; } \
   || { echo "Check 68 plan stop: the plan is ${ADD} to add, ${CHG} to change, ${DEL} to destroy, with ${OTHER} address(es) outside the gate's own fourteen and ${SWAP} to replace or forget. Opening the gate on a converged installation adds exactly the gate's fourteen addresses (seven roles, seven bindings) and changes, destroys or replaces nothing; a replacement counts as neither an add nor a destroy, so the counts alone would let one through. Read the plan's own lines above; if the installation was not converged, re-run step 1." >&2; exit 1; }
+NOCOND=$(jq '[.resource_changes[] | select(.type == "google_project_iam_member" and .change.actions == ["create"]) | select(((.change.after.condition // []) | length) != 1)] | length' "$CHK68_TMP/plan.json")
+echo "${NOCOND} binding(s) without exactly one condition"
+[ "$NOCOND" = 0 ] \
+  || { echo "Check 68 binding stop: ${NOCOND} of the plan's bindings carry no condition block (or more than one). The apply would create an unconditioned binding of a conditioned role, which is the one thing this fence may never be." >&2; exit 1; }
 fi
 ```
 
@@ -4712,7 +4721,10 @@ if chk68_step 2; then
 cd "$W/gcp/roots/installation"                  # the same workdir root step 1 planned
 export TF_DATA_DIR="$W/.terraform" TF_CLI_CONFIG_FILE="$W/terraformrc"
 terraform apply -input=false "$CHK68_TMP/chk68.tfplan" 2>&1 | tee "$CHK68_TMP/apply.txt"
-echo "apply exit: ${PIPESTATUS[0]}"
+APPLY_RC=${PIPESTATUS[0]}
+echo "apply exit: ${APPLY_RC}"
+[ "$APPLY_RC" = 0 ] \
+  || { echo "Check 68 apply stop: the apply was refused (the verbatim error is above, and it is the FACT). Steps 3 to 6 do not run. Some of the fourteen addresses may exist: run 'bash chk68.sh --step 7' to close the gate." >&2; exit 1; }
 fi
 ```
 
@@ -4755,7 +4767,13 @@ sed -n '/^locals {/,/^}/p' "$W/gcp/modules/installation/deployer.tf" \
 gcloud projects get-iam-policy "${P:?}" --format=json \
   | jq -r '.bindings[] | select(.members[]? == "serviceAccount:'"${DEPLOYER:?}"'") | select(.condition.expression) | (.role | sub(".*/fugaroDeployer"; "") | ascii_downcase) as $svc | (.condition.expression | split(" || "))[] | "\($svc)\t\(.)"' \
   | sort > "$CHK68_TMP/policy-clauses.txt"
-diff "$CHK68_TMP/module.txt" "$CHK68_TMP/policy-clauses.txt"
+DIFFRC=0
+diff "$CHK68_TMP/module.txt" "$CHK68_TMP/policy-clauses.txt" || DIFFRC=$?
+NCOND=$(gcloud projects get-iam-policy "${P:?}" --format=json \
+  | jq '[.bindings[] | select(.members[]? == "serviceAccount:'"${DEPLOYER:?}"'") | select(.role | test("/fugaroDeployer.")) | select(.condition.expression)] | length')
+echo "conditioned deployer bindings: ${NCOND}; diff exit: ${DIFFRC}"
+{ [ "$NCOND" = 7 ] && [ "$DIFFRC" = 0 ]; } \
+  || { echo "Check 68 policy stop: ${NCOND} conditioned bindings (want 7) and diff exit ${DIFFRC} (want 0). A condition that came back absent or rewritten is the failure this check exists for: record the output above as the FACT and run 'bash chk68.sh --step 7'." >&2; exit 1; }
 fi
 ```
 
@@ -4797,8 +4815,8 @@ gcloud artifacts repositories update fmgd-chk68-repo --project="${P:?}" --locati
 # an API key. The single API this check needs of it is none, so the target is the
 # API keys API itself, which accepts no API-key credential — a string that leaks
 # from anywhere is then a string that opens nothing.
-gcloud services api-keys create --project="${P:?}" --key-id=fmgd-chk68-key --display-name="fmgd-chk68-key" --api-target=service=apikeys.googleapis.com --format=none
-gcloud services api-keys update fmgd-chk68-key --project="${P:?}" --display-name="fmgd-chk68-key (updated)" --impersonate-service-account="${DEPLOYER:?}"
+gcloud services api-keys create --project="${P:?}" --key-id="${KEY_MAIN:?}" --display-name="fmgd-chk68-key" --api-target=service=apikeys.googleapis.com --format=none
+gcloud services api-keys update "${KEY_MAIN:?}" --project="${P:?}" --display-name="fmgd-chk68-key (updated)" --format=none --impersonate-service-account="${DEPLOYER:?}"
 # --service-account, and it is the throwaway account this step created two
 # services above: a Cloud Run job update also needs
 # iam.serviceAccounts.actAs on the job's RUNTIME account, and a job created
@@ -4844,8 +4862,8 @@ gcloud artifacts repositories update chk68-neg-repo --project="${P:?}" --locatio
 # The create's output and its target list are step 4's own: --format=none, because
 # the default prints the key's live keyString, and --api-target, because a key with
 # no target list is unrestricted. See the comment there.
-gcloud services api-keys create --project="${P:?}" --key-id=chk68-neg-key --display-name="chk68-neg-key" --api-target=service=apikeys.googleapis.com --format=none
-gcloud services api-keys update chk68-neg-key --project="${P:?}" --display-name="chk68-neg" --impersonate-service-account="${DEPLOYER:?}"
+gcloud services api-keys create --project="${P:?}" --key-id="${KEY_NEG:?}" --display-name="chk68-neg-key" --api-target=service=apikeys.googleapis.com --format=none
+gcloud services api-keys update "${KEY_NEG:?}" --project="${P:?}" --display-name="chk68-neg" --format=none --impersonate-service-account="${DEPLOYER:?}"
 gcloud run jobs create chk68-neg-job --project="${P:?}" --region="${L:?}" \
   --image=us-docker.pkg.dev/cloudrun/container/hello \
   --service-account="fmgd-chk68-sa@${P:?}.iam.gserviceaccount.com"
@@ -4921,8 +4939,8 @@ gcloud iam service-accounts delete "fmgd-chk68-sa@${P:?}.iam.gserviceaccount.com
 gcloud iam service-accounts delete "chk68-neg-sa@${P:?}.iam.gserviceaccount.com" --project="${P:?}" --quiet
 gcloud artifacts repositories delete fmgd-chk68-repo --project="${P:?}" --location="${L:?}" --quiet
 gcloud artifacts repositories delete chk68-neg-repo --project="${P:?}" --location="${L:?}" --quiet
-gcloud services api-keys delete fmgd-chk68-key --project="${P:?}" --quiet
-gcloud services api-keys delete chk68-neg-key --project="${P:?}" --quiet
+gcloud services api-keys delete "${KEY_MAIN:?}" --project="${P:?}" --quiet
+gcloud services api-keys delete "${KEY_NEG:?}" --project="${P:?}" --quiet
 gcloud run jobs delete fmgd-chk68-job --project="${P:?}" --region="${L:?}" --quiet
 gcloud run jobs delete xfmgd-chk68-job --project="${P:?}" --region="${L:?}" --quiet
 gcloud run jobs delete chk68-neg-job --project="${P:?}" --region="${L:?}" --quiet
@@ -4932,6 +4950,11 @@ gcloud scheduler jobs delete chk68-neg-sched --project="${P:?}" --location="${SR
 # took goes back first — the next fugaro run would rewrite the file from the
 # config anyway (PrepareWorkdir), but the restore must not depend on that.
 cp "$CHK68_TMP/tfvars.before.json" "$W/gcp/roots/installation/terraform.tfvars.json"
+# Belt and braces: whatever the backup held, the restore plans with the gate closed.
+jq 'if .managed_deployer_scoped == true then .managed_deployer_scoped = false else . end' \
+  "$W/gcp/roots/installation/terraform.tfvars.json" > "$CHK68_TMP/tfvars.closed.json" \
+  && cp "$CHK68_TMP/tfvars.closed.json" "$W/gcp/roots/installation/terraform.tfvars.json" \
+  || { echo "Check 68 restore stop: could not close the gate in the tfvars. THE GATE IS STILL OPEN." >&2; exit 1; }
 grep -n 'managed_deployer_scoped' "$W/gcp/roots/installation/terraform.tfvars.json" \
   || echo "no managed_deployer_scoped in the tfvars: the gate is closed, as fugaro init writes it"
 cd "$W/gcp/roots/installation"
