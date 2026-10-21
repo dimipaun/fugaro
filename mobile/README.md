@@ -857,6 +857,14 @@ sign on them, and for `clock-differs` the age is not a fact this phone can state
 at all. The sign is P1.4's arithmetic; the state is the fact. A reading with an
 age the phone *can* state keeps it — `stale (190s ago)`.
 
+**And a value that is not a number is not a duration either.** `heartbeatRow`
+refuses one, so no reading the wiring makes can carry it — but `lines()` sits on
+the screen's edge and asks only that the list be `jobList`-**shaped**, so a list
+assembled by hand reaches `ageText` with anything in the heartbeat. `NaN < 0` is
+false and `'3s' < 0` is false, so a sign test alone let both through to the
+arithmetic and the line read `live (NaNs ago)`. The state is printed alone
+there too, and the test is `Number.isFinite` so that `Infinity` goes with them.
+
 ### The scan: the resolution's "not shown" as rules
 
 `scope.test.js` holds what no behavioural test can hold on its own — that no
@@ -876,7 +884,12 @@ so a mistyped pattern cannot pass for a clean tree, and with test files exempt
 
 Two rules are not token rules. The door's surface is asserted as an **exact set**
 (the rule P3.2's `index.test.js` gives) and **no name on it may be dead** — used
-nowhere. The first version of that rule counted a name's own declaration as a use
+nowhere. The set is read from the **module** (`import()` the door, `Object.keys`),
+not from its text: the first version collected `export { … } from '…'` blocks out
+of the source, which is one of the forms an export can be written in, so an
+`export const GHOST = 1` appended to the door was reachable from a screen and
+invisible both to that rule and to the dead-name rule below it — one blind spot
+shared by two rules. The first version of that rule counted a name's own declaration as a use
 and the scan file's own enumeration of the names as another, so it could not fail
 and three dead exports (`NO_VALUE`, `PRINTED_FIELDS`, `jobField`) were on the door
 behind it. The declarations are stripped before the search now, the scan file is
@@ -929,6 +942,9 @@ planted dead export, that being the finding that the rule could not fail.
 | the degraded document's project is discarded | `a degraded read still says which project it is about, and why` |
 | the degraded document's notice is discarded | the same test |
 | a refusal code nothing produces is declared again (`BAD_NOW`) | `every member of an exported vocabulary is produced somewhere` |
+| an age that is not a number is printed as one (`live (NaNs ago)`) | `an age the phone cannot state is not printed as one` |
+| a name is added to the door as `export const GHOST = 1` (a form the old scanner could not see) | `the door carries the module's surface, and no dead name` |
+| a name is added to the door as `export function GHOST() {}`, and as `export { LOCAL as GHOST }` | the same test |
 
 ## Which files may write a credential
 

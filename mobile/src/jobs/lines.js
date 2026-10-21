@@ -109,9 +109,19 @@ function fieldText(list, name) {
  * the one reading whose whole point is that the phone's clock is not the
  * authority. So the state is printed alone there: the state is the fact, and the
  * negative number is P1.4's arithmetic. `null` (nothing read yet) has no age
- * either. */
+ * either.
+ *
+ * **And a value that is not a number is not a duration.** `jobList` refuses one
+ * -- `heartbeatRow` takes a finite number or nothing -- but this function is on
+ * the screen's edge, where the list only has to be `jobList`-**shaped**, so the
+ * rule is stated here rather than assumed from a caller. A sign test alone does
+ * not state it: `NaN < 0` is false and `'3s' < 0` is false, so a value that is
+ * not a number reaches `Math.round` and the line would read `live (NaNs ago)`.
+ * The rule is the one the negative age already follows -- print the state, which
+ * is the fact, and no age -- and the test is `Number.isFinite` rather than
+ * `typeof === 'number'`, so `Infinity` is refused with the rest. */
 function ageText(ageMs) {
-  if (ageMs === null || ageMs < 0) return '';
+  if (!Number.isFinite(ageMs) || ageMs < 0) return '';
   return ` (${Math.round(ageMs / 1000)}s ago)`;
 }
 
