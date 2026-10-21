@@ -159,6 +159,45 @@ func TestOrchestratorAddWritesThePolicyBlockAndTheAccessRecord(t *testing.T) {
 	}
 }
 
+// TestOrchestratorAddReportsWhatMoved: an add that names an identity the entry
+// already admits, at the cap it already carries, changes nothing in the block —
+// what it does is re-administer the record, which is how an operator corrects a
+// role. The report has to say exactly that: the arrow is the operator's
+// evidence that the allow-list moved, so "[alice-uid] → [alice-uid]" reads as a
+// widening that did not happen, and an operator closing the terminal on it has
+// been told the command did something it did not do.
+func TestOrchestratorAddReportsWhatMoved(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	seedAccessRecord(f, "alice-uid", map[string]any{"pairedAt": "2026-10-20T00:00:00Z"})
+	if _, _, err := execute(t, orchestratorAddArgs("shepherd")...); err != nil {
+		t.Fatal(err)
+	}
+	// The same identity at the same cap, with the role promoted: the record is
+	// re-administered and the block is not.
+	out, _, err := execute(t, "orchestrator", "add", "shepherd",
+		"--allow", "alice-uid", "--email", "alice@example.test", "--role", rules.RoleOrchestratorAdmin, "--cap-usd", "25")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "→") {
+		t.Errorf("the repeat add shows a change that did not happen:\n%s", out)
+	}
+	for _, want := range []string{"unchanged", "already admitted"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the repeat add does not say the block is what it was (%q):\n%s", want, out)
+		}
+	}
+	if rec := accessRecordFor(f, "alice-uid"); rec["role"] != rules.RoleOrchestratorAdmin {
+		t.Errorf("the repeat add did not re-administer the record: %v", rec)
+	}
+	if o, _ := publishedPolicy(t, f).OrchestratorFor("shepherd"); o.CapUSD != 25 || len(o.Allow) != 1 {
+		t.Errorf("the repeat add changed the block: %+v", o)
+	}
+}
+
 // TestOrchestratorAddRefusesUnlessItCanNameIdentityAllowlistAndCap is D12's
 // refusal, member by member: an add that cannot name the identity (a uid, its
 // email, its role), the allowlist (at least one identity in the entry) or the

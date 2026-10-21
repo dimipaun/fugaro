@@ -286,13 +286,23 @@ func runOrchestratorAdd(cmd *cobra.Command, o *orchestratorOptions, name string)
 	if err := writeAccessRecord(ctx, db, lc, o.allow, email, o.role); err != nil {
 		return fmt.Errorf("the orchestrators block is written, but the access record is not: %w; the rules refuse this identity every orchestrator's lease until it is — run 'fugaro orchestrator add' again", err)
 	}
+	// The report says what moved rather than what was written: an add that
+	// re-administers an identity already on the list (the way an operator fixes
+	// a wrong role) changes nothing in the block, and a line reading
+	// "[alice-uid] → [alice-uid]" would claim a widening that did not happen.
 	if !had {
 		fmt.Fprintf(out, "orchestrators.%s: cap_usd %s, allow %v\n", name, capText(o.capUSD), allow)
 	} else {
 		if before.CapUSD != o.capUSD {
 			fmt.Fprintf(out, "orchestrators.%s.cap_usd: %s → %s\n", name, capText(before.CapUSD), capText(o.capUSD))
+		} else {
+			fmt.Fprintf(out, "orchestrators.%s.cap_usd: %s (unchanged)\n", name, capText(o.capUSD))
 		}
-		fmt.Fprintf(out, "orchestrators.%s.allow: %v → %v\n", name, before.Allow, allow)
+		if slices.Contains(before.Allow, o.allow) {
+			fmt.Fprintf(out, "orchestrators.%s.allow: %v (already admitted)\n", name, allow)
+		} else {
+			fmt.Fprintf(out, "orchestrators.%s.allow: %v → %v\n", name, before.Allow, allow)
+		}
 	}
 	fmt.Fprintf(out, "access record %s/%s: email %s, role %s\n", rules.PathDevices, o.allow, oneLine(email), o.role)
 	fmt.Fprintf(out, "set %s\n", projectpolicy.PathShared())
