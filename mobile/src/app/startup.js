@@ -247,7 +247,7 @@ export function createErrorBoundary({ React, fallback }) {
  * @param {Function} options.View react-native's View
  * @param {Function} options.Text react-native's Text
  * @returns {object} the frozen guard: `state()`, `subscribe(listener)`,
- *   `report(error, what)`, `root(build)`
+ *   `report(error, what)`, `guard(what, run)`, `root(build)`
  */
 export function createGuardedStartup({ React, View, Text }) {
   // The screen's own validation runs here, at build time, so a caller that
@@ -306,6 +306,50 @@ export function createGuardedStartup({ React, View, Text }) {
   function report(error, what = UNKNOWN_STAGE) {
     if (!snapshot.failed) publish({ failed: true, error, what });
     return snapshot;
+  }
+
+  /**
+   * Wrap one step the app runs **later** -- a tap handler, an async startup
+   * step, anything a `try` around the wiring cannot reach -- so that its failure
+   * becomes a report rather than an uncaught error.
+   *
+   * **Both halves, because a handler is where a throw is easiest to lose.** A
+   * tap handler runs from the platform's event loop, not from `root`'s `try`, so
+   * a **synchronous** throw out of `run()` is an uncaught error in a release
+   * build -- exactly the invisible failure this file exists for -- and the
+   * synchronous half is the likelier one in practice, because a controller
+   * usually validates before it awaits. The returned answer of a synchronous
+   * failure is `undefined` rather than a rethrow: the control did not do the
+   * thing, and the screen says why.
+   *
+   * @param {string} [what] which step it is, in words (see `failureDetails`)
+   * @param {Function} run the work, sync or async
+   * @returns {Function} `() => unknown`: the same work, guarded
+   */
+  function guard(what, run) {
+    if (typeof run !== 'function') {
+      throw new TypeError('the startup guard\'s guard needs the work to run');
+    }
+    return function guarded() {
+      let answer;
+      try {
+        answer = run();
+      } catch (error) {
+        report(error, what);
+        return undefined;
+      }
+      // A thenable is the async half: a rejection cannot be caught by the `try`
+      // above, so it is handed to the same door.
+      if (
+        answer !== null &&
+        typeof answer === 'object' &&
+        typeof answer.then === 'function' &&
+        typeof answer.catch === 'function'
+      ) {
+        answer.catch((error) => report(error, what));
+      }
+      return answer;
+    };
   }
 
   /** The screen for a failure, built fresh so the boundary's fallback and the
@@ -383,5 +427,5 @@ export function createGuardedStartup({ React, View, Text }) {
     };
   }
 
-  return Object.freeze({ ok: true, state, subscribe, report, root });
+  return Object.freeze({ ok: true, state, subscribe, report, guard, root });
 }

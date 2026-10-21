@@ -76,10 +76,14 @@ name. Two changes answer it:
   — is built inside `startup.root(build)`, so a throw from any of it renders a
   plain screen: what failed, the error's message, and a **"Copy details"** line
   a reviewer can long-press and paste. A root error boundary catches a
-  render-time throw the same way, and `startup.report(error, what)` is the door
-  for a failure that arrives *after* a successful start (an async step: the
-  demo's entry is the app's first one today, and a future SecureStore read,
-  listener or fetch joins it). A release build on a phone has no terminal and no
+  render-time throw the same way, and `startup.guard(what, run)` — built on
+  `report(error, what)` — is the door for a failure that arrives *after* a
+  successful start, catching **both** halves: a rejected promise (its `try`
+  cannot see what happens after an `await`) and a **synchronous** throw (a tap
+  handler runs from the platform's event loop, not from `root`'s `try`, so a
+  throw there is an uncaught error in a release build; the demo's entry is the
+  app's first guarded step today, and a future SecureStore read, listener or
+  fetch joins it). A release build on a phone has no terminal and no
   red box, so a startup failure that is not *drawn* is one nobody can report.
 
 **Two audio seams, and now one of them is wired.** P3.6 defined the one audio
@@ -160,7 +164,7 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 | `eas.json` | The EAS profiles: `development`, `preview` and `internal` (the store profile Check 89 builds and submits with). It carries exactly one store-side **identifier** — `ascAppId`, the App Store Connect app record's own public number, so EAS is never asked for it (the submit track, the store distribution and the AAB build type are store-side *settings*, not identifiers, and "Building for internal testing" below is where the track is called C8's whole content) — and no credential path, no credential value and no identity value — see `src/eas-config.test.js`. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from; while demo mode is on it draws the banner and the way out on **every** screen, above whatever the screen holds. |
-| `src/app/startup.js` | The guarded startup and the root error boundary (added 2026-10-21, after the Android launch crash): `startup.root(build)` builds the app inside a `try` and renders the failure screen if it throws, `report(error, what)` is the same door for a failure that arrives later, and `failureDetails`/`createFailureScreen` turn anything thrown -- a string, `undefined`, a circular object -- into what the phone shows: the step, the message, and a selectable "Copy details" line. `React` arrives as an argument that must carry `Component`, because an error boundary is a class. `src/app/startup.test.js` drives it with a fake React, a renderer and all. |
+| `src/app/startup.js` | The guarded startup and the root error boundary (added 2026-10-21, after the Android launch crash): `startup.root(build)` builds the app inside a `try` and renders the failure screen if it throws, `report(error, what)` is the same door for a failure that arrives later, `guard(what, run)` wraps one step the app runs later -- a tap handler, an async startup step -- and catches **both** its synchronous throw and its rejected promise, because a handler runs from the platform's event loop and not from any `try` in this file, and `failureDetails`/`createFailureScreen` turn anything thrown -- a string, `undefined`, a circular object -- into what the phone shows: the step, the message, and a selectable "Copy details" line. `React` arrives as an argument that must carry `Component`, because an error boundary is a class. `src/app/startup.test.js` drives it with a fake React, a renderer and all. |
 | `src/app/first-screen.js` | The first screen: what the app is waiting for, the "Try the demo" control, and the slot (`pairingScreen`) where P6.8's pairing screen goes -- above the demo control, never instead of it. |
 | `src/demo/` | Demo mode (the owner's ruling of 2026-10-19): the fixed sample data (`sample.js`), the placeholder key source (`keys.js`), the transport that plants the consumer's side in the port double (`transport.js`), the controller (`index.js`) and the screen (`screen.js`). `safety.test.js` is the scan that holds the three fences (no network, no secure storage, no credential). |
 | `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
@@ -426,8 +430,23 @@ choice is the one security decision the port makes, and it has its own test: it
 keeps an item out of an **iCloud Keychain backup** and off a **restored-to-
 another-phone** device. The MAC key proves possession of the pairing, so a key
 that could be restored anywhere would restore the ability to speak as this
-installation — `per-pairing` in name only. It is also not readable while the
-phone is locked. `requireAuthentication` (a Face ID prompt on every read) is
+installation — `per-pairing` in name only. **On iOS** it is also not readable
+while the phone is locked, which is what `WHEN_UNLOCKED` rather than
+`AFTER_FIRST_UNLOCK` buys and what the voice-session reconciliation's **F24**
+(and VS5.1, a paused session touches no credential) rests on. **That sentence is
+iOS's, and this branch has just made that distinction load-bearing**: Android's
+store is SharedPreferences behind the Keystore, has no accessibility constant to
+set, and its key is **not** unlock-gated, so F24 is **not** a property of the
+Android build — an Android session paused on a call can still read its pairing
+key. That is read off the installed module, not assumed:
+`expo-secure-store/android/.../encryptors/AESEncryptor.kt:64` is
+`.setUserAuthenticationRequired(options.requireAuthentication)`, and this app
+never sets `requireAuthentication`, so the Android key is generated
+authentication-free (there is no `setUnlockedDeviceRequired` call either).
+Nothing in this repository asserts a cross-platform version of F24: F24's own
+evidence is the port's **iOS** rule, and neither platform's constant has been
+exercised on a device (see the unverified list below).
+`requireAuthentication` (a Face ID prompt on every read) is
 deliberately **not** set: the ID token is refreshed and read in the background,
 and a prompt per refresh is a prompt the owner switches off.
 
@@ -1548,6 +1567,17 @@ the two apart -- so it is written down here rather than claimed as a kill.
   Android — which is the crash — and requiring it nowhere would silently drop
   the iOS accessibility level. Both halves are tested against a fake module on
   each platform; neither has been run on either.
+* **The voice-session reconciliation's F24, on Android.** F24 says the secure
+  store is unreadable while the phone is locked, and that is a property of the
+  **iOS** Keychain item (`WHEN_UNLOCKED_THIS_DEVICE_ONLY` and nothing to do with
+  this app's code). Its Android half is a claim **read off the installed
+  module's source** — `AESEncryptor.kt:64` sets `setUserAuthenticationRequired`
+  from the caller's `requireAuthentication`, which this app never passes — and
+  never observed: no device here has been locked mid-session with the store
+  open. A test on a device, or a design that does not lean on unlock-gating on
+  Android, is what would make VS5.1's "a paused session touches no credential"
+  true on both platforms rather than on one.
+  (O7 in the reconciliation's open list tracks the same gap.)
 * **Every speech engine, and every acoustic behaviour.** Nothing under
   `src/audio/` is an engine: the ports are contracts and the tests drive them
   with fakes, which is D52's rule and P3.4's whole scope. Which engine is

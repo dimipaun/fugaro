@@ -323,11 +323,20 @@ test('a build that returns nothing usable is a reported failure, not a blank scr
   assert.match(guard.state().error.message, /root component/);
 });
 
-test('report() is the door for an async startup step, and it re-renders the screen', () => {
+test('report() is the door for an async startup step, and the root re-renders itself when it fires', () => {
   // The wiring is synchronous and the app's first async work is a tap today
-  // (`mobile/index.js` reports a rejected demo entry); a SecureStore read, a
+  // (`mobile/index.js` guards a rejected demo entry); a SecureStore read, a
   // Firebase init or a fetch will be the next one. Whatever it is, it arrives
   // here and not as an unhandled rejection nobody on the phone can see.
+  //
+  // **React's own path, executed rather than assumed.** The wiring from the
+  // report to the screen is `componentDidMount` -> `subscribe` -> the guard's
+  // `publish` -> this root's listener -> `setState` -> `render`. A test that
+  // hand-assigned `instance.state` would assert the last link only, so it would
+  // stay green if the subscription were never made, made with the wrong
+  // callback, or dropped before the report. This drives the real chain: mount
+  // the root the way React does, report, and read the tree the root then
+  // renders -- with no line of the test writing to `state`.
   const { React, guard } = guardFor();
   const App = function App() {
     return React.createElement('app', null);
@@ -335,24 +344,145 @@ test('report() is the door for an async startup step, and it re-renders the scre
   const Root = guard.root(() => App);
   const instance = new Root({});
   let notified = 0;
-  const unsubscribe = guard.subscribe(() => {
+  const listener = guard.subscribe(() => {
     notified += 1;
   });
   assert.equal(render(instance.render()).includes(FAILURE_TITLE), false, 'healthy until something is reported');
 
-  // The screen is the failure screen only after the report, and the subscriber
-  // is how React learns that: the guard publishes, the root re-renders.
+  instance.componentDidMount();
+  assert.equal(typeof instance.unsubscribe, 'function', 'mounting is what subscribes the root');
+  // Before the report, the mounted root still renders the app (and the app
+  // alone: a guard that subscribed itself into a failed state would be red
+  // here).
+  assert.equal(render(instance.render()).includes(FAILURE_TITLE), false);
+
   guard.report(new Error('AsyncStorage read failed during startup'));
   assert.equal(notified, 1, 'the subscribers are told once');
-  // React's own path: the subscription calls `setState`, and the next render is
-  // the failure screen.
-  instance.state = { failed: true, error: guard.state().error };
+  // THE assertion this test exists for: nothing below wrote `instance.state`,
+  // so the failure screen can only be there because the subscription moved it.
   const shown = render(instance.render());
   assert.match(shown, new RegExp(FAILURE_TITLE));
   assert.match(shown, /AsyncStorage read failed during startup/);
-  unsubscribe();
-  guard.report(new Error('second'));
-  assert.equal(notified, 1, 'an unsubscribed listener is not called again');
+  assert.match(shown, new RegExp(COPY_DETAILS));
+  assert.equal(instance.state.failed, true, 'the state the listener set is the guard\'s own');
+  assert.equal(instance.state.error.message, 'AsyncStorage read failed during startup');
+
+  // A second report is dropped (the first failure wins, asserted on its own
+  // below), so there is nothing more to publish here: the unmount half is the
+  // next test, which uses a guard whose report is the first one.
+  // Mutation: make `componentDidMount` a no-op and the failure screen never
+  // renders above.
+  listener();
+});
+
+test('an unmounted root stops listening: a later failure cannot move a dead tree', () => {
+  // React unmounts the tree on a reload, and a listener left behind would hold a
+  // dead root and re-render into nothing. The publish below really happens
+  // (`notified` moves, and the guard is in the failed state), so the assertion
+  // is about the root's own subscription and not about a report that never
+  // fired -- which is what made the version of this check inside the previous
+  // test vacuous.
+  const { React, guard } = guardFor();
+  const App = function App() {
+    return React.createElement('app', null);
+  };
+  const Root = guard.root(() => App);
+  const instance = new Root({});
+  let notified = 0;
+  const listener = guard.subscribe(() => {
+    notified += 1;
+  });
+  instance.componentDidMount();
+  assert.equal(typeof instance.unsubscribe, 'function', 'mounting subscribes');
+
+  instance.componentWillUnmount();
+  assert.equal(instance.unsubscribe, null, 'unmounting drops the subscription');
+  guard.report(new Error('the phone went away mid-launch'));
+  assert.equal(notified, 1, 'the report was published, so this test is not vacuous');
+  assert.equal(guard.state().failed, true, 'and the guard is in the failed state');
+  assert.equal(instance.state.failed, false, 'but the unmounted root was not told');
+  assert.equal(
+    render(instance.render()).includes(FAILURE_TITLE),
+    false,
+    'so it still renders the app rather than a screen for a tree that no longer exists',
+  );
+  listener();
+  // Mutation: drop the unsubscribe call in `componentWillUnmount` and the dead
+  // root moves to the failure screen with everyone else.
+});
+
+// --- guard(): a step the app runs later, sync or async ------------------------
+
+test('a synchronous throw out of a guarded step is reported, not rethrown', async () => {
+  // THE half that used to escape. `mobile/index.js` hands this to a
+  // `Pressable`'s `onPress`, which React calls from the platform's event loop --
+  // outside the wiring's `try` and outside every boundary -- so a synchronous
+  // throw there was an uncaught error in a release build: no screen, no report,
+  // the exact failure this file exists to prevent. And it is the likelier half,
+  // because a controller validates before it awaits.
+  const { React, guard } = guardFor();
+  const App = function App() {
+    return React.createElement('app', null);
+  };
+  const Root = guard.root(() => App);
+  const instance = new Root({});
+  instance.componentDidMount();
+
+  const onPress = guard.guard('entering the demo', () => {
+    throw new Error('the demo refuses an empty command');
+  });
+  let answer;
+  assert.doesNotThrow(() => {
+    answer = onPress();
+  }, 'a guarded step never throws at its caller: that caller is the platform');
+  assert.equal(answer, undefined, 'a step that did not run answers nothing');
+  assert.equal(guard.state().failed, true);
+  const shown = render(instance.render());
+  assert.match(shown, new RegExp(FAILURE_TITLE));
+  assert.match(shown, /the demo refuses an empty command/);
+  // The step is named, so the screen says which control failed and not only
+  // what the error said.
+  assert.match(guard.state().what, /entering the demo/);
+  // Mutation: drop the `try` inside `guard` and this goes red with the throw
+  // arriving at the caller -- which in the app is React, not a screen.
+});
+
+test('a rejected guarded step is reported too, and a healthy one is untouched', async () => {
+  const { React, guard } = guardFor();
+  const onTap = guard.guard('confirming the demo command', async () => {
+    throw new Error('the queue refused the command');
+  });
+  // A rejection is the async half: the `try` cannot see it, so the promise is
+  // handed to the same door. The guarded step returns **the same promise**, so a
+  // caller that awaits still sees the rejection -- that is normal promise
+  // semantics and the caller's business -- but the rejection is no longer
+  // unhandled (a handler is attached), and the *report* is what reaches the
+  // screen. In the app the caller is React's event loop, which awaits nothing.
+  const answer = onTap();
+  assert.equal(typeof answer.then, 'function', 'the guarded step still returns what it returned');
+  let stillRejects = null;
+  await answer.catch((error) => {
+    stillRejects = error;
+  });
+  assert.match(stillRejects.message, /the queue refused the command/, 'the caller still sees the rejection');
+  assert.equal(guard.state().failed, true, 'and the guard has it too, so the screen can show it');
+  assert.match(guard.state().error.message, /the queue refused the command/);
+  assert.match(guard.state().what, /confirming the demo command/);
+
+  // A step that succeeds is not a failure: nothing is reported, and the answer
+  // comes back unchanged so the caller keeps working.
+  const { guard: healthy } = guardFor();
+  const good = healthy.guard('the demo', async () => 'entered');
+  assert.equal(await good(), 'entered');
+  assert.equal(healthy.state().failed, false, 'a healthy step reports nothing');
+  const plain = healthy.guard('the demo', () => 7);
+  assert.equal(plain(), 7, 'a synchronous answer passes straight through');
+  assert.equal(healthy.state().failed, false);
+
+  // And a caller that hands it something that is not work is a wiring bug, said
+  // out loud rather than discovered on a tap.
+  assert.throws(() => healthy.guard('the demo'), /work/);
+  assert.throws(() => healthy.guard('the demo', 'not a function'), /work/);
 });
 
 test('the guard keeps the FIRST failure: a cascade is the same report, not a new one', () => {

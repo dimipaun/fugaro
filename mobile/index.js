@@ -109,20 +109,16 @@ registerRootComponent(startup.root(() => {
   // changes, and never polls it.
   const useDemo = () => useSyncExternalStore(demo.subscribe, demo.state);
 
-  // **The app's first async step, and the reason `startup.report` exists.** A
+  // **The app's first async step, and the reason `startup.guard` exists.** A
   // `try` around this call cannot catch what `enter()` does after its first
   // `await`, so a rejection is handed to the guard instead: the reviewer sees
-  // the failure on the screen rather than a control that does nothing. A later
-  // task's SecureStore read, database listener or fetch joins through the same
-  // door, and never through a `console` this tree refuses to have.
-  const guardAsync = (what, run) => () => {
-    const answer = run();
-    if (answer !== null && typeof answer === 'object' && typeof answer.catch === 'function') {
-      answer.catch((error) => startup.report(error, what));
-    }
-    return answer;
-  };
-
+  // the failure on the screen rather than a control that does nothing. The
+  // handler is a tap on a `Pressable`, which React runs from the platform's
+  // event loop rather than from the wiring's `try`, so the **synchronous** half
+  // has to be caught too -- `startup.guard` does both (its own docstring says
+  // why the sync half is the likelier one), and a later task's SecureStore read,
+  // database listener or fetch joins through the same door, never through a
+  // `console` this tree refuses to have.
   const screens = {
     // The screen the demo is entered from, with the seam `pairingScreen` that
     // P6.8's pairing screen will occupy -- above the demo control, never instead
@@ -132,7 +128,7 @@ registerRootComponent(startup.root(() => {
       View,
       Text,
       Pressable,
-      onTryDemo: guardAsync('entering the demo', () => demo.enter()),
+      onTryDemo: startup.guard('entering the demo', () => demo.enter()),
       pairingScreen: null,
     }),
     demo: createDemoScreen({
@@ -140,7 +136,7 @@ registerRootComponent(startup.root(() => {
       View,
       Text,
       Pressable,
-      onConfirm: guardAsync('confirming the demo command', () => demo.confirm()),
+      onConfirm: startup.guard('confirming the demo command', () => demo.confirm()),
     }),
   };
 

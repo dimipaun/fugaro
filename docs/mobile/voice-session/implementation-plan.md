@@ -80,11 +80,11 @@ register, and checks 113–118) · [../../../mobile/README.md](../../../mobile/R
 | The interrupt rule the session must not stale: `interruptDecision({ switch, severity, highest, speaking, turn })`, `INTERRUPT_SWITCH`, `INTERRUPT_REASON` | `mobile/src/voice/interrupt.js` | VS1.1, VS0.2 |
 | The speaker port | `mobile/src/voice/speaker.js` (`createPipelineSpeaker`) | VS0.3 |
 | The app's one wiring file, and the fences over it | `mobile/index.js`, `mobile/src/boundary.test.js`, `dependencies.test.js` | VS1.3 |
-| The identity fences: no `com.` in `app.json`; no reverse-DNS literal anywhere under `mobile/` or `docs/mobile/`; `bundleIdentifier`/`package` absent from `app.json` | `mobile/src/app-config.test.js`, `app-config.ids.test.js` | VS2.1, VS2.3 |
+| The identity fences: no `com.` in `app.json`; the owner's own reverse-DNS identity in **no file** under `mobile/` or `docs/mobile/` (the pin's `IDENTITY_ALLOWED` is empty, and what it looks for is that value and not reverse-DNS literals in general -- the fictional `com.example.sample` fixtures under `mobile/src/` are allowed and are what the tests use); `bundleIdentifier`/`package` absent from `app.json` | `mobile/src/app-config.test.js`, `app-config.ids.test.js` | VS2.1, VS2.3 |
 | The dynamic config and its two environment variables: `ID_VARIABLES = { ios: 'FUGARO_IOS_BUNDLE_ID', android: 'FUGARO_ANDROID_PACKAGE' }`, the `ios.infoPlist` merge | `mobile/app.config.js` | VS2.1, VS2.2, VS4.1 |
 | The dependency scan: every bare import declared in `package.json`, the lockfile matching it, `metro.config.cjs` present | `mobile/src/dependencies.test.js` | VS1.3, VS3.1, VS4.2 |
 | The build profiles: `development` (`developmentClient: true`), `preview`, `internal` (`distribution: store`, `android.buildType: app-bundle`), `cli.requireCommit`, `submit.internal.ios.ascAppId` | `mobile/eas.json`, `mobile/src/eas-config.test.js` | VS2.2, VS3.3, VS4.3, VS7.1 |
-| The secure store that is unreadable while the phone is locked: `keychainAccessible: WHEN_UNLOCKED_THIS_DEVICE_ONLY`, `SECRET_ITEMS = ['idToken','macKey']` | `mobile/src/accounts/expo-secure-store.js`, `secret.js`, `secure-store.js` | VS0.3 (a paused session touches no credential), VS5.1 |
+| The secure store that is unreadable while the phone is locked — **on iOS** (`keychainAccessible: WHEN_UNLOCKED_THIS_DEVICE_ONLY`; Android has no such option and its Keystore key is not unlock-gated, see F24 and `mobile/README.md`): `SECRET_ITEMS = ['idToken','macKey']` | `mobile/src/accounts/expo-secure-store.js`, `secret.js`, `secure-store.js` | VS0.3 (a paused session touches no credential), VS5.1 (**the iOS half; the Android half is not established**) |
 | The demo's fences: `createDemoMode.length === 0`, no network, no secure storage, no secret | `mobile/src/demo/safety.test.js` | VS1.3 (the demo stays out of it) |
 | The check register, its numbering rule, and the house style of a check ("guard block, FACT lines, Passes/Fails when, Paste back, Restore") | `docs/gcp-live-checklist.md` | VS7.1–VS7.6 |
 | The decision register's block table ("D193 onward — free") | `docs/coordinator/README.md` | the D-row block this work takes |
@@ -418,9 +418,13 @@ offline over `mobile/node_modules`, as VS2.1), then **`fugaro verify test`**.
 and `FUGARO_ANDROID_PACKAGE` remain the only two, `eas.json` gains no identity
 (`mobile/src/eas-config.test.js` stays as it is), and no committed file gains a
 reverse-DNS literal — including the new one this work adds for the widget.
-**Tests.** The existing scan stays green unchanged; one new assertion pins the
-widget identifier's derivation, so that no reverse-DNS literal (the owner's
-identity included) ever has to appear anywhere.
+**Tests.** The existing scan stays green unchanged — and note what it is: the
+pin in `app-config.ids.test.js` (`identityLiterals`, `IDENTITY_ALLOWED` empty)
+forbids **the owner's own reverse-DNS value**, not reverse-DNS literals in
+general, so this task's own "no committed file gains one" is an intent the new
+assertion must carry rather than something the existing scan already enforces.
+One new assertion pins the widget identifier's derivation, so that the owner's
+identity — and any hard-coded name for the widget — never has to appear.
 **Verification.** **`fugaro verify test`**.
 **Reviewer.** standard.
 
