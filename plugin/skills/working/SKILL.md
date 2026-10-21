@@ -31,6 +31,14 @@ Then read the file for what you are doing:
 
 The remote agent cannot see this conversation, your files or the user's machine. The task text names the goal and why, where to look (paths, the failing test, the error text copied in), acceptance criteria it can check, and what is out of scope. It needs nothing local: no unpushed commits (the run starts from the base branch on the remote), no local database, no undecided question. One task, one pull request.
 
+## Runs on a long-lived branch
+
+A long-lived branch (`integration-0.9.x`) is a base of its own: launch the run with `--ref BRANCH` so it works from that branch rather than from main's tip. The draft pull request it opens still targets main, and retargeting it to BRANCH afterwards is a person's step in the provider's own interface, not the run's.
+
+Review cost scales with the diff of the pull request against its base, so a branch that has drifted far from main makes every run onto it expensive. Keep the branch merged forward into main often, and keep each pull request small; a wide batch onto one branch pays for that branch's divergence from main once per run (the `parallelism` skill). A run that halted at its cap with `run_cap` usually means its review read too much, not that the work was large.
+
+To see what a run cost, and where: `fugaro runs ls` for its row, and `fugaro diagnose RUN` for the breakdown — its review stage is where a base that is too far from main shows up. On a pull request that was retargeted, check that `fugaro diagnose RUN` shows the base the pull request really has before launching a fix round.
+
 ## Monitor
 
 - `fugaro runs ls` lists runs (`--repo`, `--mine`, `--since`, `--batch`, `--pr`) and its `BY` column says who started each one; `fugaro runs ls --watch` redraws until every run has settled, and `fugaro runs stats` aggregates the same records by the person who started them.

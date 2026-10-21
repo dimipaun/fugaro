@@ -29,7 +29,7 @@ A good task is bounded, checkable and needs no local-only context (a local datab
 Find the defaults:
 - the repository: `--repo`, else the checkout's origin. `fugaro runs ls --json` shows the repositories that have runs.
 - the workflow: `--workflow`, else the repository's only workflow. A repository with several needs one named; ask which.
-- the base branch: `--ref`, else `git.base_branch` of the configuration. The run's own branch is `fugaro/<run-id>`, and the pull request goes back to the base branch.
+- the base branch: `--ref`, else `git.base_branch` of the configuration. The run's own branch is `fugaro/<run-id>`, and the pull request goes back to the base branch. A long-lived branch (an `integration-0.9.x`) is named here as well: pass it as `--ref`, and expect the draft pull request to target main until a person retargets it (SKILL.md's long-lived-branch section says why it matters).
 
 Tell the user all three and the task text, and wait for their yes.
 
