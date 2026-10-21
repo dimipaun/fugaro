@@ -327,6 +327,14 @@ func TestRTDBFakeRejectsKeysRealRTDBRejects(t *testing.T) {
 // answers with the resolved node. Without this the fake would store
 // {".sv":"timestamp"} as a bad key (it carries a dot) and a client that asked
 // the database for the time could not be tested at all.
+//
+// `timestamp` is the only server value the fake resolves. That is a deliberate
+// limit, not a property of the database: measured against the emulator, the
+// real one resolves `increment` too ({".sv":{"increment":3}} over a stored 5
+// stores 8). The cases below pin the limit as the limit it is — a value the
+// fake does not know is refused here as a bad key, which is *not* what the
+// database would answer — so that nobody reads a green test as the database's
+// behaviour.
 func TestRTDBFakeResolvesServerValues(t *testing.T) {
 	f := NewRTDB(t)
 	now := time.Now().UTC().Truncate(time.Second)
@@ -348,10 +356,23 @@ func TestRTDBFakeResolvesServerValues(t *testing.T) {
 	if a, b := mustJSON(f.Value("srv/b")), mustJSON(f.Value("srv/c")); a != `{"at":`+want+`}` || b != a {
 		t.Fatalf("patched %s and %s, want the same resolved stamp in both", a, b)
 	}
-	// A server value the database does not have is refused as the key rule
-	// refuses it, not silently stored.
-	if code, _, _ := rtdbDo(t, "PUT", f.URL+"/srv/d.json", `{"at":{".sv":"increment"}}`, nil); code != 400 {
-		t.Errorf("an unknown server value = %d, want 400", code)
+	// The limits of the fake, in both shapes of a server value it does not
+	// implement: the string form and the object form. The real database refuses
+	// the first (400, unparseable) and *resolves* the second; the fake refuses
+	// both, as a bad key, because it left them where they were.
+	f.Set("srv/num", 5)
+	for _, c := range []struct{ what, body string }{
+		{"the string form", `{".sv":"increment"}`},
+		{"the object form", `{".sv":{"increment":3}}`},
+		{"another name", `{".sv":"foo"}`},
+		{"another object", `{".sv":{"foo":1}}`},
+	} {
+		if code, _, _ := rtdbDo(t, "PUT", f.URL+"/srv/d.json", c.body, nil); code != 400 {
+			t.Errorf("a server value the fake does not resolve, %s: %d, want 400 (see resolveServerValues: the real database resolves the object form)", c.what, code)
+		}
+	}
+	if got := f.Value("srv/num"); mustJSON(got) != "5" {
+		t.Errorf("srv/num = %s, want the 5 it was set to: nothing incremented it", mustJSON(got))
 	}
 	// A nested one, and one that is not the only key, are ordinary data.
 	if code, _, _ := rtdbDo(t, "PUT", f.URL+"/srv/e.json", `{"x":{"at":{".sv":"timestamp"}}}`, nil); code != 200 {

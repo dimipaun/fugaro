@@ -637,9 +637,18 @@ func (f *RTDB) clockNow() time.Time {
 
 // resolveServerValues replaces every {".sv":"timestamp"} in a decoded write
 // with the database's clock in epoch milliseconds, which is what the real
-// database does with the server value rtdb.ServerTimestamp marshals to. Any
-// other server value is left where it is, for the key rule to refuse as the
-// real database refuses it.
+// database does with the server value rtdb.ServerTimestamp marshals to.
+//
+// `timestamp` is the only server value this fake resolves, and that is a
+// deliberate limit rather than a claim about the database: measured against
+// the emulator, the real one also resolves `increment` — a PUT of
+// {".sv":{"increment":3}} over a stored 5 stores 8, over an absent node 3 —
+// while the string form {".sv":"increment"} is a 400 ("couldn't parse JSON
+// object, array, or value"), as is any other name, string or object. So a
+// value this fake leaves alone is refused here as a bad key (the ".sv" key
+// carries a dot) rather than resolved: a caller that needs `increment` has to
+// teach the fake it first, and no test should read a refusal here as the
+// database's answer.
 func resolveServerValues(v any, now time.Time) any {
 	switch x := v.(type) {
 	case map[string]any:

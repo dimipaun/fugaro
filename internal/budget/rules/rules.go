@@ -697,17 +697,30 @@ func boundedMatch(max int, pattern string) string {
 // change `orchestrators/$slug/$job/lease`, and nothing else (central
 // orchestrator P3, decisions D1, D2, D3).
 //
-// It is on the lease node's `.write` and not on the children's `.validate`
-// because of how the engine evaluates a write: a `.validate` runs at the
-// location written and below it, so a `.validate` on the lease node is never
-// consulted for a write to `lease/holder_uid` — which is a writer changing the
-// holder of a record it does not hold, the seat stolen field by field. A
-// `.write` is consulted at the location written *and at every ancestor*, with
-// `data` and `newData` read at the ancestor, so this one rule sees every write
-// to any part of the lease as the whole record it makes, and the four
-// transitions below are the only ones it accepts. A child `.write: false`
-// would not help: a grant cascades down and cannot be withdrawn by a deeper
-// node (both halves measured on the emulator; see the P3 emulator cases).
+// It is on the lease node's `.write` and not on a child's `.validate` because
+// of how the engine evaluates a write. The three statements below were
+// measured on the emulator with this document (they are what
+// TestLeaseDeletingARequiredFieldIsRefused and its neighbours pin), and the
+// first two are easy to get backwards:
+//
+//   - A `.write` is consulted at the location written *and at every ancestor*,
+//     with `data` and `newData` read at the ancestor. So this one rule sees
+//     every write to any part of the lease as the whole record it makes, and
+//     the four transitions below are the only ones it accepts.
+//   - A `.validate` is consulted at the location written, at its ancestors and
+//     at the children of the location written — but not at a node that is none
+//     of those. The lease node's own `.validate` is therefore *not* inert: it
+//     is read for a write to `lease/holder_uid` (the lease node is an ancestor
+//     of the written location), which is what makes its hasChildren clause the
+//     thing that refuses a write deleting a required field — the `.write`
+//     predicate alone allows the holder's `renewed_at`-only write, that being
+//     the heartbeat. The transition used to live on the `generation` child,
+//     and that is exactly why it was bypassable: a write to `lease/holder_uid`
+//     never reaches a sibling, so the seat was stolen field by field. Deleting
+//     the hasChildren clause, or moving it onto a child, reopens that class of
+//     write rather than tidying anything.
+//   - A child `.write: false` would not help: a grant cascades down and cannot
+//     be withdrawn by a deeper node (measured: 200).
 //
 // The four transitions, each reading `data` (the record now), `newData` (the
 // record after this write) and `auth.uid` (the writer):

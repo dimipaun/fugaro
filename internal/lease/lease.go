@@ -436,10 +436,22 @@ func unsure(path string, held Record, err error) error {
 }
 
 // Read is the lease as the database holds it. found is false for an absent
-// node; a record that is not one this code wrote is an error (Record.valid).
+// node, and a node that is not a record this code wrote is an error rather
+// than a Record the caller could act on (Record.valid): the rules refuse to
+// write one, so a node carrying generation 0 or a stamp before the epoch was
+// written through IAM, and a hand-written lease is not one to take over,
+// renew or report on. Every caller of this package gets the same answer to
+// the same node — Take refuses it too — and no caller has to remember to
+// check.
 func Read(ctx context.Context, db DB, path string) (Record, bool, error) {
 	cur, _, found, _, err := read(ctx, db, path)
-	return cur, found, err
+	if err != nil || !found {
+		return cur, found, err
+	}
+	if err := cur.valid(); err != nil {
+		return Record{}, true, err
+	}
+	return cur, true, nil
 }
 
 // Take takes the seat of the job at path for h: it creates the lease when
