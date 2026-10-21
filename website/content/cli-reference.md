@@ -40,6 +40,7 @@ Subcommands:
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro plan` -- Read a plan's graph artifact
 - `fugaro project` -- The project's policy, its allow-list and the repositories enrolled
+- `fugaro reaper` -- Sweep the Batch jobs and VMs a run has leaked
 - `fugaro recipes` -- List, show, validate and publish recipes, the task loop a run follows after implement
 - `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model or person
 - `fugaro restore` -- Rebuild a managed project from zero, into a new GCP project ID, and print what is not restored
@@ -2209,6 +2210,49 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--yes` | bool | `false` | no | confirm the batch without typing the project's name |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro reaper`
+
+Sweep the Batch jobs and VMs a run has leaked
+
+One pass of the reaper (docs/design/compute-backend.md §3.4): delete the Batch jobs
+that are stuck or queued past their deadline, and the Compute Engine instances of runs
+no Batch job accounts for, in this project and region.
+
+The reaper holds five permissions and creates nothing (SECURITY.md). Every deletion
+rests on a label check of its own, and anything it cannot explain it refuses to touch --
+naming it in the report, which is what this command prints and what its own Cloud Run
+job logs.
+
+Run it as the installation's reaper account. --dry-run prints the same report and
+deletes nothing.
+
+Where no project config is selected the pass reads the reaper job's own environment
+(FUGARO_GCP_PROJECT and FUGARO_REGION, which Terraform sets on the job), and deletes
+only inside the Cloud Run job that also sets FUGARO_REAPER_JOB: anywhere else that
+environment is a dry run, so an operator's shell never sweeps their project.
+
+Two GCP projects are refused by name wherever they are named from, and an installation
+may add its own to the list with FUGARO_REAPER_REFUSE_PROJECTS (comma-separated project
+ids): the pass refuses those before it opens a client, so nothing is read and nothing
+deleted.
+
+Usage: `fugaro reaper`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--dry-run` | bool | `false` | no | print what would be deleted, and delete nothing |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for reaper |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 

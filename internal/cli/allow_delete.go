@@ -361,7 +361,9 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 // with a plan's by exact equality: a stray space around either would be an
 // approval of nothing. Each strip of a paste's marks is followed by a trim of
 // its own for the same reason (pasteMarks.trim): what a strip exposes is
-// whitespace the strip was sitting behind.
+// whitespace the strip was sitting behind — taking the sentence's closing
+// bracket off the end, say, uncovers the space that can sit before it
+// ("…id=x )").
 //
 // Trimming an identity cannot lose a character of one: an identity is escaped
 // so that the only whitespace in it is the single space between two of its

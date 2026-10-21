@@ -16,11 +16,15 @@ type Checkout struct {
 	Project string // its fugaro.yaml's project:, "" when absent
 	// GCPProject is its fugaro.yaml's gcp_project:, "" when absent.
 	GCPProject string
-	// Provider is its fugaro.yaml's git.provider (config.ProviderOf, read
-	// leniently and not validated), "" when the file names none. Together
-	// with the origin remote's owner/name it is the repository identity a
-	// checkout is remembered by (localcfg.CheckoutIdentity).
-	Provider string
+	// There is deliberately no Provider here. A checkout's own git.provider
+	// is a claim the checkout makes, and the identity a checkout is
+	// remembered by (CheckoutIdentity) has to be the one its origin remote
+	// proves: internal/cli's recordCheckout derives the provider from the
+	// origin's host (providerForHost) and never consults the file, because
+	// consulting it is how a fork or a hostile pull request that copies
+	// `project:` and `git.provider:` gets remembered as one of the project's
+	// checkouts. A field here would be a value with no reader and one
+	// tempting caller.
 }
 
 // SelectInput is everything that can select a project config.

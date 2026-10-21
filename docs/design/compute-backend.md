@@ -3653,10 +3653,17 @@ restore cannot find.
    generation labelled `fugaro=managed` with `base-release`, and
    `gcloud compute images describe-from-family <family>` names it. Then, in
    order: **(a)** re-run the schedule by hand
-   (`gcloud scheduler jobs run <preload_scheduler_job> --location <region>`)
-   and confirm the build **builds nothing** — the newest generation is this
-   build's own, matches the family's current release and is inside
-   `preload_refresh_days`, so the run is one API call and no image. **(b)**
+   (`gcloud scheduler jobs run <preload_scheduler_job> --location
+   <scheduler_region>` — the **scheduler** region, which is not the
+   installation's whenever Cloud Scheduler does not serve it: the sandbox's
+   us-east5 is one it does not, so the job lives in the nearest location it
+   does serve (us-east4, `internal/backend/gcp`'s `SchedulerRegion`), and
+   `--location <region>` would name a job that is not there. The stage's own
+   retry and its "start it yourself" line name the same one,
+   `infra.RunSchedulerJob` and `computeStage.Apply`) and confirm the build
+   **builds nothing** — the newest generation is this build's own, matches
+   the family's current release and is inside `preload_refresh_days`, so the
+   run is one API call and no image. **(b)**
    Make the newest generation read as stale — `gcloud compute images update
    <name> --update-labels=base-release=stale`, in the sandbox project only —
    and re-run the schedule: a **new generation** appears in the same family,
@@ -4069,9 +4076,21 @@ senior reviewer before merge, not just the normal one.
    deadlines, the decision table over every `JobStatus.State`, the client-side
    label checks, the refusals and the dry-run, held to by tests against the
    Batch and Compute fakes. The account itself is Task 6's (the five
-   permissions §3.7 lists are what it must carry), and
-   `backend: cloud-batch` stays refused everywhere, so nothing here is
-   reachable in an installation.
+   permissions §3.7 lists are what it must carry). **Task 11 is what runs it,
+   and the sentence this note could not carry until then is the schedule**:
+   `fugaro reaper` (`internal/cli/reaper.go`) runs one pass and prints the
+   report — refusing to run at all where the project has no Batch
+   configuration — and
+   `deploy/terraform/gcp/modules/compute/reaper.tf` creates the Cloud Run job
+   that runs it **as the reaper account**, plus a `google_cloud_scheduler_job`
+   that starts that job **every fifteen minutes**, which is `ReapMargin`: a run
+   that should have ended is swept at most one margin after it should have, so
+   the residual window this safety net exists for is bounded by the margin
+   rather than by a schedule's own period. The report reaches Cloud Logging
+   under the job's own `fugaro_role=reaper` labels (57b-11 measures it), and
+   `backend: cloud-batch` stays refused everywhere until the enable task
+   (Task 10), so the invocation is scheduled while no installation selects the
+   backend it sweeps.
 6. **The Batch provisioning stage in `fugaro init`** (owner-run live step):
    **the Compute and Batch APIs both enabled** (both are OFF by default, and
    enabling Compute creates the default network and the default Compute Engine

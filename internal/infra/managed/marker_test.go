@@ -1297,23 +1297,39 @@ locals {
 }
 
 // knownComputeRefusals are the compute module's grants (main's Cloud Batch
-// backend, deploy/terraform/gcp/modules/compute/iam.tf) that this scan
-// refuses: every one is a grant to a run, reaper or preload account (or to a
-// Google service agent) that runAccountGrants does not list. For 0.8.5 the
-// refusal stands (the owner's ruling of 2026-10-17/18 on the merge of main
-// into next-0.8.5): nobody has reviewed these grants for a write path to
-// fugaro/managed.json, so they are not allowlisted, and the managed cover
-// keeps refusing the compute module. Reviewing them and moving them into
-// runAccountGrants is a decision for a later release, and this list is what
-// that decision deletes.
+// backend, deploy/terraform/gcp/modules/compute/iam.tf and — Task 11's —
+// reaper.tf) that this scan refuses: every one is a grant to a run, reaper,
+// preload or scheduler-agent account (or to a Google service agent) that
+// runAccountGrants does not list. For 0.8.5 the refusal stands (the owner's
+// ruling of 2026-10-17/18 on the merge of main into next-0.8.5): nobody has
+// reviewed these grants for a write path to fugaro/managed.json, so they are
+// not allowlisted, and the managed cover keeps refusing the compute module.
+// Reviewing them and moving them into runAccountGrants is a decision for a
+// later release, and this list is what that decision deletes.
 var knownComputeRefusals = []string{
 	"run_agent_reporter", "run_log_writer", "run_registry_reader", "launcher_user",
 	"reaper", "preload_builder", "preload_build_submitter", "preload_log_writer",
 	"preload_scheduler_agent", "preload_cloud_build_agent", "preload_self_user", "preload_run_account_user",
+	// The reaper's invocation (Task 11, reaper.tf): the job-scoped
+	// roles/run.invoker held by the reaper account itself (the Scheduler job
+	// starts the job with that account's OAuth token) and the actAs the
+	// Scheduler's own agent needs to mint it. Both are refusals for
+	// runAccountGrants's reason and not a judgement about them: the member is
+	// an account, not a set of people, so nobody has reviewed it for a write
+	// path to the creation fact. The operator actAs grant in the same file is
+	// a for_each over people and is not refused.
+	"reaper_runner", "reaper_scheduler_agent",
 }
 
-// computeRefusalFile is where every known compute refusal is found.
-const computeRefusalFile = "modules/compute/iam.tf: "
+// computeRefusalFile is where every known compute refusal is found: the
+// module's iam.tf, and the reaper's own file, which Task 11 added and which
+// makes grants of its own (the job's invoker and the two actAs bindings the
+// Scheduler token needs) — the same kind of grant, refused for the same
+// reason, and so part of the same known limit.
+var computeRefusalFiles = []string{
+	"modules/compute/iam.tf: ",
+	"modules/compute/reaper.tf: ",
+}
 
 // otherThanComputeRefusals returns the findings that are not one of the
 // known compute refusals, and fails the test when the known refusals are not
@@ -1340,9 +1356,15 @@ func otherThanComputeRefusals(t *testing.T, findings []string) []string {
 }
 
 // computeRefusalName is the compute grant a finding refuses, when it is one
-// of knownComputeRefusals in modules/compute/iam.tf.
+// of knownComputeRefusals, in one of the compute module's own files.
 func computeRefusalName(f string) (string, bool) {
-	rest, ok := strings.CutPrefix(f, computeRefusalFile)
+	rest, ok := "", false
+	for _, file := range computeRefusalFiles {
+		rest, ok = strings.CutPrefix(f, file)
+		if ok {
+			break
+		}
+	}
 	if !ok {
 		return "", false
 	}
@@ -2320,7 +2342,7 @@ func peopleSetDepth(expr string, locals map[string]string, depth int) bool {
 // local, a resource.
 var tfRefRE = regexp.MustCompile(`\b(?:var|local|data|google_[a-z0-9_]+|each)\.[a-z0-9_.\[\]-]+`)
 
-// classifyRole is what a role can do to the runs bucket: write it, read it,
+// roleKind is what a role can do to the runs bucket: write it, read it,
 // or nothing this test is about.
 type roleKind int
 

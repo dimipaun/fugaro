@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -31,15 +32,26 @@ import (
 // and every other field keeps the validation the tree already gives it.
 func batchValidateRig(t *testing.T, machineType, backendName string) *localcfg.Config {
 	t.Helper()
-	return batchValidateRigWith(t, machineType, backendName, "")
+	return batchValidateRigWith(t, machineType, backendName, 0)
 }
 
-// batchValidateRigWith is the same rig with extra lines inside the batch block
-// (the task timeout), for a case that is about a field of the block.
-func batchValidateRigWith(t *testing.T, machineType, backendName, extra string) *localcfg.Config {
+// batchValidateRigWith is the same rig with the batch block's task timeout set,
+// for a case that is about that field. Zero leaves the block without one, which
+// localcfg reads as backend.MaxRunTime.
+//
+// The timeout is written onto the parsed struct rather than into the YAML, for
+// the same reason the backend name is: localcfg bounds the field itself at
+// backend.MaxRunTime (its own refusal, the reaper's requirement -- a job sized
+// past the longest a run may be given is headroom no run can use, and the
+// reaper's own job has no config to read the number from), so a config file
+// carrying the values these cases are about never parses. What this check
+// answers is Batch's own ceiling, 14 days, which is a value only a Config that
+// reached validate some other way can hold -- so the rig builds that Config,
+// exactly as it does for the name localcfg refuses until the enable task.
+func batchValidateRigWith(t *testing.T, machineType, backendName string, timeout time.Duration) *localcfg.Config {
 	t.Helper()
 	yaml := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: my-runs\n" +
-		// A complete batch block, less the two fields this rig varies: a block
+		// A complete batch block, less the fields this rig varies: a block
 		// missing its image, network or account is refused by localcfg's own
 		// validation, which is not what these tests are about.
 		"batch:\n" +
@@ -51,12 +63,14 @@ func batchValidateRigWith(t *testing.T, machineType, backendName, extra string) 
 	if machineType != "" {
 		yaml += "  machine_type: " + machineType + "\n"
 	}
-	yaml += extra
 	lc, err := localcfg.Parse([]byte(yaml))
 	if err != nil {
 		t.Fatalf("the rig's own project config does not parse: %v", err)
 	}
 	lc.BackendName = backendName
+	if timeout != 0 {
+		lc.Batch.TaskTimeout = config.Duration{Set: true, Duration: timeout}
+	}
 	return lc
 }
 
@@ -180,15 +194,21 @@ func TestValidateArtifactRefusalIsCloudBatchOnly(t *testing.T) {
 // reaches that field with on this backend is localcfg.BatchTaskTimeout --
 // batchTimeouts.TaskTimeout answers every workflow with it, and a
 // --total-timeout launch is capped at backend.MaxRunTime -- so
-// batch.task_timeout is what validate bounds. The field's own validation is
-// only "greater than zero" (internal/localcfg), which is why a value past the
-// ceiling would otherwise reach the create.
+// batch.task_timeout is what validate bounds.
+//
+// The values here are past localcfg's own bound on the field as well
+// (backend.MaxRunTime, the longest a run may be given, which the reaper's
+// requirement put there), so a config file carrying one never parses and the
+// rig builds the Config value instead -- see batchValidateRigWith. That bound
+// is the stricter of the two and the one an operator meets; this check is the
+// ceiling the value it is handed would break at create, which is why the
+// values below are still worth pinning.
 //
 // Mutation (drop the check, drop the slack, or bound the workflows'
 // timeouts.total instead -- which no launch sends in this build): the refusal
 // case fails, or the case that a long workflow is accepted fires.
 func TestValidateRefusesATaskTimeoutPastTheRunningCeiling(t *testing.T) {
-	lc := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, "  task_timeout: 360h\n")
+	lc := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, 360*time.Hour)
 	// An implementing recipe, so these cases are about the timeout field and
 	// not about the boundary's fail-closed arm (an unresolved recipe is its own
 	// case, TestValidateRefusesAnUnreadableRecipeOnCloudBatch).
@@ -203,13 +223,13 @@ func TestValidateRefusesATaskTimeoutPastTheRunningCeiling(t *testing.T) {
 		}
 	}
 	// The same installation on Cloud Run is not this check's business.
-	cr := batchValidateRigWith(t, "", backend.CloudRun, "  task_timeout: 360h\n")
+	cr := batchValidateRigWith(t, "", backend.CloudRun, 360*time.Hour)
 	if ps := batchValidateProblems(cr, batchValidateConfig(t, batchValidateYAML), impl); len(ps) != 0 {
 		t.Errorf("a 360h task timeout on cloud-run is refused by the Batch check: %v", ps)
 	}
 	// A block that names no task timeout is backend.MaxRunTime, which is inside
 	// the ceiling, and so is the longest value the field can carry under it.
-	inside := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, "  task_timeout: 335h\n")
+	inside := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, 335*time.Hour)
 	if ps := batchValidateProblems(inside, batchValidateConfig(t, batchValidateYAML), impl); len(ps) != 0 {
 		t.Errorf("a 335h task timeout on cloud-batch = %v, want none", ps)
 	}
@@ -219,11 +239,11 @@ func TestValidateRefusesATaskTimeoutPastTheRunningCeiling(t *testing.T) {
 	// exactly 14 days, which is the last value that fits. A check that compared
 	// the field against batch.MaxRunDuration itself would let 335h59m through
 	// (mutation: drop the subtraction).
-	over := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, "  task_timeout: 335h59m\n")
+	over := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, 335*time.Hour+59*time.Minute)
 	if ps := batchValidateProblems(over, batchValidateConfig(t, batchValidateYAML), impl); len(ps) != 1 || ps[0].Path != "batch.task_timeout" {
 		t.Errorf("a 335h59m task timeout on cloud-batch = %v, want one problem at batch.task_timeout (the slack puts its maxRunDuration past 14 days)", ps)
 	}
-	edge := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, "  task_timeout: 335h58m\n")
+	edge := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, 335*time.Hour+58*time.Minute)
 	if ps := batchValidateProblems(edge, batchValidateConfig(t, batchValidateYAML), impl); len(ps) != 0 {
 		t.Errorf("a 335h58m task timeout on cloud-batch = %v, want none (its maxRunDuration is exactly 14 days)", ps)
 	}

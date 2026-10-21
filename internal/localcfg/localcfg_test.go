@@ -518,6 +518,15 @@ func TestBatchSectionReadsEveryField(t *testing.T) {
 	} else if d := c.BatchTaskTimeout(); d != backend.MaxRunTime {
 		t.Errorf("BatchTaskTimeout() with no task_timeout = %v, want the default", d)
 	}
+	// The ceiling is the largest timeout a config may write, and not a
+	// refusal in disguise: at exactly backend.MaxRunTime the reaper's two
+	// sources agree, so the boundary itself is accepted (the case above the
+	// boundary is TestBatchSectionValidation's).
+	if c, err := Parse([]byte(sample + strings.Replace(batchSample, "task_timeout: 1h30m", "task_timeout: "+backend.MaxRunTime.String(), 1))); err != nil {
+		t.Errorf("a task_timeout of exactly backend.MaxRunTime (%v) was refused: %v", backend.MaxRunTime, err)
+	} else if d := c.BatchTaskTimeout(); d != backend.MaxRunTime {
+		t.Errorf("BatchTaskTimeout() = %v, want the written %v", d, backend.MaxRunTime)
+	}
 }
 
 // TestBatchSectionValidation: every field is refused in the spelling the
@@ -573,6 +582,15 @@ func TestBatchSectionValidation(t *testing.T) {
 		},
 		"zero timeout":     {replace("task_timeout: 1h30m", "task_timeout: 0s"), "batch.task_timeout"},
 		"negative timeout": {replace("task_timeout: 1h30m", "task_timeout: -5m"), "batch.task_timeout"},
+		// A timeout past a run's own ceiling is refused, and this is the
+		// reaper's requirement rather than a cap for its own sake: a run can
+		// never be given more than backend.MaxRunTime (--total-timeout is
+		// capped there), so a job sized longer is headroom no run can use --
+		// while the reaper that runs from its own Cloud Run job's environment
+		// has no config to read the number from and derives its bound from the
+		// ceiling (internal/cli/reaper.go). The two would disagree about when
+		// a live run has ended, and the disagreement deletes a running job.
+		"timeout past a run's ceiling": {replace("task_timeout: 1h30m", "task_timeout: 30h"), "batch.task_timeout"},
 		// An unparsable duration is refused by the decoder, which the two
 		// spellings of a duration in this file share (config.Duration): the
 		// message names the value and the syntax, not the key.

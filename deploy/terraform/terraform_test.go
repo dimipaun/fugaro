@@ -178,6 +178,9 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/modules/compute/network.tf",
 		"gcp/modules/compute/preload.tf",
 		"gcp/modules/compute/preload.sh",
+		// The reaper's invocation (design compute-backend §8.1 task 11): the
+		// module file with it, the way history.tf is listed above.
+		"gcp/modules/compute/reaper.tf",
 		"gcp/modules/compute/outputs.tf",
 		"gcp/roots/compute/main.tf",
 		"gcp/roots/compute/variables.tf",
@@ -1754,8 +1757,18 @@ func TestComputeReaperRoleIsExactlyFive(t *testing.T) {
 				t.Errorf("%s: the reaper holds %v, want exactly %v (design §3.7)", path, got, want)
 			}
 		}
-		for _, blk := range allResourceBlocks(t, path, b) {
-			if !anyIAMRE.MatchString(blk.typ) || !strings.Contains(blk.body, "google_service_account.reaper") {
+		// The project-level grant, and only it: what this test is about is
+		// what the reaper account is GRANTED on the project. Task 11's
+		// reaper.tf holds three grants the other way round -- the account is
+		// the member of a job-scoped roles/run.invoker and of two actAs
+		// bindings (the Scheduler agent's, so the schedule can mint the job's
+		// token, and the operators', so applying this root can create it) --
+		// and none of those is a project role. They are not counted here
+		// because they say nothing about this: a reaper that could reach more
+		// of the project would reach it through a project role, which is what
+		// the scan below still refuses, whatever type carries it.
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
+			if !strings.Contains(blk.body, "google_service_account.reaper") {
 				continue
 			}
 			grants++
@@ -1768,6 +1781,167 @@ func TestComputeReaperRoleIsExactlyFive(t *testing.T) {
 	if roles != 1 || grants != 1 {
 		t.Errorf("found %d reaper roles and %d reaper grants, want 1 of each", roles, grants)
 	}
+}
+
+// TestTheReaperJobRunsAsTheReaperAccountOnASchedule pins Task 11's invocation
+// (design §8.1 Task 11, steps 2 and 3): the Cloud Run job that runs
+// `fugaro reaper`, the invoker grant it is started with, and the Scheduler job
+// that starts it every ReapMargin -- in the scheduler region and not the
+// installation's, which is the one attribute of it a plan cannot check and a
+// wrong value cannot be seen from (a Scheduler job in a region Cloud Scheduler
+// does not serve fails the apply).
+//
+// It is the task's red step, and it was written against a reaper.tf whose job
+// left `service_account` unset: a Cloud Run job with no service account runs as
+// the project's default Compute Engine account, which holds the editor role by
+// default -- far wider than the five permissions iam.tf narrowed for this job,
+// and the exact shape the module refuses for a run's VM
+// (internal/infra/compute.go's checkServiceAccount). The assertion below is
+// what makes that unset job impossible to merge.
+//
+// The sibling tftest run (gcp/roots/compute/tests/compute.tftest.hcl,
+// TestTheReaperRunsAsTheReaperAccountOnASchedule) asserts the same three
+// resources against a plan, where the URI's parts and the account's member are
+// values rather than text. This test is the text: a plan cannot see that the
+// name in front of it is the reaper's, and this scan is what keeps the two
+// files' literals from drifting apart.
+func TestTheReaperJobRunsAsTheReaperAccountOnASchedule(t *testing.T) {
+	const path = "gcp/modules/compute/reaper.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("%s: %v (Task 11's invocation lives there)", path, err)
+	}
+	jobs := resourceBlocks(t, path, b, "google_cloud_run_v2_job")
+	if len(jobs) != 1 || jobs[0].name != "google_cloud_run_v2_job.reaper" {
+		t.Fatalf("%s declares %d google_cloud_run_v2_job blocks (%v), want the reaper's one", path, len(jobs), blockNames(jobs))
+	}
+	job := jobs[0]
+	// The pin the task was written against.
+	if !hasAttr(job.body, "service_account", "google_service_account.reaper.email") {
+		t.Errorf("%s: the reaper's job does not run as the reaper account. Unset it runs as the default Compute Engine account, whose editor role is far wider than the five permissions this job is meant to hold.", job.name)
+	}
+	if strings.Contains(job.body, "developer.gserviceaccount.com") {
+		t.Errorf("%s: the reaper's job names a default Compute account: %s", path, job.name)
+	}
+	for _, want := range [][2]string{
+		{"name", "local.reaper_job"},
+		{"image", "var.base_image"},
+		{"command", `["/usr/local/bin/fugaro"]`},
+		{"args", `["reaper"]`},
+		// The one pass over every job and VM is bounded: inside the cadence,
+		// and never retried into a second pass of its own.
+		{"max_retries", "0"},
+		{"timeout", `"600s"`},
+		{"deletion_protection", "true"},
+	} {
+		if !hasAttr(job.body, want[0], want[1]) {
+			t.Errorf("%s: %s does not set %s = %s", path, job.name, want[0], want[1])
+		}
+	}
+	// The job's whole configuration is the project and the region: a Cloud Run
+	// job has no project config file and no checkout, and the timeouts the
+	// pass judges by come from a run's own ceiling (internal/cli/reaper.go's
+	// reaperEnvOptions).
+	for _, want := range [][2]string{
+		{"name", `"FUGARO_GCP_PROJECT"`},
+		{"name", `"FUGARO_REGION"`},
+		// The marker that tells the command it is the job and not a shell:
+		// without it the environment path is a dry run
+		// (internal/cli/reaper.go's reaperEnvOptions), and the two variables
+		// above are the history job's.
+		{"name", `"FUGARO_REAPER_JOB"`},
+		{"value", `"1"`},
+	} {
+		if !hasAttr(job.body, want[0], want[1]) {
+			t.Errorf("%s: %s does not set %s = %s", path, job.name, want[0], want[1])
+		}
+	}
+	// And both are filled from this root's own project and region, which is
+	// what makes the module the Batch provisioning rather than a second
+	// config: two env values, one per variable.
+	for _, want := range []string{"var.project", "var.region"} {
+		if !regexp.MustCompile(`(?m)^\s*value\s*=\s*` + regexp.QuoteMeta(want) + `\s*$`).MatchString(job.body) {
+			t.Errorf("%s: %s does not fill an environment value from %s", path, job.name, want)
+		}
+	}
+	// The name must not look like a workflow's: ls and max_parallel count the
+	// `fugaro-` jobs as runs (internal/infra/firebase.go's HistoryJob says why).
+	if m := regexp.MustCompile(`(?m)^\s*reaper_job\s*=\s*"([^"]+)"`).FindStringSubmatch(string(b)); m == nil {
+		t.Errorf("%s: no literal reaper_job name: the job's name is a local, and this test is what reads it back", path)
+	} else if strings.HasPrefix(m[1], "fugaro-") {
+		t.Errorf("%s: the reaper's job is named %q, which `fugaro ls` and max_parallel read as a workflow's job", path, m[1])
+	}
+
+	runners := resourceBlocks(t, path, b, "google_cloud_run_v2_job_iam_member")
+	if len(runners) != 1 || runners[0].name != "google_cloud_run_v2_job_iam_member.reaper_runner" {
+		t.Fatalf("%s declares %d google_cloud_run_v2_job_iam_member blocks (%v), want the invoker's one", path, len(runners), blockNames(runners))
+	}
+	if !hasAttr(runners[0].body, "role", `"roles/run.invoker"`) ||
+		!hasAttr(runners[0].body, "member", "google_service_account.reaper.member") ||
+		// On this job and no other: the name is the resource's, not a literal.
+		!hasAttr(runners[0].body, "name", "google_cloud_run_v2_job.reaper.name") {
+		t.Errorf("%s: %s must grant roles/run.invoker on the reaper's own job to the reaper account, which is the account the schedule mints the token from", path, runners[0].name)
+	}
+
+	schedules := resourceBlocks(t, path, b, "google_cloud_scheduler_job")
+	if len(schedules) != 1 || schedules[0].name != "google_cloud_scheduler_job.reaper_sweep" {
+		t.Fatalf("%s declares %d google_cloud_scheduler_job blocks (%v), want the sweep's one", path, len(schedules), blockNames(schedules))
+	}
+	sweep := schedules[0]
+	for _, want := range [][2]string{
+		// ReapMargin is 15 minutes: a run that should have ended is swept at
+		// most one margin late, and a slower schedule would leave a stuck
+		// job's VM alive for its own period PLUS the margin.
+		{"schedule", `"*/15 * * * *"`},
+		{"time_zone", `"Etc/UTC"`},
+		{"retry_count", "0"},
+		{"http_method", `"POST"`},
+		// The SCHEDULER region and never var.region. Cloud Scheduler does not
+		// serve every Cloud Run region -- us-east5, this module's own
+		// variables block and its tfvars testdata, is one it does not -- and a
+		// Scheduler job created in a region it does not serve fails the whole
+		// apply, so the sweep would not merely be unscheduled: it would not
+		// exist, and the leaked VMs it is here to delete would be swept by
+		// nothing. The URI below is the other half of the split and stays the
+		// Cloud Run job's own location.
+		{"region", "var.scheduler_region"},
+	} {
+		if !hasAttr(sweep.body, want[0], want[1]) {
+			t.Errorf("%s: %s does not set %s = %s", path, sweep.name, want[0], want[1])
+		}
+	}
+	uri := "https://run.googleapis.com/v2/projects/${var.project}/locations/${google_cloud_run_v2_job.reaper.location}/jobs/${google_cloud_run_v2_job.reaper.name}:run"
+	if !strings.Contains(sweep.body, uri) {
+		t.Errorf("%s: %s does not start the reaper's own job: want the URI %s", path, sweep.name, uri)
+	}
+	if !regexp.MustCompile(`(?s)oauth_token\s*\{[^}]*service_account_email\s*=\s*google_service_account\.reaper\.email`).MatchString(sweep.body) {
+		t.Errorf("%s: %s does not call the job as the reaper account", path, sweep.name)
+	}
+	// The token is minted by Cloud Scheduler's own agent, which needs actAs on
+	// the account: without the grant the schedule fails with PERMISSION_DENIED
+	// before the job is ever started.
+	agents := resourceBlocks(t, path, b, "google_service_account_iam_member")
+	found := false
+	for _, blk := range agents {
+		if blk.name == "google_service_account_iam_member.reaper_scheduler_agent" &&
+			hasAttr(blk.body, "member", "local.cloud_scheduler_agent") &&
+			hasAttr(blk.body, "role", `"roles/iam.serviceAccountUser"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("%s: no actAs grant for Cloud Scheduler's agent on the reaper account: minting the job's OAuth token needs it", path)
+	}
+}
+
+// blockNames lists the addresses of blocks, for a failure message that says
+// which one the scan found.
+func blockNames(blks []block) []string {
+	out := make([]string, 0, len(blks))
+	for _, b := range blks {
+		out = append(out, b.name)
+	}
+	return out
 }
 
 // The preload builder's role is the build's own calls and nothing more, and

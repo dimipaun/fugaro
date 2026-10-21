@@ -1060,11 +1060,6 @@ func postRawJob(t *testing.T, bf *gcpfake.Batch, id, body string) {
 	}
 }
 
-// TestExecutionRewritesTheProjectNumber: Batch answers a created job's name
-// with the project *number*, so a name taken from it verbatim would stop
-// matching the name the backend launched with (design §2.3). The fake is set
-// to answer with the number, which is what makes the rewrite -- rather than
-// the fake agreeing -- the reason the names below match.
 // preemptEvent is the report a preempted run's job carries: a task-level status
 // event whose task execution ended with Batch's reserved preemption exit code.
 // The shape is the API's own -- StatusEvent.TaskExecution is documented as
@@ -1206,6 +1201,11 @@ func TestListCarriesThePreemptionToo(t *testing.T) {
 	}
 }
 
+// TestExecutionRewritesTheProjectNumber: Batch answers a created job's name
+// with the project *number*, so a name taken from it verbatim would stop
+// matching the name the backend launched with (design §2.3). The fake is set
+// to answer with the number, which is what makes the rewrite -- rather than
+// the fake agreeing -- the reason the names below match.
 func TestExecutionRewritesTheProjectNumber(t *testing.T) {
 	ctx := context.Background()
 	b, bf, _, _ := newTestBackend(t, nil)

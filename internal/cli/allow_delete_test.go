@@ -995,6 +995,15 @@ func TestAllowDeleteCommandTakesTheSentenceBracketOffAPaste(t *testing.T) {
 		{"the copied tail, bracket and all", tail},
 		{"the copied tail, quoted and bracketed", `"` + tail + `"`},
 		{"the copied tail with a space after it", tail + " "},
+		// A space BEFORE the bracket: a paste that copied the words loosely,
+		// or a refusal whose line wrapped, puts one between the identity and
+		// the sentence's closing bracket. The bracket comes off and the space
+		// it left has to come off with it -- otherwise the entry records
+		// "id=… " with a trailing space, and tf.Approves compares an identity
+		// byte for byte, so it would clear nothing while reading as an
+		// approval (tf.identityValue has single spaces and none at either
+		// end).
+		{"the copied tail with a space before the bracket", strings.TrimSuffix(tail, ")") + " )"},
 		{"the identity bare, as the sentence names it", strings.TrimSuffix(tail, ")")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

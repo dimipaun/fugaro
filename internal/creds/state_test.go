@@ -525,6 +525,76 @@ func TestStoreRefusesAMarkItDoesNotModel(t *testing.T) {
 	}
 }
 
+// A lease node keyed off the canonical spelling of its own slug or run id is a
+// subtree this release did not write, and the read refuses it, exactly as the
+// marks read does (TestStoreRefusesTwoKeysForOneName).
+//
+// Unkey reads either case of an escape, so "a%2Fb" and "a%2fb" both unkey to
+// a/b. Two members of one object assigning one map key is Go's map iteration
+// order, so which of a slug's two lease nodes this read answered with would
+// flap between runs; and the subtree this read exists to bound would not be
+// bounded, because the sweep deletes through PathLease's canonical spelling and
+// so can never clear the odd node, however long it has lapsed.
+//
+// The run id is the half that decides the cap. Holds counts the leases this
+// read returns, one per (slug, run) it is given, so a run holding under two
+// spellings of its id is counted twice by every other run selecting that
+// credential: a cap of one slot admits a second run, and the credential is
+// leased twice. A lone odd key is refused for the same reason the marks read
+// refuses one — it collides with nothing, so only its own spelling can refuse
+// it, and this package writes none.
+func TestStoreRefusesALeaseKeyThatIsNotCanonical(t *testing.T) {
+	const slug = "a/b" // escapes to a%2Fb, so the lowercase spelling is not Key(slug)
+	lease := `{"credential":"shared-1","until":"2026-10-20T13:00:00Z"}`
+	if got := budget.Key(slug); got != "a%2Fb" {
+		t.Fatalf("budget.Key(%q) = %q; this test is about the difference from a%%2fb", slug, got)
+	}
+
+	// Both spellings of one slug: the pair the marks test measures, one level up.
+	db := newFakeDB()
+	db.nodes[pathLeases] = json.RawMessage(`{"a%2Fb":{"r1":` + lease + `},"a%2fb":{"r2":` + lease + `}}`)
+	if got, err := (&RTDBStore{DB: db}).Leases(ctx, now); err == nil {
+		t.Fatalf("a lease subtree keyed twice for one slug read as %v; want the read refused", got)
+	}
+
+	// A lone odd slug key, which collides with nothing.
+	db2 := newFakeDB()
+	db2.nodes[pathLeases] = json.RawMessage(`{"a%2fb":{"r1":` + lease + `}}`)
+	if got, err := (&RTDBStore{DB: db2}).Leases(ctx, now); err == nil {
+		t.Fatalf("a lease node keyed %q, which is not the canonical spelling of its slug, read as %v", "a%2fb", got)
+	}
+
+	// Both spellings of one run id, under one slug: two Leases for one run, which
+	// Holds counts twice.
+	db3 := newFakeDB()
+	db3.nodes[pathLeases] = json.RawMessage(`{"acme":{"r%2F1":` + lease + `,"r%2f1":` + lease + `}}`)
+	if got, err := (&RTDBStore{DB: db3}).Leases(ctx, now); err == nil {
+		t.Fatalf("a run's leases keyed twice for one run id read as %v; want the read refused", got)
+	}
+
+	// A lone odd run-id key.
+	db4 := newFakeDB()
+	db4.nodes[pathLeases] = json.RawMessage(`{"acme":{"r%2f1":` + lease + `}}`)
+	if got, err := (&RTDBStore{DB: db4}).Leases(ctx, now); err == nil {
+		t.Fatalf("a lease node keyed %q, which is not the canonical spelling of its run id, read as %v", "r%2f1", got)
+	}
+
+	// The refusal is about the spelling and not about a % in the key: a lease
+	// whose slug and run id both need escaping reads back whole.
+	db5 := newFakeDB()
+	db5.put(PathLease(Run{Slug: slug, ID: "r/1"}), Lease{Credential: "shared-1", Until: now.Add(time.Hour)})
+	got, err := (&RTDBStore{DB: db5}).Leases(ctx, now)
+	if err != nil {
+		t.Fatalf("a lease of a slug and run id that need escaping did not read back: %v", err)
+	}
+	if len(got) != 1 || got[0].Slug != slug || got[0].Run != "r/1" || got[0].Credential != "shared-1" {
+		t.Fatalf("the lease of %q read back as %v", slug, got)
+	}
+	if n := Holds(got, "shared-1", now, Run{Slug: "other", ID: "r2"}); n != 1 {
+		t.Fatalf("Holds = %d for one lease, want 1", n)
+	}
+}
+
 // The round-robin counter hands out the value it consumed and leaves the next
 // one behind, and a lost race hands out the value that was actually there: two
 // instances breaking a tie at once must get two different values.

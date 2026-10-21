@@ -20,8 +20,15 @@ variables {
   project        = "proj-1234"
   project_number = "123456789012"
   region         = "us-east5"
-  network        = "projects/proj-1234/global/networks/default"
-  subnetwork     = "projects/proj-1234/regions/us-east5/subnetworks/default"
+  # Not the region above, and deliberately: Cloud Scheduler does not serve
+  # us-east5, so this is what internal/backend/gcp's SchedulerRegion answers for
+  # it and what fugaro init writes into the tfvars. Keeping the two different
+  # here is the point of the runs that assert them: a Scheduler job created in
+  # the installation's region fails the apply, and a test whose region matched
+  # would never see it.
+  scheduler_region = "us-east4"
+  network          = "projects/proj-1234/global/networks/default"
+  subnetwork       = "projects/proj-1234/regions/us-east5/subnetworks/default"
   names = {
     job_prefix            = "fugaro-"
     reaper_account_id     = "fugaro-reaper"
@@ -89,10 +96,40 @@ run "root_passes_inputs" {
       name = "fugaro-preload-rebuild"
     }
   }
+  # The reaper's custom role and its Scheduler job, for the two outputs below
+  # that read them: a custom role's name is computed by the API (the mock's own
+  # invented value is not a role path), and the Scheduler job's is the same
+  # computed-attribute case as the preload rebuild's above.
+  override_resource {
+    target          = module.compute.google_project_iam_custom_role.reaper
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroReaper"
+    }
+  }
+  override_resource {
+    target          = module.compute.google_cloud_scheduler_job.reaper_sweep
+    override_during = plan
+    values = {
+      name = "fugaro-reaper-sweep"
+    }
+  }
 
   assert {
     condition     = output.preload_image == "fugaro-preload-a0b6aca0"
     error_message = "the root must output the preloaded image's family name, which carries a hash of the pinned base image"
+  }
+  assert {
+    condition     = output.preload_socket_gid_label == "socket-gid"
+    error_message = "the root must output the label a generation of that family records its socket gid under: a run reaches the socket through --group-add <gid>, so the name travels beside the family"
+  }
+  assert {
+    condition     = output.reaper_role == "projects/proj-1234/roles/fugaroReaper"
+    error_message = "the root must output the reaper's custom role, which is the one role the reaper account holds"
+  }
+  assert {
+    condition     = output.reaper_job == "fugaroreap" && output.reaper_scheduler_job == "fugaro-reaper-sweep"
+    error_message = "the root must output the reaper's invocation by name: the Cloud Run job that runs `fugaro reaper` and the Scheduler job that starts it every ReapMargin"
   }
   assert {
     condition     = output.reaper_account == "fugaro-reaper@proj-1234.iam.gserviceaccount.com"
@@ -400,8 +437,8 @@ run "TestThePreloadRebuildIsScheduled" {
   }
 
   assert {
-    condition     = google_cloud_scheduler_job.preload_rebuild.name == "fugaro-preload-rebuild" && google_cloud_scheduler_job.preload_rebuild.region == "us-east5"
-    error_message = "the rebuild's job name and region are the inputs"
+    condition     = google_cloud_scheduler_job.preload_rebuild.name == "fugaro-preload-rebuild" && google_cloud_scheduler_job.preload_rebuild.region == "us-east4"
+    error_message = "the rebuild's job name is the input, and its region is the SCHEDULER region and not the installation's: Cloud Scheduler does not serve us-east5, so a job created there fails the apply and the preload is never rebuilt"
   }
   assert {
     condition     = google_cloud_scheduler_job.preload_rebuild.schedule == "0 3 * * 1" && google_cloud_scheduler_job.preload_rebuild.time_zone == "Etc/UTC"
@@ -658,5 +695,189 @@ run "a_group_launcher_is_accepted" {
 
   variables {
     launchers = ["group:launchers@example.com"]
+  }
+}
+
+# The reaper's invocation (design compute-backend §8.1 Task 11): the Cloud Run
+# job that runs `fugaro reaper`, the invoker grant it is started with, and the
+# Scheduler job that starts it every ReapMargin.
+#
+# Two of these are the pins that make the invocation work at all, and they are
+# asserted against the resources rather than against the file's text:
+#
+#   - the job's service_account is the REAPER account, and NOT the default
+#     Compute Engine account. A job that leaves service_account unset runs as
+#     that default account, which holds the project's editor role by default --
+#     an account with far more than the five permissions iam.tf narrowed for
+#     this job, and one the module refuses for a run's VM
+#     (internal/infra/compute.go's checkServiceAccount). This is the red step
+#     the task was written against.
+#   - the Scheduler job's target is the reaper job's own `:run` URI, in this
+#     project and region, called as the reaper account -- and its cadence is
+#     `*/15`, which is internal/backend/batch's ReapMargin: a run that should
+#     have ended is swept at most one margin late, and a slower schedule would
+#     leave a stuck job's VM alive for its own period PLUS the margin.
+run "TestTheReaperRunsAsTheReaperAccountOnASchedule" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  # The module's own account, given the values the module would have produced:
+  # the job's service_account and the Scheduler job's OAuth token are both read
+  # from it, and a mock provider's invented value is not an email at all.
+  override_resource {
+    target          = google_service_account.reaper
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition     = google_cloud_run_v2_job.reaper.template[0].template[0].service_account == "fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+    error_message = "the reaper's Cloud Run job must run as the reaper account iam.tf creates. Unset, it runs as the default Compute Engine account, whose editor role is far wider than the five permissions this job is meant to hold."
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.reaper.template[0].template[0].service_account != "123456789012-compute@developer.gserviceaccount.com"
+    error_message = "the reaper's Cloud Run job must never run as the default Compute Engine account"
+  }
+  # command and args are collections, read the way installation.tftest.hcl
+  # reads the history job's: one(one(one(…).template).template).containers.
+  assert {
+    condition     = one(one(one(google_cloud_run_v2_job.reaper.template).template).containers).args == tolist(["reaper"]) && one(one(one(google_cloud_run_v2_job.reaper.template).template).containers).command == tolist(["/usr/local/bin/fugaro"])
+    error_message = "the job's args are the command: `fugaro reaper`, the one pass of internal/backend/batch's Reaper that has no other caller"
+  }
+  assert {
+    condition = toset([for e in one(one(one(google_cloud_run_v2_job.reaper.template).template).containers).env : "${e.name}=${e.value}"]) == toset([
+      "FUGARO_GCP_PROJECT=proj-1234",
+      "FUGARO_REGION=us-east5",
+      "FUGARO_REAPER_JOB=1",
+    ])
+    error_message = "the job's configuration is the project, the region and the marker: a Cloud Run job has no project config file and no checkout, the timeouts it judges by are a run's own ceiling (the environment carries none), and FUGARO_REAPER_JOB is what tells the command it may delete -- without it the same two variables in an operator's shell get a dry run"
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.reaper.labels["fugaro_role"] == "reaper" && google_cloud_run_v2_job.reaper.template[0].labels["fugaro_role"] == "reaper"
+    error_message = "the job and its template carry the reaper role label: what the report it prints is found by in Cloud Logging, and what the log sink and its exclusion select on"
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.reaper.deletion_protection == true
+    error_message = "the janitor must not be deletable by a hand edit of the tfvars: a plan that destroyed this job would leave leaked VMs with nothing to sweep them"
+  }
+  assert {
+    condition     = google_cloud_run_v2_job_iam_member.reaper_runner.role == "roles/run.invoker" && google_cloud_run_v2_job_iam_member.reaper_runner.member == "serviceAccount:fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+    error_message = "roles/run.invoker (run.jobs.run) is granted on this job only, and to the account the schedule mints its token from"
+  }
+  assert {
+    condition     = google_cloud_run_v2_job_iam_member.reaper_runner.name == "fugaroreap"
+    error_message = "the invoker grant is on the reaper's own job and no other"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.reaper_sweep.schedule == "*/15 * * * *" && google_cloud_scheduler_job.reaper_sweep.time_zone == "Etc/UTC"
+    error_message = "the sweep is every fifteen minutes, which is ReapMargin: a slower schedule would leave a stuck job's VM alive for its own period plus the margin"
+  }
+  # A failure is reported once and not retried into a second pass of its own:
+  # the task is not retried (max_retries), and the schedule does not retry the
+  # POST (retry_count). An install whose pinned image predates the command
+  # therefore logs one clear line per tick instead of a storm.
+  assert {
+    condition     = google_cloud_run_v2_job.reaper.template[0].template[0].max_retries == 0
+    error_message = "the reaper's task must not be retried: a failed pass logs its failure, and the next tick a margin later is the retry"
+  }
+  # The runtime this job shares with every other Cloud Run job in the tree
+  # (installation/history.tf, project/job.tf, repo/check.tf, workflow/job.tf,
+  # which the repo root's own test pins): left unset it is the first generation
+  # sandbox, and the reaper -- the one job that runs unattended with delete
+  # permissions -- would be the only job in the installation on a different one.
+  assert {
+    condition     = google_cloud_run_v2_job.reaper.template[0].template[0].execution_environment == "EXECUTION_ENVIRONMENT_GEN2"
+    error_message = "the reaper's task must run on the second generation execution environment, as every other Cloud Run job in this installation does"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.reaper_sweep.retry_config[0].retry_count == 0
+    error_message = "the schedule must not retry the POST: a failed pass is reported once, and the next tick a margin later is the retry"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.reaper_sweep.region == "us-east4"
+    error_message = "the sweep is created in the SCHEDULER region, not the installation's us-east5: Cloud Scheduler does not serve us-east5, so a job created there fails the apply and the sweep does not exist at all -- which is the leak this job is here to close, and the one failure of it nothing else notices"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.reaper_sweep.http_target[0].http_method == "POST" && google_cloud_scheduler_job.reaper_sweep.http_target[0].uri == "https://run.googleapis.com/v2/projects/proj-1234/locations/us-east5/jobs/fugaroreap:run"
+    error_message = "the schedule starts the reaper's own job, in this project and region, on run.googleapis.com: the URI names the Cloud Run job's location, which IS the installation's us-east5 even though the Scheduler job lives in us-east4"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.reaper_sweep.http_target[0].oauth_token[0].service_account_email == "fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+    error_message = "the schedule calls the job as the reaper account, which is the account the invoker grant above names"
+  }
+  assert {
+    condition     = google_service_account_iam_member.reaper_scheduler_agent.member == "serviceAccount:service-123456789012@gcp-sa-cloudscheduler.iam.gserviceaccount.com" && google_service_account_iam_member.reaper_scheduler_agent.role == "roles/iam.serviceAccountUser"
+    error_message = "Cloud Scheduler's own agent holds actAs on the reaper account, which is what minting the job's OAuth token needs"
+  }
+  assert {
+    condition     = keys(google_service_account_iam_member.reaper_operator) == ["user:operator@example.com"]
+    error_message = "the installation's operators hold actAs on the reaper account: applying this root creates the Scheduler job whose token is minted from it"
+  }
+}
+
+# The installation's own never-touch list, which the scheduled sweep could not
+# carry at all before this: the job's environment is the whole of what
+# internal/cli's environment path reads, and it set exactly three variables, so
+# a list an operator declared for `fugaro reaper` in their shell stopped
+# holding the moment the sweep ran from the schedule instead -- which is the
+# one way it runs unattended. The variable only ADDS to the ids the engine
+# refuses whatever it is told (internal/backend/batch's outOfBoundsFloor), and
+# can take none of them off, which is what makes a tfvars a safe place to put
+# it.
+#
+# The run above asserts the other half: with nothing set the job's environment
+# is the same three variables it has always been, and this fourth one is absent
+# rather than present and empty.
+run "TestTheReaperCarriesTheInstallationsNeverTouchList" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  variables {
+    reaper_refuse_projects = ["acme-prod", "acme-staging"]
+  }
+
+  override_resource {
+    target          = google_service_account.reaper
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = toset([for e in one(one(one(google_cloud_run_v2_job.reaper.template).template).containers).env : "${e.name}=${e.value}"]) == toset([
+      "FUGARO_GCP_PROJECT=proj-1234",
+      "FUGARO_REGION=us-east5",
+      "FUGARO_REAPER_JOB=1",
+      "FUGARO_REAPER_REFUSE_PROJECTS=acme-prod,acme-staging",
+    ])
+    error_message = "the job must carry the installation's never-touch list as FUGARO_REAPER_REFUSE_PROJECTS, comma-separated in the order it was given: it is the variable internal/cli reads for both of its paths, and a list the scheduled sweep cannot carry is a list that stops holding where it matters most"
+  }
+}
+
+# The root's half of the same wiring. The value's shape is the module's to
+# check and the value's destination is a module resource, so the run above
+# plans the module to read the job's environment; what is left for the root is
+# that it takes the variable at all and hands it on as the module's
+# list(string). This run plans the ROOT with the list set, so a root that never
+# declared it fails here (an unsupported argument) and one that passed it in
+# the wrong shape fails at the module's own type check.
+run "the_root_takes_the_never_touch_list" {
+  command = plan
+
+  variables {
+    reaper_refuse_projects = ["acme-prod", "acme-staging"]
   }
 }
