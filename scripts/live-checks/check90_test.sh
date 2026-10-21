@@ -139,6 +139,18 @@ if "--version" not in args:
     with open(os.environ["FAKE_CLAUDE_CALLS"], "a") as fh:
         fh.write("%s %s %s\n" % (os.environ.get("ANTHROPIC_BASE_URL", ""), kind, prompt))
 
+# A client that fails on ONE call, named by its number in the call log just
+# written (1 = the control, 2 = the observed control, 3 = the swap, 4 = the
+# stream, 5 = the delayed one, with CHECK90_MAX_DROPS=0 so the drops make no
+# call of their own). It exits non-zero WITHOUT reaching the proxy, which is the
+# shape the timeout step must not read as a timeout.
+fail_call = os.environ.get("FAKE_CLAUDE_FAIL_CALL", "")
+if fail_call and "--version" not in args:
+    with open(os.environ["FAKE_CLAUDE_CALLS"]) as fh:
+        call_n = sum(1 for _ in fh)
+    if call_n == int(fail_call):
+        sys.exit("fake claude: failing on purpose on call %s" % fail_call)
+
 # Two recordings of what a process's ARGV holds while a call is live, for the
 # test that the token is never on a command line: this call's own argv, and a
 # snapshot of the argv of every process of this run, taken by the fake `ps`.
@@ -504,6 +516,14 @@ test_env_guards() {
     expect_contains "$(cat "$dir/err")" "$v" "guard $v: the message names it"
     expect_absent "$(cat "$dir/err")" "some-value-that-must-not-be-printed" "guard $v: no value"
     expect_contains "$(cat "$dir/out")" "FACT env-cleared: FAIL" "guard $v: the fact"
+    # A guard stops before the run's first call, so the block must not say the
+    # run reached the calls: `control: FAIL — not reached` beside "the run
+    # reached the calls" was one block contradicting itself. The guard's own
+    # reason is in the block too, not only on stderr, because the block is what
+    # the owner pastes back.
+    expect_contains "$(cat "$dir/out")" "FACT aborted: FAIL — " "guard $v: the block names what stopped the run"
+    expect_contains "$(cat "$dir/out")" "FACT tier-a: INFO — INCONCLUSIVE — the run stopped before its first call" "guard $v: a stop with no call gets its own wording"
+    expect_absent "$(cat "$dir/out")" "the run reached the calls" "guard $v: a run that made no call does not claim it reached them"
     if [ -s "$dir/claude.calls" ]; then fail "guard $v: claude was run anyway"; fi
     local sc
     sc=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
@@ -578,11 +598,26 @@ test_swap_fails() {
 
 test_limit_is_recorded() {
   run90 limit limit ""
-  expect_status "$status" 1 "usage limit"
+  # A 429 through the proxy is the OPPOSITE of a failed swap, and this test
+  # used to assert the opposite: an upstream rate limit cannot be reached
+  # without being authenticated (an unauthenticated request is refused with 401
+  # first), and the proxy's own refusal path never forwards at all — so the fact
+  # that the upstream answered 429 at all proves the swapped credential was
+  # accepted. Tier A is VIABLE, and the run exits 0 on it. Only the CALL did not
+  # complete, so `swap` is INFO (nothing is recorded about the answer's
+  # content), the drop list was never measured, and the remaining steps are
+  # skipped rather than spending prompts on more 429s.
+  expect_status "$status" 0 "usage limit"
   expect_contains "$out" "FACT usage-limit: PASS" "usage limit: the fact"
   expect_contains "$out" "rate_limit_error" "usage limit: the error type"
   expect_contains "$out" "retry-after" "usage limit: the reset header"
-  expect_contains "$out" "FACT tier-a: FAIL" "usage limit: tier A"
+  expect_contains "$out" "FACT swap: INFO" "usage limit: the call did not complete"
+  expect_contains "$out" "FACT swap-credential-header: PASS" "usage limit: the header was swapped"
+  expect_contains "$out" "FACT tier-a: PASS — VIABLE" "usage limit: tier A survives a rate limit"
+  expect_contains "$out" "429" "usage limit: the status is named in the verdict"
+  expect_contains "$out" "FACT headers-required: INFO" "usage limit: the drop list was not measured"
+  expect_absent "$out" "NOT VIABLE" "usage limit: no verdict against the swap"
+  expect_absent "$out" "INCONCLUSIVE" "usage limit: the verdict is not an inconclusive one"
   assert_no_sentinel "$work/limit" "usage limit"
   return 0
 }
@@ -804,6 +839,20 @@ test_missing_python3_is_named_not_an_internal_error() {
   : >"$dir/claude.calls"
   ln -sf "$(command -v bash)" "$dir/bin/bash"
   ln -sf "$(command -v mktemp)" "$dir/bin/mktemp"
+  # Everything else this machine has, EXCEPT python3: the PATH is otherwise the
+  # real one, so the run still assembles its block with the real grep, sed and
+  # cut, and the one thing missing is the interpreter the check needs. A PATH of
+  # three commands would have made the block's own tools missing too, and a test
+  # about a missing python3 would then be measuring a broken PATH instead.
+  local d f b
+  for d in ${PATH//:/ }; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*; do
+      b=${f##*/}
+      case "$b" in python3 | python3.*) continue ;; esac
+      if [ -x "$f" ] && [ ! -e "$dir/bin/$b" ]; then ln -s "$f" "$dir/bin/$b" 2>/dev/null || true; fi
+    done
+  done
   local st=0
   printf '%s\n' "$SENTINEL" | env \
     ${GUARD_UNSET[@]} \
@@ -817,6 +866,25 @@ test_missing_python3_is_named_not_an_internal_error() {
   # Nothing was set up either: the guard is the first thing that runs, so there
   # is no scratch directory to have made and none to remove.
   expect_absent "$(cat "$dir/err")" "scratch directory:" "no python3: a scratch directory was made before the tools were checked"
+  # ... and the BLOCK the owner pastes back says the same thing. This stop
+  # happens before the run has a fact file at all, so it is the shape three of
+  # the review's findings were about: `fact` writes nowhere, `die` records
+  # nothing, and the block came back with every row reading "FAIL — not reached"
+  # and no `aborted` row saying why; `restore` computed FAIL from a scratch
+  # directory that was never created, with an empty path in its detail; and the
+  # injected tier-a line claimed "the run reached the calls" for a run that
+  # never made one. The same three shapes come out of a mktemp failure and out
+  # of random_placeholder's own stop, which is why the reason is carried outside
+  # the fact file rather than written into it.
+  local blk
+  blk=$(cat "$dir/out")
+  expect_contains "$blk" "FACT aborted: FAIL — " "no python3: the block names what stopped the run"
+  expect_contains "$blk" "needs 'python3' on PATH" "no python3: the reason is in the block, not only on stderr"
+  expect_contains "$blk" "FACT restore: PASS — nothing was created" "no python3: the Restore does not report a cleanup failure"
+  expect_absent "$blk" "STILL THERE" "no python3: nothing is reported as left behind by a run that made nothing"
+  expect_contains "$blk" "FACT tier-a: INFO — INCONCLUSIVE — the run stopped before its first call" "no python3: a stop with no call gets its own wording"
+  expect_absent "$blk" "the run reached the calls" "no python3: a run that made no call does not claim it reached them"
+  expect_contains "$blk" "CHECK 90 RESULT END (exit 2)" "no python3: the block's end line"
   assert_no_sentinel "$dir" "no python3"
   return 0
 }
@@ -933,6 +1001,52 @@ test_no_drops_measured_is_not_a_pass() {
   return 0
 }
 
+# The same over-claim, one loop iteration later: CHECK90_MAX_DROPS=1 drops ONE
+# header and then stops, so `required` is a list of what was tried and says
+# nothing about the headers after it — and the fact still read PASS "every
+# header observed is optional" whenever nothing that was dropped turned out to
+# be required. The list Task C1.7 is written against must not generalise from
+# the tested subset to the whole wire.
+test_partial_drop_list_is_not_a_pass() {
+  run90 partial ok "" CHECK90_MAX_DROPS=1
+  expect_status "$status" 0 "partial drops: the run"
+  expect_contains "$out" "FACT headers-required: INFO — PARTIAL" \
+    "partial drops: the list is marked partial, not asserted"
+  expect_contains "$out" "before CHECK90_MAX_DROPS=1 stopped the loop" \
+    "partial drops: what stopped it is named"
+  expect_contains "$out" "FACT headers-optional: INFO — PARTIAL" \
+    "partial drops: the optional list is partial too"
+  expect_absent "$out" "FACT headers-required: PASS" "partial drops: no PASS for a partial list"
+  expect_absent "$out" "every header observed is optional" \
+    "partial drops: the fallback text is not used for a subset"
+  return 0
+}
+
+# The timeout step's third branch is the client GIVING UP on an answer that is
+# being delayed. It used to cover every status that is neither 0 nor 124, so an
+# immediate failure — the client exiting before the proxy was ever asked — was
+# written as a PASS: "the client gave up after 0s on an answer delayed by 1s, in
+# 0 attempt(s), status 1". That is a timeout recorded for a failure that is not
+# one, and it is the same shape the M3 fix removed from the swap's verdict.
+test_a_non_timeout_failure_is_not_recorded_as_a_timeout() {
+  # The delayed call is the fifth: the control, the observed control, the swap
+  # and the stream come before it, and CHECK90_MAX_DROPS=0 keeps the header
+  # drops from adding calls of their own.
+  run90 notimeout ok "" CHECK90_MAX_DROPS=0 FAKE_CLAUDE_FAIL_CALL=5
+  expect_status "$status" 0 "not a timeout: the run"
+  expect_contains "$out" "FACT timeout-retry: INFO — NOT a timeout observation" \
+    "not a timeout: the failure is recorded as what it is"
+  expect_absent "$out" "FACT timeout-retry: PASS" "not a timeout: no timeout is claimed"
+  expect_contains "$out" "status 1" "not a timeout: the client's own status is named"
+  # ... and the reason it is not one: the client never reached the proxy that
+  # was holding the answer, so there was no delay for it to give up on. Without
+  # this the test could pass on a run where the failing call was another one.
+  if grep -q '^FACT request ' "$work/notimeout/logs/proxy-delay.log"; then
+    fail "not a timeout: the delay proxy saw a request, so this is not the case under test"
+  fi
+  return 0
+}
+
 # m4: the version probe is ONE call, and it is capped: a client that hangs on
 # `claude --version` must not hold the run that is measuring it.
 test_version_probe_is_capped_and_once() {
@@ -1008,14 +1122,17 @@ test_child_flags_disable_tools_and_are_documented() {
     fail "child flags: no child recorded its context, so this test proves nothing"
     return 0
   }
-  local line n=0 flag help
-  help=$("$work/flags/bin/claude" --help)
+  local line n=0 flag
+  # No `--help` capture here. The fake claude prints its help from the same
+  # HELP_FLAGS table it validates against, so "the flag is in the client's own
+  # --help" could not fail whatever the script did — it was a tautology about the
+  # fake. What is worth asserting is the recorded CALL: the flags the child was
+  # actually given, which is what the line below reads.
   while IFS= read -r line; do
     n=$((n + 1))
     expect_contains "$line" "tools=''" "child flags: the child is given NO tool at all (line $n)"
     expect_contains "$line" "--no-session-persistence" "child flags: no session file is written (line $n)"
     for flag in --settings --strict-mcp-config --tools --no-session-persistence; do
-      expect_contains "$help" "$flag" "child flags: $flag is not in the client's own --help"
       expect_contains "$line" "$flag" "child flags: the child was not given $flag (line $n)"
     done
   done <"$ctx"
@@ -1253,6 +1370,8 @@ test_swap_the_proxy_never_saw
 test_foreign_request_is_refused
 test_budget_is_read_at_every_step
 test_no_drops_measured_is_not_a_pass
+test_partial_drop_list_is_not_a_pass
+test_a_non_timeout_failure_is_not_recorded_as_a_timeout
 test_version_probe_is_capped_and_once
 test_internal_error_is_aborted_not_viable
 test_token_length_is_not_printed

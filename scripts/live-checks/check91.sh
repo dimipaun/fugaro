@@ -178,6 +178,11 @@ PRINTED=""
 # background jobs an interrupt has to end, and the prefix this run gave the
 # build's staged source (see step_build_deploy and the Restore).
 AUTH_CONF=""
+# Whether the credential file above was actually gone when the run ended. The
+# Restore section of the appendix documents this row: `restore-token-file` is
+# PASS only when the file is not on disk, because the scratch directory it lives
+# in is deliberately KEPT when a count is not 0.
+AUTH_CONF_REMOVED=yes
 WAIT_PID=""
 # The per-run prefix this run staged the build's source under and what the
 # build's command line was told to stage the source into (the two go together:
@@ -213,7 +218,14 @@ scratch_up() {
 
 remove_scratch() {
   case "$SCRATCH" in
-  "" | / | "$HOME" | "$HOME"/)
+  "")
+    # A guard stop leaves this empty and there is nothing to refuse: saying
+    # "refusing to remove a scratch directory of ''" for a run that never made
+    # one reads like a cleanup that went wrong. The guard stays for the two
+    # paths that do mean trouble (a bare "/" or the owner's home directory).
+    return 0
+    ;;
+  / | "$HOME" | "$HOME"/)
     say "refusing to remove a scratch directory of '$SCRATCH'"
     return 0
     ;;
@@ -349,8 +361,15 @@ cleanup() {
   # The credential file goes with the run's own token file, before the scratch
   # directory: it holds a minted identity token, and it is this check's business
   # to leave nothing of the sort behind — not even inside a directory that is
-  # KEPT because a count was not 0.
+  # KEPT because a count was not 0. That is exactly why the removal is CHECKED
+  # rather than assumed: `rm -f ... || true` records nothing, and the one run
+  # that keeps the scratch directory is the one where a failed `rm` would leave
+  # a live bearer token inside a directory that survives the run. Check 90
+  # reports its token file the same way (its TOKEN_REMOVED); this is the same
+  # row for this script's credential file.
   rm -f "$AUTH_CONF" || true
+  AUTH_CONF_REMOVED=no
+  [ ! -e "$AUTH_CONF" ] && AUTH_CONF_REMOVED=yes
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
   if [ -n "$SCRATCH_KEPT" ]; then
     say "the scratch directory is kept: $SCRATCH"
@@ -376,8 +395,24 @@ finish() {
   if [ -z "$facts" ]; then facts="aborted|FAIL|the run stopped before it recorded anything"; fi
   # The scratch directory's row is added BEFORE the verdict is taken, because the verdict
   # is taken from the facts: a directory this check could not remove is a FAIL, and a block
-  # that printed `scratch-removed: FAIL` beside `END (exit 0)` would read as a pass.
-  facts="${facts}"$'\n'"scratch-removed|$([ "$SCRATCH_REMOVED" = yes ] && echo PASS || echo FAIL)|the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is still there, at $SCRATCH")"
+  # that printed `scratch-removed: FAIL` beside `END (exit 0)` would read as a pass. A run
+  # that stopped in a guard created no directory at all, and says so rather than reporting a
+  # cleanup failure with an empty path in it (the same shape Check 90's `restore` row had).
+  if [ -z "$SCRATCH" ]; then
+    facts="${facts}"$'\n'"scratch-removed|PASS|nothing was created: the run stopped before it made a scratch directory, so there is none to remove"
+  else
+    facts="${facts}"$'\n'"scratch-removed|$([ "$SCRATCH_REMOVED" = yes ] && echo PASS || echo FAIL)|the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is still there, at $SCRATCH")"
+  fi
+  # The credential file's own row, added here for the same reason as the one
+  # above: it holds a minted bearer token, so a run that could not remove it
+  # must not come back reading as a pass. A run that never minted one (stopped
+  # in a guard, before the scratch directory existed) says so rather than
+  # claiming a removal of a file that was never written.
+  if [ -z "$AUTH_CONF" ]; then
+    facts="${facts}"$'\n'"restore-token-file|PASS|no credential file was ever written: the run stopped before it made one, so there is no minted token to remove"
+  else
+    facts="${facts}"$'\n'"restore-token-file|$([ "$AUTH_CONF_REMOVED" = yes ] && echo PASS || echo FAIL)|the credential file $([ "$AUTH_CONF_REMOVED" = yes ] && echo "is gone" || echo "IS STILL THERE at $AUTH_CONF (mode 600, holding a minted identity token) — remove it yourself")"
+  fi
   if printf '%s\n' "$facts" | grep -q '|FAIL|' && [ "$status" = 0 ]; then
     # A guard stop is exit 1 already; a FAILed fact with exit 0 would read as a
     # pass, so the verdict is taken from the facts, not from the exit path.
@@ -688,7 +723,19 @@ step_cold_start() {
   local idle_seconds=${CHECK91_IDLE_SECONDS:-2100}
   local before cold warm
   mint_idt || stop "no identity token can be minted here, so the relay cannot be asked anything"
-  before=$(curl -sS --max-time "$CURL_SECONDS" --config "$AUTH_CONF" "${URL}/" | sed -n 's/^started=//p')
+  # Guarded like the two probes below, and for the same reason: this script
+  # installs no ERR trap, so under `set -euo pipefail` a connection-level curl
+  # failure (DNS, refused, or this call's own --max-time) would end the run with
+  # curl's own exit code and NO `cold-start` fact at all — a run that says
+  # nothing about the step it died in, against the header's 0/1 contract. The
+  # status is caught and reported as a FAILed fact instead, with the pre-wait
+  # measurement named so it is not mistaken for the cold probe.
+  local before_rc=0
+  before=$(curl -sS --max-time "$CURL_SECONDS" --config "$AUTH_CONF" "${URL}/" | sed -n 's/^started=//p') || before_rc=$?
+  if [ "$before_rc" != 0 ]; then
+    fact "cold-start" FAIL "the pre-wait liveness request failed (curl exit ${before_rc}), so nothing was measured: the relay could not be reached before the idle wait at all (DNS, connection refused, or this call's own ${CURL_SECONDS}s cap), and the cold-start figures need it as the 'before' instance. Nothing was waited for and nothing was probed"
+    return 0
+  fi
   [ -n "$before" ] || stop "the relay's / body carries no started= line, so this is not this check's image"
   say "instance now: started=${before}; waiting ${idle_seconds}s for it to be released"
   # Backgrounded and waited on, not slept in the foreground: bash runs a
@@ -780,7 +827,23 @@ step_long_stream() {
   wait "$WAIT_PID" || rc=$?
   WAIT_PID=""
   out=$(cat "$SCRATCH/long.out" 2>/dev/null || true)
-  fact "stream-longest" PASS "SSE_MINUTES=59: ${out}; curl exit ${rc} (0 = the stream ended by itself; 18/56 = the front end cut it; 52 = empty reply; 28 = this check's own ${LONG_SECONDS}s cap) — --timeout=3600; mint a fresh identity token for every probe after this one"
+  # The status is read, not assumed: curl exits 0 for ANY HTTP status (there is
+  # no --fail here), so a front end answering with an error page or a 403 in a
+  # fraction of a second left `out` reading "403 after 0.2s" with rc=0 — and
+  # this row was an unconditional PASS, which is exactly the bug that was fixed
+  # for cold-start. A row that never started streaming is a FAILed fact, not a
+  # number for U5. A stream the front end CUT still carries its 200 here (the
+  # headers were sent), so the cut -- the thing this row measures -- stays a
+  # PASS with curl's 18/56 beside it.
+  local code=${out%% *}
+  case "$code" in
+  2*)
+    fact "stream-longest" PASS "SSE_MINUTES=59: ${out}; curl exit ${rc} (0 = the stream ended by itself; 18/56 = the front end cut it; 52 = empty reply; 28 = this check's own ${LONG_SECONDS}s cap) — --timeout=3600; mint a fresh identity token for every probe after this one"
+    ;;
+  *)
+    fact "stream-longest" FAIL "the long stream never started: the front end answered ${code:-nothing} (${out}), curl exit ${rc}, so nothing was measured about where a 59-minute stream ends. curl exits 0 for any HTTP status, so an error page reaches this step looking like a completed stream — this is a failed measurement, not a figure for U5"
+    ;;
+  esac
 }
 
 # ----------------------------------------------------- step 6 the body table
@@ -835,7 +898,17 @@ step_body_limit() {
   else
     fact "body-limit-http1" FAIL "no size was accepted on HTTP/1.1 end to end: $(printf '%s' "$table" | tr '\n' '; ')"
   fi
-  fact "body-limit-http2-front-end" PASS "the front end, over TLS to it (NOT end to end: the container serves HTTP/1.1 only): $( [ -n "$h2_big" ] && echo "largest accepted ${h2_big}" || echo "nothing accepted" ). Rows: $(printf '%s' "$table" | tr '\n' ' ') "
+  # Guarded like its HTTP/1.1 sibling above, so the two halves of one table
+  # cannot disagree about what a PASS means: a PASS here is "a size was
+  # accepted", and a run where nothing was accepted — or where every row came
+  # back 401 or 403 — is a FAIL with the whole table in it. It used to be an
+  # unconditional PASS that printed "nothing accepted" in the same row, which
+  # reads as a measurement of the front end's limit when no request succeeded.
+  if [ -n "$h2_big" ]; then
+    fact "body-limit-http2-front-end" PASS "largest accepted over TLS to the front end (NOT end to end: the container serves HTTP/1.1 only): ${h2_big}.${refusal_note} Rows: $(printf '%s' "$table" | tr '\n' ' ')"
+  else
+    fact "body-limit-http2-front-end" FAIL "no size was accepted over TLS to the front end, so the front end's own limit was not measured.${refusal_note} Rows: $(printf '%s' "$table" | tr '\n' '; ')"
+  fi
   fact "http2-end-to-end" INFO "NOT SETTLED by this check: the relay is Python http.server (HTTP/1.1), so no request here is HTTP/2 to the container. U5's end-to-end HTTP/2 half stays UNVERIFIED; settling it needs --use-http2 and a container that serves h2c"
 }
 
@@ -911,7 +984,7 @@ main() {
 BLOCK_KEYS=(fugaro-version project-region baseline scratch service-config
   unauthenticated-request cold-start stream-unbuffered stream-longest
   body-limit-http1 body-limit-http2-front-end http2-end-to-end relay restore
-  restore-counts scratch-removed)
+  restore-counts scratch-removed restore-token-file)
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   local facts=$1 status=$2

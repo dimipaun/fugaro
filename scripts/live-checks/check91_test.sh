@@ -324,6 +324,32 @@ RM_EOF
   chmod +x "$1/bin/rm"
 }
 
+# A stand-in for `rm` that refuses to remove the credential FILE the run writes
+# its minted identity token into, and removes everything else. The run's own
+# `rm -f "$AUTH_CONF" || true` records nothing by itself, so this is the case
+# where a live bearer token is left behind — inside the scratch directory, which
+# a Restore count that is not 0 keeps on purpose.
+write_fake_rm_conf() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/rm" <<RM_EOF
+#!/usr/bin/env bash
+# A stand-in for \`rm\`, for scripts/live-checks/check91_test.sh only: it refuses
+# the 0600 curl config holding the minted identity token. Everything else is the
+# real \`rm\`.
+set -euo pipefail
+for a in "\$@"; do
+  case "\$a" in
+  */idt.conf)
+    echo "rm: cannot remove '\$a': Operation not permitted" >&2
+    exit 1
+    ;;
+  esac
+done
+exec "$REAL_RM" "\$@"
+RM_EOF
+  chmod +x "$1/bin/rm"
+}
+
 write_fake_curl() { # dir
   mkdir -p "$1/bin"
   cat >"$1/bin/curl" <<'CURL_EOF'
@@ -425,6 +451,13 @@ if method == "POST" and path.startswith("/echo"):
         n = os.path.getsize(data[1:])
     status, uploaded, version = 200, n, ("1.1" if "--http1.1" in args else "2")
     body = "read %d bytes\n" % n
+    # A front end that refuses the HTTP/2 request outright while the HTTP/1.1
+    # one is accepted: the two halves of one table, so a row that answered 403
+    # must not be printed as a PASS that says "nothing accepted" in it.
+    if mode == "h2-refused" and "--http2" in args:
+        status, body = 403, "forbidden\n"
+        emit()
+        sys.exit(0)
     # `timeout` mode: the size above the first one is refused the way a front
     # end refuses it -- a status with a curl that also exits non-zero, which is
     # the row this step exists to record.
@@ -436,6 +469,16 @@ if method == "POST" and path.startswith("/echo"):
     sys.exit(0)
 
 if path.startswith("/sse"):
+    # A front end that answers the long stream with an error page, at once, and
+    # with curl EXITING 0: without --fail an HTTP status is not a failure to
+    # curl, so the row this step records has to read the status to tell a
+    # completed stream from an error page. The ` after ` in the -w format is the
+    # long stream's own, so the headers probe and the unbuffered probe are
+    # answered normally.
+    if mode == "long-error-page" and fmt and " after " in fmt:
+        status, version, body = 403, "1.1", "forbidden\n"
+        emit()
+        sys.exit(0)
     # A real SSE endpoint writes each event as it happens: the fake does too,
     # one a second, and all at once when the test asks for a burst.
     count = 3
@@ -444,10 +487,14 @@ if path.startswith("/sse"):
     for i in range(count):
         line = "data: 0.%d\n" % i
         streamed.append(line)
-        if out != "/dev/null" and out:
+        if out and out != "/dev/null":
             with open(out, "a") as fh:
                 fh.write(line)
-        else:
+        elif not out:
+            # No -o at all: the body goes to stdout, which is what the
+            # unbuffered probe reads. With -o /dev/null the body is DISCARDED,
+            # as real curl discards it -- writing it to stdout instead would put
+            # the events in front of the -w text the long stream is read from.
             sys.stdout.write(line)
         sys.stdout.flush()
         if mode != "burst":
@@ -464,6 +511,14 @@ if path.startswith("/sse"):
     sys.exit(0)
 
 # GET / -- liveness, and the started= value that makes a cold start checkable.
+if mode == "refuse-pre-liveness" and not fmt:
+    # The liveness request BEFORE the idle wait: it carries no -w format, and it
+    # is the call whose failure is a connection-level one (DNS, refused, its own
+    # --max-time) -- a non-zero curl with no output at all. Under `set -e` with
+    # no ERR trap that used to end the whole run with curl's exit code and no
+    # `cold-start` fact at all.
+    sys.stderr.write("curl: (7) Failed to connect\n")
+    sys.exit(7)
 if mode == "refuse-liveness" and fmt:
     # The request that fails AFTER the idle wait: only the two probes that carry
     # a -w format do, and a front end can answer one with a non-zero curl (a 504,
@@ -598,7 +653,7 @@ test_project_guard() {
 # relay's SSE_MINUTES, and the header once named a CHECK91_SSE_SECONDS that
 # neither the script nor this test ever mentions.
 test_every_advertised_knob_is_read() {
-  local name uses
+  local name reads
   local knobs
   knobs=$(sed -n '1,60p' "$script" | grep -o 'CHECK91_[A-Z_]*' | sort -u)
   if [ -z "$knobs" ]; then
@@ -606,9 +661,14 @@ test_every_advertised_knob_is_read() {
     return
   fi
   for name in $knobs; do
-    uses=$(grep -c "$name" "$script" || true)
-    if [ "$uses" -lt 2 ]; then
-      fail "$name is advertised in the header and read nowhere in the script ($uses mention(s), the header's own)"
+    # The READ, not a mention: every knob the header names appears in that
+    # comment three or four times over, so counting plain mentions could never
+    # fire for a knob nothing reads — the assertion was vacuous by
+    # construction. `${NAME:-` is an expansion, and an expansion cannot be a
+    # comment, so a knob with no expansion is a knob with no effect.
+    reads=$(grep -cF "\${$name:-" "$script" || true)
+    if [ "$reads" -lt 1 ]; then
+      fail "$name is advertised in the header and read nowhere in the script (no \${$name:-...} expansion in it)"
     fi
   done
 }
@@ -650,6 +710,10 @@ test_service_taken() {
   expect_status "$status" 1 "service taken"
   expect_contains "$err" "already exists in fugaro-dev/us-east5, and it is not this check's" "service taken: the stop"
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "run deploy" "service taken: nothing deployed"
+  # Every stop() records WHY in the block, not only on stderr: the block is what
+  # the owner pastes back, and a guard stop that left every row reading "FAIL —
+  # not reached" with no reason in it is the one thing the block cannot say.
+  expect_contains "$out" "FACT aborted: FAIL — fugaro-chk91 already exists" "service taken: the block names what stopped the run"
 }
 
 test_repo_taken() {
@@ -678,6 +742,11 @@ test_happy_path() {
   expect_contains "$out" "FACT restore: PASS" "happy path: the Restore"
   expect_contains "$out" "FACT restore-counts: PASS — services: 0, images: 0, repository: 0" "happy path: the three counts"
   expect_contains "$out" "FACT scratch-removed: PASS" "happy path: the scratch directory went"
+  # The credential file holds a minted identity token and lives inside the
+  # scratch directory, so its removal is CHECKED rather than assumed from
+  # `rm -f ... || true`: on the path where the directory is kept (a Restore
+  # count that is not 0) a removal that failed would leave a live token behind.
+  expect_contains "$out" "FACT restore-token-file: PASS — the credential file is gone" "happy path: the credential file went"
   expect_contains "$out" "CHECK 91 RESULT END (exit 0)" "happy path: the end line"
   # The deploy is the register's, flag for flag.
   local calls
@@ -1292,6 +1361,88 @@ test_sigint() {
   if [ -d "$sc" ]; then fail "sigint: the scratch directory $sc survived"; fi
 }
 
+# The pre-wait liveness request is the one call in this script with no `-w`
+# format and no `|| rc=$?` guard around it, and check91 installs no ERR trap: a
+# connection-level curl failure (DNS, refused, its own --max-time) ended the run
+# with curl's own exit code and NO `cold-start` fact — against the header's own
+# 0/1 contract. The two probes fourteen lines later are guarded; this is the same
+# guard, and the fact it records says which request failed so a pre-wait failure
+# is not read as a failed cold probe.
+test_pre_wait_liveness_failure_is_a_fact() {
+  local dir=$work/preliveness
+  prepare "$dir"
+  run91 "$dir" FAKE_CURL_MODE=refuse-pre-liveness
+  expect_status "$status" 1 "pre-wait liveness: the verdict is this check's own"
+  expect_contains "$out" "FACT cold-start: FAIL — the pre-wait liveness request failed (curl exit 7)" \
+    "pre-wait liveness: the failure is a fact with curl's own status"
+  expect_absent "$out" "FACT cold-start: PASS" "pre-wait liveness: nothing is claimed as measured"
+  expect_contains "$out" "CHECK 91 RESULT END (exit 1)" "pre-wait liveness: the block still comes back"
+  # Nothing was probed: the two probes carry the -w format and the failed call
+  # does not, so their absence is what says the idle wait was not sat through.
+  if grep -q 'time_starttransfer' "$dir/logs/curl.calls"; then
+    fail "pre-wait liveness: the cold/warm probes were made although the pre-wait request failed"
+  fi
+}
+
+# curl exits 0 for any HTTP status (there is no --fail in this script), so a
+# front end answering the long stream with a 403 in a fraction of a second left
+# `out` reading "403 after 0.2s" with rc=0 — and the row was an unconditional
+# PASS. The status is read now, exactly as it is for cold-start.
+test_long_stream_error_page_is_not_a_pass() {
+  local dir=$work/longerr
+  prepare "$dir"
+  run91 "$dir" FAKE_CURL_MODE=long-error-page
+  expect_status "$status" 1 "long stream error page: the verdict"
+  expect_contains "$out" "FACT stream-longest: FAIL — the long stream never started" \
+    "long stream error page: the row is a failure"
+  expect_contains "$out" "403" "long stream error page: the status is named"
+  expect_absent "$out" "FACT stream-longest: PASS" "long stream error page: no PASS for a stream that never started"
+  expect_contains "$out" "CHECK 91 RESULT END (exit 1)" "long stream error page: the block still comes back"
+}
+
+# One table, two rows, one meaning for PASS: the HTTP/1.1 row only PASSes when a
+# 200* row exists, and the HTTP/2-to-front-end row used to be an unconditional
+# PASS that printed "nothing accepted" inside it — a row that answered 403 read
+# as a measurement of the front end's limit.
+test_h2_row_refused_is_not_a_pass() {
+  local dir=$work/h2refused
+  prepare "$dir"
+  run91 "$dir" FAKE_CURL_MODE=h2-refused
+  expect_status "$status" 1 "h2 row refused: the verdict"
+  expect_contains "$out" "FACT body-limit-http2-front-end: FAIL — no size was accepted over TLS to the front end" \
+    "h2 row refused: the row is a failure"
+  expect_absent "$out" "FACT body-limit-http2-front-end: PASS" "h2 row refused: no PASS for a table with nothing accepted"
+  # The HTTP/1.1 half of the same table is untouched: it answered 200, so this is
+  # the one row that failed.
+  expect_contains "$out" "FACT body-limit-http1: PASS — largest accepted" "h2 row refused: the sibling row still measures"
+  expect_contains "$out" "403" "h2 row refused: the status is in the table"
+}
+
+# The credential file holds a minted identity token and lives inside the scratch
+# directory, which is KEPT when a Restore count is not 0. `rm -f "$AUTH_CONF" ||
+# true` recorded nothing, so a removal that failed left a live bearer token
+# inside a surviving directory with no fact saying so. Check 90 reports its own
+# token file this way (TOKEN_REMOVED); this is the same row for this script.
+test_a_token_file_that_survives_is_a_failure() {
+  local dir=$work/tokenleft
+  prepare "$dir"
+  write_fake_rm_conf "$dir"
+  run91 "$dir" FAKE_GCLOUD_DELETE_FAILS=yes
+  expect_status "$status" 1 "token file left: the verdict"
+  expect_contains "$out" "FACT restore-token-file: FAIL — the credential file IS STILL THERE at " \
+    "token file left: the row says it survived"
+  expect_contains "$out" "holding a minted identity token" "token file left: what the file holds is named"
+  expect_contains "$out" "remove it yourself" "token file left: the owner is told what to do"
+  expect_absent "$out" "FACT restore-token-file: PASS" "token file left: the row does not claim it went"
+  expect_contains "$out" "CHECK 91 RESULT END (exit 1)" "token file left: the block still comes back"
+  # The file really is there, or this case asserted nothing: the scratch
+  # directory is kept on this path and the credential file is inside it.
+  if [ ! -f "$scratch/idt.conf" ]; then
+    fail "token file left: the credential file went after all, so this case asserted nothing"
+  fi
+  if [ -d "$scratch" ]; then kept+=("$scratch"); fi
+}
+
 test_never_belong() {
   # This check is the sandbox installation's and nobody else's: the project is
   # hard-coded, the doctor stop names it, and no executed command may ever name
@@ -1300,13 +1451,31 @@ test_never_belong() {
   local text calls
   text=$(cat "$script")
   expect_contains "$text" "P=fugaro-dev" "never belong: the project is hard-coded"
-  expect_absent "$text" "gcloud config get-value project" "never belong: the project is never read from a config"
+  # The phrase "gcloud config get-value project" occurs in this script's comments
+  # only — and wrapped across two lines there — so asserting its absence proved
+  # nothing about the CALL. What must not exist is an executed `gcloud config`:
+  # the project is the literal above and is never read from a config.
+  local cfg
+  cfg=$(printf '%s\n' "$text" | grep -v '^[[:space:]]*#' | grep -n 'gcloud config' || true)
+  if [ -n "$cfg" ]; then
+    fail "never belong: the script runs a gcloud config command: $cfg"
+  fi
   local outside
   outside=$(printf '%s\n' "$text" | grep -iv -e "never \`belong\`" -e "never belong" | grep -c "belong" || true)
   [ "$outside" = 0 ] || fail "never belong: 'belong' appears outside the two lines that refuse it ($outside)"
   calls=$(cat "$work"/happy/logs/gcloud.calls "$work"/happy/logs/curl.calls "$work"/happy/logs/fugaro.calls 2>/dev/null)
   expect_absent "$calls" "belong" "never belong: no command named it"
-  expect_absent "$calls" "another-project" "never belong: no command named another project"
+  # Every project argument gcloud was given names the sandbox project. This was
+  # `expect_absent "$calls" "another-project"`, which can never fail: nothing in
+  # the script or the fakes ever writes that string, so the assertion held
+  # whatever the run passed. (Only gcloud's own log is read: `fugaro doctor
+  # --project fugaro` names the INSTALLATION, which is a different thing.)
+  local projects p
+  projects=$(grep -o -- '--project=[^ ]*' "$work/happy/logs/gcloud.calls" | sort -u || true)
+  [ -n "$projects" ] || fail "never belong: no gcloud --project argument was recorded, so this test checks nothing"
+  for p in $projects; do
+    [ "$p" = "--project=fugaro-dev" ] || fail "never belong: a gcloud command named $p"
+  done
 }
 
 test_curl_cutting_the_stream
@@ -1339,6 +1508,10 @@ test_restore_leftover
 test_restore_count_query_failure_is_not_zero
 test_restore_count_query_failure_is_not_papered_over
 test_scratch_removal_failure_is_a_failure
+test_a_token_file_that_survives_is_a_failure
+test_pre_wait_liveness_failure_is_a_fact
+test_long_stream_error_page_is_not_a_pass
+test_h2_row_refused_is_not_a_pass
 test_sigint
 test_never_belong
 

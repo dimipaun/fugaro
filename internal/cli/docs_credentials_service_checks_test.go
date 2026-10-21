@@ -114,19 +114,35 @@ func TestLiveChecksAreOneScriptTheOwnerRuns(t *testing.T) {
 	// nothing -- a fresh run mints a scratch directory of its own and stops in
 	// the guards while the service or the repository is still in the project --
 	// and the appendix must not repeat the promise either. The appendix is
-	// checked for the SAME strings, not for a paraphrase of them: the register's
-	// sentence was corrected while the appendix kept telling the owner to
-	// "re-run the Restore, which removes the directory once the three counts are
-	// 0", which is the promise this whole paragraph exists to retire, and a
-	// reader who follows the section's own link reads the appendix.
+	// pinned by its INTENT rather than by three spellings of the retired
+	// promise: a fourth paraphrase ("the directory is kept ... because it is what
+	// a re-run needs to know that the service and the repository are this
+	// check's") sat in the appendix's FACT paragraph while all three strings
+	// were absent, so what the pin has to say is that the Restore section
+	// promises no re-run at all -- of the check, of the Restore, of anything.
+	// The reason it gives for keeping the directory is the records and the hand
+	// work done from them, which is what "hand work" is asserted for.
 	sec91 := registerSection(t, doc, check91Heading)
 	for _, bad := range []string{"re-run the Restore", "a re-run needs the records", "re-reads the records"} {
 		if strings.Contains(sec91, bad) {
 			t.Errorf("%s: the section starting %q says %q, which no run does", liveChecksDoc, check91Heading, bad)
 		}
-		if got := readDoc(t, check91Steps); strings.Contains(got, bad) {
-			t.Errorf("%s: the appendix says %q, which no run does — a Restore that ended with a count that is not 0 is finished by hand", check91Steps, bad)
-		}
+	}
+	app := readDoc(t, check91Steps)
+	const restoreHead = "### Check 91 step 7: Restore"
+	i := strings.Index(app, restoreHead)
+	if i < 0 {
+		t.Fatalf("%s: the appendix has no %q section", check91Steps, restoreHead)
+	}
+	restoreSec := app[i:]
+	if j := strings.Index(restoreSec, "\n### "); j >= 0 {
+		restoreSec = restoreSec[:j]
+	}
+	if !strings.Contains(restoreSec, "hand work") {
+		t.Errorf("%s: the Restore section does not say that finishing a count which is not 0 is hand work", check91Steps)
+	}
+	if strings.Contains(restoreSec, "re-run") {
+		t.Errorf("%s: the Restore section promises a re-run; a run that ended with a count which is not 0 is finished by hand, and no re-run of the check or of its Restore can do it", check91Steps)
 	}
 	if want := "finishing a count that is not `0` is hand work"; !strings.Contains(sec91, want) {
 		t.Errorf("%s: the section starting %q lacks %q", liveChecksDoc, check91Heading, want)
@@ -201,6 +217,23 @@ func TestLiveChecksAreOneScriptTheOwnerRuns(t *testing.T) {
 	} {
 		if got := strings.Count(cell, want); got != 1 {
 			t.Errorf("%s: row 90's cell says %q %d times; each claim is stated once", liveChecksDoc, want, got)
+		}
+	}
+
+	// The paragraph that reads the block names the one PASS a reader would
+	// otherwise take for a contradiction: a swap the upstream answered with a
+	// RATE LIMIT (429) is tier A viable — the credential was accepted, since a
+	// rate limit is not reachable without being authenticated — while `swap`
+	// itself is INFO because the call did not complete. check90.sh's own suite
+	// pins the script's half of this (test_limit_is_recorded); this is the half
+	// the owner reads.
+	//
+	// Mutation (verified, run and restored): take the rate-limit sentence back
+	// out of the paragraph — red here.
+	sec90 := registerSection(t, doc, check90Heading)
+	for _, want := range []string{"rate limit", "429", "authenticated"} {
+		if !strings.Contains(sec90, want) {
+			t.Errorf("%s: the section starting %q explains the block without %q, so a `tier-a: PASS` on a rate-limited swap reads as a contradiction", liveChecksDoc, check90Heading, want)
 		}
 	}
 }
@@ -419,9 +452,18 @@ func TestCheck91ScriptKeepsItsPromises(t *testing.T) {
 	}
 	// The project is never read from a gcloud config, and no other
 	// installation is ever named: `belong` appears only where the script says
-	// it is never used.
-	if strings.Contains(text, "gcloud config get-value project") {
-		t.Errorf("%s reads the project from a gcloud config; it must be hard-coded", check91Script)
+	// it is never used. The config question is asked of the script's CODE: the
+	// phrase it looks for occurs in a comment, wrapped across two lines, so
+	// searching the whole text answered "not there" for a reason that had
+	// nothing to do with what the script runs -- a comment could be re-wrapped
+	// into a match, and a real call in a comment's shadow would read the same.
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if strings.Contains(line, "gcloud config") {
+			t.Errorf("%s runs a gcloud config command: %q; the project is hard-coded", check91Script, line)
+		}
 	}
 	for _, line := range strings.Split(text, "\n") {
 		if strings.Contains(line, "belong") && !strings.Contains(strings.ToLower(line), "never belong") && !strings.Contains(line, "never `belong`") {

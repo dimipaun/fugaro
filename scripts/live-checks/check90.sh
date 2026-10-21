@@ -93,7 +93,16 @@ exec 3>&1 4>&2
 PROG=${0##*/}
 say() { printf '%s: %s\n' "$PROG" "$*" >&2; }
 owner() { printf '%s: %s\n' "$PROG" "$*" >&4; }
-die() { say "$*"; exit 2; }
+# The reason an abort stopped the run, kept OUTSIDE the facts file because the
+# earliest aborts happen before there is one: need_tools runs before scratch_up,
+# and so does the placeholder's own stop, and `fact` writes nowhere until
+# FACTS_FILE is set. Without this the block came back with every row reading
+# "FAIL — not reached" and no `aborted` row at all — the one line that says WHY
+# the run stopped went to stderr, while the documented workflow is to paste the
+# stdout block. finish() records it as an `aborted` fact when the run's own
+# fact file does not already carry one.
+ABORT_REASON=""
+die() { say "$*"; ABORT_REASON=$*; exit 2; }
 
 # stop REASON: records a FAILed fact and ends the run. The EXIT trap prints the
 # block and cleans up, so a stop still gives you something to paste back.
@@ -108,6 +117,7 @@ die() { say "$*"; exit 2; }
 # business making on evidence it does not have.
 stop() {
   fact "aborted" FAIL "$1"
+  ABORT_REASON=$1
   owner "stopped: $1"
   exit 2
 }
@@ -248,7 +258,15 @@ stop_call() {
 
 remove_scratch() {
   case "$SCRATCH" in
-  "" | / | "$HOME" | "$HOME"/)
+  "")
+    # A stop before scratch_up (need_tools, the placeholder) leaves this empty,
+    # and there is nothing to refuse: saying "refusing to remove a scratch
+    # directory of ''" for a run that never made one reads like a cleanup that
+    # went wrong, which is exactly the impression the `restore` row had to be
+    # fixed for. The guard itself stays for the two paths that DO mean trouble.
+    return 0
+    ;;
+  / | "$HOME" | "$HOME"/)
     say "refusing to remove a scratch directory of '$SCRATCH'"
     return 0
     ;;
@@ -287,10 +305,28 @@ finish() {
   CLEANUP_RUNNING=yes
   cleanup
   local facts=$FACTS_CAPTURED
+  # An abort that happened before the run had a fact file -- need_tools, or the
+  # placeholder's own stop, both of which run before scratch_up -- is recorded
+  # here, so the block names the cause instead of printing every row as "FAIL —
+  # not reached" with nothing saying why. A stop after the fact file exists has
+  # already written its own `aborted` row, and this leaves that one alone.
+  if [ -n "$ABORT_REASON" ] && ! printf '%s' "$facts" | grep -q '^aborted|'; then
+    facts="${facts}"$'\n'"aborted|FAIL|$ABORT_REASON"
+  fi
   if ! printf '%s' "$facts" | grep -q '^tier-a|' && [ "$status" = 2 ]; then
     # A run that reached the calls and could not judge the swap says so here,
-    # rather than in a "not reached" line that reads like a step nobody ran.
-    facts="${facts}"$'\n'"tier-a|INFO|INCONCLUSIVE — the run reached the calls and could not judge the swap; read the FAILed fact above"
+    # rather than in a "not reached" line that reads like a step nobody ran. A
+    # run that stopped BEFORE its first call gets its own wording: the same
+    # sentence for both made a guard stop's block contradict itself -- `control:
+    # FAIL — not reached` on one line and "the run reached the calls" eleven
+    # lines later. The control is the run's first call, and it records a fact
+    # (PASS or FAIL) the moment it is made, so `control|` in the facts is what
+    # says the calls were reached.
+    if printf '%s' "$facts" | grep -q '^control|'; then
+      facts="${facts}"$'\n'"tier-a|INFO|INCONCLUSIVE — the run reached the calls and could not judge the swap; read the FAILed fact above"
+    else
+      facts="${facts}"$'\n'"tier-a|INFO|INCONCLUSIVE — the run stopped before its first call, so the swap was never tested; read the aborted fact and the FAILed guard above for what stopped it"
+    fi
   fi
   # The two removals are reported as they happened, never as they were meant to:
   # a token file or a directory that is still there is a FAILed row, with what
@@ -299,11 +335,23 @@ finish() {
   # tell, and a cleanup failure is none of those (a FAILed `claude-version` row
   # can sit beside exit 0 for the same reason). What the guard above buys is
   # that the block is always printed at all.
+  #
+  # A run that stopped before scratch_up created NEITHER: `remove_scratch`
+  # refuses an empty path by design (it will not `rm -rf` a path it did not
+  # make), so the row below read "the scratch directory is STILL THERE, at " —
+  # a cleanup failure claimed, with an empty path, for a run that never made a
+  # directory or a token file. That is the one shape of this row that must not
+  # be a FAIL, and it is told apart by SCRATCH being empty: nothing of this
+  # run's ever existed to leave behind.
   local restore=PASS
-  [ "$SCRATCH_REMOVED" = yes ] && [ "$TOKEN_REMOVED" = yes ] || restore=FAIL
-  local token_note="the token file is removed"
-  [ "$TOKEN_REMOVED" = yes ] || token_note="the TOKEN FILE IS STILL THERE at $TOKEN_FILE (mode 600, holding the setup-token value) — remove it yourself"
-  facts="${facts}"$'\n'"restore|$restore|the proxy is stopped, ${token_note}, and the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself")"
+  if [ -z "$SCRATCH" ]; then
+    facts="${facts}"$'\n'"restore|PASS|nothing was created: the run stopped before it made a scratch directory or a token file, so there is nothing to remove"
+  else
+    [ "$SCRATCH_REMOVED" = yes ] && [ "$TOKEN_REMOVED" = yes ] || restore=FAIL
+    local token_note="the token file is removed"
+    [ "$TOKEN_REMOVED" = yes ] || token_note="the TOKEN FILE IS STILL THERE at $TOKEN_FILE (mode 600, holding the setup-token value) — remove it yourself"
+    facts="${facts}"$'\n'"restore|$restore|the proxy is stopped, ${token_note}, and the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself")"
+  fi
   if [ -z "$PRINTED" ]; then
     PRINTED=1
     print_block "$facts" "$status"
@@ -937,14 +985,42 @@ step_swap() {
   local log
   log=$(phase_log swap)
   start_proxy "$log" --token-file "$TOKEN_FILE" --error-fields
-  local started ended
+  local started ended rc=0
   started=$(date +%s)
-  if claude_call "http://127.0.0.1:$PORT" "file:$PLACEHOLDER_FILE" "$SCRATCH/swap.out" "$CALL_TIMEOUT" -p "say ok"; then
-    ended=$(date +%s)
-    local h attempts ok
-    h=$(header_of "$log")
-    attempts=$(attempts_in "$log")
-    ok=$(sed -n 's/^FACT response \([0-9]*\) .*/\1/p' "$log" 2>/dev/null | grep -E '^2' | head -n 1 || true)
+  claude_call "http://127.0.0.1:$PORT" "file:$PLACEHOLDER_FILE" "$SCRATCH/swap.out" "$CALL_TIMEOUT" -p "say ok" || rc=$?
+  ended=$(date +%s)
+  local h attempts ok answer
+  h=$(header_of "$log")
+  attempts=$(attempts_in "$log")
+  ok=$(sed -n 's/^FACT response \([0-9]*\) .*/\1/p' "$log" 2>/dev/null | grep -E '^2' | head -n 1 || true)
+  # The upstream's own answer, whatever it was: a 401 (the credential the proxy
+  # attached was refused), a 429 (a rate limit), a 5xx, or nothing at all when
+  # the request never got that far. It is named in the facts below rather than
+  # reduced to "no 2xx came back".
+  answer=$(sed -n 's/^FACT response \([0-9]*\) .*/\1/p' "$log" 2>/dev/null | head -n 1 || true)
+  # A RATE LIMIT IS NOT A FAILED SWAP, and reading it as one reports the
+  # opposite of what was measured. The swap call carries the per-run PLACEHOLDER
+  # as its credential, and the proxy refuses (403, never forwarding) any request
+  # that does not carry it — so a request the upstream answered at all is one
+  # the proxy attached YOUR token to. A 429 is reachable only by an
+  # authenticated caller: it says the token was ACCEPTED through the swap, i.e.
+  # that the swap works, and that the subscription is rate-limited right now. So
+  # this is decided BEFORE the client's own exit status is looked at (a 429
+  # makes the client exit non-zero, which is what used to send this to the FAIL
+  # below) and it is not "NOT VIABLE": dropping tier A on evidence that says the
+  # opposite is the one wrong answer here. It is not a PASS of the call either —
+  # the call did not complete, so nothing is claimed about the answer's content
+  # — and the limit itself is recorded by save_usage_limit, as before.
+  if [ "$attempts" -ge 1 ] && [ -z "$ok" ] && [ "$answer" = 429 ] && [ "$h" = authorization ]; then
+    fact "swap" INFO "the proxy swapped the credential and the upstream answered 429 (a rate limit) after $((ended - started))s: the credential WAS accepted — a rate limit is not reachable without being authenticated — so the swap carried your token to Anthropic. The call itself did not complete, so nothing is recorded here about the answer's content"
+    fact "swap-credential-header" PASS "credential-header: $h"
+    fact "headers-required" INFO "not measured: the swapped call was answered with a rate limit, so the per-header drops did not run and this list is NOT measured. Re-run when the subscription is not rate-limited to get the list Task C1.7 is written against"
+    fact "tier-a" PASS "VIABLE — the swapped call reached the upstream and the credential was accepted (429 is a rate limit, not a refusal), so subscription traffic survives the header swap. The call did not complete, so the answer's content was not measured"
+    save_usage_limit "$log"
+    save_optional_headers "$log"
+    return 0
+  fi
+  if [ "$rc" -eq 0 ]; then
     if [ "$attempts" -lt 1 ]; then
       # The client exited 0 without the proxy having seen a request: nothing was
       # swapped, and nothing about the swap was measured. That is "could not
@@ -954,7 +1030,7 @@ step_swap() {
       stop "the swap call exited 0 without the proxy having seen a single request (${attempts}), so no credential was swapped and this run measured nothing. Nothing is concluded about tier A"
     fi
     if [ -z "$ok" ] || [ "$h" != authorization ]; then
-      fact "swap" FAIL "the proxy performed the swap and the call still failed: upstream answer '${ok:-none}', credential-header '${h:-missing}', after $((ended - started))s. That is a measurement, not a missing one"
+      fact "swap" FAIL "the proxy performed the swap and the call still failed: upstream answer '${answer:-none}', credential-header '${h:-missing}', after $((ended - started))s. That is a measurement, not a missing one"
       fact "swap-credential-header" FAIL "credential-header: ${h:-missing}"
       fact "headers-required" FAIL "not recorded: the swapped call did not complete successfully"
       fact "tier-a" FAIL "NOT VIABLE — subscription traffic did not survive the header swap (Global Constraint 4: the TIER A tasks are dropped and the service ships the B-only cascade)"
@@ -964,7 +1040,7 @@ step_swap() {
     fact "swap" PASS "the call succeeded with the proxy's own credential attached ($((ended - started))s; the proxy saw ${attempts} request(s) and answered ${ok})"
     fact "swap-credential-header" PASS "credential-header: ${h}"
   else
-    fact "swap" FAIL "the call failed through the proxy while the control succeeded ($(head -c 300 "$SCRATCH/swap.out" | tr '\n' ' '))"
+    fact "swap" FAIL "the call failed through the proxy while the control succeeded: upstream answer '${answer:-none}', after $((ended - started))s. The client said: $(head -c 300 "$SCRATCH/swap.out" | tr '\n' ' ')"
     fact "swap-credential-header" INFO "credential-header: $(header_of "$log")"
     fact "headers-required" FAIL "not recorded: the swap call did not complete"
     fact "tier-a" FAIL "NOT VIABLE — subscription traffic did not survive the header swap (Global Constraint 4: the TIER A tasks are dropped and the service ships the B-only cascade)"
@@ -1098,6 +1174,18 @@ step_drops() {
     fact "headers-optional" INFO "no header was dropped, so nothing was tested as optional: $why"
     return 0
   fi
+  if [ -n "$stopped" ]; then
+    # The loop broke with drops behind it, so both lists are PARTIAL: they name
+    # the headers that were tried, and say nothing about the ones that were not.
+    # The required list is the one Task C1.7 is written against, and printing it
+    # as a PASS generalised a tested subset to the whole wire — the same
+    # over-claim the zero-drop case above was fixed for, one loop iteration
+    # later. INFO, with the counts and the stop named, so a reader can tell a
+    # complete list from this one.
+    fact "headers-required" INFO "PARTIAL — only $dropped of the observed optional headers were dropped before $stopped stopped the loop; of those, these MUST pass through: ${required[*]:-none}. The untested ones are NOT covered by this list, so it is not the complete list Task C1.7 is written against"
+    fact "headers-optional" INFO "PARTIAL — of the $dropped dropped, these were optional: ${optional[*]:-none}; the headers after them were not tried"
+    return 0
+  fi
   fact "headers-required" PASS "${required[*]:-none: every header observed is optional}"
   fact "headers-optional" PASS "${optional[*]:-none}"
 }
@@ -1117,13 +1205,41 @@ step_timeout() {
   elif [ "$status" -eq 0 ]; then
     fact "timeout-retry" PASS "the client waited $((ended - started))s for an answer delayed by ${DELAY}s, in ${attempts} attempt(s), and succeeded"
   else
-    fact "timeout-retry" PASS "the client gave up after $((ended - started))s on an answer delayed by ${DELAY}s, in ${attempts} attempt(s), status $status ($(head -c 200 "$SCRATCH/delay.out" | tr '\n' ' '))"
+    # Not every non-zero status is a timeout, and the branch used to claim one
+    # for all of them: a connection or proxy error, or a failure before the
+    # call, came back as "the client gave up after 0s on an answer delayed by
+    # 90s, in 0 attempt(s), status 1" — a PASS for a measurement nobody made.
+    # A give-up is only observable as one when the proxy had the request AND
+    # was still holding the answer when the client quit: at least one attempt,
+    # and less time spent than the delay itself. Anything else is recorded as
+    # what it is, an INFO with the status, the attempts and the client's own
+    # words, so the owner reads a broken call as a broken call.
+    local elapsed=$((ended - started))
+    if [ "$attempts" -ge 1 ] && [ "$elapsed" -lt "$DELAY" ]; then
+      fact "timeout-retry" PASS "the client gave up after ${elapsed}s on an answer delayed by ${DELAY}s, in ${attempts} attempt(s), status $status (U4: a wait shorter than the delay is the client's own timeout, and the wait belongs in the runner): $(head -c 200 "$SCRATCH/delay.out" | tr '\n' ' ')"
+    else
+      fact "timeout-retry" INFO "NOT a timeout observation: the client failed with status $status after ${elapsed}s, with ${attempts} request(s) reaching the proxy, so it did not give up on the ${DELAY}s delay — it never got that far. Nothing is recorded here about its timeout. The client said: $(head -c 200 "$SCRATCH/delay.out" | tr '\n' ' ')"
+    fi
   fi
 }
 
 # ------------------------------------------------------------------- reporting
 tier_a() {
-  local t
+  local t have
+  # A step that already judged the swap records the verdict itself -- the
+  # rate-limit branch of step_swap does exactly that, and its verdict is PASS
+  # for a reason this function cannot see from `swap|` alone (a 429 means the
+  # credential was accepted, while `swap` there is INFO because the call did
+  # not complete). Re-deriving the verdict here would append a second,
+  # contradicting line, and print_block takes the FIRST line per key, so the
+  # block would carry a PASS row and a "not reached" row for one step. The
+  # recorded verdict wins.
+  have=$(grep -m1 '^tier-a|' "$FACTS_FILE" 2>/dev/null | cut -d'|' -f2 || true)
+  case "$have" in
+  PASS) return 0 ;;
+  FAIL) return 1 ;;
+  INFO) return 2 ;;
+  esac
   t=$(grep -m1 '^swap|' "$FACTS_FILE" 2>/dev/null | cut -d'|' -f2 || true)
   case "$t" in
   PASS)
@@ -1266,8 +1382,15 @@ main() {
   step_swap
   if ! grep -q '^swap|PASS' "$FACTS_FILE"; then
     # The swap call failed: tier A is decided, and the remaining prompts would
-    # cost the owner more subscription traffic to learn nothing new.
-    say "the swap call failed, so the remaining steps are skipped (they would spend prompts for nothing)"
+    # cost the owner more subscription traffic to learn nothing new. A swap
+    # answered with a rate limit is the same skip for a different reason -- the
+    # credential WAS accepted there, so nothing about the swap is left to learn,
+    # but every further call would be refused the same way.
+    if grep -q '^tier-a|PASS' "$FACTS_FILE"; then
+      say "the swap was answered with a rate limit, so the remaining steps are skipped: they would be refused the same way and spend prompts for nothing"
+    else
+      say "the swap call failed, so the remaining steps are skipped (they would spend prompts for nothing)"
+    fi
   else
     # Each step is checked against the budget as it is reached, so the run
     # stops where the budget ran out rather than a step later.
