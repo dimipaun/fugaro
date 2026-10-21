@@ -30,7 +30,9 @@ const (
 	// FromReached is the mode this run had already reached at an earlier
 	// moment, kept because a mode never falls within a run (D22). It is not
 	// a layer: it says the run is holding the answer an earlier resolution
-	// gave, and that resolution's own layer is what named the mode.
+	// gave, and that resolution's own layer is what named the mode — which
+	// is why a run record never carries this value: the fold keeps the
+	// earlier, narrower reason (internal/runstore's KnownRigorFrom).
 	FromReached Layer = "reached"
 )
 
@@ -38,8 +40,11 @@ const (
 // then the two that are not layers. It is the closed set one place names,
 // and every reader of a resolution checks against it — a run record is an
 // object the job can write, so internal/runstore bounds a `from` read back
-// by KnownLayer rather than by a list of its own that would drift from this
-// one the day a layer is added.
+// by this list rather than by one of its own that would drift from it the
+// day a layer is added. The one exception is FromReached, which a
+// resolution carries and a record never says (D24: a record names the layer
+// that won), so runstore checks KnownRigorFrom = KnownLayer minus that
+// value.
 var Layers = []Layer{FromArea, FromRepo, FromProject, FromDefault, FromRequest, FromReached}
 
 // KnownLayer reports whether l is a layer a resolution may name.
@@ -111,10 +116,13 @@ type Resolved struct {
 	Mode Mode
 	// From is the layer that set Mode.
 	From Layer
-	// Areas is the name of every area rule that matched, strictest first
-	// (D23). nil when none did, so a record keeps the field absent rather
-	// than carrying an empty list.
-	Areas []string
+	// Areas is every area rule that matched, strictest first (D23), each
+	// with the mode it sets — not just its name. The mode is what lets a
+	// caller that folds two resolutions together keep the order D23 states
+	// (internal/runstore's RigorRecord.Applied), and it is already here:
+	// Select answers with the rules themselves. nil when none matched, so a
+	// record keeps the field absent rather than carrying an empty list.
+	Areas []Area
 }
 
 // Resolve is the one resolver (D6): the narrowest layer that sets the mode
@@ -140,13 +148,13 @@ func Resolve(cfg Config, req Request) Resolved {
 	if Known(cfg.Repo) {
 		mode, from = cfg.Repo, FromRepo
 	}
-	var areas []string
+	var areas []Area
 	if matched := Select(cfg.Areas(), req.Paths); len(matched) > 0 {
 		// An area replaces the value below it whole, in either direction
 		// (D21), and the names are kept whatever the mode turns out to be
 		// (D23: the record lists every area that matched).
 		mode, from = Strictest(ModesOf(matched)...), FromArea
-		areas = NamesOf(matched)
+		areas = matched
 	}
 	if Known(req.Mode) && req.Mode.Rank() > mode.Rank() {
 		// Raise-only: a request equal to the resolved mode leaves the layer

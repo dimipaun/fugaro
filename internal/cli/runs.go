@@ -728,8 +728,6 @@ func shortSHA(s string) string {
 // wasn't written by one (same untrusted-record concern as validSHA256).
 func validGeneration(g int64) bool { return g >= 0 }
 
-// layerCell is a run's project layer in ls: its generation, "-" for none
-// or for a record whose generation isn't trustworthy.
 // modeCell is a row's rigor mode and where it came from (docs/rigor-modes
 // D24): the mode, the layer that decided it, and the strictest area rule that
 // matched when one did, with a "+N" for the rest D23 also recorded. "-" for a
@@ -756,6 +754,8 @@ func modeCell(r runview.Row) string {
 	return cellOneLine(cell + ")")
 }
 
+// layerCell is a run's project layer in ls: its generation, "-" for none
+// or for a record whose generation isn't trustworthy.
 func layerCell(r runview.Row) string {
 	pl := r.ProjectLayer
 	switch {

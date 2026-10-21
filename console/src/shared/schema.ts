@@ -170,8 +170,9 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
 export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'mode',
   // `rigor.from`: which layer decided the mode (`internal/rigor`'s `Layer`,
-  // docs/rigor-modes D24) -- one of six words this build's own table writes,
-  // the same kind of value as `mode` beside it. `rigor.at` and the moments of
+  // docs/rigor-modes D24) -- one of the words this build's own table writes,
+  // the same kind of value as `mode` beside it -- and `rigor.areas[].mode`,
+  // which is that same `mode` vocabulary again. `rigor.at` and the moments of
   // `rigor.areas[]` are `at`, already below.
   'from',
   'state',
@@ -785,10 +786,10 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  *
  * **`rigor` arrived with the rigor modes (0.11.0)**, between `changed_files`
  * and `artifact_count` in the struct, and a run that resolved a mode writes it:
- * the mode, the layer that decided it (`from`), the areas that matched with the
- * moment each was applied, the moment of the block and the revision the
- * configuration was read from (`runstore.RigorRecord`, docs/rigor-modes D24,
- * D25). It is accepted and not read -- no screen draws a run's mode yet -- and
+ * the mode, the layer that decided it (`from`), the areas that matched -- each
+ * with the mode it sets and the moment it was applied at, strictest first
+ * (D23) -- the moment of the block and the revision the configuration was read
+ * from (`runstore.RigorRecord`, docs/rigor-modes D24, D25). It is accepted and not read -- no screen draws a run's mode yet -- and
  * it is here for `launched_by`'s reason: a list without the key refuses a real
  * `runs ls --json` document whole, as `runs[0].rigor`. Its string keys carry
  * classes rather than exemptions: `from` is an enum this build may not know and

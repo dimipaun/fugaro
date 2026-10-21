@@ -136,7 +136,8 @@ type Row struct {
 	// so a reader never sees an empty set where the answer is unknown.
 	ChangedFiles *runstore.ChangedFiles `json:"changed_files,omitempty"`
 	// Rigor is the mode the run resolved, the layer that decided it, the
-	// areas that matched and the moment of the run each was known at
+	// areas that matched — each with the mode it sets and the moment it was
+	// first applied at, strictest first (D23) — and the moment of the block
 	// (docs/rigor-modes D22, D24): the record's own block, bounded on read
 	// (runstore.RigorRecord.Bounded), and nil when the run recorded none —
 	// a record from before the field existed, a run that died before

@@ -61,8 +61,9 @@ func matches(pattern string, paths []string) bool {
 	return false
 }
 
-// NamesOf is the names of areas, in order: what the run record's rigor block
-// and the pull request body print when they say which rules decided (D24).
+// NamesOf is the names of areas, in order. It is for a reader that wants
+// only the names — the pull request body's line (T1.6) — while a caller that
+// also needs the modes, like the run record's fold, reads the Areas whole.
 func NamesOf(areas []Area) []string {
 	if len(areas) == 0 {
 		return nil

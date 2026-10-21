@@ -184,9 +184,12 @@ workflows:
 	if rg.Revision != "origin/main" {
 		t.Errorf("the block names the revision it read: %+v", rg)
 	}
-	// Both rules matched; the strictest is first (D23) and each carries the
-	// moment it was applied at.
-	want := []runstore.RigorArea{{Name: "payments", At: runstore.RigorAtFinalize}, {Name: "docs", At: runstore.RigorAtFinalize}}
+	// Both rules matched; the strictest is first (D23) and each carries its
+	// own mode and the moment it was applied at.
+	want := []runstore.RigorArea{
+		{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtFinalize},
+		{Name: "docs", Mode: rigor.POC, At: runstore.RigorAtFinalize},
+	}
 	if !reflect.DeepEqual(rg.Areas, want) {
 		t.Errorf("the areas = %+v, want %+v", rg.Areas, want)
 	}

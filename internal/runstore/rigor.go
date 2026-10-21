@@ -51,13 +51,16 @@ type RigorRecord struct {
 	Mode rigor.Mode `json:"mode"`
 	// From is the layer that decided it (rigor.Layer): "area" for a rule the
 	// run's paths matched, then "repo", "project", Fugaro's built-in
-	// "default", the run's own "request", or "reached" for a mode an earlier
-	// moment set that this one did not lower (D22).
+	// "default", and the run's own "request" (D6's raise-only flag). It is
+	// never "reached": that is the resolver's answer to a later moment asking
+	// again — "hold what you already have" (D22) — and the fold keeps the
+	// earlier, narrower reason instead, which is the layer that actually set
+	// the mode (D24's "the layer that won"). KnownRigorFrom is this set.
 	From rigor.Layer `json:"from"`
 	// Areas is every rule that matched, strictest first (D23), each with the
-	// moment it was first applied at. Absent — never an empty list — when
-	// none matched: a reader must not see "there were rules" where the answer
-	// is "there were none".
+	// mode it sets and the moment it was first applied at. Absent — never an
+	// empty list — when none matched: a reader must not see "there were
+	// rules" where the answer is "there were none".
 	Areas []RigorArea `json:"areas,omitempty"`
 	// At is the moment of the resolution this block records (D24). It is the
 	// last moment that changed the block, so a moment that resolved the same
@@ -69,11 +72,29 @@ type RigorRecord struct {
 	Revision string `json:"revision,omitempty"`
 }
 
-// RigorArea is one matched rule as the record carries it: the rule's name and
-// the moment of the run it was first applied at (D24).
+// RigorArea is one matched rule as the record carries it: the rule's name, the
+// mode it sets, and the moment of the run it was first applied at (D24).
+//
+// The mode is here, and not only on the block, because D23's order is
+// "strictest first" and a reader shows the first entry as the rule that
+// decided: `fugaro runs ls`'s MODE column names it, and a later screen will
+// too. Without the mode the order would be a claim no reader could check — a
+// single moment's list arrives ordered (rigor.Select), but folding two moments
+// concatenates them, and a block the job wrote is not ordered at all — which
+// is why both the writer and the reader sort by this field (sortAreas).
 type RigorArea struct {
-	Name string `json:"name"`
-	At   string `json:"at"`
+	Name string     `json:"name"`
+	Mode rigor.Mode `json:"mode"`
+	At   string     `json:"at"`
+}
+
+// KnownRigorFrom reports whether l is a value a record's `from` may carry. It
+// is rigor.KnownLayer minus the one value no record ever says: a block names
+// the layer that won (D24), while "reached" is the resolver's way of holding
+// the mode an earlier moment set (D22) — the fold keeps that earlier layer
+// instead, so `from: "reached"` is a block no writer of this runner produces.
+func KnownRigorFrom(l rigor.Layer) bool {
+	return rigor.KnownLayer(l) && l != rigor.FromReached
 }
 
 // Moment is one of D22's three resolutions as the runner hands it to the
@@ -98,10 +119,14 @@ type Moment struct {
 // resolves a lower one changes nothing; a moment at the same mode keeps the
 // layer already recorded, since that is the decision the run actually took,
 // and still adds any area the block does not already name. An area keeps the
-// moment it was first applied at, and the block's At is the last moment that
-// changed it. A Moment the record cannot use — no mode, or a moment outside
-// D22's three — leaves the block exactly as it was, so a nil receiver stays
-// nil.
+// moment it was first applied at and the stricter of the modes a moment gave
+// it, and the block's At is the last moment that changed it. What comes back
+// is the bounded block (bounded below), which is where D23's strictest-first
+// order is established for a fold too: two moments concatenate, and the first
+// entry is the one a reader names as the rule that decided.
+//
+// A Moment the record cannot use — no mode, or a moment outside D22's three —
+// leaves the block exactly as it was, so a nil receiver stays nil.
 func (r *RigorRecord) Applied(m Moment) *RigorRecord {
 	if !rigor.Known(m.Resolved.Mode) || !KnownRigorMoment(m.At) {
 		return r
@@ -112,15 +137,26 @@ func (r *RigorRecord) Applied(m Moment) *RigorRecord {
 		out.Mode, out.From = m.Resolved.Mode, m.Resolved.From
 		raised = true
 	}
-	added := false
-	for _, name := range m.Resolved.Areas {
-		if name == "" || slices.ContainsFunc(out.Areas, func(a RigorArea) bool { return a.Name == name }) {
+	changed := false
+	for _, a := range m.Resolved.Areas {
+		if a.Name == "" {
 			continue
 		}
-		out.Areas = append(out.Areas, RigorArea{Name: name, At: m.At})
-		added = true
+		if i := slices.IndexFunc(out.Areas, func(x RigorArea) bool { return x.Name == a.Name }); i >= 0 {
+			// The same name again: a run's configuration is fixed, so this is
+			// the same rule, and the stricter reading of it is the one to
+			// keep — rigor.Select's own dedupe, so the order boundRigorAreas
+			// then sorts stays the record's honest one.
+			if a.Mode.Rank() > out.Areas[i].Mode.Rank() {
+				out.Areas[i].Mode = a.Mode
+				changed = true
+			}
+			continue
+		}
+		out.Areas = append(out.Areas, RigorArea{Name: a.Name, Mode: a.Mode, At: m.At})
+		changed = true
 	}
-	if raised || added {
+	if raised || changed {
 		out.At = m.At
 		if m.Revision != "" {
 			out.Revision = m.Revision
@@ -132,17 +168,19 @@ func (r *RigorRecord) Applied(m Moment) *RigorRecord {
 // Bounded is the block as a reader may show it. The record is an object the
 // job's service account can write, so the block read back is not trusted to
 // be the one Applied wrote: it must name a mode from the vocabulary, a layer
-// from rigor.Layers and one of D22's three moments, or it is not a decision
+// from KnownRigorFrom and one of D22's three moments, or it is not a decision
 // anybody made and nil — the same answer the field's absence gives, which
 // every reader already renders as "no record". What survives is bounded
-// again: at most rigor.MaxAreas rules, each name at most
-// rigor.MaxAreaName runes, an area whose own moment is unreadable dropped
-// whole, and the revision at most MaxRigorRevision runes.
+// again: at most rigor.MaxAreas rules, each name at most rigor.MaxAreaName
+// runes, an area whose own mode or moment is unreadable dropped whole, the
+// rules sorted strictest first (D23, which is what makes the first one the
+// strictest whatever the block said), and the revision at most
+// MaxRigorRevision runes.
 func (r *RigorRecord) Bounded() *RigorRecord {
 	if r == nil {
 		return nil
 	}
-	if !rigor.Known(r.Mode) || !rigor.KnownLayer(r.From) || !KnownRigorMoment(r.At) {
+	if !rigor.Known(r.Mode) || !KnownRigorFrom(r.From) || !KnownRigorMoment(r.At) {
 		return nil
 	}
 	out := &RigorRecord{Mode: r.Mode, From: r.From, At: r.At, Revision: clipRunes(r.Revision, MaxRigorRevision)}
@@ -163,7 +201,9 @@ func (r *RigorRecord) Clone() *RigorRecord {
 }
 
 // bounded is the write-side bound: the caps, without Bounded's refusal, so a
-// moment folded in is already as small as a reader would make it.
+// moment folded in is already as small as a reader would make it — and ordered
+// the way a reader reads it (D23), since this is the one place both sides go
+// through (boundRigorAreas).
 func (r *RigorRecord) bounded() *RigorRecord {
 	out := r.Clone()
 	out.Areas = boundRigorAreas(out.Areas)
@@ -174,15 +214,28 @@ func (r *RigorRecord) bounded() *RigorRecord {
 func boundRigorAreas(in []RigorArea) []RigorArea {
 	var out []RigorArea
 	for _, a := range in {
-		if len(out) >= rigor.MaxAreas {
-			break
-		}
-		if a.Name == "" || !KnownRigorMoment(a.At) {
+		if a.Name == "" || !rigor.Known(a.Mode) || !KnownRigorMoment(a.At) {
 			continue
 		}
-		out = append(out, RigorArea{Name: clipRunes(a.Name, rigor.MaxAreaName), At: a.At})
+		out = append(out, RigorArea{Name: clipRunes(a.Name, rigor.MaxAreaName), Mode: a.Mode, At: a.At})
+	}
+	// Sorted before the cap, so the bound keeps the strictest rules rather
+	// than whichever ones the block happened to list first.
+	sortAreas(out)
+	if len(out) > rigor.MaxAreas {
+		out = out[:rigor.MaxAreas]
 	}
 	return out
+}
+
+// sortAreas orders areas strictest first (D23), stable, so rules of equal rank
+// keep the order they were applied in. It is called from boundRigorAreas
+// alone, which is on every path that builds a block — the writer's `bounded`
+// and the reader's Bounded both — so the order a reader depends on is one this
+// file establishes wherever a block is built, never one a caller, or the job's
+// service account, is trusted to have kept.
+func sortAreas(areas []RigorArea) {
+	slices.SortStableFunc(areas, func(x, y RigorArea) int { return y.Mode.Rank() - x.Mode.Rank() })
 }
 
 // clipRunes is s cut to at most n runes: runes and not bytes, so a cut never

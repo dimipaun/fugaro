@@ -114,8 +114,8 @@ func TestResolveLayerPrecedence(t *testing.T) {
 		if got.Mode != c.wantMode || got.From != c.wantFrom {
 			t.Errorf("%s: Resolve = (%q, %q); want (%q, %q)", c.name, got.Mode, got.From, c.wantMode, c.wantFrom)
 		}
-		if !slices.Equal(got.Areas, c.wantArea) {
-			t.Errorf("%s: areas = %v; want %v", c.name, got.Areas, c.wantArea)
+		if names := NamesOf(got.Areas); !slices.Equal(names, c.wantArea) {
+			t.Errorf("%s: areas = %v; want %v", c.name, names, c.wantArea)
 		}
 	}
 }
@@ -180,7 +180,10 @@ func TestResolveKeepsTheAreasItMatchedAtTheSecondMoment(t *testing.T) {
 
 // TestStrictestOverASetIsWhatResolveReads pins that the answer Resolve
 // carries for several matched areas is Strictest's, on a set wide enough that
-// a hand-rolled reduction in either direction would differ.
+// a hand-rolled reduction in either direction would differ — and that what it
+// carries is the rules themselves, strictest first, not just their names: a
+// caller that folds two resolutions together (internal/runstore's
+// RigorRecord.Applied) re-establishes D23's order from exactly these modes.
 func TestStrictestOverASetIsWhatResolveReads(t *testing.T) {
 	areas := []Area{
 		{Name: "a", Match: "a/**", Mode: POC},
@@ -192,8 +195,8 @@ func TestStrictestOverASetIsWhatResolveReads(t *testing.T) {
 	if got.Mode != Critical {
 		t.Fatalf("mode = %q; want %q", got.Mode, Critical)
 	}
-	if want := []string{"d", "c", "b", "a"}; !slices.Equal(got.Areas, want) {
-		t.Errorf("areas = %v; want %v", got.Areas, want)
+	if want := []Area{areas[3], areas[2], areas[1], areas[0]}; !slices.Equal(got.Areas, want) {
+		t.Errorf("areas = %+v; want %+v", got.Areas, want)
 	}
 }
 

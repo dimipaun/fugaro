@@ -329,17 +329,18 @@
       "description": "The mode the run resolved, the layer that decided it, the areas that matched and the moment of the run each was known at (docs/rigor-modes/implementation-plan.md T1.2, D22, D24, D25). The mode's configuration is read from the base branch (D25), so revision names where it came from. Absent for a run that resolved none — a record from before this field existed, or a run that died before bootstrap — and absent means 'no record of this run's rigor', never 'it resolved nothing'.",
       "properties": {
         "mode": { "enum": ["poc", "startup", "pro", "critical", "hotfix"], "description": "The resolved mode (internal/rigor's vocabulary; pro is Fugaro's built-in default, D19)." },
-        "from": { "enum": ["area", "repo", "project", "default", "request", "reached"], "description": "The layer that decided the mode: an area rule the run's paths matched, the repository's rigor.default, the project layer's defaults.rigor.default, Fugaro's built-in default, the run's own request (fugaro run --mode, which may raise and never lower), or reached — the mode an earlier moment set that a later one did not lower (D22)." },
+        "from": { "enum": ["area", "repo", "project", "default", "request"], "description": "The layer that decided the mode: an area rule the run's paths matched, the repository's rigor.default, the project layer's defaults.rigor.default, Fugaro's built-in default, or the run's own request (fugaro run --mode, which may raise and never lower). It is never reached: that is the resolver's answer to a later moment asking again — hold what you already have (D22) — and the record keeps the earlier, narrower reason instead, which is the layer that actually set the mode (D24's 'the layer that won'). internal/runstore's KnownRigorFrom is this set." },
         "areas": {
           "type": "array",
           "maxItems": 100,
-          "description": "Every area rule that matched, strictest first (D23). Absent when none matched: a reader must not see 'there were rules' where the answer is 'there were none'.",
+          "description": "Every area rule that matched, strictest first (D23), each with the mode it sets and the moment it was first applied at. Absent when none matched: a reader must not see 'there were rules' where the answer is 'there were none'. The order is one the record establishes wherever a block is built — the writer folds a moment in and sorts, the reader sorts a block the job may have written — so the first entry is the rule whose mode decided, which is what fugaro runs ls's MODE column names.",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["name", "at"],
+            "required": ["name", "mode", "at"],
             "properties": {
               "name": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$", "description": "The rule's name, as its layer wrote it (internal/rigor's Area.Validate)." },
+              "mode": { "enum": ["poc", "startup", "pro", "critical", "hotfix"], "description": "The mode this rule sets (internal/rigor's vocabulary). It is carried per rule, not only on the block, because D23's order is by it: without it a reader could not check that the first entry is the strictest." },
               "at": { "enum": ["bootstrap", "round", "finalize"], "description": "The moment of the run this rule was first applied at: the run's own moment it matched." }
             }
           }

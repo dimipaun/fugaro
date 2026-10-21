@@ -406,7 +406,10 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		// the mode the run resolved, the layer that won, the areas that
 		// matched with the moment each was applied, and the revision it read.
 		Rigor: &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
-			Areas:    []runstore.RigorArea{{Name: "payments", At: runstore.RigorAtBootstrap}, {Name: "docs", At: runstore.RigorAtRound}},
+			Areas: []runstore.RigorArea{
+				{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap},
+				{Name: "docs", Mode: rigor.POC, At: runstore.RigorAtRound},
+			},
 			At:       runstore.RigorAtFinalize,
 			Revision: "origin/main"},
 	}
@@ -446,14 +449,19 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	// D25): the vocabulary, the layer names, D22's three moments and the
 	// block's own keys are each a set the runner writes and a reader may rely
 	// on, so a value outside one of them is a record no reader should have to
-	// render.
+	// render. Each area carries its own mode, because D23's order is by it:
+	// without the field a reader could not tell the strictest rule from the
+	// first one written.
 	for _, tc := range []struct{ name, old, new string }{
 		{"a mode outside the vocabulary", `"mode":"critical"`, `"mode":"paranoid"`},
 		{"a layer that is not one", `"from":"area"`, `"from":"floor"`},
+		{"the layer only a resolution names", `"from":"area"`, `"from":"reached"`},
 		{"the block's moment outside D22's three", `"at":"finalize"`, `"at":"sometime"`},
 		{"an area's moment outside D22's three", `"at":"round"`, `"at":"lunchtime"`},
 		{"a revision that is not text", `"revision":"origin/main"`, `"revision":5`},
 		{"an area with no name", `"name":"payments"`, `"match":"internal/payments/**"`},
+		{"an area with no mode", `"mode":"critical","at":"bootstrap"`, `"at":"bootstrap"`},
+		{"an area's mode outside the vocabulary", `"mode":"critical","at":"bootstrap"`, `"mode":"paranoid","at":"bootstrap"`},
 		{"a name that is not one", `"name":"payments"`, `"name":"../../etc/passwd"`},
 		{"the block with no mode", `"mode":"critical",`, ``},
 		{"the block with no layer", `"from":"area",`, ``},

@@ -405,8 +405,10 @@ reads:
 
 **`rigor` is the mode the run resolved, and it is read from the base branch.**
 The block is one decision (docs/rigor-modes D24), carrying the mode, the layer
-that decided it (`area`, `repo`, `project`, `default`, `request` or `reached`),
-every area rule that matched with the moment it was first applied at
+that decided it (`area`, `repo`, `project`, `default` or `request` — never
+`reached`, which is the resolver's answer to a later moment asking again and
+which the fold replaces with the earlier, narrower reason), every area rule
+that matched with the mode it sets and the moment it was first applied at
 (`bootstrap`, `round` or `finalize` — D22's three moments) and the revision the
 configuration was read from. The mode's configuration comes from the **base
 branch** for every run kind (D25), so a run's other keys may come from the
@@ -418,8 +420,8 @@ names is the last one that changed the block.
 | Field | Type | omitempty | Note |
 |---|---|---|---|
 | `mode` | string | no | the resolved mode: `poc`, `startup`, `pro`, `critical` or `hotfix` (`pro` is Fugaro's built-in default, D19) |
-| `from` | string | no | the layer that decided it; `reached` means an earlier moment set the mode and this one did not lower it (D22) |
-| `areas` | `[]object` | **yes** | every rule that matched, **strictest first** (D23) and at most `rigor.MaxAreas` = **100** of them, each `name` (the rule's own name) and `at` (the moment it was first applied). **Absent when none matched** — a reader must not see "there were rules" where the answer is "there were none" |
+| `from` | string | no | the layer that decided it; **never `reached`**, which is the resolver holding an earlier moment's mode (D22) — the fold keeps the layer that actually set it (D24's "the layer that won"), so a block that says `reached` is not one this runner writes and `Bounded` refuses it |
+| `areas` | `[]object` | **yes** | every rule that matched, **strictest first** (D23) and at most `rigor.MaxAreas` = **100** of them, each `name` (the rule's own name), `mode` (the mode that rule sets) and `at` (the moment it was first applied). **Absent when none matched** — a reader must not see "there were rules" where the answer is "there were none". The order is one the record establishes, not one it is handed: `Applied` sorts when it folds a moment in and `Bounded` sorts a block the job wrote, so the first entry is the rule whose mode decided — the one `runs ls`'s `MODE` column names |
 | `at` | string | no | the moment of the resolution the block records: the last one that changed it |
 | `revision` | string | **yes** | where the configuration was read from, `origin/<base branch>`; absent when the run could not name it |
 
@@ -428,7 +430,9 @@ does not pass it through as written: `RigorRecord.Bounded` refuses a block
 whose mode, layer or moment is outside its vocabulary — the row then carries no
 block, the same answer as a record that has none — and re-applies the caps
 (`rigor.MaxAreas` rules, `rigor.MaxAreaName` = 40 runes a name, 120 runes of
-revision), dropping an area whose own moment is unreadable. A tampered
+revision), dropping an area whose own mode or moment is unreadable, and sorting
+the rules strictest first before it caps them, so the rules that survive are the
+strictest ones and the first of them is the rule a reader names. A tampered
 `result.json` therefore reaches the console as no block or as a bounded one,
 never as a value no reader can check.
 

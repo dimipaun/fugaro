@@ -15,7 +15,10 @@ import (
 func rigorRow(run string) runview.Row {
 	return runview.Row{Run: run, Status: "succeeded", Rigor: &runstore.RigorRecord{
 		Mode: rigor.Critical, From: rigor.FromArea,
-		Areas:    []runstore.RigorArea{{Name: "payments", At: runstore.RigorAtBootstrap}, {Name: "docs", At: runstore.RigorAtRound}},
+		Areas: []runstore.RigorArea{
+			{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap},
+			{Name: "docs", Mode: rigor.POC, At: runstore.RigorAtRound},
+		},
 		At:       runstore.RigorAtFinalize,
 		Revision: "origin/main",
 	}}
@@ -48,8 +51,8 @@ func TestRunsLSRigorReachesTheDocument(t *testing.T) {
 	if len(areas) != 2 {
 		t.Fatalf("rigor.areas = %v", rg["areas"])
 	}
-	if first, _ := areas[0].(map[string]any); first["name"] != "payments" || first["at"] != "bootstrap" {
-		t.Errorf("the strictest area is not first with its own moment: %v", areas[0])
+	if first, _ := areas[0].(map[string]any); first["name"] != "payments" || first["mode"] != "critical" || first["at"] != "bootstrap" {
+		t.Errorf("the strictest area is not first with its own mode and moment: %v", areas[0])
 	}
 	if _, present := doc.Runs[1]["rigor"]; present {
 		t.Errorf("a run that resolved none names the field: %v", doc.Runs[1]["rigor"])

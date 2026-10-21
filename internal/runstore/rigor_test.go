@@ -2,6 +2,7 @@ package runstore
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -15,7 +16,10 @@ import (
 func TestRigorRecordIsTheJSONTheSchemaAndTheConsoleRead(t *testing.T) {
 	rec := Record{Rigor: &RigorRecord{
 		Mode: rigor.Critical, From: rigor.FromArea,
-		Areas:    []RigorArea{{Name: "payments", At: RigorAtBootstrap}, {Name: "docs", At: RigorAtRound}},
+		Areas: []RigorArea{
+			{Name: "payments", Mode: rigor.Critical, At: RigorAtBootstrap},
+			{Name: "docs", Mode: rigor.POC, At: RigorAtRound},
+		},
 		At:       RigorAtFinalize,
 		Revision: "origin/main",
 	}}
@@ -31,7 +35,8 @@ func TestRigorRecordIsTheJSONTheSchemaAndTheConsoleRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	const want = `{"mode":"critical","from":"area",` +
-		`"areas":[{"name":"payments","at":"bootstrap"},{"name":"docs","at":"round"}],` +
+		`"areas":[{"name":"payments","mode":"critical","at":"bootstrap"},` +
+		`{"name":"docs","mode":"poc","at":"round"}],` +
 		`"at":"finalize","revision":"origin/main"}`
 	if string(block) != want {
 		t.Errorf("the rigor block marshals as\n%s\nwant\n%s", block, want)
@@ -62,9 +67,21 @@ func TestRigorRecordIsTheJSONTheSchemaAndTheConsoleRead(t *testing.T) {
 // down, and every area that ever matched is recorded with the moment it was
 // first applied (D23, D24). The block's `at` is the moment that last changed
 // it, so a moment that changes nothing leaves the record as it was.
+//
+// The areas are pinned whole — name, mode and moment — because the order is
+// D23's strictest-first and the fold is what can break it: the round moment's
+// rule is *stricter* than one the bootstrap moment already recorded, so it
+// belongs in front of it even though it arrived later. A reader takes the
+// first entry as the rule that decided (fugaro runs ls's MODE column), so
+// this is the assertion that keeps that reading honest.
 func TestRigorRecordFoldNeverLowers(t *testing.T) {
-	boot := Moment{Resolved: rigor.Resolved{Mode: rigor.Critical, From: rigor.FromArea, Areas: []string{"payments", "docs"}}, At: RigorAtBootstrap, Revision: "origin/main"}
-	round := Moment{Resolved: rigor.Resolved{Mode: rigor.Critical, From: rigor.FromArea, Areas: []string{"web"}}, At: RigorAtRound, Revision: "origin/main"}
+	boot := Moment{Resolved: rigor.Resolved{Mode: rigor.Critical, From: rigor.FromArea, Areas: []rigor.Area{
+		{Name: "payments", Match: "internal/payments/**", Mode: rigor.Critical},
+		{Name: "docs", Match: "docs/**", Mode: rigor.POC},
+	}}, At: RigorAtBootstrap, Revision: "origin/main"}
+	round := Moment{Resolved: rigor.Resolved{Mode: rigor.Critical, From: rigor.FromArea, Areas: []rigor.Area{
+		{Name: "web", Match: "web/**", Mode: rigor.Critical},
+	}}, At: RigorAtRound, Revision: "origin/main"}
 	final := Moment{Resolved: rigor.Resolved{Mode: rigor.Startup, From: rigor.FromRepo}, At: RigorAtFinalize, Revision: "origin/main"}
 
 	var rec *RigorRecord
@@ -77,16 +94,32 @@ func TestRigorRecordFoldNeverLowers(t *testing.T) {
 		t.Errorf("a moment that changed nothing moved the block's moment to %q", rec.At)
 	}
 	rec = rec.Applied(round)
-	if got, want := areaNames(rec.Areas), "payments,docs,web"; strings.Join(got, ",") != want {
-		t.Errorf("areas after three moments = %v; want %s (every area the run matched, the deciding moment's first)", got, want)
-	}
 	if rec.At != RigorAtRound {
 		t.Errorf("the moment that added an area did not become the block's moment: %q", rec.At)
 	}
-	// Each area keeps the FIRST moment it was applied, so a rule re-matched
-	// at finalize does not read as one the run met only at the end.
-	if rec.Areas[0].At != RigorAtBootstrap || rec.Areas[2].At != RigorAtRound {
-		t.Errorf("an area's moment is not the one it was first applied at: %+v", rec.Areas)
+	// Every area the run matched, strictest first (D23), each with the moment
+	// it was FIRST applied at — a rule re-matched later does not read as one
+	// the run met only at the end.
+	wantAreas := []RigorArea{
+		{Name: "payments", Mode: rigor.Critical, At: RigorAtBootstrap},
+		{Name: "web", Mode: rigor.Critical, At: RigorAtRound},
+		{Name: "docs", Mode: rigor.POC, At: RigorAtBootstrap},
+	}
+	if !reflect.DeepEqual(rec.Areas, wantAreas) {
+		t.Errorf("areas after three moments = %+v; want %+v", rec.Areas, wantAreas)
+	}
+
+	// The same name twice: a run's configuration is fixed, so the two layers'
+	// rule of one name is one rule, and the stricter reading of it wins —
+	// in place, keeping the moment it was first applied at.
+	same := (*RigorRecord)(nil).Applied(Moment{Resolved: rigor.Resolved{Mode: rigor.POC, From: rigor.FromArea, Areas: []rigor.Area{
+		{Name: "pay", Match: "p/**", Mode: rigor.POC},
+	}}, At: RigorAtBootstrap})
+	same = same.Applied(Moment{Resolved: rigor.Resolved{Mode: rigor.Critical, From: rigor.FromArea, Areas: []rigor.Area{
+		{Name: "pay", Match: "p/**", Mode: rigor.Critical},
+	}}, At: RigorAtRound})
+	if len(same.Areas) != 1 || same.Areas[0].Mode != rigor.Critical || same.Areas[0].At != RigorAtBootstrap {
+		t.Errorf("one name, two rules = %+v; want the stricter mode, first applied at", same.Areas)
 	}
 
 	// A first moment sets the block whatever it says, including Hotfix (off
@@ -108,7 +141,8 @@ func TestRigorRecordFoldNeverLowers(t *testing.T) {
 	for _, bad := range []Moment{
 		{Resolved: rigor.Resolved{Mode: ""}, At: RigorAtRound},
 		{Resolved: rigor.Resolved{Mode: "paranoid", From: rigor.FromRepo}, At: RigorAtRound},
-		{Resolved: rigor.Resolved{Mode: rigor.Critical, From: rigor.FromArea, Areas: []string{"payments"}}, At: "sometime"},
+		{Resolved: rigor.Resolved{Mode: rigor.Critical, From: rigor.FromArea, Areas: []rigor.Area{
+			{Name: "payments", Match: "p/**", Mode: rigor.Critical}}}, At: "sometime"},
 	} {
 		if got := rec.Applied(bad); got.At != before.At || len(got.Areas) != len(before.Areas) || got.Mode != before.Mode {
 			t.Errorf("Applied(%+v) changed the block: %+v", bad, got)
@@ -137,7 +171,7 @@ func TestRigorRecordBoundedRefusesABlockItCannotRead(t *testing.T) {
 		t.Errorf("a nil block bounded to %+v; nil means 'no record'", got)
 	}
 	good := &RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
-		Areas: []RigorArea{{Name: "payments", At: RigorAtBootstrap}}, At: RigorAtFinalize, Revision: "origin/main"}
+		Areas: []RigorArea{{Name: "payments", Mode: rigor.Critical, At: RigorAtBootstrap}}, At: RigorAtFinalize, Revision: "origin/main"}
 	if got := good.Bounded(); got == nil || got.Mode != good.Mode || got.From != good.From || got.At != good.At || len(got.Areas) != 1 {
 		t.Errorf("a block Applied wrote did not survive bounding: %+v", got)
 	}
@@ -148,6 +182,7 @@ func TestRigorRecordBoundedRefusesABlockItCannotRead(t *testing.T) {
 		{"a mode outside the vocabulary", func(r *RigorRecord) { r.Mode = "paranoid" }},
 		{"an empty mode", func(r *RigorRecord) { r.Mode = "" }},
 		{"a layer outside the vocabulary", func(r *RigorRecord) { r.From = "floor" }},
+		{"the layer only a resolution names", func(r *RigorRecord) { r.From = rigor.FromReached }},
 		{"an empty layer", func(r *RigorRecord) { r.From = "" }},
 		{"a moment that is not one of the three", func(r *RigorRecord) { r.At = "sometime" }},
 		{"an empty moment", func(r *RigorRecord) { r.At = "" }},
@@ -159,17 +194,33 @@ func TestRigorRecordBoundedRefusesABlockItCannotRead(t *testing.T) {
 		}
 	}
 
+	// An area the reader cannot read is dropped whole: a rule with no mode is
+	// no more a decision than a block with no mode is. Without this, a
+	// tampered record could put an unrankable rule at the front of the list a
+	// reader takes its answer from.
+	noMode := good.Clone()
+	noMode.Areas = append(noMode.Areas, RigorArea{Name: "web", At: RigorAtBootstrap})
+	if got := noMode.Bounded(); len(got.Areas) != 1 {
+		t.Errorf("an area with no mode survived bounding: %+v", got.Areas)
+	}
+
 	// The bounds themselves: names capped in count and in length, an area
-	// whose moment is not readable dropped whole, and the revision clipped.
+	// whose mode or moment is not readable dropped whole, the rules sorted
+	// strictest first, and the revision clipped. The strict rules are written
+	// LAST, so a bound that capped before it sorted would keep the weak ones
+	// and throw the strict ones away — the one thing a bound must never do
+	// with a run's mode.
 	var many []RigorArea
 	for i := 0; i < rigor.MaxAreas+10; i++ {
-		many = append(many, RigorArea{Name: "area", At: RigorAtBootstrap})
+		many = append(many, RigorArea{Name: "area", Mode: rigor.POC, At: RigorAtBootstrap})
 	}
+	many[len(many)-1] = RigorArea{Name: "payments", Mode: rigor.Critical, At: RigorAtBootstrap}
 	big := good.Clone()
 	big.Areas = many
 	big.Revision = strings.Repeat("r", MaxRigorRevision+50)
 	big.Areas[0].Name = strings.Repeat("n", rigor.MaxAreaName+50)
 	big.Areas[1].At = "sometime"
+	big.Areas[1].Mode = "paranoid"
 	got := big.Bounded()
 	if got == nil {
 		t.Fatal("a block with too much in it bounded to nothing")
@@ -177,23 +228,22 @@ func TestRigorRecordBoundedRefusesABlockItCannotRead(t *testing.T) {
 	if len(got.Areas) != rigor.MaxAreas {
 		t.Errorf("bounded to %d areas; want at most %d", len(got.Areas), rigor.MaxAreas)
 	}
-	if n := len([]rune(got.Areas[0].Name)); n != rigor.MaxAreaName {
+	if got.Areas[0].Name != "payments" || got.Areas[0].Mode != rigor.Critical {
+		t.Errorf("the cap threw the strictest rule away: %+v first", got.Areas[0])
+	}
+	if n := len([]rune(got.Areas[1].Name)); n != rigor.MaxAreaName {
 		t.Errorf("a name bounded to %d runes; want %d", n, rigor.MaxAreaName)
 	}
 	if n := len([]rune(got.Revision)); n != MaxRigorRevision {
 		t.Errorf("a revision bounded to %d runes; want %d", n, MaxRigorRevision)
 	}
-	for _, a := range got.Areas {
-		if a.At != RigorAtBootstrap {
-			t.Errorf("an area whose moment is unreadable survived bounding: %+v", a)
+	for i, a := range got.Areas {
+		if i > 0 && a.Mode.Rank() > got.Areas[i-1].Mode.Rank() {
+			t.Errorf("a bounded block is not strictest first: %+v", got.Areas)
+			break
+		}
+		if !rigor.Known(a.Mode) || a.At != RigorAtBootstrap {
+			t.Errorf("an area the reader cannot read survived bounding: %+v", a)
 		}
 	}
-}
-
-func areaNames(as []RigorArea) []string {
-	out := make([]string, 0, len(as))
-	for _, a := range as {
-		out = append(out, a.Name)
-	}
-	return out
 }

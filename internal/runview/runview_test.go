@@ -788,7 +788,7 @@ func TestJoinReboundsTheRecordedChangedFiles(t *testing.T) {
 func TestJoinCarriesTheRunsRigor(t *testing.T) {
 	r := rec(runstore.StatusSucceeded, nil)
 	r.Rigor = &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
-		Areas: []runstore.RigorArea{{Name: "payments", At: runstore.RigorAtBootstrap}},
+		Areas: []runstore.RigorArea{{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap}},
 		At:    runstore.RigorAtFinalize, Revision: "origin/main"}
 	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
 	if row.Rigor == nil || row.Rigor.Mode != rigor.Critical || row.Rigor.From != rigor.FromArea ||
@@ -826,13 +826,32 @@ func TestJoinBoundsTheRecordedRigor(t *testing.T) {
 	if row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now); row.Rigor != nil {
 		t.Fatalf("a block outside the vocabulary reached the row: %+v", row.Rigor)
 	}
+	// The strict rule is written last, so the row's own bounding has to sort
+	// before it caps (D23): a reader shows the first area as the rule that
+	// decided the mode, and a cap that kept the weak ones would hand it a
+	// block whose answer contradicts its own mode.
 	var many []runstore.RigorArea
 	for i := range 3 * rigor.MaxAreas {
-		many = append(many, runstore.RigorArea{Name: fmt.Sprintf("a%03d", i), At: runstore.RigorAtRound})
+		many = append(many, runstore.RigorArea{Name: fmt.Sprintf("a%03d", i), Mode: rigor.POC, At: runstore.RigorAtRound})
 	}
+	many[len(many)-1] = runstore.RigorArea{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap}
 	r.Rigor = &runstore.RigorRecord{Mode: rigor.POC, From: rigor.FromRepo, Areas: many, At: runstore.RigorAtFinalize}
 	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
 	if row.Rigor == nil || len(row.Rigor.Areas) != rigor.MaxAreas {
 		t.Fatalf("an oversized block reached the row as %+v", row.Rigor)
+	}
+	if first := row.Rigor.Areas[0]; first.Name != "payments" || first.Mode != rigor.Critical {
+		t.Errorf("the row's first area = %+v; want the strictest rule, whatever order the block wrote", first)
+	}
+	// An area whose own mode is unreadable is dropped whole rather than
+	// reaching a reader as a rule it cannot rank.
+	noMode := rec(runstore.StatusSucceeded, nil)
+	noMode.Rigor = &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
+		Areas: []runstore.RigorArea{
+			{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap},
+			{Name: "web", At: runstore.RigorAtRound},
+		}, At: runstore.RigorAtFinalize}
+	if got := Join(Input{Task: spec, Launch: launch, Record: noMode}, prices, now).Rigor; got == nil || len(got.Areas) != 1 || got.Areas[0].Name != "payments" {
+		t.Errorf("a block with an unrankable area reached the row as %+v", got)
 	}
 }
