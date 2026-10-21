@@ -756,6 +756,15 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		// publishedPolicyOf before a publish gets here, and what this assignment
 		// re-encodes is therefore the whole of the operator's block.
 		pol.Credentials = old.Credentials
+		// The orchestrators block is kept, and it is the strongest case of the
+		// three: no command of this release derives it from the operator's
+		// config at all — `fugaro orchestrator add` writes it, and the node is
+		// the only place it exists — so a publish that dropped it would
+		// un-admit every identity of every central orchestrator, silently, on a
+		// publish about something else. D12 put these commands on the publish
+		// path for exactly this: the block is part of the published policy and
+		// a publish is what rewrites that node.
+		pol.Orchestrators = old.Orchestrators
 	}
 	return pol, keepRouting, nil
 }
@@ -1546,6 +1555,17 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	if new.Credentials != nil {
 		fmt.Fprintf(out, "  credentials kept: %s\n", credentialsText(new.Credentials))
 	}
+	// The orchestrators block is kept for the same reason and more strongly
+	// (buildProjectPolicy says why: this publisher writes none of it), and it
+	// is worth a line per entry rather than the summary row's names: the cap is
+	// what an orchestrator's jobs may spend and the admitted identities are who
+	// may act on them, so a publish that dropped the block would take both away
+	// and a diff that named neither would let the operator read that as a
+	// publish about something else.
+	for _, name := range new.OrchestratorNames() {
+		o, _ := new.OrchestratorFor(name)
+		fmt.Fprintf(out, "  orchestrators %s kept: cap_usd %s, admitted %v\n", name, capText(o.CapUSD), o.Allow)
+	}
 	// And the two members that stop older readers (the plan's C1.2 skew
 	// section, which hands this warning to the review of this task; the review
 	// asked for it): publishing either is a decision with a cost that is paid
@@ -1843,7 +1863,18 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 		"providers":             strings.Join(slices.Sorted(maps.Keys(p.Providers)), ", "),
 		"profiles":              profilesText(p),
 		"accounts":              accountsText(p),
+		"orchestrators":         orchestratorsText(p),
 	}
+}
+
+// orchestratorsText is the policy's central-orchestrator names as one line, for
+// the diff's summary row (the per-entry lines below it carry the cap and who is
+// admitted).
+func orchestratorsText(p *projectpolicy.Policy) string {
+	if len(p.Orchestrators) == 0 {
+		return "none (this project runs no central orchestrator)"
+	}
+	return strings.Join(p.OrchestratorNames(), ", ")
 }
 
 // profilesText is the policy's profile names as one line, for the diff's

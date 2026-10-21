@@ -38,6 +38,7 @@ Subcommands:
 - `fugaro init` -- Stand up or adopt the installation's, or a repository's, cloud resources through Terraform
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
+- `fugaro orchestrator` -- The project's central orchestrators: who may use which, and what they may spend
 - `fugaro plan` -- Read a plan's graph artifact
 - `fugaro project` -- The project's policy, its allow-list and the repositories enrolled
 - `fugaro recipes` -- List, show, validate and publish recipes, the task loop a run follows after implement
@@ -1717,6 +1718,149 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for flag |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator`
+
+The project's central orchestrators: who may use which, and what they may spend
+
+Usage: `fugaro orchestrator`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for orchestrator |
+
+Subcommands:
+
+- `fugaro orchestrator add` -- Admit an identity to a central orchestrator and administer its access record
+- `fugaro orchestrator ls` -- List the project's central orchestrators, who they admit, and what is administered
+- `fugaro orchestrator rm` -- Stop admitting an identity (or a whole orchestrator) and take its access away
+
+## `fugaro orchestrator add`
+
+Admit an identity to a central orchestrator and administer its access record
+
+Admit one identity to a named central orchestrator and write that identity's
+access record, in one command, because the two are one decision (D6, D12): the
+policy block holds who this project admits to which orchestrator and the
+ceiling on one of that orchestrator's jobs, and the access record
+(config/admin/devices/<uid>, plus the email and the role) is what the deployed
+rules read on every connection.
+
+Everything the command has to be able to name is a flag, and none has a
+default: --allow is the identity (a Firebase Auth uid, which is also the
+access record's key), --email and --role are what an administrator writes
+there (the role is member or admin), and
+--cap-usd is the ceiling on what one job this orchestrator launches may spend
+(automated work carries its own cap, separate from developers' caps). An
+identity that is already admitted is re-administered rather than duplicated,
+and the cap is replaced: a second add of the same orchestrator widens it.
+
+The policy block is written first, under the ETag of the read, and the access
+record after it. The order is what a failure leaves behind: a publish that
+lands in between refuses this write and the record is not touched, where the
+other order would administer an identity no entry admits — and an administered
+identity is what the rules grant a seat to. A failure between the two writes
+is named as what it is, with the block written and the seat not yet reachable.
+
+Administration is not pairing: the device node is a phone's record and this
+command writes two fields of it, so an identity with no node at all has none
+to write into and the rules admit it to nothing — the node is written by
+pairing (fugaro pair, plan task P6.6, not built yet), and by hand until then.
+Writing a node here would be creating a pairing record, which is a different
+decision with a wider blast radius (the phone's own families).
+
+Usage: `fugaro orchestrator add <name> --allow <uid> --email <address> --role member|admin --cap-usd <usd>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--allow` | string | "" | no | the uid admitted to this orchestrator (the identity, with --email and --role) |
+| `--cap-usd` | float64 | `0` | no | the ceiling on what one job this orchestrator launches may spend, in US dollars |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--email` | string | "" | no | the email an administrator writes into the access record |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--role` | string | "" | no | the role the access record carries: member or admin |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator ls`
+
+List the project's central orchestrators, who they admit, and what is administered
+
+Print every central orchestrator the published policy names with its cap, the
+identities it admits, and the access record the database holds for each of
+them — the email, the role, or the state that keeps the rules from granting a
+seat (no node at all, or a node nobody administered).
+
+Every identity the database has administered and no orchestrator names is
+printed too: the rules grant such an identity the lease of *any* orchestrator,
+because the grant reads the access record and not this block, so it is a seat
+nobody admitted and nothing but this report takes away.
+
+Usage: `fugaro orchestrator ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator rm`
+
+Stop admitting an identity (or a whole orchestrator) and take its access away
+
+Remove one entry from the published policy's orchestrators block, or one
+identity from an entry with --allow. Both take the administration away with
+the admission — the email and the role are deleted from the access record of
+every identity no remaining entry names — because an administered identity is
+what the deployed rules grant a seat to: removing the entry alone would leave
+an identity that still takes the lease of any orchestrator, which is the state
+'fugaro orchestrator ls' reports as drift.
+
+The pairing half of the record is left exactly as it is: an identity removed
+here keeps every family its phone had (its caps, the mailbox, the dashboard)
+and loses the orchestrators lease, which is the blast radius D6's one-node
+record is chosen for.
+
+Removing the last identity of an entry with --allow is refused: an entry that
+admits nobody is a policy about nothing, so the whole entry is what goes.
+
+It asks you to type the project's name, because taking a seat away narrows who
+may act on the project's jobs; --yes confirms without it.
+
+Usage: `fugaro orchestrator rm <name> [--allow <uid>] [--yes]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--allow` | string | "" | no | remove only this uid from the entry, keeping the orchestrator |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--yes` | bool | `false` | no | confirm without typing the project's name |
 
 Subcommands:
 
