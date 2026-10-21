@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,400,486 bytes in a checkout with no tags** and to **1,400,486 bytes with the
+  commit builds to **1,402,356 bytes in a checkout with no tags** and to **1,402,356 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -739,6 +739,22 @@ added or removed without this sentence moving fails there:
     drawn as one closed outline of straight edges is symmetric about both of the lines through its
     own middle and that middle is the middle of the box — planted against the star as it shipped,
     so the fix and the check that would have caught it arrive together.
+  - **Home is the menu's first item** (the owner's feedback of 2026-10-21: "I think we need a
+    'Home' as the first menu"). The item is a link in the menu's own list, in front of the three
+    groups, on every page and at every width, and the phone block's two rules are what pay for a
+    fourth item in the header's row — the gap between the wordmark and the menu goes to the
+    phone's 4 px and the items stand with no gap between them — with the wordmark's text leaving
+    that row from 432 px down rather than from 390 px down, which is the same arithmetic with one
+    more item in it. **Both halves are inlined into every page**, so the move is uniform and large
+    for a single link: **170 bytes onto each of the 11 pages** — 119 of stylesheet and 51 of
+    markup — which is **1,870 bytes** onto the site figure, 1,400,486 → **1,402,356**, and **170**
+    onto the page weight, 399,732 → **399,902** on the console page (the homepage's own
+    `aria-current="page"` moves from the wordmark to the new link, which is why its markup moves
+    by the same 51 as every other page's). The script is untouched — the menu still opens and
+    closes with JavaScript off, and Home is a link, so it needs none — and the count of files in
+    `dist/` stays **28**. `test/base-styles.mjs` holds the item's position, its route and its name
+    and refuses a Home item that holds a list, and holds the phone block's two rules to the row
+    the fourth item was measured into.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -763,10 +779,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,498,995 bytes. Three times 499,665: the heaviest page, the
-    console page, at 399,732 bytes (its HTML, the four screenshots it renders, and the files
+  - **Page weight per page:** 1,499,634 bytes. Three times 499,878: the heaviest page, the
+    console page, at 399,902 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,251,824 bytes. Three times 1,750,608 (every file in `dist/`, 1,400,486
+  - **Whole site:** 5,258,835 bytes. Three times 1,752,945 (every file in `dist/`, 1,402,356
     bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 

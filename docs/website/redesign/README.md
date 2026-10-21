@@ -1334,3 +1334,89 @@ the FAQ page and from the file that fed it; nothing else on the page moved.
   from the gates' own measurement — with `(cd website && npm run check)` green over all of the
   gates. **Whether the page looks right without the section is the owner's check at the
   preview** (70a–70c, P9, D190).
+
+## The owner's 2026-10-21 feedback, items 1 and 2: the spark's drawing, and Home in the menu
+
+The owner's feedback of **2026-10-21** is three readings of the live site (fugaro.dev) in one
+message: the icon under the homepage's fourth benefit, a `Home` item at the front of the menu,
+and the homepage's tab strip, which becomes a slider (the section below). This section is items
+1 and 2. As every round here, the readings the feedback does not spell out are recorded, so a
+later reader does not have to guess them from the markup.
+
+- **The spark is drawn symmetric (item 1: "icon for 'The newest tools and models, ready to
+  use' is asymmetrical").** `Benefits.astro` draws the four benefit glyphs as inline SVG in one
+  24 × 24 box with a 2-unit `currentColor` stroke, and the fourth — the four-point star that
+  means the newest tools and models — was drawn as one closed outline of straight edges with
+  the north-west notch left out: `M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11Z` runs from
+  the west point straight to the north one, so six of its seven corners had a corner opposite
+  them and the seventh had none, and the mark was drawn about y = 11 in a box whose middle is
+  y = 12. Both are what a reader sees as the star leaning. The drawing is now
+  `M12 4l2.2 5.8L20 12l-5.8 2.2L12 20l-2.2-5.8L4 12l5.8-2.2Z`: the same four points, the same
+  four notches, the same 16-unit span, the same stroke, and the mark centred on (12, 12) like
+  every other glyph of the set. **The meaning is untouched** — a spark, the newest tools and
+  models, ready to use — and so are the set's size and stroke.
+- **The rule that would have caught it, and its two plants.** `website/test/home.mjs`'s
+  `benefitFailures` now holds a glyph that is *drawn as one closed outline of straight edges*
+  to being symmetric about both of the lines through its own middle, and to that middle being
+  the middle of the box. The rule is written over the drawing and not over the star by name —
+  `outlineOf` reads the path's own commands — so it is a fact about the shape a glyph is rather
+  than a description of today's markup, and a glyph drawn with curves or in several strokes (the
+  shield, the arrows, the team) is not a mark it has anything to say about. Two defects are
+  planted beside the fixture section: **the star as it shipped** (refused twice for the missing
+  corner, at (9.8, 8.8), and once for the middle at (12, 11)) and **a symmetric star a unit off
+  the box's middle** (refused for the middle alone). Both were also proved by hand against the
+  real page: with the old drawing in `Benefits.astro` and the artifact rebuilt, the case that
+  reads the built homepage fails naming the corner; with the fix in place it passes.
+- **Home is the menu's first item (item 2: "I think we need a 'Home' as the first menu").**
+  D182 took Home out of the menu and left the wordmark as the one link to `/`; the item is back
+  as a plain `<li class="site-nav-home"><a href="/">Home</a></li>` in front of the three groups,
+  in the same list, at every width — the "first menu" is the first item of the one menu the site
+  has, and the phone shows that menu rather than a collapsed version of it (the 2026-10-19
+  amendment). **The wordmark stays the way home it has always been**, so `/` is listed twice and
+  the two links say the same thing; what moves is the current-page mark, which is now the menu's
+  Home link on the home page and never the wordmark, because a page carries exactly one
+  `aria-current="page"` (RF4) and the mark belongs on the link a reader looks for in a menu.
+  Home is a link and not a group: home is one page and has nothing under it, so a disclosure in
+  front of it would be a control that opens nothing, and it needs no script at all.
+- **The phone row carries four items, and the fourth one moves the breakpoint and the row's
+  spacing.** The 2026-10-19 round measured the row rather than estimating it: at 381 px the
+  wordmark's text plus the three labels was a few pixels wider than the header's content box in
+  the font the built site falls back to, so the text left the row below **390 px**. The Home
+  link and its gap are about 45 px at that size, and the same arithmetic puts the cut at
+  **432 px (27 rem)**, rounded up from the 426 px the three-item figure implies. Below the cut
+  the row's own spacing is what the fourth item is paid for: the 8 px between the wordmark and
+  the menu becomes 4, and the items stand with no gap between them — their own 4 px padding
+  either side is what separates them, which is the 8 px a phone's labels have always been drawn
+  with. That is 16 px of the 45 px back, and it is the part of the row that is neither the mark
+  (the 2026-10-19 ruling keeps it) nor the labels (their 44 px height is the brief's tap
+  target).
+- **The gates, and what the live check has to settle.** `website/test/base-styles.mjs`'s
+  `navFailures` holds the item's position (read off the list's own children, because "first" is
+  the order a reader meets them in), its route and its name, refuses a Home item that holds a
+  list or a disclosure, and refuses an item that is neither Home nor a group; `navLayoutFailures`
+  holds the phone block's two rules, because a phone block that leaves the row's spacing standing
+  is the three-item row's spacing with a fourth item in it. Each rule keeps a plant: a menu with
+  no Home item, one with Home last, a Home link pointing elsewhere, a first item named something
+  else, a Home item holding a list, a fifth item that is neither, and the two spacing rules
+  removed. **Whether the row fits a 320 px phone's content box is a rendered measurement no
+  hermetic test can take**: it is the owner's check 70a, exactly as the three-item row's fit was,
+  and the arithmetic above says the row needs about 12 px more than a 320 px content box has on
+  the label widths the 2026-10-19 round measured in a browser (65, 83.5 and 59.3 px at 375 px).
+  If that check shows a sideways scroll, the levers are named in the code: the mark, the labels'
+  own 4 px padding, and the breakpoint.
+- **The bytes, re-derived in the commits that moved them.** The spark's drawing is 8 bytes onto
+  the homepage's markup and so onto the site figure, and it was re-derived in its own commit —
+  which also paid 12,799 bytes the stated figure had drifted by, the `cli-reference` rewrites of
+  the CLI rounds (#789, #832) landing after the screenshots round re-derived (the running list in
+  `website/README.md` records both, and D192's exact derivation runs only under
+  `FUGARO_DERIVE_BUDGETS=1`, which CI does not set). The Home item is markup **and** stylesheet
+  inlined into every page, so its move is uniform and large for one link: 170 bytes onto each of
+  the 11 pages (119 of stylesheet, 51 of markup — the homepage's own current-page mark moves from
+  the wordmark to the new link, which is why its markup moves by the same 51), 1,870 onto the
+  site figure and 170 onto the page weight, all re-derived in its own commit. The script is
+  untouched by both, and the count of files in `dist/` stays 28.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round and this run cannot see a picture. What was read is the built
+  artifact and the stylesheet, through the gates above, with `(cd website && npm run check)`
+  green over all 415 cases. **Whether the star now reads as symmetric and whether the phone's
+  header row fits at 320 px are the owner's check at the preview** (70a–70c, P9, D190).
