@@ -23,8 +23,8 @@ func readRepoFile(t *testing.T, rel string) string {
 }
 
 // TestReadmeGettingStartedIsTwoSteps: the section has exactly two numbered
-// steps, `fugaro init` and `/fugaro:setup`; the third step the skill carries
-// is one sentence, and the plugin note says where init wires it.
+// steps, `fugaro setup` and `/fugaro:setup`; the third step the skill carries
+// is one sentence, and the plugin note says where setup wires it.
 func TestReadmeGettingStartedIsTwoSteps(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 	_, rest, ok := strings.Cut(readme, "\n## Getting started\n")
@@ -36,13 +36,13 @@ func TestReadmeGettingStartedIsTwoSteps(t *testing.T) {
 	if len(steps) != 2 {
 		t.Fatalf("Getting started has %d numbered steps, want 2: %q", len(steps), steps)
 	}
-	if !strings.Contains(steps[0], "`fugaro init`") {
-		t.Errorf("step 1 is %q, want `fugaro init`", steps[0])
+	if !strings.Contains(steps[0], "`fugaro setup`") {
+		t.Errorf("step 1 is %q, want `fugaro setup`", steps[0])
 	}
 	if !strings.Contains(steps[1], "`/fugaro:setup`") {
 		t.Errorf("step 2 is %q, want `/fugaro:setup`", steps[1])
 	}
-	for _, want := range []string{"merge", "`fugaro init` again", "`.claude/settings.json`", "install"} {
+	for _, want := range []string{"merge", "`fugaro setup` again", "`.claude/settings.json`", "install"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Getting started never says %q", want)
 		}

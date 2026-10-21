@@ -422,11 +422,12 @@ added or removed without this sentence moving fails there:
     18,112 → **18,056**, and off the site figure, 972,470 → **972,414** (the document URL is 82
     bytes, the page's own anchor 26). The page weight and the script did not move.
   - **The spacing gate found a second row glued together once `main` came in** (the merge of
-    `main`'s Getting Started rework into this branch): the "Set up your installation" step
-    rendered "fugaro initin your own terminal.", the link ending one source line and the
-    sentence starting the next. The space is written into the line now, **1 byte**, and the
-    site figure is 972,414 → **972,415**. The page weight and the script did not move. The
-    clone figure moved by the same bytes as each of the security page's rounds.
+    `main`'s Getting Started rework into this branch): a step of "Set up your installation"
+    rendered the command it names and the sentence after it with nothing between them, the
+    link ending one source line and the sentence starting the next. The space is written
+    into the line now, **1 byte**, and the site figure is 972,414 → **972,415**. The page
+    weight and the script did not move. The clone figure moved by the same bytes as each of
+    the security page's rounds.
   - **The header was put on a layer of its own** (the owner's reading of 2026-10-19: "How it
     works: menu hidden by the blocks on mobile"), and moved **every page by the same 77
     bytes**: 972,415 → **973,262** at the site figure and 280,604 → **280,681** at the page
@@ -741,7 +742,7 @@ added or removed without this sentence moving fails there:
     checksum line — less the command block the owner struck.
     **The other 12,799 bytes are what rounds merged from `main` left un-derived** — 12,746 of them
     already inside the build the screenshots round's figure was taken from, and 53 from the
-    `fugaro init` round's CLI strings reaching the reference page — and this round pays them by
+    CLI rename round's strings reaching the reference page — and this round pays them by
     re-deriving rather than carrying them forward, the way the screenshots round paid the 90,041
     before it. The console page's words go 303 → **299**: the struck command was four of them, and
     the bar the script drives adds none (an arrow's name is an `aria-label`, which is not text a
