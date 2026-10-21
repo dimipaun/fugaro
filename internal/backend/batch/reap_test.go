@@ -838,22 +838,27 @@ func TestReaperRefusesAPartialJobListing(t *testing.T) {
 }
 
 // TestReaperRefusesAJobListedOutsideItsLocation: the reaper asks one location
-// for its jobs and acts on every name it answers with verbatim -- jobs.get
-// (deleteQueued's read-back) and jobs.delete take j.Name exactly as the
-// listing returned it. A listing that answers a job of another location is
-// therefore not the listing this pass asked for: the name would send those
-// calls somewhere else, and the runs the job claims would be the one thing the
-// job pass could not hand to the instance pass -- a job it never attributed is
-// a run whose VMs it never owned, which is exactly what the instance pass
-// deletes. So the pass ends before anything is deleted, with an error rather
-// than a report, as it does on a partial listing.
+// for its jobs, and the names those jobs are acted on by are the ones it
+// derived itself (jobNameFor) -- jobs.get (deleteQueued's read-back) and
+// jobs.delete take j.Name as the pass set it, and jobs.delete is the
+// destructive verb of the five in this file's header. A listing that answers a
+// job whose name cannot be placed in this installation's location is therefore
+// not the listing this pass asked for: the runs the job claims would be the
+// one thing the job pass could not hand to the instance pass -- a job it never
+// attributed is a run whose VMs it never owned, which is exactly what the
+// instance pass deletes. So the pass ends before anything is deleted, with an
+// error rather than a report, as it does on a partial listing.
 //
 // The fake's ProjectNumber knob is what makes the API answer with a name that
 // is not this installation's: it is documented as "replaces the project ID in
 // every name the fake returns, as the real API may", and here it is set to
-// another project's ID rather than to a number -- the same rendering with the
-// one value the reaper must refuse. That a NUMBER is accepted is the other
-// half, TestReaperAcceptsTheProjectNumberSpelling.
+// another project's ID rather than to a number -- a rendering the reaper
+// cannot read as its own project, and the one shape it must refuse. That a
+// NUMBER is accepted (and rewritten) is the other half,
+// TestReaperAcceptsTheProjectNumberSpelling; the region arm of the same check
+// is pinned by TestJobNameForKeepsEveryNameInThisInstallationsLocation, which
+// no fake can reach (a name in another region is a name the fake never
+// renders).
 //
 // The error is also read for what it must NOT carry: the name is the one value
 // this pass must not act on, and a message that printed it would read as a job
@@ -895,18 +900,94 @@ func TestReaperRefusesAJobListedOutsideItsLocation(t *testing.T) {
 // pins the create-time half of it), so a check that refused the number would
 // refuse every listing from an API that spells the project that way, and the
 // reaper -- a safety net that must run unattended -- would reap nothing at all
-// and say so on every pass. A numeric project segment is a project number and
-// not a project ID (an ID starts with a letter), and a listing scoped to this
-// installation's location can only carry this project's number.
+// and say so on every pass.
+//
+// The number is not merely tolerated, it is replaced: the name the pass acts
+// on is the one jobNameFor derived from the configured project, which is what
+// the action's target has to show. A pass that accepted the number and then
+// acted on the listing's own spelling would be sending jobs.delete to a name
+// whose project segment it never checked against anything -- the hole this
+// test's sibling refuses on the other side of the boundary.
 //
 // Mutation (compare the project segment to the configured ID exactly): this
-// fails, with the pass refusing its own listing.
+// fails, with the pass refusing its own listing. Mutation (accept the number
+// and keep the listing's spelling): the target assertion fails, naming
+// projects/123456789/... .
 func TestReaperAcceptsTheProjectNumberSpelling(t *testing.T) {
 	rt := newReaperTest(t, nil)
 	rt.bf.ProjectNumber = "123456789"
-	rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
-	if _, err := rt.r.Reap(context.Background()); err != nil {
-		t.Fatalf("Reap with the project number in the listing's names: %v, want a pass that runs: Batch answers names with the number, so refusing it would refuse every listing", err)
+	id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
+	rep := rt.reap(t)
+	if !hasAction(rep, ActionDeleteJob, rt.name(id)) {
+		t.Fatalf("actions = %v, want the stuck job deleted as %s: the pass acts on the name it derived from its own project, not on the listing's spelling", rep.Actions, rt.name(id))
+	}
+	for _, a := range rep.Actions {
+		if strings.Contains(a.Target, "123456789") {
+			t.Fatalf("action target = %q, want no name carrying the project number: every name this pass acts on is in the project it was configured with", a.Target)
+		}
+	}
+	if got := rt.bf.Deletes(); len(got) != 1 || got[0] != id {
+		t.Fatalf("jobs.delete = %v, want exactly [%s]", got, id)
+	}
+}
+
+// TestJobNameForKeepsEveryNameInThisInstallationsLocation pins the check
+// itself, arm by arm: every name this pass acts on comes from jobNameFor, and
+// what it returns is either a name in this installation's own location or
+// nothing at all.
+//
+// It is a direct test because the other arm cannot be reached through the
+// fakes: gcpfake.Batch renders the project (ProjectNumber, which
+// TestReaperRefusesAJobListedOutsideItsLocation uses) but never the region --
+// it stores a job under the region its create named and answers a get, cancel,
+// delete or list naming another region with NOT_FOUND, because that is what
+// the API does. A listing that answers a name in another region is exactly the
+// server the reaper cannot trust, and no knob can produce it; the arm is still
+// the difference between a name the reaper acts on and a delete sent to
+// another region, so it is pinned here.
+//
+// The region is compared and never rewritten, the project ID is kept, the
+// number is replaced by the configured ID, and everything else -- another
+// project's ID, a malformed name, a part that is not [a-z0-9-] -- is refused.
+func TestJobNameForKeepsEveryNameInThisInstallationsLocation(t *testing.T) {
+	rt := newReaperTest(t, nil)
+	const job = "20260927-100000-abcd"
+	own := rt.name(job)
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"this installation's own project ID", own, own},
+		{"the project number, which Batch answers a created job with", "projects/123456789/locations/" + testRegion + "/jobs/" + job, own},
+		{"another project's ID", "projects/another-project/locations/" + testRegion + "/jobs/" + job, ""},
+		{"another region", "projects/" + testProject + "/locations/fake-region-b/jobs/" + job, ""},
+		{"another project's number in another region", "projects/987654321/locations/fake-region-b/jobs/" + job, ""},
+		{"a name that is not a Batch job name", "projects/" + testProject + "/locations/" + testRegion + "/jobs", ""},
+		{"another service's resource", "projects/" + testProject + "/locations/" + testRegion + "/executions/" + job, ""},
+		{"a part outside [a-z0-9-]", "projects/" + testProject + "/locations/" + testRegion + "/jobs/2026_0927", ""},
+		{"an empty job id", "projects/" + testProject + "/locations/" + testRegion + "/jobs/", ""},
+		{"an empty project", "projects//locations/" + testRegion + "/jobs/" + job, ""},
+		{"an empty region", "projects/" + testProject + "/locations//jobs/" + job, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := rt.r.jobNameFor(tc.in)
+			if tc.want == "" {
+				if ok {
+					t.Fatalf("jobNameFor(%q) = %q, want no name: this pass may only act inside %s", tc.in, got, rt.r.location())
+				}
+				return
+			}
+			if !ok {
+				t.Fatalf("jobNameFor(%q) = no name, want %q", tc.in, tc.want)
+			}
+			if got != tc.want {
+				t.Fatalf("jobNameFor(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if !strings.HasPrefix(got, rt.r.location()+"/jobs/") {
+				t.Fatalf("jobNameFor(%q) = %q, want a name under %s/jobs/", tc.in, got, rt.r.location())
+			}
+		})
 	}
 }
 

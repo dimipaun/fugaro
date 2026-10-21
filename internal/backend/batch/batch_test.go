@@ -1065,6 +1065,7 @@ func postRawJob(t *testing.T, bf *gcpfake.Batch, id, body string) {
 // matching the name the backend launched with (design §2.3). The fake is set
 // to answer with the number, which is what makes the rewrite -- rather than
 // the fake agreeing -- the reason the names below match.
+
 // preemptEvent is the report a preempted run's job carries: a task-level status
 // event whose task execution ended with Batch's reserved preemption exit code.
 // The shape is the API's own -- StatusEvent.TaskExecution is documented as

@@ -541,36 +541,55 @@ func (r *Reaper) location() string {
 	return "projects/" + r.o.GCPProject + "/locations/" + r.o.Region
 }
 
-// jobNameInOwnLocation reports whether a job's own name is under the location
-// this pass asked about: projects/<project>/locations/<region>/jobs/<id>, for
-// this installation's own project and region.
+// jobNameFor is the name this pass may act on for a job the listing answered
+// with name, and whether there is one at all.
 //
-// It is the check every name this pass acts on has to pass, because a job is
-// acted on by the listing's own j.Name, verbatim: jobs.get (deleteQueued's
-// read-back) and jobs.delete take that string as it stands, so a name outside
-// this installation's location would send a read -- and a delete, which is the
-// destructive verb of the five in this file's header -- somewhere else.
-// Nothing about the listing makes that impossible: the reaper asks for its
-// location and filters by a label, and a server that answers a listing with a
-// job of another location is answering a question that was not asked.
+// Every name this pass acts on comes from here, because a job is acted on by
+// the listing's own j.Name: jobs.get (deleteQueued's read-back) and
+// jobs.delete take that string as it stands, and jobs.delete is the
+// destructive verb of the five in this file's header -- so a name outside
+// this installation's location would send a read, and a delete, somewhere
+// else. Nothing about the listing makes that impossible: the reaper asks for
+// its location and filters by a label, and a server that answers a listing
+// with a job of another location is answering a question that was not asked.
 //
-// The project segment is accepted in BOTH spellings Batch has for it: the
-// project ID this installation was configured with, and the project NUMBER.
-// The number is not a loosening of "this installation's own project": Batch
-// answers a created job's name with the number (design §2.3, which is why
-// Backend.canonical rewrites the project back to the ID, and why the fake
-// carries its ProjectNumber knob and TestExecutionRewritesTheProjectNumber
-// pins it), and a listing scoped to projects/<id>/locations/<region> can only
-// carry this project's number. No project ID is all digits -- an ID starts
-// with a lowercase letter, the rule batch.go's own name checks spell -- so a
-// numeric segment is a project number and never an ID of someone else's
-// project.
-func (r *Reaper) jobNameInOwnLocation(name string) bool {
-	id, ok := backend.BatchCodec().Parse(name)
-	if !ok || id.Region != r.o.Region {
-		return false
+// The check is therefore a rewrite and not a comparison, so that no name
+// outside this installation's own location can reach a request whatever the
+// listing says:
+//
+//   - the configured project ID: this installation's own project, and the
+//     name is rebuilt canonically all the same;
+//   - an all-digit project segment: Batch answers a created job's name with
+//     the project NUMBER (design §2.3, which is why Backend.canonical
+//     rewrites the project back to the ID, and why the fake carries its
+//     ProjectNumber knob and TestExecutionRewritesTheProjectNumber pins it).
+//     The number is not compared against this installation's own -- this
+//     pass has no number to compare with -- it is REPLACED by the configured
+//     project ID, so the request names this installation's project either
+//     way. Accepting the number is not a loosening of "this installation's
+//     own project": a numeric segment is a project number, never an ID of
+//     another project, since no project ID is all digits (an ID starts with
+//     a lowercase letter, the rule batch.go's own name checks spell), and
+//     whatever the number was, the name this pass returns is in its own
+//     project;
+//   - anything else: refused. A project segment that is neither this
+//     project's ID nor a number is a name this pass cannot place in its own
+//     project, so there is nothing here it may act on.
+//
+// The region is compared, never rewritten: a job is regional, this reaper
+// knows its own region, and the name has to be well-formed throughout --
+// BatchCodec().ParseInRegion is the tree's own shape, charset and region
+// check for a Batch name (runPartRE: [a-z0-9-] per part), the same one the
+// CLI's job-env check applies to a name it is handed.
+func (r *Reaper) jobNameFor(name string) (string, bool) {
+	id, err := backend.BatchCodec().ParseInRegion(name, r.o.Region)
+	if err != nil {
+		return "", false
 	}
-	return id.GCPProject == r.o.GCPProject || digitsOnly(id.GCPProject)
+	if id.GCPProject != r.o.GCPProject && !digitsOnly(id.GCPProject) {
+		return "", false
+	}
+	return r.location() + "/jobs/" + id.Job, true
 }
 
 // digitsOnly reports whether s is one or more ASCII digits.
@@ -1214,16 +1233,24 @@ func (r *Reaper) listJobs(ctx context.Context) ([]*batch.Job, error) {
 				continue
 			}
 			// A job this pass may act on must be named under the location it
-			// asked about (jobNameInOwnLocation has the whole of it). A
-			// listing that answers a job outside it is not the listing this
-			// pass asked for, so nothing in it can be read as fact -- the pass
-			// ends, as it does on a partial listing, and the caller retries.
-			// The name is not printed: it is the one value this pass must not
-			// act on, and the message names the location instead, which is
-			// what an operator can check against the installation.
-			if !r.jobNameInOwnLocation(j.Name) {
+			// asked about (jobNameFor has the whole of it). A listing that
+			// answers a job that cannot be placed there is not the listing
+			// this pass asked for, so nothing in it can be read as fact -- the
+			// pass ends, as it does on a partial listing, and the caller
+			// retries. The name is not printed: it is the one value this pass
+			// must not act on, and the message names the location instead,
+			// which is what an operator can check against the installation.
+			//
+			// The name this pass keeps is jobNameFor's, not the listing's, so
+			// every request the job leads to -- jobs.get, jobs.delete, and the
+			// target the report names -- is in this installation's own
+			// location even when the listing spelled it with the project
+			// number.
+			own, ok := r.jobNameFor(j.Name)
+			if !ok {
 				return nil, fmt.Errorf("listing jobs in %s: the API answered a job whose name is not under %s/jobs/, so this listing is not the one this pass asked for: refusing to reap anything from it", r.location(), r.location())
 			}
+			j.Name = own
 			out = append(out, j)
 		}
 		if resp.NextPageToken == "" {

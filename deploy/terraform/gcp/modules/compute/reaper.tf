@@ -104,12 +104,17 @@ locals {
 # bakes into the boot image, and the one the module already reasons about (its
 # host, project and repository are checked against this root's own in
 # variables.tf). It is the image that carries `/usr/local/bin/fugaro`
-# (images/base/Dockerfile). The pull is Cloud Run's own, as it is for every
-# Cloud Run job in this installation (modules/repo/check.tf runs the same kind
-# of job as the build account, which holds no reader on the repository that
-# image lives in either): the reaper account holds no
-# artifactregistry.reader, deliberately (iam.tf: "The reaper's own email has
-# no reader"), and needs none.
+# (images/base/Dockerfile). The reaper account holds no
+# artifactregistry.reader, deliberately, and needs none: a Cloud Run job's
+# image is pulled by Cloud Run's own infrastructure, not by the account the
+# container runs as -- that account decides what the container may do once it
+# is running, and this one's five permissions are the reaper's whole surface
+# (iam.tf). The installation already runs such a job: modules/installation/
+# history.tf's sweep runs the base registry's own history image as an account
+# whose only grant is the fugaroHistory custom role, and it pulls. The reader
+# grants repo/build.tf gives the build account (build_base, build_ghcr) are the
+# build's own, which pulls its FROM images with its own credential, and are no
+# precedent for this job either way.
 resource "google_cloud_run_v2_job" "reaper" {
   project  = var.project
   location = var.region
