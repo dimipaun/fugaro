@@ -34,13 +34,25 @@
 //   4. **The slider is usable with JavaScript off.** It is the browser's own scrolling:
 //      the track is a focusable, labelled scroll container with `scroll-snap`, each dot is
 //      an `<a href="#…">` naming the slide it shows — focusable, operable with Enter, named for
-//      a screen reader — and the CSS carries no script, no autoplay and no timer. This is the
-//      half a hermetic test can hold — that the markup and the stylesheet are what makes the
-//      slider work — and it is the half that would rot silently, because a slider that needs a
-//      script to move is a slider that does nothing at all on a page the site's own rule keeps
-//      script-free. The no-script fallback is the page itself: the pictures are `<img>` elements
-//      in the document and the first of them is the one the frame opens on.
-//   5. **The refusals.** A URL where a file name belongs, a name with no extension at all, a
+//      a screen reader — and the CSS carries no script, no autoplay and no timer; the bar the
+//      script drives is in the markup `hidden` and only while there is more than one slide, so a
+//      reader with no script sees four screenshots and four dots rather than two dead buttons.
+//      This is the half a hermetic test can hold — that the markup and the stylesheet are what
+//      makes the slider work — and it is the half that would rot silently, because a slider that
+//      needs a script to move is a slider that does nothing at all on a page the site's own rule
+//      keeps script-free. The no-script fallback is the page itself: the pictures are `<img>`
+//      elements in the document and the first of them is the one the frame opens on.
+//   5. **The script's half, run rather than read** (parts 5a and 5b below). The owner's
+//      feedback of 2026-10-21 asked for the count, for controls that click and for an autoplay,
+//      and those are the three things no stylesheet can do: `public/scripts/site.js` reveals the
+//      bar, writes `n / N` and the current dot from the track's own scroll position, moves the
+//      track on an arrow or a dot press, and advances a slide every six seconds while nobody is
+//      reading — stopping for a pointer over the slider, a focus inside it, a tab in the
+//      background and a visitor who asked for less motion. `lib/dom.mjs` is the stub browser both
+//      these cases and `copy.mjs` run the file in, and **each case below is proved by planting
+//      the defect it names** (5b), because a reading of a script that never disagrees with the
+//      script is a reading of nothing.
+//   6. **The refusals.** A URL where a file name belongs, a name with no extension at all, a
 //      format the slider does not serve, an empty `alt`, an empty caption, a width, a height
 //      or a whole-number size that is not one, and a key no page reads — at the document's
 //      root and in a row — each stop the build naming the row. Between them they are the two
@@ -69,6 +81,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { buildCopy } from './lib/build.mjs'
+import { fakeDOM, SCRIPT_SOURCE } from './lib/dom.mjs'
 import { SITE, parse, textOf, walk } from './lib/html.mjs'
 
 /** The data file the slider renders, as every message below names it. */
@@ -627,7 +640,7 @@ test('a data file with no row in it renders no slider at all, and no picture-sha
 // 4. The slider works with no script: the browser's own scrolling and its own anchors.
 // ---------------------------------------------------------------------------------------
 
-test('the slider is the browser\'s own scrolling, with no script and no timer', (t) => {
+test('the slider is the browser\'s own scrolling, with nothing of its own to run', (t) => {
   const built = buildCopy(t, () => {})
   const slider = sliderOf(consolePage(built))
   assert.ok(slider, `the console page renders no slider with ${SCREENS_YAML}'s rows in the data file`)
@@ -661,10 +674,396 @@ test('the slider is the browser\'s own scrolling, with no script and no timer', 
     !/animation\s*:/.test(css.replace(/animation-duration|animation-iteration-count|animation-delay/g, '')),
     'the slider\'s stylesheet declares an animation, and the slider does not move on its own: it is a scroll container with dots, not a carousel',
   )
+
+  // And the things the script does drive are the script's: the bar is in the markup `hidden`, so
+  // a reader who runs no script is shown the four screenshots and the four dots rather than two
+  // arrows that do nothing and a count nothing keeps in step. That is the same rule the copy
+  // control's markup is held to (`test/copy.mjs`), and it is the half of the fallback the
+  // stylesheet cannot state.
+  const bar = [...walk(slider)].find((el) => hasClass(el, 'screens-bar'))
+  assert.ok(bar, 'the slider carries no control bar, and the arrows and the count are what the owner asked for on 2026-10-21 (the case below reads the bar itself)')
+  assert.ok(
+    bar.attrs.has('hidden'),
+    'the slider\'s control bar is not emitted `hidden`: it is the script that reveals it, and a bar the markup renders visible is two buttons and a count that do nothing for a reader whose browser runs no script (D183)',
+  )
 })
 
 // ---------------------------------------------------------------------------------------
-// 5. The refusals: the data file cannot carry a URL, a foreign format, an empty text, a size
+// 5. The script's half of the control (the owner's feedback of 2026-10-21).
+//
+// 5a. The bar in the markup: the two arrows, the count, `hidden`, and only while there is
+//     somewhere to go.
+// 5b. The same bar with `public/scripts/site.js` run against it — what it counts, where a press
+//     takes the track, how the move lands, and what stops the autoplay — each reading proved by
+//     a planted defect.
+// 5c. The same script on a page that arrives already scrolled: the first reading is the track's
+//     like every other one, so a deep link into a slide opens telling the truth.
+// ---------------------------------------------------------------------------------------
+
+/** The hooks the bar is written in: what the script finds it by, named once. */
+const BAR = '[data-slider-bar]'
+const COUNTER = '[data-slider-counter]'
+const PREV = '[data-slider-prev]'
+const NEXT = '[data-slider-next]'
+const TRACK = '.screens-track'
+const DOT = '.screen-dot'
+
+/** The width the stub gives every element: the track's box, which is the slide's own width. */
+const STUB_WIDTH = 1000
+
+test('the bar is in the markup, emitted hidden, with two named arrows and an unwritten count', (t) => {
+  // The bar is the script's to drive and the markup's to describe: the arrows carry their names
+  // here because a chevron drawn by the stylesheet has no text, the count arrives empty because
+  // the script is what writes it, and the whole bar is `hidden` because a reader with no script
+  // has no script to reveal it with. Each of those is one edit away from being wrong in a way
+  // nothing else on the page would notice.
+  const built = buildCopy(t, () => {})
+  const slider = sliderOf(consolePage(built))
+  assert.ok(slider, `the console page renders no slider with ${SCREENS_YAML}'s rows in the data file`)
+  const inside = [...walk(slider)]
+
+  const bars = inside.filter((el) => hasClass(el, 'screens-bar'))
+  assert.equal(
+    bars.length,
+    1,
+    `the slider carries ${bars.length} control bar(s) marked .screens-bar, and it has exactly one: the Previous arrow, the count and the Next arrow`,
+  )
+  const bar = bars[0]
+  assert.ok(
+    bar.attrs.has('hidden'),
+    'the bar is not emitted `hidden`: the script reveals it, and a bar the markup renders visible is two buttons that do nothing for a reader whose browser runs no script (D183)',
+  )
+
+  // The two arrows, in the order the board draws them, each a real button with its own name:
+  // a `<button>` with no `type` in a form submits it, and a chevron has no text for a screen
+  // reader to announce (WCAG 4.1.2).
+  const arrows = [...walk(bar)].filter((el) => el.name === 'button')
+  assert.deepEqual(
+    arrows.map((el) => (el.attrs.has('data-slider-prev') ? 'previous' : el.attrs.has('data-slider-next') ? 'next' : `(unhooked ${el.name})`)),
+    ['previous', 'next'],
+    'the bar\'s buttons are not the two arrows the owner asked for, hooked in order: a control the script cannot find is a dead button, and this is the hook it finds them by',
+  )
+  for (const [which, arrow] of [['previous', arrows[0]], ['next', arrows[1]]]) {
+    assert.equal(arrow.attrs.get('type'), 'button', `the ${which} arrow is <button type="${arrow.attrs.get('type') ?? ''}">: a control that is not a button is not one a keyboard presses, and a bare <button> in a form submits it`)
+    assert.match(
+      arrow.attrs.get('aria-label') ?? '',
+      new RegExp(which, 'i'),
+      `the ${which} arrow's accessible name is ${JSON.stringify(arrow.attrs.get('aria-label') ?? '')}, and it carries no text of its own: a chevron drawn by the stylesheet is announced as an unnamed button`,
+    )
+  }
+
+  // The count: one element, empty, and a polite live region — the script writes `n / N` into it
+  // as the reader moves, and a number written by the markup is a number nothing keeps in step.
+  const counters = [...walk(bar)].filter((el) => el.attrs.has('data-slider-counter'))
+  assert.equal(counters.length, 1, `the bar carries ${counters.length} element(s) hooked as the count; it has exactly one, and the script writes the slides' count into it`)
+  assert.equal(
+    textOf(counters[0]).trim(),
+    '',
+    'the count carries text in the markup: the script writes `n / N` into it with every move, and a number the markup wrote is a number that is wrong the moment the reader moves',
+  )
+  assert.equal(counters[0].attrs.get('role'), 'status', 'the count is not a status region, so a screen reader is not told which screenshot the slider is on')
+  assert.equal(
+    (counters[0].attrs.get('aria-live') ?? '').toLowerCase(),
+    'polite',
+    `the count is aria-live="${counters[0].attrs.get('aria-live') ?? ''}": a slide changing under a reader is announced politely, and an assertive one interrupts what they are hearing`,
+  )
+  // Between the two arrows, which is where the board draws it: `[...walk]` is document order, so
+  // the count standing after the previous arrow and before the next one is a statement about the
+  // markup rather than about the string.
+  const order = [...walk(bar)]
+  assert.ok(
+    order.indexOf(arrows[0]) < order.indexOf(counters[0]) && order.indexOf(counters[0]) < order.indexOf(arrows[1]),
+    'the count is not between the two arrows: the bar reads Previous, count, Next, and a count drawn somewhere else is a reading the reader has to hunt for',
+  )
+
+  // **And a one-slide slider carries no bar at all.** The same branch the dots are suppressed
+  // on: a control that can only take a reader where they already are is noise — and here it is
+  // worse than noise, because the script would reveal two arrows that go nowhere. The one-slide
+  // case above holds the whole of that branch; this is the bar's half of it, stated where the
+  // bar is read.
+  const single = buildWithScreens(t, fixtureYAML([FIXTURE[0]]))
+  assert.deepEqual(
+    [...walk(sliderOf(consolePage(single)))].filter((el) => hasClass(el, 'screens-bar')).length,
+    0,
+    'a one-slide slider renders the control bar: with one screenshot there is nowhere to go, and the script would reveal two arrows that go nowhere',
+  )
+})
+
+/**
+ * What one run of `site.js` makes of the slider, as the lines it failed: an empty array is the
+ * script's half of the control being the half the owner asked for on 2026-10-21.
+ *
+ * The reading drives the page the way a reader does — presses the arrows, presses a dot, scrolls
+ * the track, puts the pointer over the slider, moves the focus in and out, hides the tab and
+ * changes the motion preference — and after each of those it reads the three things the page
+ * shows: the count, the dot the reader is on, and where the track stands. `when` is the state
+ * each reading is taken in, so a failure says which move was wrong rather than which number was.
+ */
+function scriptFailures(page, { width = STUB_WIDTH } = {}) {
+  const out = []
+  const fail = (why) => out.push(why)
+  const slider = page.find('[data-slider]')[0]
+  if (!slider) return ['the page carries no [data-slider] for the script to drive']
+  const bar = slider.querySelector(BAR)
+  if (!bar) return ['the script has no bar to reveal: the markup carries no [data-slider-bar] inside the slider']
+  if (bar.hidden) {
+    fail('the bar is still `hidden` with the script running: the arrows and the count are the owner\'s feedback of 2026-10-21, and a bar nobody reveals is two buttons that never appear')
+  }
+  const track = slider.querySelector(TRACK)
+  const dots = slider.querySelectorAll(DOT)
+  const count = bar.querySelector(COUNTER)
+  const prev = bar.querySelector(PREV)
+  const next = bar.querySelector(NEXT)
+  if (!track || !count || !prev || !next || dots.length < 2) {
+    return [...out, `the stub page is not a slider (track ${!!track}, count ${!!count}, arrows ${!!prev}/${!!next}, dots ${dots.length}), so none of the readings below could be taken`]
+  }
+  const total = dots.length
+  const shown = () => (count.textContent ?? '').trim()
+  const current = () => dots.map((dot) => dot.getAttribute('aria-current')).filter((mark) => mark === 'true')
+  const running = () => page.running()
+
+  /** What the slider must read and where it must stand when it is on the `at`th slide. */
+  const read = (when, at) => {
+    const want = `${at + 1} / ${total}`
+    if (shown() !== want) fail(`${when}: the count reads ${JSON.stringify(shown())} and the slider stands on ${want}`)
+    if (track.scrollLeft !== at * width) {
+      fail(`${when}: the track is at ${track.scrollLeft}px, and slide ${at + 1} of ${total} stands at ${at * width}px of a ${width}px-wide box`)
+    }
+    const marks = current()
+    if (marks.length !== 1 || dots[at].getAttribute('aria-current') !== 'true') {
+      fail(`${when}: ${marks.length} dot(s) carry aria-current="true" and the ${at + 1}th is ${dots[at].getAttribute('aria-current') === 'true' ? '' : 'not '}one of them, so a screen reader is not told which screenshot is the one on screen`)
+    }
+  }
+
+  // What the page reads before anything moved, and the advance that is the whole point of the
+  // autoplay: six seconds, one slide, and the count and the mark following it.
+  read('at load', 0)
+  const timers = running()
+  if (timers.length !== 1) {
+    fail(`the slider runs ${timers.length} timer(s) with nobody reading it, and a visitor who touches nothing is shown one advance every six seconds (the owner's "~6s")`)
+  } else if (timers[0].ms !== 6000) {
+    fail(`the autoplay's interval is ${timers[0].ms}ms, and the owner asked for about six seconds — long enough to look at a screenshot the size of a page`)
+  } else {
+    timers[0].fn()
+    read('after the autoplay fired', 1)
+  }
+
+  // The two arrows, and the wrap at either end: a Next on the last slide is the first slide
+  // rather than a button that does nothing, which is what makes two arrows the whole of the
+  // navigation.
+  next.dispatch('click')
+  read('after a Next press', 2 % total)
+  prev.dispatch('click')
+  read('after a Previous press', 1 % total)
+  prev.dispatch('click')
+  read('after a Previous press back to the first slide', 0)
+  prev.dispatch('click')
+  read('after a Previous press that wraps from the first slide', total - 1)
+  next.dispatch('click')
+  read('after a Next press that wraps from the last slide', 0)
+
+  // A dot press: the anchor is what a reader with no script follows, and with a script the press
+  // is the script's own move — so it cancels the anchor's jump and lands on the slide the dot
+  // points at, with the count and the mark behind it.
+  const third = Math.min(2, total - 1)
+  const press = dots[third].dispatch('click')
+  read('after a dot press', third)
+  if (!press.defaultPrevented) {
+    fail('a dot press left the anchor to do its own jump: the script takes the press over so that the count and the mark follow the move it makes, and the anchor is what a reader with no script gets')
+  }
+
+  // The reader's own swipe: the track is the source of truth, so a scroll it did not ask for
+  // moves the count and the mark too — otherwise a trackpad reader watches a count that describes
+  // a slide nobody is on.
+  track.scrollLeft = width
+  track.dispatch('scroll')
+  read('after the reader scrolled the track themselves', 1)
+
+  // And the four things that stop it, each of which is a reader the slider must not move under.
+  const stops = [
+    ['the pointer arriving over the slider', () => slider.dispatch('pointerenter'), () => slider.dispatch('pointerleave'), 'a reader looking at a screenshot is a reader whose screenshot does not move'],
+    // The focus leaving the slider is a `focusin` somewhere else, which is what a browser sends
+    // whatever the reader moved to; `main` is the page the slider sits in.
+    ['a focus inside the slider', () => page.document.dispatch('focusin', { target: next }), () => page.document.dispatch('focusin', { target: page.find('main')[0] }), 'a keyboard reader standing on an arrow is not finished reading'],
+    ['the tab going to the background', () => page.document.setHidden(true), () => page.document.setHidden(false), 'a tab nobody is looking at has no reader to move for'],
+    ['the visitor asking for less motion', () => page.setReduce(true), () => page.setReduce(false), 'prefers-reduced-motion: reduce is a visitor saying that things which move on their own must not (D105)'],
+  ]
+  for (const [what, stop, start, why] of stops) {
+    stop()
+    if (running().length !== 0) fail(`${what} did not stop the autoplay: ${why}`)
+    start()
+    if (running().length !== 1) fail(`${what} stopped the autoplay and letting it go did not start it again: a slider that stops for the pointer and never resumes is a slider that stopped`)
+  }
+
+  // **And every move above asked for an instant landing.** `track.scrollLeft` cannot tell the
+  // two apart — the stub lands where it is sent either way — but the browser can, and this is
+  // where the difference lives: `behavior: 'auto'` is resolved by CSSOM-View to the box's own
+  // computed `scroll-behavior`, which the track declares `smooth`, so a move asked for that way
+  // is animated. During one, the count and the dot narrate slides the reader is passing through
+  // and a second Next press advances from a position a `scroll` event has already put back.
+  // `page.scrolls` is what the script asked the track for, in its own words.
+  const asked = page.scrolls ?? []
+  const smooth = asked.filter((call) => (call.init ?? {}).behavior !== 'instant')
+  if (asked.length === 0) {
+    fail('the script never asked the track for a position: every move above went by the track\'s own scrolling, and a press that leaves the landing to the stylesheet is a press nothing counts')
+  } else if (smooth.length) {
+    fail(
+      `the script moved the track ${smooth.length} time(s) without asking for an instant landing (behavior: ${JSON.stringify((smooth[0].init ?? {}).behavior ?? null)}), and the track declares scroll-behavior: smooth: the move is animated, so the count and the dots tell the reader about slides they are passing through and two quick Next presses advance one slide`,
+    )
+  }
+  return out
+}
+
+test('the script reveals the bar, counts the slides, and stops the moment a reader is reading', (t) => {
+  const built = buildCopy(t, () => {})
+  const html = consolePage(built)
+  const failures = scriptFailures(fakeDOM(html, { width: STUB_WIDTH }))
+  assert.deepEqual(
+    failures,
+    [],
+    `the slider the script drives is not the slider the owner asked for on 2026-10-21:\n  ${failures.join('\n  ')}`,
+  )
+
+  // The two states a page can load in where there is nothing to start: a visitor who has already
+  // asked for less motion, and a tab that is already in the background. `setReduce` and
+  // `setHidden` above are the same two settings arriving later; these are the page never having
+  // started at all, which is the branch `mayAdvance` is read on before the first tick.
+  for (const [why, options] of [
+    ['a visitor whose system asks for less motion', { reduce: true }],
+    ['a tab loaded in the background', { hidden: true }],
+  ]) {
+    const page = fakeDOM(html, { width: STUB_WIDTH, ...options })
+    assert.deepEqual(page.running(), [], `the slider started its autoplay for ${why}: the first thing the script reads before it advances anything is whether it may`)
+  }
+})
+
+test('a slider the script does not drive is refused, plant by plant', (t) => {
+  // The reading above is only worth its lines if it disagrees with a script that does the wrong
+  // thing, so every plant below is one of the ways this stops being the owner's slider, and each
+  // one has to be refused by name. The edits are made in `site.js`'s own text — the file the
+  // build copies into `dist/` verbatim, which is why no plant needs a rebuild.
+  const built = buildCopy(t, () => {})
+  const html = consolePage(built)
+  const defects = [
+    {
+      what: 'a bar nobody reveals',
+      plant: (src) => src.replace('if (bar) bar.hidden = false', 'if (bar) bar.hidden = true'),
+      wants: /bar is still `hidden`/,
+    },
+    {
+      what: 'a count the script never writes',
+      plant: (src) => src.replace('    if (bar) bar.hidden = false\n    index = shown()\n    paint()', '    if (bar) bar.hidden = false'),
+      wants: /at load: the count reads ""/,
+    },
+    {
+      what: 'an autoplay that advances every fifteen seconds',
+      plant: (src) => src.replace('var AUTO_MS = 6000', 'var AUTO_MS = 15000'),
+      wants: /interval is 15000ms/,
+    },
+    {
+      what: 'an autoplay that never runs at all',
+      plant: (src) => src.replace('timer = window.setInterval(forward, AUTO_MS)', 'return'),
+      wants: /runs 0 timer\(s\)/,
+    },
+    {
+      what: 'an autoplay that runs on for a reader who asked for less motion',
+      plant: (src) => src.replace('!(query && query.matches)', 'true'),
+      wants: /asking for less motion did not stop the autoplay/,
+    },
+    {
+      what: 'an autoplay that keeps running in a background tab',
+      plant: (src) => src.replace('!document.hidden && ', ''),
+      wants: /tab going to the background did not stop the autoplay/,
+    },
+    {
+      what: 'an autoplay the pointer over the slider does not stop',
+      plant: (src) => src.replace('return !over && !inside && !document.hidden', 'return true'),
+      wants: /pointer arriving over the slider did not stop the autoplay/,
+    },
+    {
+      what: 'an autoplay a focus inside the slider does not stop',
+      plant: (src) => src.replace('inside = section.contains(event.target)', 'inside = false'),
+      wants: /focus inside the slider did not stop the autoplay/,
+    },
+    {
+      what: 'an arrow that goes past the end instead of round it',
+      plant: (src) => src.replace('index = (to + slides.length) % slides.length', 'index = to < 0 ? 0 : to > slides.length - 1 ? slides.length - 1 : to'),
+      wants: /Previous press that wraps from the first slide/,
+    },
+    {
+      what: 'a dot press that is not taken over',
+      plant: (src) => src.replace('          show(at)', '          return'),
+      wants: /after a dot press: the count reads/,
+    },
+    {
+      what: 'a count that does not follow the reader\'s own scrolling',
+      plant: (src) => src.replace('      var at = shown()', '      var at = index'),
+      wants: /after the reader scrolled the track themselves/,
+    },
+    {
+      what: 'a move the browser is free to animate',
+      plant: (src) => src.replace("behavior: 'instant'", "behavior: 'auto'"),
+      wants: /without asking for an instant landing/,
+    },
+  ]
+  for (const { what, plant, wants } of defects) {
+    const planted = plant(SCRIPT_SOURCE)
+    assert.notEqual(planted, SCRIPT_SOURCE, `${what}: the planted edit changed nothing, so this fixture proves nothing`)
+    const failures = scriptFailures(fakeDOM(html, { width: STUB_WIDTH, script: planted }))
+    assert.ok(
+      failures.some((line) => wants.test(line)),
+      `${what} was not refused (${wants}); the reading said:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
+})
+
+test('a page that arrives already scrolled opens on the slide it is showing', (t) => {
+  // A reader can land on the third screenshot without touching anything: the dots are anchors,
+  // so `#console-screen-3` is a link somebody can share, and a browser that restores a scroll
+  // position lands the same way. The reading the page opens with is then the one reading that
+  // could be taken from nothing but the track — the slide the track is on — and a count and a
+  // mark that start at the first slide are wrong until the first `scroll` event corrects them,
+  // which on a page nobody touches is never.
+  const built = buildCopy(t, () => {})
+  const html = consolePage(built)
+  const at = 2
+  const loaded = (script) => fakeDOM(html, { width: STUB_WIDTH, scroll: { [TRACK]: at * STUB_WIDTH }, script })
+
+  const page = loaded(SCRIPT_SOURCE)
+  const slider = page.find('[data-slider]')[0]
+  const dots = slider.querySelectorAll(DOT)
+  assert.ok(dots.length > at, `the console page renders ${dots.length} slide(s), and this case needs a third one to open on`)
+  assert.equal(
+    (slider.querySelector(COUNTER).textContent ?? '').trim(),
+    `${at + 1} / ${dots.length}`,
+    `a page loaded with the track already on slide ${at + 1} opens reading ${JSON.stringify((slider.querySelector(COUNTER).textContent ?? '').trim())}: the count is the track's own position, and the first reading is taken from the track like every later one`,
+  )
+  assert.equal(
+    dots[at].getAttribute('aria-current'),
+    'true',
+    'the dot the reader arrived on does not carry aria-current="true": a screen reader is told which screenshot is on screen, and a page that opens on the third one says the first',
+  )
+  assert.deepEqual(
+    dots.map((dot) => (dot.getAttribute('aria-current') === 'true' ? 'current' : '.')),
+    dots.map((_, i) => (i === at ? 'current' : '.')),
+    'the mark on the dots of a page that arrives scrolled is not on the slide the track is showing',
+  )
+
+  // The plant: the same page with the first reading taken from the starting index rather than
+  // from the track — which is what the count hardcoded to `1 / N` is, and the case above is only
+  // worth its lines if it disagrees with it.
+  const planted = SCRIPT_SOURCE.replace('    index = shown()\n    paint()', '    paint()')
+  assert.notEqual(planted, SCRIPT_SOURCE, 'the planted edit changed nothing, so this fixture proves nothing')
+  const stale = loaded(planted).find('[data-slider]')[0].querySelector(COUNTER)
+  assert.equal(
+    (stale.textContent ?? '').trim(),
+    `1 / ${dots.length}`,
+    `the planted script did not open on the first slide (it read ${JSON.stringify((stale.textContent ?? '').trim())}), so it is not the reading this case is written against`,
+  )
+})
+
+// ---------------------------------------------------------------------------------------
+// 6. The refusals: the data file cannot carry a URL, a foreign format, an empty text, a size
 //    that is not a whole number of pixels, or a key no page reads — at the document's root or
 //    in a row.
 // ---------------------------------------------------------------------------------------

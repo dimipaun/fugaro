@@ -920,7 +920,7 @@ const CASES = [
       page.reveal()
       assert.ok(page.pending().some((timer) => timer.ms === CLOCK_MS), 'the clock did not start when the page was shown again: a reader who comes back to the tab is a reader who wants the slider')
     },
-    plant: ['held || !shown() || calm()', 'held || calm()'],
+    plant: ['held || !pageShown() || calm()', 'held || calm()'],
   },
   {
     name: 'a reader who asked for less motion gets no clock, and every control still works',
@@ -933,7 +933,7 @@ const CASES = [
       page.click(page.on)
       assert.equal(page.active(), 'easy', 'less motion took the step controls with it')
     },
-    plant: ['held || !shown() || calm()', 'held || !shown()'],
+    plant: ['held || !pageShown() || calm()', 'held || !pageShown()'],
   },
   {
     name: 'the dots, the two step controls and the arrow keys move the block, and the address is left alone',

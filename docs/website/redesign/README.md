@@ -1457,9 +1457,11 @@ what it says — and the strip of tabs is the one part of it that is gone.
   The script also marks the dot of the slide on screen with `aria-current="true"`, which the
   stylesheet draws in the accent — the mark a reader has instead of a text label.
 - **The clock, and the four things that stop it.** The block advances every six seconds
-  (`ADVANCE_MS = 6000`) and wraps from the third slide back to the first. It is held while the
-  pointer is over the block or the keyboard's focus is inside it (a reader who is reading must
-  not have the slide move under them), it does not run while the page is not being shown at all
+  (`AUTO_MS = 6000`, the six seconds both of the site's sliders stand a slide for, declared once
+  with the console page's slider) and wraps from the third slide back to the first. It is held
+  while the pointer is over the block or the keyboard's focus is inside it (a reader who is
+  reading must not have the slide move under them), it does not run while the page is not being
+  shown at all
   (`document.hidden`), and it does not run for a reader whose system asks for less motion
   (`prefers-reduced-motion: reduce`) — for that reader the dots, the two controls and the arrow
   keys all still work, because what they asked for is that nothing move **on its own**. A click
@@ -1471,8 +1473,8 @@ what it says — and the strip of tabs is the one part of it that is gone.
   `website/test/copy.mjs`, `website/test/consent.mjs` and `website/test/nav-hover.mjs` each run
   the real `site.js` against the built homepage, and none of them is a browser: they have no
   `document.hidden` and two of them have no `matchMedia`. So `still()` reads
-  `held || !shown() || calm()`, and `shown()` is `document.hidden === false` — a document that
-  cannot answer is a document no clock is started in, which is both the correct reading of a
+  `held || !pageShown() || calm()`, and `pageShown()` is `document.hidden === false` — a document
+  that cannot answer is a document no clock is started in, which is both the correct reading of a
   browser that does not answer and the reason those three gates keep their timer and query
   assertions unchanged. `website/test/consent.mjs`'s two selector maps did have to learn the
   block: that stub refuses a selector it does not read rather than matching nothing, so the five
@@ -1516,5 +1518,5 @@ what it says — and the strip of tabs is the one part of it that is gone.
   artifact, the stylesheet and the script, through the gates above, with `(cd website && npm run
   check)` green over all 423 cases. **Whether the slider reads as a slider — the look of the
   dots, the feel of the six seconds, whether the motion is too fast or too slow — is the owner's
-  check** (70a–70c, P9, D190), and the number to move first if it is wrong is `ADVANCE_MS` in
+  check** (70a–70c, P9, D190), and the number to move first if it is wrong is `AUTO_MS` in
   `public/scripts/site.js`.

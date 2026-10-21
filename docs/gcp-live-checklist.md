@@ -4855,8 +4855,10 @@ grep -n "Hero\|HomeSlider\|HomeInstall" website/src/pages/index.astro
 grep -n "home-panel-\|SLIDES = \|home-slider" website/src/components/HomeSlider.astro
 # The clock, out of the one script the site ships, because it is what decides which slide a reader
 # finds on screen: six seconds after the page lands the block moves on by itself, and it holds
-# while the pointer or the keyboard's focus is inside it.
-grep -n "ADVANCE_MS\|prefers-reduced-motion" website/public/scripts/site.js
+# while the pointer or the keyboard's focus is inside it. `AUTO_MS` is the six seconds both of the
+# site's sliders stand a slide for — the homepage's and the console page's — and it is declared
+# once, with the console's section.
+grep -n "AUTO_MS\|prefers-reduced-motion" website/public/scripts/site.js
 # The one install path the homepage renders, and the markup its command is in: the path the
 # component names, and the class its command block carries.
 grep -n "HOME_PATH\|home-install-command" website/src/components/HomeInstall.astro
