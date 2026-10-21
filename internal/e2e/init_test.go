@@ -355,6 +355,32 @@ func (r *initRepoRig) fugaroInitTyped(t *testing.T, typed string, args ...string
 	return r.fugaroInitIn(t, tty, args...)
 }
 
+// convergeDoor is the door of the converge a run's args belong to, and it is
+// what these tests run instead of the retired word: since W1.2 (task W1.2 of
+// docs/setup-wizard/implementation-plan.md) `fugaro init` is a hidden tombstone
+// that applies nothing and exits 1, so every run below would be that refusal
+// and this package would be red — and the refusal-only test would pass
+// vacuously, since it asserts nothing but exit 1.
+//
+// The converge `init` used to be is two commands over one engine. `fugaro
+// setup` is the front door and the default here: it is the door that creates,
+// so it takes every flag a run below passes. `fugaro update` is the
+// re-converge of an installation that already exists, and it is the door that
+// takes --forget — the one flag the two do not share, because setup refuses it
+// by name (a first run has nothing to unwind). A --forget run that named setup
+// would be refused for the flag instead of doing what the test means.
+//
+// W5.2 renames this file and these tests for what they exercise
+// (`update_test.go`, `TestUpdate*`) and is where the split between the two
+// doors is the owner's to call. The command word is here, and only the command
+// word: every assertion below stays as it is.
+func convergeDoor(args []string) string {
+	if slices.Contains(args, "--forget") {
+		return "update"
+	}
+	return "setup"
+}
+
 func (r *initRepoRig) fugaroInitIn(t *testing.T, stdin *os.File, args ...string) cliResult {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -371,15 +397,7 @@ func (r *initRepoRig) fugaroInitIn(t *testing.T, stdin *os.File, args ...string)
 	if slices.Contains(args, "--repo") && !slices.Contains(args, "--print-vars") && !slices.Contains(args, "--plan-only") && !slices.Contains(args, "--forget") && !slices.Contains(args, "--onboard-repo") {
 		args = append(slices.Clone(args), "--onboard-repo", r.repo)
 	}
-	// The door, not the retired word: `fugaro init` is a tombstone since W1.2
-	// (docs/setup-wizard/implementation-plan.md) that applies nothing and exits
-	// 1, so every run below would be that refusal and this package would be red
-	// — the 27th test would even pass vacuously, since it only asserts exit 1.
-	// `fugaro setup` is the door these --repo runs mean: none of them passes a
-	// creating flag, which is the only thing that would make the two doors
-	// differ here. This file's strings and the helpers' names are W2.2's and
-	// W5.2's; the command word is the one line that cannot wait for them.
-	cmd := exec.CommandContext(ctx, r.fugaro, append([]string{"setup"}, args...)...)
+	cmd := exec.CommandContext(ctx, r.fugaro, append([]string{convergeDoor(args)}, args...)...)
 	cmd.Dir = r.dir
 	cmd.Env = hermeticEnv(env)
 	if stdin != nil {
