@@ -136,6 +136,17 @@ func TestOAuthUpstreamAttachesRecordedHeaders(t *testing.T) {
 	if seen.Get("Accept-Encoding") != "identity" {
 		t.Errorf("Accept-Encoding = %q, want identity", seen.Get("Accept-Encoding"))
 	}
+	// The credential reaches neither the client nor the log.
+	if strings.Contains(body, token) || strings.Contains(h.logs.String(), token) {
+		t.Error("the credential came back to the client or the log")
+	}
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			if strings.Contains(v, token) {
+				t.Errorf("response header %s carries the credential", k)
+			}
+		}
+	}
 }
 
 // TestOAuthAnthropicVersionIsPassedThroughNotInvented: anthropic-version is
