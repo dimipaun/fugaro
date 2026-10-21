@@ -133,7 +133,16 @@ func initStages(e *initEngine) []initflow.Stage {
 	if e.r.o.provisionBatch {
 		stages = append(stages, newComputeStage(e))
 	}
-	if e.r.o.createProject {
+	// The project stage, which is the one stage that may create the GCP
+	// project. `setup` registers it on a first run whether or not
+	// --create-project was given: the wizard's first question is whether to
+	// create the project or adopt one, and the answer (recorded on the same
+	// field the flag sets, askProjectAnswer) is what the stage acts on — a run
+	// whose answer was adoption has nothing to create. `update` never
+	// registers it, and neither does a `setup` whose installation is already
+	// there: e.old is the project config's file, and a run that has one
+	// converges as update does (D11, reconciliation F24).
+	if e.r.o.createProject || (e.r.o.door == setupDoor.name && e.old == nil) {
 		stages = append(stages, newProjectStage(e))
 	}
 	return stages
@@ -142,6 +151,7 @@ func initStages(e *initEngine) []initflow.Stage {
 // converge runs the converge's default and --firebase modes through the
 // loop and maps its result to what init returns.
 func (e *initEngine) converge(ctx context.Context) error {
+	e.announceAlreadySetUp()
 	stages := initStages(e)
 	e.r.review = &runReview{cover: e.cover, firebase: e.firebaseVerified, owner: e.owner, screen: e.reviewScreen}
 	e.gateEarly(ctx)

@@ -125,6 +125,21 @@ func (s *projectStage) Name() string { return initflow.Project }
 
 func (s *projectStage) o() *initOptions { return s.e.r.o }
 
+// answer is what this run said about the project: create one, or adopt one that
+// already exists. It is the wizard's first question's answer (setup.go's
+// askProjectAnswer) or --create-project, which is the same field, because it is
+// the same question — a scripted run answers it with the flag instead of at a
+// terminal. Nothing here reads the flag: the stage acts on the answer, so that
+// a run whose answer was adoption creates nothing however it came to run.
+//
+// adoptDetail is what the stage says when the answer was adoption. It is a
+// skip and not a check: whether the project is there is the installation's own
+// question, and it is asked by the run that applies into it (a GCP project
+// that is missing fails there, with the message that has always said so).
+const adoptDetail = "not creating: this run's answer was to adopt an existing GCP project"
+
+func (s *projectStage) answer() bool { return s.o().createProject }
+
 func (s *projectStage) clients(ctx context.Context) error {
 	if s.pc != nil {
 		return nil
@@ -216,6 +231,12 @@ func (s *projectStage) read(ctx context.Context) error {
 }
 
 func (s *projectStage) Check(ctx context.Context) (initflow.Status, error) {
+	if !s.answer() {
+		// Adoption: nothing to create, and nothing to read either. The answer
+		// is the stage's whole input, so a run that answered "adopt" reaches no
+		// project API at all.
+		return initflow.Status{State: initflow.Skipped, Detail: adoptDetail}, nil
+	}
 	if err := s.read(ctx); err != nil {
 		return s.problem(err)
 	}
@@ -269,6 +290,9 @@ func (s *projectStage) describe() string {
 }
 
 func (s *projectStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan, error) {
+	if !s.answer() {
+		return initflow.Plan{NothingToDo: true, Detail: adoptDetail}, nil
+	}
 	if err := s.read(ctx); err != nil {
 		return initflow.Plan{}, err
 	}
@@ -401,7 +425,15 @@ func (s *projectStage) declined(what string) error {
 
 func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	if s.started {
+		// The one-project-per-run invariant first: it holds whatever the
+		// answer was, and it is the stage's own, not the run's.
 		return initflow.Outcome{}, errors.New("fugaro setup creates at most one project per run: it has already acted in this run")
+	}
+	if !s.answer() {
+		// Adoption creates nothing, and asks nothing: a run that answered
+		// "adopt" has no typed confirmation to leave for anyone, whatever its
+		// terminal is.
+		return initflow.Outcome{Detail: adoptDetail}, nil
 	}
 	if !env.Interactive || !s.canType() {
 		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
@@ -518,6 +550,9 @@ func (s *projectStage) fail(err error) error {
 // Verify re-reads the project: Apply verified each step it took; this is
 // the closing check that nothing is left half done.
 func (s *projectStage) Verify(ctx context.Context) error {
+	if !s.answer() {
+		return nil // an adopted project is not this stage's to check
+	}
 	if err := s.read(ctx); err != nil {
 		return s.fail(err)
 	}

@@ -1,6 +1,10 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
+
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/spf13/cobra"
 )
 
@@ -45,20 +49,31 @@ Credentials), so that fugaro run works; --launcher or --operator replaces that,
 an existing or adopted config is never changed by it, and with a service
 account's credentials it stops and names the two flags.
 
-On a first run in a terminal it asks, once, for the project's name, the GCP
-project's ID and the region, each with a suggestion (the name from the
-repository's owner; the ID from GOOGLE_CLOUD_PROJECT or the credentials' quota
-project, never gcloud's default project; us-east5) and writes the local config,
-so later runs ask nothing; without a terminal, or with --non-interactive,
---yes or --json, it names every missing flag in one error. Where the
-installation already exists and this machine has no local config for it,
-setup adopts it: it writes the config from the installation and applies
-nothing, and says which roles to ask an owner for. There the name is asked
-after the GCP project and the region and defaults to the installation's own
-(from the runs bucket's marker), not the directory's, and the budget section
+On a first run it asks its questions once, in this order, each with a
+suggestion Enter takes, and writes the local config, so later runs ask
+nothing: the GCP project's ID (--gcp-project; suggested from
+GOOGLE_CLOUD_PROJECT or the credentials' quota project, never gcloud's default
+project), the region (--region; us-east5), whether to create the GCP project
+or adopt one that already exists (--create-project; "create", what Enter
+takes, is a new fugaro-<name> project, and "adopt" leaves one that is already
+there exactly as it is), and the project's name (--name; from the
+repository's owner, else this directory's). Every question has its flag, so
+only the confirmations below need a terminal at all: without one, or with
+--non-interactive, --yes or --json, the run names every missing flag in one
+error — every one but the project question, whose answer it does not need. A
+run nobody can ask does not create a project (it adopts, the answer that
+changes nothing in the cloud), and --create-project is how a scripted run
+says otherwise. Where the installation already exists and this machine has no
+local config for it, setup keeps it rather than offering a second one: it
+writes the config from the installation and applies nothing, says which roles
+to ask an owner for, and says in one line that the installation is already
+set up and that it converges as fugaro update does. Its name is the
+installation's own (from the runs bucket's marker), not the directory's, and
+there is nothing left to ask. The budget section
 (rtdb_url, firebase_project, firebase_api_key, token_signer: none a secret) is
-filled from the Firebase root's outputs, read only; --name must be the
-installation's name. With several project configs, --name of a project that
+filled from the Firebase root's outputs, read only. A --name given for an
+installation that already exists must be the installation's own name. With
+several project configs, --name of a project that
 has none is a first run of that name, and a checkout whose origin repository
 exactly one project lists selects that project.
 
@@ -72,7 +87,10 @@ first, at the start, before any plan.
 
 setup runs as a converge of stages (preflight, installation, with --firebase
 the Firebase backend and the images, the secrets, the plugin wiring and the
-repository), each with its own confirmation, in order,
+repository, and on a first run the project — the one stage that may create the
+GCP project, and it does that only when the first question's answer was to
+create: an answer of "adopt" reads nothing and creates nothing), each with its
+own confirmation, in order,
 and stops at the first that fails or needs you; a rerun resumes, and one
 with nothing to do says "No changes" and exits 0. Exit codes: 0 done (or
 only planned), 1 a refusal, or a step left for you (see left_for_you in
@@ -203,7 +221,11 @@ can be refused: its refusal tells you what to do about it). A pasted private key
 secret's container, before the repository stage, with the labels
 setup --repo's Terraform adopts (fugaro, fugaro_repo, fugaro_secret).
 
---create-project --gcp-project <id> creates that GCP project and adds Firebase
+--create-project is the flag that answers the wizard's first question, and the
+only way to answer it without a terminal (a run with no terminal takes the
+other answer, adoption); the question itself decides nothing more than which
+of the two the project stage acts on. --create-project --gcp-project <id>
+creates that GCP project and adds Firebase
 to it, as you, after you type its ID at a terminal; --link-billing <account>
 then links that billing account (it may incur charges), after you type the
 account's ID. Each is its own typed confirmation, never given by --yes,
@@ -255,3 +277,168 @@ func newSetupCmd() *cobra.Command { return newSetupCmdWith(&initOptions{}) }
 // project through the same command line the user would run, with strictCreate
 // set on the options it hands over.
 func newSetupCmdWith(o *initOptions) *cobra.Command { return newInitCmdWith(o, setupDoor) }
+
+// setupAlreadySetUp is the one line the wizard prints when the installation is
+// already there: this machine has the project config, or the GCP project's
+// runs bucket carries the mark of an installation this machine has no config
+// for. Either way `setup` keeps it and converges as `update` does, rather than
+// offering to create a second installation in one GCP project — that offer is
+// what the retired command's ambiguity was (D11).
+const setupAlreadySetUp = "this installation is already set up"
+
+// setupAskProject is the wizard's first question. It is a question and not a
+// sentence about one: the answer decides whether this run may create the GCP
+// project, which is the one thing about a run that cannot be undone.
+const setupAskProject = "GCP project: create a new one, or adopt an existing one"
+
+// The two answers the question takes. Creation is the default Enter takes
+// (D11, answered 2026-10-20 as recommended): setup is the first-time wizard,
+// and the first-time user is the one with no project to adopt.
+const (
+	setupAnswerCreate = "create"
+	setupAnswerAdopt  = "adopt"
+)
+
+// wizardQuestion is one question the wizard asks, in the order it asks it: the
+// flag that answers the same question without a terminal — so a scripted run
+// needs no terminal for anything but the typed confirmations — and the name
+// `--non-interactive` prints when the run cannot proceed without an answer.
+//
+// missing is "" for a question whose answer a run that cannot ask simply
+// takes. There is exactly one, and it is the first: nobody can be asked
+// whether to create a project, so the run does not create one (see
+// askProjectAnswer). A run that wants creation says so with the flag.
+type wizardQuestion struct {
+	what    string // the question, in one line
+	label   string // the label the prompt shows (a prefix, where the label is built from the run)
+	flag    string // the flag that answers it
+	missing string // what MissingInputsError names, exactly as firstRunMissing builds it
+}
+
+// setupQuestions is the wizard's question list, and TestEveryWizardQuestionHasAFlag
+// holds the run to it in both directions: every label below is a prompt a first
+// run prints when nothing else answers it and none is printed when its own flag
+// does, and the missing names are the ones a run with no terminal prints — so a
+// question added without a flag, or with a flag nobody can pass, fails there
+// rather than in a user's terminal.
+//
+// The later questions of the wizard are later tasks': the repository (W3.4) and
+// the two-phase ask (W3.5) add their rows here.
+var setupQuestions = []wizardQuestion{
+	{
+		what:    "the GCP project's ID",
+		label:   "GCP project ID",
+		flag:    "--gcp-project",
+		missing: "--gcp-project <id>",
+	},
+	{
+		what:    "the region the installation's jobs and the scheduler run in",
+		label:   "Region",
+		flag:    "--region",
+		missing: "--region <region>",
+	},
+	{
+		what:  "whether this run creates the GCP project or adopts one that already exists",
+		label: setupAskProject,
+		flag:  "--create-project",
+		// No missing name: the answer a run that cannot ask takes is the one
+		// that creates nothing (adoption), so there is nothing to demand of it
+		// — and nothing it can do by accident.
+	},
+	{
+		what:    "the Fugaro project's name",
+		label:   "Fugaro project name",
+		flag:    "--name",
+		missing: "--name <name>",
+	},
+}
+
+// asksProjectAnswer is the whole of the question's own condition: the door this
+// run is can act on the answer, the answer is not already on the command line,
+// and the run can be asked one at all. It is split out because gatherInputs
+// needs the same answer to decide whether it is about to prompt for anything:
+// the project's is the one question the table in setupQuestions cannot name as
+// missing, so a run whose other inputs all came from flags has nothing in
+// `missing` and still has this question to ask.
+func (r *initRun) asksProjectAnswer() bool {
+	o := r.o
+	return o.door != updateDoor.name && !o.configOnly && !o.createProject && r.canAsk()
+}
+
+// askProjectAnswer asks the wizard's first question and records the answer
+// where the rest of the run reads it: --create-project's own field, so a person
+// at a terminal and a scripted run answer one question, and the project stage
+// (init_project.go) is the one place that acts on it.
+//
+// The flag short-circuits the question, and so does a run that cannot ask one:
+// with no terminal, or with --yes, --json or --non-interactive (a run no person
+// is answering the prompts of), the answer taken is adoption. Creation is the
+// one answer a run must never take on nobody's behalf — the project it makes is
+// permanent, its ID is global and unusable by anyone afterwards, and everything
+// that would make it billable arrives with the billing link — and the answer a
+// scripted run gives is `--create-project`, explicitly.
+//
+// A run that cannot act on the answer is not asked: `fugaro update` creates
+// nothing (its stage set has no project stage at all, init_stages.go), and
+// --config-only writes the local config from an installation that is already
+// there and touches no cloud. In both, the question would be asked and then
+// ignored, and an ignored question about the one irreversible thing in this
+// door is worse than no question. No production run is door-less (every run is
+// built by newInitCmdWith, which names its door); a hand-built options value
+// with no door is a test's, and asks — the question list's contract
+// (TestEveryWizardQuestionHasAFlag) is checked on one.
+//
+// The answer that does create goes through the flag's own checks
+// (checkCreateProject): init.go's check() ran before the question was asked, so
+// this is where the ID's rules — Google's restricted words among them, which
+// the prompt's own check does not know — and the --firebase mismatch are
+// applied to what the person typed. The answer is the flag, so it is held to
+// what the flag is held to.
+func (r *initRun) askProjectAnswer() error {
+	if !r.asksProjectAnswer() {
+		return nil
+	}
+	o := r.o
+	v, err := r.prompt(setupAskProject, setupAnswerCreate, func(s string) error {
+		if s != setupAnswerCreate && s != setupAnswerAdopt {
+			return errors.New("answer " + setupAnswerAdopt + " to install into a project that already exists, or " + setupAnswerCreate + " to create a new one")
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if v != setupAnswerCreate {
+		o.createProject = false
+		return nil
+	}
+	o.createProject = true
+	return o.checkCreateProject()
+}
+
+// announceAlreadySetUp is setup's one line for a run whose installation is
+// already there: a project config this machine has (e.old is its file), which
+// is also what makes the run update's stage set — initStages registers no
+// project stage once the config exists, so `setup` converges exactly as
+// `fugaro update` does.
+//
+// It says nothing with --json (stdout is one object) or --print-vars (stdout is
+// the variables alone), the two modes whose stdout is a document rather than a
+// transcript; the fact is in the result either way.
+func (e *initEngine) announceAlreadySetUp() {
+	r, o := e.r, e.r.o
+	if o.door != setupDoor.name || e.old == nil || o.asJSON || o.printVars {
+		return
+	}
+	fmt.Fprintf(r.w, "%s%s: keeping project %s, and converging as %s does\n",
+		o.programPrefix(), setupAlreadySetUp, pluginwire.Printable(e.lc.Name), "fugaro "+updateDoor.name)
+}
+
+// programPrefix is the line's own "fugaro setup: ", or "" for a hand-built
+// options value — a test's — whose run has no door to name.
+func (o *initOptions) programPrefix() string {
+	if p := o.loopProgram(); p != "" {
+		return p + ": "
+	}
+	return ""
+}

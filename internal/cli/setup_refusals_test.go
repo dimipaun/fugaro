@@ -48,13 +48,21 @@ import (
 // the list twice, with and without the flag. ctor is the name initStages()
 // has to use, matched inside that function's body.
 type cliStage struct {
-	stage   string
-	ctor    string // the marker initStages()' body must contain: the constructor call, or the literal for the one stage built without one
-	build   func(*initEngine) initflow.Stage
-	behind  string // the flag the stage is registered under, "" for always
-	noYes   bool
-	covered bool
-	self    bool
+	stage  string
+	ctor   string // the marker initStages()' body must contain: the constructor call, or the literal for the one stage built without one
+	build  func(*initEngine) initflow.Stage
+	behind string // the flag the stage is registered under, "" for always
+	// firstRun is the second way a stage is registered beside behind: the
+	// stage `setup` has on a first run whatever the flags say (W1.3, D11 —
+	// the wizard's first question is the project, so the stage that acts on
+	// the answer is registered with the question rather than with a flag).
+	// False for every row but the project stage. It is checked the way behind
+	// is — by building the list — so an arm that stops registering it, and a
+	// stage that starts being registered on a first run, both fail here.
+	firstRun bool
+	noYes    bool
+	covered  bool
+	self     bool
 }
 
 // cliStages is the pin: a slot that loses its noYes, a runCovered entry that
@@ -78,7 +86,7 @@ var cliStages = []cliStage{
 		build: func(e *initEngine) initflow.Stage { return newPluginStage(e) }},
 	{stage: initflow.Repository, ctor: "newRepositoryStage(", covered: true, self: true,
 		build: func(e *initEngine) initflow.Stage { return newRepositoryStage(e) }},
-	{stage: initflow.Project, ctor: "newProjectStage(", behind: "--create-project", noYes: true,
+	{stage: initflow.Project, ctor: "newProjectStage(", behind: "--create-project", firstRun: true, noYes: true,
 		build: func(e *initEngine) initflow.Stage { return newProjectStage(e) }},
 	{stage: initflow.Compute, ctor: "newComputeStage(", behind: "--provision-batch", noYes: true,
 		build: func(e *initEngine) initflow.Stage { return newComputeStage(e) }},
@@ -193,6 +201,31 @@ func TestRefusalMatrixListsEveryStageTheCLIRegisters(t *testing.T) {
 	for _, n := range append(namesOf(plain), namesOf(all)...) {
 		if !registered[n] {
 			t.Errorf("%s: initStages() registers it and no row records it: add the row, with the flag it is registered under", n)
+		}
+	}
+
+	// And the stage set each door has, the third way a row can be registered:
+	// `setup` on a first run — the door the wizard is, no project config on
+	// this machine — has the project stage whether or not --create-project was
+	// given, and `update`, and a `setup` whose config exists, never have it.
+	// The answer to the wizard's first question is what the stage acts on.
+	firstNames := setOf(namesOf(initStages(&initEngine{r: &initRun{o: &initOptions{door: setupDoor.name}}})))
+	configured := &initEngine{r: &initRun{o: &initOptions{door: setupDoor.name}}, old: []byte("fugaro.yaml\n")}
+	for _, s := range cliStages {
+		want := s.behind == "" || s.firstRun
+		if got := firstNames[s.stage]; got != want {
+			t.Errorf("%s: in setup's first-run list %v, want %v (behind %q, firstRun %v)", s.stage, got, want, s.behind, s.firstRun)
+		}
+		if s.firstRun && firstNames[s.stage] {
+			// The two runs the wizard does not create in: it converges as
+			// `fugaro update` does, and update has no project stage.
+			upNames := setOf(namesOf(initStages(&initEngine{r: &initRun{o: &initOptions{door: updateDoor.name}}})))
+			if upNames[s.stage] {
+				t.Errorf("%s: initStages() registers it for the update door, which creates nothing", s.stage)
+			}
+			if setOf(namesOf(initStages(configured)))[s.stage] {
+				t.Errorf("%s: initStages() registers it for a setup whose project config already exists", s.stage)
+			}
 		}
 	}
 

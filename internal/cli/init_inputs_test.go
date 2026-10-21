@@ -91,7 +91,9 @@ func TestProjectIDNeverFromGcloudDefault(t *testing.T) {
 	// At the prompt there is no suggestion, so Enter alone is not an answer.
 	fakeTerminal(t)
 	var out strings.Builder
-	r := &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("\n\nproj-5678\n")), cmd: NewRootCmd()}
+	// The answers: two empty tries at the ID (there is nothing to suggest),
+	// the ID, and Enter to the project question the wizard asks next (W1.3).
+	r := &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("\n\nproj-5678\n\n")), cmd: NewRootCmd()}
 	r.cmd.SetIn(strings.NewReader(""))
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatal(err)
@@ -115,7 +117,8 @@ func TestProjectIDNeverFromGcloudDefault(t *testing.T) {
 }
 
 // A first run in a terminal asks for the three inputs once, each with its
-// suggestion; Enter takes it.
+// suggestion; Enter takes it. (The project question W1.3 puts between the
+// region and the name is one more Enter, and is pinned in setup_wizard_test.go.)
 func TestFirstRunAsksWithSuggestions(t *testing.T) {
 	firstRunEnv(t)
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "env-proj-1")
@@ -126,7 +129,7 @@ func TestFirstRunAsksWithSuggestions(t *testing.T) {
 	t.Chdir(root)
 	fakeTerminal(t)
 	var out strings.Builder
-	r := &initRun{o: &initOptions{}, w: &out, in: bufio.NewReader(strings.NewReader("\n\n\n")), cmd: NewRootCmd()}
+	r := &initRun{o: &initOptions{}, w: &out, in: bufio.NewReader(strings.NewReader("\n\n\n\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +142,7 @@ func TestFirstRunAsksWithSuggestions(t *testing.T) {
 		}
 	}
 	// A bad answer is asked again; input that ends is a refusal.
-	r = &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("Not A Project\nproj-1234\n")), cmd: NewRootCmd()}
+	r = &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("Not A Project\nproj-1234\n\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil || r.o.cloud.gcpProject != "proj-1234" {
 		t.Errorf("a bad answer: %v, %q", err, r.o.cloud.gcpProject)
 	}
@@ -261,23 +264,32 @@ func TestCheckoutProjectNeverNamesANewInstallation(t *testing.T) {
 	t.Chdir(root)
 	fakeTerminal(t)
 	var out strings.Builder
-	r := &initRun{o: &initOptions{cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("\nmy-team\n")), cmd: NewRootCmd()}
+	// Enter to the project question, an empty answer to the name, then the name.
+	r := &initRun{o: &initOptions{cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("\n\nmy-team\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if r.o.name != "my-team" || !strings.Contains(out.String(), "a value is needed") || strings.Contains(out.String(), "[evil-project]") || !strings.Contains(out.String(), "fugaro.yaml says evil-project") {
 		t.Errorf("name %q\n%s", r.o.name, out.String())
 	}
-	// With --name it is the user's own word.
-	r = &initRun{o: &initOptions{name: "evil-project", cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+	// With --name it is the user's own word. The project question is still
+	// asked: the three flags answered every other question, and that one is
+	// not a row `missing` can hold (setup_wizard_test.go), so a first run at a
+	// terminal answers it rather than having an answer taken for it.
+	r = &initRun{o: &initOptions{name: "evil-project", cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader(setupAnswerAdopt + "\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Errorf("--name: %v", err)
 	}
+	if r.o.name != "evil-project" {
+		t.Errorf("--name: name %q, want the user's own word", r.o.name)
+	}
 }
 
-// Adopt mode (a new machine, an existing installation): the name is asked
-// after the GCP project and region, and its suggestion is the installation's
-// own name, not the directory's.
+// Adopt mode (a new machine, an existing installation): once the GCP project
+// and region are known, the installation in them is read, and its name is the
+// run's — never the directory's, and never a question: the run keeps the
+// installation it found and converges as `fugaro update` does (D11, W1.3). A
+// name typed by hand is still the user's own word.
 func TestFirstRunSuggestsTheInstallationsName(t *testing.T) {
 	firstRunEnv(t)
 	root := filepath.Join(t.TempDir(), "My App")
@@ -296,27 +308,30 @@ func TestFirstRunSuggestsTheInstallationsName(t *testing.T) {
 	}
 	t.Cleanup(func() { installationName = old })
 	var out strings.Builder
-	r := &initRun{o: &initOptions{}, w: &out, in: bufio.NewReader(strings.NewReader("proj-1234\n\n\n")), cmd: NewRootCmd()}
+	r := &initRun{o: &initOptions{}, w: &out, in: bufio.NewReader(strings.NewReader("proj-1234\n\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if r.o.name != "team-x" || !strings.Contains(out.String(), "[team-x]") || strings.Contains(out.String(), "my-app") {
-		t.Errorf("name %q:\n%s", r.o.name, out.String())
+	if r.o.name != "team-x" || r.o.createProject || !strings.Contains(out.String(), setupAlreadySetUp) || strings.Contains(out.String(), "my-app") {
+		t.Errorf("name %q, create %v:\n%s", r.o.name, r.o.createProject, out.String())
 	}
 	if len(asked) != 1 || asked[0] != "proj-1234 us-east5" {
 		t.Errorf("the installation was looked up with %q, want once with the GCP project and region already known", asked)
 	}
 	// Typing another name is still the user's word (the run then refuses it
-	// against the installation as before); --name is never replaced.
+	// against the installation as before); --name is never replaced, and it is
+	// not an answer to the project question: that one is asked, because no flag
+	// gave it, and the answer here is adoption.
 	asked = nil
-	r = &initRun{o: &initOptions{name: "mine", cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+	r = &initRun{o: &initOptions{name: "mine", cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader(setupAnswerAdopt + "\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil || r.o.name != "mine" || len(asked) != 0 {
 		t.Errorf("--name: %v %q %v", err, r.o.name, asked)
 	}
-	// Nothing found: the ordinary suggestion.
+	// Nothing found: the ordinary suggestion (region, the project question, the
+	// name — three Enters after the ID).
 	installationName = func(context.Context, string, string, string) string { return "" }
 	out.Reset()
-	r = &initRun{o: &initOptions{}, w: &out, in: bufio.NewReader(strings.NewReader("proj-1234\n\n\n")), cmd: NewRootCmd()}
+	r = &initRun{o: &initOptions{}, w: &out, in: bufio.NewReader(strings.NewReader("proj-1234\n\n\n\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil || r.o.name != "my-app" {
 		t.Errorf("no installation: %v %q\n%s", err, r.o.name, out.String())
 	}
