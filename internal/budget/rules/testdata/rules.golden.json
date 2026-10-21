@@ -333,7 +333,7 @@
         "$job": {
           "lease": {
             ".read": "(auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())",
-            ".write": "(auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists()) && newData.exists()",
+            ".write": "(auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists()) && ((!data.exists() && newData.child('holder_uid').val() == auth.uid && newData.child('generation').val() == 1) || (data.exists() && data.child('holder_uid').val() == auth.uid && newData.child('holder_uid').val() == auth.uid && newData.child('generation').val() == data.child('generation').val()) || (data.exists() && newData.child('holder_uid').val() == auth.uid && newData.child('generation').val() == data.child('generation').val() + 1 && (data.child('holder_uid').val() == '' || now - data.child('renewed_at').val() >= 600000)) || (data.exists() && data.child('holder_uid').val() == auth.uid && newData.child('holder_uid').val() == '' && newData.child('generation').val() == data.child('generation').val() + 1))",
             ".validate": "newData.hasChildren(['holder', 'holder_uid', 'generation', 'renewed_at']) && $slug.length <= 100 && $job.length <= 100",
             "holder": {
               ".validate": "(newData.isString() && newData.val().length <= 200) && (newData.parent().child('holder_uid').val() == '' ? newData.val() == '' : newData.val().length > 0)"
@@ -342,10 +342,10 @@
               ".validate": "(newData.isString() && newData.val().length <= 200) && (newData.val() == '' || newData.val() == auth.uid)"
             },
             "generation": {
-              ".validate": "newData.isNumber() && newData.val() % 1 == 0 && newData.val() >= 1 && newData.val() <= 9007199254740991 && ((!data.exists() && newData.val() == 1) || ((data.exists() && newData.parent().child('holder_uid').val() == auth.uid && data.parent().child('holder_uid').val() == auth.uid) && newData.val() == (data.exists() ? data.val() : 0)) || (((newData.parent().child('holder_uid').val() == auth.uid && (data.parent().child('holder_uid').val() == '' || now - data.parent().child('renewed_at').val() > 600000)) || (newData.parent().child('holder_uid').val() == '' && data.parent().child('holder_uid').val() == auth.uid)) && newData.val() == (data.exists() ? data.val() : 0) + 1))"
+              ".validate": "newData.isNumber() && newData.val() % 1 == 0 && newData.val() >= 1 && newData.val() <= 9007199254740991"
             },
             "renewed_at": {
-              ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0) && newData.val() > 0 && newData.val() <= now"
+              ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0) && newData.val() == now"
             },
             "mode": {
               ".validate": "(newData.isString() && newData.val().length <= 200)"

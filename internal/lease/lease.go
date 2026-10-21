@@ -20,15 +20,21 @@
 //     A lease is never written with an unconditional Put: that would clobber
 //     a takeover that landed between this caller's read and its write, which
 //     is precisely two orchestrators acting on one job.
-//  3. **The database's clock.** Expiry is `renewed_at + grace`, where
-//     `renewed_at` is read from the database's own clock
-//     (rtdb.Client.ServerNow, the Date header of the most recent response)
-//     and the comparison is made against that same clock. The writer stores
-//     no deadline it computed itself, and there is no expiry field to store
-//     one in (D3): a machine whose clock is an hour wrong cannot make its
-//     lease look fresh or stale, and the deployed rules refuse a
-//     `renewed_at` ahead of the database's own `now`. This package never
-//     reads the local clock (TestThePackageNeverReadsTheLocalClock).
+//  3. **The database's clock.** Expiry is `renewed_at + grace`, and both
+//     halves of it are the database's. A write carries no time at all: the
+//     `renewed_at` field goes out as an rtdb.ServerTimestamp
+//     (`{".sv":"timestamp"}`), the database stamps the write with its own
+//     clock, and the deployed rules require the stored value to equal their
+//     own `now` in the same write — so a `renewed_at` this process computed
+//     is refused, whoever computed it and however right its clock is. The
+//     stamp the database gave the write comes back in the write's own answer
+//     (rtdb.PutIfMatchInto), which is the only place it can come from, and
+//     the comparisons are made against readings of the database's clock
+//     (rtdb.Client.ServerNow, the Date header of the most recent response).
+//     There is no expiry field to store a deadline in (D3): a machine whose
+//     clock is an hour wrong cannot make its lease look fresh or stale. This
+//     package never reads the local clock
+//     (TestThePackageNeverReadsTheLocalClock).
 //
 // What this package does not do, stated plainly:
 //
@@ -101,6 +107,12 @@ var ErrHeld = errors.New("lease: held by another orchestrator")
 // sees it must stop acting on the job — this is the "never a silent continue"
 // half of D15.
 var ErrLost = errors.New("lease: the seat is gone")
+
+// ErrUnsure is the sentinel of a heartbeat that did not land: the caller asked
+// the database whether it still holds the seat and did not get an answer it
+// can act on. errors.Is(err, ErrUnsure) is true of every *UnsureError, which
+// carries the deadline the caller decides by.
+var ErrUnsure = errors.New("lease: the heartbeat did not land")
 
 // ErrNoClock is the refusal to judge a lease with a clock that is not the
 // database's: the client has not yet seen a response from the database, so it
@@ -209,15 +221,19 @@ func (r Record) Expires(grace time.Duration) time.Time { return r.Renewed().Add(
 // database's clock. A free lease is never fresh: an empty seat is one anyone
 // may take.
 //
-// The boundary is the deployed rules' own, and it is why the comparison is
-// written as it is. The template allows a takeover only while
-// `now - renewed_at > LeaseGraceMs`, so a seat whose grace has run out exactly
-// now (now == renewed_at + grace) is still fresh here and a takeover of it is
-// still refused by the database. A client one instant looser would attempt a
-// takeover the rules refuse, and the caller would get a bare
-// rtdb.ErrPermission where this package promises the typed *HeldError.
+// The boundary is the deployed rules' own, to the instant, and it is why the
+// comparison is written as it is. The template allows a takeover only while
+// `now - renewed_at >= LeaseGraceMs`, so a seat whose grace has run out
+// exactly now (now == renewed_at + grace) is already takeable: this is the
+// same comparison written the other way round (`now < renewed_at + grace`),
+// and the two agree at every instant, the boundary included
+// (TestTakeoverIsRefusedWhileTheLeaseIsFresh drives it there). A client one
+// instant stricter would refuse a takeover the database allows — a seat given
+// up for nothing — and one instant looser would attempt a takeover the
+// database refuses, which comes back as a bare rtdb.ErrPermission where this
+// package promises the typed *HeldError.
 func (r Record) Fresh(now time.Time, grace time.Duration) bool {
-	return !r.Free() && !now.After(r.Expires(grace))
+	return !r.Free() && now.Before(r.Expires(grace))
 }
 
 // valid reports whether the record is one this code wrote. A node the rules
@@ -242,9 +258,13 @@ func (r Record) valid() error {
 type DB interface {
 	// GetETag reads the node and its ETag ("null_etag" when it is absent).
 	GetETag(ctx context.Context, path string, out any) (etag string, found bool, err error)
-	// PutIfMatch writes v (nil deletes) only while the node's ETag is still
-	// etag, and answers rtdb.ErrPrecondition otherwise.
-	PutIfMatch(ctx context.Context, path, etag string, v any) error
+	// PutIfMatchInto writes v (nil deletes) only while the node's ETag is
+	// still etag, and answers rtdb.ErrPrecondition otherwise; out (a pointer)
+	// receives the node as the database stored it, with the stamp the
+	// database gave the write. It is the only call this package makes that
+	// writes, and the only one that can report what the database made of a
+	// value this process did not compute.
+	PutIfMatchInto(ctx context.Context, path, etag string, v, out any) error
 	// ServerNow is the database's own clock, and false before it has told
 	// one.
 	ServerNow() (time.Time, bool)
@@ -324,10 +344,95 @@ func (e *LostError) Error() string {
 
 func (e *LostError) Unwrap() error { return ErrLost }
 
+// UnsureError is the typed result of a heartbeat that did not land: the
+// database could not be asked, or the write failed in a way that says nothing
+// about who holds the seat. It is what a holder sees when its renewals keep
+// failing, and it carries the one thing that lets it decide what to do — Until,
+// the instant past which the seat is certainly not its own any more
+// (held.RenewedAt + grace, on the database's clock). A caller that gets one
+// keeps acting until then and stops after it.
+//
+// It is deliberately not a *LostError. Losing the seat is a fact and a caller
+// stops on it at once; this is the absence of a fact, and a caller that
+// treated the two the same would give up seats it still holds — the other half
+// of the invariant, a job with no shepherd at all. The alternative failure is
+// worse: a caller that ignored this and kept acting would be acting on a job
+// it may no longer own, which is exactly the "two orchestrators on one job"
+// this package exists to prevent. MayAct is the answer to both, and it is a
+// method rather than a number the caller does arithmetic on so that the
+// comparison is always against the database's clock.
+type UnsureError struct {
+	Path string
+	Held Record // the seat this caller believed it held
+	// Until is the last instant this caller may act on the job: the held
+	// lease's expiry, renewed_at + grace, on the database's clock.
+	Until time.Time
+	// Err is why the heartbeat failed: an outage, a refusal, a decode.
+	Err error
+}
+
+func (e *UnsureError) Error() string {
+	return fmt.Sprintf("lease: %s: %v; this orchestrator holds generation %d until %s on the database's clock and must stop acting on the job after that",
+		e.Path, e.Err, e.Held.Generation, e.Until.UTC().Format(time.RFC3339))
+}
+
+// Unwrap is both sentinels: ErrUnsure, and the cause, so a caller can still
+// tell an outage from a refusal (errors.Is(err, rtdb.ErrUnavailable)).
+func (e *UnsureError) Unwrap() []error { return []error{ErrUnsure, e.Err} }
+
+// MayAct reports whether this caller may still act on the job: true while the
+// database's clock has not reached Until. A database that has never told its
+// clock answers false — without the database's clock a lease cannot be judged
+// (D3), and the safe reading of "I cannot tell" is "stop".
+func (e *UnsureError) MayAct(db DB) bool {
+	now, ok := db.ServerNow()
+	return ok && now.Before(e.Until)
+}
+
 // oneLine is s as one line: a holder's name and uid are read in a message a
 // person sees, and the rules bound them but do not stop a newline.
 func oneLine(s string) string {
 	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f }), " ")
+}
+
+// wire is a Record as it goes to the database: the same fields, with
+// renewed_at carrying the database's own clock instead of a number. A lease
+// cannot be written with a time this process computed — the field is an
+// rtdb.ServerTimestamp, the deployed rules require it to equal their own `now`
+// in the same write, and the stamp the database gave the write comes back from
+// the write's answer (PutIfMatchInto) — so nothing on this path invents one.
+type wire struct {
+	Holder     string               `json:"holder"`
+	HolderUID  string               `json:"holder_uid"`
+	Generation int64                `json:"generation"`
+	RenewedAt  rtdb.ServerTimestamp `json:"renewed_at"`
+	Mode       string               `json:"mode,omitempty"`
+	PR         int64                `json:"pr,omitempty"`
+}
+
+// wireOf is a record as it is written. Any time in r is dropped rather than
+// sent: it is a reading of an earlier write, and the database stamps this one.
+func wireOf(r Record) wire {
+	return wire{Holder: r.Holder, HolderUID: r.HolderUID, Generation: r.Generation, Mode: r.Mode, PR: r.PR}
+}
+
+// put writes a record and returns what the database stored: the node the
+// write's own answer carries, with the stamp the database gave it. Nothing is
+// read back — the answer to the write is the node the write stored — and
+// nothing computes a time on this path.
+func put(ctx context.Context, db DB, path, etag string, r Record) (Record, error) {
+	var out Record
+	if err := db.PutIfMatchInto(ctx, path, etag, wireOf(r), &out); err != nil {
+		return Record{}, err
+	}
+	return out, nil
+}
+
+// unsure is the typed result of a heartbeat that did not land: the caller may
+// still hold the seat, and Until is the instant past which it certainly does
+// not (see UnsureError).
+func unsure(path string, held Record, err error) error {
+	return &UnsureError{Path: path, Held: held, Until: held.Expires(DefaultGrace), Err: err}
 }
 
 // Read is the lease as the database holds it. found is false for an absent
@@ -357,7 +462,7 @@ func Take(ctx context.Context, db DB, path string, h Holder, o Options) (Record,
 	if err != nil {
 		return Record{}, err
 	}
-	next := Record{Holder: h.Name, HolderUID: h.UID, RenewedAt: now.UnixMilli(), Mode: o.Mode, PR: o.PR}
+	next := Record{Holder: h.Name, HolderUID: h.UID, Mode: o.Mode, PR: o.PR}
 	switch {
 	case !found:
 		next.Generation = 1
@@ -369,13 +474,16 @@ func Take(ctx context.Context, db DB, path string, h Holder, o Options) (Record,
 	default:
 		return Record{}, &HeldError{Path: path, Found: &cur, Now: now, Until: cur.Expires(DefaultGrace)}
 	}
-	if err := db.PutIfMatch(ctx, path, etag, next); err != nil {
+	// The record that comes back is the database's, stamp and all, so a caller
+	// never holds a lease whose renewed_at is a number this process made up.
+	rec, err := put(ctx, db, path, etag, next)
+	if err != nil {
 		if errors.Is(err, rtdb.ErrPrecondition) {
 			return Record{}, heldFirst(ctx, db, path, now)
 		}
 		return Record{}, err
 	}
-	return next, nil
+	return rec, nil
 }
 
 // Renew is the heartbeat: it writes held back with the database's current
@@ -395,10 +503,24 @@ func Take(ctx context.Context, db DB, path string, h Holder, o Options) (Record,
 // the new holder), and the ETag catches the takeover that lands between this
 // call's read and its write (the race, where nothing but the compare-and-set
 // can decide).
+//
+// The generation half of that check is not the holder_uid half. A holder is a
+// *named identity*, and the same identity can be running in two places — the
+// same account on a laptop and on the resident service — so a record whose
+// holder_uid is still this caller's says nothing about whether this caller's
+// seat is the current one. The generation does: a takeover by the same uid
+// moves it, and a heartbeat that carries the generation it read is refused
+// (TestTheSameIdentityOnTwoMachinesIsStillTwoHolders).
+//
+// When the outcome is neither "the seat is still yours" nor "it is gone" — the
+// database could not be reached, or refused the write for a reason that says
+// nothing about who holds the seat — the answer is a *UnsureError carrying the
+// instant after which the caller must stop acting, never a bare error and
+// never a silent continue (D15).
 func Renew(ctx context.Context, db DB, path string, held Record) (Record, error) {
-	cur, etag, found, now, err := read(ctx, db, path)
+	cur, etag, found, _, err := read(ctx, db, path)
 	if err != nil {
-		return Record{}, err
+		return Record{}, unsure(path, held, err)
 	}
 	if !found {
 		return Record{}, &LostError{Path: path, Held: held}
@@ -407,14 +529,15 @@ func Renew(ctx context.Context, db DB, path string, held Record) (Record, error)
 		return Record{}, &LostError{Path: path, Held: held, Found: &cur}
 	}
 	next := held
-	next.Generation, next.RenewedAt = cur.Generation, now.UnixMilli()
-	if err := db.PutIfMatch(ctx, path, etag, next); err != nil {
+	next.Generation = cur.Generation
+	rec, err := put(ctx, db, path, etag, next)
+	if err != nil {
 		if errors.Is(err, rtdb.ErrPrecondition) {
 			return Record{}, lostAfterRace(ctx, db, path, held)
 		}
-		return Record{}, err
+		return Record{}, unsure(path, held, err)
 	}
-	return next, nil
+	return rec, nil
 }
 
 // Release gives the seat up: the lease is written with an empty holder and
@@ -427,9 +550,9 @@ func Renew(ctx context.Context, db DB, path string, held Record) (Record, error)
 // it must not restart (D15's "the generation stays monotonic"), so the record
 // stays and says nobody is sitting in it.
 func Release(ctx context.Context, db DB, path string, held Record) error {
-	cur, etag, found, now, err := read(ctx, db, path)
+	cur, etag, found, _, err := read(ctx, db, path)
 	if err != nil {
-		return err
+		return unsure(path, held, err)
 	}
 	if !found {
 		return &LostError{Path: path, Held: held}
@@ -437,12 +560,11 @@ func Release(ctx context.Context, db DB, path string, held Record) error {
 	if cur.Generation != held.Generation || cur.HolderUID != held.HolderUID {
 		return &LostError{Path: path, Held: held, Found: &cur}
 	}
-	next := Record{Generation: cur.Generation + 1, RenewedAt: now.UnixMilli()}
-	if err := db.PutIfMatch(ctx, path, etag, next); err != nil {
+	if _, err := put(ctx, db, path, etag, Record{Generation: cur.Generation + 1}); err != nil {
 		if errors.Is(err, rtdb.ErrPrecondition) {
 			return lostAfterRace(ctx, db, path, held)
 		}
-		return err
+		return unsure(path, held, err)
 	}
 	return nil
 }

@@ -203,10 +203,32 @@ func (c *Client) get(ctx context.Context, path string, out any, wantETag bool) (
 	return res.etag, true, nil
 }
 
+// ServerTimestamp is the database's own clock as a value in a write: it
+// marshals to the Realtime Database server value {".sv":"timestamp"}, which
+// the database replaces with its clock when the write lands. It is how a
+// writer stores a time without asserting one — the stored instant is the
+// database's, and a rule that requires a field to equal `now` (the rules'
+// clock, read in the same write) can only be satisfied this way.
+type ServerTimestamp struct{}
+
+func (ServerTimestamp) MarshalJSON() ([]byte, error) { return []byte(`{".sv":"timestamp"}`), nil }
+
 // PutIfMatch writes v (nil deletes) at path only if the node's ETag is still
 // etag; otherwise it returns ErrPrecondition. ETags work on one location: this
 // is for single-node admin writes.
 func (c *Client) PutIfMatch(ctx context.Context, path, etag string, v any) error {
+	return c.PutIfMatchInto(ctx, path, etag, v, nil)
+}
+
+// PutIfMatchInto is PutIfMatch that also decodes the database's answer into
+// out (a pointer; json.RawMessage works): the node as stored, with every
+// ServerTimestamp in v already resolved. It is how a writer learns what the
+// database made of a value the writer did not send — the stamp of a write that
+// carried {".sv":"timestamp"} comes back here and nowhere else.
+//
+// The answer is the node the write itself stored, so a caller needs no read
+// after it: nothing else can have changed it between the write and its answer.
+func (c *Client) PutIfMatchInto(ctx context.Context, path, etag string, v, out any) error {
 	if etag == "" {
 		return fmt.Errorf("rtdb: PUT /%s: an empty etag is no precondition; read the node with GetETag first", path)
 	}
@@ -221,10 +243,22 @@ func (c *Client) PutIfMatch(ctx context.Context, path, etag string, v any) error
 	hdr.Set("If-Match", etag)
 	// No print=silent: the real database refuses it together with If-Match
 	// (400 "Mixing 'shallow', querying parameters or 'print=silent' and
-	// if-match or if-none-match requests is not supported"); the response
-	// body is the written value and is ignored.
-	_, err = c.do(ctx, http.MethodPut, path, nil, b, hdr)
-	return err
+	// if-match or if-none-match requests is not supported"); the response body
+	// is the written value, which is what out decodes.
+	res, err := c.do(ctx, http.MethodPut, path, nil, b, hdr)
+	if err != nil {
+		return err
+	}
+	if out != nil {
+		body := bytes.TrimSpace(res.body)
+		if len(body) == 0 {
+			return fmt.Errorf("rtdb: PUT /%s: the database answered with no value", path)
+		}
+		if err := json.Unmarshal(body, out); err != nil {
+			return fmt.Errorf("rtdb: PUT /%s: decoding the written node: %w", path, err)
+		}
+	}
+	return nil
 }
 
 // Patch updates several locations under root in one atomic request: every

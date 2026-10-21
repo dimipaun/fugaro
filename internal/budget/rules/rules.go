@@ -660,31 +660,8 @@ func wordMacro(m string, depth int) (string, error) {
 		return "$i.matches(" + indexPattern(MaxAgents) + ")", nil
 	case "PERRUNOK":
 		return perRunOK(depth)
-	case "LEASEKEEP":
-		// A holder renewing its own seat (D2): the generation does not move,
-		// and the writer is the identity already recorded on the lease. Both
-		// halves are needed — the first says the node has a holder to compare
-		// with, the second that this writer is that holder — and together they
-		// are the heartbeat's half of the fencing token: a holder whose
-		// generation has moved on is not the recorded uid any more, so its
-		// renewal is refused here rather than after the write.
-		return "(data.exists() && newData.parent().child('holder_uid').val() == auth.uid && data.parent().child('holder_uid').val() == auth.uid)", nil
-	case "LEASETAKE":
-		// A takeover of a free or stale seat (D1, D2, D3): the seat is
-		// nobody's (a released lease keeps its node, with an empty
-		// holder_uid) or its holder has not renewed for the grace, judged
-		// against the database's own `now` and not against any clock the
-		// writer brought with it. The writer records itself, which is what
-		// makes the generation it takes over refusable at its own next call.
-		return fmt.Sprintf("(newData.parent().child('holder_uid').val() == auth.uid && (data.parent().child('holder_uid').val() == '' || now - data.parent().child('renewed_at').val() > %d))", LeaseGraceMs), nil
-	case "LEASERELEASE":
-		// A holder giving the seat up (D15): the generation moves on and the
-		// record stays, with an empty holder_uid, so the released holder's
-		// token is stale at once and the next taker's is not one the released
-		// holder ever held. Only the recorded holder may release, for
-		// LEASEKEEP's reason: a lease nobody holds must not be freeable by
-		// whoever asks.
-		return "(newData.parent().child('holder_uid').val() == '' && data.parent().child('holder_uid').val() == auth.uid)", nil
+	case "LEASEWRITE":
+		return leaseWrite(), nil
 	case "GLOBALDAILY":
 		return "root.child('config/caps/global/dailyMicros').val()", nil
 	case "RUNDELTA":
@@ -714,6 +691,59 @@ func wordMacro(m string, depth int) (string, error) {
 // them in the pattern's set.
 func boundedMatch(max int, pattern string) string {
 	return fmt.Sprintf("(newData.isString() && newData.val().length > 0 && newData.val().length <= %d && newData.val().matches(%s))", max, pattern)
+}
+
+// leaseWrite is the lease's whole `.write`: the four transitions that may
+// change `orchestrators/$slug/$job/lease`, and nothing else (central
+// orchestrator P3, decisions D1, D2, D3).
+//
+// It is on the lease node's `.write` and not on the children's `.validate`
+// because of how the engine evaluates a write: a `.validate` runs at the
+// location written and below it, so a `.validate` on the lease node is never
+// consulted for a write to `lease/holder_uid` — which is a writer changing the
+// holder of a record it does not hold, the seat stolen field by field. A
+// `.write` is consulted at the location written *and at every ancestor*, with
+// `data` and `newData` read at the ancestor, so this one rule sees every write
+// to any part of the lease as the whole record it makes, and the four
+// transitions below are the only ones it accepts. A child `.write: false`
+// would not help: a grant cascades down and cannot be withdrawn by a deeper
+// node (both halves measured on the emulator; see the P3 emulator cases).
+//
+// The four transitions, each reading `data` (the record now), `newData` (the
+// record after this write) and `auth.uid` (the writer):
+//
+//  1. **Create** on an absent node, at generation 1, by the writer itself.
+//  2. **Renew**: the seat is the writer's already and stays its own, at the
+//     same generation. This is the heartbeat, and it is the generation that
+//     makes it a heartbeat rather than a takeover: the fencing token does not
+//     move for a holder, so a stale process that lost the seat to a takeover
+//     writes a generation that is no longer the recorded one and is refused.
+//  3. **Takeover** of a seat that is nobody's (a released lease keeps its
+//     node, with an empty holder_uid) or stale — its holder has not renewed
+//     for the grace — moving the generation on by one. The staleness test is
+//     `now - renewed_at >= LeaseGraceMs`, the database's own `now` and never a
+//     clock the writer brought with it; internal/lease's Record.Fresh applies
+//     the same comparison at the same boundary (`now < renewed_at + grace`),
+//     so the two never disagree about the instant a seat becomes takeable.
+//  4. **Release**: the holder gives the seat up, moving the generation on and
+//     emptying the holder. Only the recorded holder may, for renew's reason.
+//
+// Every transition fixes the generation or moves it by exactly one, and every
+// one of them requires the writer to be the holder the record ends with — so a
+// write that changes no generation (a child write, a multi-path update that
+// rewrites `holder` alone) satisfies none of them unless the writer already
+// holds the seat. The stamp is required to be the database's own by the
+// renewed_at field's `.validate` (`NEW == now`), which is what a write can only
+// satisfy with rtdb.ServerTimestamp.
+func leaseWrite() string {
+	uid, gen := "newData.child('holder_uid').val()", "newData.child('generation').val()"
+	oldUid, oldGen := "data.child('holder_uid').val()", "data.child('generation').val()"
+	create := "(!data.exists() && " + uid + " == auth.uid && " + gen + " == 1)"
+	renew := "(data.exists() && " + oldUid + " == auth.uid && " + uid + " == auth.uid && " + gen + " == " + oldGen + ")"
+	take := fmt.Sprintf("(data.exists() && %s == auth.uid && %s == %s + 1 && (%s == '' || now - data.child('renewed_at').val() >= %d))",
+		uid, gen, oldGen, oldUid, LeaseGraceMs)
+	release := "(data.exists() && " + oldUid + " == auth.uid && " + uid + " == '' && " + gen + " == " + oldGen + " + 1)"
+	return "(" + create + " || " + renew + " || " + take + " || " + release + ")"
 }
 
 // kindOf is the kind of the message at the snapshot, as the rules read it: the

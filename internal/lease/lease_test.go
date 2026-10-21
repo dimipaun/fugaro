@@ -256,23 +256,84 @@ func TestStaleGenerationIsRefused(t *testing.T) {
 	}
 }
 
-// TestTakeoverIsRefusedWhileTheLeaseIsFresh pins the other half of "one job,
-// one shepherd": an orchestrator that wants the job while the holder is alive
-// is refused, and the refusal says how long it must wait.
+// TestTheSameIdentityOnTwoMachinesIsStillTwoHolders is why a heartbeat checks
+// the generation and not only the holder's uid. D3's holder is a named identity,
+// and one identity can be running in two places at once: the same account on a
+// laptop and on the resident service, or the same service account in two
+// containers. The uid on the record is then the same before and after a
+// takeover, so a holder that compared uids would call a seat it lost its own and
+// go on acting on the job — two orchestrators on one PR, which is the whole of
+// what this package exists to prevent.
 //
-// The boundary is the point of the third case. The deployed template allows a
-// takeover only while `now - renewed_at > LeaseGraceMs`, so a seat whose grace
-// has run out *exactly* now is still held — and the client has to agree, or it
-// sends a takeover the database refuses and the caller gets a bare
-// rtdb.ErrPermission where this package promises a *HeldError. The fake has no
-// rules to catch that disagreement, which is why the case is here and why the
-// emulator file has its own copy of it.
+// The generation is what tells them apart: a takeover moves it even when the
+// identity does not, and the heartbeat that carries the generation it read is
+// refused.
 //
-// Hand mutation this fails on: inverting the freshness test in Take (every
-// orchestrator may take over whenever it likes), or loosening the boundary to
-// now.Before(expires) (the exactly-at-the-grace case takes over, and the
-// database refuses the write).
-func TestTakeoverIsRefusedWhileTheLeaseIsFresh(t *testing.T) {
+// Hand mutation this fails on: dropping `cur.Generation != held.Generation` from
+// Renew's check (the uid half still matches, so the stale process renews the new
+// holder's seat and keeps acting).
+func TestTheSameIdentityOnTwoMachinesIsStillTwoHolders(t *testing.T) {
+	base := at(time.Now())
+	f := gcpfake.NewRTDB(t)
+	f.SetClock(func() time.Time { return base })
+	db := newClient(t, f)
+	path := Path("aurora", "r1")
+	// One identity, two processes: the same name and the same uid, which is
+	// exactly the case a uid comparison cannot see.
+	here := holder("dimi (laptop)", "uid-dimi")
+	there := holder("dimi (resident)", "uid-dimi")
+
+	laptop := mustTake(t, db, path, here, Options{})
+	f.SetClock(func() time.Time { return base.Add(DefaultGrace + time.Minute) })
+	resident := mustTake(t, db, path, there, Options{})
+	if resident.HolderUID != laptop.HolderUID {
+		t.Fatalf("the two holders have different uids (%q, %q): this case is about the takeover a uid check cannot see", laptop.HolderUID, resident.HolderUID)
+	}
+	if resident.Generation != laptop.Generation+1 {
+		t.Fatalf("the takeover wrote generation %d, want %d", resident.Generation, laptop.Generation+1)
+	}
+
+	_, err := Renew(ctx(t), db, path, laptop)
+	var le *LostError
+	if !errors.As(err, &le) || !errors.Is(err, ErrLost) {
+		t.Fatalf("the laptop's Renew after a takeover by the same uid = %v, want a *LostError: the seat moved, and the uid on it did not", err)
+	}
+	if le.Held.Generation != laptop.Generation {
+		t.Errorf("the refusal says the caller held generation %d, want %d", le.Held.Generation, laptop.Generation)
+	}
+	if err := Release(ctx(t), db, path, laptop); !errors.Is(err, ErrLost) {
+		t.Errorf("the laptop's Release = %v, want ErrLost: the same uid must not be able to free a seat the generation says is not its own", err)
+	}
+
+	// The resident's own heartbeat still works, so the two refusals above are
+	// the generation check and not a rule that refuses every call.
+	renewed, err := Renew(ctx(t), db, path, resident)
+	if err != nil {
+		t.Fatalf("the resident's Renew = %v", err)
+	}
+	if renewed.Generation != resident.Generation {
+		t.Errorf("a renewal moved the generation to %d, want %d", renewed.Generation, resident.Generation)
+	}
+}
+
+// TestAFailedHeartbeatSaysHowLongTheHolderMayAct is the third answer a
+// heartbeat can give, beside "still yours" and "gone": the database could not be
+// asked, or the write failed for a reason that says nothing about who holds the
+// seat. A plain error there is a caller that does not know whether to stop —
+// stop and it gives up a seat it holds (a job with no shepherd), carry on and it
+// may be acting on a job that is someone else's.
+//
+// The answer is a *UnsureError carrying Until, the instant past which the seat
+// is certainly not the caller's (renewed_at + grace, on the database's clock),
+// and MayAct, which compares that instant against the same clock. Both halves
+// are asserted here: the deadline is the held record's expiry, and it is judged
+// against the database's clock and not this machine's.
+//
+// Hand mutation this fails on: returning the bare error from a failed Renew
+// (the caller has no deadline and no typed value to branch on), computing Until
+// from the local clock, or making MayAct true past Until (a holder acts on a
+// seat the database has already handed to someone else).
+func TestAFailedHeartbeatSaysHowLongTheHolderMayAct(t *testing.T) {
 	base := at(time.Now())
 	f := gcpfake.NewRTDB(t)
 	f.SetClock(func() time.Time { return base })
@@ -280,32 +341,154 @@ func TestTakeoverIsRefusedWhileTheLeaseIsFresh(t *testing.T) {
 	path := Path("aurora", "r1")
 	held := mustTake(t, db, path, holder("dimi (laptop)", "uid-local"), Options{})
 
-	// One second short of the grace: still fresh.
-	f.SetClock(func() time.Time { return base.Add(DefaultGrace - time.Second) })
+	// The database goes away: the heartbeat cannot land, and the caller is told
+	// what it still has and for how long.
+	f.Refuse(503, "UNAVAILABLE", "", "the database is not answering")
+	_, err := Renew(ctx(t), db, path, held)
+	var ue *UnsureError
+	if !errors.As(err, &ue) || !errors.Is(err, ErrUnsure) {
+		t.Fatalf("a Renew the database could not answer = %v, want a *UnsureError", err)
+	}
+	if !errors.Is(err, rtdb.ErrUnavailable) {
+		t.Errorf("the refusal lost its cause (%v): a caller must still be able to tell an outage from a rule refusal", err)
+	}
+	if want := held.Expires(DefaultGrace); !ue.Until.Equal(want) {
+		t.Errorf("the heartbeat says the caller may act until %s, want the held lease's expiry %s", ue.Until, want)
+	}
+	if ue.Held.Generation != held.Generation {
+		t.Errorf("the heartbeat says the caller holds generation %d, want %d", ue.Held.Generation, held.Generation)
+	}
+	if !strings.Contains(ue.Error(), "stop acting on the job") {
+		t.Errorf("the refusal does not say when to stop: %q", ue.Error())
+	}
+
+	// The deadline is the database's clock's and no other. The clock is fixed
+	// for these cases rather than read from the fake: what is being pinned is
+	// the comparison, and a reading taken from a response would be a few
+	// microseconds past the instant the test asked for.
+	if !ue.MayAct(atClockDB{db, base}) {
+		t.Errorf("MayAct is false at %s, before the seat expires at %s: the caller would give up a seat it still holds", base, ue.Until)
+	}
+	if !ue.MayAct(atClockDB{db, ue.Until.Add(-time.Millisecond)}) {
+		t.Errorf("MayAct is false 1 ms before %s, the instant the seat stops being the caller's", ue.Until)
+	}
+	// At the deadline itself it stops, and that is the same instant the
+	// deployed rules let a takeover land (Record.Fresh's boundary).
+	if ue.MayAct(atClockDB{db, ue.Until}) {
+		t.Errorf("MayAct is true exactly at %s, the instant the seat stops being the caller's", ue.Until)
+	}
+	// And a database that has never told its clock fails closed.
+	if (&UnsureError{Path: path, Held: held, Until: ue.Until}).MayAct(noClockDB{db}) {
+		t.Error("MayAct is true on a database that has never told its clock: without the database's clock a lease cannot be judged (D3)")
+	}
+
+	// The database is answering again, and refuses the write itself: a rule
+	// says no, which is the other shape of "I do not know". It is not a lost
+	// seat — the rules refusing a heartbeat say nothing about who holds it, and
+	// a caller that read a 401 as "the seat is gone" would give up a seat it
+	// still holds — and it is not a plain error either, because the caller
+	// still needs the deadline.
+	f.Refuse(0, "", "", "")
+	f.Deny(path)
+	_, err = Renew(ctx(t), db, path, held)
+	if !errors.As(err, &ue) || !errors.Is(err, ErrUnsure) {
+		t.Fatalf("a Renew the rules refused = %v, want a *UnsureError", err)
+	}
+	if errors.Is(err, ErrLost) {
+		t.Error("a refused heartbeat is reported as a lost seat: the caller would stop acting on a seat it still holds")
+	}
+	if !errors.Is(err, rtdb.ErrPermission) {
+		t.Errorf("the refusal lost its cause (%v): a caller must still be able to tell a rule refusal from an outage", err)
+	}
+	if want := held.Expires(DefaultGrace); !ue.Until.Equal(want) {
+		t.Errorf("the refused heartbeat says the caller may act until %s, want %s", ue.Until, want)
+	}
+	f.Deny("")
+
+	// A Release that could not land answers the same way, for the same reason.
+	f.Refuse(503, "UNAVAILABLE", "", "the database is not answering")
+	if err := Release(ctx(t), db, path, held); !errors.As(err, &ue) || !errors.Is(err, ErrUnsure) {
+		t.Fatalf("a Release the database could not answer = %v, want a *UnsureError", err)
+	}
+	f.Refuse(0, "", "", "")
+	// The seat is still the caller's, and the local orchestrator that stopped
+	// acting on the deadline left the record alone.
+	if got := f.Value(path); got == nil {
+		t.Fatal("the lease was removed by a call that failed")
+	}
+}
+
+// TestTakeoverIsRefusedWhileTheLeaseIsFresh pins the other half of "one job,
+// one shepherd": an orchestrator that wants the job while the holder is alive
+// is refused, and the refusal says how long it must wait.
+//
+// The boundary is the point of the middle cases. The deployed template allows a
+// takeover from `now - renewed_at >= LeaseGraceMs` on, so a seat whose grace has
+// run out *exactly* now is takeable — and the client has to draw the line at the
+// same instant, or it either sends a takeover the database refuses (a bare
+// rtdb.ErrPermission where this package promises a *HeldError) or gives up a
+// takeover the database allows. The fake has no rules to catch a disagreement,
+// which is why the cases are here and why the emulator file has its own copy of
+// the same boundary.
+//
+// Hand mutation this fails on: inverting the freshness test in Take (every
+// orchestrator may take over whenever it likes), or moving the boundary one
+// instant stricter (now.After(expires) instead of now.Before(expires): the
+// exactly-at-the-grace takeover is refused here and lands on the emulator).
+func TestTakeoverIsRefusedWhileTheLeaseIsFresh(t *testing.T) {
+	base := at(time.Now())
+	f := gcpfake.NewRTDB(t)
+	f.SetClock(func() time.Time { return base })
+	db := newClient(t, f)
+	path := Path("aurora", "r1")
+	held := mustTake(t, db, path, holder("dimi (laptop)", "uid-local"), Options{})
+	// The stamp is the database's, so the seat expires exactly one grace after
+	// it, and every case below is placed against that instant rather than
+	// against a clock this test guessed at.
+	expires := held.Expires(DefaultGrace)
+
+	// One second short of it: still the holder's.
+	f.SetClock(func() time.Time { return expires.Add(-time.Second) })
 	_, err := Take(ctx(t), db, path, holder("resident orchestrator", "uid-central"), Options{})
 	var he *HeldError
 	if !errors.As(err, &he) {
 		t.Fatalf("a takeover %s into the grace = %v, want a *HeldError", DefaultGrace-time.Second, err)
 	}
-	if want := held.Expires(DefaultGrace); !he.Until.Equal(want) {
-		t.Errorf("the refusal says the lease is fresh until %s, want %s", he.Until, want)
+	if !he.Until.Equal(expires) {
+		t.Errorf("the refusal says the lease is fresh until %s, want %s", he.Until, expires)
 	}
 
-	// Exactly at the grace: still fresh, and the rules agree — they refuse a
-	// takeover until the grace has been passed, not until it is reached. The
-	// clock is fixed for this case, because ServerNow projects the Date header
-	// forward and so can never return the instant exactly.
-	boundary := base.Add(DefaultGrace)
-	if _, err := Take(ctx(t), atClockDB{db, boundary}, path, holder("resident orchestrator", "uid-central"), Options{}); !errors.As(err, &he) {
-		t.Fatalf("a takeover exactly at the grace = %v, want a *HeldError: the deployed rules refuse it too, so a takeover sent here comes back as a bare rtdb.ErrPermission", err)
+	// Exactly at it: the seat is takeable, and the deployed rules agree — they
+	// allow a takeover from `now - renewed_at >= LeaseGraceMs` on, the same
+	// instant this package calls the lease stale. The clock is fixed for this
+	// case, because ServerNow projects the Date header forward and so can never
+	// return the instant exactly; a client that drew the boundary anywhere else
+	// would either attempt a takeover the database refuses (one instant looser)
+	// or give up one it allows (one instant stricter).
+	f.SetClock(func() time.Time { return base })
+	if held.Fresh(expires, DefaultGrace) {
+		t.Errorf("Record.Fresh says a lease renewed at %s is still held exactly at its expiry %s, and the deployed rules let a takeover land there", held.Renewed(), expires)
 	}
-	if !held.Fresh(boundary, DefaultGrace) {
-		t.Errorf("Record.Fresh says a lease renewed at %s is stale exactly at its expiry %s, and the rules say it is still held", held.Renewed(), held.Expires(DefaultGrace))
+	taken := mustTake(t, atClockDB{db, expires}, path, holder("resident orchestrator", "uid-central"), Options{})
+	if taken.Generation != held.Generation+1 {
+		t.Errorf("the takeover wrote generation %d, want %d", taken.Generation, held.Generation+1)
 	}
 
-	// One second past it: stale, so the takeover lands.
-	f.SetClock(func() time.Time { return base.Add(DefaultGrace + time.Second) })
-	taken := mustTake(t, db, path, holder("resident orchestrator", "uid-central"), Options{})
+	// One millisecond short of the new record's expiry, and the seat is its
+	// holder's again: the boundary is the grace, not "nearly the grace".
+	held = taken
+	expires = held.Expires(DefaultGrace)
+	before := expires.Add(-time.Millisecond)
+	if _, err := Take(ctx(t), atClockDB{db, before}, path, holder("dimi (laptop)", "uid-local"), Options{}); !errors.As(err, &he) {
+		t.Fatalf("a takeover 1 ms before the grace = %v, want a *HeldError", err)
+	}
+	if !held.Fresh(before, DefaultGrace) {
+		t.Errorf("Record.Fresh says a lease renewed at %s is stale 1 ms before its expiry %s", held.Renewed(), expires)
+	}
+
+	// And a second past it, the takeover lands.
+	f.SetClock(func() time.Time { return expires.Add(time.Second) })
+	taken = mustTake(t, db, path, holder("dimi (laptop)", "uid-local"), Options{})
 	if taken.Generation != held.Generation+1 {
 		t.Errorf("the takeover wrote generation %d, want %d", taken.Generation, held.Generation+1)
 	}
@@ -553,13 +736,13 @@ func (s *spyDB) GetETag(ctx context.Context, path string, out any) (string, bool
 	return etag, found, err
 }
 
-func (s *spyDB) PutIfMatch(ctx context.Context, path, etag string, v any) error {
+func (s *spyDB) PutIfMatchInto(ctx context.Context, path, etag string, v, out any) error {
 	b, _ := json.Marshal(v)
 	s.mu.Lock()
 	s.writes = append(s.writes, spyWrite{read: s.last, etag: etag, body: string(b)})
 	s.calls = append(s.calls, "PUT "+path+" if-match="+etag+" body="+string(b))
 	s.mu.Unlock()
-	return s.DB.PutIfMatch(ctx, path, etag, v)
+	return s.DB.PutIfMatchInto(ctx, path, etag, v, out)
 }
 
 // TestTheRecordCarriesNoDeadline is D3 as a property of the bytes: the record
@@ -576,7 +759,7 @@ func TestTheRecordCarriesNoDeadline(t *testing.T) {
 	db := newClient(t, f)
 	path := Path("aurora", "r1")
 	spy := &spyDB{DB: db}
-	mustTake(t, spy, path, holder("dimi (laptop)", "uid-local"), Options{Mode: "observe", PR: 7})
+	held := mustTake(t, spy, path, holder("dimi (laptop)", "uid-local"), Options{Mode: "observe", PR: 7})
 
 	spy.mu.Lock()
 	defer spy.mu.Unlock()
@@ -604,13 +787,26 @@ func TestTheRecordCarriesNoDeadline(t *testing.T) {
 			t.Errorf("the record carries %q: the writer stores no deadline it computed itself (D3), and the grace is applied by every reader to renewed_at", deadline)
 		}
 	}
-	// The one time in the record is the database's, to the millisecond.
-	var renewed int64
-	if err := json.Unmarshal(fields["renewed_at"], &renewed); err != nil {
+	// The write carries no time at all: renewed_at goes out as the database's
+	// own server value, which the database resolves to its clock when the
+	// write lands. A number here — the local clock, the database's clock as
+	// this process last read it, anything — is a time the writer asserted, and
+	// the deployed rules refuse one (they require newData.renewed_at == now,
+	// which only a server value can satisfy).
+	var sent any
+	if err := json.Unmarshal(fields["renewed_at"], &sent); err != nil {
 		t.Fatal(err)
 	}
-	if d := time.UnixMilli(renewed).Sub(base); d.Abs() > 2*time.Second {
-		t.Errorf("renewed_at is %s from the database's clock: it is not the database's reading", d.Round(time.Millisecond))
+	sv, isObj := sent.(map[string]any)
+	if !isObj || len(sv) != 1 || sv[".sv"] != "timestamp" {
+		t.Errorf("the write carries renewed_at %s, want the database's server value %s: no write may assert a time (D3)", fields["renewed_at"], `{".sv":"timestamp"}`)
+	}
+	// And the stamp the caller is handed is the database's, to the millisecond:
+	// the fake resolves the server value against the clock this test fixed, so
+	// a client that computed its own — even from ServerNow, which projects the
+	// Date header forward — would not land on it.
+	if held.RenewedAt != base.UnixMilli() {
+		t.Errorf("Take returned renewed_at %d, want the database's own stamp %d: the stamp comes out of the write's answer and is never computed here", held.RenewedAt, base.UnixMilli())
 	}
 
 	// And the shape has nowhere to put one: an unset field with omitempty
@@ -794,6 +990,48 @@ func TestTheRulesCarryTheLeaseAndTheGraceWeApply(t *testing.T) {
 	graceMs := fmt.Sprint(DefaultGrace.Milliseconds())
 	if !strings.Contains(text, graceMs) {
 		t.Errorf("the generated rules do not carry the grace (%s ms, DefaultGrace): the database would let a takeover of a fresh lease through, or refuse one of a stale lease", graceMs)
+	}
+	// The transition is the node's `.write`, and every field's `.validate` is a
+	// shape check. It has to be: the engine consults a `.validate` for the
+	// location written and below it, so a `.validate` on the lease node is
+	// never read for a write to `lease/holder_uid` — a seat taken field by
+	// field by whoever asks. A `.write` is read for the location written *and
+	// every ancestor*, which is what makes one predicate the gate for the whole
+	// record.
+	write, _ := leaseRule[".write"].(string)
+	if write == "" {
+		t.Fatal("the lease node has no .write: the transition would have to be on a child's .validate, which a write to that child's sibling never consults")
+	}
+	for _, clause := range []string{
+		"!data.exists()", // create on an absent node
+		"data.child('holder_uid').val() == auth.uid",    // the seat is the writer's to renew or release
+		"newData.child('holder_uid').val() == auth.uid", // and stays the writer's
+		"data.child('generation').val() + 1",            // a takeover or a release moves the token
+	} {
+		if !strings.Contains(write, clause) {
+			t.Errorf("the lease's .write does not carry %q: %s", clause, write)
+		}
+	}
+	// The staleness test, to the character: the client's Record.Fresh is
+	// `now < renewed_at + grace` and this is the same comparison the other way
+	// round. One character either way and the two disagree about the instant a
+	// seat becomes takeable, which is a takeover refused by the database
+	// (reported as a bare rtdb.ErrPermission) or one given up for nothing.
+	if want := "now - data.child('renewed_at').val() >= " + graceMs; !strings.Contains(write, want) {
+		t.Errorf("the lease's .write does not carry the staleness test as %q: %s", want, write)
+	}
+	if gen, _ := leaseRule["generation"].(map[string]any); gen != nil {
+		if v, _ := gen[".validate"].(string); strings.Contains(v, "data.") {
+			t.Errorf("the generation's .validate reads the previous record (%q): a .validate is not consulted for a write to a sibling field, so the transition must be on the lease node's .write", v)
+		}
+	}
+	// The stamp is the database's own: renewed_at must equal the rules' `now`,
+	// which only a write carrying the server value can satisfy (rtdb's
+	// ServerTimestamp, the only thing this package writes there).
+	if r, _ := leaseRule["renewed_at"].(map[string]any); r != nil {
+		if v, _ := r[".validate"].(string); !strings.Contains(v, "== now") {
+			t.Errorf("renewed_at's .validate is %q, want it to require the database's own clock (newData.val() == now): a writer-supplied stamp is a time the database has no reason to believe", v)
+		}
 	}
 	if !strings.Contains(text, fmt.Sprint(MaxString)) {
 		t.Errorf("the generated rules do not carry MaxString (%d), the bound this package applies to a holder's name", MaxString)
