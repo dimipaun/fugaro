@@ -1002,10 +1002,79 @@ test('every refusal the slider reading makes fires on the defect it names', () =
   const { html, css } = built()
   const cases = [
     [
+      'a homepage with no slider on it',
+      css,
+      html.replace('<section class="home-slider" data-slot="home-slider" data-slider ', '<section class="home-slides" data-slot="home-slider" data-slider '),
+      /the homepage carries 0 sliders/,
+    ],
+    [
+      'a block the script cannot find',
+      css,
+      html.replace('<section class="home-slider" data-slot="home-slider" data-slider ', '<section class="home-slider" data-slot="home-slider" '),
+      /carries no `data-slider` attribute/,
+    ],
+    [
       'a slide that is not in the HTML',
       css,
       html.replace(/<div class="panel panel-see"[\s\S]*?<\/div><\/div><\/section>/, '</div></section>'),
       /carries 2 slides/,
+    ],
+    [
+      'a dot that is not there',
+      css,
+      html.replace(/<li class="slider-dot-item"[^>]*><a class="slider-dot" href="#home-panel-see"[^>]*><\/a><\/li>/, ''),
+      /carries 2 dots/,
+    ],
+    [
+      'a panel whose id is not the slide it carries',
+      css,
+      html.replace('id="home-panel-benefits"', 'id="home-panel-why"'),
+      /is named "benefits" and carries the id "home-panel-why"/,
+    ],
+    [
+      'a dot named after another slide',
+      css,
+      html.replace('data-slider-dot="benefits"', 'data-slider-dot="see"'),
+      /dot 2 carries "see" where the slide it opens is named "benefits"/,
+    ],
+    [
+      'a dot whose href is not a fragment',
+      css,
+      html.replace('href="#home-panel-benefits"', 'href="home-panel-benefits"'),
+      /a dot is a fragment link to the panel it shows/,
+    ],
+    [
+      'a panel with nothing in it',
+      css,
+      html.replace(/<h2 class="panel-title"[^>]*>Easy to use<\/h2><ol class="easy-steps"[\s\S]*?<\/ol>/, ''),
+      /carries no text, so the dot opens an empty box/,
+    ],
+    [
+      'a step control that is not there',
+      css,
+      html.replace(/<button type="button" class="slider-step" data-slider-next[\s\S]*?<\/button>/, ''),
+      /carries 0 next-slide controls/,
+    ],
+    [
+      'a step control that is a link',
+      css,
+      html.replace(
+        /<button type="button" class="slider-step" data-slider-prev([\s\S]*?)<\/button>/,
+        '<a href="#home-panel-easy" class="slider-step" data-slider-prev$1</a>',
+      ),
+      /the previous-slide control is a <a> of type ""/,
+    ],
+    [
+      'a step control with no name',
+      css,
+      html.replace(' aria-label="Previous slide"', ''),
+      /the previous-slide control carries no name/,
+    ],
+    [
+      'a dot the tab key skips',
+      css,
+      html.replace('<a class="slider-dot" href="#home-panel-easy"', '<a class="slider-dot" tabindex="-1" href="#home-panel-easy"'),
+      /a dot carries tabindex="-1"/,
     ],
     [
       'a dot whose fragment names no element',
@@ -1131,6 +1200,18 @@ test('every refusal the slider reading makes fires on the defect it names', () =
       /the control row declare `flex-wrap: \(nothing\)`/,
     ],
     [
+      'a row of dots that cannot wrap',
+      css.replace(/(\.slider-dots\[data-astro-cid-\w+\]\{[^}]*?)flex-wrap:wrap;/, '$1'),
+      html,
+      /the dots declare `flex-wrap: \(nothing\)`/,
+    ],
+    [
+      'a page with no focus ring at all',
+      css.replace(':focus-visible{outline:var(--focus-ring-width) solid var(--accent);outline-offset:var(--focus-ring-offset)}', ''),
+      html,
+      /carries no `:focus-visible` rule drawing an outline/,
+    ],
+    [
       'a dot that removes the focus ring',
       css.replace(/(\.slider-dot\[data-astro-cid-\w+\]\{)/, '$1outline:none;'),
       html,
@@ -1205,6 +1286,21 @@ test('every refusal the steps reading makes fires on the defect it names', () =>
       'a step with no icon',
       html.replace(/<svg class="step-icon"[\s\S]*?<\/svg>/, ''),
       /'s icon is missing/,
+    ],
+    [
+      'a step with no name',
+      html.replace(/<h3 class="step-name"[^>]*>Tell your agent<\/h3>/, ''),
+      /step 1 has no name/,
+    ],
+    [
+      'a step whose icon draws nothing',
+      html.replace('<path d="M4 5h16v11H9l-5 4V5Z"/>', ''),
+      /holds no shape, so the step renders an empty <svg> nothing can see/,
+    ],
+    [
+      'a step citing no section of a document',
+      html.replace('data-source="README.md#Getting started"', 'data-source="README.md"'),
+      /which names no section of a document of this repository/,
     ],
     [
       'a step numbered by hand out of order',
