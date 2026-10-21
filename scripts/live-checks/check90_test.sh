@@ -1642,45 +1642,61 @@ test_second_interrupt_during_cleanup_does_not_kill_it() {
   return 0
 }
 
-test_happy_path
-test_block_format
-test_env_guards
-test_settings_guard
-test_swap_fails
-test_swap_fails_before_reaching_the_proxy
-test_limit_is_recorded
-test_limit_the_client_never_spoke_about_is_unverified
-test_control_failure_is_inconclusive
-test_dry_run_makes_no_call
-test_non_loopback_upstream_is_refused
-test_token_is_never_on_a_command_line
-test_streaming_call_is_capped
-test_sigint_cleans_up
-test_no_second_paste
-test_xtrace_is_refused
-test_missing_python3_is_named_not_an_internal_error
-test_child_is_confined
-test_swap_the_proxy_never_saw
-test_foreign_request_is_refused
-test_budget_is_read_at_every_step
-test_no_drops_measured_is_not_a_pass
-test_partial_drop_list_is_not_a_pass
-test_a_non_timeout_failure_is_not_recorded_as_a_timeout
-test_version_probe_is_capped_and_once
-test_internal_error_is_aborted_not_viable
-test_token_length_is_not_printed
-test_a_token_file_that_survives_is_a_failure
-test_keep_logs_refuses_a_checkout_even_when_the_directory_is_not_there_yet
-test_child_flags_disable_tools_and_are_documented
-test_child_is_not_started_with_debug_logging
-test_placeholder_is_never_in_a_process_argv
-test_managed_settings_reads_every_directory_it_names
-test_default_managed_settings_names_both_platforms
-test_the_proxy_uses_the_first_ca_bundle_that_loads
-test_a_machine_with_no_ca_bundle_stops_before_the_first_call
-test_the_proxy_never_disables_certificate_verification
-test_the_upstream_error_type_reaches_the_block
-test_second_interrupt_during_cleanup_does_not_kill_it
+# Sharding, so the package's Go test can run the tests of this file side by
+# side: CHECK_TEST_SHARD="i/n" runs every n-th test starting at i (each test
+# works in its own directory under $work), CHECK_TEST_ONLY=name runs that one
+# test alone (for a solo rerun of a flaky-looking one). Neither set: all run.
+test_index=0
+t() {
+  local i=$test_index
+  test_index=$((test_index + 1))
+  if [ -n "${CHECK_TEST_ONLY:-}" ]; then
+    [ "$1" = "$CHECK_TEST_ONLY" ] || return 0
+  elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
+    [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
+  fi
+  "$1"
+}
+
+t test_happy_path
+t test_block_format
+t test_env_guards
+t test_settings_guard
+t test_swap_fails
+t test_swap_fails_before_reaching_the_proxy
+t test_limit_is_recorded
+t test_limit_the_client_never_spoke_about_is_unverified
+t test_control_failure_is_inconclusive
+t test_dry_run_makes_no_call
+t test_non_loopback_upstream_is_refused
+t test_token_is_never_on_a_command_line
+t test_streaming_call_is_capped
+t test_sigint_cleans_up
+t test_no_second_paste
+t test_xtrace_is_refused
+t test_missing_python3_is_named_not_an_internal_error
+t test_child_is_confined
+t test_swap_the_proxy_never_saw
+t test_foreign_request_is_refused
+t test_budget_is_read_at_every_step
+t test_no_drops_measured_is_not_a_pass
+t test_partial_drop_list_is_not_a_pass
+t test_a_non_timeout_failure_is_not_recorded_as_a_timeout
+t test_version_probe_is_capped_and_once
+t test_internal_error_is_aborted_not_viable
+t test_token_length_is_not_printed
+t test_a_token_file_that_survives_is_a_failure
+t test_keep_logs_refuses_a_checkout_even_when_the_directory_is_not_there_yet
+t test_child_flags_disable_tools_and_are_documented
+t test_child_is_not_started_with_debug_logging
+t test_placeholder_is_never_in_a_process_argv
+t test_managed_settings_reads_every_directory_it_names
+t test_default_managed_settings_names_both_platforms
+t test_the_proxy_uses_the_first_ca_bundle_that_loads
+t test_a_machine_with_no_ca_bundle_stops_before_the_first_call
+t test_the_proxy_never_disables_certificate_verification
+t test_the_upstream_error_type_reaches_the_block
+t test_second_interrupt_during_cleanup_does_not_kill_it
 
 if [ "$failures" -ne 0 ]; then
   echo "check90_test.sh: $failures failure(s)" >&2

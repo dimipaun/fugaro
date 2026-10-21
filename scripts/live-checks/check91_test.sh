@@ -110,6 +110,43 @@ with open(os.path.join(LOG, "gcloud.calls"), "a") as fh:
 
 args = sys.argv[1:]
 
+# Like the real CLI, a flag a subcommand does not have is an error. EVERY
+# subcommand the script calls is listed with the flags it may pass; a call to a
+# subcommand that is not here, or with a flag that is not in its list, fails
+# with exit 2. A misspelled or invented flag therefore cannot hide in any call.
+ALLOWED = {
+    ("run", "services", "describe"): ("--project", "--region", "--format"),
+    ("run", "services", "list"): ("--project", "--region", "--filter", "--format"),
+    ("run", "services", "delete"): ("--project", "--region", "--quiet"),
+    ("run", "services", "update"): ("--project", "--region", "--set-env-vars", "--quiet"),
+    ("run", "deploy"): ("--project", "--region", "--image", "--no-allow-unauthenticated", "--timeout",
+                         "--min-instances", "--max-instances", "--set-env-vars", "--quiet"),
+    ("artifacts", "repositories", "describe"): ("--project", "--location"),
+    ("artifacts", "repositories", "create"): ("--project", "--location", "--repository-format", "--description", "--quiet"),
+    ("artifacts", "repositories", "delete"): ("--project", "--location", "--quiet"),
+    ("artifacts", "repositories", "list"): ("--project", "--location", "--filter", "--format"),
+    ("artifacts", "docker", "images", "delete"): ("--project", "--delete-tags", "--quiet"),
+    ("artifacts", "docker", "images", "list"): ("--project", "--include-tags", "--format"),
+    ("iam", "service-accounts", "list"): ("--project", "--filter", "--format"),
+    ("iam", "service-accounts", "describe"): ("--project",),
+    ("iam", "service-accounts", "get-iam-policy"): ("--flatten", "--format", "--project"),
+    ("projects", "get-iam-policy"): ("--flatten", "--format", "--project"),
+    ("storage", "buckets", "get-iam-policy"): ("--flatten", "--format", "--project"),
+    ("storage", "ls"): (),
+    ("storage", "rm"): (),
+    ("auth", "list"): ("--filter", "--format"),
+    ("auth", "print-identity-token"): (),
+    ("builds", "submit"): ("--project", "--config", "--service-account", "--gcs-source-staging-dir"),
+}
+_key = next((k for k in sorted(ALLOWED, key=len, reverse=True) if tuple(args[:len(k)]) == k), None)
+if _key is None:
+    sys.stderr.write("ERROR: the fake gcloud does not know this subcommand: %s\n" % " ".join(args))
+    sys.exit(2)
+for _a in args[len(_key):]:
+    if _a.startswith("--") and _a.split("=")[0] not in ALLOWED[_key]:
+        sys.stderr.write("ERROR: (gcloud.%s) unrecognized arguments: %s\n" % (".".join(_key), _a))
+        sys.exit(2)
+
 
 def flag(name):
     if name in args:
@@ -359,6 +396,9 @@ if iam_read:
         if os.environ.get("FAKE_GCLOUD_ACTAS", "yes") == "yes":
             print("roles/iam.serviceAccountUser,user:" + os.environ.get("FAKE_GCLOUD_ACCOUNT", "owner@example.com"))
         print("roles/iam.serviceAccountUser,user:somebody-else@example.com")
+        for line in os.environ.get("FAKE_GCLOUD_SA_EXTRA", "").split(";"):
+            if line:
+                print(line)
         sys.exit(0)
     if kind == "PROJECT":
         roles = os.environ.get("FAKE_GCLOUD_PROJECT_ROLES", "roles/artifactregistry.writer roles/logging.logWriter")
@@ -366,6 +406,11 @@ if iam_read:
         roles = os.environ.get("FAKE_GCLOUD_BUCKET_ROLES", "roles/storage.objectViewer")
     for r in roles.split():
         print(r + "," + member)
+    # Extra "role,member[,condition]" lines, ';'-separated (the project owner's own roles).
+    if kind == "PROJECT":
+        for line in os.environ.get("FAKE_GCLOUD_PROJECT_EXTRA", "").split(";"):
+            if line:
+                print(line)
     # Another account holding everything: the script must pick out ITS account.
     for r in ("roles/owner", "roles/artifactregistry.writer", "roles/storage.objectViewer", "roles/logging.logWriter"):
         print(r + ",serviceAccount:other-account@fugaro-dev.iam.gserviceaccount.com")
@@ -859,13 +904,59 @@ test_build_identity_preflight() {
   expect_contains "$err" "the staging bucket's IAM policy cannot be read" "unreadable bucket policy: said"
   expect_absent "$(cat "$dir/unread-bucket/logs/gcloud.calls")" "repositories create" "unreadable bucket policy: nothing created"
 
-  # The owner's own right to act as the build account: read, and printed when missing.
+  # The owner's own right to act as the build account: read, and a "no" is a
+  # WARNING with the grant command, not a stop (a grant through a group, folder
+  # or organization is not visible in these policies).
   prepare "$dir/actas"
   run91 "$dir/actas" FAKE_GCLOUD_ACTAS=no
-  expect_status "$status" 1 "no actAs: the run stops"
-  expect_contains "$err" "[per installation fugaro (fugaro-dev), run by YOU] gcloud iam service-accounts add-iam-policy-binding fugaro-b-sandbox-abc123@fugaro-dev.iam.gserviceaccount.com --project=fugaro-dev --member=user:owner@example.com --role=roles/iam.serviceAccountUser" "no actAs: the grant is printed"
-  expect_absent "$(cat "$dir/actas/logs/gcloud.calls")" "repositories create" "no actAs: nothing created"
+  expect_status "$status" 0 "no actAs: the run goes on"
+  expect_contains "$err" "WARNING: no iam.serviceAccounts.actAs" "no actAs: a warning"
+  expect_contains "$err" "a conditional grant is not counted" "no actAs: the conditional caveat is said"
+  expect_contains "$err" "gcloud iam service-accounts add-iam-policy-binding fugaro-b-sandbox-abc123@fugaro-dev.iam.gserviceaccount.com --project=fugaro-dev --member=user:owner@example.com --role=roles/iam.serviceAccountUser" "no actAs: the exact grant is printed"
+  expect_absent "$err" "MISSING GRANTS" "no actAs: not a missing-grant stop"
+  expect_contains "$(cat "$dir/actas/logs/gcloud.calls")" "builds submit" "no actAs: the build is still submitted"
   expect_contains "$(cat "$dir/actas/logs/gcloud.calls")" "iam service-accounts get-iam-policy fugaro-b-sandbox-abc123@" "actAs: the build account's policy is read"
+
+  # An owner who is a service account: the member is serviceAccount:, matched case-insensitively.
+  prepare "$dir/actas-sa"
+  run91 "$dir/actas-sa" FAKE_GCLOUD_ACTAS=no FAKE_GCLOUD_ACCOUNT=Runner@fugaro-dev.iam.gserviceaccount.com \
+    FAKE_GCLOUD_SA_EXTRA="roles/iam.serviceAccountUser,serviceAccount:runner@fugaro-dev.iam.gserviceaccount.com"
+  expect_status "$status" 0 "service-account owner: the run"
+  expect_absent "$err" "WARNING: no iam.serviceAccounts.actAs" "service-account owner: found, case-insensitively, no warning"
+  prepare "$dir/actas-sa-no"
+  run91 "$dir/actas-sa-no" FAKE_GCLOUD_ACTAS=no FAKE_GCLOUD_ACCOUNT=runner@fugaro-dev.iam.gserviceaccount.com
+  expect_contains "$err" "--member=serviceAccount:runner@fugaro-dev.iam.gserviceaccount.com --role=roles/iam.serviceAccountUser" "service-account owner: the member is serviceAccount:"
+
+  # serviceAccountAdmin and serviceAccountTokenCreator do not carry actAs; a conditional grant is not counted.
+  for role in roles/iam.serviceAccountAdmin roles/iam.serviceAccountTokenCreator; do
+    prepare "$dir/actas-${role##*/}"
+    run91 "$dir/actas-${role##*/}" FAKE_GCLOUD_ACTAS=no FAKE_GCLOUD_SA_EXTRA="${role},user:owner@example.com"
+    expect_contains "$err" "WARNING: no iam.serviceAccounts.actAs" "${role}: does not count as actAs"
+  done
+  prepare "$dir/actas-cond"
+  run91 "$dir/actas-cond" FAKE_GCLOUD_ACTAS=no FAKE_GCLOUD_SA_EXTRA="roles/iam.serviceAccountUser,user:owner@example.com,only-today"
+  expect_contains "$err" "WARNING: no iam.serviceAccounts.actAs" "a conditional grant is not counted"
+
+  # The project-owner fallback: roles/owner on the PROJECT satisfies the right.
+  prepare "$dir/actas-owner"
+  run91 "$dir/actas-owner" FAKE_GCLOUD_ACTAS=no FAKE_GCLOUD_PROJECT_EXTRA="roles/owner,user:owner@example.com"
+  expect_status "$status" 0 "project owner: the run"
+  expect_absent "$err" "WARNING: no iam.serviceAccounts.actAs" "project owner: roles/owner at project level satisfies the right"
+  expect_contains "$(cat "$dir/actas-owner/logs/gcloud.calls")" "projects get-iam-policy fugaro-dev" "project owner: the project policy is read for it"
+
+  # The build account's own policy cannot be read: a NOTE, and the run carries on.
+  prepare "$dir/actas-unread"
+  run91 "$dir/actas-unread" FAKE_GCLOUD_SA_POLICY_FAILS=yes
+  expect_status "$status" 0 "unreadable build-account policy: the run goes on"
+  expect_contains "$err" "NOTE: whether your account can act as" "unreadable build-account policy: a NOTE"
+  expect_absent "$err" "MISSING GRANTS" "unreadable build-account policy: not a stop"
+
+  # The cleanup note: grants first (with --condition=None), the account last.
+  prepare "$dir/cleanup-order"
+  run91 "$dir/cleanup-order" FAKE_GCLOUD_BUILD_SAS="fugaro-chk91-build" CHECK91_BUILD_SA=fugaro-chk91-build@fugaro-dev.iam.gserviceaccount.com \
+    FAKE_GCLOUD_POLICY_SA=fugaro-chk91-build@fugaro-dev.iam.gserviceaccount.com
+  expect_contains "$err" "remove-iam-policy-binding fugaro-dev --member=serviceAccount:fugaro-chk91-build@fugaro-dev.iam.gserviceaccount.com --role=roles/artifactregistry.writer --condition=None" "cleanup: the project binding is removed with --condition=None"
+  expect_contains "$err" "and last: gcloud iam service-accounts delete" "cleanup: the account is deleted last"
 
   # A product account gets the broader-grant warning and the dedicated alternative.
   expect_contains "$(cat "$dir/miss/err")" "WARNING: fugaro-b-sandbox-abc123@" "product account: the broader-grant warning"
@@ -1357,7 +1448,7 @@ test_second_interrupt_during_cleanup_does_not_kill_it() {
   calls=$(cat "$dir/logs/gcloud.calls")
   expect_contains "$calls" "run services delete fugaro-chk91" "second interrupt: the service delete still ran"
   expect_contains "$calls" "repositories delete fugaro-chk91" "second interrupt: the cleanup went on past the service"
-  expect_contains "$out" "FACT restore-counts: PASS" "second interrupt: the counts were still read"
+  expect_contains "$(cat "$dir/out")" "FACT restore-counts: PASS" "second interrupt: the counts were still read"
   local sc
   sc=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
   [ -n "$sc" ] || fail "second interrupt: the scratch directory was never announced"
@@ -1897,6 +1988,8 @@ test_never_belong() {
   # another installation's project. `belong` appears in the script only in the
   # two places that say it is never used.
   local text calls
+  # It reads the happy path's logs: when that test ran in another shard, run it here.
+  [ -f "$work/happy/logs/gcloud.calls" ] || test_happy_path
   text=$(cat "$script")
   expect_contains "$text" "P=fugaro-dev" "never belong: the project is hard-coded"
   # The phrase "gcloud config get-value project" occurs in this script's comments
@@ -1926,52 +2019,68 @@ test_never_belong() {
   done
 }
 
-test_curl_cutting_the_stream
-test_dry_run
-test_build_identity_preflight
-test_dry_run_prints_the_plan
-test_project_guard
-test_every_advertised_knob_is_read
-test_doctor_failing_its_own_checks_is_not_a_stop
-test_doctor_output_after_the_project_line_is_not_a_stop
-test_service_taken
-test_repo_taken
-test_happy_path
-test_warm_cold_start
-test_error_page_is_not_a_cold_start
-test_burst_stream
-test_liveness_probe_failure_is_recorded
-test_no_http2_curl
-test_xtrace_is_refused
-test_staged_source_is_removed
-test_unreadable_staging_bucket_stops_before_the_build
-test_a_failed_build_records_what_it_said
-test_every_curl_carries_a_cap
-test_second_interrupt_during_cleanup_does_not_kill_it
-test_identity_token_is_never_on_a_command_line
-test_ownership_record_precedes_the_create
-test_failed_create_takes_its_record_back
-test_failed_create_that_made_the_repository_keeps_its_record
-test_failed_deploy_that_made_nothing_takes_its_record_back
-test_failed_deploy_keeps_the_record_it_made
-test_an_unreadable_describe_is_not_an_absent_resource
-test_an_unreadable_repository_describe_stops_before_the_create
-test_an_unreadable_describe_after_a_failed_deploy_keeps_the_record
-test_a_url_describe_that_fails_after_the_deploy_does_not_end_the_run_bare
-test_a_config_describe_that_fails_after_the_deploy_does_not_end_the_run_bare
-test_interrupt_during_the_idle_wait_is_prompt
-test_long_stream_request_carries_its_own_cap
-test_every_body_row_mints_its_own_token
-test_restore_leftover
-test_restore_count_query_failure_is_not_zero
-test_restore_count_query_failure_is_not_papered_over
-test_scratch_removal_failure_is_a_failure
-test_a_token_file_that_survives_is_a_failure
-test_pre_wait_liveness_failure_is_a_fact
-test_long_stream_error_page_is_not_a_pass
-test_h2_row_refused_is_not_a_pass
-test_sigint
-test_never_belong
+# Sharding, so the package's Go test can run the tests of this file side by
+# side: CHECK_TEST_SHARD="i/n" runs every n-th test starting at i (each test
+# works in its own directory under $work), CHECK_TEST_ONLY=name runs that one
+# test alone (for a solo rerun of a flaky-looking one). Neither set: all run.
+test_index=0
+t() {
+  local i=$test_index
+  test_index=$((test_index + 1))
+  if [ -n "${CHECK_TEST_ONLY:-}" ]; then
+    [ "$1" = "$CHECK_TEST_ONLY" ] || return 0
+  elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
+    [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
+  fi
+  "$1"
+}
+
+t test_curl_cutting_the_stream
+t test_dry_run
+t test_build_identity_preflight
+t test_dry_run_prints_the_plan
+t test_project_guard
+t test_every_advertised_knob_is_read
+t test_doctor_failing_its_own_checks_is_not_a_stop
+t test_doctor_output_after_the_project_line_is_not_a_stop
+t test_service_taken
+t test_repo_taken
+t test_happy_path
+t test_warm_cold_start
+t test_error_page_is_not_a_cold_start
+t test_burst_stream
+t test_liveness_probe_failure_is_recorded
+t test_no_http2_curl
+t test_xtrace_is_refused
+t test_staged_source_is_removed
+t test_unreadable_staging_bucket_stops_before_the_build
+t test_a_failed_build_records_what_it_said
+t test_every_curl_carries_a_cap
+t test_second_interrupt_during_cleanup_does_not_kill_it
+t test_identity_token_is_never_on_a_command_line
+t test_ownership_record_precedes_the_create
+t test_failed_create_takes_its_record_back
+t test_failed_create_that_made_the_repository_keeps_its_record
+t test_failed_deploy_that_made_nothing_takes_its_record_back
+t test_failed_deploy_keeps_the_record_it_made
+t test_an_unreadable_describe_is_not_an_absent_resource
+t test_an_unreadable_repository_describe_stops_before_the_create
+t test_an_unreadable_describe_after_a_failed_deploy_keeps_the_record
+t test_a_url_describe_that_fails_after_the_deploy_does_not_end_the_run_bare
+t test_a_config_describe_that_fails_after_the_deploy_does_not_end_the_run_bare
+t test_interrupt_during_the_idle_wait_is_prompt
+t test_long_stream_request_carries_its_own_cap
+t test_every_body_row_mints_its_own_token
+t test_restore_leftover
+t test_restore_count_query_failure_is_not_zero
+t test_restore_count_query_failure_is_not_papered_over
+t test_scratch_removal_failure_is_a_failure
+t test_a_token_file_that_survives_is_a_failure
+t test_pre_wait_liveness_failure_is_a_fact
+t test_long_stream_error_page_is_not_a_pass
+t test_h2_row_refused_is_not_a_pass
+t test_sigint
+t test_never_belong
 
 if [ "$failures" -ne 0 ]; then
   echo "check91_test.sh: $failures failure(s)" >&2

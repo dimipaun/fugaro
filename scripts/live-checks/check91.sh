@@ -1100,38 +1100,51 @@ sa_roles() {
   case "$kind" in
   project)
     raw=$(gcloud projects get-iam-policy "${P:?}" --flatten='bindings[].members' \
-      --format='csv[no-heading](bindings.role,bindings.members)' 2>"$err") || return 1
+      --format='csv[no-heading](bindings.role,bindings.members,bindings.condition.title)' 2>"$err") || return 1
     ;;
   bucket)
     raw=$(gcloud storage buckets get-iam-policy "gs://${P:?}_cloudbuild" --flatten='bindings[].members' \
-      --format='csv[no-heading](bindings.role,bindings.members)' 2>"$err") || return 1
+      --format='csv[no-heading](bindings.role,bindings.members,bindings.condition.title)' 2>"$err") || return 1
     ;;
   esac
-  printf '%s\n' "$raw" | awk -F, -v m="serviceAccount:${BUILD_SA}" '$2 == m { print $1 }'
+  printf '%s\n' "$raw" | awk -F, -v m="serviceAccount:${BUILD_SA}" 'tolower($2) == tolower(m) && $3 == "" { print $1 }'
+}
+
+# owner_member — the IAM member string of the active account: serviceAccount:
+# for a service-account email, user: otherwise.
+owner_member() {
+  case "${1}" in
+  *.gserviceaccount.com) printf 'serviceAccount:%s' "$1" ;;
+  *) printf 'user:%s' "$1" ;;
+  esac
 }
 
 # owner_can_act_as — whether the owner's active account can use BUILD_SA
-# (roles/iam.serviceAccountUser, or a role that contains it), read from the
-# build account's own policy and the project's. Prints "yes", "no" or
-# "unknown:<why>". Read-only. A grant held through a group reads as "no", which
-# errs on the safe side: the owner is told, not stopped.
+# (roles/iam.serviceAccountUser, or roles/owner or roles/editor, which contain
+# iam.serviceAccounts.actAs; serviceAccountAdmin and serviceAccountTokenCreator
+# do NOT), read from the build account's own policy and the project's. Prints
+# "yes", "no" or "unknown:<why>". Read-only. Grants held through a group, a
+# folder or the organization are not visible here, and a conditional grant is
+# not counted, so "no" is only a WARNING: the run goes on and the real error,
+# if any, shows at `builds submit`.
 owner_can_act_as() {
-  local acct=${OWNER_ACCT:-} sa_pol proj_pol
+  local acct=${OWNER_ACCT:-} sa_pol proj_pol member
   if [ -z "$acct" ]; then
     echo "unknown:the active gcloud account cannot be read"
     return 0
   fi
+  member=$(owner_member "$acct")
   sa_pol=$(gcloud iam service-accounts get-iam-policy "$BUILD_SA" --project="${P:?}" --flatten='bindings[].members' \
-    --format='csv[no-heading](bindings.role,bindings.members)' 2>"$SCRATCH/policy.err") \
+    --format='csv[no-heading](bindings.role,bindings.members,bindings.condition.title)' 2>"$SCRATCH/policy.err") \
     || { echo "unknown:the policy of ${BUILD_SA} cannot be read"; return 0; }
-  if printf '%s\n' "$sa_pol" | awk -F, -v m="user:${acct}" '$2 == m && ($1 == "roles/iam.serviceAccountUser" || $1 == "roles/iam.serviceAccountAdmin" || $1 == "roles/owner" || $1 == "roles/editor") { f = 1 } END { exit !f }'; then
+  if printf '%s\n' "$sa_pol" | awk -F, -v m="$member" 'tolower($2) == tolower(m) && $3 == "" && ($1 == "roles/iam.serviceAccountUser" || $1 == "roles/owner" || $1 == "roles/editor") { f = 1 } END { exit !f }'; then
     echo yes
     return 0
   fi
   proj_pol=$(gcloud projects get-iam-policy "${P:?}" --flatten='bindings[].members' \
-    --format='csv[no-heading](bindings.role,bindings.members)' 2>"$SCRATCH/policy.err") \
+    --format='csv[no-heading](bindings.role,bindings.members,bindings.condition.title)' 2>"$SCRATCH/policy.err") \
     || { echo "unknown:the project policy cannot be read"; return 0; }
-  if printf '%s\n' "$proj_pol" | awk -F, -v m="user:${acct}" '$2 == m && ($1 == "roles/iam.serviceAccountUser" || $1 == "roles/iam.serviceAccountAdmin" || $1 == "roles/owner" || $1 == "roles/editor") { f = 1 } END { exit !f }'; then
+  if printf '%s\n' "$proj_pol" | awk -F, -v m="$member" 'tolower($2) == tolower(m) && $3 == "" && ($1 == "roles/iam.serviceAccountUser" || $1 == "roles/owner" || $1 == "roles/editor") { f = 1 } END { exit !f }'; then
     echo yes
   else
     echo no
@@ -1154,7 +1167,7 @@ print_dedicated_setup() {
 # owner's to remove, never this script's.
 optional_cleanup_note() {
   [ "${BUILD_SA%%@*}" = "$DEDICATED_SA_ID" ] || return 0
-  say "OPTIONAL owner step, per installation fugaro (${P}), run by YOU (this script never runs it): remove the throwaway build account and its grants when you are done with Check 91: gcloud iam service-accounts delete ${BUILD_SA} --project=${P} (its project-level bindings go with the account once the policy is cleaned: gcloud projects remove-iam-policy-binding ${P} --member=serviceAccount:${BUILD_SA} --role=roles/artifactregistry.writer, and the same for roles/logging.logWriter; and gcloud storage buckets remove-iam-policy-binding gs://${P}_cloudbuild --member=serviceAccount:${BUILD_SA} --role=roles/storage.objectViewer)"
+  say "OPTIONAL owner step, per installation fugaro (${P}), run by YOU (this script never runs it): remove the throwaway build account's grants FIRST (after the account is deleted its members read deleted:serviceAccount:... and the removes fail), then the account: gcloud projects remove-iam-policy-binding ${P} --member=serviceAccount:${BUILD_SA} --role=roles/artifactregistry.writer --condition=None; gcloud projects remove-iam-policy-binding ${P} --member=serviceAccount:${BUILD_SA} --role=roles/logging.logWriter --condition=None (only if you granted it); gcloud storage buckets remove-iam-policy-binding gs://${P}_cloudbuild --member=serviceAccount:${BUILD_SA} --role=roles/storage.objectViewer; and last: gcloud iam service-accounts delete ${BUILD_SA} --project=${P}"
 }
 
 # holds ROLES... — reads the role lines on stdin; true when any of ROLES is there.
@@ -1239,19 +1252,21 @@ guard_build_identity() {
 "
   fi
   # The owner's own right to use the account (the build is submitted by the
-  # owner as that account). A missing right is printed, and it stops the run
-  # when it can be read as missing: the build would fail late otherwise.
-  local actas
+  # owner as that account). A "no" is only a WARNING with the grant command:
+  # the right may come through a group, a folder or the organization, which the
+  # policies read here do not show. The real error, if any, shows at
+  # `builds submit`, where the build-error row names the permission.
+  local actas owner_member_str
   OWNER_ACCT=$(gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null | tr -d '\r' | head -n 1) || OWNER_ACCT=""
   actas=$(owner_can_act_as)
+  owner_member_str=$(owner_member "${OWNER_ACCT:-YOUR-EMAIL}")
   case "$actas" in
   yes) ;;
   no)
-    missing="${missing}  [per installation fugaro (${P}), run by YOU] gcloud iam service-accounts add-iam-policy-binding ${BUILD_SA} --project=${P} --member=user:${OWNER_ACCT:-YOUR-EMAIL} --role=roles/iam.serviceAccountUser
-"
+    say "WARNING: no iam.serviceAccounts.actAs on ${BUILD_SA} was found for ${owner_member_str} in the build account's or the project's policy (a grant through a group, folder or organization is not visible here, and a conditional grant is not counted), so the build may fail on permission. If it does, grant: gcloud iam service-accounts add-iam-policy-binding ${BUILD_SA} --project=${P} --member=${owner_member_str} --role=roles/iam.serviceAccountUser"
     ;;
   *)
-    say "NOTE: whether your account can act as ${BUILD_SA} could not be read (${actas#unknown:}); if the build fails on permission, grant: gcloud iam service-accounts add-iam-policy-binding ${BUILD_SA} --project=${P} --member=user:YOUR-EMAIL --role=roles/iam.serviceAccountUser"
+    say "NOTE: whether your account can act as ${BUILD_SA} could not be read (${actas#unknown:}); if the build fails on permission, grant: gcloud iam service-accounts add-iam-policy-binding ${BUILD_SA} --project=${P} --member=${owner_member_str} --role=roles/iam.serviceAccountUser"
     ;;
   esac
   if [ -n "$missing" ]; then
