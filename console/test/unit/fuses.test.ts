@@ -67,6 +67,7 @@ import {
   fuseTarget,
   linuxExecutable,
   macExecutable,
+  win32Executable,
   type AfterPackContext,
   type FuseTools,
 } from '../../src/main/fuses'
@@ -166,6 +167,17 @@ const LINUX_CONTEXT: AfterPackContext = {
     appInfo: { productFilename: 'Fugaro Console', sanitizedName: 'fugaro-console' },
     executableName: 'fugaro-console',
   },
+}
+
+/** WIN_CONTEXT is the same context for a Windows build. There is no bundle on
+ * Windows either: electron-builder's `WinPackager` writes
+ * `<appOutDir>/<productFilename>.exe` -- the packager's name, not Linux's
+ * `executableName`, which is a `LinuxPackager` property -- and `appOutDir` is
+ * `release/win-unpacked`. */
+const WIN_CONTEXT: AfterPackContext = {
+  electronPlatformName: 'win32',
+  appOutDir: '/tmp/out/win-unpacked',
+  packager: { appInfo: { productFilename: 'Fugaro Console', sanitizedName: 'fugaro-console' } },
 }
 
 describe('the six fuses the console is built with', () => {
@@ -459,19 +471,51 @@ describe('the afterPack hook', () => {
     await expect(afterPack(LINUX_CONTEXT, fuses)).rejects.toThrow(/fugaro-console/)
   })
 
-  it('refuses a platform this build does not package, rather than shipping an unflipped binary', async () => {
-    // Windows is the platform this build does not produce (design D10: the CLI
-    // has no Windows build, and signing is the owner's). A build on it would
-    // produce a binary this hook has no path for, and silently skipping would
-    // be the one outcome that ships the fuses unset.
-    expect([...SUPPORTED_PLATFORMS]).toEqual(['darwin', 'linux'])
+  it('names the Windows executable electron-builder produced, by its productFilename', () => {
+    // The Windows leg is the third row, and its path is the packager's own
+    // resolution rather than one this file invented: `app-builder-lib`'s
+    // `platformPackager` joins `appOutDir` to `appInfo.productFilename` with
+    // the extension map `{ darwin: '.app', mas: '.app', win32: '.exe', linux:
+    // '' }` -- the Linux packager's own `executableName` is the exception, not
+    // the rule. It is `productFilename` (`Fugaro Console`, the space included)
+    // and not `productName`, because the name on disk is the packager's.
+    //
+    // The path is also what an actual `electron-builder --win` writes: the
+    // pack that produced this row's evidence printed
+    // `executablePath=release/win-unpacked/Fugaro Console.exe` before the
+    // hook refused it.
+    expect(fuseTarget(WIN_CONTEXT)).toBe(join(WIN_CONTEXT.appOutDir, 'Fugaro Console.exe'))
+    expect(fuseTarget(WIN_CONTEXT)).toBe(win32Executable(WIN_CONTEXT))
+  })
+
+  it('flips the same six fuses into the Windows executable, with the same configuration', async () => {
+    // The fuse set is a property of the application, not of the platform. The
+    // Windows pack is what the staged release-time job runs, and a Windows
+    // build that packed an executable with the fuses unset would be the one
+    // artifact of the three that shipped `ELECTRON_RUN_AS_NODE` as a feature.
     const fuses = fakeFuses()
-    const elsewhere: AfterPackContext = { ...CONTEXT, electronPlatformName: 'win32' }
-    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/win32/)
+    await afterPack(WIN_CONTEXT, fuses)
+    expect(fuses.calls).toHaveLength(1)
+    expect(fuses.calls[0]?.path).toBe(win32Executable(WIN_CONTEXT))
+    expect(fuses.calls[0]?.config).toEqual(fuseConfig())
+    expect(Object.keys(fuses.calls[0]?.config as object)).toHaveLength(FLIPPED_FUSES.length + 1)
+  })
+
+  it('refuses a platform nobody decided, rather than answering with another platform', async () => {
+    // The list is the decision, and the refusal is its complement: a platform
+    // that is in neither is a build this hook has no path for, and the one
+    // thing it must not do is reach for another platform's executable -- a
+    // `freebsd` context answered with Linux's bare executable is a path that
+    // does not exist, and flipping nothing while reporting success is the
+    // outcome the hook exists to prevent.
+    expect([...SUPPORTED_PLATFORMS]).toEqual(['darwin', 'linux', 'win32'])
+    const fuses = fakeFuses()
+    const elsewhere: AfterPackContext = { ...CONTEXT, electronPlatformName: 'freebsd' }
+    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/freebsd/)
     // and the message names what *is* packaged, so the refusal is actionable
-    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/darwin and linux/)
+    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/darwin and linux and win32/)
     expect(fuses.calls).toEqual([])
-    expect(() => fuseTarget(elsewhere)).toThrow(/win32/)
+    expect(() => fuseTarget(elsewhere)).toThrow(/freebsd/)
   })
 })
 
