@@ -1883,14 +1883,16 @@ test('the tokens the pages name are the ones the design layer declares', () => {
 const CONTROL_TARGETS = [
   ['hero-cta', "the hero's filled call to action"],
   ['hero-cta-quiet', "the hero's quiet call to action"],
-  ['home-install-button', 'the button under the slider'],
+  ['home-run-link', "the run band's link to How it works"],
+  ['home-install-button', 'the button in the closing call to action'],
 ]
 
 /**
  * Every way a homepage control misses the target size the owner's brief of 2026-10-19
  * measures it against, as the lines a reader of a failure gets. **Every control the page asks
  * a reader to tap is at least 44 px tall**, and the page's own controls are the hero's two
- * links in the action row and the one button under the slider (`HomeInstall.astro`); the
+ * links in the action row, the run band's link to the page that draws the run, and the one
+ * button in the closing call to action (`HomeRunBand.astro`, `HomeInstall.astro`); the
  * slider's three tabs are `test/slider.mjs`'s, which reads them at the widths the page is
  * read at, so this reading is about the controls outside the slider.
  *
@@ -1962,7 +1964,7 @@ test('a control under the target is refused, wherever its minimum is missing or 
     [
       'the button’s minimum moved into a media query, where it holds at one width and not at every one',
       `${withoutMinimum('home-install-button')}@media (min-width:48rem){.home-install-button{min-height:56px}}`,
-      /the button under the slider is no declared target/,
+      /the button in the closing call to action is no declared target/,
     ],
     [
       'a minimum declared under the target',
