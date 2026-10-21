@@ -6448,7 +6448,7 @@ func TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 	}
 }
 
-// TestPendingSentenceFencesCarryNoBlankLine: each of those sentences is handed
+// TestDocsPendingWorkflowsReadmeFencesCarryNoBlankLine: each of those sentences is handed
 // to the owner **inside a fenced block as the exact text to paste** -- one for
 // the opening line, one for the site's paragraph, in every state the two
 // copy-ins leave the directory in -- and a blank line inside such a block is a
@@ -6464,7 +6464,7 @@ func TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 // `\`docs/pending-workflows/\` now holds …`. The blocks of shell commands beside
 // them are left alone -- a blank line between two commands is ordinary, and the
 // rule would be about punctuation rather than about text a reader pastes.
-func TestPendingSentenceFencesCarryNoBlankLine(t *testing.T) {
+func TestDocsPendingWorkflowsReadmeFencesCarryNoBlankLine(t *testing.T) {
 	const path = "docs/pending-workflows/README.md"
 	doc := readDoc(t, path)
 
@@ -6629,7 +6629,7 @@ const (
 
 // consolePendingSentenceHeadRE matches the head of the opening-line sentence
 // ("**Three files are pending: `shared-tests.yml`** ..."), which is also how
-// TestPendingSentenceFencesCarryNoBlankLine recognises a fenced block that holds
+// TestDocsPendingWorkflowsReadmeFencesCarryNoBlankLine recognises a fenced block that holds
 // a sentence rather than a list of commands. The two share it deliberately: a
 // sentence the parser reads has to be a sentence whose fence is checked.
 var consolePendingSentenceHeadRE = regexp.MustCompile(`\*\*(\w+) files? (?:is|are) pending`)
