@@ -592,14 +592,16 @@ repository. → **Q12**.
 ## 3. The owner's answers (Q1–Q16)
 
 Sixteen questions. Each names what it changes in [spec.md](spec.md). They were questions, not
-decisions: this work allocates no D-number, and no task starts on the strength of an answer
-alone.
+decisions: an answer picks an option and allocates nothing, and no task starts on the strength
+of an answer alone. (The five decisions the planning afterwards found are not these: they are
+**D193–D197**, and they are in **§6**.)
 
 **The owner answered all sixteen on 2026-10-19, each by taking option (A) — the recommendation — and an answer is not an approval.** The answer is recorded under each question
 below, in the owner's own choice of option; the wording of every option and of every
 "Consequence" line is this document's, written before the answer, and is left as it was so
-that the answer can be read against what it was choosing between. **Nothing here has been
-accepted, approved or given a decision number**, no plan exists, and the answers choose a
+that the answer can be read against what it was choosing between. **None of the sixteen has
+been accepted, approved or given a decision number** — they are questions, and §6's five
+decisions are the separate, numbered ones — and the answers choose a
 direction rather than approving work: they are the owner's decision to proceed on that
 option, and the plan that follows is a separate document with its own gate. A reader who finds
 one of these answers described elsewhere as an approved plan, or as a D-number, should treat
