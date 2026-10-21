@@ -121,7 +121,7 @@ Named, so that a reader does not look for it and a later writer does not re-add 
 ## 4. What the owner must answer before any part starts
 
 The plan is written to the recommendation in each decision; a part whose decision is answered the
-other way is rewritten before it starts, not after. **Four of these are new** — they were found by
+other way is rewritten before it starts, not after. **Five of these are new** — they were found by
 planning and are numbered in [reconciliation.md](reconciliation.md) §6 — and **one is the set of
 answers the plan already stands on**.
 
@@ -169,9 +169,15 @@ so.** P2–P6 need one each. P7 and P8 are blocked twice.
 reconciliation and the index, and does not hold this plan. The part extends it: the plan exists
 and carries this document's status line; its parts are `P0`…`P8`, contiguous and in order; the
 gate section is headed exactly as §4 heads it; every citation the plan makes resolves on disk,
-with the paths the plan marks **new** excused **by name and only while they do not exist**; and
-the reconciliation's new decisions are **D193–D197**, contiguous, each with a recommendation
-first. **The edit to the guard is part of this part, not a side effect of it**: the index's status
+with the paths the plan marks **new** excused **by name and only while they do not exist**; every
+`` `path`'s `symbol` `` pairing the plan writes is held to that file — the shape the plan uses for
+almost every symbol it names; and the reconciliation's new decisions are **D193–D197**,
+contiguous, each with a recommendation first. **What the pair of checks does not hold is stated
+rather than implied**: a symbol named beside a citation without the possessive form ("minted
+through `MintInstallationToken`" after a path) is outside both, because pairing an identifier with
+a citation there needs a notion of scope the prose does not carry — the same hole the
+reconciliation's citation check records in its own comment, and the reason this part does not
+claim to check "every symbol". **The edit to the guard is part of this part, not a side effect of it**: the index's status
 line and its "no D-number" sentence change with the plan (below), and the pins that hold them
 change with it.
 
@@ -180,11 +186,16 @@ and the two rewritten pins), `docs/coordinator/implementation-plan.md` (this fil
 `docs/coordinator/reconciliation.md` (§6), `docs/coordinator/README.md` (the status line, the
 file table and the numbers table).
 
-**Red step.** Rename a symbol one of the plan's citations names — `MintInstallationToken` — in a
-scratch tree: the citation check must fail, naming the path. Restore. Then: delete a part
-heading; change one byte of `docs/coordinator/spec.md`; put a line number on a plan citation; delete one of the
-new decisions from the reconciliation. Each must fail. Then the two pins that moved: restore the
-old status sentence, and restore the "no D-number" sentence, and see each fail.
+**Red step.** Two mutations on citations, and they are different checks. Rename a **path** one of
+the plan's citations names — `internal/gitprov/github/apptoken.go` moved to a name that does not
+exist, in a scratch tree — and the citation check must fail, naming the path. Rename a **symbol** one of the plan's
+possessive pairings names — `GetETag`, in `internal/rtdb/client.go`, which the plan cites as
+`` `internal/rtdb/client.go`'s `GetETag` `` — and the symbol check must fail, naming the symbol
+and the file: a path that still resolves while the symbol behind it has moved is the half of this
+that a path check alone cannot see, and it is why the pairing exists. Restore. Then: delete a part
+heading; change one byte of `docs/coordinator/spec.md`; put a line number on a plan citation;
+delete one of the new decisions from the reconciliation. Each must fail. Then the two pins that
+moved: restore the old status sentence, and restore the "no D-number" sentence, and see each fail.
 
 **Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./internal/cli/ -run
 TestDocsCoordinator`; and the register-pinning tests of the same package unchanged (this part
@@ -603,7 +614,11 @@ The register's own rule is that **the phase that ships the check writes it** —
 this plan proposes its checks **by name** and takes **no number**. The reading, name by name,
 against `docs/gcp-live-checklist.md` at `1e0953b7`:
 
-**1–18 exist only as summary rows; 19–47 are written** as `## Check N` sections; **48–56** are the
+**1–18 exist only as summary rows; 19–47 are written** as `## Check N` sections — **with one
+number missing from that run: 39**, which is reserved by the retire-image-mirror plan's Task 7
+live checks (39a–39f) and has **no section and no row at all**, because the registry-remote
+repository plan dropped 39b and 39f and amended 39a; the written sections run 19–38 and 40–47.
+**48–56** are the
 project-centric plan's, **57** the compute backend's (its section lives in
 `docs/design/compute-backend.md`), **58** the artifact-runs work's, **59a/59b** the desktop
 console's, **60 and 61 owner-allocated** (the budget-token channel and the monorepo folder

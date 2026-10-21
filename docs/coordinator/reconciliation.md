@@ -812,6 +812,11 @@ between real alternatives with a security consequence rather than a detail. They
 numbers table records **D193 onward as free**, and a folder-local `D1` here would be a fifth
 meaning for one number beside the four folders that already use one.
 
+**Taking this block makes other works' readings of it stale**, and [README.md](README.md) records
+that drift site by site — three other folders read **D193 onward as free** at their own base
+commits, and one of them offers "move this work to D193–D218" as a live alternative that now
+overlaps **D193–D197**. Those documents are deliberately not edited from here.
+
 **Each is written recommendation first.** The plan is written to the recommendation; a part whose
 decision is answered the other way is rewritten before it starts, not after. **None is answered.**
 Every path and symbol named below was read at `1e0953b7`; none is a line number.

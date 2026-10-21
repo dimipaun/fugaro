@@ -94,7 +94,7 @@ package cli
 //    twenty-four -- which is the same silent-overclaim the citation census
 //    exists to catch in the document.
 //
-// Mutation (verified, run and restored) -- 71, one per way these documents can
+// Mutation (verified, run and restored) -- 76, one per way these documents can
 // rot, each planted and reverted. The count is a digit and not a word, and
 // there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
 // reads it and counts the list under it: one arrow per mutation, so a number
@@ -149,7 +149,25 @@ package cli
 //	  naming it;
 //	  create the file the plan declares new (`internal/cli/coordinator.go`) ->
 //	  fails: an exception that has outlived the thing it excused is a citation
-//	  nobody checks.
+//	  nobody checks;
+//	  rename the symbol a possessive pairing names (`GetETag` in
+//	  internal/rtdb/client.go, which the plan cites as `internal/rtdb/client.go`'s
+//	  `GetETag`) -> fails, naming the symbol and the file: the path still
+//	  resolves, which is the half a path check cannot see;
+//	  make the pairing regexp stop at the newline where it now allows any
+//	  whitespace (`'s\s+` -> `'s `) -> fails, against the possessive census: the
+//	  plan wraps one pairing across two lines, so the narrower regexp finds one
+//	  pairing fewer and the census is what says so. Wrapping the plan's pairing
+//	  itself is not a mutation -- the regexp reads across the wrap, which is why
+//	  it is written to;
+//	  reword the plan's one audited prose possessive so the phrase
+//	  coordinatorPlanProsePossessives excuses no longer appears (the plan's
+//	  `...`'s list` becomes "the list `...` carries") -> fails, naming the entry:
+//	  an exception that has
+//	  outlived its sentence is a pairing nobody is checking, the same rule the
+//	  citation exception maps follow;
+//	  delete the index's drift section -> fails: three other folders' readings of
+//	  this register are recorded nowhere else.
 //	TestDocsCoordinatorCitationsExist
 //	  rename a cited path to `internal/budget/modelX.go` -> fails, naming it;
 //	  put a line past the end of a cited file (`internal/budget/model.go:99999`,
@@ -423,6 +441,12 @@ const coordinatorReadmeStatus = "plan written; no code is implemented; approval 
 // the answered-rather-than-approved pair is: it is the claim a later edit
 // softens first.
 const coordinatorReadmePlanNewDecisions = "**written, not answered.**"
+
+// coordinatorReadmeDriftHeading is the index's section recording what writing
+// into the D193 block made stale elsewhere: three other works read this register
+// at their own base commits and concluded D193 onward was free, and their
+// documents were not edited from here.
+const coordinatorReadmeDriftHeading = "## What still reads this register the old way"
 
 // coordinatorPlanGateHeadingRE is the one section heading the brief for this
 // plan asked for by name, because that gate is what a reader has to find and a
@@ -712,6 +736,23 @@ func TestDocsCoordinatorNewDecisionsAreNumbered(t *testing.T) {
 	// folder before the plan, and leaving it would say the block is unallocated.
 	if strings.Contains(readDoc(t, coordinatorReadme), "**D193 onward** | — | **free.**") {
 		t.Errorf("%s still reports **D193 onward** as free: this work wrote D193-D197 into it", coordinatorReadme)
+	}
+	// Writing into the block made three other folders' readings of this register
+	// stale, and those documents were deliberately not edited from here: the
+	// index records the drift site by site instead. That record is pinned,
+	// because it is the only place a reader of those documents is told what
+	// changed -- deleting it would leave three works offering "move this work to
+	// D193 onward" as a live alternative to a block this one has taken.
+	readmeDoc := readDoc(t, coordinatorReadme)
+	for _, want := range []string{
+		coordinatorReadmeDriftHeading,
+		"docs/central-orchestrator/README.md",
+		"docs/windows-cli/README.md",
+		"docs/mobile/voice-session/README.md",
+	} {
+		if !strings.Contains(readmeDoc, want) {
+			t.Errorf("%s no longer carries %q: the drift this block created in three other folders' readings has to be recorded somewhere, and this is the only place it is", coordinatorReadme, want)
+		}
 	}
 	// And the index still reports the block the way it reports every block: as a
 	// range row, not as one row per number. A `| **D193** | ... |` row in the
@@ -2275,6 +2316,95 @@ func TestDocsCoordinatorPlanCitationsExist(t *testing.T) {
 			t.Errorf("%s no longer cites %q, but coordinatorPlanNewPaths still excuses it: delete the entry, or the next citation of that name is unchecked", coordinatorPlan, path)
 		}
 	}
-	t.Logf("%s: %d citation occurrences over %d distinct paths, against a census of %d path-looking tokens in the document",
-		coordinatorPlan, len(matches), len(seen), census)
+	symbols := coordinatorCheckPlanSymbols(t, plan)
+	t.Logf("%s: %d citation occurrences over %d distinct paths, against a census of %d path-looking tokens in the document; %d `path`'s `symbol` pairings checked against a census of %d possessives after a path token",
+		coordinatorPlan, len(matches), len(seen), census, symbols, len(coordinatorPlanPossessiveCensusRE.FindAllString(plan, -1)))
+}
+
+// coordinatorPlanPossessiveCensusRE counts, independently of the pairing check
+// below, how many times the plan attaches a possessive to a backticked path --
+// `internal/rtdb/client.go`'s ... -- whatever follows it. It is deliberately
+// dumber than the pairing regexp, and it is the floor that check is measured
+// against, for the reason the path census exists: a regexp that has stopped
+// matching a shape the prose uses finds fewer citations and says nothing, and
+// the two shapes the plan uses for a symbol are one line apart -- `path`'s
+// `symbol` on one line, and the same pair wrapped between them.
+var coordinatorPlanPossessiveCensusRE = regexp.MustCompile("`[^`\n]*\\.(?:go|md|ts|json|js|tmpl|yaml|yml|tf)\\b[^`\n]*`'s")
+
+// coordinatorPlanSymbolRE finds the pairing the plan writes for almost every
+// symbol it names: a backticked path, a possessive, and the symbol in backticks.
+// The symbol is captured as "anything but a backtick", newlines included,
+// because one of the plan's pairings wraps inside the token
+// (`google_cloud_run_v2_job_iam_member` and `"launcher"`); the check collapses
+// the whitespace before looking for it.
+var coordinatorPlanSymbolRE = regexp.MustCompile("`([A-Za-z0-9_.][A-Za-z0-9_./*-]*\\.(?:go|md|ts|json|js|tmpl|yaml|yml|tf))`'s\\s+`([^`]+)`")
+
+// coordinatorPlanProsePossessives are the plan's possessive phrases that name no
+// symbol: a path followed by `'s` and ordinary prose. Each is an audited case
+// and the check fails if one goes unused, because an entry here that outlives
+// its sentence is a pairing nobody is checking -- the same rule the citation
+// exception maps follow.
+var coordinatorPlanProsePossessives = []string{
+	"`internal/initflow/stage.go`'s list",
+}
+
+// coordinatorCheckPlanSymbols holds every `path`'s `symbol` pairing in the plan
+// to the file it names, and returns how many it checked.
+//
+// This is the half of "cite by path and symbol" that a path check cannot see: a
+// path that still resolves while the symbol behind it has been renamed is a
+// citation that reads as checked and is not. It is deliberately narrow. Pairing
+// an identifier with a citation in general needs a notion of scope the prose
+// does not carry -- a sentence may name three files and one symbol, or a symbol
+// belonging to a different citation in the same paragraph -- which is why the
+// reconciliation's citation check records that hole rather than closing it with
+// something fuzzy. The possessive form is the one shape where the plan's own
+// grammar makes the pairing unambiguous, and it is the shape the plan uses for
+// nearly every symbol it names, so it is the shape that is checked.
+func coordinatorCheckPlanSymbols(t *testing.T, plan string) int {
+	t.Helper()
+	census := len(coordinatorPlanPossessiveCensusRE.FindAllString(plan, -1))
+	matches := coordinatorPlanSymbolRE.FindAllStringSubmatch(plan, -1)
+	prose := 0
+	for _, want := range coordinatorPlanProsePossessives {
+		if strings.Contains(plan, want) {
+			prose++
+			continue
+		}
+		t.Errorf("%s no longer writes %q, which coordinatorPlanProsePossessives excuses from the symbol check: delete the entry, or a pairing goes unchecked", coordinatorPlan, want)
+	}
+	if census != len(matches)+prose {
+		t.Errorf("%s attaches a possessive to a path %d times, and this check pairs %d of them with a symbol (%d are the audited prose ones): a possessive the pairing regexp no longer matches is a symbol nothing checks, which is the failure the two shapes being one line apart makes easy",
+			coordinatorPlan, census, len(matches), prose)
+	}
+	for _, m := range matches {
+		path, symbol := m[1], strings.Join(strings.Fields(m[2]), " ")
+		if _, ok := coordinatorPlanNewPaths[path]; ok {
+			continue
+		}
+		src, err := os.ReadFile("../../" + path)
+		if err != nil {
+			t.Errorf("%s pairs %q with %q and the file cannot be read: %v", coordinatorPlan, path, symbol, err)
+			continue
+		}
+		text := string(src)
+		if strings.Contains(text, symbol) {
+			continue
+		}
+		// A Terraform resource is written `resource "type" "name"`, and the plan
+		// spells the same resource two ways -- `type.name` and `type "name"` --
+		// neither of which is a literal the file carries. So a two-part pairing
+		// is checked as its two halves, and only when the literal form is absent.
+		if head, tail, ok := strings.Cut(symbol, "."); ok && !strings.ContainsAny(tail, " ") &&
+			strings.Contains(text, head) && strings.Contains(text, `"`+tail+`"`) {
+			continue
+		}
+		if head, tail, ok := strings.Cut(symbol, " "); ok &&
+			strings.Contains(text, head) && strings.Contains(text, tail) {
+			continue
+		}
+		t.Errorf("%s pairs %q with %q, and %s carries no such symbol: a path that still resolves while the symbol behind it has moved is a citation that reads as checked and is not",
+			coordinatorPlan, path, symbol, path)
+	}
+	return len(matches)
 }

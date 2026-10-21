@@ -100,6 +100,34 @@ surface: the project-wide view, the PR records, the roadmap and the override log
 greenfield, all deterministic, and all buildable from the two stores and the one GitHub
 credential the repository already has.
 
+## What still reads this register the old way
+
+This table is the register, and three other works read it at **their own base commits** and
+concluded, correctly for those commits, that **D193 onward was free**. Writing **D193–D197** into
+that block on 2026-10-21 makes those readings stale, and their documents were **not** edited by
+this change — they are dated readings of a register, and rewriting another work's base-commit
+reading from here would be this folder quietly editing someone else's record. Recorded instead,
+site by site, so a reader who finds one of them knows what changed:
+
+- **`docs/central-orchestrator/README.md`** and its reconciliation: **D193 onward "is free"**, and
+  the recommended alternative is *"move this work to D193–D218"*. That alternative now overlaps
+  this work's first five numbers: **a move into the block must start at D198** unless the owner
+  rules otherwise, and its folder-local D1–D26 recommendation is unaffected.
+- **`docs/windows-cli/README.md`** and its reconciliation: the same free-block reading and the
+  same *"move this work to D193 onward"* alternative (its O6). Same correction: **D198 onward**.
+- **`docs/mobile/voice-session/README.md`** and its reconciliation: it reads the same label and
+  **leaves D193–D200 alone deliberately**, taking **D201**. It does **not** collide with anything
+  here, and nothing in it needs to change.
+- **`docs/central-orchestrator/reconciliation.md`** also quotes **this index's previous status
+  sentence** verbatim, twice (its C4 and its finding #51), as the state of this folder at
+  `c6009b5f`. Both quotes were true of that commit; this folder's status line changed on
+  2026-10-21, and the quotes are readings of it at an earlier date rather than claims about it
+  now.
+
+**The rule this records rather than repairs**: a document that reads another folder's register is
+right about the commit it read it at, and a register that moves is what makes the reader stale.
+When a later work moves into D198 onward, this note is the thing to correct.
+
 ## How these documents are held
 
 Eleven tests pin everything above, and they are one command:
@@ -124,7 +152,9 @@ mutations to the list under it.
 - [docs/central-orchestrator/](../central-orchestrator/README.md) — the sibling that landed as
   #775: the resident service per installation, to which every orchestrator reports, and whose
   **P9** records the coordinator's half as blocked on this folder's plan existing. Q10's answer
-  is why this work builds no second service and **D196** is the owner's ruling about it.
+  is why this work builds no second service, and **D196 is the decision that says so** — it is
+  written and **not answered**, so which document builds the front door is still the owner's to
+  rule on at the plan's gate (§6 of the reconciliation, and §11 of the plan).
 - [docs/credentials-service/](../credentials-service/README.md) — the "security service"
   the spec's §8 names. Plan only; D130–D154 answered 2026-10-17; nothing implemented.
 - [docs/mobile/](../mobile/README.md) — the orchestrator, the phone, and D115 (phase 2
