@@ -15,7 +15,7 @@ func execute(t *testing.T, args ...string) (string, string, error) {
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetArgs(NormalizeRepoArgs(args))
+	cmd.SetArgs(NormalizeArgs(args))
 	err := cmd.Execute()
 	return out.String(), errOut.String(), err
 }
