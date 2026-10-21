@@ -420,7 +420,17 @@ func (r *run) reviewMode(ctx context.Context) {
 		r.failReviewInfra(ctx, err)
 		return
 	}
-	req := agent.Request{Prompt: r.reviewModePrompt(), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+	// The built input is the reviewed pull request's own diff, read from the
+	// checkout reviewMode's line above put its head in (reviewinput.go). A
+	// pick run gets none: its attempts are worktrees beside the main
+	// checkout, which no head has been checked out into, so there is no range
+	// to build a diff from — PickPrompt carries the rule about binary files
+	// instead.
+	prompt := r.reviewModePrompt()
+	if len(r.reviewHeads) == 1 {
+		prompt = r.reviewPromptWithInput(ctx, prompt)
+	}
+	req := agent.Request{Prompt: prompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 	res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
 	r.countTokens(res)
 	if !ok {

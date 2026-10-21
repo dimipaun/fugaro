@@ -102,7 +102,7 @@ func PickPrompt(review, promptFile string, nums []int, dirs []string) string {
 	default:
 		b.WriteString(defaultReview)
 	}
-	b.WriteString("\n\nSeveral attempts at the same task are checked out, each in its own directory, as separate pull requests. Do not modify any files.\n")
+	b.WriteString("\n\nSeveral attempts at the same task are checked out, each in its own directory, as separate pull requests. Do not modify any files. " + binaryRule + "\n")
 	for i, n := range nums {
 		fmt.Fprintf(&b, "- PR #%d: %s\n", n, dirs[i])
 	}
