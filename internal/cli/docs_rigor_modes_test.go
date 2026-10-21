@@ -19,25 +19,44 @@ import (
 // convention docs_windows_cli_test.go states for docs/windows-cli/ and
 // docs_in_job_review_test.go for docs/in-job-review/.
 //
-// The folder is a plan: nothing in it is implemented and every decision in it is
-// open. So what a guard can usefully hold is the plan's own shape and the plan's
-// own claims about itself — the status line, the numbered findings, decisions,
-// items and unverified rows with no gap, the census stating the command beside
-// every count, every task carrying the seven things a task must state, and
-// the folder's refusal to put a decision in the owner's mouth. Every one of
-// those is a sentence a later edit can quietly break, which is what makes them
-// worth pinning rather than asserting in prose.
+// The folder is a plan whose owner approval gate is passed: the owner answered
+// D1–D25 on 2026-10-20 and the backlog ruling settles the rest, so nothing in it
+// is implemented yet and every decision in it carries an answer rather than a
+// recommendation alone. So what a guard can usefully hold is the plan's own shape
+// and the plan's own claims about itself — the status line, the gate, the
+// numbered findings, decisions, items and unverified rows with no gap, an answer
+// on every decision, the census stating the command beside every count, every
+// task carrying the seven things a task must state, and the folder's rule that
+// the owner's spec is answered in the reconciliation rather than edited. Every
+// one of those is a sentence a later edit can quietly break, which is what makes
+// them worth pinning rather than asserting in prose.
 const (
 	rigorModesReadme = "docs/rigor-modes/README.md"
 	rigorModesSpec   = "docs/rigor-modes/spec.md"
 	rigorModesRecon  = "docs/rigor-modes/reconciliation.md"
 	rigorModesPlan   = "docs/rigor-modes/implementation-plan.md"
 
-	// rigorModesStatus is the index's status line, word for word: the folder is
-	// a plan with nothing implemented and every decision open. It moves only
-	// when the work it describes moves, which is why it is asserted rather than
-	// left to a reader.
-	rigorModesStatus = "**Status: plan only; nothing is implemented; decisions open.**"
+	// rigorModesStatus is the index's status line, word for word: the owner
+	// answered the decisions on 2026-10-20 and the plan is approved to build.
+	// It moves only when the work it describes moves, which is why it is
+	// asserted rather than left to a reader.
+	rigorModesStatus = "**Status: approved to build on the branch `rigor-modes`; the owner approval gate is passed.**"
+
+	// rigorModesGatePassed is the plan's gate sentence, word for word, and
+	// rigorModesAnswered the marker every decision in the reconciliation carries
+	// once the owner has answered it. The two move together: a gate that is
+	// passed while a decision still reads as a recommendation is the one
+	// inconsistency this folder exists to avoid.
+	rigorModesGatePassed = "**This gate is passed: the owner answered §5's decisions (D1–D25) on 2026-10-20, and the plan is approved to build on the branch `rigor-modes`.**"
+	rigorModesAnswered   = "**Answered 2026-10-20"
+	// rigorModesAnsweredIntro is the reconciliation's own statement that the
+	// block carries answers, which is the sentence the "not taken" one became.
+	rigorModesAnsweredIntro = "**Every decision here is answered"
+
+	// rigorModesNotImplemented is the index's first "what this folder is not"
+	// bullet, which replaced "Not an approval" when the gate passed: the
+	// approval is a go to build, not a claim that anything is built.
+	rigorModesNotImplemented = "**Not implemented.**"
 
 	// rigorModesGateHeading is the plan's gate, and rigorModesSlicesHeading the
 	// section whose tasks the completeness guard counts.
@@ -120,8 +139,10 @@ func TestDocsRigorModesIsWritten(t *testing.T) {
 		"**Owner:** the Fugaro owner",
 		rigorModesRevision,
 		rigorModesHash,
-		// The claim that this folder decides nothing for the owner.
-		"**Not an approval.**",
+		// The claim that this folder decides nothing for the owner, which
+		// became a claim about what is built rather than about what is approved
+		// when the gate passed.
+		rigorModesNotImplemented,
 		// The check number this work proposes, in the index, where a reader
 		// looks for the numbers a work holds. It is 119 rather than 110-118
 		// because every one of those is held by an open claim at the base
@@ -146,7 +167,11 @@ func TestDocsRigorModesIsWritten(t *testing.T) {
 		rigorModesBacklogFolder,
 		"## 5. Decisions for the owner",
 		"## 9. UNVERIFIED",
-		"**None of these is taken.**",
+		// The preamble that replaced "**None of these is taken.**" when the
+		// owner answered: the decisions section states its own state, and a
+		// reader who finds a recommendation where an answer belongs has found
+		// this sentence broken.
+		rigorModesAnsweredIntro,
 		// The revision, in both forms, so a later reader can compare a re-read
 		// against the commit this document was written at.
 		rigorModesRevision,
@@ -162,7 +187,7 @@ func TestDocsRigorModesIsWritten(t *testing.T) {
 		rigorModesSlicesHeading,
 		rigorModesGateHeading,
 		rigorModesBacklogFolder,
-		"**This gate is not passed, and nothing below is approved.**",
+		rigorModesGatePassed,
 		// The live check this work proposes, named in the plan as well as in the
 		// index, because a number claimed in two places is a number to check.
 		"Check 119",
@@ -174,11 +199,14 @@ func TestDocsRigorModesIsWritten(t *testing.T) {
 }
 
 // TestDocsRigorModesSpecIsTheOwners: the spec is the owner's document, and the
-// folder does not put words in the owner's mouth. Its four open questions stay
-// open — no document here records an answer, which is the marker the sibling
-// folder uses ("**Answered 2026-10-19: option 1**") and the one this folder must
-// not carry while the status line says the decisions are open — and each of the
-// four has a numbered recommendation behind it rather than being left unread.
+// owner's answers are recorded beside it rather than in it. The spec's four open
+// questions stay open *in the spec* — it is verbatim, so it carries no answer
+// marker and no answer text, and the sibling folder's marker ("**Answered
+// 2026-10-19: option 1**") appears only in the reconciliation — and each of the
+// four has a decision behind it, answered on 2026-10-20 the way every other
+// decision in the block is. This is the mirror of the rule the guard carried
+// while the questions were open: then it refused an answer anywhere, and now it
+// refuses an answer in the spec and requires one on every decision.
 func TestDocsRigorModesSpecIsTheOwners(t *testing.T) {
 	spec := readDoc(t, rigorModesSpec)
 	recon := readDoc(t, rigorModesRecon)
@@ -205,26 +233,48 @@ func TestDocsRigorModesSpecIsTheOwners(t *testing.T) {
 		t.Errorf("%s: the owner's open questions are %d, want 4", rigorModesSpec, got)
 	}
 
-	// No answer is recorded here: not by the sibling folder's marker, and not in
-	// words either.
-	for _, doc := range []struct{ path, body string }{
-		{rigorModesRecon, recon},
-		{rigorModesPlan, plan},
-	} {
-		for _, want := range []string{"**Answered", "the owner answered"} {
-			if strings.Contains(doc.body, want) {
-				t.Errorf("%s records %q: this folder recommends, and the status line says the decisions are open", doc.path, want)
-			}
+	// The spec stays the owner's document: the answers are recorded in the
+	// reconciliation, and an answer pasted into the spec would make it this
+	// folder's text.
+	for _, want := range []string{rigorModesAnswered, "the owner answered"} {
+		if strings.Contains(spec, want) {
+			t.Errorf("%s records %q: the spec is verbatim, and the answers live in the reconciliation", rigorModesSpec, want)
 		}
 	}
 
-	// Each of the owner's four questions has a numbered recommendation or item
-	// behind it: the scale (D1), the calibration (O1), where the config lives
-	// (D5) and who may invoke Hotfix (D12).
+	// Every decision carries the owner's answer, and the four questions the spec
+	// left open are among them: the scale (D1), the calibration (O1 behind D1's
+	// anchors), where the config lives (D5) and who may invoke Hotfix (D12).
+	idx := rigorModesDecisionRE.FindAllStringSubmatchIndex(recon, -1)
+	if len(idx) == 0 {
+		t.Fatalf("%s lists no decisions to answer", rigorModesRecon)
+	}
+	for n, m := range idx {
+		id := recon[m[2]:m[3]]
+		end := len(recon)
+		if n+1 < len(idx) {
+			end = idx[n+1][0]
+		}
+		if body := recon[m[1]:end]; !strings.Contains(body, rigorModesAnswered) {
+			t.Errorf("%s: D%s carries no %q marker: the owner answered every decision on 2026-10-20", rigorModesRecon, id, rigorModesAnswered)
+		}
+	}
 	for _, want := range []string{"### D1 —", "**O1 —", "### D5 —", "### D12 —"} {
 		if !strings.Contains(recon, want) {
-			t.Errorf("%s lacks %q: every one of the owner's open questions has a recommendation behind it", rigorModesRecon, want)
+			t.Errorf("%s lacks %q: every one of the owner's open questions has a decision or an item behind it", rigorModesRecon, want)
 		}
+	}
+
+	// The plan says the gate is passed, and the reconciliation says why: a gate
+	// passed in the plan and not recorded where the decisions are is the one
+	// half-sentence a reader cannot check.
+	for _, want := range []string{"the owner answered", "2026-10-20"} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q: the answers' date and owner are what the gate rests on", rigorModesRecon, want)
+		}
+	}
+	if !strings.Contains(plan, rigorModesGatePassed) {
+		t.Errorf("%s lacks the passed gate sentence %q", rigorModesPlan, rigorModesGatePassed)
 	}
 }
 
@@ -661,5 +711,174 @@ func TestDocsRigorModesEveryTaskIsComplete(t *testing.T) {
 	}
 	if idx[0][0] < strings.Index(plan, rigorModesSlicesHeading) {
 		t.Errorf("%s: a task is written above %q", rigorModesPlan, rigorModesSlicesHeading)
+	}
+}
+
+// rigorModesCriticalPin is the one-line pin D19's answer gives a repository that
+// wants today's behaviour after Pro became the default: without it in the
+// documents, the change of behaviour has no stated way back.
+const rigorModesCriticalPin = "`rigor.default: critical`"
+
+// rigorModesUnchangedClaims are the phrases the folder used to make its
+// strongest safety claim with, back when the default was Critical and an
+// unconfigured repository was said not to change at all. D19's answer makes Pro
+// the default, so each of these is true of *Critical mode* only — of a run whose
+// resolved mode is Critical — and the guard holds each occurrence to a nearby
+// "Critical" rather than to a reader's memory of which decision said what.
+var rigorModesUnchangedClaims = []string{
+	"relaxes nothing",
+	"byte-identical to today",
+	"exactly as it does today",
+	"exactly as it does now",
+}
+
+// rigorModesScopeWindow is how far from such a claim the word "Critical" may sit
+// and still count as scoping it. It is generous because markdown wraps: the
+// claim and its scope are one sentence, and a sentence here runs to a few
+// hundred characters.
+const rigorModesScopeWindow = 600
+
+// rigorModesMarksReadyAbsences are the phrasings the folder must not carry: a
+// run's pull request is opened as a draft and marked ready by the runner on
+// `runner.Decide`'s answer (D11's correction), so any sentence that puts a
+// person in that path is a description of a practice this repository does not
+// have.
+var rigorModesMarksReadyAbsences = []string{
+	"a person marks ready",
+	"a person marks it ready",
+	"a person marks the pull request ready",
+	"a human marks it ready",
+	"the owner marks it ready",
+	"an operator marks it ready",
+}
+
+// rigorModesBlock returns the chunk of a numbered block a document starts at id
+// and ends where the next one starts — a task of the plan or a decision of the
+// reconciliation. It is how a guard asks a question about one task rather than
+// about the document it sits in.
+func rigorModesBlock(t *testing.T, path, doc, id string, re *regexp.Regexp) string {
+	t.Helper()
+	idx := re.FindAllStringSubmatchIndex(doc, -1)
+	for n, m := range idx {
+		if doc[m[2]:m[3]] != id {
+			continue
+		}
+		end := len(doc)
+		if n+1 < len(idx) {
+			end = idx[n+1][0]
+		}
+		return doc[m[1]:end]
+	}
+	t.Fatalf("%s states no %s", path, id)
+	return ""
+}
+
+// TestDocsRigorModesAnswersSayWhatTheyChange: the answers of 2026-10-20 changed
+// four things about what this folder claims — the default mode (D19), the
+// Hotfix gate's inputs (D14), the order the work is picked up in (D9) and who
+// marks a pull request ready (D11) — and each of those changed a sentence that
+// was true when it was written. This is the guard on the sentences rather than
+// on the decisions: an answer recorded while the claim it displaced stays in the
+// documents is the one failure a reader cannot see, because both halves read as
+// deliberate.
+func TestDocsRigorModesAnswersSayWhatTheyChange(t *testing.T) {
+	readme := readDoc(t, rigorModesReadme)
+	recon := readDoc(t, rigorModesRecon)
+	plan := readDoc(t, rigorModesPlan)
+
+	// D19's answer, and the pin it owes a repository: the default is Pro, so
+	// "nothing changes" is not the claim any more, and every one of the three
+	// documents has to name the way back.
+	for _, doc := range []struct{ path, text string }{
+		{rigorModesReadme, readme},
+		{rigorModesRecon, recon},
+		{rigorModesPlan, plan},
+	} {
+		if !strings.Contains(doc.text, rigorModesCriticalPin) {
+			t.Errorf("%s does not state %q: D19's answer makes Pro the default, and the one-line pin is what a repository keeps today's behaviour with", doc.path, rigorModesCriticalPin)
+		}
+	}
+
+	// Every unchanged-behaviour claim is scoped to Critical mode. The window is
+	// the sentence around the claim, not the document: a claim a reader meets
+	// twenty lines away from its scope is the shape this catches.
+	for _, path := range []string{rigorModesReadme, rigorModesRecon, rigorModesPlan} {
+		doc := readDoc(t, path)
+		for _, claim := range rigorModesUnchangedClaims {
+			for at := strings.Index(doc, claim); at >= 0; {
+				lo, hi := at-rigorModesScopeWindow, at+len(claim)+rigorModesScopeWindow
+				if lo < 0 {
+					lo = 0
+				}
+				if hi > len(doc) {
+					hi = len(doc)
+				}
+				window := doc[lo:hi]
+				if !strings.Contains(window, "Critical mode") && !strings.Contains(window, "Critical *mode*") {
+					t.Errorf("%s states %q with no \"Critical mode\" in the sentence around it: D19's answer makes Pro the default, so the claim is true of Critical mode only", path, claim)
+				}
+				next := strings.Index(doc[at+1:], claim)
+				if next < 0 {
+					break
+				}
+				at += 1 + next
+			}
+		}
+	}
+
+	// D11's correction: the runner marks a run's pull request ready, and no
+	// person is in that path in any mode. Both halves are pinned, because the
+	// sentence the correction displaced said the opposite and read as practice.
+	if !strings.Contains(recon, "no person is in that path") {
+		t.Errorf("%s does not state that no person is in the ready path: D11's answer corrects the folder's earlier reading of the practice", rigorModesRecon)
+	}
+	if !strings.Contains(plan, "the runner is what marks it ready") {
+		t.Errorf("%s does not state that the runner marks it ready: it is D11's answer as the task that changes the ready state has to hold it", rigorModesPlan)
+	}
+	for _, path := range []string{rigorModesReadme, rigorModesRecon, rigorModesPlan} {
+		doc := readDoc(t, path)
+		for _, phrase := range rigorModesMarksReadyAbsences {
+			if strings.Contains(doc, phrase) {
+				t.Errorf("%s states %q: no person marks a run's pull request ready in any mode (D11)", path, phrase)
+			}
+		}
+	}
+
+	// D9's settlement, in the decision's own words and in the plan's order: the
+	// item is filed on the run's own branch and in the pull request the run is
+	// already about, and the run loop that first tolerates a finding waits for
+	// the task that files one.
+	if !strings.Contains(recon, "**same** run branch and the **same** pull request") {
+		t.Errorf("%s does not settle where the item is filed: D9's answer puts it on the run's own branch and in its own pull request", rigorModesRecon)
+	}
+	t31 := rigorModesBlock(t, rigorModesPlan, plan, "T3.1", rigorModesTaskRE)
+	for _, want := range []string{"T4.5", "D9"} {
+		if !strings.Contains(t31, want) {
+			t.Errorf("%s: T3.1 does not name %s: Slice 3 may not tolerate a finding before T4.5 can file one (D9)", rigorModesPlan, want)
+		}
+	}
+	if !strings.Contains(plan, "the backlog comes first") {
+		t.Errorf("%s does not state D9's order: the backlog's tasks are picked up before the run loop applies the mode", rigorModesPlan)
+	}
+
+	// D14's answer: the Hotfix gate is built from what the project configured,
+	// never from this repository's own paths, and the agent's number is recorded
+	// rather than trusted. The task that builds it has to say all three.
+	t53 := rigorModesBlock(t, rigorModesPlan, plan, "T5.3", rigorModesTaskRE)
+	for _, want := range []string{"the project", "`rigor:`", "confidence", "never read"} {
+		if !strings.Contains(t53, want) {
+			t.Errorf("%s: T5.3 does not state %q: D14's gate reads what the project configured and records the agent's confidence without reading it", rigorModesPlan, want)
+		}
+	}
+
+	// D29's value is the one the owner still owes, and the task that needs it
+	// says so: a decision answered "in shape" is a decision a task cannot
+	// silently fill in for itself.
+	d29 := rigorModesBlock(t, rigorModesRecon, recon, "29", rigorModesDecisionRE)
+	if !strings.Contains(d29, "still the owner's") {
+		t.Errorf("%s: D29 does not record that its value is still the owner's: the ruling settles the shape, not the repository", rigorModesRecon)
+	}
+	if t45 := rigorModesBlock(t, rigorModesPlan, plan, "T4.5", rigorModesTaskRE); !strings.Contains(t45, "D29") {
+		t.Errorf("%s: T4.5 does not name D29 in its body: the value it assumes is the owner's to name", rigorModesPlan)
 	}
 }

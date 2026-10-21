@@ -1,6 +1,6 @@
 # Reconciliation — rigor modes against the tree
 
-**Status: plan only; nothing is implemented; decisions open.**
+**Status: approved to build on the branch `rigor-modes`; the owner approval gate is passed.**
 
 The owner's [spec](spec.md) was written without seeing this repository. This
 document is what the tree says back: every claim the spec makes, checked against
@@ -57,13 +57,14 @@ last, since that one is a plan matter rather than a design one:
 | Where each layer lives, and what an area is | D20, D21; the project layer's closed `defaults:` (F36), the repository's `rigor:` block, and `rigor.areas` as `{name, match, mode}` `doublestar` rules (F9) |
 | What "dynamically" means | D22: chosen per run from the files it touches — declared at bootstrap where the caller knows them, measured from `runstore.Record.ChangedFiles` as they become known, monotone within the run (F38, F39) |
 | The resolved mode, and which layer won, in the run, PR and watch output | D24: the record (`runview.Row`, `fugaro runs ls`, `fugaro diagnose`), the PR body's status section (`internal/runner/prflow.go`'s `finalSection`), and `fugaro watch`'s live row, which costs a registry child (F40) |
-| A rule for a run that touches several areas | D23: the strictest matched area wins, and it is an **open decision** — the owner's own proposal, recommended here with its alternatives and their costs |
+| A rule for a run that touches several areas | D23: the strictest matched area wins and every matched area is recorded, in the order strictest first |
 | (The re-cut the ruling asks for, which is a plan matter and not a design one) | §2 of the [plan](implementation-plan.md): Slice 1's T1.2, T1.3 and T1.4, in that order |
 
-Two things the ruling does not change, and this amendment does not touch: the
-spec stays verbatim (its own commit, `37ea0d9d`), and every decision below stays
-**open** — D20–D25 are recommendations with alternatives, exactly like the
-whole block.
+Two things the ruling does not change: the spec stays verbatim (its own commit,
+`37ea0d9d`), and the answers are written where the recommendations were rather
+than in the spec. Every one of the six decisions the ruling raised is **answered**
+(D20–D25), with the answer in place of the recommendation and the recommendation
+kept beneath it as the displaced alternative.
 
 ### 1.3 The backlog ruling of 2026-10-20, and where each of its parts lands
 
@@ -88,9 +89,11 @@ where each lands:
 | The relation to the deferred-leftover ledger practice, so there is one backlog and not two | D32 and F46; the practice sentence, and the sweep, are plan T4.7 |
 | The plan part for the format, the index tool and the filing command, each mergeable alone | the plan's Slice 4, re-cut into T4.3 (the format and the first items), T4.4 (the index and its pins), T4.5 (the filing command and the run that files), T4.6 (how each mode files) and T4.7 (closing, and the one-backlog practice) |
 
-Two things the ruling does not change, and this amendment does not touch: the spec
-stays verbatim (its own commit, `37ea0d9d`), and every decision below stays
-**open** — D26–D32 are recommendations with alternatives, like the whole block.
+Two things the ruling does not change: the spec stays verbatim (its own commit,
+`37ea0d9d`), and the answers are written here rather than in the spec. D26–D32 are
+**answered** by the ruling's own words — one value excepted, **D29**'s designated
+repository, which is the owner's to name and is recorded as the open value rather
+than as a recommendation this folder takes.
 
 ## 2. Corrections to the premises this task was given
 
@@ -473,7 +476,12 @@ review rather than in production. This document is where the quotes are written
 down with a finding number each (T0.1 is the task that produced it), and T7.2 is
 the task that puts the mode that automates each practice beside its sentence in
 `docs/dogfooding.md` itself, with a pin of its own so the mapping cannot quietly
-rot.
+rot. **One of these sentences is read correctly only with a correction** (D11):
+"check the PR's CI, mark it ready and merge" describes a person salvaging a
+failed draft *by hand* after the fact, not the run path — a run opens its pull
+request as a draft and **the runner** marks it ready if and only if `runner.Decide`
+says so, and the mode changes only the policy `Decide` is given. No person marks
+a run's pull request ready, in any mode, Hotfix included.
 
 **F31 — Independent review for security-sensitive work is already written down.**
 Class: **Exists**.
@@ -482,8 +490,10 @@ Class: **Exists**.
 `docs/dogfooding.md`'s money-and-security rule. Consequence: Critical's
 "independent review" requirement is not a new invention, and the mode table cites
 the constraint instead of restating it. It also means Critical is already
-*partly* the default for that tier by policy, which is why migrating with Critical
-as the default relaxes nothing (D18, D19).
+*partly* the default for that tier by policy — and D18's floors are what keeps
+that tier where the policy already puts it once D19's answer makes Pro the default
+a repository gets: a credential path, an IAM path or `.github/workflows/` runs at
+Critical whatever a repository's default says.
 
 **F32 — Unfixed work already has a recording pattern.** Class: **Exists**.
 `docs/plans/2026-10-13-project-secrets.md` and
@@ -641,7 +651,7 @@ read to answer it).
 
 **F46 — Deferrals are written in three places today, and none of them is a backlog.** Class: **Gap**. The `docs/plans` sections — §4's census counts **three** of them at this commit, by their headings: `docs/plans/2026-10-13-project-secrets.md`'s `## Known follow-ups before implementation …` and its `## Deferred review items (2026-10-14 fix round)`, and `docs/plans/2026-10-18-project-named-oauth-tokens.md`'s `## Known follow-ups, deliberately not in this plan` (a fourth list states the practice under a heading the pattern does not match — `docs/plans/2026-10-14-project-centric.md`'s `## Accepted as deferred`, whose lower-case `d` is why it is outside the figure, and the reason this finding names the sections rather than only citing the count); the pull request's own body, whose status section names what a run tolerated and no addressable item (F28); and the run record, where `runstore.ReviewSummary.Findings` is a **count** — the finding text survives only in the stored transcript, which `internal/cli/diagnose.go` reads back (F18). None of the three is a list a later reader can close one line of, and two of them die with the artifact that carries them: the pull request body is history the moment the pull request merges, and a review round's table is a snapshot of that round. Consequence: "one backlog and not two" is a change of practice as much as a format (D32), and the item file is the first carrier that outlives both the ephemeral job and the merged pull request.
 
-**F47 — Every front-matter field the ruling names has a source in the record except the area.** Class: **Exists**. `runstore.Record.RunID`, `Record.PR` (`PRRef{Number, URL}`), `Record.FinishedAt`, `Record.Repo` and the launch's `LaunchedBy` (read back as `runview.Row.LaunchedBy`) give `filed-in`, `date`, `filed-by` and the repository with no new field at all; the resolved mode and the layer that won are D24's recorded value, from T1.2; and `id`, `title` and `status` are the filer's own words. The area is the one field a mixed run has no single answer for: D22's resolution names the areas that matched, and D23's rule — still **open** — is what turns them into one. Consequence: the front matter is cheap everywhere except `area:`, where D23 arrives in the file a reader meets it in.
+**F47 — Every front-matter field the ruling names has a source in the record except the area.** Class: **Exists**. `runstore.Record.RunID`, `Record.PR` (`PRRef{Number, URL}`), `Record.FinishedAt`, `Record.Repo` and the launch's `LaunchedBy` (read back as `runview.Row.LaunchedBy`) give `filed-in`, `date`, `filed-by` and the repository with no new field at all; the resolved mode and the layer that won are D24's recorded value, from T1.2; and `id`, `title` and `status` are the filer's own words. The area is the one field a mixed run has no single answer for: D22's resolution names the areas that matched and D23's answer records them all, strictest first, so `area:` carries the list rather than one name. Consequence: the front matter is cheap everywhere including `area:`, which is a list rather than a choice.
 
 **F48 — What the ruling's own shape rejects, and why.** Class: **Rule** — the rule being that what did not survive is recorded, so the next reader does not re-propose it. Rejected: that the backlog should be the provider's issues (O5's permission question is unanswered, and the ruling puts it in the repository); that one file per month, per mode or per work would do (two pull requests filing at once is the reason the ruling gives for one file per **item**, and every one of those shapes puts them in one file); that a hand-maintained index would do (a list a hand edits is a list the pin then has to accept, and the ruling asks for a generator); that an item should be filed after the merge by something scheduled (D15 deferred the scheduler, and an item exists the moment the run ends — filing it later would lose the ones whose pull request is never merged); that an item should carry the finding's text (the transcript holds it and `fugaro diagnose` reads it back, F18; the item is what to do next, not what was found); and that one ledger file per work — D9's carrier before this ruling — is enough (F46: it is the file two runs filing in the same week conflict on).
 
@@ -721,11 +731,27 @@ the one row in this table that the folder's own commit moves.
 
 ## 5. Decisions for the owner
 
-Each decision states the recommendation first with its reason, then the
-alternative and what it costs. **None of these is taken.** Nothing below is
-implemented, and the plan's tasks are not approved.
+**Every decision here is answered**, because the owner answered §5's decisions (D1–D25)
+on 2026-10-20, each asked independently, and **D26–D32** record the
+backlog ruling he gave the same day; §1.3 is the index of that ruling. Each decision states the answer first,
+then the recommendation as this folder weighed it with its reason, then the
+alternative and what it cost — the alternatives stay because they are the record
+of what was considered and priced rather than missed. **Where the answer differs
+from the recommendation, the recommendation text is rewritten to the answer** and
+the option this folder had recommended is kept as the alternative it displaced;
+four decisions differ (D9, D11, D14, D19) and each says so in its own words.
+**One value is still the owner's**: **D29**'s designated repository, which the
+ruling puts in the project configuration and leaves the owner to name. Nothing
+below is implemented, and the plan's slices **are approved to build on the branch
+`rigor-modes`** — its OWNER APPROVAL GATE is passed — so a task that depends on a
+decision takes it as settled and says so in its **Depends on** line.
 
 ### D1 — The scoring scale: 1–5 per axis, anchored
+
+**Answered 2026-10-20: integers 1–5 on each of likelihood, impact and fix
+cost, with each value anchored in the reviewer prompt.**
+Why: three values cannot separate "rare but catastrophic" from "common but
+cosmetic", which is the pair the threshold table exists to tell apart.
 
 **Recommended: integers 1–5 on each of likelihood, impact and fix cost, with
 each value given an anchored definition and one example in the reviewer prompt.**
@@ -739,10 +765,18 @@ which "rare" and "very rare" are distinguishable, and the spec itself proposes
 **Alternative: 1–3 per axis.** Cost: fewer calibration failures, but the
 threshold table collapses to a handful of distinct cells and the security
 override ends up doing all the work — at which point the scale is decoration and
-the honest design is a per-mode word list. The plan's T2.2 writes the anchors;
-if the owner prefers 1–3 the table in T2.3 is rewritten, not redesigned.
+the honest design is a per-mode word list. The plan's T2.2 writes the anchors at
+five, which is the scale the answer above chose; at three, the table in T2.3 would
+be rewritten rather than redesigned, and the security override would carry the
+weight.
 
 ### D2 — What `blocker`/`high`/`medium`/`low`/`nit` are: labels, not inputs
+
+**Answered 2026-10-20: the five words are the reviewer's derived label for a
+finding, not the threshold table's input — the table reads the three axes and the
+finding's class.**
+Why: a word derived from the score cannot disagree with it, and the vocabulary
+stays one this repository can define and a reader can check.
 
 **Recommended: the five words are the reviewer's *label* for a finding, derived
 from the axes by a stated rule, and the label is what a human reads in the PR
@@ -757,11 +791,18 @@ becomes the label field with a documented set of values (F1, C2).
 implies (`blocker`/`high`/`medium`/`low`/`nit`).** Cost: the spec's own
 "weigh fix cost vs likelihood × severity" is unimplementable, the security
 override has nowhere to attach except a word that a model chose freely, and the
-three-axis scoring section of the spec becomes prose. If the owner wants the
-words as inputs, the design loses fix cost entirely, and the recommendation is
-to say so in the spec rather than in the code.
+three-axis scoring section of the spec becomes prose. The answer above kept the
+words as labels, so the design keeps fix cost; had it gone the other way, the
+design would lose fix cost entirely and the honest place to record that would be
+the spec rather than the code.
 
 ### D3 — Where the score lives: new optional properties on the finding item
+
+**Answered 2026-10-20: new optional finding fields — `likelihood`, `impact`,
+`fix_cost` and `class` — added to the finding item, with `severity` kept exactly
+as it is.**
+Why: the item's property set is open, so the change is additive and every stored
+transcript and every verdict still parses.
 
 **Recommended: add `likelihood`, `impact`, `fix_cost` (integers 1–5) and
 `class` (a closed enum that includes `security` and `data_loss`) to the finding
@@ -781,6 +822,11 @@ already carries. It buys tidiness and nothing else.
 
 ### D4 — An unscored finding blocks in every mode
 
+**Answered 2026-10-20: an unscored finding blocks in every mode, POC
+included.**
+Why: a reviewer that stops emitting scores must not turn Critical into POC
+silently, and `ParseVerdict` already fails closed.
+
 **Recommended: fail closed.** A finding with no score, or a verdict that does not
 parse, blocks in POC as much as in Critical, and the run says which finding was
 unscored. Reason: `runner.ParseVerdict` already fails closed (F3), and the
@@ -796,6 +842,13 @@ while behaving otherwise. The failure mode is a bad patch merged with a green
 audit trail, which is worse than a loud red one.
 
 ### D5 — Mode config lives in `fugaro.yaml` and in the project layer; the published policy is not a carrier
+
+**Answered 2026-10-20: the mode is configured in the project layer's
+`defaults.rigor.default` and in a top-level `rigor:` block in the repository's
+`fugaro.yaml`; the published project policy is not a carrier, and a floor comes
+later through the policy.**
+Why: the mode is a per-project and per-repository value like every other, and a
+policy key costs a version bump and a redeploy of every installation's rules.
 
 **Amended 2026-10-20.** The ruling adds a project-wide default, and the first
 recommendation below was written before it existed.
@@ -822,9 +875,10 @@ is the published policy's sentence, and the project layer is a *file in the
 project's Git repository*, which a repository admitted to the project can change
 by merging a pull request. So the project-wide **default** is a layer value
 (part one) and a project-wide **floor** is policy — with the version bump F36
-describes as its price. Which of the two the owner wants for the security tier is
-D18's question, not this decision's, and the first cut ships with the built-in
-set alone (T1.5) so the answer can land later without a migration.
+describes as its price. Where the security tier's floor lives is D18's question,
+not this decision's, and D18's answer puts it outside every layer: the built-in
+set plus whatever a repository declares, with the first cut shipping the built-in
+set alone (T1.5) so a policy-level floor can land later without a migration.
 
 **Recommended, part two (unchanged): the repository's own `rigor:` block carries
 the mode for this repository and the area rules.** Reason: the spec asks whether
@@ -846,6 +900,11 @@ mode system alone — is a real argument, and this is the decision where the own
 weighs it.
 
 ### D6 — Precedence: area > repo > project, one resolver, one statement
+
+**Answered 2026-10-20: area, then repository, then project, then Fugaro's
+own built-in default; one resolver; and the mode never falls within a run.**
+Why: it is `docs/project-layer.md` §2's existing narrowest-layer-wins rule one
+rank longer, so the order is stated once, in the place that already states it.
 
 **Amended 2026-10-20.** The ruling names three layers and asks for one place that
 states their order. What follows replaces this decision's earlier `max(...)`
@@ -891,7 +950,15 @@ rather than the only one.
 
 ### D7 — What each mode changes in the run loop
 
-**Recommended: Critical is byte-identical to today.** Every other mode keeps the
+**Answered 2026-10-20: the policy lives inside `runner.Decide`; readiness
+stays Decide's one rule; and the findings a mode tolerates become backlog
+items.**
+Why: one answer to "may this pull request be ready" is the property the owner
+relies on, and a tolerated finding has to land where a reader can close it.
+
+**Recommended: Critical *mode* is byte-identical to today — and only Critical,
+because D19's answer makes Pro the mode a repository gets for configuring
+nothing.** Every other mode keeps the
 reviewer, keeps the one required `review` step, keeps the verify stage, and
 changes exactly three things: (a) the findings policy handed to the reviewer and
 applied to the verdict — the threshold table as data; (b) the review round
@@ -922,6 +989,12 @@ knobs for.
 
 ### D8 — Who may lower a floor: the trusted list, acting through a merged config change
 
+**Answered 2026-10-20: only a merged change to the base branch's
+configuration lowers a floor — no run, no task request, no follow-up comment, no
+label and no job environment variable.**
+Why: the lowering then has a reviewed diff as its audit trail, and the trusted
+list stays the answer to *who*.
+
 **Recommended: the trusted list (`followup.trusted`, `internal/followup/trust.go`,
 F13) is the answer to *who*, and the only mechanism that lowers a floor is a
 change to the base branch's configuration — a merged pull request reviewed as a
@@ -951,32 +1024,67 @@ configuration. It is genuinely more convenient for a hotfix that needs to touch
 one floored file, and that convenience is the cost: the case it optimises is the
 case where the control matters.
 
-### D9 — The backlog: the record, the PR, and `fugaro diagnose`; the ledger and a provider issue come later
+### D9 — The backlog: one Markdown file per item, filed in the run's own pull request
 
-**Recommended first cut: the tolerated findings are (a) persisted on the run
-record — the finding objects, extending the work
-`docs/in-job-review/reconciliation.md` Q8 already decided (F19, F20); (b) listed
-in the PR body's existing status section as "left open by policy", with the mode
-that left them (F28); and (c) recoverable by `fugaro diagnose`, whose finding row
-already exists and whose JSON contract §6.1 is already the console's input
-(F18).** Deferred to a later slice, with the precedent named: a `docs/`-style
-ledger file (the pattern in `docs/plans/2026-10-13-project-secrets.md` and
-`docs/plans/2026-10-17-managed-projects-review-follow-ups.md`, F32) and a
-provider issue.
+**Answered 2026-10-20, and it differs from this folder's recommendation: the
+Markdown backlog under `docs/backlog/` is the **first** carrier, not the last. An
+item file is written into the run's own branch and pull request and reviewed with
+it, and the tolerated findings are **still** recorded on the run record, which is
+cheap.**
+Why: the item file is the one carrier that outlives both the ephemeral job and the
+merged pull request, so it is the first thing to build rather than the thing to
+defer.
 
-Reason: the three carriers in the first cut are one storage change, one sentence
-in a section that already exists, and zero new surfaces; they are also the three
-surfaces the owner already reads. The ledger and the issue each need something
-that does not exist yet — a decision about which pull request a ledger entry
-lands in and who merges it, and an issues permission the App does not hold — and
-neither is needed for a single mode to be usable.
+**Recommended, and taken: the tolerated findings are filed as items of the
+Markdown backlog — one file per item under `docs/backlog/` (D26–D32) — and that
+is the first cut of this surface.** The three carriers this decision's earlier
+recommendation put first stay, because each is cheap and each answers a different
+question: (a) the finding objects on the run record, extending the work
+`docs/in-job-review/reconciliation.md` Q8 already decided (F19, F20) — what the
+run found; (b) the pull request body's existing status section, listing what the
+mode left open and the mode that left it (F28, D24) — what a reader meets at the
+pull request; and (c) `fugaro diagnose`, whose finding row already exists and
+whose JSON contract §6.1 is already the console's input (F18) — what a later
+reader can read back. The item file is what says **what to do about it**, and it
+is the only one of the four that outlives both the ephemeral job and the merged
+pull request (F46).
 
-**Alternative: the `docs/`-style ledger first.** Cost: a run that writes a ledger
-file either dirties the PR it is about or opens a second PR, and the second PR
-has its own merge policy, its own format and its own pin test — all before the
-first mode ships. It is the carrier that survives an ephemeral job best, which is
-the argument for it; against that, the run record is already durable and already
-read back by a command.
+Reason: the ruling picks the carrier that survives, so the item file is the first
+thing built rather than the thing deferred, and the plan's slice order follows
+from that rather than from convenience: the folder, the format and the first
+items land before the score and the run loop (T4.3), because D7 makes a mode's
+tolerated findings backlog items and a mode must not be able to tolerate a
+finding before there is a file to put it in. The record-side carriers stay
+because they are one storage change and zero new surfaces, and because a run's
+own record is what the mode's effect is audited from.
+
+**How the item file is written without dirtying the pull request it is about —
+the question the ruling asked this folder to settle. The item is part of the
+**same** run branch and the **same** pull request, and it is reviewed with it.**
+A run files into its own repository and its own branch, which is the one
+repository its installation token reaches and the one branch it can push (F43,
+F44); the item file is one more commit in the pull request it is already about,
+so the deferred leftover arrives in the diff where the reader already is and the
+reviewer can refuse it like any other change. An item that is to be filed later —
+D15's follow-up task file, D30's per-mode rule — is a file in that same pull
+request rather than a second branch or a second pull request, and a run writes
+nothing anywhere else. That is also what §1.3's Slice 4 order and the plan's
+T4.5 assume.
+
+**Alternative (this folder's earlier recommendation, displaced by the answer):
+the run-record side first — the finding objects on the record, the status
+section, `fugaro diagnose` — with the Markdown ledger deferred to a later
+slice.** Cost: a tolerated finding then has no carrier a later reader can close
+one line of, because the two the first cut would have shipped are both ephemeral
+— the pull request body is history the moment the pull request merges, and a
+review round's table is a snapshot of that round (F46) — and the deferred work
+waits a second slice to become addressable at all. It is cheaper by one task and
+strictly weaker, which is why it was recommended and why it was declined.
+
+**Alternative: a provider issue per tolerated finding.** Cost: the App holds no
+issues permission, so this is a task before it is a carrier, and O5's question
+about the permission has to be settled before it is planned rather than
+during.
 
 **Note on `version`:** `schemas/result.schema.json` is closed and pinned to the
 record by `TestResultSchemaAcceptsRunnerRecords` (F20), so the new fields land
@@ -986,18 +1094,17 @@ with their schema entries in one commit. The recommendation is to **keep
 compatibility claim nothing enforces, while the additive field is genuinely
 compatible.
 
-**Amended 2026-10-20, by the backlog ruling.** The three carriers the first cut
-recommends stand unchanged — the finding objects on the record, the status
-section of the pull request body, and `fugaro diagnose` — and the fourth carrier
-this decision deferred is now ruled: the ledger is `docs/backlog/`, **one file per
-item**, with a generated index (D26–D32), and the plan's Slice 4 builds it
-(T4.3–T4.7). What the ruling changes is that carrier's shape, not its order in
-the work: F46 is why one file per item is the safe form and one file per work is
-not, and a run files into its own repository and its own branch (F43, F44). A
-provider issue stays deferred, and O5's permission question is what has to be
-settled before it is planned rather than during.
+**Why one file per item rather than one ledger per work**, which the earlier
+recommendation's precedent used (F32, F46): two runs filing in the same week would
+conflict on one file, and the ruling's whole point is that parallel pull requests
+filing items never conflict (D26, D28).
 
 ### D10 — The verify stage's gate is the recipe's `check`, not a mode switch
+
+**Answered 2026-10-20: the verify stage is never skipped; the mode picks the
+recipe, and so the `check` gate and the round ceiling.**
+Why: `Decide` requires the verify record, so skipping it produces a failed draft
+rather than a cheaper run.
 
 **Recommended: the mode selects the recipe (and so the `check` gate and the
 round ceiling); the verify stage itself — a `verify.KindTest` record with a clean
@@ -1011,26 +1118,56 @@ either way, and CI on `main` is the merge gate (F27, F30).
 draft with "no verified test run on the final commit", which is not a mode, it is
 a bug report. Making it work means changing `Decide`, which is F4's rule.
 
-### D11 — Draft or ready, per mode
+### D11 — Draft or ready: unchanged, and Decide is the one who says which
 
-**Recommended: every mode opens a draft PR except Hotfix, which opens ready under
-D12's gate.** Critical, Pro, Startup and POC all draft, and a person marks ready
-after reading the run's status section — exactly today's practice
-("check the PR's CI, mark it ready and merge", F30). Reason: a POC run's `ship`
-comes from the same cheap reviewer as a Critical run's, and marking a POC PR
-ready is precisely the substitution the owner refuses ("A run's own `ship` never
-replaces it", F30). The mode changes what the run *tolerates*, which is visible
-in the body; it does not change who decides to merge. Hotfix is the one exception
-because time is its entire justification (D13).
+**Answered 2026-10-20, and it corrects this folder's reading of today's
+practice: unchanged — a pull request is ready if and only if `runner.Decide` says
+so, whose policy the mode sets, and Hotfix follows the same rule.**
+Why: the runner already opens the draft and marks it ready on Decide's answer
+(`gitprov`'s `markPullRequestReadyForReview`), so no mode needs a second rule and
+no person stands in that path.
 
-**Alternative: POC and Startup open ready when their policy tolerates every
-finding.** Cost: a scaffold PR and a payment-adjacent PR look identical to
-whatever automation reads PR state, and the difference between them exists only
-in a body a machine does not read. The convenience is real — a POC PR that
-nobody has to click through — and it is the one place where this design's
-recommendation is deliberately inconvenient.
+**Recommended, and taken: nothing here changes. A pull request is ready if and
+only if `runner.Decide` says so, and the mode changes only what `Decide` is
+given — its policy.** Every mode opens a draft and every mode's ready state is
+Decide's answer, Hotfix included: Hotfix's difference is that its policy tolerates
+more and D12's gate decides whether the run may open at all, not that some other
+act marks it ready. This is today's practice, read correctly: the runner opens the
+draft (`internal/runner/prflow.go`'s `openDraftPR`, `Draft: true`) and marks it
+ready itself, through `provider.UpdatePR` with `Draft: !ready`
+(`internal/runner/runner.go`'s finalize) — which is `gitprov`'s
+`markPullRequestReadyForReview` on GitHub — so **no person is in that path and no
+mode adds one.** Reason: one rule for readiness is the property the owner relies
+on (F4), and a mode that decided readiness a second way would be a second answer
+to "may this merge". A POC run's `ship` comes from the same cheap reviewer as a
+Critical run's, which is the argument for the mode being *visible* in the pull
+request's body and its record (D24) rather than for a mode that holds a pull
+request hostage.
+
+**What the owner's own practice sentence means, corrected.** `docs/dogfooding.md`
+says "a run that ends as a failed draft only because the excluded or unrunnable
+parts failed can still be fine: check the PR's CI, mark it ready and merge"
+(F30). That is the **fallback** for a run that ended `not_ready` for a reason the
+operator can accept — a failed draft that a person may rescue by hand — not the
+normal path, in which the runner has already marked the pull request ready. Read
+the other way it would describe a repository where every run waits for a human,
+which is not what the tree does and not what the modes change.
+
+**Alternative: a mode whose tolerated set is empty opens ready and the rest
+draft, with a person marking those ready.** Cost: readiness becomes a function of
+the policy in a second place, so the answer to "may this merge" would be split
+between `Decide` and whoever clicks; and the human step would land on exactly the
+runs whose findings a person most needs to read *before* an approval-looking state
+appears. It is the shape this folder originally wrote down, and it is what the
+owner's correction of 2026-10-20 displaced.
 
 ### D12 — Who may invoke Hotfix: an operator, with a base-branch opt-in
+
+**Answered 2026-10-20: an operator runs `fugaro run --mode hotfix`, gated on
+the base branch's configuration — never a pull request comment, never a
+follow-up.**
+Why: the mode with the least review must not be reachable from the surface the
+owner already treats as hostile.
 
 **Recommended: `fugaro run --mode hotfix` by a person, gated on the base branch's
 configuration (`rigor.hotfix` on, plus the trusted list) — never a PR comment,
@@ -1050,6 +1187,12 @@ mode *to* Critical and never *into* Hotfix, which is an asymmetry worth stating
 in the flag's help text.
 
 ### D13 — What "deploy" means: Fugaro opens PRs and never deploys
+
+**Answered 2026-10-20: Fugaro opens pull requests and never deploys; "ship
+immediately" means a ready pull request the operator merges now, with the full
+suite running as CI on `main` after the merge.**
+Why: `gitprov` has no merge call and a run may not touch `.github/workflows/` at
+all, so the post-deploy suite can only be the CI that already runs.
 
 **Recommended: say it plainly in the design and in the mode's documentation.
 "Ship immediately" means "open the PR ready, with a label, for the operator to
@@ -1073,17 +1216,53 @@ several sizes larger than this feature. The honest version of this alternative i
 
 ### D14 — Fix confidence: a deterministic diff rule gates; the agent's number is recorded, never trusted
 
-**Recommended: the agent's stated confidence is recorded on the run and never
-gates anything. The gate is a deterministic rule over the diff and the record: a
-Hotfix may not touch `.github/workflows/`, a credential or IAM path, or any path
-with a floor above the allowed mode; the diff's size and file count bound it; and
-the compile plus the targeted test must pass. When the rule cannot decide, it
-takes the conservative branch (more checks, not fewer).** Reason: an agent
-grading its own confidence is the weakest signal in the system — it is the point
-the spec itself flags as an open question, and it is the same class of signal the
-owner already distrusts ("the in-loop reviewer is a cheap model too", F30).
-Making the gate depend on the diff means the gate is checkable by a reader who
-has the diff, which is what makes a post-hoc audit of a Hotfix possible at all.
+**Answered 2026-10-20, and it differs from this folder's recommendation: the
+gate is a deterministic rule whose inputs are all **project-configured** — the
+project's own recipe `check`, the protected paths the project declares in
+`rigor:`, and diff-size and file-count bounds with tunable defaults — with
+universal built-ins only for the host's CI and workflow configuration and for
+credential-file patterns. The agent's confidence is recorded and never
+trusted.**
+Why: Fugaro has to work for any project, so a gate that hard-codes this
+repository's own paths is not a rule a project can run.
+
+**Recommended, and taken: the agent's stated confidence is recorded on the run
+and never gates anything; the gate is a deterministic rule over the diff and the
+record, and every input it reads is one the project configured.** The inputs, in
+the order the rule reads them:
+
+1. **The project's own recipe `check`**, which is the gate the project already
+   trusts; a mode does not replace it, it selects which recipe runs (D10).
+2. **The protected paths the project declares** in its `rigor:` block (D18,
+   D20) — the project's own words about what is sensitive, matched with the same
+   `doublestar` matcher every other path rule uses (F9). A Hotfix may not touch a
+   path whose floor is above the mode it is running at, wherever that floor was
+   declared.
+3. **Diff-size and file-count bounds**, with tunable defaults, so a project can
+   say how large a "minimal diff" is for it; when the rule cannot decide, it
+   takes the conservative branch (more checks, not fewer).
+4. **A small universal built-in set, and nothing more**: the host's own CI and
+   workflow configuration (`.github/workflows/`, already refused outright,
+   F12) and credential-file patterns — the two things that are unsafe to guess
+   wrong in any project, and the only two this design hard-codes.
+
+The compile and the targeted test still have to pass; that is the verify stage
+(D10), not a fourth input. Reason: Fugaro runs for **any** project, so a gate
+built from this repository's own paths would be a rule that only this repository
+can run — and the configuration is where a project's own security posture already
+lives. An agent grading its own confidence is the weakest signal in the system —
+it is the point the spec itself flags as an open question, and the same class of
+signal the owner already distrusts ("the in-loop reviewer is a cheap model too",
+F30). Making the gate depend on the diff means the gate is checkable by a reader
+who has the diff, which is what makes a post-hoc audit of a Hotfix possible.
+
+**Alternative (this folder's earlier recommendation, displaced by the answer): a
+Fugaro-specific rule with this repository's paths in it** — a credential or IAM
+path list written into the runner, plus `.github/workflows/`. Cost: every other
+project runs a Hotfix gate that knows nothing about its sensitive paths, and its
+own config cannot teach it, because the list is code; and the day this
+repository's paths change, the gate is wrong in a second place. It is smaller to
+write and it does not generalise, which is the trade the answer refused.
 
 **Alternative: let the agent's confidence number pick the branch (high → no
 pre-push tests; low → compile and a targeted test).** Cost: a model's self-report
@@ -1093,6 +1272,11 @@ It is also unmeasurable afterwards: nothing in the record can distinguish "the
 agent was right" from "the agent was sure".
 
 ### D15 — The automatic follow-up: recorded now, scheduled later
+
+**Answered 2026-10-20: the Hotfix run records a ready-to-paste follow-up
+task file; no scheduler is built.**
+Why: a trigger that reacts to a merge is new infrastructure with its own
+credentials, and the task file exists the moment the run ends.
 
 **Recommended: the Hotfix run records and prints a ready-to-paste follow-up task
 file ("revisit in the area's normal mode", naming the PR, the paths and the
@@ -1131,6 +1315,12 @@ deciding on its own merits rather than as a footnote to this mode.
 
 ### D16 — Cost: modes lower the ceiling, never raise it
 
+**Answered 2026-10-20: a mode lowers the ceiling and never raises it — a
+per-run default below the deployed cap, ordered POC < Startup < Pro < Critical,
+with Hotfix tightest and still enough to finish the verify stage.**
+Why: the effective cap is the lower of two values that are already frozen, so a
+mode can only move downward.
+
 **Recommended: each mode ships a per-run budget default expressed as a fraction
 of the deployed cap, ordered POC < Startup < Pro < Critical, applied only when no
 explicit `budget.per_run_usd` is set and never able to exceed the deployed
@@ -1151,6 +1341,11 @@ that lowered it would strangle a run's stages without lowering the bill.
 
 ### D17 — `fugaro budget preview` takes `--mode` where the arithmetic is real
 
+**Answered 2026-10-20: `fugaro budget preview --mode` changes only the bound
+the tool can compute; the output stays a ceiling and never becomes a forecast.**
+Why: the mode is a real input to `StageBound` and to nothing the tool can
+honestly predict.
+
 **Recommended: the preview accepts `--mode`, and the mode changes only the terms
 the tool can honestly compute — the recipe's `recipe.StageBound`, since a mode
 selects a recipe. The output keeps saying it is a ceiling and not a forecast, and
@@ -1169,6 +1364,12 @@ quoted in a planning document and then treated as a fact.
 
 ### D18 — Security: floors win, Critical is the default for the sensitive tier, and the mode is recorded
 
+**Answered 2026-10-20: floors win over every other input, the built-in
+protected set stands beside whatever a repository declares, and the mode used is
+recorded in the pull request body and in the run record.**
+Why: the refusal in `refused.go` is this repository's precedent for a protection
+that does not depend on the repository remembering to configure it.
+
 **Recommended.** A mode must never bypass a protected path or an independent-review
 requirement; floors win over every other input. **Critical is the default mode for
 the security-sensitive tier**, which includes a built-in set — `.github/workflows/`
@@ -1181,7 +1382,9 @@ used is recorded in the PR body and in the run record**, in the same words, so t
 two can be diffed. Reason: the repository's security posture for this tier is
 already written (`docs/credentials-service/implementation-plan.md` Global
 Constraint 10, and `docs/dogfooding.md`'s money-and-security rule, F31), so
-Critical as the default relaxes nothing; and the built-in part matters because a
+the tier the floors cover is already meant to run at Critical, and D18's answer is
+what turns that policy into a rule the resolver cannot go under; and the built-in
+part matters because a
 repository that forgets to declare its credential paths would otherwise run them
 at whatever its default is — the refusal in `internal/runner/refused.go` is the
 precedent for a protection that does not depend on the repository remembering.
@@ -1193,31 +1396,71 @@ silent and one-way. The cost of the recommendation is that a repository cannot
 *lower* `.github/workflows/`, which is not a cost — that refusal is not
 configurable today and should not become so (F12).
 
-### D19 — Migration: the default is Critical, and the first cut relaxes nothing
+### D19 — Migration: the default is Pro, and Critical is what a repository pins to
 
-**Recommended: the default mode is Critical — today's behaviour, byte for byte —
-until the owner sets another, and the entire first cut ships with every path on
-Critical. A repository with no `rigor:` block behaves exactly as it does today.**
-The CLI and documentation surface: `fugaro run --mode`, the `rigor:` config and
-policy keys, `fugaro doctor` checking that the mode vocabulary and the floors are
+**Answered 2026-10-20, and it differs from this folder's recommendation: the
+default mode is **Pro**, not Critical.** The first cut therefore **does** change
+behaviour for a repository with no `rigor:` block — its runs start tolerating what
+Pro tolerates — while the security-sensitive tier (D18's floors) stays Critical
+and any repository may pin itself back with `rigor.default: critical`.
+Why: Critical everywhere is the problem the spec exists to solve, and a default
+that changes nothing helps nobody until someone opts in.
+
+**Recommended, and taken: the default mode is **Pro**.** Pro's threshold table is
+therefore the behaviour of **every repository that sets no `rigor:` block**, from
+the commit that gives the mode a reader — and that is a change of behaviour, not a
+change of configuration: a finding the default used to fail on may now be
+tolerated and filed. Two things bound it. **First, the security-sensitive tier
+stays Critical**: D18's floors are outside every layer, so a credential path, an
+IAM path or `.github/workflows/` runs at Critical whatever the default says.
+**Second, a repository may pin itself back**: `rigor.default: critical` in that
+repository's `fugaro.yaml` restores today's behaviour exactly, and it is one line
+that a repository can merge on its own.
+
+**The migration note, stated where a reader will meet it** (the plan's T8.2, and
+the release note it writes): *the rigor modes change what "ready" means for a
+repository that configures nothing. From this release the default is Pro, so
+findings that used to fail a run may now be tolerated and filed as backlog items.
+Set `rigor.default: critical` to keep the old behaviour, or leave it and read what
+Pro tolerates.* Repository owners get the note, the one-line pin, and the mode's
+own line in the pull request body (D24) telling them which mode a run ran under.
+
+**Reason:** Critical everywhere is the problem the spec exists to solve (its
+"Problem" section is two sentences long and both are about this), and a default
+that changes nothing helps nobody until someone opts in — while the floors,
+which no default can reach under, keep the security-sensitive tier exactly where
+F31 already puts it. The CLI and documentation surface is unchanged from the
+earlier recommendation below: `fugaro run --mode`, the `rigor:` config and policy
+keys, `fugaro doctor` checking that the mode vocabulary and the floors are
 self-consistent, and `fugaro diagnose` printing the mode of the run it read.
-Reason: the spec's whole premise is that modes differ in what happens to
-findings; a default of Pro would change what "ready" means for every repository
-at the moment the code merges, with nobody having asked for it. Critical being
-the default also means the first cut's risk is bounded by construction — with
-nothing configured, no behaviour changes at all, which is the property that lets
-each slice of the plan merge alone. It is also the only default consistent with
-F31: the security-sensitive tier is already mandated to the strictest treatment.
 
-**Alternative: default to Pro.** Cost: every existing repository's runs start
-tolerating findings they were failing on, and the change arrives as a difference
-in behaviour rather than as a difference in configuration. The argument for it is
-that Critical-everywhere is the problem the spec exists to solve, and a default
-that does not change anything means the feature helps nobody until they opt in —
-which is true, and is the reason the plan's T0.1 and T7.1 put the owner's own
-`fugaro.yaml` in front of them as the first thing to set.
+**What follows from the answer, and is the plan's problem rather than this
+decision's:** every claim in this folder and in the plan that the first cut
+"relaxes nothing", that an unconfigured repository "behaves exactly as it does
+today", or that a run is "byte-identical to today" is **true of Critical mode
+only** — of a run whose resolved mode is Critical, which after this answer is a
+run that configured it or sits under a floor. The plan scopes them (T3.1's table,
+T8.2's note) and §7's review focus gives Pro's threshold table the attention it
+now owes: **Pro's table is the behaviour of every unconfigured repository**, so
+it is the one table whose review cannot be deferred.
+
+**Alternative (this folder's earlier recommendation, displaced by the answer):
+default to Critical — today's behaviour, byte for byte — until the owner sets
+another.** Cost: nothing changes until a repository opts in, so the feature helps
+nobody who does not read a release note, and the "Critical everywhere" problem
+the spec opens with survives the release that was meant to solve it. Its
+advantage was that the first cut's risk was bounded by construction, with each
+slice merging alone against unchanged behaviour; the answer trades that bound for
+the point of the feature, and pays for it with the floors, the one-line pin and
+the migration note above.
 
 ### D20 — Where each layer's key lives, and how an area is named and matched
+
+**Answered 2026-10-20: three keys — `defaults.rigor.default` in the project
+layer; a `rigor:` block in `fugaro.yaml` carrying `default` and `areas`; and an
+area written as `{name, match: <doublestar glob>, mode}`.**
+Why: each key lands where the tree already reads that kind of value, and a rule
+with a name is a rule the run and the pull request can print.
 
 **Recommended: three keys, in the three places the tree already reads, with an
 area as a named `doublestar` rule.**
@@ -1258,6 +1501,12 @@ file inside the tree is a file the branch under review can write (F35, F41).
 
 ### D21 — Whether a narrower layer may lower
 
+**Answered 2026-10-20: a narrower layer may lower a default, and no layer may
+lower a floor.**
+Why: a default is a value a narrower layer is meant to replace, and a floor is a
+constraint no layer reaches; making the two one thing leaves a project no way to
+say "usually Pro here, POC for this repository".
+
 **Recommended: yes for calls about the *default*, no for calls about a *floor*.
 A repository's `rigor.default` and its areas may set a mode lower than the
 project's default — that is what a default is for, and a project that wants a
@@ -1277,6 +1526,12 @@ minimum but not a policy entry: it is one comparison in `Resolve`, and the plan'
 T1.1 test table is where it would land.
 
 ### D22 — What "dynamically, per area" means, and when the resolution runs
+
+**Answered 2026-10-20: three moments — bootstrap, from `fugaro run --path`
+(repeatable); after every review round that changed the tree; and before the pull
+request is marked ready — and the mode never falls within a run.**
+Why: those are the three places a run legitimately knows its paths, and monotone
+is what makes them compose into one answer.
 
 **Recommended: the area is chosen from the files the run touches, at three
 moments, and the mode never falls within a run.** (a) **At bootstrap**, from the
@@ -1302,8 +1557,10 @@ floors have.
 **Alternative: two moments only — bootstrap and finalize.** Cost: a diff that
 first matches a Critical area in round 2 of 3 buys nothing, and the run's extra
 rounds are gone; the PR turns into a draft nobody asked for, with the reason
-being a mode that arrived too late to be used. It is one call site fewer, and it
-is what the plan's T1.4 would build if the owner prefers it.
+being a mode that arrived too late to be used. It is one call site fewer, and it is
+what the plan's T1.4 would have built had the answer taken it; the answer took the
+three moments, so T1.4 builds three call sites and the monotone rule between
+them.
 
 **Alternative: resolve from `plan.Footprint` — the planner's prediction — at
 bootstrap, and skip the declared paths.** Cost: nothing a run executes reads that
@@ -1312,7 +1569,12 @@ graph` is its only reader), so a run would gain a dependency on a plan artifact
 that may not exist, may be stale, and covers the files a *plan* files changed
 rather than the files a run will.
 
-### D23 — A run that touches several areas: strictest wins (an open decision)
+### D23 — A run that touches several areas: strictest wins
+
+**Answered 2026-10-20: the strictest mode among the areas the run's paths
+match wins, and every matched area is recorded.**
+Why: it fails closed and needs no order between a project area and a repository
+area that both match.
 
 **Recommended: the strictest mode among the areas the run's paths match, and the
 record lists every area that matched.** This is the owner's own proposal, taken
@@ -1339,6 +1601,14 @@ will remember. Patterns have no natural order; modes do, and that is why
 strictest-by-mode is the recommendation.
 
 ### D24 — What each surface shows, and which value it shows
+
+**Answered 2026-10-20: three surfaces — the run record, one line in the pull
+request body, and a live `fugaro watch` row — and the watch half is a new registry
+child, a rules regeneration with its golden file, and a deploy the owner runs.
+Recorded as proposed rather than numbered: the plan's part and the owner-run
+check, both below.**
+Why: the mode is what the review was for and the owner reads all three surfaces;
+the third is priced because it costs a deploy rather than a line of code.
 
 **Recommended: one resolved value with three parts — the mode, the layer that
 won, and the areas that matched — shown in three places.** The value is computed
@@ -1370,13 +1640,22 @@ run has finished** (its row then comes from `result.json`'s record, which is
 free). Cost: the mode of a run in flight is invisible, which is exactly the run
 whose mode someone would want to argue with; the price of the alternative is
 zero and the price of the recommendation is a rules deploy, so this is the
-decision where the owner weighs a deploy against seeing a live run's rigor.
+decision where the owner weighed a deploy against seeing a live run's rigor — and
+took the deploy: the answer above keeps the live `fugaro watch`, with the registry
+child, the rules regeneration and its golden file as a plan part and the deploy
+itself as a check the owner runs (the plan's §9, where the check is proposed and
+not numbered).
 
 **Alternative: watch reads the mode from the machine that launched the run.**
 Cost: does not work — a run executes on a Cloud Run job and watch reads the
 database for runs on any machine, which is why the registry exists at all.
 
 ### D25 — Which revision of the configuration the mode is read from
+
+**Answered 2026-10-20: the base branch, for every run kind, including a
+first run.**
+Why: a value that decides how much review a pull request gets must not be read
+from the pull request under review.
 
 **Recommended: the base branch, for every run kind, including a first run.** That
 means a new read beside `internal/runner/followup.go`'s `readBaseConfig` (which
@@ -1385,7 +1664,8 @@ the mode's configuration, rather than the working tree's copy that
 `internal/runner/runner.go`'s bootstrap reads today (F35). Reason: the mode
 decides how much review the PR gets, and a value that decides that must not come
 from the artifact under review — which is precisely why `readBaseConfig` exists
-for a review run and a follow-up, as `internal/runner/project.go` states. A
+for a review run and a follow-up, as its own doc comment in
+`internal/runner/followup.go` states. A
 branch that could set its own mode could set it to POC in the same pull request it
 wants merged, and the built-in floors (D18) would be the only thing left holding
 the line.
@@ -1402,10 +1682,17 @@ exist.
 is already read), consistent with every other key a first run uses, and it means a
 branch merges together with the rigor it was developed under — which is a genuine
 argument. What it accepts: a branch sets its own mode until the floors stop it,
-and the floor set is the only backstop. This is the alternative to weigh against
-the recommendation, and neither is taken here.
+and the floor set is the only backstop. This is the alternative the answer weighed
+against the base-branch read and refused: the mode is read from the base branch
+for every run kind.
 
 ### D26 — An item's id is its file name: a date, a sequence, and a slug
+
+**Answered 2026-10-20, in the backlog ruling's own words: one file per item
+under `docs/backlog/`, named `<id>-<slug>.md`, so that parallel pull requests
+filing tickets never conflict on one file.**
+Why: a date-plus-sequence name reaches that with no allocator, and the one
+collision left is a rename on the branch that would merge second.
 
 **Recommended: the file is `docs/backlog/<id>-<slug>.md`, where `<id>` is
 `YYYYMMDD-NN` — the day the item was filed and a two-digit sequence that day,
@@ -1435,6 +1722,11 @@ citation first.
 
 ### D27 — The front matter: eight required fields, three statuses, and a body with headings
 
+**Answered 2026-10-20, in the ruling's own words: the eight front-matter
+fields it names — id, title, mode, area, status, filed-by, filed-in and date.**
+Why: seven of the eight already have a source on the run record, so the format
+invents no second place to disagree about them.
+
 **Recommended: the eight fields the ruling names, each required, with `status` in
 a closed three-word vocabulary and the body carrying named headings.** The fields
 and where each value comes from today:
@@ -1444,15 +1736,15 @@ and where each value comes from today:
 | `id` | the file name (D26) |
 | `title` | the filer's words, one line |
 | `mode` | the **resolved** mode the run ran under (D24's value on the record); `none` for an item filed by hand |
-| `area` | the matched area's `name` (`rigor.areas`, D20); `project` or `repo` for an item about the whole layer; and, for a mixed run, the several names **once D23 is ruled** — until then the strictest name and the others beside it |
+| `area` | the matched area's `name` (`rigor.areas`, D20); `project` or `repo` for an item about the whole layer; and, for a mixed run, all the matched names, **strictest first** (D23's answer records every area a run matched, not only the one that won) |
 | `status` | `open`, `closed` or `dropped` — three words, and no fourth |
 | `filed-by` | `runstore.Launch.LaunchedBy` (read back as `runview.Row.LaunchedBy`) for a run; the filer's login for a hand-filed item |
 | `filed-in` | `run:<run id>` or `pr:<number>`, both already on `runstore.Record` |
 | `date` | the record's `FinishedAt` in UTC as `YYYY-MM-DD` — never the clock of whoever regenerates the index |
 
-Reason: F47 shows seven of the eight are free and the eighth is D23's problem
-arriving where a reader meets it, so the format should not invent a second place
-to disagree about any of them. The mode and the area are recorded as the
+Reason: F47 shows seven of the eight have a source in the record and the eighth
+is D23's rule arriving where a reader meets it, so the format should not invent a
+second place to disagree about any of them. The mode and the area are recorded as the
 **resolved** values, not as the configuration's words, so an item is readable
 without the config that produced it — which is the same reason D24 records the
 mode on the run. The body's headings are `## What was left open`, `## Why`,
@@ -1469,6 +1761,12 @@ marker.** Cost: two things to keep in step, two chances to drift, and the pin th
 has to hold a relation between files rather than a field.
 
 ### D28 — The index is generated, pinned twice, and never hand-merged
+
+**Answered 2026-10-20, in the ruling's own words: the index is regenerated by
+a small tool and pinned by a test, so two pull requests filing at once never
+conflict on it.**
+Why: a hand-maintained index is a list the pin would have to accept, and the
+ruling asks for a generator.
 
 **Recommended: `docs/backlog/README.md`, generated by a small tool, with two
 guards of different kinds, and a stated rule for two branches that regenerated it
@@ -1512,6 +1810,16 @@ ruling's index exists for.
 
 ### D29 — Project-level items live in the project layer's own repository (the owner's question)
 
+**Answered 2026-10-20 in shape, and this is the one question whose value is
+still the owner's:** the ruling puts a project's items in one designated
+repository named by the project configuration; **which** repository that is has
+not been answered, and this folder recommends `defaults.backlog.repo` valued at
+this repository. The plan names it at the task that needs it (T4.5's **Depends
+on** line).
+Why: a run's installation token reaches exactly one repository and `PRSpec` names
+none (F43), so the designation has to be a value a run can read rather than one it
+chooses.
+
 **Recommended: one new member of the project layer's closed `defaults:` —
 `defaults.backlog.repo`, a canonical `<provider>/<owner>/<name>` — and, for this
 installation, its value is this repository (`dimipaun/fugaro`), the one whose
@@ -1551,6 +1859,12 @@ files **in the repository**.
 
 ### D30 — How each of the five modes files
 
+**Answered 2026-10-20, in the ruling's own words: POC files none or one line,
+Startup and Pro file one item per tolerated finding, Critical files none of its
+own, and Hotfix files one for what it deferred.**
+Why: the mode is what decides which findings are tolerated, so it is also what
+decides which of them become items.
+
 **Recommended: one mechanism, and the mode decides only whether the tolerated set
 is empty — except Hotfix, which always files one.**
 
@@ -1578,6 +1892,11 @@ supposed to file.
 
 ### D31 — Closing: the pull request that fixes it flips the status in the same commit
 
+**Answered 2026-10-20, in the ruling's own words: the pull request that fixes
+an item flips its status in the same commit.**
+Why: the status then moves in a reviewed diff rather than by a second step someone
+has to remember, and the item file is never deleted.
+
 **Recommended: `status: open` → `closed` (or `dropped`, with its reason in the
 body) **in the same commit as the fix**, by the pull request that fixes it, which
 names the item id in its body and regenerates the index in that same commit.** A
@@ -1604,6 +1923,13 @@ id, so the citations break unless the id lives only in the front matter — whic
 D26 rejects, and which would make a link to an item depend on a lookup.
 
 ### D32 — One backlog: the practice, and what happens to the existing deferral notes
+
+**Answered 2026-10-20, in the ruling's own words: one backlog and not two — a
+deferral is filed as an item from now on, and the practice sentence lands in
+`docs/dogfooding.md`.**
+Why: two live lists of the same deferred work is the failure the ruling's own
+words name, and freezing the `docs/plans` notes without saying so would leave
+one.
 
 **Recommended: the item is the one live backlog. Going forward, a deferral is
 filed as an item and no new `docs/plans/*-review-follow-ups.md` file of that shape

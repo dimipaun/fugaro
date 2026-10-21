@@ -1,10 +1,13 @@
 # Implementation plan — rigor modes
 
-**Status: plan only; nothing is implemented; decisions open.**
+**Status: approved to build on the branch `rigor-modes`; the owner approval gate is passed.**
 
 Nine slices, ordered so that each one merges alone and leaves `main` green, and
-so that the first six change nothing a user can observe until the mode is
-configured. This plan is written from [reconciliation.md](reconciliation.md)'s
+so that a repository that configures nothing sees only what D19's answer made
+observable — the default is **Pro**, so what "ready" means for an unconfigured
+repository changes with the commit that gives the mode a reader, and the
+migration note (T8.2) and the one-line pin `rigor.default: critical` are what a
+repository answers that with. This plan is written from [reconciliation.md](reconciliation.md)'s
 findings **F1–F48**, decisions **D1–D32**, items **O1–O7** and the UNVERIFIED
 table **U1–U12**, and it cites them rather than restating them. Slice 1 is
 ordered by the owner's scope ruling of 2026-10-20 (the reconciliation's §1.2):
@@ -18,12 +21,19 @@ merging alone.
 
 ## 0. What this does not do
 
-- **It does not implement anything.** No task below is approved, no slice is
-  started, and the [OWNER APPROVAL GATE](#owner-approval-gate) is **not
-  passed**.
-- **It does not change the readiness rule's meaning for an unconfigured
-  repository.** With no `rigor:` block anywhere, every slice leaves a run
-  behaving exactly as it does today, because the default is Critical (D19).
+- **It does not implement anything.** No slice is started and no line of this
+  plan is written. The [OWNER APPROVAL GATE](#owner-approval-gate) **is passed**
+  — the owner answered §5's decisions (**D1–D25**) on 2026-10-20 — so the slices are approved to build
+  on the branch `rigor-modes`, and approved is not started.
+- **It does change the readiness rule's meaning for an unconfigured repository,
+  on purpose.** D19's answer makes the default **Pro**, so a repository with no
+  `rigor:` block starts tolerating what Pro tolerates — findings that used to fail
+  a run may now be tolerated and filed. The **security-sensitive tier stays
+  Critical** (the D18 floors, outside every layer), and a repository that wants
+  today's behaviour exactly pins it back with `rigor.default: critical`. Every
+  claim below that a slice "relaxes nothing" or is "byte-identical to today" is
+  therefore **true of Critical mode only**, and T8.2's migration note is the loud
+  version of this paragraph.
 - **It does not add a merge path, a deployer, or a scheduler.** `gitprov` has no
   merge call and the runner never deploys (F29); D13 and D15 say what Hotfix and
   the automatic follow-up mean instead, and both are smaller than they sound.
@@ -40,11 +50,14 @@ merging alone.
   Markdown under `docs/backlog/` (the reconciliation's §1.3): a run files an item
   into its own repository and its own branch, because that is the one repository
   its token reaches and the one it can push (F43, F44), and **D29** is the owner's
-  question about which repository holds a project's items, with a recommendation
-  first.
-- **It does not decide the open questions.** D1–D32 are recommendations, O1–O7
-  are items and U1–U12 are unverified claims. A task below that depends on one
-  says so in its **Depends on** line.
+  question about which repository holds a project's items; its **value** is the
+  one thing in the block still the owner's to name, and T4.5's **Depends on**
+  line says so.
+- **It does not decide anything the owner has not.** D1–D32 are **answered**
+  (2026-10-20); O1–O7 are items for the owner and U1–U12 are unverified claims,
+  and those two stay open. A task below that depends on an answer says so in its
+  **Depends on** line, and the one value still unnamed — D29's designated
+  repository — is named there too.
 
 ## 1. Builds on merged code
 
@@ -80,8 +93,8 @@ one of them is named so a reader can check the claim:
 | **0** | the folder, and the guard that owns it | none (documents and one test) | — |
 | **1** | the mode's three layers, and where they show | the resolved mode and the layer that won are recorded and printed; behaviour unchanged | 0 |
 | **2** | the score, acted on by nothing | findings carry scores in the transcript and the prompt asks for them | 1 |
-| **3** | the run loop applies the mode | a configured mode tolerates what it says it tolerates | 2 |
-| **4** | the backlog surface, and the Markdown backlog | the tolerated findings are readable in the PR and by `fugaro diagnose`; an item is a file under `docs/backlog/`, and the index is generated | 3 (T4.1–T4.2); the backlog's own five tasks depend on Slice 0 alone |
+| **3** | the run loop applies the mode | a configured mode tolerates what it says it tolerates | 2, **and T4.5** — a mode may not tolerate a finding before there is an item file to put it in (D9) |
+| **4** | the backlog surface, and the Markdown backlog | the tolerated findings are readable in the PR and by `fugaro diagnose`; an item is a file under `docs/backlog/`, and the index is generated | T4.1–T4.2 depend on 3; the backlog's own five tasks (T4.3–T4.7) depend on Slice 0 alone and are **picked up first** (D9) |
 | **5** | the task file, and Hotfix | a task may ask for a mode; Hotfix opens a ready PR | 3 |
 | **6** | cost | per-mode budget defaults; `budget preview --mode` | 3 |
 | **7** | the documentation and the practice | `docs/rigor-modes.md`, the project layer, `docs/dogfooding.md` | 4, 5, 6 |
@@ -92,6 +105,18 @@ in parallel (§6). Slice 7 needs all three because it documents them. The
 backlog's five tasks (T4.3–T4.7) are independent of Slices 2 and 3 as well: an
 item filed by hand needs no mode (T4.3, T4.4), and only the run-side filing
 (T4.5) waits for a mode to exist at all.
+
+**The order is the owner's (D9): the backlog comes first.** D7's answer makes the
+findings a mode tolerates into backlog items, so a mode must not be able to
+tolerate a finding before there is a file to put it in. The backlog's five tasks
+are therefore picked up **before** Slice 3 — T4.3 (the format and the first
+items), T4.4 (the index and its pins) and T4.5 (the filing command and the run
+that files) land first, and **Slice 3's T3.1 depends on T4.5**, not the reverse.
+An item is filed on the **same run branch and in the same pull request** as the
+change it was filed from — the question the ruling left this folder to settle,
+answered in the reconciliation's D9 — so the filing dirties nothing that was not
+already part of the pull request a reviewer is reading, and a follow-up to be
+filed later is a file in that same pull request.
 
 ## 3. Check numbers this plan takes
 
@@ -173,9 +198,14 @@ correction, C5):
 - **The readiness rule stays one rule.** `runner.Decide` is where readiness is
   decided (F4) and no task may add a second answer to "may this PR be ready".
   Slice 3's T3.1 changes what `Decide` is given, not what it means.
-- **Critical is byte-identical to today.** T3.1's first test asserts it: a run at
-  Critical produces the same outcome, the same reason string and the same PR body
-  as `main` does. If that test cannot be written, the slice is wrong.
+- **Critical *mode* is byte-identical to today — and only Critical, because D19's
+  answer makes Pro the default.** T3.1's first test asserts it: a run whose
+  resolved mode is Critical produces the same outcome and the same reason string
+  as `main` does, and the same PR body apart from the one line D18 requires every
+  run's body to carry, naming the mode it ran under. If that test cannot be
+  written, the slice is wrong. The same claim is **not** true of a run in an
+  unconfigured repository: that run is Pro, and T3.1's second test is the one that
+  says what Pro tolerates.
 - **Fail closed, everywhere.** An unscored finding, an unparseable verdict, or a
   policy that cannot decide blocks in every mode (D4, F3). T2.3 and T3.1 both
   carry a test for it.
@@ -193,9 +223,12 @@ correction, C5):
 
 ## 6. Parallel execution
 
-**Edges.** `0 → 1 → 2 → 3 → {4, 5, 6} → 7 → 8`. Within a slice, the tasks are
-listed in the order they must land, except where a task says otherwise in its
-**Depends on** line.
+**Edges.** `0 → 1 → 2 → {T4.3 → T4.4 → T4.5} → 3 → {4, 5, 6} → 7 → 8`. Slice 3's
+first task waits for T4.5 as well as for Slice 2 (D9), so the backlog's first
+three tasks are built before the run loop applies the mode — and Slice 4's own
+five tasks hang off T0.1 rather than off Slice 3, exactly as the table in §2
+says. Within a slice, the tasks are listed in the order they must land, except
+where a task says otherwise in its **Depends on** line.
 
 **Levels** (what may run at the same time, by dependency depth):
 
@@ -204,12 +237,13 @@ listed in the order they must land, except where a task says otherwise in its
 | 0 | T0.1, T0.2 |
 | 1 | T1.1; T2.1 and T4.3 (neither depends on Slice 1 at all) |
 | 2 | T1.2, T1.3, T1.5, T1.6, T2.2, T2.3, T4.4 |
-| 3 | T1.4 (needs T1.3's key), T1.7, T2.4, T3.1, T3.2, T4.5, T4.7 |
-| 4 | T3.3, T3.4, T5.1 |
-| 5 | T4.1, T4.2, T4.6, T5.2, T5.3, T6.1 |
-| 6 | T5.4, T5.5, T6.2, T6.3, T3.5 |
-| 7 | T7.1, T7.2, T7.3 |
-| 8 | T8.1, T8.2, T8.3 |
+| 3 | T1.4 (needs T1.3's key), T1.7, T2.4, T4.5, T4.7 |
+| 4 | T3.1 (it may not tolerate a finding before T4.5 can file one, D9) |
+| 5 | T3.2, T3.3, T3.4, T3.5, T5.1 |
+| 6 | T4.1, T4.2, T4.6, T5.2, T5.3, T6.1 |
+| 7 | T5.4, T6.2, T6.3 |
+| 8 | T5.5, T7.1, T7.2, T7.3 |
+| 9 | T8.1, T8.2, T8.3 |
 
 **File lanes.** Two tasks in different lanes may be built in parallel without a
 conflict; two tasks in the same lane may not.
@@ -226,10 +260,12 @@ conflict; two tasks in the same lane may not.
 | H | `internal/budget/**`, `internal/watch/**`, `console/docs/json-contract.md` | T1.6's console contract, T1.7, T4.4's `--json` entry |
 | I | `internal/backlog/**` (new package), `internal/cli/backlog.go`, `docs/backlog/**` | T4.3, T4.4, T4.5, T4.7 |
 
-**Critical path:** T0.2 → T1.1 → T1.2 → T2.1 → T2.3 → T3.1 → T3.3 → T3.4 → T4.1
-→ T7.1 → T8.1. Everything else hangs off it, and the backlog ruling does not
-lengthen it: T4.3–T4.7 hang off T0.1, and only T4.5's run-side half waits for
-T1.2 (see §6's levels).
+**Critical path:** T0.2 → T1.1 → T1.2 → T2.1 → T2.3 → T4.3 → T4.4 → T4.5 → T3.1
+→ T3.3 → T3.4 → T4.1 → T7.1 → T8.1. **The backlog ruling lengthens it on
+purpose** (D9): T4.3–T4.7 hang off T0.1 and would not be on the path by
+themselves, but T4.5's run-side half waits for T1.2 and Slice 3 waits for T4.5,
+so the backlog's first three tasks are built first and everything else waits for
+them.
 
 **What must be sequential, and why:**
 
@@ -256,25 +292,40 @@ T1.2 (see §6's levels).
 
 What a reviewer of these pull requests should look at, in order:
 
-1. **Does the change alter an unconfigured repository?** If yes, the default is
-   wrong (D19) and the slice is not mergeable as written.
-2. **Is there a second answer to "may this PR be ready"?** If yes, F4 is broken.
+1. **Does the change alter a run at Critical mode?** It must not: Critical is
+   byte-identical to today (apart from the mode line D18 requires in every run's
+   body), and a slice that changes Critical's outcome, reason or body is not
+   mergeable as written.
+2. **Is the change the one D19's answer asks for in an unconfigured repository?**
+   The default is **Pro**, so a repository with no `rigor:` block tolerates what
+   Pro tolerates. The question is not "does this alter an unconfigured repository"
+   — it must, that is the answer — but "is what it tolerates **Pro's table**, and
+   is the mode line, the filed item and the migration note all present beside it".
+   **Pro's threshold table is the behaviour of every unconfigured repository**,
+   which is why it is the one table whose review cannot be deferred and why T2.3
+   and T3.1 are read together.
+3. **Is there a second answer to "may this PR be ready"?** If yes, F4 is broken.
    `Decide` is the only place.
-3. **Can a mode lower a floor, or route around `workflowGuard`?** If yes, §5's
+4. **Can a mode lower a floor, or route around `workflowGuard`?** If yes, §5's
    security constraint is broken. Grep the new code for a mode comparison that
    *permits* rather than *requires*.
-4. **Is a finding able to disappear?** Every finding must end in exactly one of
+5. **Is a finding able to disappear?** Every finding must end in exactly one of
    three places: fixed, recorded as tolerated with its mode, or blocking. A
    finding that vanishes is the failure mode this whole feature risks.
-5. **Does a new schema property land with its pin?** F20 and F7: the corpus tests
+6. **Does a new schema property land with its pin?** F20 and F7: the corpus tests
    and `TestResultSchemaAcceptsRunnerRecords` are the check.
-6. **Is anything security-sensitive being done by a run?** §5's last constraint.
-7. **Is there still one backlog?** An item is one file under `docs/backlog/` and
+7. **Is anything security-sensitive being done by a run?** §5's last constraint.
+8. **Is there still one backlog?** An item is one file under `docs/backlog/` and
    the index is generated (D26–D32): a hand-edited index, a new deferral list in
    a `docs/plans` file, or a finding "left open by policy" with no item behind it
    is the drift this question exists to catch (F46, D32). Asking it of a pull
    request that touches Slices 3 or 4 is the cheap moment to catch it.
-8. **Is the order stated in more than one place, or can a layer reach under a
+9. **Is the item filed in the right place?** An item a run files is a file on
+   that run's own branch, in the same pull request as the change it was filed from
+   (D9), reviewed with it — never a second pull request, never a provider issue,
+   and never a write to the base branch. A filing path that would dirty a pull
+   request that is *not* the run's own is the bug this question exists to catch.
+10. **Is the order stated in more than one place, or can a layer reach under a
    floor?** The ruling asks for one resolver and one statement (D6, D20): §2 of
    `docs/project-layer.md` and `internal/rigor`'s `Resolve` are the two places it
    may live, and a third restatement in a comment, a doc or a test name is the
@@ -302,7 +353,8 @@ product code.
   (green, because nothing yet reads the folder).
 - **Depends on.** —
 - **Reviewer.** senior (in-loop) — documents only; the owner's review is the real
-  one, and the OWNER APPROVAL GATE below is where it happens.
+  one, it happened on 2026-10-20, and the OWNER APPROVAL GATE below is where that
+  answer is recorded.
 - **Commit.** `docs(rigor-modes): the owner's spec, the reconciliation and the plan`
 
 **T0.2 — the folder's pin test**
@@ -627,10 +679,13 @@ not change for anyone who has not configured a mode.
   `review round N still has M findings` — the whole feature, in one failing
   assertion.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/runner -run 'Decide|Outcome' -count=1 -timeout 30m`
-- **Depends on.** T2.3.
+- **Depends on.** T2.3, **and T4.5** — D9's order: a mode may not tolerate a
+  finding before there is an item file to put it in, so the task that files one
+  lands first and this task is the first that needs it to have landed.
 - **Reviewer.** senior (in-loop) **plus** the owner, because this is the one
   change in the plan that can make a PR ready that was not ready before. Reviewer
-  tier is in-loop; the human eye is the gate — the OWNER APPROVAL GATE's third bullet.
+  tier is in-loop; the owner's eye is what §7's first two questions and the
+  OWNER APPROVAL GATE's third item exist for.
 - **Commit.** `runner: the mode decides which findings block, inside Decide`
 
 **T3.2 — the mode's round ceiling**
@@ -713,7 +768,8 @@ hold, a filing command, a per-mode rule and a way to close an item. They are one
 slice because they are one subject, and five tasks because each has to merge
 alone — T4.3 changes no Go code at all, T4.4 adds no behaviour to a run, T4.5 is
 the first that writes an item from a run, and T4.6 and T4.7 are rules about what
-is already written.
+is already written. **Their order is D9's**: T4.3, T4.4 and T4.5 are picked up
+before Slice 3, and T3.1 waits for T4.5 (§2, §6).
 
 **T4.1 — `fugaro diagnose` shows the score and the mode**
 - **Files.** `internal/cli/diagnose.go` (`Diagnosis.Findings`, `seniorRound`,
@@ -733,7 +789,7 @@ is already written.
 **T4.2 — the run's report carries the same list**
 - **Files.** `internal/runner/report.go`.
 - **Tests.** The report golden carries the tolerated findings and the mode, and
-  is byte-identical to today's for a run with none.
+  differs from today's by nothing but the mode line when a run tolerated nothing.
 - **Red step.** The golden does not carry the list.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/runner -run 'Report' -count=1 -timeout 30m`
 - **Depends on.** T3.4.
@@ -800,7 +856,13 @@ is already written.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/backlog ./internal/runner ./internal/cli ./internal/runstore -run 'Backlog|Item|Finalize|Schema' -count=1 -timeout 40m`
 - **Depends on.** T4.4; **T1.2 supplies the mode**, and T1.4 the area name — until
   T1.4 lands an item filed by a run records `area: repo`, and this task says so in
-  its commit message rather than guessing an area.
+  its commit message rather than guessing an area. **It also depends on D29,
+  whose value is still the owner's**: the ruling settles that a project's items
+  live in one repository the project configuration names, and not which repository
+  that is. Until the owner names it, this task is built for this repository's own
+  installation, the key is not added, and the commit message says which value it
+  assumes. Slice 3 depends on this task (D9), so the value is worth naming before
+  the run loop is picked up.
 - **Reviewer.** senior (in-loop).
 - **Commit.** `runner(backlog): a run files the items it left open`
 
@@ -823,9 +885,10 @@ is already written.
 **T4.7 — closing an item, and the one-backlog practice**
 - **Files.** `docs/backlog/FORMAT.md` (the closing rule), the item a fixing pull
   request flips, `docs/dogfooding.md` (the practice sentence: a deferral is filed
-  as an item, and nothing new is written in the shape F46 counts), and — if D32 is
-  answered for the sweep rather than the freeze — the `docs/plans` sections F46
-  names, each keeping its own text with a one-line pointer to the items it became.
+  as an item, and nothing new is written in the shape F46 counts), and — D32's
+  answer takes the recommendation that was written for it — the `docs/plans`
+  sections F46 names, converted in one mechanical pull request, each keeping its
+  own text with a one-line pointer to the items it became.
 - **Tests.** A `closed` item with no `## Closed by` line naming the pull request
   fails the folder's pin; a `dropped` item with no reason fails it; and flipping
   `status` without regenerating the index fails T4.4's regenerate-and-compare pin,
@@ -877,16 +940,25 @@ is already written.
 - **Commit.** `runner: a follow-up may raise its mode and never lower it`
 
 **T5.3 — Hotfix's deterministic gate**
-- **Files.** `internal/rigor/hotfix.go` (new: the diff rule of D14 — path
-  classes, size bounds, the targeted test and compile requirement, and the
-  conservative default when the rule cannot decide), reading
-  `internal/runstore/changedfiles.go`.
-- **Tests.** A diff touching `.github/workflows/`, a credential path or a floored
-  path is refused whatever the agent says; a diff over the size bound takes the
-  conservative branch; a diff under it with a passing targeted test takes the
-  fast branch; and the agent's stated confidence is recorded and **never read** —
-  a test that asserts the rule's inputs do not include it, which is D14's whole
-  point.
+- **Files.** `internal/rigor/hotfix.go` (new: the diff rule of D14, whose every
+  input is one the project configured — the recipe's own `check`, the protected
+  paths the project declares in `rigor:`, the diff-size and file-count bounds with
+  their tunable defaults, and the conservative branch when the rule cannot
+  decide), reading `internal/runstore/changedfiles.go`, `internal/config`
+  (the tunable bounds and the declared paths) and the recipe it selects.
+- **Tests.** A diff touching `.github/workflows/` or a credential-file path is
+  refused whatever the agent says — the two universal built-ins, and the only two
+  this rule hard-codes; a diff touching a path the *project* declared is refused
+  for the same reason; a diff over the configured size or file-count bound takes
+  the conservative branch, and the same diff under a repository's own larger bound
+  does not, which is the test that proves the bounds are **configured** rather
+  than written into the runner; a diff under the bound with the recipe's `check`
+  passing takes the fast branch; and the agent's stated confidence is recorded and
+  **never read** — a test that asserts the rule's inputs do not include it, which
+  is D14's whole point.
+- **Note.** D14's answer is that this rule must work for **any** project: no path
+  of this repository's own is written into it, and a project that declares no
+  protected paths still gets the two built-ins and its own recipe's check.
 - **Red step.** The refusal test fails: nothing inspects a Hotfix diff.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/rigor -run 'Hotfix' -count=1 -timeout 20m`
 - **Depends on.** T1.5, T3.5.
@@ -906,8 +978,10 @@ is already written.
 - **Red step.** The ready assertion fails: `finalize` drafts everything.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/runner -run 'Finalize|Ready|Draft' -count=1 -timeout 30m`
 - **Depends on.** T5.3.
-- **Reviewer.** senior (in-loop), with the ready-PR decision (D11, D13) the
-  owner's.
+- **Reviewer.** senior (in-loop); the ready-PR rule itself is unchanged and D11's
+  answer states it — a pull request is ready if and only if `runner.Decide` says
+  so, the runner is what marks it ready (`markPullRequestReadyForReview`), and no
+  person is in that path in any mode.
 - **Commit.** `runner: hotfix opens a ready PR, and only hotfix does`
 
 **T5.5 — the recorded follow-up task**
@@ -1090,22 +1164,34 @@ scope ruling's own (the reconciliation's §1.2 and §7); checks 10 and 11 are th
 backlog ruling's (§1.3); and check 9 is the only one that needs a deploy before
 it can be run at all.
 
+**One more check is proposed and not numbered** (D24's answer). The live
+`fugaro watch` row needs a new registry child, a rules regeneration with its
+golden file, and a deploy — and the deploy is the owner's to run, not a run's
+(§5's last constraint). It is therefore written as a plan part with an operator
+step, and it is **not** folded into Check 119's numbering: the register in
+`docs/gcp-live-checklist.md` is not touched by it, and T8.1's task writes it as a
+step beside the check rather than as a check. What it says: regenerate the rules
+with the new child, deploy them, start a run, and read the mode in
+`fugaro watch` while the run is in flight — with the drop-and-warn path T1.7 takes
+from `Recipe` as the thing to watch for on an installation whose rules are older.
+
 ## 10. Risks
 
 | Risk | Where it comes from | What holds it |
 | --- | --- | --- |
-| a bad PR becomes ready because a threshold is loose | this feature's entire point | D4's fail-closed rule; T3.1's Critical-is-byte-identical table; the OWNER APPROVAL GATE's human gate on T3.1 |
+| a bad PR becomes ready because a threshold is loose | this feature's entire point, and it is now the behaviour of every unconfigured repository (D19's Pro default) | D4's fail-closed rule; §7's first two questions — Critical mode's byte-identical table, and Pro's table reviewed as the default rather than as one mode among five |
 | the reviewer scores unreliably, so the thresholds are noise | **U1**, unverified | T2.4 measures before the thresholds are trusted; D4 keeps the failure safe |
 | a credential path is missed by the floors | D18's declared-plus-built-in split | T1.5's built-in set and its operator review; the floors can only be raised |
 | schema drift between the record and `result.schema.json` | F20 | the existing `TestResultSchemaAcceptsRunnerRecords`, which is the red step of T3.4 |
 | a mode becomes a second readiness rule | F4 | §5's first constraint; §7's second review question |
 | the config key collides with `task.Spec.Mode` | F22 | the key is `rigor` (T5.1), and the collision is a parse error rather than a misreading |
 | the check number collides with an open claim | §3 | the register's own renumber-second rule, owned by T8.1 |
-| a branch sets its own rigor, and the run obeys it | F35, D25 | the built-in floors (T1.5) hold whatever the revision says; the owner's ruling on D25 is the real answer |
+| a branch sets its own rigor, and the run obeys it | F35, D25 | D25's answer is the real one — the mode is read from the **base branch** for every run kind, so the branch under review never supplies it; the built-in floors (T1.5) hold whatever the revision says |
 | the project default is read as a floor by a reader | D21's line between a default and a floor | D5's part three and D18: a floor is policy, and `docs/project-layer.md` §2 says "only tightens" of exactly that kind of value |
-| a live `watch` deploy breaks an installation whose rules are older | F40 | the drop-and-warn path T1.7 takes from `Recipe`, tested; the marker-and-halt path is the alternative if the owner prefers it |
+| a live `watch` deploy breaks an installation whose rules are older | F40 | the drop-and-warn path T1.7 takes from `Recipe`, tested; the marker-and-halt path is the alternative the answer did not take, and §9's unnumbered check is where the deploy is watched |
 | cost: the modes make runs cheaper in theory and not in fact | **U2**, unverified | T6.3's per-mode reporting and D17's refusal to forecast |
-| a Hotfix ships a wrong fix with the record agreeing it was confident | D14's weak point | the gate is the diff, not the agent's number (T5.3), and the follow-up task exists (T5.5) |
+| a Hotfix ships a wrong fix with the record agreeing it was confident | D14's weak point | the gate is the diff, not the agent's number (T5.3), every input to it is one the project configured, and the follow-up task exists (T5.5) |
+| the Hotfix gate knows nothing about a project's own sensitive paths | D14's answer: the rule is built from configuration, never from this repository's paths | the declared `rigor:` paths are read as inputs (T5.3), so a project teaches the gate its own paths; the two universal built-ins are the floor under that |
 | the backlog's index conflicts on every parallel filing | F46's precedent: two pull requests writing one list | D26 (one file per item) and D28 (the index is regenerated, never merged); U12 is the unverified half of the claim |
 | two branches file the same day's Nth item | D26's allocation has no central counter | the pin's duplicate-id guard (T4.3), and the rename-second rule the registers already use; the collision surfaces on the branch that would merge second, where a rename is cheap |
 | the backlog becomes a second backlog beside the `docs/plans` notes | F46, D32 | the practice sentence (T4.7), the conversion count in that pull request's own body, and §7's first review question |
@@ -1113,31 +1199,39 @@ it can be run at all.
 
 ## OWNER APPROVAL GATE
 
-**This gate is not passed, and nothing below is approved.**
+**This gate is passed: the owner answered §5's decisions (D1–D25) on 2026-10-20, and the plan is approved to build on the branch `rigor-modes`.**
 
-1. **The decisions are open.** D1–D32 are recommendations; the owner answers them
-   (or does not) before Slice 1 starts. The tasks that depend on one say so in
-   their **Depends on** line, and a task whose dependency is unanswered does not
-   start. Three of the new ones are the owner's own questions and are worth an
-   answer before Slice 4's last five tasks are picked up: **which repository holds
-   a project's items** (D29, recommended first), the **id and the front matter**
-   (D26, D27), and **whether the existing deferral notes are converted or frozen**
-   (D32).
-2. **D19 is the gate on the whole feature.** If the owner wants a default other
-   than Critical, that is a different first cut — the plan's slices are ordered so
-   that an unconfigured repository does not change, and a default of Pro breaks
-   that ordering on purpose.
-3. **T3.1 gets a human eye.** It is the one change that can make a pull request
-   ready that would not have been ready before. The plan asks for it to be
-   reviewed by the owner, not only by the in-loop reviewer.
+1. **The decisions are answered.** D1–D32 carry the owner's answers, each in place
+   of the recommendation it displaces, with the displaced recommendation kept
+   beneath it; a task that depends on an answer says so in its **Depends on**
+   line. **One value is still the owner's to name**: **D29**'s designated
+   repository for a project's items — the shape is settled, the repository is not
+   — and T4.5's **Depends on** line carries it, so T4.5 and everything Slice 3
+   waits on are the tasks to check before picking them up.
+2. **D19's answer is the one that changes behaviour, and it is deliberate.** The
+   default is **Pro**, not Critical, so the first cut **does** change what "ready"
+   means for a repository that configures nothing — its runs start tolerating what
+   Pro tolerates. Every slice and every claim written on the assumption that an
+   unconfigured repository does not change is scoped to **Critical mode**; the
+   security-sensitive tier stays Critical (D18's floors), the one-line pin
+   `rigor.default: critical` restores today's behaviour exactly, and **Pro's
+   threshold table is now the behaviour of every unconfigured repository**, which
+   is why §7 gives it its own review question. T8.2's migration note is what tells
+   those repositories about it.
+3. **T3.1 still gets a human eye.** It is the one change that can make a pull
+   request ready that would not have been ready before, and it is now the change
+   that decides what every unconfigured repository tolerates. The plan asks for it
+   to be reviewed by the owner, not only by the in-loop reviewer.
 4. **T1.5, T5.3 and T7.3, and the live checks, are not run by a Fugaro run.**
    They are the security floor, the gate on the mode with no review, the owner's
    own configuration and the live checks — §5's last constraint. A run that picks
-   one up has found a bug in this plan.
+   one up has found a bug in this plan. D24's watch deploy is the same class and
+   is written in §9 as a proposed, unnumbered step: the owner runs it.
 5. **Slice 0 is already written.** The documents in this folder are the
-   deliverable of the analysis; the plan is what waits for the owner. Slice 0's
-   T0.2 (the pin test) may land with them, because a guard on a plan is not a
+   deliverable of the analysis — including the answers recorded on 2026-10-20 —
+   and T0.2 (the pin test) landed with them, because a guard on a plan is not a
    step of the plan.
 6. **Nothing is timed.** No date, no sequence, no estimate — the slices are
    ordered by dependency and by what keeps `main` green, which is the only
-   ordering this document can support.
+   ordering this document can support. The one order the owner did give is D9's:
+   the backlog's tasks come first, and Slice 3 depends on them.
