@@ -150,6 +150,31 @@ type convergeDoor struct {
 	foreign []foreignFlag
 }
 
+// takes is whether this door takes the named flag: the foreign list, for the
+// help a door has to word for itself. A usage string that says what a flag
+// does may not name one the door refuses — setup's --non-interactive told the
+// reader what --forget does on the door that rejects --forget by name
+// (TestNoDoorsHelpOffersAFlagItRefuses).
+func (d convergeDoor) takes(name string) bool {
+	for _, ff := range d.foreign {
+		if ff.name == name {
+			return false
+		}
+	}
+	return true
+}
+
+// passedForeign is the first foreign flag the run actually passed, if any: the
+// one decision that comes before anything is read, prompted for or applied.
+func (d convergeDoor) passedForeign(cmd *cobra.Command) (foreignFlag, bool) {
+	for _, ff := range d.foreign {
+		if cmd.Flags().Changed(ff.name) {
+			return ff, true
+		}
+	}
+	return foreignFlag{}, false
+}
+
 // foreignFlag is a flag one door declares and the other takes, with the door
 // that owns it and why. The refusal it drives is a sentence that names both —
 // `fugaro update does not take --create-project: that is fugaro setup's (...)`
@@ -213,22 +238,29 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f := cmd.Flags()
-			// A flag that belongs to the other door: refused here, by name,
-			// before anything is read, prompted for or applied. It is the one
-			// check that runs before the run is built, so a script that
-			// re-converges with a creating flag gets a sentence naming the
-			// door that takes it and not a converge that half-happened.
-			for _, ff := range d.foreign {
-				if f.Changed(ff.name) {
-					return userErr("fugaro %s does not take --%s: that is %s's (%s)", d.name, ff.name, ff.owner, ff.hint)
-				}
-			}
 			o.launchersChanged, o.operatorsChanged = f.Changed("launcher"), f.Changed("operator")
 			o.alertEmailChanged, o.baseImageChanged = f.Changed("alert-email"), f.Changed("base-image")
 			o.budgetAdminsChanged = f.Changed("budget-admin")
 			r := newInitRun(cmd, o)
+			// A flag that belongs to the other door: refused here, by name,
+			// before anything is read, prompted for or applied, so a script
+			// that re-converges with a creating flag gets a sentence naming the
+			// door that takes it and not a converge that half-happened.
+			//
+			// It is the first decision the run makes, and it is made on the run
+			// rather than before the run exists: building the run reads
+			// nothing, and a refusal is an outcome like any other — the check
+			// below prints the one --json object for it, as it does for every
+			// other refusal that stops a run before a stage
+			// (TestInitJSONOnARefusalBeforeAnyStage). Deciding it before the
+			// run existed left --json printing nothing at all for this one
+			// path, so a machine consumer got a document or an empty stdout
+			// depending on which refusal fired.
+			ff, foreign := d.passedForeign(cmd)
 			var err error
 			switch {
+			case foreign:
+				err = userErr("fugaro %s does not take --%s: that is %s's (%s)", d.name, ff.name, ff.owner, ff.hint)
 			case o.repo:
 				err = runInitRepo(r, args)
 			case len(args) > 0:
@@ -283,7 +315,14 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). Never covers creating a project, billing, a secret, an unlisted repository, the Firestore location, a billable first image build or replacing an image tag (typed at a real terminal). Under a coding agent's environment variable (CLAUDECODE and the like) init applies nothing, --yes included (except init --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one non-interactive opt-in to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes never covers it, and a coding agent's environment refuses it; any other origin takes the typed confirmation)")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
-	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its typed confirmation even then, so that plan exits 1); --yes never covers the typed-only steps (see --yes). With --forget and --config-only it only stops them prompting: their confirmations then need --yes")
+	// The flags --non-interactive only stops from prompting, worded for this
+	// door: --forget is fugaro update's, and setup's help must not describe
+	// what a flag setup refuses does.
+	stops := "--config-only"
+	if d.takes("forget") {
+		stops = "--forget and --config-only"
+	}
+	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its typed confirmation even then, so that plan exits 1); --yes never covers the typed-only steps (see --yes). With "+stops+" it only stops them prompting: their confirmations then need --yes")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
 	f.BoolVar(&o.checkApp, "check-github-app", false, "let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only, for one signed token; refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it); without it init checks only with the key you typed in this run")

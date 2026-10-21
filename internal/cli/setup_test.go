@@ -171,6 +171,40 @@ func TestAForeignFlagIsHiddenFromItsDoorsHelp(t *testing.T) {
 	}
 }
 
+// TestNoDoorsHelpOffersAFlagItRefuses: the flag list is not the whole help. A
+// usage string that says what a flag *does* may not name a flag the door
+// refuses — `fugaro setup --help` went on saying what --non-interactive does
+// "with --forget and --config-only", on the door that rejects --forget by name
+// and hides it from the list beside it. Neither of the checks above can see
+// that: the flag list is not prose, and the Long's rule is about a paragraph
+// that *begins* with the flag.
+//
+// Only --non-interactive is held to it, because it is the one usage string
+// that describes what the named flag does. --provision-batch's and --retire's
+// name --forget among the flags they *exclude*, which is a statement about
+// themselves and true of the converge on either door.
+func TestNoDoorsHelpOffersAFlagItRefuses(t *testing.T) {
+	for _, tc := range []struct{ door, foreign string }{
+		{"setup", "--forget"},
+		{"update", "--create-project"},
+		{"update", "--display-name"},
+		{"update", "--parent"},
+		{"update", "--managed"},
+		{"update", "--link-billing"},
+		{"update", "--provision-batch"},
+	} {
+		t.Run(tc.door+" "+tc.foreign, func(t *testing.T) {
+			f := doorCommands[tc.door]().Flags().Lookup("non-interactive")
+			if f == nil {
+				t.Fatal("no --non-interactive")
+			}
+			if strings.Contains(f.Usage, tc.foreign) {
+				t.Errorf("fugaro %s's --non-interactive help names %s, which the door refuses:\n%s", tc.door, tc.foreign, f.Usage)
+			}
+		})
+	}
+}
+
 // TestSetupRefusesAnUpdateOnlyFlag: a flag that only makes sense once an
 // installation exists is `fugaro update`'s, and `fugaro setup` — the first
 // run — refuses it by name rather than ignoring it. `--forget` is that flag:

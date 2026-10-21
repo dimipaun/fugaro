@@ -18,6 +18,11 @@ func TestInitJSONOnARefusalBeforeAnyStage(t *testing.T) {
 		"missing inputs": {"setup", "--json", "--non-interactive"},
 		"bad flags":      {"update", "--json", "--forget", "--config-only"},
 		"repo, no repo":  {"setup", "--repo", "--json"},
+		// The refusal that names the other door: it is decided before anything
+		// is read, and it is still a refusal like the rest — a machine consumer
+		// gets one object whichever check stopped the run.
+		"a flag the other door takes": {"setup", "--json", "--forget", "--yes"},
+		"a creating flag on update":   {"update", "--json", "--create-project"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			firstRunEnv(t)
