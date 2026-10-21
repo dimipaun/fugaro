@@ -47,16 +47,25 @@
 #
 # WHAT THIS FILE IS, AND WHAT IT DELIBERATELY DOES NOT CONTAIN
 #
-#   - **A tag publishes nothing unless it is on main and its checks passed.**
+#   - **Nothing is published unless it is on main and its checks passed.**
 #     Every tag-triggered publishing workflow in this repository runs
 #     `scripts/release-gate.sh` first (`.github/workflows/release.yml`,
 #     `images.yml`, `console-release.yml`), and this one is no exception: the
-#     gate is the first step of each job, and it runs **only on a tag push** --
-#     a manual dispatch has no tag to check, and `dry_run` is what holds that
-#     path back. The gate reads the tagged commit's check-runs, so each job
-#     carries `checks: read` beside `contents: read`, and the checkout is
-#     full-depth (`fetch-depth: 0`) because the gate asks whether that commit is
-#     reachable from `origin/main`.
+#     gate is the first step of each job on a **tag push**. The gate reads the
+#     tagged commit's check-runs, so each job carries `checks: read` beside
+#     `contents: read`, and the checkout is full-depth (`fetch-depth: 0`)
+#     because the gate asks whether that commit is reachable from `origin/main`.
+#   - **A manual dispatch that would submit passes a gate too.** The environment
+#     approval is a person deciding to *run* this workflow, not a review of the
+#     commit it would submit, and a dispatch can name a tag as well as a branch
+#     (`gh workflow run --ref v1.2.3`): without the second gate step a dispatch
+#     on an off-main branch, or on a `vtest` tag, would build on EAS and submit
+#     to a store behind nothing but that click. So a dispatch whose `dry_run` is
+#     not `true` runs a second gate step: a dispatched **tag** is held to the
+#     whole gate, and a dispatched **branch** to its second half -- the commit is
+#     reachable from `origin/main` -- because a branch has no tag to shape-check.
+#     A dry run submits nothing and is not gated; the submission step is what it
+#     cannot reach.
 #   - **The store identity is not here.** The iOS bundle identifier and the
 #     Android package name live in the EAS project's own `production`
 #     environment, and every `eas` command below runs through
@@ -74,9 +83,15 @@
 #     job log -- and this repository is public. The mask step reads the two
 #     values out of the EAS project's `production` environment and passes each
 #     one to `::add-mask::`, which is the only way a value can be hidden from a
-#     log it would otherwise reach. **The owner confirms this on the first dry
-#     run**: the check is on the owner's list (docs/pending-workflows/README.md,
-#     `## mobile-release.yml`), not a number.
+#     log it would otherwise reach. **A read that fails, or that comes back
+#     empty, stops the job before anything is built**: `mobile/app.config.js`
+#     requires the identity only on EAS's own build machines, so a build started
+#     without the mask in place would resolve the identity and print it into this
+#     public log, and the mask step is the only thing between the two. **The
+#     owner confirms the mask itself on the first dry run**: that
+#     `::add-mask::` really keeps the value out of `eas`'s output is a fact about
+#     the CLI, and the check is on the owner's list
+#     (docs/pending-workflows/README.md, `## mobile-release.yml`), not a number.
 #   - **The run summary carries no artifact download link.** The EAS build
 #     page's id goes in the summary, and nothing else: the artifact URL is a
 #     download link for a signed binary whose Info.plist carries the bundle
@@ -170,8 +185,6 @@ jobs:
       # tag is a strict `vX.Y.Z`, its commit is reachable from `origin/main`,
       # and the required checks succeeded on it. Without it a tag pushed on an
       # off-main or red commit would still build on EAS and submit to a store.
-      # A manual dispatch skips it -- there is no tag to check, and `dry_run` is
-      # what holds that path back.
       - name: The tag is strict, on main, and its checks passed
         if: github.event_name == 'push'
         env:
@@ -180,6 +193,34 @@ jobs:
         run: |
           set -euo pipefail
           scripts/release-gate.sh "$TAG"
+      # The same gate for the path that has no `push` event, and the step that
+      # keeps a dispatch from being the only thing between an off-main commit
+      # and a store: the environment's approval is a person deciding to *run*
+      # this workflow, not a review of the commit it would submit, and a
+      # dispatch can name a tag as well as a branch. A dispatched tag is held
+      # to the whole gate; a dispatched branch has no tag to shape-check, so it
+      # is held to the gate's second half. A dry run submits nothing and is not
+      # held to it -- the submission step below is what it cannot reach.
+      - name: A manual submission passes the same gate
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # `origin/main` is there because the checkout above takes the full
+          # history, and the fetch is the one `scripts/release-gate.sh` makes:
+          # this repository is public, so it needs no credential.
+          if [[ "${REF}" == refs/tags/* ]]; then
+            scripts/release-gate.sh "${REF_NAME}"
+          else
+            git fetch --quiet origin main
+            if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+              echo "::error::this manual dispatch names ${REF_NAME} (${GITHUB_SHA}), which is not on main. A manual submission is a release, so it may be made only from a commit on main or from a strict vX.Y.Z tag; nothing was built or submitted." >&2
+              exit 1
+            fi
+          fi
       # The Node line comes from mobile/package.json's `engines.node`, the same
       # way console-linux.yml takes the console's: a second copy of it written
       # here would be a pin that can disagree with the app's own.
@@ -208,22 +249,39 @@ jobs:
       # themselves are never echoed: they live in a shell variable for the
       # length of the loop and nowhere else.
       #
-      # A read that fails masks nothing and does not fail the run -- the build
-      # step below is what fails, loudly, when the token or the environment is
-      # wrong, and a mask step that turned a wrong token into a red release
-      # before the build had a chance to would only move the failure.
+      # A read that fails, or that comes back empty, **stops the job here**,
+      # before anything is built. `mobile/app.config.js` requires the identity
+      # only on EAS's own build machines, so a build started without the mask in
+      # place would resolve the identity and print it into this public log: the
+      # mask step is the only thing between the two, and a run that cannot mask
+      # a value is a run that must not build. The failure names the variable and
+      # prints no value.
       - name: mask the store identity
         working-directory: mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -euo pipefail
+          # The value is read into a shell variable and never echoed: the mask is
+          # what keeps it out of the log, so the read cannot print what it is
+          # about to hide. `--non-interactive` because interactive mode prefixes
+          # each output line, and a prefixed line is not the value `::add-mask::`
+          # is asked to hide.
           mask() {
+            local name="${1}" value
+            if ! value=$(eas env:exec --non-interactive production "printenv ${name}" 2>/dev/null); then
+              echo "::error::${name} could not be read from the EAS project's production environment, so it cannot be masked, and this job will not build: a build resolves mobile/app.config.js and would print the identity into this public log. Check that ${name} exists in that environment and that the EXPO_TOKEN secret can read it, then run this workflow again. Nothing was built or submitted." >&2
+              exit 1
+            fi
+            if [ -z "${value}" ]; then
+              echo "::error::${name} is empty in the EAS project's production environment, so there is nothing to mask, and this job will not build: a build resolves mobile/app.config.js and would print whatever the identity resolves to into this public log. Set ${name} in that environment, then run this workflow again. Nothing was built or submitted." >&2
+              exit 1
+            fi
             while IFS= read -r line; do
               if [ -n "${line}" ]; then
                 echo "::add-mask::${line}"
               fi
-            done < <(eas env:exec production "printenv $1" 2>/dev/null || true)
+            done <<< "${value}"
           }
           # Both names in both jobs: either build resolves app.config.js, which
           # reads both, and a value that reaches a log is a value in a log.
@@ -245,7 +303,7 @@ jobs:
           # parsed below rather than trusted, so a CLI that answered with
           # something other than JSON fails the run instead of submitting the
           # wrong build.
-          eas env:exec production 'eas build --platform ios --profile internal --non-interactive --wait --json' > "$RUNNER_TEMP/mobile-build.json"
+          eas env:exec --non-interactive production 'eas build --platform ios --profile internal --non-interactive --wait --json' > "$RUNNER_TEMP/mobile-build.json"
           jq -e . "$RUNNER_TEMP/mobile-build.json" > /dev/null
       - name: put the build's id in the run summary
         run: |
@@ -280,10 +338,18 @@ jobs:
           # build of the profile, whoever made it -- a different claim, and one
           # a second run of this workflow would silently change.
           build_id=$(jq -er 'if type == "array" then .[0].id else .id end' "$RUNNER_TEMP/mobile-build.json")
+          # The id is pasted into the shell string below, so its shape is
+          # checked before it gets there. `jq -e` fails on a document with no id,
+          # but an id that is not a UUID -- a URL, or a string carrying a `;` --
+          # would still be pasted into the command this step runs.
+          if [[ ! "${build_id}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+            echo "::error::the build's id is not a UUID, so this job will not submit: the id is read out of ${RUNNER_TEMP}/mobile-build.json and pasted into the submit command, and only a UUID may be. Nothing was submitted." >&2
+            exit 1
+          fi
           # The same `eas env:exec production` as the build: it is what gives
           # this local `eas-cli` process the bundle identifier it needs to
           # submit at all.
-          eas env:exec production "eas submit --profile internal --platform ios --id ${build_id} --non-interactive"
+          eas env:exec --non-interactive production "eas submit --profile internal --platform ios --id ${build_id} --non-interactive"
       - name: say that a dry run stopped before the submission
         if: ${{ github.event.inputs.dry_run == 'true' }}
         run: |
@@ -326,13 +392,35 @@ jobs:
         run: |
           set -euo pipefail
           scripts/release-gate.sh "$TAG"
+      # The same second gate as the iOS job's, for the same reason: a manual
+      # dispatch can name a tag or a branch, and the approval click is not a
+      # review of the commit it would submit.
+      - name: A manual submission passes the same gate
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "${REF}" == refs/tags/* ]]; then
+            scripts/release-gate.sh "${REF_NAME}"
+          else
+            git fetch --quiet origin main
+            if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+              echo "::error::this manual dispatch names ${REF_NAME} (${GITHUB_SHA}), which is not on main. A manual submission is a release, so it may be made only from a commit on main or from a strict vX.Y.Z tag; nothing was built or submitted." >&2
+              exit 1
+            fi
+          fi
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: mobile/package.json
       - name: install eas-cli
         run: npm install --global eas-cli@25.3.0 --ignore-scripts --no-audit --no-fund
       # The same mask step as the iOS job's, and for the same reason: either
-      # build resolves `app.config.js`, which reads both identities.
+      # build resolves `app.config.js`, which reads both identities. It stops the
+      # job on a read that fails or comes back empty, before the build below,
+      # exactly as the iOS job's does.
       - name: mask the store identity
         working-directory: mobile
         env:
@@ -340,11 +428,20 @@ jobs:
         run: |
           set -euo pipefail
           mask() {
+            local name="${1}" value
+            if ! value=$(eas env:exec --non-interactive production "printenv ${name}" 2>/dev/null); then
+              echo "::error::${name} could not be read from the EAS project's production environment, so it cannot be masked, and this job will not build: a build resolves mobile/app.config.js and would print the identity into this public log. Check that ${name} exists in that environment and that the EXPO_TOKEN secret can read it, then run this workflow again. Nothing was built or submitted." >&2
+              exit 1
+            fi
+            if [ -z "${value}" ]; then
+              echo "::error::${name} is empty in the EAS project's production environment, so there is nothing to mask, and this job will not build: a build resolves mobile/app.config.js and would print whatever the identity resolves to into this public log. Set ${name} in that environment, then run this workflow again. Nothing was built or submitted." >&2
+              exit 1
+            fi
             while IFS= read -r line; do
               if [ -n "${line}" ]; then
                 echo "::add-mask::${line}"
               fi
-            done < <(eas env:exec production "printenv $1" 2>/dev/null || true)
+            done <<< "${value}"
           }
           mask FUGARO_IOS_BUNDLE_ID
           mask FUGARO_ANDROID_PACKAGE
@@ -356,7 +453,7 @@ jobs:
           set -euo pipefail
           # The AAB the Play app-signing path takes: `eas.json`'s `internal`
           # profile sets `android.buildType: app-bundle`.
-          eas env:exec production 'eas build --platform android --profile internal --non-interactive --wait --json' > "$RUNNER_TEMP/mobile-build.json"
+          eas env:exec --non-interactive production 'eas build --platform android --profile internal --non-interactive --wait --json' > "$RUNNER_TEMP/mobile-build.json"
           jq -e . "$RUNNER_TEMP/mobile-build.json" > /dev/null
       - name: put the build's id in the run summary
         run: |
@@ -385,7 +482,13 @@ jobs:
           # its own, so a profile that named a public one would be caught in
           # `eas.json` and not here.
           build_id=$(jq -er 'if type == "array" then .[0].id else .id end' "$RUNNER_TEMP/mobile-build.json")
-          eas env:exec production "eas submit --profile internal --platform android --id ${build_id} --non-interactive"
+          # The same shape check as the iOS submission's, and for the same
+          # reason: the id is pasted into the shell string below.
+          if [[ ! "${build_id}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+            echo "::error::the build's id is not a UUID, so this job will not submit: the id is read out of ${RUNNER_TEMP}/mobile-build.json and pasted into the submit command, and only a UUID may be. Nothing was submitted." >&2
+            exit 1
+          fi
+          eas env:exec --non-interactive production "eas submit --profile internal --platform android --id ${build_id} --non-interactive"
       - name: say that a dry run stopped before the submission
         if: ${{ github.event.inputs.dry_run == 'true' }}
         run: |

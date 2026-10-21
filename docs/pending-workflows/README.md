@@ -1089,7 +1089,7 @@ only the client that uploads it — with `contents: read` and the `checks: read`
 the release gate below needs, and nothing else, and **neither job needs the
 other**, so a platform that fails never blocks the other's release. Each job
 checks the repository out with `persist-credentials: false` and
-`fetch-depth: 0`, runs the release gate (below), takes the Node line from
+`fetch-depth: 0`, runs the two gate steps (below), takes the Node line from
 `mobile/package.json`'s `engines.node` (the same way `console-linux.yml` takes
 the console's), installs `eas-cli` **at one exact version**, masks the store
 identity, runs `eas build
@@ -1101,7 +1101,7 @@ commit SHA with its `# vX.Y.Z` beside it. The `concurrency` group is the
 workflow's own name and not the ref, so two releases queue rather than submit at
 once, and a release that is mid-submission is never cancelled.
 
-**A tag publishes nothing unless it is on main and its checks passed.** On a tag
+**Nothing is published unless it is on main and its checks passed.** On a tag
 push the **first step of each job** is `scripts/release-gate.sh "$TAG"` — the
 same gate `release.yml`, `images.yml` and `console-release.yml` run first, which
 refuses unless the tag is a strict `vX.Y.Z`, its commit is reachable from
@@ -1109,15 +1109,33 @@ refuses unless the tag is a strict `vX.Y.Z`, its commit is reachable from
 console legs) succeeded on it. Without it, a tag pushed on an off-main or red
 commit would still build on EAS and submit to TestFlight and to Google Play:
 this is a publishing workflow, so it is held to the same rule as every other one
-here (`docs/release.md`, "What a tag does"). The step carries
+here (`docs/release.md`, "What a tag does"). That step carries
 `if: github.event_name == 'push'`, the same condition the sibling workflows
-carry: a **manual dispatch has no tag to check**, and `dry_run` is what holds
-that path back. Because the gate reads the tagged commit's check-runs, each job
-holds **`checks: read` beside `contents: read`** — and nothing else — and the
-checkout is **full-depth (`fetch-depth: 0`)**, because the gate asks whether that
-commit is reachable from `origin/main`, which a shallow clone cannot answer.
-`TestDocsMobileReleaseWorkflowIsStagedAndPinned` holds each job to exactly one
-gate step, to that exact condition, and to coming before anything is built or
+carry, because the gate is a claim about a tag.
+
+**A manual dispatch that would submit passes a gate too.** The environment's
+approval is a person deciding to *run* this workflow, not a review of the commit
+it would submit, and a dispatch can name a **tag** as well as a branch
+(`gh workflow run --ref v1.2.3`): with only the step above, a dispatch on an
+off-main branch — or on a `vtest` tag — would build on EAS and submit behind
+nothing but that click. So each job carries a **second gate step**, under
+`if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true'`:
+a dispatched **tag** goes through the whole gate (`scripts/release-gate.sh
+"$REF_NAME"`, the same script, so the tag shape and the required checks are
+checked as they are on a push), and a dispatched **branch** through the gate's
+second half — `git fetch origin main` and `git merge-base --is-ancestor
+"$GITHUB_SHA" origin/main` — because a branch has no tag to shape-check and "this
+commit is on main" is the claim a submission needs either way. A dispatch with
+`dry_run` set submits nothing and is held to neither, which is what keeps a dry
+run runnable from a work-in-progress branch.
+
+Because the gate reads the commit's check-runs, each job holds **`checks: read`
+beside `contents: read`** — and nothing else — and the checkout is **full-depth
+(`fetch-depth: 0`)**, because the gate asks whether that commit is reachable from
+`origin/main`, which a shallow clone cannot answer.
+`TestDocsMobileReleaseWorkflowIsStagedAndPinned` holds each job to exactly two
+gate steps, to those exact conditions, to the tag path and the on-main path
+inside the second one, and to both coming before anything is built or
 submitted.
 
 **The submission submits the build the run made, and the summary carries no
@@ -1157,8 +1175,12 @@ where the two variable names appear**, and it has to be: a mask cannot hide a
 value it is not given. `TestDocsMobileReleaseWorkflowIsStagedAndPinned` holds
 each name to exactly one occurrence per job and requires that occurrence to be
 the argument of a `mask` call in that job's mask step. A read that fails masks
-nothing and does not fail the run — the build step right after it is what fails,
-loudly, when the token or the environment is wrong.
+nothing and **stops the job**, before the build step. `mobile/app.config.js`
+requires the identity only on EAS's own build machines, so the build does not
+fail on its own when the mask is missing: it resolves the identity and prints it
+into this public log. A run that cannot mask a value is therefore a run that must
+not build, and the step says which variable it could not read and prints no
+value.
 
 **The one thing the owner has to check by eye, on the first dry run.** No test
 can prove that a job log carries no identifier, because no test can run the job
@@ -1207,6 +1229,14 @@ against exactly the line above for its platform, so a condition with a second
 disjunct — a tag push, say, which would start a submission the owner turned off —
 is not green here.
 
+**While the Play side is not ready, set this before the copy-in and not after
+it.** The Android job is enabled by default — an unset variable names neither
+platform — so a copy-in that lands first is a workflow that can build and submit
+to Play on its very first run, and the environment's approval click says a person
+ran the workflow, not that the Play side is ready. `MOBILE_RELEASE_DISABLED_PLATFORMS=android`
+is the state `### Android first release` below describes, and it is step **3** of
+the owner's list under `### Before it can run` for that reason.
+
 ### Before it can run: the three things the owner does first
 
 None is in the file, and none can be: a staging file cannot create a GitHub
@@ -1216,14 +1246,17 @@ account. (The Apple side needs no step of its own here: the App Store Connect ke
 and the signing certificate are EAS's, server-side, under the owner's own
 account — the closing paragraph of this section says so.)
 
-**The first two have to be done *before* the file is copied in, not after it.**
+**The environment, the secret and — while the Play side is not ready — the
+Android switch have to be done *before* the file is copied in, not after it.**
 GitHub creates a missing environment the first time a job names it, and the
 environment it creates that way has **no required reviewer at all** — so the
 first run of a copied-in workflow against a missing `mobile-release` would go
 straight through, holding the Expo token, with nobody's click in between. The
-copy-in is deliberately the last thing in this section: an environment that
-already exists is not re-created, and the secret on it is unreadable until the
-reviewer approves.
+Android switch is the same rule from the other side: the Android job is enabled
+by default, so a copy-in made before `MOBILE_RELEASE_DISABLED_PLATFORMS=android`
+is set is a file whose first run can submit to Play. The copy-in is deliberately
+the last thing in this section: an environment that already exists is not
+re-created, and the secret on it is unreadable until the reviewer approves.
 
 **1. [per repo] The `mobile-release` environment, with the owner as its only
 required reviewer.** This is the gate: GitHub holds the job until that reviewer
@@ -1280,7 +1313,18 @@ secrets → Add secret**, or:
 gh secret set EXPO_TOKEN --repo "$REPO" --env mobile-release
 ```
 
-**3. [per repo, after the first dry run] Read the first dry run's log and
+**3. [per repo] `MOBILE_RELEASE_DISABLED_PLATFORMS=android`, before the copy-in,
+while the Play side is not ready.** The command is the `gh variable set` one under
+"One switch turns either platform off" above, with why it is a repository variable
+rather than a workflow edit. It is a step of its own here rather than a footnote
+because of the order: the Android job is enabled by default, and the environment's
+approval is not a statement about whether the Play side — the account, the app
+record and the forms `### Android first release` below lists — is ready. Set it
+**before** the copy-in, and clear it (`gh variable delete
+MOBILE_RELEASE_DISABLED_PLATFORMS --repo "$REPO"`, or set it to `ios`) only when
+that checklist is done.
+
+**4. [per repo, after the first dry run] Read the first dry run's log and
 confirm it carries no identifier.** Dispatch the workflow once with `dry_run`
 left checked — it builds, writes its summary and submits nothing — and then read
 that run's log for the bundle identifier and the package name. **No test can make
@@ -1486,16 +1530,22 @@ pattern `v[0-9]+.[0-9]+.[0-9]+`; `contents: read` at the top and
 `{contents: read, checks: read}` on each job — the second being what the release
 gate's check-runs read needs — with no other scope and no job-level
 `env:`; the **release gate** as each job's first step, carrying exactly
-`if: github.event_name == 'push'` so a manual dispatch skips it, with
-`fetch-depth: 0` on the checkout it depends on; the `mobile-release` environment
+`if: github.event_name == 'push'`, and the **second gate step** a manual
+dispatch that would submit runs, carrying exactly
+`if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true'`,
+routing a dispatched tag through `scripts/release-gate.sh` and a dispatched
+branch through `git merge-base --is-ancestor "$GITHUB_SHA" origin/main`, and
+stopping the job when that check fails — with `fetch-depth: 0` on the checkout
+they depend on; the `mobile-release` environment
 on both jobs; the single
 `secrets.EXPO_TOKEN` reference — bound in the `env:` of the steps that run an
 `eas` command and on no other step, with no job-level `env:` at all — and no
 secret-shaped literal; every `uses:` a full 40-hex SHA with its `# vX.Y.Z`, and
 the one install, `eas-cli@25.3.0`, pinned by version rather than floating; the
 `concurrency` group and `cancel-in-progress: false`; the `dry_run` input and the
-two step conditions that read it, **each compared whole** (`${{ github.event.inputs.dry_run != 'true' }}`
-on both submissions and its exact complement on the notice), so a condition with
+step conditions that read it, **each compared whole** (`${{ github.event.inputs.dry_run != 'true' }}`
+on both submissions, its exact complement on the notice, and the dispatch gate's
+`github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true'`), so a condition with
 a second disjunct — a tag push, say, which would submit on a dispatch that asked
 for a dry run — is not green here; each job's `if:` compared whole against
 `${{ !contains(vars.MOBILE_RELEASE_DISABLED_PLATFORMS, '<platform>') }}`, so the
@@ -1506,7 +1556,11 @@ production` and carrying `--non-interactive`; the build step's `--wait` and
 build's **id**; that no step runs `--latest` or `eas build:list` or reads
 `artifacts.buildUrl`; the mask step in each job, before the first `eas` command
 that resolves the app's config, naming both identity variables — each of which
-appears **exactly once per job and nowhere else** in the file; and that no
+appears **exactly once per job and nowhere else** in the file — reading each one
+non-interactively into a shell variable and stopping the job on a read that fails
+or comes back empty rather than masking nothing and carrying on; that the
+submission checks the build's id is **UUID-shaped** before pasting it into the
+submit command; and that no
 reverse-DNS-shaped value appears anywhere in it, **in either case** — the scan
 is case-insensitive on purpose, because a lowercase-only one would pass a pasted
 `com.Fugaro.App`, which is the accident it exists to catch. (A handful of
@@ -1519,7 +1573,7 @@ Each is a field or file name, never a value.)
 is asserted to exist, to run before the first `eas` command and to name both
 variables; that `::add-mask::` actually keeps an identity out of `eas`'s output
 is a fact about `eas-cli` and GitHub Actions, and the only instrument for it is a
-person reading the first dry run's log (item 3 above). That gap is what item 3 is
+person reading the first dry run's log (item 4 above). That gap is what item 4 is
 for, and it is why the item is on the owner's list rather than in this paragraph.
 
 **`eas-cli` is pinned to one exact version, and it is the only install in the

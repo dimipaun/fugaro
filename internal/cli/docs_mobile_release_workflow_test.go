@@ -82,7 +82,7 @@ const (
 	// staged copy is gone: the one wrapper that keeps the store identity out of
 	// this repository. A copy that lost the job, or a file renamed over it, is
 	// refused here rather than passing vacuously.
-	mobileReleaseWorkflowMarker = "eas env:exec production"
+	mobileReleaseWorkflowMarker = mobileReleaseEnvExecCommand
 	// mobileReleaseReadmeHeading opens the staging document's section on this
 	// workflow.
 	mobileReleaseReadmeHeading = "## `mobile-release.yml`"
@@ -151,12 +151,58 @@ const (
 	// commit rather than here.
 	mobileReleaseFollowUpEdits = "Three"
 	// mobileReleaseGateCondition is the whole `if:` on that step: the gate is a
-	// claim about a tag, and this workflow also runs by hand, where there is no
-	// tag to check and `dry_run` is what holds the run back. `images.yml` and
-	// `console-release.yml` carry the same condition for the same reason.
-	// Compared whole rather than by substring, like every other gate here: a
-	// condition that also fired on a dispatch would gate a path that has no tag.
+	// claim about a tag. `images.yml` and `console-release.yml` carry the same
+	// condition for the same reason. Compared whole rather than by substring,
+	// like every other gate here: a condition that also fired on a dispatch
+	// would run a gate that has no tag to check.
 	mobileReleaseGateCondition = "github.event_name == 'push'"
+	// mobileReleaseDispatchGateCondition is the whole `if:` on the **second**
+	// gate step, the one a manual dispatch runs: a dispatch has no `push` event,
+	// and the environment's approval is a person deciding to run the workflow
+	// rather than a review of the commit it would submit. It fires only when the
+	// dispatch would actually submit, because `dry_run` is what holds the other
+	// path back -- a dry run reaches no store. Compared whole for the same reason
+	// as every other gate here: `github.event.inputs.dry_run != 'true'` alone
+	// would also fire on a tag push, and a disjunct on the event name would run
+	// it on the path the first gate already covers.
+	mobileReleaseDispatchGateCondition = "github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true'"
+	// mobileReleaseDispatchGateTagRef is how that step tells a dispatched tag
+	// from a dispatched branch, and mobileReleaseDispatchGateMainCheck is the
+	// half of the gate a branch is held to: the whole gate is a claim about a
+	// tag, and a branch has no tag to shape-check, but "this commit is on main"
+	// is the claim a submission needs either way.
+	mobileReleaseDispatchGateTagRef    = "refs/tags/*"
+	mobileReleaseDispatchGateMainCheck = "git merge-base --is-ancestor"
+	// mobileReleaseEnvExecCommand is how every `eas` command in the file runs:
+	// under the EAS project's `production` environment, which is what loads the
+	// store identity, and **non-interactively**. The flag is not cosmetic:
+	// interactive mode prefixes each line of the wrapped command's output, and
+	// both halves of this workflow read that output as a value -- the mask step
+	// masks what it reads, so a prefix is a string `::add-mask::` was never
+	// given, and the build step parses its output as JSON, which a prefix
+	// breaks.
+	mobileReleaseEnvExecCommand = "eas env:exec --non-interactive production"
+	// mobileReleaseMaskEmptyCheck is the branch the mask step takes when a value
+	// comes back empty, and mobileReleaseMaskExit is what both that branch and a
+	// failed read do: stop the job before the build step. Without them a read
+	// that returned nothing masks nothing and the build below resolves
+	// `mobile/app.config.js` -- which requires the identity only on EAS's own
+	// build machines -- and prints it into a public log.
+	mobileReleaseMaskEmptyCheck = `[ -z "${value}" ]`
+	mobileReleaseMaskReadGuard  = "if ! value="
+	mobileReleaseMaskExit       = "exit 1"
+	// mobileReleaseBuildIDShapeCheck is the UUID test the submission applies to
+	// the id it read out of the build's JSON before pasting it into the submit
+	// command. `jq -e` fails on a document with no id; a shape check is what
+	// stops an id that is not a UUID -- a URL, or a string carrying a `;` --
+	// from becoming part of the command this job runs.
+	mobileReleaseBuildIDShapeCheck = `^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`
+	// mobileReleaseAndroidSwitchStep is the owner step the README has to carry
+	// while the Play side is not ready: the Android job is enabled by default,
+	// so the variable has to be set **before** the copy-in, or the first run of
+	// the copied-in file can submit to Play. The step is read against the
+	// copy-in command's position, not merely as a sentence that exists.
+	mobileReleaseAndroidSwitchStep = "`" + mobileReleaseDisabledPlatforms + "=android`, before the copy-in"
 	// mobileReleasePinTestName and mobileReleaseReadmeTestName are the two
 	// checks this file adds. The document beside the staged file has to name
 	// both, so the paragraph that tells a reader what is verified cannot outlive
@@ -433,6 +479,26 @@ func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		}
 	}
 
+	// --- Every `eas env:exec` is non-interactive ----------------------------
+	// Interactive mode prefixes each line of the wrapped command's output, and
+	// both halves of this workflow read that output as a value: the mask step
+	// masks what it reads, so a prefix is a string `::add-mask::` was never
+	// given, and the build step parses its output as JSON, which a prefix
+	// breaks. Read over the steps' commands rather than the text, because the
+	// file's comments name `eas env:exec production` too.
+	for name, job := range wf.Jobs {
+		for i, step := range job.Steps {
+			for _, line := range strings.Split(workflowRunCommands(step.Run), "\n") {
+				if !strings.Contains(line, "eas env:exec") {
+					continue
+				}
+				if !strings.Contains(line, mobileReleaseEnvExecCommand) {
+					t.Errorf("%s's %s job runs `%s` in step %d without `--non-interactive`: interactive mode prefixes each output line, and this workflow masks that output and parses it as JSON", path, name, strings.TrimSpace(line), i)
+				}
+			}
+		}
+	}
+
 	// --- Concurrency --------------------------------------------------------
 	// One release at a time, keyed on the workflow rather than the ref: two
 	// releases must never submit at once, and a submission in flight is never
@@ -568,14 +634,20 @@ func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 // written once and applied to both, rather than an iOS rule that Android
 // quietly lacks.
 type mobileReleaseJobShape struct {
-	platform  string
-	gates     int
-	installs  int
-	masks     int
-	builds    int
-	summaries int
-	submits   int
-	dryRuns   int
+	platform string
+	gates    int
+	// dispatchGates counts the second gate step, the one a manual dispatch that
+	// would submit runs. It is counted apart from `gates` because the two steps
+	// carry different conditions and hold different paths: one gate that fired
+	// on both events would be a gate with no tag to check, and a job with only
+	// the tag gate is the hole this count exists to close.
+	dispatchGates int
+	installs      int
+	masks         int
+	builds        int
+	summaries     int
+	submits       int
+	dryRuns       int
 	// bound is how many of the job's steps bind the Expo token, which the caller
 	// holds against the number of `secrets.EXPO_TOKEN` references in the file.
 	bound int
@@ -621,7 +693,7 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 		t.Errorf("the %s job binds %v at job level: the Expo token belongs in the `env:` of the steps that talk to EAS, and a job-level binding hands it to every step in the job", platform, job.Env)
 	}
 
-	var gateAt, maskAt, buildAt, summaryAt, submitAt = -1, -1, -1, -1, -1
+	var gateAt, dispatchGateAt, maskAt, buildAt, summaryAt, submitAt = -1, -1, -1, -1, -1, -1
 	for i, step := range job.Steps {
 		cmd := workflowRunCommands(step.Run)
 		switch {
@@ -636,24 +708,59 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 				t.Errorf("the %s job's checkout takes fetch-depth %q, not 0: the release gate below asks whether the tagged commit is reachable from origin/main, and a shallow clone cannot answer that", platform, got)
 			}
 		case strings.Contains(cmd, mobileReleaseGateCommand):
-			// The gate every tag-triggered publishing workflow here runs first,
-			// and the condition that keeps it off the manual path: a dispatch has
-			// no tag to check, and `dry_run` is what holds that path back.
+			// Two gate steps, one per event, each with its own whole condition:
+			// the tag push runs the gate itself, and a manual dispatch that
+			// would submit runs the second one -- a dispatched tag through the
+			// whole gate, a dispatched branch through its on-main half. A
+			// dispatch with `dry_run` set submits nothing and is held to
+			// neither.
 			shape.gates++
-			gateAt = i
-			if got := step.If; got != mobileReleaseGateCondition {
-				t.Errorf("the %s job's release gate carries `if: %s`, not `if: %s`: the gate is a claim about a tag, and this workflow also runs by hand, where there is no tag to check", platform, got, mobileReleaseGateCondition)
+			if gateAt < 0 {
+				gateAt = i
 			}
-			if !strings.Contains(cmd, `"$TAG"`) {
-				t.Errorf("the %s job's release gate does not pass the tag to %s: the script takes the tag as its argument and refuses anything that is not a strict vX.Y.Z", platform, mobileReleaseGateCommand)
-			}
-			for name, want := range map[string]string{
-				"GH_TOKEN": "${{ github.token }}", // the checks API read the gate makes
-				"TAG":      "${{ github.ref_name }}",
-			} {
-				if got := step.Env[name]; got != want {
-					t.Errorf("the %s job's release gate sets %s to %q, not %q: the gate cannot read the commit's check-runs without the token, and it needs the pushed tag rather than any other ref", platform, name, got, want)
+			switch got := step.If; got {
+			case mobileReleaseGateCondition:
+				if !strings.Contains(cmd, `"$TAG"`) {
+					t.Errorf("the %s job's release gate does not pass the tag to %s: the script takes the tag as its argument and refuses anything that is not a strict vX.Y.Z", platform, mobileReleaseGateCommand)
 				}
+				for name, want := range map[string]string{
+					"GH_TOKEN": "${{ github.token }}", // the checks API read the gate makes
+					"TAG":      "${{ github.ref_name }}",
+				} {
+					if env := step.Env[name]; env != want {
+						t.Errorf("the %s job's release gate sets %s to %q, not %q: the gate cannot read the commit's check-runs without the token, and it needs the pushed tag rather than any other ref", platform, name, env, want)
+					}
+				}
+			case mobileReleaseDispatchGateCondition:
+				shape.dispatchGates++
+				dispatchGateAt = i
+				// A dispatched tag is held to the whole gate, so the command
+				// has to reach it: a step that only checked the branch case
+				// would let a dispatch on a `vtest` tag submit.
+				if !strings.Contains(cmd, mobileReleaseGateCommand) || !strings.Contains(cmd, mobileReleaseDispatchGateTagRef) {
+					t.Errorf("the %s job's manual-dispatch gate never sends a dispatched tag through %s (it has to tell %s from a branch and run the whole gate for it): a dispatch can name a tag as well as a branch, and a tag that is not a strict vX.Y.Z is not a release", platform, mobileReleaseGateCommand, mobileReleaseDispatchGateTagRef)
+				}
+				// And a dispatched branch through the gate's second half: the
+				// commit has to be reachable from `origin/main`, which is what
+				// makes the submission a release rather than a build of
+				// whatever branch the dispatcher named.
+				if !strings.Contains(cmd, mobileReleaseDispatchGateMainCheck) || !strings.Contains(cmd, "origin/main") {
+					t.Errorf("the %s job's manual-dispatch gate does not check that the dispatched commit is on main (`%s ... origin/main`): the environment's approval is a person deciding to run this workflow, not a review of the commit it would submit, so an off-main dispatch would submit behind nothing but that click", platform, mobileReleaseDispatchGateMainCheck)
+				}
+				if !strings.Contains(cmd, mobileReleaseMaskExit) {
+					t.Errorf("the %s job's manual-dispatch gate does not stop the job on a commit that is not on main: a check whose failure only prints is a submission that still happens", platform)
+				}
+				for name, want := range map[string]string{
+					"GH_TOKEN": "${{ github.token }}", // the checks API read the tag path makes
+					"REF":      "${{ github.ref }}",
+					"REF_NAME": "${{ github.ref_name }}",
+				} {
+					if env := step.Env[name]; env != want {
+						t.Errorf("the %s job's manual-dispatch gate sets %s to %q, not %q: the step has to tell a dispatched tag from a dispatched branch (%s), and the tag path needs the token the gate reads check-runs with", platform, name, env, want, mobileReleaseDispatchGateTagRef)
+					}
+				}
+			default:
+				t.Errorf("the %s job's release gate step %d carries `if: %s`, which is neither `%s` (the tag push) nor `%s` (a manual dispatch that would submit): the two events are the two paths into a store, and each one needs the gate its own path can be held to", platform, i, got, mobileReleaseGateCondition, mobileReleaseDispatchGateCondition)
 			}
 		case strings.HasPrefix(step.Uses, "actions/setup-node@"):
 			// The Node line comes from the app's own manifest, the way
@@ -672,10 +779,40 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 					t.Errorf("the %s job's mask step does not mask %s: `eas build` and `eas submit` resolve mobile/app.config.js locally, and this repository is public, so an identity value that reaches the log is public with it", platform, name)
 				}
 			}
+			// The read that feeds the mask. `2>/dev/null || true` is the shape
+			// this step must not have: it turns a read that failed into a step
+			// that succeeded having masked nothing, and the build below then
+			// resolves `mobile/app.config.js` -- which requires the identity
+			// only on EAS's own build machines, so the build itself does not
+			// fail -- and prints the identity into a public log. A value that
+			// came back empty is the same accident without the error.
+			if strings.Contains(cmd, "|| true") {
+				t.Errorf("the %s job's mask step swallows a read that failed (`|| true`): the step then masks nothing and succeeds, and the build below resolves mobile/app.config.js -- which requires the identity only on EAS's own build machines -- and prints the identity into this public log. A read that fails has to stop the job before the build", platform)
+			}
+			if !strings.Contains(cmd, mobileReleaseEnvExecCommand) {
+				t.Errorf("the %s job's mask step does not read the values with `%s`: interactive mode prefixes each line `eas env:exec` prints, and a prefixed line is not the value `::add-mask::` is asked to hide", platform, mobileReleaseEnvExecCommand)
+			}
+			if !strings.Contains(cmd, mobileReleaseMaskEmptyCheck) {
+				t.Errorf("the %s job's mask step does not test the value it read (`%s`): a variable that is set and empty masks nothing, and the build below then prints whatever the identity resolves to", platform, mobileReleaseMaskEmptyCheck)
+			}
+			// And both guards have to stop the job, not just one: a branch that
+			// reports a value it could not read and carries on is a build
+			// started without the mask this step exists to put in place, which
+			// is the same accident the swallowed read was. Counted rather than
+			// merely looked for, so that one `exit` cannot stand in for two.
+			guards := 0
+			for _, guard := range []string{mobileReleaseMaskReadGuard, mobileReleaseMaskEmptyCheck} {
+				if strings.Contains(cmd, guard) {
+					guards++
+				}
+			}
+			if got := strings.Count(cmd, mobileReleaseMaskExit); got != guards {
+				t.Errorf("the %s job's mask step stops the job %d time(s) for %d guard(s) (the read that failed, and the value that came back empty): each guard has to stop the job before the build, because the build below resolves mobile/app.config.js and prints whatever the identity resolves to", platform, got, guards)
+			}
 		case strings.Contains(cmd, "eas build --platform "+platform):
 			shape.builds++
 			buildAt = i
-			if !strings.Contains(cmd, "eas env:exec production") {
+			if !strings.Contains(cmd, mobileReleaseEnvExecCommand) {
 				t.Errorf("the %s job's build step does not run under `eas env:exec production`: `eas-cli` resolves mobile/app.config.js locally before it uploads anything, and the identity comes from the EAS project's environment", platform)
 			}
 			for _, flag := range []string{"--non-interactive", "--wait", "--json"} {
@@ -695,7 +832,7 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 		case strings.Contains(cmd, "eas submit ") && strings.Contains(cmd, "--platform "+platform):
 			shape.submits++
 			submitAt = i
-			if !strings.Contains(cmd, "eas env:exec production") {
+			if !strings.Contains(cmd, mobileReleaseEnvExecCommand) {
 				t.Errorf("the %s job's submission does not run under `eas env:exec production`: the local `eas-cli` process needs the identity the environment carries, or it stops before it uploads anything", platform)
 			}
 			if !strings.Contains(cmd, "--non-interactive") {
@@ -706,6 +843,12 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 			}
 			if got := step.If; got != mobileReleaseSubmitGate {
 				t.Errorf("the %s job submits with `if: %s`, not `if: %s`: the submission is what `dry_run` stops before, and a condition with anything else in it (a tag push, say) submits on a dispatch that asked for a dry run", platform, got, mobileReleaseSubmitGate)
+			}
+			// The id is pasted into the shell string this step runs, so its
+			// shape is checked before it gets there: `jq -e` refuses a document
+			// with no id, and this is what refuses an id that is not a UUID.
+			if !strings.Contains(cmd, mobileReleaseBuildIDShapeCheck) {
+				t.Errorf("the %s job's submission does not check that the build's id is a UUID before it pastes it into the submit command: the id comes out of a JSON document this run parsed, and anything else in that field -- a URL, or a string carrying a `;` -- would become part of the command", platform)
 			}
 		case mobileReleaseSummaryRE.MatchString(cmd) && strings.Contains(cmd, "Dry run"):
 			shape.dryRuns++
@@ -720,7 +863,7 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 	// reason to hold one.
 	for i, step := range job.Steps {
 		got, binds := step.Env[mobileReleaseSecretName]
-		runsEas := strings.Contains(workflowRunCommands(step.Run), "eas env:exec production")
+		runsEas := strings.Contains(workflowRunCommands(step.Run), mobileReleaseEnvExecCommand)
 		switch {
 		case binds && !runsEas:
 			t.Errorf("the %s job's step %d binds %s and runs no `eas` command: a step that does not use the token has no reason to hold it", platform, i, mobileReleaseSecretName)
@@ -741,10 +884,10 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 	// be in place before the first command that resolves the app's config, the
 	// summary describes the build the step before it made, and the submission
 	// submits that same build.
-	if shape.gates != 1 || shape.installs != 1 || shape.masks != 1 || shape.builds != 1 || shape.summaries != 1 || shape.submits != 1 || shape.dryRuns != 1 {
-		t.Errorf("the %s job carries %d release gate(s), %d install(s), %d mask step(s), %d build(s), %d summary step(s), %d submission(s) and %d dry-run notice(s), not one of each: the job is this platform's whole release", platform, shape.gates, shape.installs, shape.masks, shape.builds, shape.summaries, shape.submits, shape.dryRuns)
-	} else if !(gateAt < maskAt && maskAt < buildAt && buildAt < summaryAt && summaryAt < submitAt) {
-		t.Errorf("the %s job's steps are out of order (gate %d, mask %d, build %d, summary %d, submission %d): the gate has to refuse an off-main or red tag before anything is built, the mask has to run before the first `eas` command that resolves mobile/app.config.js, the summary has to describe the build that was made, and the submission has to follow both", platform, gateAt, maskAt, buildAt, summaryAt, submitAt)
+	if shape.gates != 2 || shape.dispatchGates != 1 || shape.installs != 1 || shape.masks != 1 || shape.builds != 1 || shape.summaries != 1 || shape.submits != 1 || shape.dryRuns != 1 {
+		t.Errorf("the %s job carries %d release gate step(s) (%d of them the manual-dispatch one), %d install(s), %d mask step(s), %d build(s), %d summary step(s), %d submission(s) and %d dry-run notice(s), not two gates and one of everything else: the job is this platform's whole release, and a store submission can start from a tag push or from a dispatch that would submit", platform, shape.gates, shape.dispatchGates, shape.installs, shape.masks, shape.builds, shape.summaries, shape.submits, shape.dryRuns)
+	} else if !(gateAt < dispatchGateAt && dispatchGateAt < maskAt && maskAt < buildAt && buildAt < summaryAt && summaryAt < submitAt) {
+		t.Errorf("the %s job's steps are out of order (tag gate %d, dispatch gate %d, mask %d, build %d, summary %d, submission %d): both gates have to refuse a commit that is off-main or red before anything is built, the mask has to run before the first `eas` command that resolves mobile/app.config.js, the summary has to describe the build that was made, and the submission has to follow both", platform, gateAt, dispatchGateAt, maskAt, buildAt, summaryAt, submitAt)
 	}
 	if len(shape.uses) != 2 {
 		t.Errorf("the %s job uses %d actions (%q); it needs a checkout and a node", platform, len(shape.uses), shape.uses)
@@ -924,7 +1067,11 @@ func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 		{"`" + mobileReleaseEnvironment + "`", "the protected environment both jobs wait at, by name"},
 		{"required reviewer", "the reviewer whose click is the gate, and that there is one"},
 		{"Prevent self-review", "the setting that has to stay off, or the owner's own run can never be approved"},
-		{"the file is copied in, not after it", "the order: the environment and the secret exist before the copy-in"},
+		{"the file is copied in, not after it", "the order: the environment, the secret and the Android switch exist before the copy-in"},
+		{mobileReleaseAndroidSwitchStep, "the Android switch, with the order it has to be set in: the job is enabled by default, so a copy-in made before it is a file whose first run can submit to Play"},
+		{mobileReleaseDispatchGateCondition, "the second gate's own condition, spelled as the file spells it: a manual dispatch that would submit is gated, and one that asked for a dry run is not"},
+		{"stops the job", "the mask step's fail-closed read: a value it could not read or that came back empty stops the job before the build, rather than masking nothing and carrying on"},
+		{"UUID-shaped", "the shape check the submission applies to the build's id before pasting it into the submit command"},
 		{"no required reviewer at all", "what an environment GitHub creates on first use has, which is why that order matters"},
 		{"`" + mobileReleaseSecretName + "`", "the one secret the workflow reads, by name and never by value"},
 		{"gh secret set " + mobileReleaseSecretName, "the command that creates the secret, with the environment it belongs on"},
@@ -1008,6 +1155,20 @@ func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 	copyIn := strings.Index(section, "cp docs/pending-workflows/mobile-release.yml")
 	if warn < 0 || copyIn < 0 || warn > copyIn {
 		t.Errorf("%s's `%s` section warns about an environment with no required reviewer at %d and gives the copy-in command at %d: the warning has to come first, because the copy-in is what creates the unprotected environment when it is made before the environment exists", pendingWorkflowsReadmePath, mobileReleaseReadmeHeading, warn, copyIn)
+	}
+
+	// And the Android switch before it too, for the reason the environment does:
+	// the Android job is enabled by default -- an unset variable names neither
+	// platform -- so a copy-in that lands first is a workflow whose first run can
+	// build and submit to Play, and the environment's approval click says a
+	// person ran the workflow rather than that the Play side is ready. The step
+	// is read against the copy-in's position and not merely as a sentence that
+	// exists somewhere in the section.
+	androidOff := strings.Index(section, mobileReleaseAndroidSwitchStep)
+	if androidOff < 0 {
+		t.Errorf("%s's `%s` section no longer carries %q: while the Play side is not ready the owner has to set %s before the copy-in, or the first run of the copied-in file can submit to Play", pendingWorkflowsReadmePath, mobileReleaseReadmeHeading, mobileReleaseAndroidSwitchStep, mobileReleaseDisabledPlatforms)
+	} else if androidOff > copyIn {
+		t.Errorf("%s's `%s` section sets %s at %d and gives the copy-in command at %d: the switch has to come first, because the Android job is enabled by default and a copy-in made before the variable is set is a workflow whose first run can submit to Play", pendingWorkflowsReadmePath, mobileReleaseReadmeHeading, mobileReleaseDisabledPlatforms, androidOff, copyIn)
 	}
 
 	// The section has to name the identity's home rather than leave a reader
