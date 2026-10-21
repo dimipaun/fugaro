@@ -241,9 +241,13 @@ const slideId = (index: number) => `console-screen-${index + 1}`
   }
 
   /* The placeholder: the box the picture will land in, drawn at the picture's own shape so
-     the frame does not change height the day the file arrives. It is a dashed hairline and a
-     faint stripe — the two are palette tokens at an opacity, which is what keeps a decoration
-     out of the contrast pairs the a11y gate computes. */
+     the frame does not change height the day the file arrives. It is a dashed hairline
+     (`--border`) and a stripe of the palette's own two grounds (`--ground` and `--panel`), all
+     of them tokens painted at full opacity — which is what the colour-literal scan reads, and
+     it needs no pair of its own because no text sits on it: the pair set is about text and
+     about a graphic a reader has to perceive to operate the page, and a decoration under a
+     label is neither, which is the same reason `--border` is out of it
+     (`website/test/a11y.mjs`). */
   .screen-placeholder {
     display: flex;
     flex-direction: column;
@@ -305,7 +309,11 @@ const slideId = (index: number) => `console-screen-${index + 1}`
 
   /* A dot is a target a reader taps, so it is at least 44 px of box with the dot drawn
      inside it: the board draws a 10 px dot, and a 10 px target is not one a finger can hit
-     (the owner's brief of 2026-10-19 measures every control against 44 px). */
+     (the owner's brief of 2026-10-19 measures every control against 44 px). It is written as
+     a minimum rather than a height, because that is the declaration the site's one
+     reading of the brief looks for — `website/test/lib/control-target.mjs`, which the home
+     page's case and this page's both call — and because the box may grow: the dot is centred
+     in whatever the anchor's content comes to. */
   .screen-dot-item {
     display: flex;
   }
@@ -316,7 +324,7 @@ const slideId = (index: number) => `console-screen-${index + 1}`
     justify-content: center;
     box-sizing: border-box;
     width: 44px;
-    height: 44px;
+    min-height: 44px;
   }
 
   /* The dot itself, drawn by the anchor's own pseudo-element so that the target above is

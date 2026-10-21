@@ -104,26 +104,44 @@ const HEADLINE_GRADIENT = nameWords.slice(-GRADIENT_WORDS).join(' ')
  * together with a dot between them, and what makes this the repository's rather than this
  * page's is the guard below: the platform is held to the data file's sentence about the
  * release, so a pill can never name one no document speaks about.
+ *
+ * **The platform is `null` unless there is a release to read one from**, and that is what the
+ * pill and the download action are drawn on — not on `available` itself, and never on a bare
+ * first element of the list. Two states are the reason, and neither is hypothetical:
+ *
+ *   - an unavailable data file may carry the artifacts it will publish — the loader permits
+ *     `available: false` with a list of downloads, and the section renders none of them — so a
+ *     file that has not shipped can name a platform, and a hero that read the list would make
+ *     a claim about a release this repository says does not exist;
+ *   - and the opposite pair (`available: true` with an empty list) is refused by the loader,
+ *     naming the file (`src/lib/console-downloads.mjs`, "available is true and downloads is
+ *     empty"), which is why the read below asks for a first element rather than taking one:
+ *     the page's own guard against that state is its silence, because a `TypeError` from an
+ *     array position is a build with no message in it.
  */
 const RELEASE_TAG = facts.release.tag
-const RELEASE_PLATFORM = facts.downloads[0].platform
+const RELEASE_PLATFORM: string | null =
+  facts.available && facts.downloads.length > 0 ? facts.downloads[0].platform : null
 
 /**
  * The two actions. The first names the platform the release's first asset is built for — the
  * same platform the pill above carries, so the page's one download claim is made once and
  * followed by the reader in one place — and the second is the data file's own clause about
- * where a reader starts. Both are held to the data file below.
+ * where a reader starts. Both are held to the data file below, and the first is `null` when
+ * there is no release to download.
  */
-const CTA_DOWNLOAD = `Download for ${RELEASE_PLATFORM}`
+const CTA_DOWNLOAD: string | null = RELEASE_PLATFORM === null ? null : `Download for ${RELEASE_PLATFORM}`
 const CTA_CLI = 'Install the CLI first'
 
-// Hold the two actions and the pill to the data file's own sentence about the release. All
-// three name a fact this page renders rather than a fact it holds: a platform the release's
+// Hold the two actions and the pill to the data file's own sentence about the release. Each
+// name is a fact this page renders rather than a fact it holds: a platform the release's
 // sentence does not carry, or a "CLI first" the sentence has stopped saying, is this page
 // saying something no document of this repository says (Global Constraint 6) — and the day the
 // release's sentence is reworded, this is what stops the build rather than shipping a claim
-// with nothing behind it.
+// with nothing behind it. A phrase that is `null` is a hero that draws nothing for it, so
+// there is nothing to hold.
 for (const phrase of [RELEASE_PLATFORM, CTA_CLI]) {
+  if (phrase === null) continue
   if (!facts.released.text.includes(phrase)) {
     throw new Error(
       `website/src/pages/console.astro: the hero names ${JSON.stringify(phrase)} and ${JSON.stringify(facts.released.text)} — the data file's own sentence about the release — does not carry it: the hero's pill, its download action and its CLI link are written out of that sentence, and a page that names a fact its own data file does not is the page contradicting its data (Global Constraint 6).`,
@@ -144,7 +162,7 @@ for (const phrase of [RELEASE_PLATFORM, CTA_CLI]) {
       <div class="console-hero-copy">
         {/* The release, while the repository says it has shipped: the tag its assets are
             published under and the platform they are built for, both the data file's. */}
-        {facts.available && (
+        {RELEASE_PLATFORM !== null && (
           <p class="pill console-pill">
             <span class="console-pill-dot" aria-hidden="true" />
             {RELEASE_TAG} · {RELEASE_PLATFORM}
@@ -164,7 +182,7 @@ for (const phrase of [RELEASE_PLATFORM, CTA_CLI]) {
             The first is rendered only while there is a release to take, and both are the
             page's own words for actions the data file's sentence describes. */}
         <p class="console-actions">
-          {facts.available && (
+          {CTA_DOWNLOAD !== null && (
             <a class="console-cta" href="#downloads">
               {CTA_DOWNLOAD}
             </a>

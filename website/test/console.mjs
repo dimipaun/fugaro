@@ -71,7 +71,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
-import { builtPages, cssDeclarations, cssRules, find, parse, textOf, walk } from './lib/html.mjs'
+import { controlTargetFailures } from './lib/control-target.mjs'
+import { builtPages, find, parse, textOf, walk } from './lib/html.mjs'
 import {
   CONSOLE_README,
   DOWNLOADS_JSON,
@@ -316,6 +317,22 @@ test('the console page renders the facts its data file carries', async (t) => {
     !page.includes(data.not_released.text),
     `the page still renders not_released.text ${JSON.stringify(data.not_released.text)} with the console released`,
   )
+
+  // And the hero, in the state the checkout ships: the release's own tag and the platform its
+  // first published asset is built for in the pill, and the action that offers that release.
+  // Both are the data file's facts rather than this page's words — and the case below is the
+  // other half of this gate, where the console is unreleased and a data file that still lists
+  // its assets must draw neither. The pair is what makes the hero's release facts a reading of
+  // the release rather than of the list.
+  const hero = articleOf(page)
+  assert.ok(
+    hero.includes(consoleTag(data)),
+    `the hero does not render the release tag ${JSON.stringify(consoleTag(data))} while the console has shipped`,
+  )
+  assert.ok(
+    hero.includes(`Download for ${data.downloads[0].platform}`),
+    `the hero does not offer "Download for ${data.downloads[0].platform}", the platform of the release's first published asset`,
+  )
 })
 
 test('the downloads section carries no link and no download URL while the flag is false', async (t) => {
@@ -373,14 +390,45 @@ test('the downloads section carries no link and no download URL while the flag i
     section.includes(downloadsData().not_released.text),
     'the downloads section does not render the data file\'s unreleased sentence while the flag is false',
   )
+
+  // **And the hero says nothing about a release either.** It is the page's other half of the
+  // same state: the pill names the release's tag and platform and the filled action offers the
+  // download, and both are claims about a release this repository says has not shipped. The
+  // fixture is the shape that makes the reading worth something — the data file still LISTS the
+  // assets (a release's published names arrive before the release does, which is the state this
+  // file was in while the console was being built), so a hero that read a platform off the list
+  // without asking whether there is a release would draw the pill here. It draws the CLI link
+  // and the lead instead, which are not claims about a release.
+  const hero = articleOf(page)
+  const data = downloadsData()
+  assert.ok(
+    data.downloads.length > 0,
+    `${DOWNLOADS_JSON} lists no download, and this case's premise is a page whose data file lists the assets of a release that has not shipped`,
+  )
+  assert.ok(
+    !hero.includes(consoleTag(data)),
+    `the hero renders the release tag ${JSON.stringify(consoleTag(data))} while the console is unreleased: the pill is a claim about a release, and the data file naming an asset is not one`,
+  )
+  assert.ok(
+    !/Download for/.test(hero),
+    'the hero offers a download while the console is unreleased',
+  )
+  assert.ok(hero.includes('Install the CLI first'), 'the hero dropped its CLI link along with the download action')
+  assert.ok(hero.includes(data.what.text), 'the hero dropped the data file\'s sentence about the console')
 })
+
+/** One built console page's `<article>`: the page's own content, without the layout around it. */
+function articleOf(page) {
+  const m = /<article[^>]*>([\s\S]*?)<\/article>/.exec(page)
+  assert.ok(m, 'the built page carries no article')
+  return m[1]
+}
 
 /**
  * The controls the console page asks a reader to tap, and what each one is: the classes the
- * redesign gave them. The home page's own case reads the same declaration out of its own
- * stylesheet (`website/test/home.mjs`'s `controlTargetFailures`); this page's reading is
- * written here rather than shared, because sharing it would mean moving that helper into
- * `test/lib/` and editing another page's test file, which this run does not do.
+ * redesign gave them. The home page's own case calls the same reading with its own controls
+ * (`website/test/lib/control-target.mjs`), so the owner's one rule is one reading — a control
+ * cannot pass here on a declaration that page's reader would refuse.
  */
 const CONSOLE_CONTROLS = [
   ['console-cta', "the hero's filled action"],
@@ -389,16 +437,9 @@ const CONSOLE_CONTROLS = [
   ['screen-dot', 'a dot in the screenshot slider'],
 ]
 
-test('every control the console page asks a reader to tap is at least 44 px tall', async (t) => {
-  // The owner's brief of 2026-10-19 measures every control the site asks a reader to tap
-  // against 44 px, and a rendered measurement is not one this repository can take: the rule
-  // declares the minimum and this reading looks for the declaration. A rule inside a media
-  // query does not count — the minimum has to hold at every width, so the rule it is declared
-  // in is one with no condition over it — and the token a `var()` names is resolved, because
-  // a minimum written as a step of the spacing scale is the same minimum.
-  const built = buildWith(t, () => {})
-  const doc = parse(decode(builtPage(built)))
-  const css = [...walk(doc)]
+/** The console page's own stylesheet, as the 44 px reading takes it: every `<style>` it ships. */
+function builtStylesheet(built) {
+  const css = [...walk(parse(decode(builtPage(built))))]
     .filter((el) => el.name === 'style')
     .map((el) => el.raw ?? '')
     .join('\n')
@@ -406,36 +447,54 @@ test('every control the console page asks a reader to tap is at least 44 px tall
     css.includes('.console-cta'),
     'the built page ships no stylesheet of its own, so this case would be reading nothing',
   )
+  return css
+}
 
-  const tokens = new Map([...css.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;}]+)/g)].map((m) => [m[1], m[2].trim()]))
-  const px = (value) => {
-    const named = /^var\((--[a-z0-9-]+)\)$/.exec((value ?? '').trim())
-    const resolved = (named ? (tokens.get(named[1]) ?? '') : (value ?? '')).trim()
-    const m = /^([\d.]+)px$/.exec(resolved)
-    return m ? Number(m[1]) : null
-  }
-
-  const failures = []
-  for (const [klass, what] of CONSOLE_CONTROLS) {
-    const heights = []
-    for (const rule of cssRules(css)) {
-      if (rule.conditions.length > 0) continue
-      if (!new RegExp(`\\.${klass}(?![\\w-])`).test(rule.selector)) continue
-      const declared = cssDeclarations(rule.body).find(([property]) => property === 'min-height' || property === 'height')
-      const height = declared ? px(declared[1]) : null
-      if (height !== null) heights.push(height)
-    }
-    if (!heights.some((height) => height >= 44)) {
-      failures.push(
-        `${what} is ${heights.length ? `a ${Math.max(...heights)} px target` : 'no declared target'}, and the owner's brief of 2026-10-19 measures every control the page asks a reader to tap against 44 px`,
-      )
-    }
-  }
+test('every control the console page asks a reader to tap is at least 44 px tall', async (t) => {
+  const built = buildWith(t, () => {})
+  const failures = controlTargetFailures(builtStylesheet(built), CONSOLE_CONTROLS)
   assert.deepEqual(
     failures,
     [],
     `a control on the console page is under the 44 px target the owner's brief of 2026-10-19 measures every control against:\n  ${failures.join('\n  ')}`,
   )
+})
+
+test('a console control under the target is refused, wherever its minimum is missing or out of force', async (t) => {
+  // The passing case above proves what the page is, not what the reading refuses: a reading
+  // that looked for the wrong property, or that stopped seeing a rule, would pass it and hold
+  // nothing. Each plant below is one of the ways a minimum stops holding, and the case names
+  // the sentence that has to fire — the same three shapes the home page's plant case uses
+  // (`website/test/home.mjs`), because it is the same reading.
+  const css = builtStylesheet(buildWith(t, () => {}))
+  const ruleOf = (klass) => new RegExp(`\\.${klass}(?![\\w-])[^{}]*\\{[^}]*\\}`)
+  const withoutMinimum = (klass) =>
+    css.replace(ruleOf(klass), (rule) => rule.replace(/min-height\s*:\s*[^;}]+;?/, ''))
+  const cases = [
+    [
+      "the minimum taken off the download link's rule",
+      withoutMinimum('download-link'),
+      /a download link is no declared target/,
+    ],
+    [
+      'a slider dot declared under the target',
+      css.replace(ruleOf('screen-dot'), (rule) => rule.replace('min-height:44px', 'min-height:20px')),
+      /a dot in the screenshot slider is a 20 px target/,
+    ],
+    [
+      "the hero's filled action's minimum moved into a media query, where it holds at one width and not at every one",
+      `${withoutMinimum('console-cta')}@media (min-width:48rem){.console-cta{min-height:56px}}`,
+      /the hero's filled action is no declared target/,
+    ],
+  ]
+  for (const [what, planted, expected] of cases) {
+    assert.notEqual(planted, css, `${what} left the stylesheet as it is, so the plant is not a plant`)
+    const failures = controlTargetFailures(planted, CONSOLE_CONTROLS)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what} was not refused by the sentence that names it:\n  ${failures.join('\n  ') || '(nothing refused)'}`,
+    )
+  }
 })
 
 test("the page names the console's read-only and no-telemetry properties", async (t) => {
