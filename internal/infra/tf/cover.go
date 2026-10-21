@@ -476,8 +476,9 @@ var RolePermissions = map[string][]string{
 	},
 }
 
-// knownCommands are the container command and args the modules set: none for
-// a workflow's job, the history sweep and the image check.
+// knownCommands are the container command and args the modules set: none for a
+// workflow's job and for the credentials service (whose image's own entrypoint
+// is the service, credentials.tf), the history sweep and the image check.
 var knownCommands = [][2][]string{
 	{nil, nil},
 	{{"/usr/local/bin/fugaro"}, {"budget", "history", "--sweep"}},
@@ -1569,6 +1570,24 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 				return fmt.Sprintf("runs the image %q, which is not pinned by an @sha256: digest: this service's account reads every model credential in the bundle and every operator may push to this run's registry",
 					img)
 			}
+			// The command and args are held to the same list a job's are, and
+			// the module sets neither (credentials.tf: the image's own
+			// entrypoint is the service, C1.14) — so an override that reached
+			// this layer would be a hand-edited or stale tfvars running
+			// something else as the account that reads every credential.
+			for _, attr := range []string{"command", "args"} {
+				if unknownAt(unk, append(slices.Clone(cp), attr)...) {
+					return "a container " + attr + " that is not known"
+				}
+			}
+			cmd, args := strList(m["command"]), strList(m["args"])
+			known := false
+			for _, k := range knownCommands {
+				known = known || (slices.Equal(cmd, k[0]) && slices.Equal(args, k[1]))
+			}
+			if !known {
+				return "runs a command the modules do not set"
+			}
 			if unknownAt(unk, append(slices.Clone(cp), "env")...) {
 				return "an environment that is not known"
 			}
@@ -1580,6 +1599,24 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 				if n := str(e["name"]); !slices.Contains(credentialsServiceEnv, n) {
 					return fmt.Sprintf("an environment variable %q, which the credentials service does not read: its container sets only %s",
 						n, strings.Join(credentialsServiceEnv, ", "))
+				}
+				// A name off the allowlist is not the whole of it: an entry
+				// that takes its value from a source (a secret_key_ref or the
+				// like) carries the module's name and a value the module never
+				// set, which is exactly the path a credential reaches this
+				// process without a Secret Manager read. The module sets a
+				// literal for each of the three and nothing else.
+				//
+				// The test is the block's contents, not the key's presence.
+				// `value_source` is a nested block of list nesting mode, and
+				// Terraform renders an unset one as an empty list rather than
+				// omitting it: every env entry of a plan the module writes
+				// carries `"value_source": []` (testdata/golden/*.plan.json),
+				// so a nil test on the interface refuses the module's own
+				// three literals. objects([]any{}) is nil, so this admits that
+				// shape and still refuses a real secret_key_ref.
+				if refs := objects(e["value_source"]); len(refs) > 0 {
+					return "an environment variable whose value comes from a source rather than the module: this service's environment is the module's three names and nothing else"
 				}
 			}
 		}

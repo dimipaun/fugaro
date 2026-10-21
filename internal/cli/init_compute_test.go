@@ -374,16 +374,60 @@ func TestComputeStageNoChanges(t *testing.T) {
 	}
 }
 
-// --plan-only applies nothing, --provision-batch or not.
+// --plan-only applies nothing, --provision-batch or not: not the compute
+// root's apply, and not the preload rebuild Apply starts once it has applied.
+//
+// The work is scripted into the compute root alone so that this stage is the
+// one the run plans, and the run's own account is then read to hold that: see
+// the guard below.
 func TestComputeStagePlanOnlyAppliesNothing(t *testing.T) {
 	r := computeRig(t)
+	r.setPlanAt(t, "installation")
+	r.setPlanAt(t, "compute", change("module.compute.google_cloud_scheduler_job.preload_rebuild", "create"))
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, "", "init", "--yes", "--plan-only", "--provision-batch")
+	out, _, err := executeStdin(t, "", "init", "--yes", "--plan-only", "--provision-batch", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
+	// The guard that keeps the two assertions below honest, and the reason the
+	// work is scripted into the compute root alone: initflow's preview plans
+	// only the FIRST stage with something to do, so a change left in the
+	// installation root (the rig's default) is what gets planned, and this
+	// stage is reported as "will-do ... (after installation)" — a stage a
+	// plan-only run never reaches. Both assertions below are green against a
+	// Plan that starts the build in that case, which is exactly the mutation
+	// they are here to catch; so the run has to be shown to have planned THIS
+	// stage, with work in it, before either of them means anything.
+	var res struct {
+		Stages []struct {
+			Name, State, Detail, After string
+		} `json:"stages"`
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	compute := -1
+	for i, s := range res.Stages {
+		if s.Name == "compute" {
+			compute = i
+		}
+	}
+	if compute < 0 {
+		t.Fatalf("the run has no compute stage:\n%s", out)
+	}
+	if s := res.Stages[compute]; s.State != "will-do" || s.After != "" || !strings.Contains(s.Detail, "creates") {
+		t.Fatalf("the compute stage %+v is not the stage this plan-only run planned: it is the stage with work, and it is neither done nor waiting for another", s)
+	}
 	if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
 		t.Fatalf("--plan-only applied: %q", calls)
+	}
+	// And it starts nothing: the preload rebuild is Apply's last action, and
+	// a plan is not the confirmation that earns it (the stage's own comment
+	// puts the run after the apply). Asserted rather than assumed, because a
+	// Plan that started the build would spend the image build a --plan-only
+	// run was asked to cost nothing of.
+	if runs := r.sched.Runs(); len(runs) != 0 {
+		t.Fatalf("--plan-only ran the preload rebuild: %q", runs)
 	}
 }
 
