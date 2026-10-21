@@ -1128,7 +1128,7 @@ Each line is the recommendation first.
 | D20 | Where the agent runs | in a job; the service consumes and launches | in the service: a long-lived model credential, deciding D115 | **open** |
 | D21 | Notifications | session marker, console feed, CLI; push waits on P5.2 | build push now: a second product | **open** |
 | D22 | The mobile spec's edits | a separate pull request applies §4's list | fold them in: redraws another work's pinned text | **open** |
-| D23 | D-numbers | folder-local D1–D26 | move to D193–D218 | **open** |
+| D23 | D-numbers | folder-local D1–D26 | move to D221–D246, the next free block (§7, O1) | **open** |
 | D24 | The check number | claim none; the writing task takes it | claim "the next free number" now | **open** |
 | D25 | Archive to Git | a stated non-goal for v1 | a service-owned archive branch: a new git identity | **open** |
 | D26 | Presence | derived from the connection | the signed heartbeat model: a write per beat per phone | **open** |
