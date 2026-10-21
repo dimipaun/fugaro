@@ -17,11 +17,13 @@ import (
 // managed-deployer-fence.md; deploy/terraform/gcp/modules/installation/
 // deployer.tf). The section is the only place the shape's open questions are
 // measured, so what this test holds is what makes it runnable by the owner and
-// safe to run: whose check it is, the nine hard stops in the guard block (the
+// safe to run: whose check it is, the twelve hard stops in the guard block (the
 // pin to installation `fugaro` / project `fugaro-dev`, the belong and
 // production refusals comparing PROJECT IDS and the installation's name — never
 // a `fugaro doctor` line read out of the checkout — the owner-typed variable,
-// and the config's own project, region, Scheduler region and runs bucket), the
+// the `--step` argument's own refusal, the project's number and the random
+// suffix the bucket deletes need, and the config's own project, region,
+// Scheduler region and runs bucket), the
 // workdir and backend
 // configuration every terraform command below it needs (the checkout's
 // `deploy/terraform/gcp/roots/installation` has no tfvars and no backend), the
@@ -137,7 +139,7 @@ func TestChecklistHasCheck68(t *testing.T) {
 		}
 	}
 
-	// 2. The guard block: the first block, with the eight hard stops, the
+	// 2. The guard block: the first block, with the twelve hard stops, the
 	// project typed by the owner and pinned by name rather than read from
 	// gcloud, and the belong stop
 	// comparing project ids and the installation's name — a `fugaro doctor` line
@@ -700,6 +702,129 @@ func TestChecklistCheck68GuardRefusesBelong(t *testing.T) {
 	}
 }
 
+// TestChecklistCheck68GuardRefusesProdPerValue: the guard's production rule
+// reads THREE values — the installation `$I` the owner types, the project `$P`
+// the owner types, and the project the installation's config names — and the
+// three are three different places. Written as one `||` chain, the term for a
+// single one of the three can be dropped and the stop still fires from another,
+// which is a mutation that survives: `! prod "$P"` did, because the only case
+// that carries a production id set `$P` AND the config's `gcp_project` to
+// `fugaro-prod`, so the config's term refused it with the same message. The
+// rule is a loop that names every refused value. This test therefore takes each
+// of the three ALONE: exactly one of them is a production id, the other two are
+// the pinned pair, and the guard has to stop with the belong/production refusal
+// — not with the pin, which a production `$P` also trips — and to name the
+// value it refused.
+//
+// Mutations (verified, run and restored): `prod "$CHK68_ID"` dropped from the
+// loop body → all three cases fail, and the two that carry a pinned `$P` name
+// `fugaro-prod` nowhere in the output; the loop narrowed to `"$I" "$P"` → the
+// config case fails the same way; the loop narrowed to `"$P" "$CFG_PROJECT"` →
+// the installation case fails; the refusal's message printing only `$I` and `$P`
+// → every case fails on the value it refused, which is the point of naming it.
+func TestChecklistCheck68GuardRefusesProdPerValue(t *testing.T) {
+	guard := chk68GuardBlock(t)
+
+	cases := []struct {
+		name          string
+		installation  string // CHK68_INSTALLATION
+		project       string // CHK68_PROJECT
+		configProject string // the config's own `gcp_project:`
+		bad           string // the one value of the three that is a production id
+	}{
+		{"only the installation is a production id", "fugaro-prod", "fugaro-dev", "fugaro-dev", "fugaro-prod"},
+		{"only the typed project is a production id", "fugaro", "fugaro-prod", "fugaro-dev", "fugaro-prod"},
+		{"only the config's project is a production id", "fugaro", "fugaro-dev", "fugaro-prod", "fugaro-prod"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeChk68Config(t, home, tc.installation, tc.configProject, "us-east5", "us-east4", "sandbox-runs")
+			code, out := runChk68Guard(t, guard, []string{
+				"HOME=" + home,
+				"PATH=" + os.Getenv("PATH"),
+				"CHK68_OWNER_RUN=yes",
+				"CHK68_PROJECT=" + tc.project,
+				"CHK68_INSTALLATION=" + tc.installation,
+			})
+			if code == 0 {
+				t.Fatalf("the guard exited 0 with %q a production id (I=%q P=%q config=%q): no step of this check may write in a production project, and this one opens a live IAM policy and creates resources there", tc.bad, tc.installation, tc.project, tc.configProject)
+			}
+			if stops := strings.Count(out, "Check 68 stopped:"); stops != 1 {
+				t.Errorf("the guard printed %d hard stops with %q a production id (I=%q P=%q config=%q), want exactly the production one\n%s", stops, tc.bad, tc.installation, tc.project, tc.configProject, out)
+			}
+			if !strings.Contains(out, tc.bad+" is the belong installation") {
+				t.Errorf("the guard refused I=%q P=%q config=%q without naming %q as the value it refused: the three come from three different places, so a message that names another one of them sends its reader to fix the wrong variable\n%s", tc.installation, tc.project, tc.configProject, tc.bad, out)
+			}
+		})
+	}
+}
+
+// TestChecklistCheck68ApiKeyCreatesHideTheKeyString: `gcloud services api-keys
+// create` prints the whole key object by default, keyString included, and that
+// string is a live credential for every API that accepts an API key — so both of
+// Check 68's creates sent a credential into the FACT, into the terminal's
+// scrollback and into whatever the owner pasted back, and the section's own
+// "Paste back" line forbids exactly that. A key created with no target list is
+// unrestricted besides. Neither create is used against any API by any step of
+// the check (steps 4 and 5 create the key and update its display name, and both
+// commands that act on it name it by the `--key-id` the create chose), so
+// nothing is lost by printing nothing.
+//
+// Mutations (verified, run and restored): `--format=none` dropped from a create
+// → that create fails here; `--api-target=service=` dropped from a create →
+// FAIL; the output captured instead of suppressed (`--format='value(name)'`) →
+// FAIL, because a `value(...)` format on this command prints the field asked for
+// and this test's rule is that nothing but the exit status is printed; the
+// `--key-id` dropped → FAIL, because without it the create's own output is the
+// only way to learn the name and the suppression would then be hiding something
+// the check needs.
+func TestChecklistCheck68ApiKeyCreatesHideTheKeyString(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+
+	// The creates are the ones that write a key, wherever the section keeps
+	// them: step 4's positive probe and step 5's negative one.
+	creates := 0
+	for _, line := range strings.Split(section, "\n") {
+		s := strings.TrimSpace(line)
+		if !strings.HasPrefix(s, "gcloud services api-keys create") {
+			continue
+		}
+		creates++
+		if !strings.Contains(s, "--format=none") {
+			t.Errorf("%s's Check 68 runs %q without `--format=none`: this command's default output is the key object together with its keyString, which is a live credential, and it would end up in the FACT, in the scrollback and in whatever the owner pastes back — which the section's own Paste back line forbids", path, s)
+		}
+		if !strings.Contains(s, "--api-target=service=") {
+			t.Errorf("%s's Check 68 runs %q with no `--api-target`: an API key with no target list is unrestricted, a credential for every API that accepts one, and this check needs no API of it at all — steps 4 and 5 create the key and update its display name", path, s)
+		}
+		if !strings.Contains(s, "--key-id=") {
+			t.Errorf("%s's Check 68 runs %q without `--key-id`: the fence keys on the key's NAME, and every command that acts on the key names it by the ID this create chose — with a server-generated uid neither the check's positive action nor its cleanup can name the key", path, s)
+		}
+		// The three flags are on the create's own line, which is why one line is
+		// read at a time here: a create whose flags were moved to a continuation
+		// line is a create this test would read as missing every one of them.
+		if strings.HasSuffix(s, "\\") {
+			t.Errorf("%s's Check 68 splits %q over more than one line: the three flags it is held to are read off one line here, and a command whose own line carries none of them is a command whose default output and unrestricted target list nothing in this file would catch", path, s)
+		}
+	}
+	if creates != 2 {
+		t.Errorf("%s's Check 68 has %d `gcloud services api-keys create` commands, want the two the positive and the negative direction each need: one per service, and the API key is one of the seven", path, creates)
+	}
+	// And no COMMAND in the section asks for the string. The word is in the
+	// prose beside both creates, which is where the reason it is never printed
+	// belongs; what is refused here is a command that reads it — a `--format`
+	// naming it, or a capture of it into a variable.
+	for _, line := range strings.Split(section, "\n") {
+		s := strings.TrimSpace(line)
+		if strings.HasPrefix(s, "#") || !strings.Contains(s, "keyString") {
+			continue
+		}
+		t.Errorf("%s's Check 68 runs %q, which reads the key's own string: it is a live credential, nothing in this check uses the key against an API, and the section's Paste back line forbids it in the FACT", path, s)
+	}
+}
+
 // TestChecklistCheck68GuardPinsTheInstallation: Check 68's project and
 // installation were free environment variables — `${CHK68_PROJECT:?}` and
 // `${CHK68_INSTALLATION:?}` with nothing comparing them to each other, to the
@@ -715,7 +840,9 @@ func TestChecklistCheck68GuardRefusesBelong(t *testing.T) {
 //
 // Mutations (verified, run and restored): the pin comparison dropped → the
 // wrong-project and wrong-installation cases pass; the `prod` refusal dropped →
-// the production case passes; the config's project compared to nothing → the
+// the production case passes (the config's term, which is the one this case
+// carries — a term of the rule alone is
+// TestChecklistCheck68GuardRefusesProdPerValue's); the config's project compared to nothing → the
 // wrong-config case passes; `L=${L:?...}` put back → every case fails, because
 // this test's environment sets no L and the config is the only place the region
 // is written; the owner check dropped → the "not typed by the owner" case
@@ -746,7 +873,11 @@ func TestChecklistCheck68GuardPinsTheInstallation(t *testing.T) {
 		// Production, by name: the same rule the belong stop applies, for the
 		// same reason — the ambient project of an owner running this is often a
 		// *-prod one, and `fugaro-prod` is the site's own Firebase project.
-		{"a production project", "yes", "fugaro", "fugaro-prod", "fugaro-prod", "us-east5", "us-east4", "sandbox-runs",
+		// ONE of the three values is production here, and it is the config's:
+		// while `$P` was production too, this case could not tell the two terms
+		// apart, and dropping `prod "$P"` from the body survived it.
+		// TestChecklistCheck68GuardRefusesProdPerValue takes each term alone.
+		{"the config's project is a production project", "yes", "fugaro", "fugaro-dev", "fugaro-prod", "us-east5", "us-east4", "sandbox-runs",
 			"production project"},
 		// The config is what names the installation's project, and the check
 		// edits that installation's workdir and applies a policy in that project:
@@ -922,7 +1053,10 @@ func TestReleaseManagedDeployerBulletStatesTheCurrentReason(t *testing.T) {
 // bucket deletes compare a bucket's own project against (a bucket name is
 // global and `gcloud storage rm` ignores --project), and the random suffix the
 // check's two throwaway buckets carry, which has to be drawn rather than left
-// empty — so the number is eleven.
+// empty — so the number was eleven. The 2026-10-21 review's second round made
+// the check ONE script with `--step N`, and the argument's own refusal (a step
+// that is not 1..7, or an unknown argument) is a twelfth stop in the guard block
+// — so the number is twelve.
 // Three places state the same fact, so this reads all three and requires one
 // number — a guard whose count is stated in prose is exactly the kind of claim
 // that survives a silent edit.
@@ -935,7 +1069,7 @@ func TestChecklistCheck68HardStopCountsAgree(t *testing.T) {
 	numbers := map[string]int{
 		"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
 		"six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-		"eleven": 11,
+		"eleven": 11, "twelve": 12,
 	}
 	// 1. The index row, the checklist's own summary of the check.
 	row := ""
@@ -956,11 +1090,11 @@ func TestChecklistCheck68HardStopCountsAgree(t *testing.T) {
 		t.Fatalf("Check 68's index row states its hard stops as %q, which is not a count this test can read", m[1])
 	}
 	section := docSection(t, path, doc, "## Check 68:")
-	// 2. The guard's own comment, which is what a reader re-running the block
+	// 2. The guard's own comment, which is what a reader launching the script
 	// is told to expect.
 	m = regexp.MustCompile(`nothing below the (\w+) hard stops runs`).FindStringSubmatch(section)
 	if m == nil {
-		t.Fatal("Check 68's guard comment does not say how many hard stops run before the check's steps: the owner re-runs that block at every step")
+		t.Fatal("Check 68's guard comment does not say how many hard stops run before the check's steps: the guard is the first block of the script, and the count is what tells its reader how many refusals stand between a mistyped project and the first live write")
 	}
 	sectionN, ok := numbers[m[1]]
 	if !ok {
@@ -976,8 +1110,8 @@ func TestChecklistCheck68HardStopCountsAgree(t *testing.T) {
 	if rowN != sectionN || rowN != stops {
 		t.Errorf("Check 68's hard stops are counted three ways and disagree: the index row says %d, the guard comment says %d, and the guard carries %d `Check 68 stopped:` refusals", rowN, sectionN, stops)
 	}
-	if stops < 11 {
-		t.Errorf("Check 68's guard carries %d `Check 68 stopped:` refusals, and this check's belong stop, its pin to the sandbox installation, the project number its bucket deletes compare against and the random suffix its two buckets carry are among them: the guard is what keeps a live IAM check off an installation it must never write in", stops)
+	if stops < 12 {
+		t.Errorf("Check 68's guard carries %d `Check 68 stopped:` refusals, and this check's belong stop, its pin to the sandbox installation, the `--step` argument's own refusal, the project number its bucket deletes compare against and the random suffix its two buckets carry are among them: the guard is what keeps a live IAM check off an installation it must never write in", stops)
 	}
 }
 
@@ -1352,9 +1486,10 @@ func TestManagedProjectsTaskOneFiveRecordsCheck52U3AsRun(t *testing.T) {
 // contains the prefix), except the runs bucket, which is read and not written:
 // `storage.objects.list` is in the conditioned storage role alone, so the read is
 // a real test of a condition, and it changes nothing if the fence fails. A trap
-// in the guard block deletes the check's own resources when the shell exits, so a
-// failed probe leaves nothing behind, and it says that it does not close the
-// gate. This holds the three statements of that invariant together: step 5 acts
+// in the guard block deletes the check's own resources when the RUN ends — the
+// last step, a stop, or a Ctrl-C, and never between steps, because the check is
+// one script whose steps act on each other's resources — so a failed probe
+// leaves nothing behind, and it says that it does not close the gate. This holds the three statements of that invariant together: step 5 acts
 // only on the check's own names, the trap and the Restore both name every one of
 // them, and no `${SANDBOX_*}` name survives anywhere in the section.
 //
@@ -2659,12 +2794,12 @@ gcloud() {
 }
 
 // TestChecklistCheck68BucketSuffixIsDrawnOnce: the two throwaway buckets carry a
-// random suffix, and the guard block is re-run at the start of every step — so
-// the suffix has to be drawn once per run and kept, or each step would name a
-// bucket the check never created: step 4 would create a second bucket and the
-// trap and the Restore would delete neither.
+// random suffix, and the guard block runs again at the start of every `--step N`
+// invocation of the one script — so the suffix has to be drawn once per run and
+// kept, or a repeated step would name a bucket the check never created: step 4
+// would create a second bucket and the trap and the Restore would delete neither.
 //
-// The block is run twice in the same $CHK68_TMP, the way two steps run it, and
+// The block is run twice in the same $CHK68_TMP, the way two invocations run it, and
 // the second draw has to be the first. The two names are also held to the
 // leftover filter, which is what has to see them at the end of the Restore.
 //
@@ -2745,7 +2880,7 @@ func TestChecklistCheck68BucketSuffixIsDrawnOnce(t *testing.T) {
 		}
 	}
 	if fields["second"][0] != rand {
-		t.Errorf("Check 68 drew a different suffix the second time the guard block ran (%s, then %s): the block is re-run at the start of every step, and a fresh suffix each time names a bucket the check never created — step 4 would create a second bucket and the trap and the Restore would delete neither", rand, fields["second"][0])
+		t.Errorf("Check 68 drew a different suffix the second time the guard block ran (%s, then %s): the guard runs again at the start of every `--step N` invocation, and a fresh suffix each time names a bucket the check never created — step 4 would create a second bucket and the trap and the Restore would delete neither", rand, fields["second"][0])
 	}
 	if !strings.Contains(out, "file "+rand) {
 		t.Errorf("Check 68's suffix is not kept in $CHK68_TMP/rand, so the next step cannot draw the same one:\n%s", out)
