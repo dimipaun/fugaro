@@ -949,7 +949,7 @@ added or removed without this sentence moving fails there:
   the stylesheet, and watches the named refusal come back.
   Each of those rules was then mutation-proved the other way: removed from the function, with the
   refusal it names watched failing.
-- `test/privacy.mjs` — the privacy statement's software part, and the seven rules that keep it
+- `test/privacy.mjs` — the privacy statement's software part, and the eight rules that keep it
   honest (the owner's request of 2026-10-19; the app's reporting is always on by the owner's
   ruling of the same day, with no switch inside the app). The page is the one the App Store and Play
   listings link as a privacy policy, so it now says what the CLI, the console and the phone app
@@ -1003,13 +1003,23 @@ added or removed without this sentence moving fails there:
     `SECURITY.md`'s reporting route and nothing else, and the page carries no e-mail address, by
     the owner's ruling that there is no address to publish; and
   - **no terms page** — no built page links to `/terms`, and no sitemap the build produced names
-    one, which is the owner's ruling of the same day written where the link would have gone.
+    one, which is the owner's ruling of the same day written where the link would have gone; and
+  - **the look** — the page wears the bold redesign out of the shapes `src/styles/base.css` draws
+    and invents none: the headline is on the display scale with its word in `.gradient-text`, the
+    two part headings are on the display scale, every subsection is one of the site's cards, the
+    hero's glow is decoration a reader is not handed, and every look class the page names is one
+    the page's own inlined stylesheet draws — a name with no rule behind it draws nothing, and a
+    rule of the page's own is a second look. What is held is the shape of the look and not its
+    rendering: a gate cannot see a page, and the match to the owner's boards
+    (`website/design-ref/`) is the owner's check at the preview.
 
   Each rule is one exported function with its own case, and each has a second case that plants
   the defect it refuses — a lost part, a part nested under the other, a dependency that collects,
   a reporter the page does not name, a page naming a reporter nothing in the tree holds, a third
   secret, an endpoint pointed elsewhere, a source naming the host, a third contact route, an
-  address, a `/terms` link — and watches the named refusal come back. The word ceiling's own derivation — the
+  address, a `/terms` link, a headline off the display scale, a gradient that left the headline, a
+  part heading off the scale, a subsection outside a card, a glow a reader is handed, a look class
+  the page's stylesheet does not draw — and watches the named refusal come back. The word ceiling's own derivation — the
   privacy statement's own count plus 25 %, the number `website/README.md` states, and every
   other page of the site still inside D188's 500 — is `budget.mjs`'s, beside the reader that
   measures it and the byte figures it is a sibling of.

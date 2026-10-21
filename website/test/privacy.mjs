@@ -10,7 +10,7 @@
 //
 // **Every sentence in "The software" is held to the thing that makes it true, never to a copy of
 // itself.** That is the whole rule of this file: a sentence and a fact, so that the fact moving
-// is the sentence failing. Seven rules, one function each, each with a case below that plants a
+// is the sentence failing. Eight rules, one function each, each with a case below that plants a
 // defect and watches the named refusal come back:
 //
 //   1. **The two parts.** The page carries "The website" and "The software" as its two `h2`s, in
@@ -75,6 +75,14 @@
 //   7. **There is no terms page.** The owner ruled it: no built page links to one, and no
 //      sitemap the build produced names one (`termsFailures`). This is the page a `/terms` page
 //      would have been linked from, which is why the rule is here rather than in `linkcheck.mjs`.
+//   8. **The look.** The owner approved the bold redesign on 2026-10-20 (`website/design-ref/`)
+//      and the look is written once, in `src/styles/base.css`'s section 2c. This page wears it —
+//      the headline on the display scale with its word in the gradient, the two part headings on
+//      the display scale, every subsection in one of the site's cards — and the classes it names
+//      are shapes that stylesheet draws, so a page that grew a look of its own is refused
+//      (`lookFailures`, `shapeFailures`). What is held is the shape of the look, not its
+//      rendering: a gate cannot see a page, and the match to the owner's boards is the owner's
+//      check at the preview.
 //
 // It reads the built artifact and the repository's sources, standard library only, no network
 // (Global Constraint 4). The built half comes from `dist/`; `FUGARO_GATES_DIST` points it
@@ -85,7 +93,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DIST, REPO, builtPages, find, parse, siteFacts, textOf, walk } from './lib/html.mjs'
+import { DIST, REPO, builtPages, cssRules, find, findAll, parse, siteFacts, textOf, walk } from './lib/html.mjs'
 
 // ---- the repository's files, by path -----------------------------------------------------
 
@@ -733,6 +741,144 @@ export function termsFailures(dist) {
   return out
 }
 
+// ---- 8. the look ---------------------------------------------------------------------------
+//
+// The owner approved the bold redesign on 2026-10-20 (`website/design-ref/`, which carries the
+// boards) and the look itself is written once, in `src/styles/base.css`'s section 2c: the
+// display scale, the gradient, the card and the hero's glow. Every other page wears it, and the
+// privacy statement is the page a store listing links — the one page a redesign could quietly
+// leave behind, because it is a statement rather than a pitch and no board was drawn for it.
+//
+// **Two things are held, and they are different things.** The first is the markup: the page's
+// headline is on the display scale and the word the boards put the accent on is in the
+// gradient, its two part headings are on the display scale too, every subsection under them is
+// one of the site's own cards, and the glow behind the headline is decoration a reader is not
+// handed. The second is that the names it wears are SHAPES THE SITE DRAWS: `base.css` is
+// inlined into every built page, so the page's own stylesheet is where the shared rules and the
+// page's scoped rules both end up, and a look class with no rule behind it is a name rather
+// than a look — the shape of a page that grew its own.
+//
+// **What is not held is the rendering.** A gate cannot see a page, and the match to the owner's
+// boards is the owner's check at the preview; this section holds the shape of the look and says
+// so rather than pretending a string comparison is a design review.
+
+/** The display scale `base.css` defines: the headline steps the boards set. */
+export const DISPLAY = Object.freeze(['display-xl', 'display-lg', 'display-md'])
+
+/** The shapes the bold look is built from, by the class each is named. */
+export const LOOK_SHAPES = Object.freeze([...DISPLAY, 'gradient-text', 'card', 'hero-glow'])
+
+/** The classes on an element, as a list. */
+const classListOf = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
+
+/**
+ * The classes on an element that name the look: the shapes above, and any `display-*` at all —
+ * a step nobody defined is exactly the defect the shape rule below is for, so the reader may
+ * not filter it out before that rule sees it.
+ */
+function lookClassesOf(el) {
+  return classListOf(el).filter((name) => LOOK_SHAPES.includes(name) || name.startsWith('display-'))
+}
+
+/** Whether `node` is `ancestor` or sits inside it. */
+function within(node, ancestor) {
+  for (let n = node; n; n = n.parent) if (n === ancestor) return true
+  return false
+}
+
+/** The nearest ancestor of `el` that is a card, or null. */
+function cardAround(el) {
+  for (let n = el.parent; n; n = n.parent) if (classListOf(n).includes('card')) return n
+  return null
+}
+
+/** The element's text as one line, for a failure line about it. */
+const textOn = (el) => JSON.stringify(textOf(el).replace(/\s+/g, ' ').trim())
+
+/** Every way the page's markup departs from the look, or []. */
+export function lookFailures(html) {
+  const main = mainOf(html)
+  const els = [...walk(main)]
+  const out = []
+
+  const h1 = els.find((el) => el.name === 'h1')
+  if (!h1) {
+    out.push(
+      `the privacy page has no h1: the page opens on its headline, and it is the headline the look is measured on (the bold redesign, website/design-ref/)`,
+    )
+  } else {
+    if (!classListOf(h1).some((name) => DISPLAY.includes(name))) {
+      out.push(
+        `the privacy page's headline ${textOn(h1)} is not on the display scale: the bold look's headline is one of ${JSON.stringify(DISPLAY)} (base.css), the oversized, tightly tracked, heaviest-weight step the boards set — a headline left on the default scale is a page that did not get the redesign`,
+      )
+    }
+    if (!els.some((el) => classListOf(el).includes('gradient-text') && textOf(el).trim() !== '' && within(el, h1))) {
+      out.push(
+        `the privacy page's headline carries no gradient: the emphasis the boards draw is the word in base.css's .gradient-text, inside the h1, and a headline of one flat tone is the look without its accent (the bold redesign, website/design-ref/)`,
+      )
+    }
+  }
+
+  for (const h2 of els.filter((el) => el.name === 'h2')) {
+    if (classListOf(h2).some((name) => DISPLAY.includes(name))) continue
+    out.push(
+      `the privacy page's part heading ${textOn(h2)} is not on the display scale: a part of the statement is a section headline the boards set at display-lg (base.css), so the two parts read as the page's own division rather than as bold body text`,
+    )
+  }
+
+  for (const h3 of els.filter((el) => el.name === 'h3')) {
+    if (cardAround(h3)) continue
+    out.push(
+      `the privacy page's subsection heading ${textOn(h3)} stands on the page rather than in a card: every subsection of the statement is one of the site's own panels (base.css's .card), which is what makes the page's hierarchy a heading over its box — a run of headings over loose prose is the old look (website/design-ref/)`,
+    )
+  }
+
+  for (const glow of els.filter((el) => classListOf(el).includes('hero-glow'))) {
+    if (glow.attrs.get('aria-hidden') !== 'true') {
+      out.push(
+        `the privacy page's hero glow is not aria-hidden: base.css's .hero-glow paints no text, so it is decoration and a reader with a screen reader is owed nothing from it`,
+      )
+    }
+    if (textOf(glow).trim() !== '') {
+      out.push(
+        `the privacy page's hero glow carries text (${textOn(glow)}): the layer behind the headline is decoration, and a word inside it is a word on the page that nothing styles`,
+      )
+    }
+  }
+
+  return out
+}
+
+/** The page's own stylesheets: what the build inlined, which is `base.css` plus the page's own
+ *  scoped rules, and so what a browser reads when it draws the page. */
+export function stylesheetsOf(html) {
+  return findAll(parse(html), 'style')
+    .map((el) => el.raw ?? '')
+    .join('\n')
+}
+
+/**
+ * Every look class the page names that its own stylesheet does not draw, or []. The look is
+ * written once, in `src/styles/base.css`; a class with no rule behind it is a name that draws
+ * nothing, and a page whose stylesheet carries a second headline scale or a second card is a
+ * page with a look of its own, which is the thing the redesign is against.
+ */
+export function shapeFailures(html, css) {
+  const named = new Set()
+  for (const el of walk(parse(html))) for (const name of lookClassesOf(el)) named.add(name)
+  const drawn = new Set()
+  for (const rule of cssRules(css)) {
+    for (const m of rule.selector.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) drawn.add(m[1])
+  }
+  return [...named]
+    .filter((name) => !drawn.has(name))
+    .sort()
+    .map(
+      (name) =>
+        `the privacy page wears .${name}, which the page's own stylesheet does not draw: the look is written once, in src/styles/base.css, and a page names the shapes that file defines — a class with no rule behind it draws nothing, and a rule of the page's own is a second look (the bold redesign, website/design-ref/)`,
+    )
+}
+
 // ---- the gate ----------------------------------------------------------------------------
 
 const FACTS = siteFacts()
@@ -814,6 +960,24 @@ test("the page's contact section is the owner's two routes, and the page carries
 test('no page links to a terms page, and no sitemap lists one', () => {
   const failures = termsFailures(DIST)
   assert.deepEqual(failures, [], failures.join('\n'))
+})
+
+test("the privacy page wears the site's bold look, out of the shapes the site draws", () => {
+  const page = privacyPage()
+  const failures = lookFailures(page.html)
+  assert.deepEqual(failures, [], `the privacy page is not wearing the look:\n  ${failures.join('\n  ')}`)
+
+  const css = stylesheetsOf(page.html)
+  // The reader below is only worth its answer if the stylesheet it read is the whole of the
+  // look: `base.css` is inlined into every built page, so a page whose own stylesheet carries
+  // no `.card` rule is a page the shape rule would refuse rather than a page it never read.
+  assert.match(
+    css,
+    /\.card\s*[,{]/,
+    'the built privacy page carries no `.card` rule: the shape rule reads the stylesheet the build inlined, and a page with none inlined is a page that rule cannot say anything about',
+  )
+  const shapes = shapeFailures(page.html, css)
+  assert.deepEqual(shapes, [], shapes.join('\n'))
 })
 
 // ---- the refusals, kept ------------------------------------------------------------------
@@ -1168,4 +1332,63 @@ test('a page that links a terms page, and a sitemap that lists one, are refused'
   assert.match(named[0], /sitemap-index\.xml lists \/terms/)
 
   assert.deepEqual(termsFailures(distOf(t, { 'index.html': SHELL('<h1>t</h1><a href="/privacy/">Privacy</a>') })), [])
+})
+
+test('a headline off the display scale, or a gradient that left the headline, is refused', () => {
+  // The look in miniature: a page whose headline is plain text, one whose gradient sits on the
+  // lead instead of on the headline, and the page the site builds, which is neither.
+  const parts = '<h2 class="display-lg">The website</h2><div class="card"><h3>a</h3></div><h2 class="display-lg">The software</h2><div class="card"><h3>b</h3></div>'
+
+  const plain = SHELL(`<h1>Privacy</h1>${parts}`)
+  assert.match(lookFailures(plain).join('\n'), /headline "Privacy" is not on the display scale/)
+
+  const gilded = SHELL(`<h1 class="display-xl">Privacy</h1>${parts}`)
+  assert.match(lookFailures(gilded).join('\n'), /headline carries no gradient/)
+
+  // The gradient on the page and not on the headline: the accent is the headline's, so a
+  // `.gradient-text` somewhere else in `main` is not the look.
+  const elsewhere = SHELL(`<h1 class="display-xl">Privacy</h1><p class="gradient-text">the lead</p>${parts}`)
+  assert.match(lookFailures(elsewhere).join('\n'), /headline carries no gradient/)
+
+  const good = SHELL(`<h1 class="display-xl"><span class="gradient-text">Privacy</span></h1>${parts}`)
+  assert.deepEqual(lookFailures(good), [])
+})
+
+test('a part heading off the display scale, a subsection outside a card, and a glow a reader is handed are refused', () => {
+  const head = '<h1 class="display-xl"><span class="gradient-text">Privacy</span></h1>'
+  const good = SHELL(`${head}<h2 class="display-lg">The website</h2><div class="card"><h3>a</h3></div><h2 class="display-lg">The software</h2><div class="card"><h3>b</h3></div>`)
+  assert.deepEqual(lookFailures(good), [])
+
+  const flat = SHELL(`${head}<h2>The website</h2><div class="card"><h3>a</h3></div><h2 class="display-lg">The software</h2><div class="card"><h3>b</h3></div>`)
+  assert.match(lookFailures(flat).join('\n'), /part heading "The website" is not on the display scale/)
+
+  // An `h3` under the part heading and outside any card: the heading over loose prose the
+  // redesign replaced.
+  const loose = SHELL(`${head}<h2 class="display-lg">The website</h2><h3>a</h3><p>prose</p><h2 class="display-lg">The software</h2><div class="card"><h3>b</h3></div>`)
+  assert.match(lookFailures(loose).join('\n'), /subsection heading "a" stands on the page rather than in a card/)
+
+  const announced = SHELL(`${head}<div class="hero-glow">grid</div><h2 class="display-lg">The website</h2><div class="card"><h3>a</h3></div><h2 class="display-lg">The software</h2><div class="card"><h3>b</h3></div>`)
+  const glow = lookFailures(announced).join('\n')
+  assert.match(glow, /hero glow is not aria-hidden/)
+  assert.match(glow, /hero glow carries text/)
+
+  const hidden = SHELL(`${head}<div class="hero-glow" aria-hidden="true"></div><h2 class="display-lg">The website</h2><div class="card"><h3>a</h3></div><h2 class="display-lg">The software</h2><div class="card"><h3>b</h3></div>`)
+  assert.deepEqual(lookFailures(hidden), [])
+})
+
+test('a look class the page’s stylesheet does not draw is refused, and one it draws is not', () => {
+  const css = stylesheetsOf(privacyPage().html)
+  assert.deepEqual(shapeFailures(SHELL('<h1 class="display-xl"><span class="gradient-text">t</span></h1><div class="card"><h3>a</h3></div><div class="hero-glow" aria-hidden="true"></div>'), css), [])
+
+  // A step nobody defined: the class is a name, and a name draws nothing.
+  const invented = shapeFailures(SHELL('<h1 class="display-xxl">t</h1>'), css)
+  assert.equal(invented.length, 1, invented.join('\n'))
+  assert.match(invented[0], /wears \.display-xxl, which the page's own stylesheet does not draw/)
+
+  // And the rule is the page's own stylesheet, not the site's: a page that inlined no look
+  // refuses every shape it names, which is what the gate's control above is for.
+  const bare = shapeFailures(SHELL('<h1 class="display-xl">t</h1>'), '.display-xl{font-size:1rem}')
+  assert.deepEqual(bare, [])
+  const nothing = shapeFailures(SHELL('<h1 class="display-xl">t</h1>'), '')
+  assert.equal(nothing.length, 1, nothing.join('\n'))
 })
