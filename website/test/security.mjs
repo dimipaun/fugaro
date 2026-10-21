@@ -72,6 +72,17 @@
 //      The one hint the layout composes is the sitemap, and whether the build ships one is
 //      read from the resolved `astro.config.mjs` — imported, not pattern-matched, which is the
 //      same rule `website/test/readme.mjs` applies to the same file.
+//   7. **The page is drawn in the site's bold look** (the owner's brief of 2026-10-21): the
+//      same look the owner approved on the homepage and the product pages, which is one set of
+//      shapes in `src/styles/base.css` and not a look each page invents. The page's title is
+//      the display scale's largest step with the accent's gradient over it, each section
+//      heading is the step below, the page's four blocks are the site's card, and the room
+//      between them is a step of the site's own spacing scale. This is the one check here
+//      that is about how the page looks rather than about what it says, and it is written
+//      because the page's shape is held by five gates that read its words: a restyle that
+//      dropped the shared classes would leave every one of them green. **The visual match to
+//      the owner's boards is the owner's check at the preview** (the redesign's 70a–70c, P9):
+//      what this holds is that the page wears the site's shapes, not that it wears them well.
 //
 // **Two readers, and why the text is read the hard way** (round 3 of the review, findings 3 and
 // 4). The text of the page is read with `test/lib/html.mjs`'s `verbatimText`, which invents
@@ -104,7 +115,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DIST, REPO, SITE, findAll, parse, verbatimText } from './lib/html.mjs'
+import { DIST, REPO, SITE, cssDeclarations, cssRules, findAll, parse, stripCSSComments, verbatimText } from './lib/html.mjs'
 // The builds the two cases below need: a copy of the repository in a temp directory with one
 // edit planted in it, built with the site's own Astro (`buildCopy`), because the page's
 // refusals are the build's and a refusal nobody has seen fire is a refusal nobody knows the
@@ -900,15 +911,177 @@ function checkSection(region, { document, heading, id, fail, what, kind, label }
   }
 }
 
+// ---------------------------------------------------------------------------------------
+// The page in the site's bold look (the owner's brief of 2026-10-21).
+// ---------------------------------------------------------------------------------------
+
+/** The CSS a built page carries: its inline `<style>` blocks, and any first-party stylesheet
+ *  it links. Astro inlines today (`build.inlineStylesheets: 'always'`) and this reader does
+ *  not depend on which of the two the build emits — `website/test/base-styles.mjs` reads the
+ *  same pair the same way. The tokens are in it, so a step of the spacing scale is read from
+ *  the artifact rather than from a second copy of the number here. */
+function pageCSS(html, dist = DIST) {
+  const inline = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1])
+  const linked = [...html.matchAll(/<link[^>]*rel="stylesheet"[^>]*href="(\/[^"]+)"/g)].map((m) =>
+    readFileSync(path.join(dist, m[1]), 'utf8'),
+  )
+  return [...inline, ...linked].join('\n')
+}
+
+/** An element's class tokens, as the set the built page carries. A class is matched on the
+ *  whole token, because the page's own class and the site's are one attribute. */
+function classList(el) {
+  return new Set((el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean))
+}
+
+/** The rule a built stylesheet carries for one selector, or null. The selectors are compared
+ *  with their whitespace removed, because the minifier rewrites it (`[data-security-page] h1`
+ *  and `[data-security-page]h1` are one selector). */
+function ruleFor(css, selector) {
+  const wanted = selector.replace(/\s+/g, '')
+  return cssRules(css).find((rule) => rule.selector.replace(/\s+/g, '') === wanted) ?? null
+}
+
+/** A length token's value in px, out of the stylesheet that declares it — or null when the
+ *  stylesheet does not declare it, which is a failure the caller reports rather than a zero
+ *  it silently compares with. */
+function tokenPx(css, name) {
+  const m = new RegExp(`--${name}:\\s*([\\d.]+)(rem|px)`).exec(css)
+  return m ? Number(m[1]) * (m[2] === 'rem' ? 16 : 1) : null
+}
+
+/**
+ * Every way the built page departs from the site's bold look, as the sentences a reader of
+ * the failure gets. One function over one artifact, so its refusals are kept with planted
+ * defects rather than argued (the case below).
+ *
+ * The look itself is `src/styles/base.css`'s section 2c — the display scale, the gradient, the
+ * card, the eyebrow, the pill and the step badge — and this gate reads the page against it:
+ * **the page wears the site's shapes rather than shapes of its own**, which is the whole point
+ * of a redesign that is meant to make the site look like one thing. So the rules below name
+ * the shared classes by name, and the rules a class is worth are read out of the page's own
+ * stylesheet (a class the stylesheet does not carry is a name that draws nothing, which is how
+ * a rename in `base.css` would leave this page unstyled and every other gate green).
+ *
+ * The page's words are not this gate's business: `securityFailures` above holds the page to
+ * the document, and the two are deliberately separate readings — a restyle must be able to
+ * change nothing a reader reads.
+ */
+export function boldLookFailures(dist = DIST) {
+  const out = []
+  const fail = (why) => out.push(`security/: ${why}`)
+
+  const html = builtPage(dist)
+  if (html === null) {
+    fail(`${BUILT} is not in the artifact: the page this gate checks is the one \`npm run build\` writes, and \`npm run check\` builds before it runs these checks (W1.8)`)
+    return out
+  }
+
+  let doc
+  try {
+    doc = parse(html)
+  } catch (err) {
+    fail(`the page could not be read as HTML: ${err.message}`)
+    return out
+  }
+  const css = pageCSS(html, dist)
+
+  // The shared shapes have to be the stylesheet's and not only the markup's: a page that names
+  // a class no rule carries is a page drawn by the browser's defaults.
+  for (const [selector, what] of [
+    ['.display-xl', "the display scale's largest step"],
+    ['.display-md', "the display scale's middle step"],
+    ['.gradient-text', "the accent's gradient over a headline's words"],
+    ['.card', 'the card the site draws its blocks on'],
+  ]) {
+    if (ruleFor(css, selector) === null) {
+      fail(`the page's stylesheet carries no \`${selector}\` rule, so ${what} draws nothing here: the bold look is one set of shapes in \`src/styles/base.css\` for the whole site, and a page that wears a name the stylesheet does not carry is a page the browser draws (the owner's brief of 2026-10-21)`)
+    }
+  }
+
+  // 1. The title: the display scale's largest step, with the accent's gradient over the whole
+  //    of it. The gradient is a span inside the heading, which is how `Hero.astro` splits its
+  //    headline — and the whole word and not part of it, because this page's title is one word.
+  const titles = findAll(doc, 'h1')
+  if (titles.length !== 1) {
+    fail(`the page carries ${titles.length} <h1> headings, so the bold look's headline has no one title to be drawn on: the display scale is the page's title and nothing else (the owner's brief of 2026-10-21)`)
+  } else {
+    const title = titles[0]
+    const classes = title.attrs.get('class') ?? ''
+    if (!classList(title).has('display-xl')) {
+      fail(`the page's title carries class ${JSON.stringify(classes)} and not the display scale's largest step (\`display-xl\`): the bold look's headline is the site's own display step — oversized, tightly tracked, at the heaviest weight the system stack draws — and a title left to the browser's \`h1\` is the page the redesign replaced (the owner's brief of 2026-10-21)`)
+    }
+    const gradient = findAll(title, (el) => classList(el).has('gradient-text'))
+    const said = prose(text(title))
+    if (gradient.length !== 1) {
+      fail(`the page's title carries ${gradient.length} \`gradient-text\` spans where the bold look draws the headline's words in the accent's gradient, once: the gradient is the accent the redesign moved to the logo's own hue, and a headline without it is the page's title in one flat tone (the owner's brief of 2026-10-21)`)
+    } else if (prose(text(gradient[0])) !== said) {
+      fail(`the gradient covers ${JSON.stringify(prose(text(gradient[0])))} of the page's title ${JSON.stringify(said)}: the accent is the whole headline's, so the page's one word is not half gradient and half plain (the owner's brief of 2026-10-21)`)
+    }
+  }
+
+  // 2. Every section heading under the title is the display scale's middle step, so the page
+  //    has the board's hierarchy — the title at the top step, the sections below it — rather
+  //    than three browser `h2`s.
+  const headings = findAll(doc, 'h2')
+  if (headings.length === 0) {
+    fail('the page carries no <h2>, so the hierarchy the bold look draws — a title and the sections under it — is a title over one flat block of text (the owner\'s brief of 2026-10-21)')
+  }
+  for (const heading of headings) {
+    if (!classList(heading).has('display-md')) {
+      fail(`a section heading of the page carries class ${JSON.stringify(heading.attrs.get('class') ?? '')} and not the display scale's middle step (\`display-md\`): the page's sections are set from the site's type scale, one step under its title, and a heading left to the browser's \`h2\` is a section that does not read as one (the owner's brief of 2026-10-21)`)
+    }
+  }
+
+  // 3. The page's four blocks are the site's card — the same box the homepage's run band and
+  //    "what you get" grid are drawn on. The regions are the ones `securityFailures` reads the
+  //    page by, and a missing one is that gate's failure rather than this one's.
+  for (const [marker, what] of [
+    ['data-security-diagram', 'the boundary diagram'],
+    ['data-security-summary', "the document's summary"],
+    ['data-security-reporting', "the document's reporting section"],
+    ['data-security-policy', 'the pointer to the document'],
+  ]) {
+    const found = findAll(doc, (el) => el.attrs.has(marker))
+    if (found.length !== 1) continue
+    if (!classList(found[0]).has('card')) {
+      fail(`${what} carries class ${JSON.stringify(found[0].attrs.get('class') ?? '')} and not the site's card (\`card\`): every block of the bold look is drawn on the same box — one step above the ground, a hairline border and the larger radius — so a block of this page is a card like the homepage's blocks, and not a shape of its own (the owner's brief of 2026-10-21)`)
+    }
+  }
+
+  // 4. The room between the page's blocks is a step of the site's spacing scale, and a
+  //    generous one: the redesign's rhythm is the scale's own steps rather than numbers a page
+  //    picks, and the page's blocks are set apart by at least the scale's `--space-lg`. The
+  //    declaration is read off the page's own container rule, which is the one place the room
+  //    between all four blocks is declared.
+  const page = ruleFor(css, '[data-security-page]')
+  const gap = page === null ? undefined : cssDeclarations(page.body).find(([property]) => property === 'gap')?.[1]
+  const step = gap === undefined ? null : /^var\(--(space-[a-z0-9]+)\)$/.exec(gap)
+  if (step === null) {
+    fail(`the page sets the room between its blocks with ${gap === undefined ? 'no declaration this gate can read' : JSON.stringify(gap)} and not with a step of the site's spacing scale: the redesign's rhythm is the scale's — the room one block gives the next is a step, so two blocks' room is comparable — and a number here is the page inventing a rhythm of its own (the owner's brief of 2026-10-21)`)
+  } else {
+    const px = tokenPx(css, step[1])
+    const floor = tokenPx(css, 'space-lg')
+    if (px === null || floor === null) {
+      fail(`the page sets the room between its blocks at \`--${step[1]}\`, and the stylesheet does not declare that step's value, so this gate cannot measure the room the page gives its blocks (the owner's brief of 2026-10-21)`)
+    } else if (px < floor) {
+      fail(`the page sets the room between its blocks at \`--${step[1]}\` (${px}px) where the bold look's blocks are set apart generously: the floor is the scale's \`--space-lg\` (${floor}px), and a page whose blocks sit closer than that is the page the redesign replaced (the owner's brief of 2026-10-21)`)
+    }
+  }
+
+  return out
+}
+
 // ---- the refusals, kept ----------------------------------------------------------------
 
-/** A temp dist holding one built page, and the gate's verdict on it. */
-function verdict(t, html) {
+/** A temp dist holding one built page, and the gate's verdict on it — `securityFailures` by
+ *  default, or the checker a case is proving. */
+function verdict(t, html, checker = securityFailures) {
   const dist = mkdtempSync(path.join(tmpdir(), 'fugaro-security-'))
   t.after(() => rmSync(dist, { recursive: true, force: true }))
   mkdirSync(path.join(dist, 'security'), { recursive: true })
   writeFileSync(path.join(dist, BUILT), html)
-  return securityFailures(dist)
+  return checker(dist)
 }
 
 /** The good page, with one edit planted in it. The edit has to land: a fixture that silently
@@ -1212,7 +1385,7 @@ test('the gate refuses each planted defect', (t) => {
 
   // A paragraph slipped into the diagram, where the balance counts it as the region's own text
   // and passes it: the shape rule is what sees this one.
-  const inDiagram = planted(html, /(<section data-security-diagram>)/, '$1<p>A friendly note about the model.</p>')
+  const inDiagram = planted(html, /(<section\b[^>]*data-security-diagram[^>]*>)/, '$1<p>A friendly note about the model.</p>')
   assert.match(verdict(t, inDiagram).join('\n'), /the boundary diagram carries a <p> that is not part of it/, 'a paragraph inside the diagram is not refused')
 
   // A second title. This is the one defect that used to switch the gate off: the title rule
@@ -1255,7 +1428,7 @@ test('the gate refuses each planted defect', (t) => {
   // region — the diagram's copy is refused by the diagram's own rule.
   const glued = planted(
     html,
-    /(<section data-security-summary>[\s\S]*?)is listed in <code>followup\.trusted<\/code>/,
+    /(<section\b[^>]*data-security-summary[^>]*>[\s\S]*?)is listed in <code>followup\.trusted<\/code>/,
     '$1is listed infollowup.trusted',
   )
   assert.match(
@@ -1356,6 +1529,76 @@ test('the gate refuses each planted defect', (t) => {
     '$1https://github.com/dimipaun/fugaro/blob/main/docs/design/v1.md"',
   )
   assert.match(verdict(t, elsewhere).join('\n'), /sends a reader to/, 'a policy link to another file is not refused')
+})
+
+test('the page is drawn in the site’s bold look', () => {
+  assert.deepEqual(
+    boldLookFailures(DIST),
+    [],
+    `the security page is not drawn in the bold look the owner approved on the homepage and the product pages (the owner's brief of 2026-10-21):\n  ${boldLookFailures(DIST).join('\n  ')}`,
+  )
+})
+
+test('the bold look refusals fire on the defect each one names', (t) => {
+  const html = builtPage(DIST)
+  assert.ok(html !== null, `${BUILT} is not in the artifact: run \`npm run check\` from website/ so this gate has a page to read`)
+  const refusals = (edited) => verdict(t, edited, boldLookFailures).join('\n')
+
+  // The title back at the browser's `h1`: the page as it was before the redesign.
+  const plainTitle = planted(html, 'class="security-title display-xl"', 'class="security-title"')
+  assert.match(refusals(plainTitle), /and not the display scale's largest step/, 'a title that is not the display scale is not refused')
+
+  // The gradient narrowed to the page's own class rather than the site's — a page that drew
+  // the accent locally is the same defect one level down: the class is named and the rule is
+  // not, so the headline is drawn in one flat tone.
+  const noGradient = planted(html, /<span class="gradient-text">Security<\/span>/, 'Security')
+  assert.match(
+    refusals(noGradient),
+    /carries 0 `gradient-text` spans where the bold look draws the headline's words in the accent's gradient/,
+    'a headline with no gradient accent is not refused, so the page could drop the accent the redesign is built on',
+  )
+
+  // A section heading left to the browser: one of the page's three, because one is enough to
+  // fail the rule it names.
+  const plainHeading = planted(html, /<h2 class="display-md"/, '<h2')
+  assert.match(refusals(plainHeading), /and not the display scale's middle step/, 'a section heading that is not the display scale is not refused')
+
+  // A block that is not the site's card: the summary taken off its box, which the rule reads
+  // by the region's own marker rather than by the class alone.
+  const bareSummary = planted(html, 'class="card security-summary"', 'class="security-summary"')
+  assert.match(
+    refusals(bareSummary),
+    /the document's summary carries class "security-summary" and not the site's card/,
+    'a block that is not drawn on the site\'s card is not refused, so the page could grow a shape of its own beside the homepage\'s',
+  )
+
+  // The room between the blocks cut to a number: the rhythm the gate is here for. The plant is
+  // anchored on the page's own container rule, so it cannot be met by another `gap` in the
+  // stylesheet, and the number it plants is below the floor as well as off the scale.
+  const cramped = planted(
+    html,
+    /(\[data-security-page\]\{[^}]*?)gap:var\(--space-xl\)/,
+    '$1gap:4px',
+  )
+  assert.match(
+    refusals(cramped),
+    /sets the room between its blocks with "4px" and not with a step of the site's spacing scale/,
+    'a page whose blocks are set apart by a number rather than by a step of the scale is not refused',
+  )
+
+  // And the other half of the same rule: a step of the scale that is too small for the bold
+  // look's room. This is the defect the floor exists for — a page that keeps the scale and
+  // loses the room.
+  const tight = planted(
+    html,
+    /gap:var\(--space-xl\)/,
+    'gap:var(--space-3xs)',
+  )
+  assert.match(
+    refusals(tight),
+    /at `--space-3xs` \(\d+px\) where the bold look's blocks are set apart generously/,
+    'a step of the scale below the floor is not refused, so the room the bold look gives its blocks is a taste nothing measures',
+  )
 })
 
 test('the page points at no file the build does not produce', () => {
