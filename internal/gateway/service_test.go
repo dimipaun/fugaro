@@ -323,6 +323,45 @@ func TestNoInJobFallback(t *testing.T) {
 		}
 	})
 
+	t.Run("a service upstream that cannot say who it is is refused", func(t *testing.T) {
+		// The identities are the reason this kind exists: an upstream with
+		// one of them missing is refused at Start, where the mistake is,
+		// rather than at the first call.
+		for _, tc := range []struct {
+			name string
+			edit func(*Upstream)
+			want string
+		}{
+			{"no identity at all", func(u *Upstream) { u.Service = nil }, "no identity"},
+			{"no job identity", func(u *Upstream) { u.Service.IDToken = nil }, "job identity"},
+			{"no run identity", func(u *Upstream) { u.Service.RunIDToken = nil }, "run identity"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				o := Options{
+					Upstream: Upstream{Kind: KindService, BaseURL: "https://creds.example",
+						Service: &Service{
+							IDToken:    func(context.Context) (string, error) { return serviceIDToken(t), nil },
+							RunIDToken: func() string { return serviceRunToken(t) },
+							Job:        serviceJob,
+						}},
+					Prices: dsPrices(),
+					Mode:   Observe,
+				}
+				tc.edit(&o.Upstream)
+				gw, err := Start(context.Background(), o)
+				if err == nil {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					_ = gw.Close(ctx)
+					t.Fatalf("Start accepted a service upstream with %s", tc.name)
+				}
+				if !strings.Contains(err.Error(), tc.want) {
+					t.Errorf("the refusal doesn't name what is missing: %v", err)
+				}
+			})
+		}
+	})
+
 	t.Run("a run whose identity cannot be presented is not replaced", func(t *testing.T) {
 		h, f := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
 			return serviceOK(TierA, "repo-a")

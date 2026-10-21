@@ -403,7 +403,9 @@ func TestServiceUpstreamCarriesTheRunsIdentityAndTheJobsIDToken(t *testing.T) {
 	if aud := metas[0].URL.Query().Get("audience"); aud != svc.URL {
 		t.Errorf("the ID token was minted for audience %q, want the service's URL %q", aud, svc.URL)
 	}
-	if metas[0].URL.Path != metadataIdentityPath {
+	// The path is written out rather than read from the constant it checks:
+	// this is the platform's own endpoint, and it is not this build's to move.
+	if metas[0].URL.Path != "/computeMetadata/v1/instance/service-accounts/default/identity" {
 		t.Errorf("the metadata request went to %q", metas[0].URL.Path)
 	}
 
@@ -454,8 +456,9 @@ func TestMetadataIDToken(t *testing.T) {
 		if len(seen) != 1 {
 			t.Fatalf("the metadata server was asked %d times, want once", len(seen))
 		}
-		if seen[0].URL.Path != metadataIdentityPath {
-			t.Errorf("the path is %q, want %q", seen[0].URL.Path, metadataIdentityPath)
+		const path = "/computeMetadata/v1/instance/service-accounts/default/identity"
+		if seen[0].URL.Path != path {
+			t.Errorf("the path is %q, want %q", seen[0].URL.Path, path)
 		}
 		if aud := seen[0].URL.Query().Get("audience"); aud != audience {
 			t.Errorf("the audience is %q, want %q", aud, audience)
@@ -500,8 +503,11 @@ func TestMetadataIDToken(t *testing.T) {
 			if strings.Contains(err.Error(), "the metadata server's own sentence") {
 				t.Errorf("the error echoes the metadata server's body: %v", err)
 			}
-			if strings.Contains(err.Error(), audience) {
-				t.Errorf("the error carries the request's URL: %v", err)
+			// Whatever the metadata server answered -- a refusal, a token
+			// this run will not present -- appears in no error the run can
+			// log or record.
+			if strings.Contains(err.Error(), "ya29.") {
+				t.Errorf("the error carries what the metadata server answered: %v", err)
 			}
 		})
 	}

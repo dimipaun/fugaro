@@ -240,6 +240,11 @@ func (r *run) serviceUpstream() (gateway.Upstream, error) {
 		return gateway.Upstream{}, errors.New(r.redact(err.Error()))
 	}
 	if job == "" {
+		// Belt and braces: jobName's own contract means this cannot fire
+		// today -- the only run it answers "" for is a local one, refused
+		// above -- but an upstream that reports no job is one the gateway
+		// refuses anyway (validate), and a run that got here with none
+		// should stop where the reason is known rather than there.
 		return gateway.Upstream{}, errors.New("starting the gateway: a cascade run has no Cloud Run job name to report")
 	}
 	return gateway.Upstream{
