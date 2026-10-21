@@ -273,6 +273,103 @@ func TestPrintEntriesCapsTheListingAndSaysWhatItLeftOut(t *testing.T) {
 	}
 }
 
+// TestTheListingPrintsWholeLinesWholeAndCutsOnlyWhatItCannot: the switch
+// between FieldUncut and Field sits at the listing's own line bound, and it is
+// in that direction — inside the bound the entry is printed as itself, even
+// past safetext.FieldMax, where Field would cut a text its owner can no longer
+// paste back; past the bound it is Field's, cut and marked.
+//
+// The write half is pinned with it, because the two together are the reason the
+// bound is where it is: the address this command records is unbounded
+// (listingLineMax says why), so an entry past the bound is one the listing may
+// be printing something this command wrote, and the cut there is the honest
+// answer rather than a line nothing could have produced.
+func TestTheListingPrintsWholeLinesWholeAndCutsOnlyWhatItCannot(t *testing.T) {
+	inside := tf.DeleteEntry{
+		Address: "google_storage_bucket." + strings.Repeat("a", 200),
+		Before:  "type=google_storage_bucket id=" + strings.Repeat("b", 400),
+	}
+	line := inside.Address + "=" + inside.Before
+	if len(line) <= safetext.FieldMax || len(line) > listingLineMax {
+		t.Fatalf("the fixture line is %d characters, and this test is about the range between FieldMax (%d) and listingLineMax (%d)", len(line), safetext.FieldMax, listingLineMax)
+	}
+	var b strings.Builder
+	printEntries(&b, []tf.DeleteEntry{inside})
+	if got, want := b.String(), line+"\n"; got != want {
+		t.Errorf("a line inside the listing's bound printed as\n%q\nwant the entry itself\n%q\nit is FieldUncut's: Field would cut an entry an owner then cannot paste back", got, want)
+	}
+
+	// Past the bound the line is Field's — cut at FieldMax, ending in Field's
+	// own marker, and not the entry.
+	over := tf.DeleteEntry{
+		Address: "google_storage_bucket." + strings.Repeat("c", listingLineMax),
+		Before:  "type=google_storage_bucket id=x",
+	}
+	b.Reset()
+	printEntries(&b, []tf.DeleteEntry{over})
+	got, want := strings.TrimSuffix(b.String(), "\n"), safetext.Field(over.Address+"="+over.Before)
+	if got != want {
+		t.Errorf("a line past the listing's bound printed as %d characters, want Field's %d", len([]rune(got)), len([]rune(want)))
+	}
+	if !strings.HasSuffix(got, "…") || len([]rune(got)) >= len(over.Address) {
+		t.Errorf("a line past the bound is %q, want a text cut short and marked as cut", got)
+	}
+
+	// And that entry is one this command would have written: approveArgument
+	// bounds the identity and not the address (deliberately — listingLineMax).
+	if e, err := approveArgument(over.Address + "=" + over.Before); err != nil || e.Address != over.Address {
+		t.Errorf("approving an address past the listing's bound = %q, %v; want the entry recorded: the address is the plan's own, this list is a managed project's only way to approve its delete, and a bound here would lock that removal away", e.Address, err)
+	}
+}
+
+// TestTheListingPromisesAPasteOnlyForTheHalfItWrote: printEntries offers its
+// lines as text the owner pastes back, and that is true of the identity half —
+// the command that recorded the entry escaped it (tf.RemovalIdentity.String
+// escapes every byte the printers rewrite), so safetext.FieldUncut's rewrites
+// are no-ops there and the line carries the identity back byte for byte. The
+// address half is the plan's own, neither escaped nor bounded (listingLineMax),
+// so an address holding a character the printers rewrite is printed as they
+// rewrite it: that line is not the entry, and pasting it back records an entry
+// about an address the plan does not have — the gate compares by exact
+// equality, so it approves nothing, loudly, at the apply. The listing says
+// which half it can promise this for; this pins the two halves apart.
+func TestTheListingPromisesAPasteOnlyForTheHalfItWrote(t *testing.T) {
+	written := tf.DeleteEntry{
+		Address: "module.managed.google_storage_bucket.fmgd_data",
+		Before:  `type=google_storage_bucket project=proj-1234 name=fmgd\x20data id=fmgd\x20data-bucket`,
+	}
+	var b strings.Builder
+	printEntries(&b, []tf.DeleteEntry{written})
+	line := strings.TrimSuffix(b.String(), "\n")
+	if want := written.Address + "=" + written.Before; line != want {
+		t.Fatalf("the listing printed %q, want the entry itself %q", line, want)
+	}
+	if e, err := approveArgument(line); err != nil || e != written {
+		t.Errorf("the listing's own line pasted back = %+v, %v; want the entry it printed (%+v)", e, err, written)
+	}
+
+	raw := tf.DeleteEntry{
+		Address: "google_storage_bucket.a\tb",
+		Before:  "type=google_storage_bucket id=data-bucket",
+	}
+	b.Reset()
+	printEntries(&b, []tf.DeleteEntry{raw})
+	got := strings.TrimSuffix(b.String(), "\n")
+	if want := safetext.FieldUncut(raw.Address) + "=" + raw.Before; got != want {
+		t.Fatalf("the listing printed %q, want the address as the printers leave it (%q)", got, want)
+	}
+	if got == raw.Address+"="+raw.Before {
+		t.Fatal("the listing printed the address as the entry holds it: this test is about an address a printer rewrites")
+	}
+	e, err := approveArgument(got)
+	if err != nil {
+		t.Fatalf("the line the listing printed was refused: %v", err)
+	}
+	if want := safetext.FieldUncut(raw.Address); e.Address != want || e.Address == raw.Address {
+		t.Errorf("the line the listing printed pasted back as the address %q, want the printed one %q (the entry's own is %q)", e.Address, want, raw.Address)
+	}
+}
+
 // TestAllowDeleteListingIsCappedEndToEnd: the command's own listing, through
 // the real command line: the header counts the whole list, the listing stops
 // at the cap, and the line after it says how many it did not print.

@@ -628,13 +628,15 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 }
 
 // advice is the sentence a refusal ends with, when the mode has one: a
-// refused plan whose guard refused a delete or replace the owner's list would
-// admit if it named the address (Verdict.Listable) ends with DeleteAdvice,
-// since that is the one thing its reader can act on. Nothing else gets it: a
-// refusal from the cover or the cost list alone says what the plan is, not who
-// may approve it, and a guard refusal made only of what no list clears — an
-// object moved here from another address, an action the guard does not know,
-// a change with no actions — would send the owner to list an address and the
+// refused plan whose guard refused a delete or replace a new entry in the
+// owner's list would admit — one naming the address AND the identity of the
+// object the plan removes (Verdict.Listable, whose rule is tf.ListableEntries')
+// — ends with DeleteAdvice, since that is the one thing its reader can act on.
+// Nothing else gets it: a refusal from the cover or the cost list alone says
+// what the plan is, not who may approve it, and a guard refusal made only of
+// what no entry clears — an object moved here from another address, an action
+// the guard does not know, a change with no actions, a removal whose before
+// view identifies nothing — would send the owner to record an entry and the
 // next plan would be refused the same way. No advice rather than the wrong one.
 func (r Request) advice(v Verdict) string {
 	if len(v.Listable) == 0 {

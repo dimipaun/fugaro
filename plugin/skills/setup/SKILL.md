@@ -73,7 +73,7 @@ Read, don't run. Take the facts from the files, with their lines: `reference/dis
 - the secrets the build or tests read, by name
 - the language versions the repository pins (for `mise.toml`)
 - CI machine size and the test footprint, for `resources`, and how risky the repository is (what a missed bug costs), for `review_rounds`: two separate decisions
-- for a GitHub repository, whether the user already has a Fugaro GitHub App (step 5, topic 1)
+- for a GitHub repository, whether the user has a Fugaro GitHub App (step 5, topic 1)
 
 Tell the user in a few lines what you found and what you couldn't.
 
@@ -143,7 +143,7 @@ fugaro secrets set claude-oauth-token
 fugaro secrets set claude-oauth-token-<name>
 ```
 
-Minting a *second* account's token, when this terminal already holds one from `claude setup-token`, is not yet verified: have the user run `claude setup-token` again and follow its account-switch prompts.
+Minting a *second* account's token, when this terminal holds one from `claude setup-token`, is not yet verified: have the user run `claude setup-token` again and follow its account-switch prompts.
 
 ## 9. Hand off
 
