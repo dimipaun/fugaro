@@ -105,7 +105,7 @@ holdLabels({ lead: LEAD, ...Object.fromEntries(CARDS.map((card) => [card.name, c
   <ul class="home-get-cards">
     {
       CARDS.map((card, index) => (
-        <li class="home-get-card" data-lead={index === 0 ? '' : undefined}>
+        <li class="card home-get-card" data-lead={index === 0 ? '' : undefined}>
           <svg class="home-get-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             {GLYPHS[card.glyph].map((d) => (
               <path d={d} />
@@ -175,14 +175,13 @@ holdLabels({ lead: LEAD, ...Object.fromEntries(CARDS.map((card) => [card.name, c
     }
   }
 
+  /* The card is `base.css`'s `.card` — the padding, the hairline, the radius and the surface
+     tone, written once for the site; what is the grid's own is the stack its contents are
+     laid in. */
   .home-get-card {
     display: flex;
     flex-direction: column;
     gap: var(--space-2xs);
-    padding: var(--space-lg);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-xl);
-    background: var(--surface);
   }
 
   /* The card the board tints: the accent's hairline and a wash of the accent at the top of the

@@ -54,7 +54,7 @@ const STEPS = [
     <ol class="home-run-steps">
       {
         STEPS.map((step, index) => (
-          <li class="home-run-step">
+          <li class="card home-run-step">
             <span class="step-badge" data-state={step.done ? 'done' : undefined} aria-hidden="true">
               {index + 1}
             </span>
@@ -110,14 +110,14 @@ const STEPS = [
     list-style: none;
   }
 
+  /* The card is `base.css`'s `.card`, with one thing this block changes: the band's four steps
+     are smaller boxes than the grid's cards, so they take the control's radius rather than the
+     card's. The stack the contents are laid in is this block's own. */
   .home-run-step {
     display: flex;
     flex-direction: column;
     gap: var(--space-2xs);
-    padding: var(--space-lg);
-    border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
-    background: var(--surface);
   }
 
   /* The last step is the run's result, so it is the card the board marks: the green border and

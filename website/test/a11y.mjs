@@ -221,10 +221,12 @@ export const PAIRS = [
   ['--accent-on-dark', '--gradient-from', BODY_TEXT],
   ['--accent-on-dark', '--gradient-to', BODY_TEXT],
 
-  // Warnings and cost figures, which are text on both grounds and on the hero — the
-  // caps-and-costs teaser sits over the gradient, which is why `--warn` is a pair there and
-  // not only on the flat grounds — and the dark label on a filled warning chip.
+  // Warnings and cost figures, which are text on both grounds, on the hero and on the panel —
+  // the caps-and-costs teaser sits over the gradient, which is why `--warn` is a pair there and
+  // not only on the flat grounds, and the hero illustration's status line is the warn tone on a
+  // panel — and the dark label on a filled warning chip.
   ['--warn', '--ground', BODY_TEXT],
+  ['--warn', '--panel', BODY_TEXT],
   ['--warn', '--surface', BODY_TEXT],
   ['--warn', '--gradient-from', BODY_TEXT],
   ['--warn', '--gradient-to', BODY_TEXT],

@@ -53,15 +53,15 @@
   --space-4xl: 9rem;
 
   /* ---- radius ----
-   * Five steps, and the redesign is why the top two exist: the boards draw a card at 18–20 px
+   * Four steps, and the redesign is why the top two exist: the boards draw a card at 18–20 px
    * and a panel at 20 px, so a card and the panel it sits on are two radii rather than one
    * rounded box inside another. `--radius-lg` is the control (a button, a code block), and
-   * `--radius-pill` is the one shape that is not a corner at all. */
+   * `--radius-pill` is the one shape that is not a corner at all. There is deliberately no
+   * step above `--radius-xl`: a fifth radius nothing draws is a token every page carries. */
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 16px;
   --radius-xl: 20px;
-  --radius-2xl: 24px;
   --radius-pill: 999px;
 
   /* ---- type: families, then sizes, then the leading and weights that go with them ---- */

@@ -795,8 +795,10 @@ added or removed without this sentence moving fails there:
     install command — and the five together measure **468 words**. D188's number is therefore
     the smallest round ceiling above the page that carries every block its briefs and its
     boards require, and it is still a ceiling rather than a
-    target: the highest of the pages that gained nothing from those briefs is Getting Started at
-    250 words, and a page that wants the extra room has to carry a brief's own block for it.
+    target: the highest of the pages that gained nothing from those briefs or that board is How
+    It Works at
+    279 words (Getting Started is 257), and a page that wants the extra room has to carry a
+    brief's own block for it.
     Both raises are recorded as readings in `docs/website/redesign/README.md`, the way every
     number the briefs do not spell out is.
 - `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and

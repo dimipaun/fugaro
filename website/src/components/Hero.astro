@@ -162,7 +162,7 @@ const ROWS = Array.from({ length: JOBS }, (_, index) => index + 1)
       {PILL}
     </p>
 
-    <h1 class="hero-tagline" id="hero-tagline">
+    <h1 class="hero-tagline display-xl" id="hero-tagline">
       {HEADLINE_HEAD}{' '}
       <span class="gradient-text">{HEADLINE_GRADIENT}</span>
     </h1>
@@ -295,20 +295,13 @@ const ROWS = Array.from({ length: JOBS }, (_, index) => index + 1)
     background: var(--ok);
   }
 
-  /* The headline: the display scale's largest step and the split the board draws — the words
-     before the gradient in the text tone, the last two in the accent's (`base.css`'s
-     `.gradient-text`). `text-wrap: balance` is what keeps a four-word headline from leaving
-     one word on its own line at a width that has room for two and two. */
+  /* The headline: `base.css`'s `.display-xl` — the display scale's largest step, written once
+     for the site — with the two things that are this page's own. The split the board draws (the
+     words before the gradient in the text tone, the last two in the accent's) is
+     `.gradient-text`'s, and `max-width: 20ch` is what keeps the headline to the two or three
+     lines the board sets it in rather than running the width of the page. */
   .hero-tagline {
-    margin: 0;
     max-width: 20ch;
-    font-family: var(--font-sans);
-    font-size: clamp(var(--font-size-3xl), 7.2vw, var(--font-size-6xl));
-    line-height: var(--leading-display);
-    letter-spacing: var(--tracking-display);
-    font-weight: var(--weight-black);
-    color: var(--text);
-    text-wrap: balance;
   }
 
   .hero-lead {

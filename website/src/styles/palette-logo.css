@@ -62,10 +62,15 @@
   --warn: #F5A524;
 
   /* The success tone: the end of the run, the card that finishes, the second stop of the
-   * gradient a heading is drawn in. It is the one colour on the site that means "this
-   * finished", and it is 132° from the accent, so a green mark and a cyan one are never
-   * mistaken for each other. It carries the ground as a label when it is a fill, and it is
-   * legible as a mark on the ground, the panel and the surface.
+   * gradient a heading is drawn in. It is the one colour on the site that means "this finished",
+   * and it is legible as a mark on the ground, the panel and the surface. Its hue is **154.1°**
+   * (`hsl`'s own convention, the one `docs/design/console-styling.md` §3.2 prints its hues in),
+   * and the accent's is **198.0°** — the two are **43.9° apart**, which is *less* than the 50°
+   * the console's styling rule asks of any two of its own five state colours. That rule is the
+   * console's and is not claimed here: the site has exactly one state colour, so the green and
+   * the accent are never a pair of state marks a reader has to tell apart, and the ground
+   * between them is the roles — a mark that means the run finished, and the accent that means
+   * "this is the site's colour".
    *
    * **The value is this site's own, and deliberately not the console's `--ok`.** The console's
    * `docs/design/console-styling.md` §3.2 records `--ok` as one of six colours it invents
@@ -74,7 +79,9 @@
    * six literals anywhere in **this** file — the palette in force. So the site's green is its
    * own value in the same hue family rather than the console's literal: a colour that reads as
    * the same green and that does not make the console's record wrong. The other three palettes
-   * still carry the console's literal, and the reading is about the one that is in force. */
+   * still carry the console's literal, and the reading is about the one that is in force.
+   * (The console's literal is 151.3°, three degrees from this one, so the two are the same
+   * green to a reader's eye whatever the arithmetic says.) */
   --ok: #43C08A;
 
   /* The hero's gradient, as its two stops: `linear-gradient(var(--gradient-from),

@@ -502,10 +502,14 @@ a.skip-link:focus {
 /* ---- 2c. the bold look (redesign part P1) ------------------------------------------------
  *
  * The owner's boards of 2026-10-20 draw the site in a set of shapes it repeats: an oversized
- * heavy headline, a small uppercase eyebrow above a section, a pill, a panel card, a numbered
- * step badge and a command bar. They are written once here rather than per page, because the
+ * heavy headline, a small uppercase eyebrow above a section, a pill, a card, a numbered
+ * step badge and a command block. They are written once here rather than per page, because the
  * point of the redesign is that the whole site looks like one thing, and a shape each page
- * invented would be the thing the boards are not.
+ * invented would be the thing the boards are not. **Each one here is a shape a built page
+ * actually renders** — the display scale is the hero's headline and the two new blocks'
+ * headings, the card is the run band's four steps and the "what you get" grid's five, the
+ * command block is every `[data-copy]` block on the site, and a shape nothing rendered is a
+ * rule every page inlines for nothing.
  *
  * Two rules hold throughout and are the reason several of these look unusual:
  *
@@ -605,12 +609,15 @@ a.skip-link:focus {
 
 /* The card: the panel the boards draw everything on. One step above the ground, a hairline
  * border and the larger radius, with the padding as a step of the spacing scale rather than a
- * number — a card in a grid and a card standing alone are then the same box. */
+ * number — a card in a grid and a card standing alone are then the same box. The tone is the
+ * surface rather than the panel, because a card is laid on the page and a panel is what a pill
+ * or a tab bar is drawn on; the bold redesign's run band and "what you get" grid are the two
+ * blocks that use it, and each adds only the layout and the marks its own block needs. */
 .card {
   padding: var(--space-lg);
   border: var(--border-width) solid var(--border);
   border-radius: var(--radius-xl);
-  background: var(--panel);
+  background: var(--surface);
 }
 
 /* The numbered step badge: the square the flow's steps are numbered in. The accent is the
@@ -634,25 +641,6 @@ a.skip-link:focus {
 
 .step-badge[data-state='done'] {
   background: var(--ok);
-}
-
-/* The command bar: the box a command is printed in. It is the copy control's own row — the
- * markup and the `[data-copy]` mechanism are `src/lib/copy-control.mjs` and section 2b above —
- * with the panel, the border and the radius a card has, so a command reads as a thing a reader
- * can take away rather than as a line of prose. */
-.command-bar {
-  padding: var(--space-sm) var(--space-md);
-  border: var(--border-width) solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--panel);
-}
-
-.command-bar > pre {
-  margin: 0;
-  color: var(--accent-on-dark);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-  line-height: var(--leading-snug);
 }
 
 /* The hero's background: the two soft glows and the grid the boards draw behind the headline.
