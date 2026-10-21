@@ -31,6 +31,16 @@ Then read the file for what you are doing:
 
 The remote agent cannot see this conversation, your files or the user's machine. The task text names the goal and why, where to look (paths, the failing test, the error text copied in), acceptance criteria it can check, and what is out of scope. It needs nothing local: no unpushed commits (the run starts from the base branch on the remote), no local database, no undecided question. One task, one pull request.
 
+## Runs on a long-lived branch
+
+A long-lived branch (`integration-0.9.x`) is launched with `--ref BRANCH`, and the run takes its base branch from the `fugaro.yaml` on that ref: `git.base_branch` is what its pull request targets and what its review reads the diff against. On a branch whose own file still names main — `integration-0.9.5`'s does — the draft pull request opens against main, and retargeting it to BRANCH afterwards is a person's step in the provider's own interface. A branch whose file names itself gets its pull requests against BRANCH, with nothing to retarget, and a follow-up on one needs that: it refuses a base that is not the branch its configuration comes from.
+
+Review cost scales with the diff of the pull request against its base, so where the base is main the review reads the branch's whole divergence from main before the change the task was about. Keep each pull request small, and merge main into the branch often so it never drifts far from it; a wide batch onto one branch pays that cost once per run (the `parallelism` skill).
+
+To see what a run cost: `fugaro runs ls` for its row, and `fugaro diagnose RUN` for the cost beside the halt and its detail.
+A halt with `run_cap` is the run reaching its dollar cap — `reference/diagnose.md` has the row, and the printed detail names the cap and what the run spent; on a pull request whose base is far from main the review can reach the cap alone.
+On a pull request that was retargeted, check the base its runs recorded before launching a fix round: the plain listing prints none, `fugaro diagnose RUN --json` prints it as `row.base_branch`.
+
 ## Monitor
 
 - `fugaro runs ls` lists runs (`--repo`, `--mine`, `--since`, `--batch`, `--pr`) and its `BY` column says who started each one; `fugaro runs ls --watch` redraws until every run has settled, and `fugaro runs stats` aggregates the same records by the person who started them.
@@ -53,6 +63,31 @@ The remote agent cannot see this conversation, your files or the user's machine.
 - **Two review tiers.** A run may have a first-line review by a cheaper coder model before the senior review. Only the senior review decides readiness.
 - **Cost.** `fugaro diagnose` shows it, and its JSON has `row.cost.route_by`, which splits the spend by route (a provider model's route, for example), and `row.cost.reported_usd`, what a provider claimed, kept beside the priced figure and never replacing it. Subscription (`oauth`) spend is notional, never billed.
 - **Statuses and halts** are in `reference/status.md` and `reference/diagnose.md`. A halt is a budget cap or a kill switch working as intended.
+
+## Inspect the expensive runs daily
+
+Once a day, list the last 24 hours of runs (`fugaro runs ls --since 24h`) and read the dearest 10-20% of them by the COST column — one or two rows in twenty. The reading is read-only, and it is where the next run gets cheaper.
+
+Take each of those through `fugaro diagnose RUN` for the cost and the halt, then `fugaro logs RUN`, and look for:
+
+- **the review stage costing far more than implement.** Where a run's calls go through the gateway, each model call is one log line carrying its stage — `[implement] model call`, `[review] model call`, `[fix] model call`, and `[review_first] model call` for the cheaper first-line review — and the snippet below counts them. A review making many times implement's calls for a small change has read too much, and often the wrong diff base (below).
+- **sub-agent fan-outs** — `tool Agent:` lines, each a sub-agent the stage spawned, with its own calls on top of the stage's. These are the agent's own output, so they are there on every run.
+- **the wrong diff base** — the review's own `git diff origin/<base>...HEAD` naming a base the pull request does not target (the long-lived-branch section above is about those runs).
+- **repeated identical commands**, a resumed session re-reading the whole repository, rounds that end at the same cap, and a relaunch that redoes work already landed.
+
+Write each lesson where the next run will read it — the project's `CLAUDE.md` or its agent instructions — and fix the cause it names: the task's brief, the configuration, or the product itself.
+
+The `model call` lines are the gateway's, so a run only has them with the budget on and an API key or vertex credential; an `oauth` run's calls never reach it and log none of them. Read those runs by the agent's own lines instead, one `result` line per agent run, tagged with its stage: `[implement/agent]`, `[review/agent]`, `[review_first/agent]` and `[fix/agent]`.
+
+This counts a run's calls without changing anything: `fugaro logs` only reads, and so does `grep -c`.
+
+```bash
+RUN=<run>
+fugaro logs "$RUN" | grep -c '\[implement\] model call'
+fugaro logs "$RUN" | grep -cE '\[review(_first)?\] model call'
+fugaro logs "$RUN" | grep -c '\[fix\] model call'
+fugaro logs "$RUN" | grep -c 'tool Agent:'
+```
 
 ## A usage limit on the Claude account
 
