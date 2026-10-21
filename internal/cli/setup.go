@@ -1,6 +1,10 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
+
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/spf13/cobra"
 )
 
@@ -255,3 +259,135 @@ func newSetupCmd() *cobra.Command { return newSetupCmdWith(&initOptions{}) }
 // project through the same command line the user would run, with strictCreate
 // set on the options it hands over.
 func newSetupCmdWith(o *initOptions) *cobra.Command { return newInitCmdWith(o, setupDoor) }
+
+// setupAlreadySetUp is the one line the wizard prints when the installation is
+// already there: this machine has the project config, or the GCP project's
+// runs bucket carries the mark of an installation this machine has no config
+// for. Either way `setup` keeps it and converges as `update` does, rather than
+// offering to create a second installation in one GCP project — that offer is
+// what the retired command's ambiguity was (D11).
+const setupAlreadySetUp = "this installation is already set up"
+
+// setupAskProject is the wizard's first question. It is a question and not a
+// sentence about one: the answer decides whether this run may create the GCP
+// project, which is the one thing about a run that cannot be undone.
+const setupAskProject = "GCP project: create a new one, or adopt an existing one"
+
+// The two answers the question takes. Creation is the default Enter takes
+// (D11, answered 2026-10-20 as recommended): setup is the first-time wizard,
+// and the first-time user is the one with no project to adopt.
+const (
+	setupAnswerCreate = "create"
+	setupAnswerAdopt  = "adopt"
+)
+
+// wizardQuestion is one question the wizard asks, in the order it asks it: the
+// flag that answers the same question without a terminal — so a scripted run
+// needs no terminal for anything but the typed confirmations — and the name
+// `--non-interactive` prints when the run cannot proceed without an answer.
+//
+// missing is "" for a question whose answer a run that cannot ask simply
+// takes. There is exactly one, and it is the first: nobody can be asked
+// whether to create a project, so the run does not create one (see
+// askProjectAnswer). A run that wants creation says so with the flag.
+type wizardQuestion struct {
+	what    string // the question, in one line
+	label   string // the label the prompt shows (a prefix, where the label is built from the run)
+	flag    string // the flag that answers it
+	missing string // what MissingInputsError names, exactly as firstRunMissing builds it
+}
+
+// setupQuestions is the wizard's question list, and TestEveryWizardQuestionHasAFlag
+// holds the run to it in both directions: every label below is a prompt a first
+// run prints when nothing else answers it and none is printed when its own flag
+// does, and the missing names are the ones a run with no terminal prints — so a
+// question added without a flag, or with a flag nobody can pass, fails there
+// rather than in a user's terminal.
+//
+// The later questions of the wizard are later tasks': the repository (W3.4) and
+// the two-phase ask (W3.5) add their rows here.
+var setupQuestions = []wizardQuestion{
+	{
+		what:    "the GCP project's ID",
+		label:   "GCP project ID",
+		flag:    "--gcp-project",
+		missing: "--gcp-project <id>",
+	},
+	{
+		what:    "the region the installation's jobs and the scheduler run in",
+		label:   "Region",
+		flag:    "--region",
+		missing: "--region <region>",
+	},
+	{
+		what:  "whether this run creates the GCP project or adopts one that already exists",
+		label: setupAskProject,
+		flag:  "--create-project",
+		// No missing name: the answer a run that cannot ask takes is the one
+		// that creates nothing (adoption), so there is nothing to demand of it
+		// — and nothing it can do by accident.
+	},
+	{
+		what:    "the Fugaro project's name",
+		label:   "Fugaro project name",
+		flag:    "--name",
+		missing: "--name <name>",
+	},
+}
+
+// askProjectAnswer asks the wizard's first question and records the answer
+// where the rest of the run reads it: --create-project's own field, so a person
+// at a terminal and a scripted run answer one question, and the project stage
+// (init_project.go) is the one place that acts on it.
+//
+// The flag short-circuits the question, and so does a run that cannot ask one:
+// with no terminal, or with --yes, --json or --non-interactive (a run no person
+// is answering the prompts of), the answer taken is adoption. Creation is the
+// one answer a run must never take on nobody's behalf — the project it makes is
+// permanent, its ID is global and unusable by anyone afterwards, and everything
+// that would make it billable arrives with the billing link — and the answer a
+// scripted run gives is `--create-project`, explicitly.
+func (r *initRun) askProjectAnswer() error {
+	o := r.o
+	if o.createProject || !r.canAsk() {
+		return nil
+	}
+	v, err := r.prompt(setupAskProject, setupAnswerCreate, func(s string) error {
+		if s != setupAnswerCreate && s != setupAnswerAdopt {
+			return errors.New("answer " + setupAnswerAdopt + " to install into a project that already exists, or " + setupAnswerCreate + " to create a new one")
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	o.createProject = v == setupAnswerCreate
+	return nil
+}
+
+// announceAlreadySetUp is setup's one line for a run whose installation is
+// already there: a project config this machine has (e.old is its file), which
+// is also what makes the run update's stage set — initStages registers no
+// project stage once the config exists, so `setup` converges exactly as
+// `fugaro update` does.
+//
+// It says nothing with --json (stdout is one object) or --print-vars (stdout is
+// the variables alone), the two modes whose stdout is a document rather than a
+// transcript; the fact is in the result either way.
+func (e *initEngine) announceAlreadySetUp() {
+	r, o := e.r, e.r.o
+	if o.door != setupDoor.name || e.old == nil || o.asJSON || o.printVars {
+		return
+	}
+	fmt.Fprintf(r.w, "%s%s: keeping project %s, and converging as %s does\n",
+		o.programPrefix(), setupAlreadySetUp, pluginwire.Printable(e.lc.Name), "fugaro "+updateDoor.name)
+}
+
+// programPrefix is the line's own "fugaro setup: ", or "" for a hand-built
+// options value — a test's — whose run has no door to name.
+func (o *initOptions) programPrefix() string {
+	if p := o.loopProgram(); p != "" {
+		return p + ": "
+	}
+	return ""
+}

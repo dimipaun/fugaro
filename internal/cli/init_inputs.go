@@ -232,14 +232,31 @@ func (r *initRun) gatherInputs(ctx context.Context) error {
 		}
 		o.cloud.region = v
 	}
+	// An installation may already be there (a teammate's, or one this machine
+	// has no project config for): `setup` keeps it, and converges as `fugaro
+	// update` does rather than offering to create a second one (D11). It asks
+	// nothing more — not the name, which is the installation's own, and not
+	// whether to create the project: this run is creating nothing whatever the
+	// answer would have been, which is why the question is asked below and not
+	// here. The installation stage adopts it and says which roles to ask an
+	// owner for.
+	if name == "" && !o.configOnly {
+		if installed := installationName(ctx, o.cloud.gcpProject, o.cloud.region, o.runsBucket); installed != "" {
+			o.name, o.createProject = installed, false
+			fmt.Fprintf(r.w, "%s%s: keeping project %s, and converging as %s does\n",
+				o.programPrefix(), setupAlreadySetUp, pluginwire.Printable(installed), "fugaro "+updateDoor.name)
+			return nil
+		}
+	}
+	// The project (D11): create one, or adopt one that already exists. The
+	// answer is what the project stage acts on; a run that cannot ask takes
+	// adoption (setup.go's askProjectAnswer says why).
+	if err := r.askProjectAnswer(); err != nil {
+		return err
+	}
 	if name == "" && !o.configOnly {
 		def, label := suggestName(ctx), "Fugaro project name (permanent"
-		installed := installationName(ctx, o.cloud.gcpProject, o.cloud.region, o.runsBucket)
 		switch _, _, ok := originOwner(ctx); {
-		case installed != "":
-			// An installation already exists here (a teammate's, adopted on
-			// this machine): its own name, not a guess from a directory.
-			def, label = installed, label+"; the existing installation in this GCP project is named "+pluginwire.Printable(installed)
 		case fromCheckout != "":
 			// No default: the file may be a clone's, so the name is typed.
 			def, label = "", label+"; this checkout's fugaro.yaml says "+pluginwire.Printable(fromCheckout)+", but a cloned repository's file can say anything: type the name you want"
