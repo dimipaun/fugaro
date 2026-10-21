@@ -1520,14 +1520,16 @@ P4.3) — `docs/pending-workflows/console-linux.yml` — the desktop console's L
 (2026-10-20: it packs the AppImage and the `.deb` on `ubuntu-latest` and uploads them, and
 holds no secret) — `docs/pending-workflows/console-release-linux.yml` — the console's
 signing pipeline with the Linux legs added, which supersedes the staged `console-release.yml`
-and so is copied over it as well as into `.github/workflows/` — and
-`docs/pending-workflows/console-windows.yml` — the desktop console's Windows pack, one of the
-two files here that is not a pull-request check (2026-10-20: it typechecks, runs the unit suite
+and so is copied over it as well as into `.github/workflows/` — a release-time job and so the
+first of the three files here that are not pull-request checks (2026-10-20: on the release tag
+and never on a pull request) — and
+`docs/pending-workflows/console-windows.yml` — the desktop console's Windows pack, the second of
+those three (2026-10-20: it typechecks, runs the unit suite
 and packs the unsigned NSIS installer on `windows-latest`, and holds no secret, and it runs **at
 release time only** — the release tag or a manual dispatch before one, never on a pull request,
 not even path-filtered) — and
-`docs/pending-workflows/mobile-release.yml` — the mobile app's release, the other file here that
-is not a pull-request check (2026-10-20: on every
+`docs/pending-workflows/mobile-release.yml` — the mobile app's release, the third of the three
+files here that are not pull-request checks (2026-10-20: on every
 `v[0-9]+.[0-9]+.[0-9]+` tag and by hand it builds the app on EAS and submits it to TestFlight's
 internal testers and to Play's internal-testing track, behind the `mobile-release`
 environment and the owner's approval). None of the five is this site's: the website's two manual

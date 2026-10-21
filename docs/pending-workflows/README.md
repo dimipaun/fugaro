@@ -5,8 +5,8 @@
 - **`shared-tests.yml`** — the whole CI job for `shared/`'s tests, mobile plan Task **P4.3**: a `main`-filtered push and pull request under `shared/**`, `contents: read`, `npm ci` and `npm test` on Node 22 and Node 26, and every `shared/*/mutation-proof.sh` in the package, every action pinned by full commit SHA. `shared/` is outside the Go module, so no job in `ci.yml` runs it. Staged by a Fugaro run that cannot push a `.github/workflows/**` change; see `## shared-tests.yml` below, which also records what the job will report on `main` today.
 - **`website-preview.yml`** and **`website-promote.yml`** — the website's two new workflows, both `workflow_dispatch`-only: one builds a chosen ref and deploys it to a Firebase Hosting preview channel of the site's own project and prints the preview URL, the other promotes an existing preview channel to live and is the owner's alone (`environment: website-live` plus a guard on `github.actor`). Staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Read `docs/website/preview-promote.md` first**: it carries the owner-only one-time setup (the Workload Identity Federation pool and provider, the deployer service account and its Firebase Hosting roles, the `website-live` environment and the three repository variables) that both files need before they can run at all.
 - **`console-linux.yml`** — the console's **Linux build check**: one job on `ubuntu-latest` that packs the AppImage and the `.deb` on every pull request and every push to `main` and uploads them, holding no secret at all. Staged by the 2026-10-20 run that packages the console for Linux (the owner's ruling: Linux for 0.10.0, unsigned). It is its own workflow rather than a second job in `console-tests.yml` because the release gate's required-check list is derived from that file's job set; see `## console-linux.yml` below.
-- **`console-release-linux.yml`** — the console's signing, notarisation and publishing pipeline **with the Linux legs added**: a third job that builds and verifies the unsigned AppImage and `.deb`, and a `publish` that merges both legs, signs one merged `console-sha256sums.txt` keyless with cosign and attaches everything to `console-vX.Y.Z`. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-linux.yml` below.
-- **`console-windows.yml`** — the console's **Windows pack**, and one of the two files here that are **not** a pull-request check (`mobile-release.yml` below is the other): one job on `windows-latest` that typechecks, runs the unit suite and packs the unsigned NSIS installer **at release time only** — the release tag, or a `workflow_dispatch` before one, and **never on a pull request**, not even path-filtered — and uploads it, holding no secret at all. Staged by the 2026-10-20 run that plans the console's Windows build (the owner's ruling of that date: the console drives the **Linux** `fugaro` inside WSL, unsigned), and re-cut the same day for the owner's answer to that plan's decision D7, whose words were *"a waste of resources; if there are problems we will fix them then"*. **It is red until three things in `console/` land** — the `package:win` script and the `win32` fuse row, the POSIX repairs that let the unit suite run on a Windows runner, and the `win32-x64` Electron checksum pin — which is why it is staged now and copied in later; the file's own header says so first. It is its own workflow rather than a second job in `console-tests.yml` for the reason `console-linux.yml` gives below; see `## console-windows.yml` below.
+- **`console-release-linux.yml`** — the console's signing, notarisation and publishing pipeline **with the Linux legs added**: a third job that builds and verifies the unsigned AppImage and `.deb`, and a `publish` that merges both legs, signs one merged `console-sha256sums.txt` keyless with cosign and attaches everything to `console-vX.Y.Z`. It runs on the release tag and **never on a pull request**, so it is the first of the three files here that are not pull-request checks. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-linux.yml` below.
+- **`console-windows.yml`** — the console's **Windows pack**, and the second of the three files here that are **not** a pull-request check (`console-release-linux.yml` above is the first and `mobile-release.yml` below is the third): one job on `windows-latest` that typechecks, runs the unit suite and packs the unsigned NSIS installer **at release time only** — the release tag, or a `workflow_dispatch` before one, and **never on a pull request**, not even path-filtered — and uploads it, holding no secret at all. Staged by the 2026-10-20 run that plans the console's Windows build (the owner's ruling of that date: the console drives the **Linux** `fugaro` inside WSL, unsigned), and re-cut the same day for the owner's answer to that plan's decision D7, whose words were *"a waste of resources; if there are problems we will fix them then"*. **It is red until three things in `console/` land** — the `package:win` script and the `win32` fuse row, the POSIX repairs that let the unit suite run on a Windows runner, and the `win32-x64` Electron checksum pin — which is why it is staged now and copied in later; the file's own header says so first. It is its own workflow rather than a second job in `console-tests.yml` for the reason `console-linux.yml` gives below; see `## console-windows.yml` below.
 - **`mobile-release.yml`** — the **mobile app's release**, staged on 2026-10-20 on the owner's rulings of 2026-10-19/20 and reworked on 2026-10-21 after the security review of #777 (the build runs from GitHub Actions on each release tag, and by hand). On every `v[0-9]+.[0-9]+.[0-9]+` tag and on a manual dispatch, **one job per platform** builds on EAS and submits the finished build to TestFlight's internal testers and to Play's internal-testing track, behind the `mobile-release` GitHub environment and its only required reviewer (the owner) — the same click that gates `console-release` and `website-live`. The two jobs are independent, **both are enabled**, and one repository variable (`MOBILE_RELEASE_DISABLED_PLATFORMS`) can turn either off; see `## mobile-release.yml` below, which carries the Android first-release checklist.
 - **`images.yml` — applied, not pending.** The signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`, was staged here by a Fugaro run that cannot push a `.github/workflows/**` change, then copied into `.github/workflows/images.yml` and `git rm`'d from here in `6b57ba9`. `## images.yml` below is the record of that change and of the timing it had to meet, not something still to copy.
 
@@ -1126,8 +1126,15 @@ checked as they are on a push), and a dispatched **branch** through the gate's
 second half — `git fetch origin main` and `git merge-base --is-ancestor
 "$GITHUB_SHA" origin/main` — because a branch has no tag to shape-check and "this
 commit is on main" is the claim a submission needs either way. A dispatch with
-`dry_run` set submits nothing and is held to neither, which is what keeps a dry
-run runnable from a work-in-progress branch.
+`dry_run` set submits nothing and is held to neither gate — but it is **not**
+therefore runnable from any branch: a job that names an environment is held to
+that environment's **Deployment branches and tags** policy, `mobile-release`'s
+names `main` and the `v*` tags (step **1** of the owner's list below), and GitHub
+refuses a job whose ref is outside that policy **before its first step runs**, so
+the workflow's own conditions never get a say. A dry run is a dispatch from
+`main` — or from a `v*` tag — like any other, and the first dry run of *this*
+file is therefore made after its copy-in has landed on `main`, not from the
+branch that carries the edit.
 
 Because the gate reads the commit's check-runs, each job holds **`checks: read`
 beside `contents: read`** — and nothing else — and the checkout is **full-depth
@@ -1187,9 +1194,9 @@ can prove that a job log carries no identifier, because no test can run the job
 and no `eas` command has ever been run from this repository. On the **first dry
 run** — a manual dispatch with `dry_run` left checked, which submits nothing —
 the owner reads the run's log and confirms that **no bundle identifier or package
-name appears anywhere in it**. It is written as an item in the owner's list
-below rather than as a number: it is a thing to look at, not a check that has
-been made. If an identifier does appear, the mask step is the thing to look at
+name appears anywhere in it**. It is written as a step of its own below
+(`### After the first dry run: read that run's log`) rather than as a number: it
+is a thing to look at, not a check that has been made. If an identifier does appear, the mask step is the thing to look at
 first, and the fix is in this file, which an agent cannot deliver — so it is
 worth doing before the first release rather than after.
 
@@ -1324,25 +1331,19 @@ record and the forms `### Android first release` below lists — is ready. Set i
 MOBILE_RELEASE_DISABLED_PLATFORMS --repo "$REPO"`, or set it to `ios`) only when
 that checklist is done.
 
-**4. [per repo, after the first dry run] Read the first dry run's log and
-confirm it carries no identifier.** Dispatch the workflow once with `dry_run`
-left checked — it builds, writes its summary and submits nothing — and then read
-that run's log for the bundle identifier and the package name. **No test can make
-this check for you**: nothing here runs GitHub Actions, and no `eas` command has
-ever been run from this repository, so whether `eas build` or `eas submit` prints
-an identity into a job log is the kind of thing that can only be known by
-looking. It is an item to do rather than a numbered check, because a number would
-claim a check that has not been made. If an identifier does appear, the mask step
-is what to look at first — and its fix is an edit to this workflow, which an
-agent cannot deliver (GitHub refuses the push), so it is worth doing before the
-first release rather than after it.
-
-**That is the whole list.** `EXPO_TOKEN` is the only secret this workflow needs,
+**That is the whole list** of what has to be in place before it runs.
+`EXPO_TOKEN` is the only secret this workflow needs,
 and it is the only `secrets.` reference in the file: the App Store Connect API
 key and the signing certificate are EAS's (server-side, under the owner's
 account), which is why the submission needs no second credential here.
 `TestDocsMobileReleaseWorkflowIsStagedAndPinned` asserts that the file names
 exactly that one secret and carries no literal that could be one.
+
+The dry run that reads a run's log (`### After the first dry run: read that run's
+log` below) and the version each release has to carry (`### Every release, before
+the tag: the version the app reports` below) are not among the three: one is done
+after the copy-in rather than before it, and the other is done before every
+release rather than once.
 
 **Nothing is added to the repository for the store identity**, because the
 identity is not here: `FUGARO_IOS_BUNDLE_ID` and `FUGARO_ANDROID_PACKAGE` stay in
@@ -1447,6 +1448,55 @@ third edit above). The two sentences do survive it, when this copy-in is the one
 made first — the directory is left holding the four files the block above names
 — and `website/README.md` is never left naming a set this file is not in while it
 is still here: `readme.mjs` reads the directory, not the file's own history.
+
+### Every release, before the tag: the version the app reports
+
+**The version a store shows is `expo.version` in `mobile/app.json`, and nothing in
+this workflow sets it.** The file is checked in as `"version": "0.0.0"` — the
+placeholder a release replaces — and `mobile/app.config.js` spreads that static
+config, adding only the two store identities to it. So the tag push builds
+whatever `app.json` says, and what a build reports is fixed at its upload: an app
+that ships `0.0.0` behind a `vX.Y.Z` tag is a store record that disagrees with the
+release, and nothing in this workflow goes red to say so.
+
+Two checks read that version against the tag: **C6**
+(`docs/mobile/implementation-plan.md`, "the app is versioned with the CLI's tag")
+and **Check 89 step 4** (`docs/gcp-live-checklist.md`: "the version the app
+reports equals the guard's `$TAG`"). `mobile/README.md` says the same in the
+release's own words: releasing this app means setting it to the version being
+released, and nothing bumps it for you.
+
+**[per repo, before every release tag] Set `expo.version` in `mobile/app.json` to
+the version being released, in a commit on `main` before the tag.** It is the
+ordering the Highlights file and the plugin bump already have
+(`scripts/bump-plugin-version.sh` bumps the plugin and touches nothing under
+`mobile/`), and `docs/release.md`'s "Before you tag" checklist carries the same
+line, so a release reads it whether the owner comes to it from this document or
+from the release procedure.
+
+The console answers the same question the other way — `console-release.yml` stamps
+each pack with `-c.extraMetadata.version=X.Y.Z` taken from the tag, which is why
+`console/package.json` can stay `0.0.0`. **That way is not available here without
+a change to `mobile/app.config.js`**: the app's version comes from the app's own
+config, so this staged file cannot set it from the tag by itself. The step above is
+what exists, and a later change that stamps the version from the tag replaces that
+step rather than adding to it.
+
+### After the first dry run: read that run's log
+
+**[per repo, after the first dry run] Dispatch the workflow once with `dry_run`
+left checked — it builds, writes its summary and submits nothing — and then read
+that run's log for the bundle identifier and the package name.** **No test can
+make this check for you**: nothing here runs GitHub Actions, and no `eas` command
+has ever been run from this repository, so whether `eas build` or `eas submit`
+prints an identity into a job log is the kind of thing that can only be known by
+looking. It is an item to do rather than a numbered check, because a number would
+claim a check that has not been made. The dispatch itself has to come from `main`
+or from a `v*` tag, because the `mobile-release` environment's policy names those
+and GitHub refuses any other ref before the job starts. If an identifier does
+appear, the mask step is what to look at first — and its fix is an edit to this
+workflow, which an agent cannot deliver (GitHub refuses the push), so it is worth
+doing before the first release rather than after it.
 
 ### Android first release
 
