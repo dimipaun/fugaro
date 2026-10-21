@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -269,6 +270,59 @@ func TestCoordinatorStatusTextGolden(t *testing.T) {
 	if out != string(want) {
 		t.Errorf("the rendered view changed (go test ./internal/cli -run TestCoordinatorStatusTextGolden -update-coordinator to accept):\ngot:\n%s\nwant:\n%s", out, want)
 	}
+}
+
+// "It reads; it writes nothing, anywhere" (the plan's own sentence for P1).
+// The two places this command could write are the runs bucket and the host,
+// and both are checked: the bucket's objects are the same files, byte for byte
+// and stamp for stamp, and the fake host's call log — which records the calls
+// that write and nothing else — is empty.
+func TestCoordinatorStatusWritesNothing(t *testing.T) {
+	f := newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	runs := filepath.Join(f.dir, "runs")
+	before := coordinatorTree(t, runs)
+	if _, _, err := execute(t, "coordinator", "status", "--json", "--since", "0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "coordinator", "status", "--since", "0"); err != nil {
+		t.Fatal(err)
+	}
+	if after := coordinatorTree(t, runs); !slices.Equal(before, after) {
+		t.Errorf("the runs bucket changed under a read:\nbefore: %v\nafter:  %v", before, after)
+	}
+	if calls := f.host.Snapshot().Calls; len(calls) != 0 {
+		t.Errorf("the host was called to write: %+v", calls)
+	}
+}
+
+// coordinatorTree is every file under dir as "path size modtime", sorted: what
+// a write into the bucket would change.
+func coordinatorTree(t *testing.T, dir string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		out = append(out, fmt.Sprintf("%s %d %s", filepath.ToSlash(rel), info.Size(), info.ModTime().UTC()))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // P1's reader is the runs bucket's own declarations: gitprov has no call that
