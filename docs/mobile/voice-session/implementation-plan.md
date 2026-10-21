@@ -174,10 +174,15 @@ mode, the microphone ask, Bluetooth, and barge-in"* (P3.5/P4.2, owner-run), its
 text is unwritten, and it keeps its number and its subject. The six below cover
 what it does not name. F17.
 
-**None of the six is written into the register by this plan.** The register's own
-rules are that *a check is never run before its text is in the register*, that
-*the phase that ships the check writes it*, and that *a reserved number is never
-reused or renumbered* — and no phase here is approved. D219 records the choice.
+**None of the six is written into the register by this plan.** The three rules
+that keep it out are not all the register's, and each is attributed to the file
+it is in: *"a reserved number is never reused or renumbered"* is the register's
+([../../gcp-live-checklist.md](../../gcp-live-checklist.md)); *"the phase that
+ships the check writes them"* is [../../design/voice.md](../../design/voice.md)
+§5.3's convention, the one the project-centric plan sets and the console plan
+follows; and *"A check is never run before its text is in the register"* is
+[docs/mobile/implementation-plan.md](../implementation-plan.md)'s own sentence —
+and no phase here is approved. D219 records the choice.
 
 | # | The check's subject (the text is VS7's) | Covers | Runs on |
 |---|---|---|---|
