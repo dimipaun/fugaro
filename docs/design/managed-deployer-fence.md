@@ -195,7 +195,8 @@ one D75 already needed.
   a literal front cannot be written, and **§9 cannot reach it**: a name of a
   conditioned type that misses its own template cannot be created. The near miss
   §9 does use (a name that contains `fmgd-` without starting with it) tests the
-  prefix, not the template. **C6/C7 carry UNVERIFIED for exactly this reason**:
+  prefix, not the template. **C6/C7 carry the label §3 gives them, for exactly
+  this reason**:
   the fail-closed reading is the repository's, nothing in the tree quotes the
   reference for it, and no live step can reach the question either way — so this
   stays an open question about Google's behaviour rather than a risk the design
@@ -356,8 +357,8 @@ Reasoning, in the order the requirements are numbered:
   scoped binding whose condition is not the one the code builds, byte for byte.
   The change is to make that "the one the code builds" a *set* — one per service
   — and to keep the same refusal strength per binding.
-- **R6** holds for all seven services, **on the reading C6/C7 record (both
-  UNVERIFIED, neither cited)**: the storage and service-account clauses are
+- **R6** holds for all seven services, **on the reading C6/C7 record (§3's two
+  rows carry the label; neither is cited)**: the storage and service-account clauses are
   `startsWith` on a plan-time literal, and the five `extract` clauses deny when
   their template does not match (C7). The remaining exposure is not the
   fail-closed direction but the one that cannot be measured: a service that does
