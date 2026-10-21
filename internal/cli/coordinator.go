@@ -70,6 +70,16 @@ const coordinatorDeclaredNote = "declared by is the launcher each run's own laun
 // widen a column to the width of the terminal.
 const coordinatorMaxCellRunes = 60
 
+// coordinatorTruncatedNote is printed under the table when any record it lists
+// has a run whose stored file set is short of the one it changed
+// (runstore.ChangedFiles). It is a note and not a cell's footnote because the
+// truncated set is what the collisions below it were computed over: a reader
+// who sees "3+" has to know that the pairs are the ones those runs recorded,
+// and not that there are no others.
+const coordinatorTruncatedNote = "n+ in FILES is a run whose changed-file set is short of the one it changed\n" +
+	"(runstore.ChangedFiles): the paths it lists, and every collision computed from\n" +
+	"them, are the ones the run recorded and not necessarily all of them."
+
 // coordinatorOptions are status's flags.
 type coordinatorOptions struct {
 	cloud  cloudOptions
@@ -333,6 +343,7 @@ func writeCoordinatorStatus(w io.Writer, v coordinator.View) error {
 	fmt.Fprintln(w)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "WORK\tBRANCH\tRELEASE\tRUNS\tFILES\tSTATE\tDECLARED BY")
+	truncated := false
 	for _, r := range v.Records {
 		state := "landed"
 		if r.InFlight {
@@ -342,17 +353,25 @@ func writeCoordinatorStatus(w io.Writer, v coordinator.View) error {
 		if len(r.Runs) > 0 {
 			runs = strconv.Itoa(len(r.Runs))
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+		files := strconv.Itoa(len(r.Files))
+		if recordFilesTruncated(r) {
+			files += "+"
+			truncated = true
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			cellOneLine(r.Label()),
 			coordinatorCell(r.Branch),
 			coordinatorCell(r.Release),
 			runs,
-			len(r.Files),
+			files,
 			state,
 			coordinatorCell(declaredBy(r)))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
+	}
+	if truncated {
+		fmt.Fprintf(w, "\n%s\n", coordinatorTruncatedNote)
 	}
 	fmt.Fprintln(w)
 	if len(v.Collisions) == 0 {
@@ -373,6 +392,20 @@ func writeCoordinatorStatus(w io.Writer, v coordinator.View) error {
 	}
 	fmt.Fprintf(w, "\n%s\n", coordinatorDeclaredNote)
 	return nil
+}
+
+// recordFilesTruncated is whether any run behind the record stored a file set
+// short of the one it changed. The record's FILES cell then reads "n+", and
+// the table carries the note that says what the "+" means: the collisions the
+// view reports are computed over the paths the runs recorded, and a truncated
+// set is not the whole one.
+func recordFilesTruncated(r coordinator.Record) bool {
+	for _, run := range r.Runs {
+		if run.FilesTruncated {
+			return true
+		}
+	}
+	return false
 }
 
 // declaredBy is the launcher of the record's newest run — the view lists a

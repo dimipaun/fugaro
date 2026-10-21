@@ -34,8 +34,11 @@ var updateCoordinatorGolden = flag.Bool("update-coordinator", false, "rewrite te
 //
 //   - TestCoordinatorStatusJSON: the joined view, read as data, over real run
 //     objects and a real (fake) provider — the records, the collision rule
-//     (one per pair, and a pair that shares only a service is one) and the
-//     declaration under a name that says it is one.
+//     (one per pair, and a pair that shares only a service is one), the
+//     declaration under a name that says it is one, and the one record whose
+//     stored file set is short of what the run changed: the field that
+//     qualifies the collisions, since a truncated set is what they are
+//     computed over.
 //   - TestCoordinatorStatusTextGolden: the rendered view, read rather than
 //     accepted.
 //   - TestCoordinatorStatusWritesNothing: the plan's sentence for P1, held by
@@ -70,6 +73,10 @@ type coordinatorRunSeed struct {
 	prRef  int      // the pull request the record names, 0 for none
 	base   string   // the record's base_branch
 	files  []string // the paths the record says it changed
+	// total is what the record says the run changed, when that is more than
+	// files holds: a truncated set (runstore.ChangedFiles). 0 for a whole one,
+	// which is the ordinary record and the only kind the store writes.
+	total int
 }
 
 // coordinatorFixture is the fixture the tests below drive: a cloud fixture
@@ -116,6 +123,15 @@ func newCoordinatorFixture(t *testing.T, seeds []coordinatorRunSeed, prs ...fake
 		}
 		if len(s.files) > 0 {
 			rec.ChangedFiles = runstore.NewChangedFiles(s.files)
+			if s.total > 0 {
+				// A record whose stored set is short of the one the run
+				// changed: the caps in runstore.ChangedFiles fall on a run
+				// that touched more paths than the record holds, and the
+				// record says so (Total and Truncated) rather than passing
+				// the short list off as the whole one.
+				rec.ChangedFiles.Total = s.total
+				rec.ChangedFiles.Truncated = true
+			}
 		}
 		if err := store.WriteRecord(ctx, rec); err != nil {
 			t.Fatal(err)
@@ -150,9 +166,14 @@ func coordinatorPR(number int, branch string, state gitprov.PRState, draft bool)
 // a pull request at all.
 func coordinatorSeeds() []coordinatorRunSeed {
 	return []coordinatorRunSeed{
+		// The one record whose stored file set is short of what the run
+		// changed: it also collides with #14 on internal/coordinator/view.go,
+		// which is the point — a truncated set is what the collisions are
+		// computed over, and the view says so rather than passing the short
+		// list off as the whole one.
 		{id: "20261013-100000-aaaa", pr: 12, prev: "20261012-090000-1111", branch: "fugaro/20261013-100000-aaaa",
 			who: "someone@example.com", status: runstore.StatusSucceeded, prRef: 12, base: "main",
-			files: []string{"internal/cli/exec.go", "internal/coordinator/view.go"}},
+			files: []string{"internal/cli/exec.go", "internal/coordinator/view.go"}, total: 400},
 		{id: "20261013-110000-bbbb", pr: 14, prev: "20261012-090000-2222", branch: "fugaro/20261013-110000-bbbb",
 			who: "other@example.com", status: runstore.StatusSucceeded, prRef: 14, base: "main",
 			files: []string{"internal/coordinator/view.go"}},
@@ -255,6 +276,30 @@ func TestCoordinatorStatusJSON(t *testing.T) {
 		if c.A == "#16" || c.B == "#16" {
 			t.Errorf("the merged #16 is in a collision: %+v", c)
 		}
+	}
+	// The one field that qualifies everything above it: the run behind #12
+	// stored a file set short of the one it changed, so the collisions the view
+	// reports are the ones the paths it recorded produce, and not necessarily
+	// all of them. The view says so rather than passing the short list off as
+	// the whole one. Every other record's set is whole, and the key is then
+	// absent rather than false — so the count is one, not four.
+	truncated := 0
+	for _, r := range v.Records {
+		for _, run := range r.Runs {
+			if !run.FilesTruncated {
+				continue
+			}
+			truncated++
+			if recordLabel(r) != "#12" {
+				t.Errorf("the run %s behind %s is marked truncated, want only #12's", run.ID, recordLabel(r))
+			}
+		}
+	}
+	if truncated != 1 {
+		t.Errorf("%d runs are marked truncated, want exactly 1 (#12's)", truncated)
+	}
+	if n := strings.Count(out, `"files_truncated": true`); n != 1 {
+		t.Errorf("the view carries files_truncated %d times, want once:\n%s", n, out)
 	}
 }
 
@@ -559,8 +604,9 @@ type coordinatorRecord struct {
 		Number int `json:"number"`
 	} `json:"pr"`
 	Runs []struct {
-		ID         string `json:"id"`
-		DeclaredBy string `json:"declared_by"`
+		ID             string `json:"id"`
+		DeclaredBy     string `json:"declared_by"`
+		FilesTruncated bool   `json:"files_truncated"`
 	} `json:"runs"`
 	Release  string   `json:"release"`
 	InFlight bool     `json:"in_flight"`
