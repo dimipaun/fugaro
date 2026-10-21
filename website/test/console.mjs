@@ -71,7 +71,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
-import { builtPages } from './lib/html.mjs'
+import { builtPages, find, parse, textOf, walk } from './lib/html.mjs'
 import {
   CONSOLE_README,
   DOWNLOADS_JSON,
@@ -187,6 +187,15 @@ function platformBlock(section) {
   return /<div class="downloads-linux"[^>]*>([\s\S]*?)<\/ul>\s*<\/div>/.exec(section)?.[1] ?? null
 }
 
+/**
+ * Whether an element carries a class, by token: `class="card download-card"` carries `card`
+ * and not `download-card-…`. Matched by substring instead, `download-card` would also match
+ * the platform heading's own `download-card-platform` and the cards would be read twice.
+ */
+function hasClass(el, name) {
+  return (el.attrs.get('class') ?? '').split(/\s+/).includes(name)
+}
+
 /** The links one piece of markup carries, as `{ href, label }` in document order. */
 function linksIn(html) {
   return [...html.matchAll(/<a[^>]*href="([^"]+)"[^>]*>([^<]*)<\/a>/g)].map((match) => ({
@@ -268,7 +277,28 @@ test('the console page renders the facts its data file carries', async (t) => {
 
   // Every sentence rendered on the page is the data file's own: the name, what the console
   // is, and each property with its title.
-  assert.ok(page.includes(`<h1>${data.name}</h1>`), `the page's heading is not ${JSON.stringify(data.name)}, the name the data file carries`)
+  //
+  // The heading is read as a **document** and not as a string, because the redesign draws the
+  // name in two tones: `website/src/pages/console.astro` splits it the way the home page's
+  // headline is split, so the `h1` carries a class and a `<span class="gradient-text">` around
+  // its last words. What has to hold is the thing the string comparison was really about — the
+  // headline a reader reads is the data file's name, and the words in the gradient are the
+  // name's own last two rather than a second copy of it with markup in the middle (D102).
+  const doc = parse(page)
+  const h1 = find(doc, 'h1')
+  assert.ok(h1, 'the built console page carries no h1')
+  assert.equal(
+    textOf(h1).replace(/\s+/g, ' ').trim(),
+    data.name,
+    `the page's heading is not ${JSON.stringify(data.name)}, the name the data file carries`,
+  )
+  const gradient = [...walk(h1)].find((el) => hasClass(el, 'gradient-text'))
+  assert.ok(gradient, 'the console page\'s headline carries no element of class "gradient-text", so the board\'s two-tone name is not drawn')
+  assert.equal(
+    textOf(gradient).trim(),
+    data.name.split(/\s+/).filter(Boolean).slice(-2).join(' '),
+    `the gradient carries ${JSON.stringify(textOf(gradient).trim())}, and the split is the name's own last two words: a headline whose halves are written down separately is a second copy of the name, and it is the copy that drifts`,
+  )
   assert.ok(page.includes(data.what.text), `the page does not render what.text ${JSON.stringify(data.what.text)}`)
   for (const property of data.properties) {
     assert.ok(page.includes(property.text), `the page does not render the property "${property.id}"`)
@@ -926,6 +956,17 @@ test('the links carry the name the release serves, not the name the build wrote'
   }
 })
 
+/**
+ * The slider's placeholder lines that are long enough for the case below to read (40
+ * characters or more, which is where that reader starts). They are the page's own words and
+ * no document's — `website/src/components/ScreenshotSlider.astro` draws the frame while
+ * `website/data/console-screens.yaml` carries no screenshot — and the shorter one ("A line
+ * naming the screen goes here.", the caption's placeholder) is under the reader's floor and
+ * needs no entry here. A placeholder that grows past 40 characters and is not added to this
+ * list fails the case below, which is the point: the exemption is a decision somebody makes.
+ */
+const PLACEHOLDER_LINES = ['Real console screenshot goes here (not taken yet)']
+
 test('the page states nothing its data file does not carry', async (t) => {
   const built = buildWith(t, () => {})
   const page = decode(builtPage(built))
@@ -935,7 +976,10 @@ test('the page states nothing its data file does not carry', async (t) => {
   // the section titles, the navigation's words) that are the page's own furniture — appears
   // in the data file. A page that paraphrased a claim, or wrote a new sentence of its own
   // about the console, fails here (F37, Global Constraint 6).
-  const article = /<article>([\s\S]*?)<\/article>/.exec(page)
+  // The opening tag is matched loosely: the page has a stylesheet of its own now, so Astro
+  // scopes its markup with `data-astro-cid-…` and `<article>` is written `<article
+  // data-astro-cid-…>` in the artifact (the same reason `downloadsSection` above is loose).
+  const article = /<article[^>]*>([\s\S]*?)<\/article>/.exec(page)
   assert.ok(article, 'the built page carries no article')
 
   const rendered = article[1]
@@ -960,11 +1004,28 @@ test('the page states nothing its data file does not carry', async (t) => {
     // page's sentence as much as the released one is, and a page that paraphrased it would be
     // restating a fact — the rule this case is. Absent, it adds nothing to the list.
     ...(data.linux === undefined ? [] : [data.linux.text]),
+    // The slider's placeholder lines, which are the page's own and no document's: the console
+    // has no screenshot yet, so the frame says so in its own words — the same exception the
+    // home page's illustration caption is (`website/test/home.mjs`), and the one text run on
+    // this page a data file could not carry. They are listed here by hand, they are asserted
+    // to be on the page below so that the exception cannot outlive them, and they are listed
+    // in the pull request for the owner to veto.
+    ...PLACEHOLDER_LINES,
   ]
   for (const sentence of rendered) {
     assert.ok(
       sources.includes(sentence),
       `the page renders ${JSON.stringify(sentence)}, which ${DOWNLOADS_JSON} does not carry: a page renders a fact; it never restates one`,
+    )
+  }
+
+  // The one exception above is a live one: a placeholder line the page has stopped drawing is
+  // an exemption that would let the next long sentence through unread, so it is asserted to be
+  // on the page here rather than trusted.
+  for (const line of PLACEHOLDER_LINES) {
+    assert.ok(
+      rendered.includes(line),
+      `${DOWNLOADS_JSON} is not the only source this case allows: ${JSON.stringify(line)} is exempted as a placeholder line and the page does not render it, so the exemption outlived the text it was written for`,
     )
   }
 })
@@ -1040,7 +1101,37 @@ test('with no Linux block in the data file, no built page carries one', async (t
     null,
     `the downloads section carries a Linux block while ${DOWNLOADS_JSON} carries none: it renders only while the data file has one (D10)`,
   )
-  for (const word of ['Linux', 'AppImage', '.deb']) {
+
+  // **And no card names a platform the data file does not.** The redesign draws a card per
+  // platform — the one the release ships for and the two it does not — so the rule this case
+  // has always held ("the page makes no claim about a platform no document of this repository
+  // speaks about") is now read off the cards the page actually draws rather than as a ban on a
+  // list of words: whatever platform name a card carries has to be a word of the data file's
+  // own sentences. It is the same rule from the other end, and it is the end that holds a
+  // platform nobody here thought to write down.
+  //
+  // This assertion is also the one that failed on `main` before this branch, in its old form:
+  // the data file's own `released.text` says "Windows and Linux builds do not exist yet.", the
+  // page renders that sentence, and a rule that refused the word "Linux" anywhere on the page
+  // was refusing the page for rendering its own data file.
+  const cards = [...walk(parse(page))].filter((el) => hasClass(el, 'download-card-platform'))
+  assert.ok(
+    cards.length >= 3,
+    `the section draws ${cards.length} platform card(s), and this case is about the three the release's state makes: the platform it ships for and the two it does not`,
+  )
+  const claims = [data.released.text, data.not_released.text, ...(data.linux === undefined ? [] : [data.linux.text])]
+  for (const card of cards) {
+    const platform = textOf(card).trim()
+    assert.ok(
+      claims.some((claim) => claim.includes(platform)),
+      `the section draws a card for ${JSON.stringify(platform)} and no sentence of ${DOWNLOADS_JSON} names it: a card is a claim about a platform, and a claim no document of this repository makes is the one this case exists to refuse`,
+    )
+  }
+
+  // And the page names no artifact format of a platform whose artifacts it does not have: an
+  // AppImage and a `.deb` are what a Linux build is, and a page that named them while the data
+  // file carries no Linux asset would be describing a download that is not there (D10).
+  for (const word of ['AppImage', '.deb']) {
     assert.ok(
       !page.includes(word),
       `the page carries ${JSON.stringify(word)} and ${DOWNLOADS_JSON} says nothing about it: the page's sentence about the platform the release carries is the only one it makes`,
