@@ -1067,8 +1067,8 @@ func (r *initRun) setProject(lc *localcfg.Config) {
 	r.res.Project, r.res.GCPProject = lc.Name, lc.GCPProject
 }
 
-// loadInitConfig selects the project config (localcfg.Select, as fugaro
-// init: a missing one is to be created) with --gcp-project, --region and
+// loadInitConfig selects the project config (localcfg.Select, as the
+// converge does: a missing one is to be created) with --gcp-project, --region and
 // --runs-bucket applied; without one, it starts a new one,
 // projects/<name>.yaml, from --name (else the name that selected it, such
 // as the checkout's project:), --gcp-project and --region. A --name that

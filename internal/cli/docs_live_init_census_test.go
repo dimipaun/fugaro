@@ -168,7 +168,7 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 178 files -- 67 non-test Go files, 69 test files,
+// command, sorted. It is 175 files -- 64 non-test Go files, 69 test files,
 // 36 markdown files, and the six that fall in none of those groups: the
 // website's four (its install data, its two pages and its test script), the
 // getting-started design board the redesign was approved from,
@@ -337,12 +337,9 @@ var pendingRename = []string{
 	"internal/cli/docs_release_notes_test.go",
 	"internal/cli/docs_setup_wizard_checks_test.go",
 	"internal/cli/doctor_bucket_test.go",
-	"internal/cli/image.go",
 	"internal/cli/image_refresh_steps_test.go",
-	"internal/cli/init.go",
 	"internal/cli/init_test.go",
 	"internal/cli/managed_apply_test.go",
-	"internal/cli/project_job.go",
 	"internal/cli/project_shared_test.go",
 	"internal/cli/project_test.go",
 	"internal/cli/run_oauth_test.go",

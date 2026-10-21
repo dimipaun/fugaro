@@ -396,8 +396,8 @@ func buildRecordNote(lc *localcfg.Config) string {
 
 // cloudBuildSpec is the Cloud Build build of workflow name of the
 // repository rs, from base, recording to bucket (gs://…, the local
-// config's RecordBucketURL): the one spec fugaro image build, fugaro
-// init's first build and the daily image check submit. gitSecretID is the
+// config's RecordBucketURL): the one spec fugaro image build, the
+// converge's first build and the daily image check submit. gitSecretID is the
 // secret the build's clone reads (rs.Secrets[ws.GitSecret] would be the
 // repository's own copy, which Readiness may have resolved past: design
 // docs/design/project-secrets.md §5), never looked up here.
