@@ -6375,6 +6375,62 @@ func TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 		}
 	}
 
+	// The two pairs that section prints are the sentences the owner writes when
+	// they apply this file, one per state `mobile-release.yml` can be in, and
+	// until this test read them nothing did: the copy-in proof splices the Linux
+	// pair's, out of `## console-release-linux.yml`. A pair whose names or count
+	// have drifted from the state its label describes is a sentence that reddens
+	// the two checks below in the owner's commit -- this file replaced in the
+	// opening line, and a count and a set the directory does not hold -- so each
+	// is held here to the directory that state leaves.
+	//
+	// The set each pair describes is stated rather than observed, because one of
+	// the two states is not this tree's: the pending set with this file gone, and
+	// with `mobile-release.yml` in it or out of it. Both are read in every tree,
+	// so neither pair can rot while the other is the one the repository is in.
+	if docExists(t, consoleLinuxWorkflowPath) {
+		const what = "docs/pending-workflows/README.md's `console-linux.yml` section"
+		withMobile := pendingWorkflows(t)
+		if !slices.Contains(withMobile, filepath.Base(stagedMobileReleaseWorkflowPath)) {
+			withMobile = append(withMobile, filepath.Base(stagedMobileReleaseWorkflowPath))
+		}
+		slices.Sort(withMobile)
+		for _, c := range []struct {
+			name, label, to string
+			want            []string
+		}{
+			{
+				name:  "already applied",
+				label: consoleLinuxCopyInMobileAppliedLabel,
+				to:    consoleLinuxCopyInMobileStagedLabel,
+				want: slices.DeleteFunc(slices.Clone(withMobile), func(n string) bool {
+					return n == filepath.Base(consoleLinuxWorkflowPath) || n == filepath.Base(stagedMobileReleaseWorkflowPath)
+				}),
+			},
+			{
+				name:  "still staged",
+				label: consoleLinuxCopyInMobileStagedLabel,
+				to:    consoleLinuxCopyInOtherOrderLabel,
+				want:  slices.DeleteFunc(slices.Clone(withMobile), func(n string) bool { return n == filepath.Base(consoleLinuxWorkflowPath) }),
+			},
+		} {
+			pair := readmeSectionPart(t, what, build, c.label, c.to)
+			for _, p := range []struct{ what, block, pattern string }{
+				{"the opening line", fencedBlockContaining(t, what, pair, "files are pending"), consolePendingBoldPattern},
+				{"the site's last paragraph", fencedBlockContaining(t, what, pair, "now holds"), consolePendingPathsPattern},
+			} {
+				names, count := consolePendingSentence(t, "the pair in `"+what+"` for `mobile-release.yml` "+c.name+", "+p.what, p.block, p.pattern)
+				slices.Sort(names)
+				if !slices.Equal(names, c.want) {
+					t.Errorf("the pair `%s` hands the owner in `%s` names %q, and applying `console-linux.yml` with `mobile-release.yml` %s leaves the directory holding %q: the sentences are held to the directory, and one that named a file that is not pending would be red in the owner's commit", c.label, what, names, c.name, c.want)
+				}
+				if count != len(c.want) {
+					t.Errorf("the pair `%s` hands the owner in `%s` says %d pending workflow(s), and applying `console-linux.yml` with `mobile-release.yml` %s leaves %d (%q): the count and the names are one claim", c.label, what, count, c.name, len(c.want), c.want)
+				}
+			}
+		}
+	}
+
 	// The release file's section: the three commands, in order, and the reason
 	// there are three.
 	release := consoleReadmeSection(t, doc, "## `console-release-linux.yml`")
@@ -6897,6 +6953,21 @@ type copyInSentences struct {
 const (
 	consoleCopyInMobileStagedLabel  = "**If `mobile-release.yml` is still staged when you make this copy-in**"
 	consoleCopyInMobileAppliedLabel = "**If it has already been copied in**"
+)
+
+// The `## console-linux.yml` section prints a pair of its own for each of the
+// same two states, under labels of its own: applying that file leaves a
+// different directory than applying the release file does, so the sentences it
+// hands the owner cannot be the Linux pair's. Nothing else read those two pairs
+// until TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere did, and a pair that
+// has drifted from its state is a sentence the owner writes into a red tree --
+// the two sentences it replaces are what that test checks against this
+// directory. The third marker is the paragraph that follows the second pair, and
+// it is what tells the two parts apart when they are read one at a time.
+const (
+	consoleLinuxCopyInMobileStagedLabel  = "**If `mobile-release.yml` is still staged**, it leaves four"
+	consoleLinuxCopyInMobileAppliedLabel = "**If `mobile-release.yml` has already been copied in**, applying this file leaves"
+	consoleLinuxCopyInOtherOrderLabel    = "**If the console's other two have been applied first**"
 )
 
 // readmeSectionPart returns the part of text that runs from `from` to the start

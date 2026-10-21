@@ -595,14 +595,21 @@ repository count the files still pending in this directory and both are held to
 the directory: the last section of `website/README.md` (which
 `website/test/readme.mjs` reads in both directions, count and names) and **this
 README's own opening line** (which `TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`
-holds to the same directory). Applying this file leaves
+holds to the same directory). **Which state this copy-in creates depends on the
+order the owner applies 2026-10-20's other files in**, and this section cannot
+fix that order: this file and `console-release-linux.yml` belong to the Linux
+run, `console-windows.yml` to the packer's, and `mobile-release.yml` to the
+mobile app's. With the console's other two still staged — the order this section
+describes — the pair to write depends on `mobile-release.yml` alone, so both
+pairs are given. Each block is the **exact** text to write in place of the
+sentence it replaces: the opening-line block is the whole claim, from its first
+bold marker to the end of its last sentence, and the sentence that follows it in
+this file — "**Two other files stay staged here by design**, `console-tests.yml`
+and `console-release.yml`" — is unchanged, because those two do stay staged.
+
+**If `mobile-release.yml` has already been copied in**, applying this file leaves
 `console-release-linux.yml` and `console-windows.yml` pending beside
-`shared-tests.yml`, so the two sentences that commit needs are (each block is
-the **exact** text to write in place of the sentence it replaces: the
-opening-line block is the whole claim, from its first bold marker to the end of
-its last sentence, and the sentence that follows it in this file — "**Two other
-files stay staged here by design**, `console-tests.yml` and
-`console-release.yml`" — is unchanged, because those two do stay staged):
+`shared-tests.yml`:
 
 ```
 **Three files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
@@ -624,13 +631,49 @@ request, and is copied in only after the packer and the unit suite can pass on a
 None is this site's:
 ```
 
-The second block is the head of `website/README.md`'s last paragraph, up to and
-including "site's:"; the words that follow it on the page today — "the
-website's two manual workflows, `website-preview.yml` and
+**If `mobile-release.yml` is still staged**, it leaves four — `shared-tests.yml`,
+`console-release-linux.yml`, `console-windows.yml` and `mobile-release.yml`:
+
+```
+**Four files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below), **`console-release-linux.yml`** (the console's signing
+pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged
+`console-release.yml`; see `## console-release-linux.yml` below), **`console-windows.yml`**
+(the console's Windows installer pack, 2026-10-20 — a release-time job, not a pull-request check;
+see `## console-windows.yml` below) **and `mobile-release.yml`** (the mobile app's build and
+store submissions, 2026-10-20; see `## mobile-release.yml` below).
+```
+
+```
+`docs/pending-workflows/` now holds four pending workflows,
+`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+P4.3) — `docs/pending-workflows/console-release-linux.yml` — the console's signing pipeline
+with the Linux legs added, which supersedes the staged `console-release.yml` and so is copied
+over it as well as into `.github/workflows/` — `docs/pending-workflows/console-windows.yml` —
+the console's Windows installer pack, which runs at release time only rather than on a pull
+request, and is copied in only after the packer and the unit suite can pass on a Windows runner
+— and `docs/pending-workflows/mobile-release.yml` — the mobile app's build and store
+submissions (2026-10-20). None of the four is this site's:
+```
+
+**If the console's other two have been applied first**, this copy-in leaves one of
+the two trees the `## console-windows.yml` section prints under its own labels,
+and the pair to write is that section's — `shared-tests.yml` beside
+`mobile-release.yml` when that one is still staged, and `shared-tests.yml` alone
+when it is not — because the directory a copy-in leaves is the same whichever
+order the copies went in. Read the count and the names off
+`docs/pending-workflows/`, which is what both sentences are held to.
+
+In each pair above the second block is the head of `website/README.md`'s last
+paragraph, up to and including "site's:"; the words that follow it on the page
+today — "the website's two manual workflows, `website-preview.yml` and
 `website-promote.yml` (#566)…" — are not part of this change and stay where they
-are. `TestStagedLinuxFilesSurviveTheCopyIn` splices exactly this text into the
-site's README (and the two blocks below into this one) and then runs this suite
-in the spliced tree, so a block that is not the text the tests need fails here
+are. **None of the four blocks here is spliced by a test**, unlike the pair in
+`## console-release-linux.yml` below: `TestStagedLinuxFilesSurviveTheCopyIn`
+applies the Linux pair's copy-in and splices *that* section's pair, which says so
+at its own label. These two pairs are read where they stand instead, by
+`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`, each against the state its
+label describes — so a block that is not the text that state needs fails here
 rather than in the owner's commit.
 
 The sentences the second commit needs — with both of 2026-10-20's files applied
@@ -1622,8 +1665,9 @@ Each is a field or file name, never a value.)
 is asserted to exist, to run before the first `eas` command and to name both
 variables; that `::add-mask::` actually keeps an identity out of `eas`'s output
 is a fact about `eas-cli` and GitHub Actions, and the only instrument for it is a
-person reading the first dry run's log (item 4 above). That gap is what item 4 is
-for, and it is why the item is on the owner's list rather than in this paragraph.
+person reading the first dry run's log (`### After the first dry run: read that
+run's log` above). That gap is what that section is for, and it is why the read
+is an item to do rather than a check this paragraph can make.
 
 **`eas-cli` is pinned to one exact version, and it is the only install in the
 file.** `npm install --global eas-cli@25.3.0` — **25.3.0** was the version the
