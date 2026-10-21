@@ -40,8 +40,10 @@
  * 2026-10-21 for this page). The page is styled in the shapes the foundation PR wrote once
  * for the site — the oversized headline with the accent's gradient, the slim lead, the
  * card — and it adds no shape of its own and touches no shared file: the headline is
- * `base.css`'s `.display-xl` with `.gradient-text` on the word, the guides are `.card`s in
- * a grid, and the reference's own title is the band's heading at the display scale. **Not
+ * `base.css`'s `.display-xl` with `.gradient-text` on the word, the Guides heading and the
+ * reference's own title are `.display-md` (the class `demotedTitle` moves the generated title
+ * onto), the guides are `.card`s in a grid, and no rule of this page's writes a type size, a
+ * weight or a tracking of its own. **Not
  * one word of the page changed with it**: the headline, the lead, the entries' titles, the
  * paths and the answers are the strings they were, and the rendered reference is the
  * generated document it was — the redesign is the layout and the styling, and
@@ -213,6 +215,16 @@ const referenceEntry = {
  * are the generated file's own. A document that does not open with exactly one `h1` is a
  * build error naming the file, because the build has nothing to move and would otherwise
  * render a page with two titles.
+ *
+ * **The move is also where the heading's shape comes from.** The title is the band's heading
+ * and the command headings under it are entries, so the title takes the display scale's middle
+ * step — `base.css`'s `.display-md`, the class written onto it here. It is a class rather than
+ * a rule of this page's on purpose: the display scale is a set of declarations (the weight, the
+ * tracking, the leading, the size's `clamp`, `text-wrap: balance`) written once in `base.css`,
+ * and a copy of it in this page's stylesheet is a copy that drifts from it — this page's copy
+ * already had, by the time it was reviewed, dropped the balance. The page therefore writes no
+ * rule for the title at all, and the rule for the command headings below is written as the
+ * headings *after* the title so the mono face cannot reach it.
  */
 function demotedTitle(html: string, file: string, title: string): string {
   const titles = [...html.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/g)]
@@ -221,7 +233,7 @@ function demotedTitle(html: string, file: string, title: string): string {
       `${file} renders ${titles.length} "h1" headings and the page moves its title to a section heading: the generated document and this file have to agree on what its title is (W1.7 step 3).`,
     )
   }
-  const rendered = titles[0][0].replace(/^<h1/, '<h2').replace(/<\/h1>$/, '</h2>')
+  const rendered = titles[0][0].replace(/^<h1/, '<h2 class="display-md"').replace(/<\/h1>$/, '</h2>')
   if (rendered.replace(/<[^>]*>/g, '').trim() !== title) {
     throw new Error(
       `${file}'s "# " title is ${JSON.stringify(title)} and its rendered title reads ${JSON.stringify(rendered.replace(/<[^>]*>/g, '').trim())}: the page renders the generated document, and the two disagree about its own title (W1.7 step 3).`,
@@ -280,8 +292,9 @@ const entries = [...guides, referenceEntry]
   {/* The hub's opening band: the headline and the lead, and the room the guides start after
       (the bold look's two blocks, separated by the hairline `.docs-hero` carries). **No word
       is added between the `h1` and the `Guides` heading**, and that is a gate's business
-      rather than a taste: D188 reads a page's lead as the text between those two headings,
-      and this page's lead is 37 of its 40 words — an eyebrow, a byline or a sentence about
+      rather than a taste: D188 reads a page's lead as the text between those two headings
+      (`budget.mjs`'s `pageWords`, which measures 36 here), and this page's lead is 36 of its
+      40 words — an eyebrow, a byline or a sentence about
       the page here would be a word the ceiling counts. */}
   <div class="docs-hero">
     <h1 class="docs-title display-xl"><span class="gradient-text">Documentation</span></h1>
@@ -442,22 +455,24 @@ const entries = [...guides, referenceEntry]
     max-width: var(--measure);
   }
 
-  /* The document's own title, which the page moves from `h1` to `h2` (`demotedTitle`): it is
-     the heading of this band, so it takes the display scale's middle step rather than the
-     mono face the command headings below it are set in — that difference is what makes the
-     document's title read as the band's heading and a command's name as an entry under it. */
-  .docs-reference > h2:first-child {
-    margin-top: 0;
-    font-family: var(--font-sans);
-    font-size: clamp(var(--font-size-xl), 2.6vw, var(--font-size-3xl));
-    font-weight: var(--weight-black);
-    letter-spacing: var(--tracking-display);
-    line-height: var(--leading-display);
-  }
+  /* The document's own title, which the page moves from `h1` to `h2` (`demotedTitle`), carries
+     `base.css`'s `.display-md` — the class the move writes onto it — and so has **no rule of
+     this page's at all**: the step's own `margin-block: 0` is the room it needs, and every
+     declaration of its shape is the display scale's, written once for the site. A copy of the
+     scale here is a copy that drifts from it: the one this replaced had already dropped the
+     scale's `text-wrap: balance`, so the band's heading wrapped unbalanced where a `display-md`
+     heading does not.
+
+     The command headings below it are the reference's *other* headings, and the rule for them
+     is written that way — `:not(:first-child)` — rather than as `.docs-reference h2`, which
+     would out-specify `.display-md` (a class and a type against a class) and set the band's
+     own heading in the mono face at a command's size. The heading the title is moved to is the
+     band's first child, which is what the page's own `demotedTitle` guarantees and what
+     `website/test/docs-hub.mjs` reads the band by. */
 
   /* Every other heading of the reference is a command's name: the mono face, one step up
      from the body, with the room a section needs. */
-  .docs-reference h2 {
+  .docs-reference > h2:not(:first-child) {
     font-family: var(--font-mono);
     font-size: var(--font-size-lg);
     margin-top: var(--space-xl);

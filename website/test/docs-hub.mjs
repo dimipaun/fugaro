@@ -309,13 +309,16 @@ test('the hub renders the generated CLI reference, command section for command s
 
   // The document's own title is rendered as a section heading of this page: the page's h1
   // is the hub's, so the rendered document sits a level below it, and the anchor the
-  // document's title carries survives the move (F40's rule, applied to the built page).
+  // document's title carries survives the move (F40's rule, applied to the built page). The
+  // heading is read by the attributes it carries rather than by one exact spelling of the tag:
+  // the move also writes the display scale's class onto it (the bold look's case below), and a
+  // reading that pinned the whole opening tag would call a correctly moved title a missing one.
   assert.ok(
-    page.includes(`<h2 id="${title.anchor}">`),
+    new RegExp(`<h2\\b[^>]*\\bid="${title.anchor}"[^>]*>`).test(page),
     `${path.relative(REPO, BUILT_PAGE)} does not render ${REFERENCE}'s own title ${JSON.stringify(title.text)} as a section heading: the page renders the generated document, and the document's title is part of it`,
   )
 
-  const sections = [...page.matchAll(/<h2 id="([^"]*)">/g)].map((match) => match[1]).filter((id) => id !== title.anchor)
+  const sections = [...page.matchAll(/<h2\b[^>]*\bid="([^"]*)"/g)].map((match) => match[1]).filter((id) => id !== title.anchor)
   const commands = generated.filter((heading) => heading.depth === 2)
   assert.equal(
     sections.length,
@@ -467,10 +470,23 @@ test('markup planted in the reference source is rendered as text and never as a 
 // the look is not (no gate here can see a page): the classes the built markup carries, and
 // the declarations the page's own stylesheet does NOT make.
 //
+// **What "the page's own stylesheet" means here, and why it is read by name rather than by
+// spelling.** The page's rules are the ones that carry a class this page writes, and a rule
+// that re-declares a shared shape writes it under *some* selector naming that class —
+// `.docs-title{font-size:1rem}` and `.guides .guide{background:…}` are the same defect as the
+// bare `.guide{background:…}` and the same defect as a headline with a size of its own. A
+// reading that looked for one exact selector string would pass all three, which is a gate
+// holding a spelling rather than the property. So the reader below takes every rule whose
+// selector names the class as a token, and the case refuses the type properties on the
+// headings and the box properties on anything that names a guide.
+//
 // A gate whose refusal has never been seen to fire is a gate nobody knows the shape of, so
 // each assertion below was mutation-proved on the built page: dropping `display-xl` from the
-// headline, dropping the gradient's `span`, dropping `card` from an entry, and writing a
-// `background` into the page's own `.guide` rule each fail here, naming the page.
+// headline, dropping the gradient's `span`, dropping `card` from an entry, dropping
+// `display-md` from the reference's own title, writing a `background` into the page's own
+// `.guide` rule, writing one into a `.guides .guide` rule (a selector the earlier reading did
+// not look at), and writing `font-size: 1rem; font-weight: 400` into `.docs-title` each fail
+// here, naming the page.
 
 /** The built page's own stylesheet: Astro inlines the site's CSS into one `<style>` block. */
 function pageStylesheet(page) {
@@ -479,11 +495,22 @@ function pageStylesheet(page) {
   return blocks.join('\n')
 }
 
-/** The declarations of the one rule whose selector list is exactly `selector`. */
-function declarationsOf(css, selector) {
-  const rule = cssRules(css).find((entry) => entry.selector === selector)
-  assert.ok(rule, `the built page's stylesheet carries no ${selector} rule, and the case below reads its declarations`)
-  return cssDeclarations(rule.body)
+/**
+ * Every declaration the built page's stylesheet makes in a rule whose selector **names**
+ * `name` as a class — any such rule, not only the one whose whole selector is that class.
+ *
+ * The difference is between a property and a spelling. A page that gives its headline a size
+ * of its own, or paints a card it did not own, writes the defect under whatever selector
+ * reaches the element: `.docs-title{font-size:1rem}` and `.guides .guide{background:…}` are
+ * the page's own shape exactly as `.guide{background:…}` is, and a reading that looked for one
+ * exact selector string would call all of them clean. The class is matched as a whole token,
+ * so `.guides` — the grid that holds the cards — is not a rule about a guide.
+ */
+function declarationsNaming(css, name) {
+  const token = new RegExp(`\\.${name}(?![\\w-])`)
+  return cssRules(css)
+    .filter((rule) => token.test(rule.selector))
+    .flatMap((rule) => cssDeclarations(rule.body))
 }
 
 test("the hub is drawn in the site's shared bold look, and gives the page no shape of its own", () => {
@@ -518,16 +545,41 @@ test("the hub is drawn in the site's shared bold look, and gives the page no sha
     assert.match(classes, /(?:^|\s)card(?:\s|$)/, `a guide entry carries ${JSON.stringify(classes)} and not the site's shared \`card\` class: the bold look's card is written once in \`base.css\`, and a card this page drew itself is the page that stops looking like the site`)
   }
 
-  // And the page draws no card of its own: the box (its fill, its hairline, its corner and
-  // its padding) is `.card`'s, so the page's own `.guide` rule may lay the card's contents
-  // out and may not paint it.
+  // The reference band's heading: the generated document's own title, which the page moves
+  // from `h1` to `h2` and onto which the move writes the display scale's middle step. It is a
+  // heading of this page, so it is a heading of the same shape as the Guides heading above it
+  // and not a copy of the scale written into this page's stylesheet.
+  const bandTitle = /<section\b[^>]*\bid="cli-reference"[^>]*>[\s\S]*?<h2\b([^>]*)>/.exec(page)
+  assert.ok(bandTitle, `${path.relative(REPO, BUILT_PAGE)} carries no rendered reference, and the band's heading is the generated document's own title`)
+  assert.match(bandTitle[1], /(?:^|\s)class="[^"]*\bdisplay-md\b[^"]*"/, `the rendered reference's own title carries ${JSON.stringify(bandTitle[1])} and no display step: the band's heading is \`base.css\`'s \`.display-md\`, which the page's \`demotedTitle\` writes onto the title as it moves it — a title styled by a rule of this page's own is a second copy of the scale, and the copy is what drifts from it`)
+
+  // And the page writes none of those shapes out by hand. A rule of this page's may place a
+  // heading — its margins, its measure — and may not set its type: the size, the face, the
+  // weight, the tracking, the leading and the balance are the display scale's, written once in
+  // `base.css`. The property is the same one the two assertions above hold in the markup, read
+  // where the markup cannot show it: the page's own stylesheet.
   const css = pageStylesheet(page)
-  const forbidden = new Set(['background', 'background-color', 'background-image', 'border', 'border-radius', 'padding'])
-  const drawn = declarationsOf(css, '.guide').filter(([property]) => forbidden.has(property))
+  const type = new Set(['font-family', 'font-size', 'font-weight', 'letter-spacing', 'line-height', 'text-wrap'])
+  for (const [name, what] of [
+    ['docs-title', "the headline"],
+    ['docs-heading', 'a section heading'],
+  ]) {
+    const declared = declarationsNaming(css, name).filter(([property]) => type.has(property))
+    assert.deepEqual(
+      declared,
+      [],
+      `the page's own \`.${name}\` rule declares ${JSON.stringify(declared.map(([p, v]) => `${p}: ${v}`))}: the type of ${what} is the display scale's — \`base.css\`'s \`.display-xl\`/\`.display-md\` — and a size, a weight or a tracking written here is the page's own shape, which is the one thing a redesign of one page can get wrong (the bold look, PR #779). A rule of this page's may place a heading and may not set its type`,
+    )
+  }
+
+  // The card's box (its fill, its hairline, its corner and its padding) is `.card`'s, so no
+  // rule of this page's that names a guide may paint one — whichever way it names it.
+  const painted = new Set(['background', 'background-color', 'background-image', 'border', 'border-radius', 'padding'])
+  const drawn = declarationsNaming(css, 'guide').filter(([property]) => painted.has(property))
   assert.deepEqual(
     drawn,
     [],
-    `the page's own \`.guide\` rule declares ${JSON.stringify(drawn.map(([p, v]) => `${p}: ${v}`))}: the card's fill, hairline, corner and padding are \`base.css\`'s \`.card\` on this page as on every other, and a page that paints its own box is the drift the shared look exists to stop`,
+    `the page's own rules for its guides declare ${JSON.stringify(drawn.map(([p, v]) => `${p}: ${v}`))}: the card's fill, hairline, corner and padding are \`base.css\`'s \`.card\` on this page as on every other, and a page that paints its own box is the drift the shared look exists to stop`,
   )
 })
 
