@@ -665,7 +665,7 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 		}
 	}
 	if strings.Contains(release, "the console has a Windows build") {
-		t.Errorf("docs/release.md says the console has a Windows build again: the plan is not approved, the pack is red until its Parts B and C land, and docs/design/desktop-console.md and the console's own README still say Windows stays out")
+		t.Errorf("docs/release.md says the console has a Windows build again: the plan is not approved, the pack's test step is red until Part C's POSIX repairs land (Part B landed on 2026-10-21), and docs/design/desktop-console.md and the console's own README still say Windows stays out")
 	}
 
 	// 6. And the figure the suite's size is given as, in the two other places it
