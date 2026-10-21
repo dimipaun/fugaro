@@ -1143,6 +1143,161 @@ function screensOf(name: string, why: string): Screen[] {
   })
 }
 
+/**
+ * One line the zoom drawing prints: its text, and the document the text is a line of. The
+ * component holds every one of them to that document at build time (`src/lib/zoom-labels.mjs`),
+ * so the name here is a citation and not a description (Global Constraint 6).
+ */
+export interface ZoomLabel {
+  /** The line as the drawing prints it. */
+  text: string
+  /** The document it is quoted from, as the data file names it: `README.md#How it works`. */
+  source: string
+}
+
+/**
+ * One entity a level draws, and the words beside it. `entity` names a `<symbol>` of the
+ * component's one `<defs>` (`job`, `orchestrator`, `developer`, `console`, `project`); the
+ * component refuses a name with no symbol, and `website/test/how-it-works.mjs` refuses a symbol
+ * no level draws (D244).
+ */
+export interface ZoomPart {
+  /** Which of the five entities this part is. */
+  entity: string
+  /** The lines drawn beside it, in the order the drawing writes them. */
+  labels: ZoomLabel[]
+}
+
+/** One of the four levels: its anchor, its name, its caption and the parts it draws. */
+export interface ZoomLevel {
+  /** The anchor the level's markers point at: `level-1` … `level-4` (D245). */
+  id: string
+  /** The level's name — the `<figcaption>` of its `<figure>`. */
+  name: ZoomLabel
+  /** The line under the drawing, or `null` when the level carries none. */
+  caption: ZoomLabel | null
+  /** The entities the level draws, in the order it draws them. */
+  parts: ZoomPart[]
+}
+
+/** website/data/zoom-levels.yaml, validated. */
+export interface ZoomLevelsFacts {
+  levels: ZoomLevel[]
+}
+
+const ZOOM_FILE = 'website/data/zoom-levels.yaml'
+
+const ZOOM_KEYS = ['levels', 'version']
+const ZOOM_LEVEL_KEYS = ['caption', 'id', 'name', 'parts']
+const ZOOM_PART_KEYS = ['entity', 'labels']
+const ZOOM_LABEL_KEYS = ['source', 'text']
+
+/** One row that is a line of a document: `{ text, source }`, both read and both non-empty. */
+function asLabel(value: Value, file: string, what: string): ZoomLabel {
+  const label = asMap(value, file, what)
+  refuseUnknownKeys(label, ZOOM_LABEL_KEYS, `${file} ${what}`)
+  const text = asString(label.text, file, `${what}.text`)
+  const source = asString(label.source, file, `${what}.source`)
+  if (text.trim() === '') {
+    throw new Error(
+      `${file}: ${what}.text is empty, and every row of this file is a line the drawing prints: a level whose name, caption or label is empty draws a blank space where a reader was meant to read the repository's own words.`,
+    )
+  }
+  if (source.trim() === '') {
+    throw new Error(
+      `${file}: ${what}.source is empty, and every line this drawing prints cites the document it is quoted from (Global Constraint 6): a line with no citation is a line no guard can hold, and the component refuses to build the drawing rather than print an unchecked claim.`,
+    )
+  }
+  return { text, source }
+}
+
+/**
+ * The four zoom levels, in the order the page draws them: each level's anchor, its name, its
+ * caption and the entities it draws with the words beside them (D237, D244).
+ *
+ * **A row's words are held to a document twice.** This reader holds the *shape* — a row is a
+ * `{ text, source }` pair and neither half is empty — and the component holds the *line*
+ * (`src/lib/zoom-labels.mjs`'s `holdZoomLabels`), which refuses a text that is not a line of
+ * the document its row cites. `website/test/how-it-works.mjs` makes the same check against the
+ * built page, so a label that drifts from its document stops the tests as well as the build.
+ *
+ * Everything else is refused by name: an `id` that is not `level-N` (the anchors Part 5 reuses
+ * are `#level-1` … `#level-4`, so a level whose id is anything else is a marker nothing can
+ * point at), an `entity` that is not a name at all, and a level with no parts — a level that
+ * draws nothing is a `<figure>` with a caption and no picture.
+ */
+export function loadZoomLevels(): ZoomLevelsFacts {
+  const file = ZOOM_FILE
+  const doc = asMap(
+    parseYAML(readBytes(path.join(DATA_DIR, 'zoom-levels.yaml'), "the zoom drawing's four levels: their anchors, their names, their captions and the words beside each entity they draw (the brief of 2026-10-21, D237 and D244)"), file),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, ZOOM_KEYS, file)
+
+  if (asInt(doc.version, file, 'version') !== 1) {
+    throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
+  }
+
+  const levels = asList(doc.levels, file, 'levels').map((entry, index) => {
+    const what = `levels[${index}]`
+    const level = asMap(entry, file, what)
+    refuseUnknownKeys(level, ZOOM_LEVEL_KEYS, `${file} ${what}`)
+
+    const id = asString(level.id, file, `${what}.id`)
+    // The anchor, and the only shape of it there is: `#level-1` … `#level-N` (D245). An id is
+    // what a marker's `href` and a figure's own `id` are built from, so an id carrying anything
+    // else is a link that resolves to nothing or an id written twice on one page — both of
+    // which the linkcheck and a11y gates would report without saying which row to open.
+    if (!/^level-[1-9][0-9]*$/.test(id)) {
+      throw new Error(
+        `${file}: ${what}.id is ${JSON.stringify(id)}, and a level's id is its anchor: \`level-\` and the level's number, which is what the markers' \`href="#${id}"\` and the \`<figure id="${id}">\` are made of (D245). A name of any other shape is a marker that points at nothing.`,
+      )
+    }
+
+    const name = asLabel(level.name, file, `${what}.name`)
+    const caption = level.caption === undefined || level.caption === null ? null : asLabel(level.caption, file, `${what}.caption`)
+
+    const parts = asList(level.parts, file, `${what}.parts`).map((partEntry, partIndex) => {
+      const partWhat = `${what}.parts[${partIndex}]`
+      const part = asMap(partEntry, file, partWhat)
+      refuseUnknownKeys(part, ZOOM_PART_KEYS, `${file} ${partWhat}`)
+      const entity = asString(part.entity, file, `${partWhat}.entity`)
+      if (!/^[a-z][a-z-]*$/.test(entity)) {
+        throw new Error(
+          `${file}: ${partWhat}.entity is ${JSON.stringify(entity)}, and an entity is the name of one of the drawing's shapes — \`job\`, \`orchestrator\`, \`developer\`, \`console\` or \`project\` (D244): lower-case letters and dashes, which is the id the level's \`<use href="#…">\` is built from. Anything else is a reference to a shape the drawing does not have.`,
+        )
+      }
+      // A part's labels may be empty, and level 4's are: an entity that is there to be
+      // recognised rather than explained draws a shape and no words, and a level's own name
+      // and caption carry what it is. A part with **no such key at all** is refused by
+      // `refuseUnknownKeys` above only when it is misspelled, and by `asList` here when it is
+      // absent — which is what keeps "draws nothing" a decision a row makes rather than one a
+      // reader assumes.
+      const labels = asList(part.labels, file, `${partWhat}.labels`).map((label, labelIndex) =>
+        asLabel(label, file, `${partWhat}.labels[${labelIndex}]`),
+      )
+      return { entity, labels }
+    })
+
+    if (parts.length === 0) {
+      throw new Error(
+        `${file}: ${what} draws no parts, and a level is a drawing: every level of the four draws at least one entity through \`<use>\` (D244). A level with no parts is a caption with no picture under it.`,
+      )
+    }
+
+    return { id, name, caption, parts }
+  })
+
+  if (new Set(levels.map((level) => level.id)).size !== levels.length) {
+    throw new Error(
+      `${file}: two levels share an id, and an id is an anchor: the page would carry \`id="…"\` twice and every marker for it would resolve to the first — one level's marker would scroll a reader to another level.`,
+    )
+  }
+
+  return { levels }
+}
+
 // ---------------------------------------------------------------------------------------
 // website/content/ — the generated documents, and the aggregation's published output.
 // ---------------------------------------------------------------------------------------

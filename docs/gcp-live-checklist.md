@@ -363,6 +363,16 @@ account without `billing.accounts.list`, and the three sessions that are never
 allowed to list an account at all), and Check 27's rewritten section is where
 the picker's success path is run.
 
+**Check 112 is the four zoom levels', and it is the next number free above 111** (the
+zoom-diagrams plan `docs/website/zoom-diagrams/implementation-plan.md` §3, its Part 4 — decision
+**D247** takes **112** for this work). The reading is the same shape as the one above and is taken
+the same way: the highest **written** `## Check N` section in this file, read at **`d3a2ef08`** —
+the commit this change is based on — was **111**, and a reservation is not a fact about the tree,
+so the section is **written below** rather than reserved. Its subject is the four levels as
+**stills**, which is what this tree carries: the pinned, scroll-driven zoom between them is **Part
+5** of that plan and is not in this checkout, so the one step of the section that is about the zoom
+is written and **cannot be run yet**. The check is owner-run and it is **NOT RUN**.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -532,6 +542,7 @@ probe account carries predefined grants only).
 | 89 | A signed EAS build, and the store's **internal** track (mobile plan Task P4.2a writes it, and P4.4 **runs** it; D120, C8): a build of the app at `mobile/` — its own artifact, outside the Go module (C2), at the commit whose tag it is versioned from (C6) — signed with **your** distribution credentials (EAS-managed or your own distribution certificate and upload key), and reaching the stores' internal testing tracks only; no public release is implied or made, and the submit track is read before anything is built — step 1's `jq` reads `submit.internal.android.track`, and a profile naming a public track is a stop you take there ("edit it and re-run"), not something the guard reads: the guard hard-stops on the build itself — without `mobile/eas.json` or `mobile/app.config.js` in the checkout (P4.4's), and without the store identity, which it resolves through `app.config.js` out of the two variables you export (the identity is **not** in `app.json` and never will be: the committed config carries no release identity, P3.1's boundary test, and the identity is yours). No agent runs `eas build` or `eas submit`, none touches a signing key, an App Store Connect API key or a Play service-account key, and no store credential enters an agent's environment | See "Check 89" below; **you** run it, at your own terminal, with your own Apple and Google accounts, your own signing keys and your own EAS project, from a clean checkout of the tagged commit; **no agent runs any step of it** (D120, Global Constraint 9). Its guard hard-stops today: P3.1's `mobile/app.json` and P4.4's `mobile/eas.json` and `mobile/app.config.js` are in the tree, so the file tests pass and the stop is the store identity itself — the two variables must be in your shell (or in the EAS project's environment the profile names, for the build job), and until they are, the guard stops before a build that could not reach any track | One build per platform and one submission per platform, on the internal tracks; the signing keys, the App Store Connect API key and the Play service-account key are yours, are never read by this check and are never pasted into a `FACT` line. **USER-RUN, NOT RUN.** |
 
 | 111 | The billing picker's failure modes (setup-wizard plan Task W0.3; D3 and D6): the Cloud Billing API disabled on the quota project — in D3's two cases, the quota project **being** the project set up and the quota project being **another** one — a caller without `billing.accounts.list` on a project whose API **is** enabled (so the API answers **403** rather than the disabled-API refusal), and the three sessions that never list anything at all (no TTY, `--json`, an agent session) — each asserting the guided `gcloud billing projects link` line, that **nothing was enabled**, and that **no account list appears in any output** (the one run where a list *is* expected is the `gcloud` fallback answering an API that refused) | See "Check 111" below; **you** run it at your own terminal, on installation `fugaro` (never `belong`), and **no agent runs any step of it** (an agent session is one of the five modes it observes). | Three throwaway projects of your own — `P` (the installation's), `Q` (API off) and `S` (API on) — and the ADC quota project is repointed by three of the runs. Every step is a refusal, and nothing is created, enabled or linked by the check itself. **NOT RUN.** |
+| 112 | The four zoom levels, drawn once and drawn as stills (zoom-diagrams plan §3, Part 4; D237, D244, D245, D247): the section sits on `/how-it-works/`, **under "The run, end to end" and its diagram** (D237); the four levels are four `<figure>`s in the brief's order, each named by its own `<figcaption>`, which also says which recipe the drawing is; **every entity is one `<symbol>` of one `<defs>`, drawn through `<use>`** — the job tile, the orchestrator, the developer, the console and the project — so a job tile is the same tile at every level (D244), and no level draws its own copy of one; every label of every level is a row of `website/data/zoom-levels.yaml`, held to the document it cites; the four markers are one `<nav>` of anchors with accessible names (D245), each jumping to its own level by keyboard and by pointer; the four levels and every label are in the document **with JavaScript off** (the section ships no script of its own); and the drawings are legible — labels at the palette's own contrast, nothing clipped, nothing drawn as an empty box — on a desktop and at 360, 390 x 844 and 320 (ZU4) | See "Check 112" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pinned scroll-driven zoom is **Part 5** and is not in this tree: that step of the section is written and cannot be run yet, and an unrun step is not a pass | One browser, a hard reload, one look at the section with script on and one with it off, and one narrow viewport. Nothing is created, enabled, linked or written. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -6082,3 +6093,183 @@ assert_mode() {
 - **Re-enable the API you disabled** on `P` and on `Q` (`gcloud services enable cloudbilling.googleapis.com --project="${P:?}"` and `--project="${Q:?}"`), and **if you removed the billing role from your own account for mode 2(b), put it back** — that role is yours, not the check's. If a project was a fresh throwaway and you are done with it, delete it instead (`gcloud projects delete <that project>`): check that nothing else in your machine's config still points at it first.
 - **Remove this check's own directory** — `rm -rf /tmp/chk111`, which holds its config root (`$C`), its `vars.env`, the maimed `gcloud` wrapper, `account-names.txt`/`account-ids.txt`, and every mode's capture (mode 4's two files among them). `unset AI_AGENT` too, if you have not already.
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here writes to them, the guard block is what makes that so, and the guided line this check is about names a project you type, never one of theirs.
+
+
+## Check 112: the four zoom levels, drawn once and drawn as stills (the built artifact or the live site, read-only; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Part 4** of the zoom-diagrams plan
+(`docs/website/zoom-diagrams/implementation-plan.md` §3, decisions D237, D244, D245 and **D247**,
+which takes this number; the reconciliation's §3 is what the levels are allowed to say today), and
+written here rather than left to that plan because this is the file the owner runs live checks out
+of. It is the half of Part 4 no hermetic test can take: the tests hold the section's **shape** and
+its **words** — one `<defs>` of `<symbol>`s drawn through `<use>`, every label a row of
+`website/data/zoom-levels.yaml`, the markers and the captions — and what a browser is for is
+whether the four drawings are **legible**, whether an entity really looks the same at every level,
+and whether a marker lands where it says it lands.
+
+**What this tree carries today, and what it does not.** The section exists: `ZoomLevels.astro` is
+mounted on `/how-it-works/` **under "The run, end to end" and its diagram** (D237), it is one
+`<h2>` and one `<nav>` of four markers, and its four `<figure>`s are the levels. Its words are the
+brief's, **corrected to what the runner does**: Level 1 says the first-line review is the coder's
+own model in a new session and that the senior review is a loop bounded by `agent.review_rounds`,
+because that is what `docs/recipes.md` says and what the reconciliation's §3 found the brief's own
+sketch getting wrong. **And it is stills**: there is no animation, no timeline and no script in the
+drawing at all — the page's one script is the site's own, in the head, and it is not this section's
+— so all four levels are whole in the document before anything runs. **The pinned, scroll-driven
+zoom between the levels is Part 5 of the plan and is not in this checkout**, which is why the last
+step below is written and **cannot be run yet**: an unrun step is not a pass, and this row stays
+**NOT RUN** until both halves have been seen.
+
+**What the gates hold, and what only your eyes can.** `website/test/how-it-works.mjs` reads the
+built page and refuses a `<use>` whose target is missing, a symbol no level draws, a level that
+draws its own copy of an entity (D244's same-shape rule, planted three ways), a level kind the
+paint gate has not been taught, a label that is not a row of the data file, a row the drawing does
+not render, and a label attributed to a document that does not carry that line.
+`website/test/a11y.mjs` holds the one `<nav>` and its markers — one per level, each named, each
+pointing at the level beside it, each reachable with no positive `tabindex` — and refuses a level
+announced as one image, because a level here is a list of labelled parts and its words are the
+telling. `website/test/budget.mjs` holds the page inside its byte and word ceilings. **None of
+them reads a pixel**: whether a tile arrives as a black rectangle, whether a label is legible
+against its panel, whether the drawings fit a phone, and whether the jump lands.
+
+**Method.** One browser, one built site, one narrow viewport, no account and no cloud project.
+Either serve the artifact locally or read the deployed site; both are read-only:
+
+```bash
+# What this check needs, read out of the tree rather than remembered. It refuses to start on a
+# build that is not there, so a pass below is a pass about a page that exists.
+[ -f website/dist/index.html ] || { echo "Check 112 stopped: website/dist/ is not built — run (cd website && npm run check) first" >&2; exit 1; }
+(cd website/dist && python3 -m http.server 8080) &     # the built artifact, on localhost:8080
+# ...or, for the deployed site instead, read the canonical origin out of the site's own facts:
+sed -n 's/^canonical_url: *//p' website/data/site.yaml
+# The four levels' own ids, out of the built page rather than typed: steps 2, 5 and 6.
+grep -o 'id="level-[0-9]*"' website/dist/how-it-works/index.html
+# The markers, and where each one points: step 5.
+grep -o 'href="#level-[0-9]*"' website/dist/how-it-works/index.html
+# The five symbols the levels draw through, and the one <defs> that holds them: step 3. Each id
+# appears ONCE (it is a symbol); a second line here is a level drawing its own copy.
+grep -o 'id="zoom-[a-z]*"' website/dist/how-it-works/index.html
+# The section's own classes, so a step below names what the page has: a level, its caption, its
+# drawing, a label and a marker.
+grep -o 'class="zoom-[a-z-]*"' website/dist/how-it-works/index.html | sort -u
+# Every label of every level, out of the data file rather than remembered: the text step 4 compares
+# what the drawing prints against is these lines, and each row's `source:` is the document it cites.
+sed -n 's/^ *text: *//p' website/data/zoom-levels.yaml
+# The scripts on the page: one line, the site's own, and no other — the drawing ships none.
+grep -o '<script[^>]*>' website/dist/how-it-works/index.html
+```
+
+1. **The section is where the brief puts it, and it is the page's own block.** Open
+   `/how-it-works/` and scroll past **"The run, end to end"** and its diagram: the next block is
+   the zoom section, headed **"The four levels"** (one `<h2>`), under a `<nav>` of four markers,
+   and the page's closing band follows it. **FACT:** the heading's text, the number of markers and
+   their accessible names, and what sits above and below the section. A section that has moved
+   above the run's diagram, or into another page, is D237's decision reversed rather than a
+   drawing defect.
+
+2. **The four levels are four figures, in the brief's order, each named by its own caption.**
+   Read the four `<figcaption>`s (`.zoom-caption`): each names its level — *Inside a cloud job*,
+   *Orchestrator fans out jobs*, *The developer's view*, *The whole project* — and each caption
+   also says **which recipe the drawing is** (ZF7), because a level drawn from a recipe that exists
+   is a claim, while a level drawn from one that does not is a promise. **FACT:** the four
+   captions, verbatim and in order, and whether each level drawing matches its caption's subject.
+
+3. **Every entity is the same entity at every level** (D244's same-shape rule, seen rather than
+   read). The five symbols are in the `grep` above — the job tile, the orchestrator, the developer,
+   the console and the project — and each level draws an entity through `<use href="#zoom-…">`, so
+   the job tile at levels 1, 2, 3 and 4 must be the **same tile**: same size, same bar, same rows,
+   same paint. Look at the tile at Level 1 and at Level 2 side by side, and the orchestrator at
+   Levels 2 and 3. **FACT:** for each entity, which levels draw it and whether the copies are the
+   same shape; anything that differs is the defect this step exists for.
+
+4. **Every label is legible, inside its box, and one of the file's rows.** Read each level's
+   labels (`.zoom-label`): no text runs out of the shape or the drawing it belongs to, nothing is
+   clipped at a drawing's edge, and every string is a line of the `sed` output above — the drawing
+   says nothing the data file does not. **The palette's own contrast is the other half**: the
+   labels are the site's `--text` on `--panel`, and a label drawn in a colour the palette does not
+   carry, or a shape that arrives as a **black or empty rectangle** where the drawing should be, is
+   the defect the site hit once on 2026-10-21 and this step is written for. **FACT:** per level,
+   the labels read back, and the ground they are legible against. A label whose text differs by a
+   word from its row is a misquote (the hermetic gate refuses it by the row's name, and a browser
+   is where you see the shape it drew instead).
+
+5. **A marker jumps to its own level, by keyboard and by pointer.** The `<nav>` is the first thing
+   after the section's heading, so Tab reaches it from the top of the section: **four anchors**,
+   each with a name that says which level it is. Press **Enter** on each and read the URL: it gains
+   `#level-N`, the page scrolls so that **that level's figure and its caption** are on screen, and
+   the browser's Back returns you to where you were. Then click one with the pointer: the same
+   landing. **FACT:** the URL after each jump, and whether the level named by the marker is the one
+   on screen. A marker that lands on another level, or nowhere, is the failure; a marker whose
+   focus ring is invisible is the keyboard half of it.
+
+6. **The four levels are there with JavaScript off, and nothing about them moves on its own.**
+   Disable JavaScript for the site, hard-reload `/how-it-works/`, and read the page: **all four
+   figures, all four captions and every label are in the document, in order**, and the markers
+   still jump (they are anchors, and they need no script). Then turn script back on and watch the
+   section for a minute without touching it: **nothing animates, nothing hides itself and nothing
+   scrolls on its own** — this half is stills, and Part 4 ships no timeline. **FACT:** with script
+   off, the four captions' texts and the markers' count; with script on, that nothing in the
+   section moves by itself.
+
+7. **The drawings are legible on a phone.** Set the viewport to **360 × 800** (the width ZU4
+   measures), then to **390 × 844** and **320**, hard-reload, and read the section: each drawing
+   fits the column without a sideways scroll
+   (`document.documentElement.scrollWidth` is not wider than the viewport), the labels are drawn at
+   a size a reader can read rather than a whole desktop picture shrunk to fit, and the markers are
+   still targets a thumb can hit. **FACT:** the document's scroll width and the smallest drawn label
+   at each of the three widths, and the markers' rendered heights.
+
+8. **The pinned zoom (Part 5's, and not runnable on this tree).** The brief's "Format" bullet asks
+   that each level rests as a still, that the zoom **between** the levels is smooth as the reader
+   scrolls, that a marker jumps to its level, and that the system's reduced-motion preference turns
+   the section into stills. **This checkout has no pinned zoom and no timeline**, so there is
+   nothing here to observe today and this step is **not run** — it is written now because D247
+   takes the number and a reservation is not a fact about the tree. When Part 5 lands, this step
+   becomes: with the system's *reduce motion* preference **on**, the section shows the four levels
+   as stills and no scroll-driven motion at all; with it off, the zoom between the levels is smooth
+   (no jump, no stutter, no level skipped) and a marker still jumps; and the reduced-motion reader
+   is never shown a level that the motion alone would have revealed. **FACT**, when it can be run:
+   which preference was set, what the section did, and whether any content exists only in the
+   animated path.
+
+**Passes when:** the section is on `/how-it-works/` under the run's diagram, headed "The four
+levels"; four figures stand in the brief's order with four captions naming them and the recipe
+each is drawn from; each entity is the same shape at every level it appears at; every label is a
+line of `website/data/zoom-levels.yaml`, legible against its panel and inside its box; four named
+anchors jump to their own levels by keyboard and by pointer; the four levels and their labels are
+in the document with JavaScript off, and nothing in the section animates or hides itself with it
+on; and the drawings fit and stay readable at 360, 390 × 844 and 320.
+
+**Fails when:** the section is missing, or sits above the run's diagram, or on a page other than
+`/how-it-works/`; a level has no caption, or a caption names a level the drawing is not; an entity
+looks different at two levels, or a level draws a shape of its own (a `<rect>` where a `<use>`
+belongs) — that is D244 broken in the one place a test's message and a reader's eye agree; a label
+is missing, clipped, misquoted against its row, or drawn at a contrast a reader cannot read; a
+shape arrives as a black or empty rectangle; a marker points at another level, lands nowhere, has
+no name, or cannot be reached from the keyboard; a level or a label is missing with JavaScript off,
+or one exists only with it on; something in the section animates, hides or scrolls by itself; or a
+drawing overflows the phone's column. **What failing looks like:** the 2026-10-21 defect again —
+Astro scopes a page's stylesheet to the elements the page renders, so a generated shape drawn from
+a component's markup with a plain class arrives **unstyled**, and every shape is a black rectangle;
+and a marker list that a reader can press but that lands on the section's top rather than the level
+it names.
+
+**Paste back** (no secret, no account, nothing from any project): the browser and its version, the
+OS and the date; whether you read the built artifact or the live site, and at which commit; the
+four captions verbatim; per level, the labels you read back and any that differ from the data
+file's rows; for each entity, the levels it is drawn at and whether the shapes matched; the URL
+after each marker jump and whether the level on screen was the one named; the scroll width and the smallest label at 360, at
+390 × 844 and at 320, and any label that was too small to read there; and, for step 8, that it was not
+run — the pinned zoom is Part 5's. Until both halves have been seen, this row stays **NOT RUN**.
+
+**Restore.** Nothing is created, so there is nothing to undo: no account, no cloud project, no
+`fugaro` command, no installation and no file is touched by any step above.
+
+- **Stop the localhost server** the Method block started (`kill %1` in the shell that started it,
+  or close that shell) — that is the whole of the check's footprint on your machine.
+- **Put the browser's JavaScript and motion settings back** if you changed either for steps 6 and
+  8: they are your browser's, not the check's, and step 6 needs JavaScript on again to be about the
+  site you actually read.
+- **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a project at all,
+  and the only host this check fetches is the built artifact on localhost or the canonical origin
+  the site's own `site.yaml` names.

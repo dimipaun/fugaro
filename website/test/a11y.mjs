@@ -923,6 +923,100 @@ export function pictureA11yFailures(html) {
   return out
 }
 
+/**
+ * Every level of the zoom section, with the anchor that points at it, as the page writes them:
+ * the section's own `<nav>`, its markers in document order, and the four `<figure>`s with the
+ * `<svg>` and the `<figcaption>` each one carries.
+ */
+export function zoomSectionOf(html) {
+  const doc = parse(html)
+  const section = findAll(doc, (el) => el.name === 'section' && classList(el).includes('zoom'))[0]
+  if (section === undefined) return { section: null, nav: [], markers: [], figures: [] }
+  const nav = findAll(section, (el) => el.name === 'nav')
+  const markers = nav.flatMap((element) => [...walk(element)].filter((el) => classList(el).includes('zoom-marker')))
+  const figures = findAll(section, (el) => el.name === 'figure' && classList(el).includes('zoom-figure'))
+  return { section, nav, markers, figures }
+}
+
+/**
+ * What a screen reader would get wrong about the four levels, as the lines a reader sees: a
+ * marker with no name (a list of numbers with no subject), a marker that points somewhere other
+ * than the level it names, a marker a keyboard cannot reach, a level with no name of its own, a
+ * level hidden from assistive technology, and a level announced as one image.
+ *
+ * **Why a level is not one image** (the brief's "role=img with an aria-label only where a level
+ * is a single picture"): these four levels are lists of labelled parts — each one draws the
+ * repository's own words beside its shapes — so the words are the telling. A drawing that
+ * announced itself as one picture would be read out once by its name and never by its labels,
+ * which is the run diagram's rule read the other way round for a drawing that is not one image.
+ *
+ * The rest of the page's contract is not this reading's: one `<h1>`, named landmarks, no positive
+ * `tabindex` and the palette's contrast are held for every built page by `pageA11yFailures`
+ * above, and the levels are a section of a page that already passes it.
+ */
+export function zoomA11yFailures(html) {
+  const out = []
+  const zoom = zoomSectionOf(html)
+  if (zoom.section === null) return out // the section is How It Works' own; the pages without it say nothing here
+  if (zoom.nav.length !== 1) {
+    out.push(`the zoom section carries ${zoom.nav.length} level <nav>s, and its markers are one list: a reader is given one landmark to jump between the levels with (D245)`)
+  }
+  for (const element of zoom.nav) {
+    const name = (element.attrs.get('aria-label') ?? element.attrs.get('aria-labelledby') ?? '').trim()
+    if (name === '') {
+      out.push('the zoom section\'s <nav> carries no name (aria-label or aria-labelledby): a screen reader lists landmarks by name, and two unnamed lists on one page are two lists a reader cannot tell apart')
+    }
+  }
+  if (zoom.markers.length !== zoom.figures.length) {
+    out.push(`the zoom section draws ${zoom.figures.length} levels and carries ${zoom.markers.length} markers, and every level has one marker: a marker with no level is an anchor that resolves to nothing, and a level with no marker is one a reader cannot jump to (D245)`)
+  }
+  zoom.markers.forEach((marker, index) => {
+    const href = marker.attrs.get('href') ?? ''
+    const figure = zoom.figures[index]
+    const name = (marker.attrs.get('aria-label') ?? marker.attrs.get('aria-labelledby') ?? textOf(marker)).trim()
+    if (!/[A-Za-z]/.test(name)) {
+      out.push(`the zoom section's marker ${index + 1} is named ${JSON.stringify(name)}, and a marker's name says which level it jumps to: a list of bare numbers says nothing about what it is a list of (D245)`)
+    }
+    if (marker.name !== 'a') {
+      out.push(`the zoom section's marker ${index + 1} is a \`<${marker.name}>\`, and the markers are anchors: an anchor needs no script and a reader with none still has it (D245)`)
+    }
+    if (marker.attrs.get('tabindex') !== undefined && Number(marker.attrs.get('tabindex')) > 0) {
+      out.push(`the zoom section's marker ${index + 1} carries \`tabindex="${marker.attrs.get('tabindex')}"\`, and a positive tabindex reorders the keyboard path away from the reading order (W1.11)`)
+    }
+    if (figure === undefined) return
+    if (href !== `#${figure.attrs.get('id') ?? ''}`) {
+      out.push(`the zoom section's marker ${index + 1} points at ${JSON.stringify(href)} and the level beside it is \`#${figure.attrs.get('id') ?? ''}\`: a marker that points at another level scrolls a reader somewhere they did not choose (D245)`)
+    }
+  })
+  zoom.figures.forEach((figure, index) => {
+    const id = figure.attrs.get('id') ?? ''
+    if (!/^level-[1-9][0-9]*$/.test(id)) {
+      out.push(`the zoom section's level ${index + 1} carries the id ${JSON.stringify(id)}, and a level's id is its anchor: \`level-\` and its number, which is what the markers' \`href\` points at (D245)`)
+    }
+    const captions = findAll(figure, (el) => el.name === 'figcaption')
+    if (captions.length !== 1 || textOf(captions[0] ?? figure).trim() === '') {
+      out.push(`the zoom section's level ${JSON.stringify(id)} carries ${captions.length} <figcaption>s, and every level is named by one: a figure with no name is announced as "figure" with nothing after it`)
+    }
+    if (hiddenFromAT(figure)) {
+      out.push(`the zoom section's level ${JSON.stringify(id)} is hidden from assistive technology (aria-hidden="true" on it or on something above it), and the four levels are the section's subject: a reader given none of them has been given nothing`)
+    }
+    for (const drawing of [...walk(figure)].filter((el) => el.name === 'svg')) {
+      const role = drawing.attrs.get('role') ?? ''
+      const label = (drawing.attrs.get('aria-label') ?? '').trim()
+      const words = [...walk(drawing)].filter((el) => el.name === 'text').length
+      if (role !== 'img') continue
+      if (label === '') {
+        out.push(`the zoom section's level ${JSON.stringify(id)} draws an \`<svg role="img">\` with no name, and a picture with no name is a picture a screen reader announces as nothing`)
+        continue
+      }
+      if (words > 0) {
+        out.push(`the zoom section's level ${JSON.stringify(id)} is announced as one image (\`role="img"\` with an aria-label) and carries ${words} <text> labels: a level is a list of labelled parts, so its words are the telling — a reader told the picture's name is never told the parts (the brief's "role=img only where a level is a single picture")`)
+      }
+    }
+  })
+  return out
+}
+
 test('the slider is an ordered list a screen reader reads in order, and the run is one named picture', () => {
   // The homepage is the page the slider is on, and the run's picture is on the page about how a
   // run works: each page is held to the steps it carries, or a page that rendered no list at all
@@ -1087,4 +1181,73 @@ test('motion gated on no-preference, or neutralised by its own reduce rule, pass
   const bare = GOOD_CSS.replace(/@media[\s\S]*$/, '')
   assert.deepEqual(motionFailures(bare + '@supports (animation-timeline:view()){@media (prefers-reduced-motion:no-preference){.s{animation:in linear both}}}'), [])
   assert.deepEqual(motionFailures(bare + '.t{animation:spin 1s}@media (prefers-reduced-motion:reduce){.t{animation:none}}'), [])
+})
+
+test('the four levels are four named anchors a keyboard reaches in order, and no level is one image', () => {
+  const page = builtPages().find((entry) => entry.rel === 'how-it-works/index.html')
+  assert.ok(page, 'the built site has no How It Works page, and the four levels are a section of it (D237)')
+  const failures = zoomA11yFailures(page.html)
+  assert.deepEqual(failures, [], `${page.rel}: the levels are not the four named anchors the brief asks for (D245):\n  ${failures.join('\n  ')}`)
+
+  // The reading's own proof, and the count that keeps it from passing on nothing: the built page
+  // carries the section, four markers and four levels.
+  const zoom = zoomSectionOf(page.html)
+  assert.equal(zoom.nav.length, 1, `the built page carries ${zoom.nav.length} level <nav>s, and the markers are one list (D245)`)
+  assert.deepEqual(
+    zoom.markers.map((marker) => marker.attrs.get('href')),
+    ['#level-1', '#level-2', '#level-3', '#level-4'],
+    'the markers do not point at the four anchors, in order: `#level-1` … `#level-4` (D245)',
+  )
+  assert.deepEqual(
+    zoom.figures.map((figure) => figure.attrs.get('id')),
+    ['level-1', 'level-2', 'level-3', 'level-4'],
+    'the figures do not carry the four anchors the markers point at (D245)',
+  )
+  for (const other of builtPages()) {
+    assert.deepEqual(zoomA11yFailures(other.html), [], `${other.rel}: a page that does not carry the four levels is read by this gate`)
+  }
+
+  // Each refusal, on the one thing it breaks.
+  const verdict = (html) => zoomA11yFailures(html)
+  const unnamed = page.html.replace(/<nav class="zoom-nav" aria-label="The four levels"[^>]*>/, '<nav class="zoom-nav">')
+  assert.notEqual(unnamed, page.html, 'the built page carries no named level <nav>, and the plant below takes the name off it')
+  assert.match(verdict(unnamed).join(' | '), /carries no name \(aria-label or aria-labelledby\)/, 'the reading passes a list of markers with no name')
+
+  const wrongHref = page.html.replace('href="#level-2"', 'href="#level-3"')
+  assert.match(verdict(wrongHref).join(' | '), /points at "#level-3" and the level beside it is `#level-2`/, 'the reading passes a marker that points at another level')
+
+  const imageless = page.html.replace(/<svg class="zoom-svg"[^>]*>/, (tag) => `${tag.slice(0, -1)} role="img" aria-label="a level">`)
+  assert.notEqual(imageless, page.html, 'the built page carries no level <svg> of the shape the plant below rewrites')
+  assert.match(verdict(imageless).join(' | '), /announced as one image/, 'the reading passes a level announced as one image, and a level is a list of labelled parts')
+
+  const numberOnly = page.html.replace(/ aria-label="Level 1 — Inside a cloud job"/, '')
+  assert.notEqual(numberOnly, page.html, 'the built page carries no named first marker, and the plant below takes the name off it')
+  assert.match(verdict(numberOnly).join(' | '), /is named "1", and a marker's name says which level it jumps to/, 'the reading passes a marker a screen reader reads as "1"')
+
+  const notAnAnchor = page.html.replace(
+    /<a class="zoom-marker" href="#level-1"[^>]*>1<\/a>/,
+    (tag) => tag.replace('<a class="zoom-marker"', '<span class="zoom-marker"').replace('href="#level-1"', 'data-href="#level-1"').replace('</a>', '</span>'),
+  )
+  assert.notEqual(notAnAnchor, page.html, 'the built page carries no first marker of the shape the plant below rewrites')
+  assert.match(verdict(notAnAnchor).join(' | '), /is a `<span>`, and the markers are anchors/, 'the reading passes a marker a keyboard cannot reach')
+
+  const tabbed = page.html.replace('<a class="zoom-marker" href="#level-1"', '<a class="zoom-marker" tabindex="1" href="#level-1"')
+  assert.notEqual(tabbed, page.html, 'the built page carries no first marker of the shape the plant below rewrites')
+  assert.match(verdict(tabbed).join(' | '), /carries `tabindex="1"`/, 'the reading passes a positive tabindex on a marker')
+
+  const unnamedLevel = page.html.replace(/<figcaption class="zoom-caption"[^>]*>(?:(?!<\/figcaption>).)*Inside a cloud job(?:(?!<\/figcaption>).)*<\/figcaption>/, '')
+  assert.notEqual(unnamedLevel, page.html, 'the built page carries no figure caption of the shape the plant below rewrites')
+  assert.match(verdict(unnamedLevel).join(' | '), /carries 0 <figcaption>s, and every level is named by one/, 'the reading passes a level with no <figcaption>')
+
+  const unnamedPicture = imageless.replace(' aria-label="a level"', '')
+  assert.notEqual(unnamedPicture, imageless, 'the planted picture above carries no name, and the plant below takes it off')
+  assert.match(verdict(unnamedPicture).join(' | '), /draws an `<svg role="img">` with no name/, 'the reading passes an unnamed picture')
+
+  const strayId = page.html.replace('<figure class="zoom-figure" id="level-3"', '<figure class="zoom-figure" id="step-3"')
+  assert.notEqual(strayId, page.html, 'the built page carries no third level of the shape the plant below rewrites')
+  assert.match(verdict(strayId).join(' | '), /carries the id "step-3", and a level's id is its anchor/, 'the reading passes a level whose anchor is not the one the markers point at')
+
+  const hiddenLevel = page.html.replace('<figure class="zoom-figure" id="level-2"', '<figure class="zoom-figure" aria-hidden="true" id="level-2"')
+  assert.notEqual(hiddenLevel, page.html, 'the built page carries no second level of the shape the plant below rewrites')
+  assert.match(verdict(hiddenLevel).join(' | '), /level "level-2" is hidden from assistive technology/, 'the reading passes a level no screen reader is told about')
 })
