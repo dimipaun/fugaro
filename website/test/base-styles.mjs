@@ -985,18 +985,25 @@ export function listMaxWidth(css, width, element) {
 //
 // The same two claims are read here on the page the owner's draft of 2026-10-19 asks for, and
 // the defect they refuse is the one the review measured: a block of the page that insets itself
-// inside the gutter, and a title left sitting against the drawing. Both are read out of the
-// built page rather than left to the eye — the inline component of every diagram block's
+// inside the gutter, and a title left sitting against the block under it. Both are read out of
+// the built page rather than left to the eye — the inline component of every diagram block's
 // padding comes out of the cascade at the desktop width, and the title's own rule is read for
 // the room it declares under itself. The vertical rhythm between the picture and the words is
 // not this check's business: that is a rhythm the owner's eye owns (70a-70c).
+//
+// **The bold redesign of 2026-10-20 moved the title into the page's opening** (the owner's
+// approved board `website/design-ref/HowItWorksV3.dc.html`): the `h1` is the hero's headline,
+// the diagram and its words are the blocks under it, and the room the title declares is what
+// separates the headline from the lead under it. The claim and the room are the ones this check
+// has always read — the class the page declares it on, and the two pixels it is at least — and
+// what moved is which block follows the title.
 
 /** The classes of the blocks the diagram is drawn in: the page's own, and no other page's. */
 const RUN_BLOCKS = ['run-picture', 'run-diagram', 'run-words']
 
 /**
  * Every way the How It Works page's blocks do not share `main`'s left edge, or its title sits
- * against the picture under it, for one built page's stylesheet and markup. Returns nothing on
+ * against the block under it, for one built page's stylesheet and markup. Returns nothing on
  * a page that carries no diagram, so it can be run over every built page.
  */
 export function runDiagramFailures(css, html) {
@@ -1038,7 +1045,7 @@ export function runDiagramFailures(css, html) {
 
   if (!title) {
     out.push(
-      "the How It Works page's `h1` carries no `page-title` class, so the room under it cannot be read: the title and the picture under it are the page's opening, and what separates them is this page's own rule rather than a heading's default margin (review round 3, item 3d)",
+      "the How It Works page's `h1` carries no `page-title` class, so the room under it cannot be read: the title and the block under it are the page's opening, and what separates them is this page's own rule rather than a heading's default margin (review round 3, item 3d)",
     )
     return out
   }
@@ -1050,7 +1057,7 @@ export function runDiagramFailures(css, html) {
     )
   } else if (room < wanted) {
     out.push(
-      `the How It Works title has ${Math.round(room)} px under it, and the page opens with the picture the draft of 2026-10-19 draws: \`base.css\`'s heading margin is a heading's margin, and the picture the page is about is met with the room of a section opening — at least ${wanted} px (\`--space-lg\`) (review round 3, item 3d)`,
+      `the How It Works title has ${Math.round(room)} px under it, and the page's opening follows it: \`base.css\`'s heading margin is a heading's margin, and the title a reader meets first is followed by the page's own block at the room of a section opening — at least ${wanted} px (\`--space-lg\`) (review round 3, item 3d)`,
     )
   }
   return out
@@ -1093,21 +1100,29 @@ test('every run-diagram refusal fires on the defect it names', () => {
     // block that gives itself a gutter inside `main`'s.
     [
       'the words section indented inside the page gutter',
-      change('.run-words', 'margin-top:var(--space-2xl)}', 'margin-top:var(--space-2xl);padding-left:var(--space-md)}'),
+      change('.run-words', 'margin-top:var(--space-2xl)', 'margin-top:var(--space-2xl);padding-left:var(--space-md)'),
       /insets its own content by 24 px/,
     ],
-    // And the same defect written as a shorthand, which is how the page it was found on wrote it.
+    // And the same defect written as a shorthand, which is how the page it was found on wrote
+    // it: the drawing's own vertical room, rewritten as the shorthand that insets both edges.
     [
       'the drawing inset by a shorthand',
-      change('.run-diagram', 'margin:0}', 'margin:0;padding:var(--space-md)}'),
+      change('.run-diagram', 'padding-block:var(--space-sm)', 'padding:var(--space-md)'),
       /insets its own content by 24 px/,
     ],
-    // A title left with a heading's margin under it, which is where the picture started 12 px
-    // below it.
-    ['the title with a heading’s margin under it', change('.page-title', 'margin-bottom:var(--space-xl)', 'margin-bottom:var(--space-xs)'), /px under it, and the page opens with the picture/],
+    // A title left with a heading's margin under it, which is where the page's own block under
+    // it started 12 px below the headline.
+    ['the title with a heading’s margin under it', change('.page-title', 'margin-bottom:var(--space-2xl)', 'margin-bottom:var(--space-xs)'), /px under it, and the page's opening/],
     // A page whose title lost the class the room is declared on: the rule is the page's, and a
-    // title that no longer carries it is a title nothing measured.
-    ['a title without the page’s own class', css, /carries no `page-title` class/, page.replace('class="page-title"', '')],
+    // title that no longer carries it is a title nothing measured. The headline carries the
+    // page's class beside `base.css`'s display step, so the class is dropped from the list
+    // rather than the whole attribute replaced.
+    [
+      'a title without the page’s own class',
+      css,
+      /carries no `page-title` class/,
+      page.replace(/class="([^"]*)\bpage-title\b ?([^"]*)"/, 'class="$1$2"'),
+    ],
   ]
   for (const [what, stylesheet, expected, html = page] of cases) {
     assert.deepEqual(
