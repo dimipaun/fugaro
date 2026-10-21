@@ -369,10 +369,12 @@ func (s *Selector) Probed(ctx context.Context, name string, tier Tier) (Mark, er
 	})
 }
 
-// Cleared records a successful probe's *operator* — the clear of a broken mark
-// (C1.21). It is the operator's write and the only one that takes a broken mark
-// off: a probe answers through Probed, which is a no-op on anything but a
-// backed-off mark (ProbeSucceeded), so a probe's success cannot clear a 401.
+// Cleared records the operator's clear (C1.21): the transition that takes a
+// broken or exhausted mark off, after the operator has replaced the token or
+// judged the account fit to serve again. It is the operator's write and the only
+// one that takes a broken mark off: a probe answers through Probed, which is a
+// no-op on anything but a backed-off mark (ProbeSucceeded), so a probe's success
+// cannot clear a 401.
 func (s *Selector) Cleared(ctx context.Context, name string) (Mark, error) {
 	return s.Mark(ctx, name, func(Mark, bool) (Mark, error) { return Cleared(), nil })
 }
