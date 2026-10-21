@@ -74,6 +74,7 @@ import {
 import { SERVED_FILES } from '../../src/main/protocol'
 
 const PACKAGE_JSON = fileURLToPath(new URL('../../package.json', import.meta.url))
+const README = fileURLToPath(new URL('../../README.md', import.meta.url))
 const BUILD_CONFIG = fileURLToPath(new URL('../../tsconfig.build.json', import.meta.url))
 const LOCKFILE = fileURLToPath(new URL('../../package-lock.json', import.meta.url))
 const CONSOLE_DIR = fileURLToPath(new URL('../../', import.meta.url))
@@ -840,6 +841,32 @@ describe('the packaging configuration the fuses belong to', () => {
     // in the middle of a packaging step is a second chance to pack something
     // the type-checked build did not produce.
     expect(manifest.scripts['package:linux']).not.toMatch(/npm run build/)
+  })
+
+  it('describes every packaging script in the manifest, by name', () => {
+    // The manifest is where a pack is *configured* and the README is where it
+    // is *described*, and nothing else holds the two together: a script can be
+    // added, packed with and shipped without a line of prose, and the next
+    // reader then believes the set of packs is the set the document lists. So
+    // every `package:*` script has to be named in the README, spelled the way
+    // it is spelled here (`npm run <name>`).
+    //
+    // The set itself is pinned too, so this cannot be satisfied by deleting the
+    // script rather than describing it.
+    const readme = readFileSync(README, 'utf8')
+    const packs = Object.keys(manifest.scripts)
+      .filter((name) => name.startsWith('package:'))
+      .toSorted()
+    expect(packs).toEqual(['package:linux', 'package:targets', 'package:win'])
+    for (const name of packs) {
+      // The spelling is matched to the end of the token, not as a substring:
+      // `npm run package:win` is *inside* `npm run package:windows`, and a
+      // guard a rename satisfies is a guard that reads a name it was not given.
+      expect(
+        readme,
+        `console/README.md must describe \`npm run ${name}\``,
+      ).toMatch(new RegExp(`npm run ${name}(?![\\w:-])`))
+    }
   })
 
   it('has no electron-builder.env, and could not ship one', () => {
