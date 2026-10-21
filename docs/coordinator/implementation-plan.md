@@ -100,8 +100,9 @@ Five dependencies force the order, and nothing else in the plan is arbitrary:
 5. **The service comes last, and on purpose.** Q1(C) — "the service first" — is the option the
    reconciliation refused: it makes the hardest part, authentication, the first thing built,
    before any deterministic value exists. So the deterministic half (P1–P6) ships first, and the
-   front door (P7–P8) is the part that waits on **D196** and on a sibling plan that is itself
-   unapproved.
+   front door (P7–P8) is the part that waited on **D196** — answered on 2026-10-21, and answered
+   as **this work's own service**, so it waits on nothing else now but the front-door design
+   review §7 asks for.
 
 ## 3. What is deliberately not in this plan
 
