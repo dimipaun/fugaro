@@ -1,6 +1,6 @@
 // Package mirror copies one image from a public registry into the
 // project's own Artifact Registry, in Go and with no Docker daemon, as the
-// person running fugaro init (design m11-setup-and-skills.md §3.3).
+// person running fugaro update (design m11-setup-and-skills.md §3.3).
 //
 // What it will and will not do is fixed here, not by its callers:
 //

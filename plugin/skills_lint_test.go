@@ -570,7 +570,7 @@ var (
 var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag"}
 
 // userRunsAllowed is every command a user-runs block may hold.
-var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro init", "fugaro update-skills", "fugaro upgrade"}
+var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro setup", "fugaro update", "fugaro update-skills", "fugaro upgrade"}
 
 // userLeadRE is the sentence before a user-runs block: it says the user (or
 // the owner) runs it.
@@ -685,8 +685,8 @@ func ownerViolation(c fugaroCmd) string {
 	switch {
 	case slices.Contains(ownerCommands, c.path):
 		return "an owner's command (" + c.path + ") outside a user-runs block"
-	case c.path == "fugaro init" && !slices.ContainsFunc(c.args, func(x string) bool { return x == "--plan-only" || x == "--print-vars" || x == "--help" }):
-		return "an applying fugaro init outside a user-runs block"
+	case (c.path == "fugaro setup" || c.path == "fugaro update") && !slices.ContainsFunc(c.args, func(x string) bool { return x == "--plan-only" || x == "--print-vars" || x == "--help" }):
+		return "an applying " + c.path + " outside a user-runs block"
 	}
 	return ""
 }
@@ -1202,7 +1202,7 @@ func TestLintRejectsUnknownFlag(t *testing.T) {
 
 func TestLintJoinsContinuedLines(t *testing.T) {
 	// The forbidden flag sits on the continuation line, not the first.
-	expectViolation(t, demoTree(t, "```bash\nfugaro init \\\n  --yes\n```\n"), "a flag the agent must never pass")
+	expectViolation(t, demoTree(t, "```bash\nfugaro setup \\\n  --yes\n```\n"), "a flag the agent must never pass")
 	expectViolation(t, demoTree(t, "```bash\nfugaro budget \\\n  kill\n```\n"), "an owner's command")
 }
 
@@ -1285,21 +1285,21 @@ func multiLineCommands(f *skillFile) []string {
 	return out
 }
 
-func TestLintRejectsYesNearInit(t *testing.T) {
-	expectViolation(t, demoTree(t, "```bash\nfugaro init --yes\n```\n"), "a flag the agent must never pass")
-	expectViolation(t, demoTree(t, "Run `fugaro init --repo --yes`.\n"), "a flag the agent must never pass")
-	expectViolation(t, demoTree(t, "Run `fugaro init --allow-delete`.\n"), "a flag the agent must never pass")
-	expectViolation(t, demoTree(t, "```bash\ntime fugaro init --forget\n```\n"), "a flag the agent must never pass")
-	expectClean(t, demoTree(t, "Never run `fugaro init --plan-only --yes`.\n"))
+func TestLintRejectsYesNearSetup(t *testing.T) {
+	expectViolation(t, demoTree(t, "```bash\nfugaro setup --yes\n```\n"), "a flag the agent must never pass")
+	expectViolation(t, demoTree(t, "Run `fugaro setup --repo --yes`.\n"), "a flag the agent must never pass")
+	expectViolation(t, demoTree(t, "Run `fugaro setup --allow-delete`.\n"), "a flag the agent must never pass")
+	expectViolation(t, demoTree(t, "```bash\ntime fugaro update --forget\n```\n"), "a flag the agent must never pass")
+	expectClean(t, demoTree(t, "Never run `fugaro setup --plan-only --yes`.\n"))
 }
 
 // TestLintInitAppliesOnlyInUserRuns: init beyond its plan modes creates
 // billable resources and needs the user's terminal.
-func TestLintInitAppliesOnlyInUserRuns(t *testing.T) {
-	expectViolation(t, demoTree(t, "Then run `fugaro init`.\n"), "applying fugaro init")
-	expectViolation(t, demoTree(t, "Never run `fugaro init`.\n"), "applying fugaro init")
-	expectClean(t, demoTree(t, "Run `fugaro init --repo --plan-only` and `fugaro init --print-vars`.\n"))
-	expectClean(t, demoTree(t, "The user runs this once in their own terminal, not through the agent:\n\n```bash user-runs\nfugaro init\n```\n"))
+func TestLintSetupAppliesOnlyInUserRuns(t *testing.T) {
+	expectViolation(t, demoTree(t, "Then run `fugaro setup`.\n"), "applying fugaro setup")
+	expectViolation(t, demoTree(t, "Never run `fugaro setup`.\n"), "applying fugaro setup")
+	expectClean(t, demoTree(t, "Run `fugaro setup --repo --plan-only` and `fugaro setup --print-vars`.\n"))
+	expectClean(t, demoTree(t, "The user runs this once in their own terminal, not through the agent:\n\n```bash user-runs\nfugaro setup\n```\n"))
 }
 
 func TestLintRejectsSecretShaped(t *testing.T) {
@@ -1504,8 +1504,8 @@ func TestLintOwnerCommandsHoweverTheyAreWritten(t *testing.T) {
 	expectViolation(t, demoTree(t, "Now run fugaro budget kill to stop everything.\n"), "an owner's command")
 	expectViolation(t, demoTree(t, "A paragraph that is\nwrapped: fugaro\nbudget set is here.\n"), "an owner's command")
 	expectViolation(t, demoTree(t, "    fugaro budget kill\n"), "an owner's command")
-	expectViolation(t, demoTree(t, "Then fugaro init applies.\n"), "an applying fugaro init")
-	expectClean(t, demoTree(t, "Run `fugaro budget show`, `fugaro --project p runs ls` and `fugaro init --repo --plan-only`.\n"))
+	expectViolation(t, demoTree(t, "Then fugaro setup applies.\n"), "an applying fugaro setup")
+	expectClean(t, demoTree(t, "Run `fugaro budget show`, `fugaro --project p runs ls` and `fugaro setup --repo --plan-only`.\n"))
 }
 
 // TestLintUserRunsBlocksAreNotExempt: a user-runs block is for a short list
@@ -1519,7 +1519,7 @@ func TestLintUserRunsBlocksAreNotExempt(t *testing.T) {
 		"gcloud auth print-access-token",
 		"fugaro run --no-smoke",
 		"fugaro image build --local --no-smoke",
-		"fugaro init --yes",
+		"fugaro setup --yes",
 		"fugaro run --no-budget-check",
 		"fugaro run --repo o/r",
 		"fugaro cancel run-1",
@@ -1543,23 +1543,23 @@ func TestLintUserRunsBlocksAreNotExempt(t *testing.T) {
 // cloud image build must go to the user's own terminal window.
 func TestLintBangShell(t *testing.T) {
 	for _, body := range []string{
-		"Run `! fugaro init` now.\n",
-		"Type !fugaro init in the prompt.\n",
+		"Run `! fugaro setup` now.\n",
+		"Type !fugaro setup in the prompt.\n",
 		"```bash\n! fugaro secrets set x --repo o/r\n```\n",
 		"Then ! fugaro image build --workflow web.\n",
-		"Use `!fugaro init`.\n",
-		"Type `! ./fugaro init`.\n",
-		"Type `!FUGARO_PROJECT=p fugaro init`.\n",
+		"Use `!fugaro setup`.\n",
+		"Type `! ./fugaro setup`.\n",
+		"Type `!FUGARO_PROJECT=p fugaro setup`.\n",
 		"Type `! gcloud auth login` or `! docker build .`.\n",
 	} {
 		expectViolation(t, demoTree(t, body), "a ! prefix")
 	}
 	// Exclamation marks, images and the real instruction are fine.
 	expectClean(t, demoTree(t, "Done! fugaro is ready.\n"))
-	expectClean(t, demoTree(t, userRuns("fugaro init")))
+	expectClean(t, demoTree(t, userRuns("fugaro setup")))
 	// A user-runs block says the terminal.
-	expectViolation(t, demoTree(t, "The user runs this in their terminal:\n\n```bash user-runs\nfugaro init\n```\n"), "not through the agent")
-	expectViolation(t, demoTree(t, "The user runs this:\n\n```bash user-runs\nfugaro init\n```\n"), "own terminal")
+	expectViolation(t, demoTree(t, "The user runs this in their terminal:\n\n```bash user-runs\nfugaro setup\n```\n"), "not through the agent")
+	expectViolation(t, demoTree(t, "The user runs this:\n\n```bash user-runs\nfugaro setup\n```\n"), "own terminal")
 }
 
 // TestLintHiddenInstructions: nothing that renders as nothing, loads from
@@ -1609,17 +1609,17 @@ func TestLintForbidsBypassFlags(t *testing.T) {
 // the agent pass these flags, in any spelling.
 func TestLintForbidsOnboardingAndMoneyFlags(t *testing.T) {
 	for _, body := range []string{
-		"```bash\nfugaro init --onboard-repo acme/app\n```\n",
-		"Run `fugaro init --onboard-repo=acme/app`.\n",
-		"Run `fugaro init --repo --onboard-repo acme/app`.\n",
-		"```bash\nfugaro init --base go --replace-image go\n```\n",
-		"Run `fugaro init --replace-image=history`.\n",
-		"```bash\nfugaro init --create-project --gcp-project my-proj-123\n```\n",
-		"Run `fugaro init --link-billing 0123AB-4567CD-89EF01`.\n",
-		"The user runs this:\n\n```bash user-runs\nfugaro init --create-project --gcp-project my-proj-123\n```\n",
-		"```bash\nfugaro init --provision-batch\n```\n",
-		"Run `fugaro init --provision-batch --yes`.\n",
-		"The user runs this:\n\n```bash user-runs\nfugaro init --provision-batch\n```\n",
+		"```bash\nfugaro setup --onboard-repo acme/app\n```\n",
+		"Run `fugaro setup --onboard-repo=acme/app`.\n",
+		"Run `fugaro setup --repo --onboard-repo acme/app`.\n",
+		"```bash\nfugaro setup --base go --replace-image go\n```\n",
+		"Run `fugaro setup --replace-image=history`.\n",
+		"```bash\nfugaro setup --create-project --gcp-project my-proj-123\n```\n",
+		"Run `fugaro setup --link-billing 0123AB-4567CD-89EF01`.\n",
+		"The user runs this:\n\n```bash user-runs\nfugaro setup --create-project --gcp-project my-proj-123\n```\n",
+		"```bash\nfugaro setup --provision-batch\n```\n",
+		"Run `fugaro setup --provision-batch --yes`.\n",
+		"The user runs this:\n\n```bash user-runs\nfugaro setup --provision-batch\n```\n",
 	} {
 		expectViolation(t, demoTree(t, body), "a flag")
 	}
@@ -1647,6 +1647,6 @@ func TestLintDangerousCommandsVariants(t *testing.T) {
 func TestLintUserRunsYesOnlyOnUpgrade(t *testing.T) {
 	expectClean(t, demoTree(t, userRuns("fugaro upgrade --yes")))
 	expectViolation(t, demoTree(t, userRuns("fugaro upgrade --yes --allow-fork")), "a flag no one should pass for the user")
-	expectViolation(t, demoTree(t, userRuns("fugaro init --yes")), "a flag no one should pass for the user")
+	expectViolation(t, demoTree(t, userRuns("fugaro setup --yes")), "a flag no one should pass for the user")
 	expectViolation(t, demoTree(t, "Run this:\n\n```bash\nfugaro upgrade --yes\n```\n"), "a flag the agent must never pass")
 }

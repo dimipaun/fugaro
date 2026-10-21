@@ -1272,3 +1272,61 @@ about the section moves.
   `(cd website && npm run check)` green over all fourteen gates. **Whether the renamed
   heading looks right in the section's own type step is the owner's check** (70a–70c, P9,
   D190): the ruling names a string, and no gate here can see a page.
+
+## The owner's 2026-10-21 feedback on the FAQ: the empty comparison section comes out
+
+The owner's feedback on the preview of 2026-10-21 is one line — "FAQ page: remove How Fugaro
+compares section, it's empty" — and this round is that one line. The section is removed from
+the FAQ page and from the file that fed it; nothing else on the page moved.
+
+- **What the section was, and why it was empty.** `website/src/pages/faq.astro` rendered a
+  section headed "How Fugaro compares" from `website/data/faq.yaml`'s `comparison:` list. The
+  list carried no row and never had one, and D103's provenance rule (F51–F52) is exactly what
+  kept it that way: a row about another tool is a claim this repository cannot verify — it has
+  no network and records no sourced, dated fact about any other agent runner — so a row
+  without a `source:` and a `date:` stopped the build. The honest empty state was written for
+  day one and the owner has now answered it: a heading over a panel that says nothing is a
+  promise a reader meets on the page, and the answer is to take the section out rather than to
+  keep a place set for rows that may never come.
+- **What came out, and where.** `faq.astro`: the section and its panel, its empty state, the
+  `data-comparison-rows` count and its heading; the validator that read the list (`rows`,
+  `ComparisonRow` and `comparison` in `TOP_LEVEL_KEYS`); and the seven stylesheet rule blocks
+  the section and its table were drawn with — `.comparison`, `.comparison-title`,
+  `.comparison-panel`, `.comparison-empty`, `.comparison table`, `.comparison caption` and
+  `.comparison th, .comparison td`. `website/data/faq.yaml`: the `comparison: []` key and
+  the comment block that documented the row format, both replaced by a note that records the
+  removal and its date. **Nothing else in the page moved** — the headline, the lede, the six
+  answers, their sources and the two `more_*` links are the strings and the files they were.
+- **The anchor, the navigation and the sitemap.** There was no table of contents on the page
+  and no sitemap entry to remove: `src/layouts/Base.astro`'s menu links `/faq/` and no anchor
+  of it, and the page's own outline was its bands. Nothing in the tree linked
+  `/faq/#comparison`, and nothing links it now — `website/test/linkcheck.mjs`'s second rule is
+  what holds that either way, since a `#fragment` that resolves to no `id` on the target page
+  is refused wherever it is written.
+- **The two gates that pin the removal.** `website/test/faq-community.mjs` reads the built
+  page for every leftover of the section — the band, the heading "How Fugaro compares", and the
+  word `comparison` itself, which is what every shape of the section was written in: its anchor
+  and class, its panel, its empty state, its row count and all seven of its rule blocks. The
+  word rather than a list of them, because a list is what a first cut of this check carried:
+  it named the three shapes a reader sees and left five of the seven rule blocks free to come
+  back unnoticed. Each shape has a plant a later edit would write, and the stylesheet's plant
+  is the five selectors that list missed. The file half is a build case: a `comparison:` key written into
+  `faq.yaml` again stops the build naming the key, because the page reads `version` and
+  `questions` and refuses every other one. That is what keeps the removed section's data from
+  returning as a fact nothing renders (W1.10 step 2), and it is the rule D103's reader used to
+  be; the provenance cases themselves went out with the rows they were written for.
+- **The figures, and the owner's request that they stay put.** The removal takes the section's
+  markup and its rules out of the page: the built FAQ is **1,583 bytes** lighter (23,719 →
+  **22,136** bytes), and the whole build is lighter by the same 1,583 bytes, the file count
+  unmoved at 23. The page's word count drops from 241 to **211** — the heading and the
+  empty-state sentence — and its lead is the nine words it was. **No figure in
+  `website/README.md` is re-derived**: the owner's ruling of 2026-10-20 re-derives the byte
+  budgets only when asked, and the round moves the whole-site total *down*, so every ceiling
+  holds with the numbers further inside them than they were — which is what the budget gate
+  measures on every run, whatever the README states.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round and this run cannot see a picture. What was read is the
+  built artifact — the page's own HTML for the section's leftovers and its bytes and words
+  from the gates' own measurement — with `(cd website && npm run check)` green over all of the
+  gates. **Whether the page looks right without the section is the owner's check at the
+  preview** (70a–70c, P9, D190).

@@ -972,7 +972,7 @@ func TestTokenWithoutBackendIsInfraError(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "5")
 	b.deps.Backend = runner.Backend{}
 	rec, err := b.run(t)
-	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "fugaro init --repo") {
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "fugaro update") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 	// The object is the launcher's evidence and is left for the lifecycle

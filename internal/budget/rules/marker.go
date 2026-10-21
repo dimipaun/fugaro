@@ -19,7 +19,7 @@ package rules
 // `cascade` run ever writes them.
 //
 // What replaces the bump is a marker of its own, written by the same owner-run
-// deploy (`fugaro init --firebase`, plan task C1.6) in the same place and in
+// deploy (`fugaro update --firebase`, plan task C1.6) in the same place and in
 // the same way as `projectpolicy.PathRulesMarker()`: after the rules PUT
 // succeeds, and also when no deploy is planned because the deployed document
 // already equals the generated one. A `cascade` launch (C1.19), the service's
@@ -27,14 +27,14 @@ package rules
 // run on an installation whose rules predate the children, before the run
 // starts rather than in the middle of one.
 //
-// KNOWN GAP — a rules downgrade. An older Fugaro running `fugaro init
+// KNOWN GAP — a rules downgrade. An older Fugaro running `fugaro update
 // --firebase` reads `config/limits/policyRules` at its own `RulesVersion`, so
 // its downgrade refusal does not fire; it redeploys its older document, which
 // lacks the new children, and leaves this marker at 1, which that release does
 // not know. A cascade launch then passes the marker gate and the run's first
 // write of `credential`, `waiting_until` or a by-tier counter is refused
 // mid-run. The mitigation is that the refusal is a named halt (C1.17's
-// `HaltCredsRulesDenied`, naming `fugaro init --firebase` with a current
+// `HaltCredsRulesDenied`, naming `fugaro update --firebase` with a current
 // release), never a silent drop. The refusal below of a marker *above*
 // `CredsRulesVersion` guards only future releases; a release that shipped
 // before this one cannot be taught to write this marker.
@@ -44,7 +44,7 @@ package rules
 // every launcher to do. Its doctor compares the deployed document with the one
 // it generates, finds them different (this document carries the /creds node and
 // the new children; that one does not) and reports `policy-rules-skew` with the
-// remedy "re-run `fugaro init --firebase`". An operator who follows that advice
+// remedy "re-run `fugaro update --firebase`". An operator who follows that advice
 // with the older binary in hand performs exactly the downgrade above, and the
 // fix text's "upgrade instead if the release is newer" cannot resolve it: both
 // sides are `RulesVersion` 3, and that binary reads no `credsRules` marker, so
@@ -71,7 +71,7 @@ func PathCredsRulesMarker() string { return "config/limits/credsRules" }
 // credentials change bumps it without touching `projectpolicy.RulesVersion`,
 // which is the whole point of keeping them apart.
 //
-// A marker above this is a newer Fugaro's; `fugaro init --firebase` refuses to
+// A marker above this is a newer Fugaro's; `fugaro update --firebase` refuses to
 // deploy this binary's rules over it (internal/infra's DB.Plan), exactly as it
 // does for a `policyRules` marker above `projectpolicy.RulesVersion`.
 const CredsRulesVersion = 1

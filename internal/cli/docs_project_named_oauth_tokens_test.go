@@ -453,7 +453,12 @@ func TestDocsProjectClaudeAccountsCommandsExist(t *testing.T) {
 		// (claude-oauth-token is all lower case and hyphens), so
 		// `fugaro secrets set claude-oauth-token` would otherwise be read as a
 		// three-word path that resolves to nothing.
-		words := strings.Fields(strings.TrimPrefix(text, "fugaro "))
+		// The page's `fugaro init` is its spelling of `fugaro setup`: W1.2
+		// retired the name into a tombstone that carries no flags, and the
+		// rename of this page's prose is W2.3's, so the flags a line shows are
+		// checked against the door that carries them (docCommandWords). The
+		// messages below quote the line as the page writes it.
+		words := docCommandWords(strings.Fields(strings.TrimPrefix(text, "fugaro ")))
 		var path []string
 		cmd := root
 		for _, f := range words {
@@ -472,7 +477,7 @@ func TestDocsProjectClaudeAccountsCommandsExist(t *testing.T) {
 		}
 		for _, fm := range flagRE.FindAllStringSubmatch(text, -1) {
 			if !cmdHasFlag(cmd, fm[1]) {
-				t.Errorf("%s's `fugaro %s` names --%s, which that command has no such flag", projectClaudeAccountsDoc, strings.Join(path, " "), fm[1])
+				t.Errorf("%s's `%s` names --%s, which that command has no such flag", projectClaudeAccountsDoc, text, fm[1])
 			}
 		}
 	}

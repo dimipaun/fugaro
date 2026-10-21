@@ -206,10 +206,10 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 		want []string
 	}{
 		{"../../plugin/skills/setup/SKILL.md", []string{
-			"Init's prompts (step 9) have no `--repo` to pass",
+			"Setup's prompts (step 9) have no `--repo` to pass",
 			"except a per-repository one (`bitbucket-token`, project-wide only through an explicit `project_secrets` allow-list entry)",
 			"per-repository by default; project-wide only through that same entry",
-			"press Ctrl-C at the prompt and run the command it printed in your own terminal, then start init again",
+			"press Ctrl-C at the prompt and run the command it printed in your own terminal, then start setup again",
 			"a covered name is not asked for",
 		}},
 		{"../../plugin/skills/setup/reference/decisions.md", []string{

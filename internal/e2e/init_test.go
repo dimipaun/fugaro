@@ -33,7 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// The fugaro init --repo tests run the fugaro binary against the gcpfake
+// The fugaro update --repo tests run the fugaro binary against the gcpfake
 // servers and a fake terraform, from a checkout of the live-test sandbox
 // fixture. The fake terraform plans whatever the test scripts; what the
 // tests check is what fugaro hands it: the tfvars and imports of each
@@ -98,7 +98,7 @@ type initRepoRig struct {
 	spec   infra.RepoSpec
 }
 
-// newInitRepoRig sets up an installation that fugaro init has applied:
+// newInitRepoRig sets up an installation that fugaro setup has applied:
 // the runs and state buckets, the installation's state, and a local config
 // with its outputs. checkoutYAML replaces the sandbox's fugaro.yaml when
 // not empty; origin is the checkout's origin.
@@ -128,7 +128,7 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 		os.Unsetenv(k)
 	}
 
-	// The local config fugaro init leaves: the bootstrap's, plus the
+	// The local config fugaro setup leaves: the bootstrap's, plus the
 	// installation's outputs.
 	// It is the project's config, found by the checkout's project:.
 	r.cfg = filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects", initRepoProjectName+".yaml")
@@ -181,7 +181,7 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 	testutil.Git(t, r.checkout, "commit", "-qm", "fixture")
 	testutil.Git(t, r.checkout, "remote", "add", "origin", origin)
 
-	// The names, from Go, as fugaro init --repo computes them.
+	// The names, from Go, as fugaro update --repo computes them.
 	lc, err := localcfg.Parse([]byte(r.cfgText))
 	if err != nil {
 		t.Fatal(err)
@@ -330,14 +330,14 @@ func (c cliResult) String() string {
 	return "exit " + fmt.Sprint(c.code) + "\nstdout:\n" + c.stdout + "\nstderr:\n" + c.stderr
 }
 
-// fugaroInit runs fugaro init with args from a directory outside the
+// fugaroInit runs fugaro update with args from a directory outside the
 // checkout, with no terminal on stdin.
 func (r *initRepoRig) fugaroInit(t *testing.T, args ...string) cliResult {
 	t.Helper()
 	return r.fugaroInitIn(t, nil, args...)
 }
 
-// fugaroInitTyped is fugaro init run at a (pseudo) terminal where typed is
+// fugaroInitTyped is fugaro update run at a (pseudo) terminal where typed is
 // what the person types, line by line: the typed-only confirmations (a billable
 // first image build) are given nowhere else.
 func (r *initRepoRig) fugaroInitTyped(t *testing.T, typed string, args ...string) cliResult {
@@ -355,11 +355,36 @@ func (r *initRepoRig) fugaroInitTyped(t *testing.T, typed string, args ...string
 	return r.fugaroInitIn(t, tty, args...)
 }
 
+// convergeCmd is the command every run below invokes, and it is what these
+// tests run instead of the retired word: since W1.2 (task W1.2 of
+// docs/setup-wizard/implementation-plan.md) the old `init` is a hidden
+// tombstone that applies nothing and exits 1, so a run that still named it
+// would be that refusal and this package would be red.
+//
+// The converge `init` used to be is two commands over one engine: `fugaro
+// setup`, the first run, which creates, and `fugaro update`, the re-converge of
+// an installation that already exists, which creates nothing. `update` is the
+// door these tests are about. Every rig below starts from an installation
+// newInitRepoRig has already applied — the state bucket's
+// installation/default.tfstate and the local config the converge left — so what
+// each run exercises is a re-converge, which is update's own contract ("the
+// re-converge of an installation ... or, with --repo, for the repository of the
+// checkout at PATH"), and it is the door W5.2 renames this file and its tests
+// after (`internal/e2e/update_test.go`, `TestUpdate*`). W5.2 keeps
+// `TestInitRepoBuildsThenDeploys` and `TestInitRepoBuildNeedsConfirmation` as
+// the only candidates for `TestSetup*`, and that split is the owner's to call
+// with W1.3; all 27 run under this one word until then.
+//
+// The word is one constant in one place because it is one decision: W5.2 moves
+// it here and nothing else in the file moves with it. Every assertion below
+// stays as it is.
+const convergeCmd = "update"
+
 func (r *initRepoRig) fugaroInitIn(t *testing.T, stdin *os.File, args ...string) cliResult {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	// fugaro init applies nothing in a coding agent's session, and these tests
+	// the converge refuses in a coding agent's session, and these tests
 	// may be run from one: the markers are cleared, as a person's terminal has none.
 	env := os.Environ()
 	for _, k := range []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT"} {
@@ -371,7 +396,7 @@ func (r *initRepoRig) fugaroInitIn(t *testing.T, stdin *os.File, args ...string)
 	if slices.Contains(args, "--repo") && !slices.Contains(args, "--print-vars") && !slices.Contains(args, "--plan-only") && !slices.Contains(args, "--forget") && !slices.Contains(args, "--onboard-repo") {
 		args = append(slices.Clone(args), "--onboard-repo", r.repo)
 	}
-	cmd := exec.CommandContext(ctx, r.fugaro, append([]string{"init"}, args...)...)
+	cmd := exec.CommandContext(ctx, r.fugaro, append([]string{convergeCmd}, args...)...)
 	cmd.Dir = r.dir
 	cmd.Env = hermeticEnv(env)
 	if stdin != nil {
@@ -384,7 +409,7 @@ func (r *initRepoRig) fugaroInitIn(t *testing.T, stdin *os.File, args ...string)
 	// gocloud says this when a gs:// bucket is opened without credentials: the
 	// rig's endpoints are fakes, and nothing in init may open a real bucket.
 	if strings.Contains(res.stderr+res.stdout, "Default Credentials") {
-		t.Fatalf("fugaro init tried to open a real gs:// bucket:\n%s\n%s", res.stderr, res.stdout)
+		t.Fatalf("fugaro update tried to open a real gs:// bucket:\n%s\n%s", res.stderr, res.stdout)
 	}
 	var xe *exec.ExitError
 	switch {
@@ -727,8 +752,9 @@ func TestInitRepoBuildsThenDeploys(t *testing.T) {
 }
 
 // A repository whose agent authenticates through Vertex AI is recorded as
-// such, so fugaro init enables the Vertex AI API; the first one says to
-// rerun fugaro init.
+// such, so fugaro update enables the Vertex AI API; the first one says to
+// rerun `fugaro init`, the sentence internal/cli prints today and W2.1 renames
+// -- the assertion below quotes it as it stands.
 func TestInitRepoRecordsVertex(t *testing.T) {
 	r := newInitRepoRig(t, "acme/sandbox", "https://bitbucket.org/acme/sandbox.git", func(y string) string {
 		return strings.Replace(y, "auth: oauth", "auth: vertex", 1)
@@ -778,8 +804,8 @@ func TestInitRepoWarnsBaseImageOutsideBaseRegistry(t *testing.T) {
 	}
 }
 
-// init --repo reads the installation's outputs in a directory of its own,
-// so the installation's workdir (a fugaro init running meanwhile, or
+// fugaro update --repo reads the installation's outputs in a directory of its own,
+// so the installation's workdir (a fugaro update running meanwhile, or
 // terraform run there by hand) keeps its tfvars, imports and saved plan.
 func TestInitRepoLeavesInstallationWorkdir(t *testing.T) {
 	r := sandboxRig(t)
@@ -1049,14 +1075,15 @@ func exists(t *testing.T, b *blobx.Bucket, key string) bool {
 }
 
 // After the installation's --forget (state rm), its state keeps its
-// outputs but manages nothing: init --repo refuses to plan against it,
-// and says to run fugaro init first.
+// outputs but manages nothing: fugaro update --repo refuses to plan against it,
+// and says to run `fugaro init` first -- the sentence internal/cli prints
+// today, which is W2.1's to rename; the assertion below quotes it as it stands.
 func TestInitRepoRefusesForgottenInstallation(t *testing.T) {
 	r := sandboxRig(t)
 	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": installationOutputs(t)}, "show": map[string]any{"stdout": stateEmpty}})
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
 	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro init first") || !strings.Contains(res.stderr, "forgotten") {
-		t.Fatalf("init --repo on a forgotten installation:\n%s", res)
+		t.Fatalf("fugaro update --repo on a forgotten installation:\n%s", res)
 	}
 	if calls := r.calls(t); count(calls, "repo plan") != 0 || count(calls, "repo apply") != 0 {
 		t.Errorf("calls = %q, want no plan or apply of the repository", calls)
@@ -1064,8 +1091,9 @@ func TestInitRepoRefusesForgottenInstallation(t *testing.T) {
 }
 
 // An installation applied before the tag mover role existed outputs no
-// role_ids.tag_mover: init --repo refuses to plan a grant of a role that
-// isn't there, and says to run fugaro init first.
+// role_ids.tag_mover: fugaro update --repo refuses to plan a grant of a role that
+// isn't there, and says to run `fugaro init` first -- W2.1's sentence, quoted
+// by the assertion below as internal/cli prints it today.
 func TestInitRepoRefusesInstallationWithoutTagMover(t *testing.T) {
 	r := sandboxRig(t)
 	var outs map[string]map[string]any
@@ -1080,7 +1108,7 @@ func TestInitRepoRefusesInstallationWithoutTagMover(t *testing.T) {
 	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": string(b)}, "show": map[string]any{"stdout": installationStateManaged}})
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
 	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro init first") || !strings.Contains(res.stderr, "tag_mover") {
-		t.Fatalf("init --repo on an installation without the tag mover role:\n%s", res)
+		t.Fatalf("fugaro update --repo on an installation without the tag mover role:\n%s", res)
 	}
 	if calls := r.calls(t); count(calls, "repo plan") != 0 || count(calls, "repo apply") != 0 {
 		t.Errorf("calls = %q, want no plan or apply of the repository", calls)
@@ -1088,7 +1116,7 @@ func TestInitRepoRefusesInstallationWithoutTagMover(t *testing.T) {
 }
 
 // An installation applied before M9a has no project_name: every job
-// carries the name, so init --repo refuses it and names the fix.
+// carries the name, so fugaro update --repo refuses it and names the fix.
 func TestInitRepoRefusesUnnamedInstallation(t *testing.T) {
 	r := sandboxRig(t)
 	var outs map[string]map[string]any
@@ -1103,7 +1131,7 @@ func TestInitRepoRefusesUnnamedInstallation(t *testing.T) {
 	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": string(b)}, "show": map[string]any{"stdout": installationStateManaged}})
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
 	if res.code != 1 || !strings.Contains(res.stderr, "the installation has no project name") || !strings.Contains(res.stderr, "fugaro init --name "+initRepoProjectName) {
-		t.Fatalf("init --repo on an unnamed installation:\n%s", res)
+		t.Fatalf("fugaro update --repo on an unnamed installation:\n%s", res)
 	}
 	if calls := r.calls(t); count(calls, "repo plan") != 0 || count(calls, "repo apply") != 0 {
 		t.Errorf("calls = %q, want no plan or apply of the repository", calls)
@@ -1133,9 +1161,10 @@ func TestInitRepoForget(t *testing.T) {
 	}
 }
 
-// The rollback is recoverable: after init --repo --forget and init
-// --forget (state rm, which destroys nothing), a retried fugaro init and
-// init --repo import what state rm left behind instead of planning creates
+// The rollback is recoverable: after fugaro update --repo --forget and fugaro
+// update --forget (state rm, which destroys nothing), a retried fugaro update
+// and fugaro update --repo import what state rm left behind instead of
+// planning creates
 // that fail with 409: the custom roles, the scheduler account, the log
 // bucket (once undeleted) and the repository's Scheduler job, next to
 // what they imported before.
@@ -1202,7 +1231,7 @@ func TestInitForgetThenReinitImports(t *testing.T) {
 		t.Errorf("installation imports:\n%v\nwant:\n%v", got, want)
 	}
 
-	// And init --repo imports the Scheduler job, in the scheduler region,
+	// And fugaro update --repo imports the Scheduler job, in the scheduler region,
 	// with the rest of the repository.
 	if res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build"); res.code != 0 {
 		t.Fatal(res)
@@ -1296,7 +1325,7 @@ func TestInitRepoNeedsInstallation(t *testing.T) {
 	}
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
 	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro init first") {
-		t.Fatalf("want exit 1 with run fugaro init first:\n%s", res)
+		t.Fatalf("want exit 1 with the no-installation refusal:\n%s", res)
 	}
 }
 
@@ -1365,7 +1394,7 @@ func TestInitRepoBuildNeedsConfirmation(t *testing.T) {
 	}
 }
 
-// init --repo on a project where Cloud Resource Manager is disabled
+// fugaro update --repo on a project where Cloud Resource Manager is disabled
 // enables it once confirmed, and a disabled Cloud Scheduler hides nothing
 // to adopt: the check's Scheduler job is planned as a create.
 func TestInitRepoEnablesResourceManager(t *testing.T) {
@@ -1416,8 +1445,9 @@ func TestInitRepoEnablesResourceManager(t *testing.T) {
 	}
 }
 
-// init --repo with the Storage API disabled fails as a remote error at
-// the state bucket, not as "no installation: run fugaro init first".
+// fugaro update --repo with the Storage API disabled fails as a remote error
+// at the state bucket, not as the no-installation refusal ("run `fugaro init`
+// first" -- W2.1's sentence, and the assertion below quotes it as it stands).
 func TestInitRepoStorageDisabledIsRemote(t *testing.T) {
 	r := sandboxRig(t)
 	r.su.Disable("storage.googleapis.com", r.gcs.Server)

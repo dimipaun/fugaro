@@ -301,7 +301,7 @@ func retireClients(t *testing.T, r *initRig) *infra.Clients {
 // deleted.
 func TestInitRepoRetireRefusesWithoutTheFlag(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true})
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build")
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s; want the refusal", ExitCode(err), err, out, errOut)
 	}
@@ -334,7 +334,7 @@ func TestInitRepoRetireRefusesWithoutTheFlag(t *testing.T) {
 // applies, and the job is left to them rather than refused.
 func TestInitRepoRetireGateReadsTheStateNotTheAddressList(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: false})
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -370,7 +370,7 @@ func TestInitRepoRetireGateReadsTheStateNotTheAddressList(t *testing.T) {
 // anything is removed.
 func TestInitRepoUnreadableStateWarnsAndCarriesOn(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, stateUnreadable: true})
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -394,7 +394,7 @@ func TestInitRepoUnreadableStateWarnsAndCarriesOn(t *testing.T) {
 	}
 
 	r2 := newRetireRig(t, retireOpts{protection: true, stateUnreadable: true})
-	out, errOut, err = executeStdin(t, "", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err = executeStdin(t, "", "setup", "--repo", "--retire", "--no-build")
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v\n%s%s; want the unreadable state to stop --retire", ExitCode(err), err, out, errOut)
 	}
@@ -409,7 +409,7 @@ func TestInitRepoUnreadableStateWarnsAndCarriesOn(t *testing.T) {
 // deleted and the unprotected service account left to the apply.
 func TestInitRepoRetireRunsTheWholeFlowInOrder(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true})
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -459,7 +459,7 @@ func TestInitRepoRetireRunsTheWholeFlowInOrder(t *testing.T) {
 // said: both confirmations carry it.
 func TestInitRepoRetireConfirmationNamesEveryKeptSecret(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true})
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -548,7 +548,7 @@ func TestInitRepoRetireTypedConfirmationsAreNotCoveredByAnythingElse(t *testing.
 				stdinIsTerminal = func(io.Reader) bool { return false }
 				t.Cleanup(func() { stdinIsTerminal = old })
 			}
-			args := append([]string{"init", "--repo", "--retire", "--no-build"}, tc.args...)
+			args := append([]string{"setup", "--repo", "--retire", "--no-build"}, tc.args...)
 			out, errOut, err := executeStdin(t, "aurora\naurora\n", args...)
 			if ExitCode(err) != ExitUserError {
 				t.Fatalf("exit %d, err %v\n%s%s; want a refusal", ExitCode(err), err, out, errOut)
@@ -597,7 +597,7 @@ func TestInitRepoRetireTypedConfirmationsAreNotCoveredByAnythingElse(t *testing.
 // and it has to sit between the header and the prompt.
 func TestInitRepoRetireShowsThePlanBeforeTheSecondConfirmation(t *testing.T) {
 	newRetireRig(t, retireOpts{protection: true})
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -650,7 +650,7 @@ func TestInitRepoRetireShowsThePlanBeforeTheSecondConfirmation(t *testing.T) {
 // finishes the work -- "nothing was removed" would be false by then.
 func TestInitRepoRetireDeclinedSecondConfirmationNamesWhatLeftTheState(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true})
-	out, errOut, err := executeStdin(t, "aurora\nno\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\nno\n", "setup", "--repo", "--retire", "--no-build")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s; want the decline to stop the run", ExitCode(err), err, out, errOut)
 	}
@@ -688,7 +688,7 @@ func TestInitRepoRetireDeclinedSecondConfirmationNamesWhatLeftTheState(t *testin
 // deleted I-C.
 func TestInitRepoRetireResumeNoChangeAsksBeforeTheDeleteAndDecliningStopsIt(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, noJobInState: true, planClean: true})
-	out, errOut, err := executeStdin(t, "aurora\nno\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\nno\n", "setup", "--repo", "--retire", "--no-build")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s; want the declined confirmation to stop the run", ExitCode(err), err, out, errOut)
 	}
@@ -727,7 +727,7 @@ func TestInitRepoRetireResumeNoChangeDeletesAfterTheConfirmation(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, noJobInState: true, planClean: true})
 	// The third answer is the local config's own confirmation: this run never
 	// applied, so that write is not covered by an apply's.
-	out, errOut, err := executeStdin(t, "aurora\naurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -761,7 +761,7 @@ func TestInitRepoRetireResumeNoChangeDeletesAfterTheConfirmation(t *testing.T) {
 // what a real run does, was the untested path.
 func TestInitRepoRetireAdoptsALiveLabelledContainerInTheState(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, keptLive: true})
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -814,7 +814,7 @@ func TestInitRepoRetireAdoptsALiveLabelledContainerInTheState(t *testing.T) {
 // the state.
 func TestInitRepoRetireResumeNoChangeNamesOnlyTheDelete(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, noJobInState: true, keptAsNote: true, planClean: true})
-	out, errOut, err := executeStdin(t, "aurora\naurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -838,7 +838,7 @@ func TestInitRepoPlanOnlyRemovesNothing(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true})
 	// --allow-delete names the service account: --plan-only runs the
 	// ordinary guard, which refuses any delete the user did not name.
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--plan-only", "--allow-delete", retireSvcAddr)
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--plan-only", "--allow-delete", retireSvcAddr)
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -865,7 +865,7 @@ func TestInitRepoRetireAndPlanOnlyExcludeOneAnother(t *testing.T) {
 	for _, k := range agentMarkers {
 		t.Setenv(k, "")
 	}
-	_, _, err := executeStdin(t, "", "init", "--repo", "--retire", "--plan-only")
+	_, _, err := executeStdin(t, "", "setup", "--repo", "--retire", "--plan-only")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "exclude one another") {
 		t.Fatalf("exit %d, err %v; want the flags refused", ExitCode(err), err)
 	}
@@ -877,7 +877,7 @@ func TestInitRepoRetireAndPlanOnlyExcludeOneAnother(t *testing.T) {
 func TestInitRepoRetireRefusesADeleteOutsideTheSet(t *testing.T) {
 	outside := "module.repo.google_storage_bucket_iam_member.job"
 	r := newRetireRig(t, retireOpts{protection: true, outside: outside})
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), outside) {
 		t.Fatalf("exit %d, err %v\n%s%s; want the guard to refuse %s", ExitCode(err), err, out, errOut, outside)
 	}
@@ -898,7 +898,7 @@ func TestInitRepoRetireRefusesADeleteOutsideTheSet(t *testing.T) {
 // and the state removal passes nothing for it.
 func TestInitRepoRetireResumeFindsTheOrphanByLabel(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, noJobInState: true})
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -1070,7 +1070,7 @@ func TestRetireLeftoverNamesWhatAStopBeforeTheAPIDeleteOwes(t *testing.T) {
 // the script fails the second call.
 func TestInitRepoRetireNamesWhatAPartialStateRemovalTook(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, stateRmFails: true})
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if err == nil {
 		t.Fatalf("the partial state removal did not fail the run\n%s%s", out, errOut)
 	}
@@ -1509,7 +1509,7 @@ func TestPreventDestroySignatureIsWhitespaceNormalized(t *testing.T) {
 // message, and the stdout the summary owns.
 func TestInitRepoPreventDestroyReframed(t *testing.T) {
 	r := newRetireRig(t, retireOpts{planAbort: fixture(t, "prevent_destroy_wrapped.txt")})
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--yes")
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -1542,7 +1542,7 @@ func TestInitRepoPreventDestroyReframed(t *testing.T) {
 func TestInitRepoPreventDestroyOnAResourceFugaroNeverDestroys(t *testing.T) {
 	aborted := strings.Replace(fixture(t, "prevent_destroy_wrapped.txt"), retireKeptAddr, retireRegistryAddr, 1)
 	r := newRetireRig(t, retireOpts{planAbort: aborted})
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--yes")
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -1597,7 +1597,7 @@ func TestInitRepoPreventDestroyThenRetireFinishesIt(t *testing.T) {
 	}
 	r.save(t)
 
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--yes")
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes")
 	if ExitCode(err) != ExitUserError || err == nil ||
 		!strings.Contains(err.Error(), "the plan was refused: "+retireKeptAddr) {
 		t.Fatalf("the first run was not refused on the container: exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
@@ -1609,7 +1609,7 @@ func TestInitRepoPreventDestroyThenRetireFinishesIt(t *testing.T) {
 		t.Fatalf("the refused run removed state: %v", calls)
 	}
 
-	out, errOut, err = executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err = executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if err != nil {
 		t.Fatalf("the rerun failed: exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -1641,7 +1641,7 @@ func TestInitRepoPreventDestroyThenRetireFinishesIt(t *testing.T) {
 // come (Review Focus 6, design §6).
 func TestInitRepoRetireHalfFailureNamesWhatWasRemoved(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, planAbort: "Error: Invalid provider configuration\n"})
-	out, errOut, err := executeStdin(t, "aurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\n", "setup", "--repo", "--retire", "--no-build")
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -1671,7 +1671,7 @@ func TestInitRepoRetireHalfFailureNamesWhatWasRemoved(t *testing.T) {
 // with the state already consistent.
 func TestInitRepoRetireReportsAnApplyThatSucceededAndADeleteThatFailed(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, deleteFails: 500})
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -1699,7 +1699,7 @@ func TestInitRepoRetireFailedDeleteStillWritesTheLocalConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, errOut, runErr := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, runErr := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if ExitCode(runErr) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s; want the failed delete to exit non-zero", ExitCode(runErr), runErr, out, errOut)
 	}
@@ -1735,7 +1735,7 @@ func TestInitRepoRetireFailedDeleteStillWritesTheLocalConfig(t *testing.T) {
 // deleted (design §6, review round 4).
 func TestInitRepoRetireReportsADeleteWhoseOperationFailed(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, deleteOpError: "the job is in use"})
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s; want a failed operation to exit non-zero", ExitCode(err), err, out, errOut)
 	}
@@ -1773,7 +1773,7 @@ func TestInitRepoRetireReportsADeleteStillRunning(t *testing.T) {
 	t.Cleanup(func() { retireDeletePolls, retireDeletePoll = oldPolls, oldPoll })
 
 	r := newRetireRig(t, retireOpts{protection: true, deletePolls: 1000})
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s; want a delete that did not finish to exit non-zero", ExitCode(err), err, out, errOut)
 	}
@@ -1814,7 +1814,7 @@ func TestInitRepoRetireRefusesAJobTheStateCannotName(t *testing.T) {
 	// cannot name it and the labels cannot either (a refused or degraded
 	// label call), and it is the one that must not pass silently.
 	r := newRetireRig(t, retireOpts{protection: true, jobNoName: true, noOrphanJob: true})
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -1853,7 +1853,7 @@ func TestInitRepoRetireRefusesAJobTheStateCannotName(t *testing.T) {
 // repeat.
 func TestInitRepoRetireResumeDoesNotReremove(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, noJobInState: true})
-	_, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	_, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, errOut)
 	}
@@ -1883,7 +1883,7 @@ func TestInitRepoRetireResumeDoesNotReremove(t *testing.T) {
 // removal, nothing deleted (I4).
 func TestInitRepoRetireResumeAdoptsTheLiveLabelledContainer(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, keptAsNote: true})
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -1915,7 +1915,7 @@ func TestInitRepoRetireResumeAdoptsTheLiveLabelledContainer(t *testing.T) {
 // with the state's and the labels' fields filled in (design §3.2).
 func TestInitRepoJSONCarriesRetirements(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true})
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes", "--json")
 	if ExitCode(err) != ExitUserError || err == nil {
 		// --yes cannot run a retirement, so the documented outcome is the
 		// refusal -- and the result document is printed either way.
@@ -1960,7 +1960,7 @@ func TestInitRepoRetireNeverTouchesSecretManager(t *testing.T) {
 	// the retirement takes its address out of the state, and that value has
 	// to survive.
 	r.sm.Seed(retireKeptSecretID(t), nil, []byte("v"))
-	if _, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build"); err != nil {
+	if _, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build"); err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, errOut)
 	}
 	if got := r.sm.Deleted(); len(got) != 0 {
@@ -2036,7 +2036,7 @@ func TestInitRepoRetireTranscriptGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	newRetireRig(t, retireOpts{protection: true})
-	out, errOut, runErr := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, runErr := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if runErr != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(runErr), runErr, out, errOut)
 	}
@@ -2083,7 +2083,7 @@ func TestInitRepoRetireConvergesOnAnAdoptedContainer(t *testing.T) {
 		// --allow-delete names the one address this fixture's plan deletes (the
 		// retired service account); the container is nobody's to delete, which
 		// is what the assertions below are about.
-		out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+		out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
 		if err != nil {
 			t.Fatalf("run %d: exit %d, err %v\n%s%s", i, ExitCode(err), err, out, errOut)
 		}
@@ -2119,7 +2119,7 @@ func TestInitRepoRetireSaysWhenThereIsNothingToRetire(t *testing.T) {
 	// live and labelled in Secret Manager, so Readiness adopts it back into
 	// the spec and nothing at all is left to retire.
 	r := newRetireRig(t, retireOpts{protection: false, stateEmpty: true, noOrphanJob: true, keptAsNote: true})
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--retire", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--retire", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -2161,7 +2161,7 @@ func TestInitRepoRetireRefusesAFailedLabelCall(t *testing.T) {
 			tc.fail(r)
 			// No typed confirmation is fed in: a refusal that reached the
 			// first prompt would fail on EOF instead of on the message.
-			out, errOut, err := executeStdin(t, "", "init", "--repo", "--retire", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+			out, errOut, err := executeStdin(t, "", "setup", "--repo", "--retire", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
 			if ExitCode(err) != ExitRemoteError {
 				t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 			}
@@ -2200,7 +2200,7 @@ func TestInitRepoRetireRefusesAFailedLabelCall(t *testing.T) {
 func TestInitRepoRefusedSecretsListDegradesInsteadOfAborting(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: false})
 	r.sm.FailListWith = 403
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
 	if err != nil {
 		t.Fatalf("a refused secrets.list stopped the run: exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -2227,7 +2227,7 @@ func TestInitRepoRefusedSecretsListDegradesInsteadOfAborting(t *testing.T) {
 // state as the fact it is.
 func TestInitRepoRetireSecondConfirmationIsPastTense(t *testing.T) {
 	newRetireRig(t, retireOpts{protection: true})
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -2262,7 +2262,7 @@ func TestInitRepoRetireSecondConfirmationIsPastTense(t *testing.T) {
 // deletion_protection = true" about an attribute the state does not carry.
 func TestInitRepoRetireRefusalNeedsAValueTheStateCarried(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: false, jobNoProtection: true})
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -2295,7 +2295,7 @@ func TestInitRepoRetireRefusalNeedsAValueTheStateCarried(t *testing.T) {
 // address and one API delete.
 func TestInitRepoRetireRunsTheFlowOnce(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true})
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire")
 	text := out + errOut
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, text)

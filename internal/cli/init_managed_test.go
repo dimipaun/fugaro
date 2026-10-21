@@ -45,7 +45,7 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		r := newInitRig(t)
 		r.markedRuns(t, initProjectName, initProject)
 		fakeTerminal(t)
-		if _, _, err := executeStdin(t, initProjectName+"\n", "init"); err != nil {
+		if _, _, err := executeStdin(t, initProjectName+"\n", "setup"); err != nil {
 			t.Fatal(err)
 		}
 		noMarker(t, r.gcs, initRunsBucket)
@@ -56,7 +56,7 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 	t.Run("init --firebase on an existing project", func(t *testing.T) {
 		r := newFBRig(t)
 		r.markedRuns(t, initProjectName, initProject)
-		if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+		if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes"); err != nil {
 			t.Fatal(err)
 		}
 		noMarker(t, r.gcs, initRunsBucket)
@@ -634,7 +634,7 @@ func TestManagedInitRefusalNamesNoFlag(t *testing.T) {
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out, _, err := executeStdin(t, "", "init", "--yes")
+	out, _, err := executeStdin(t, "", "setup", "--yes")
 	managedRefusal(t, err, address, true)
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("a plan the guard refused was applied\n%s", out)
@@ -644,7 +644,7 @@ func TestManagedInitRefusalNamesNoFlag(t *testing.T) {
 	r2 := newInitRig(t)
 	r2.stateBucket()
 	r2.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out2, _, err := executeStdin(t, "", "init", "--yes")
+	out2, _, err := executeStdin(t, "", "setup", "--yes")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out2)
 	}
@@ -673,7 +673,7 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	r.managedRuns(t, initProjectName, initProject)
 	r.allowDeleteList(t, initProject, address)
 	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	_, _, err := executeStdin(t, "", "init", "--yes")
+	_, _, err := executeStdin(t, "", "setup", "--yes")
 	managedRefusal(t, err, address, true)
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatal("the owner's delete list approved a delete in fugaro's own root")
@@ -689,7 +689,7 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 			r.stateBucket()
 		}
 		r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-		out, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", address)
+		out, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", address)
 		if err != nil || len(r.ran(t, "apply")) != 1 {
 			t.Errorf("%s: --allow-delete for the plan's delete: err %v, %d applies\n%s", name, err, len(r.ran(t, "apply")), out)
 		}
@@ -704,7 +704,7 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 		t.Fatal(err)
 	}
 	reads := stubManagedFact(t, false, errors.New("must not be read"))
-	out, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", address)
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", address)
 	if err != nil || len(r.ran(t, "apply")) != 1 {
 		t.Fatalf("a plan with no delete: err %v, %d applies\n%s", err, len(r.ran(t, "apply")), out)
 	}
@@ -730,7 +730,7 @@ func TestManagedInitRefusalOfWhatNoApprovalClearsHasNoAdvice(t *testing.T) {
 			r.setPlan(t, ch)
 			// Listed on the command line, so the moved object's refusal is
 			// the moved one rather than an unlisted delete's.
-			_, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", addr)
+			_, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", addr)
 			managedRefusal(t, err, addr, false)
 			if len(r.ran(t, "apply")) != 0 {
 				t.Fatal("a plan the guard refused was applied")
@@ -750,7 +750,7 @@ func TestManagedInitFactReadErrorFailsClosed(t *testing.T) {
 	r.stateBucket()
 	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
 	reads := stubManagedFact(t, false, errors.New("the storage API answered 400"))
-	_, _, err := executeStdin(t, "", "init", "--yes")
+	_, _, err := executeStdin(t, "", "setup", "--yes")
 	managedRefusal(t, err, address, false)
 	if !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "the storage API answered 400") {
 		t.Errorf("the refusal does not say the read failed:\n%s", err)
@@ -840,7 +840,7 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		r.script["plan@installation"] = map[string]any{"exit": 0}
 		r.script["show@installation"] = map[string]any{"stdout": `{"format_version":"1.2","resource_changes":[]}`}
 		r.save(t)
-		_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+		_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes")
 		managedRefusal(t, err, addr, true)
 		if len(r.applies(t)) != 0 {
 			t.Errorf("applied: %v", r.applies(t))
@@ -850,7 +850,7 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		stubManagedFact(t, true, nil)
 		outside := "module.repo.google_storage_bucket_iam_member.job"
 		r := newRetireRig(t, retireOpts{protection: true, outside: outside})
-		_, _, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+		_, _, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 		managedRefusal(t, err, outside, true)
 		if applies := r.applies(t); len(applies) != 0 {
 			t.Errorf("the refused plan was applied: %v", applies)
@@ -864,7 +864,7 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		r := newInitRig(t)
 		r.stateBucket()
 		r.setPlan(t, append(forgetPlan(), change("module.installation.google_service_account.scheduler", "delete"))...)
-		_, _, err := executeStdin(t, "", "init", "--forget", "--yes")
+		_, _, err := executeStdin(t, "", "update", "--forget", "--yes")
 		managedRefusal(t, err, "module.installation.google_service_account.scheduler", true)
 		if len(r.ran(t, "apply"))+len(r.ran(t, "state rm")) != 0 {
 			t.Fatalf("calls = %q", r.calls(t))
@@ -887,7 +887,7 @@ func TestManagedInitRefusalBoundsUntrustedText(t *testing.T) {
 				r := newInitRig(t)
 				r.stateBucket()
 				r.setPlan(t, change(v, "delete"))
-				_, _, err := executeStdin(t, "", "init", "--yes")
+				_, _, err := executeStdin(t, "", "setup", "--yes")
 				if ExitCode(err) != ExitUserError {
 					t.Fatalf("exit %d, err %v", ExitCode(err), err)
 				}

@@ -2,7 +2,7 @@
 // Fugaro project: $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml (else under
 // ~/.config), holding the project's name, its GCP project, region and
 // buckets, and the onboarded repositories (design §2.4 and §5.4). fugaro
-// init writes them; Select picks the one a command acts on.
+// update writes them; Select picks the one a command acts on.
 package localcfg
 
 import (
@@ -58,7 +58,7 @@ type Config struct {
 	BaseImages map[string]string `yaml:"base_images,omitempty"`
 	// ImageSource is the registry/owner prefix a base pin's images come
 	// from: "<host>/<owner>" (for example ghcr.io/dimipaun), the same
-	// string fugaro init's --image-source takes. It is the TRUSTED owner a
+	// string fugaro update's --image-source takes. It is the TRUSTED owner a
 	// base_images entry under the remote repository is checked against
 	// (design registry-remote-repository.md §3.6), recorded once by the run
 	// that pins, published in the shared config, and read from here by
@@ -206,13 +206,13 @@ type Budget struct {
 	AllowedModels []string `yaml:"allowed_models,omitempty"`
 	// RTDBURL is the project's Firebase Realtime Database (the budget
 	// backend of M9b), which fugaro budget reads and writes. Set by fugaro
-	// init --firebase; empty means the project has none.
+	// update --firebase; empty means the project has none.
 	RTDBURL string `yaml:"rtdb_url,omitempty"`
 	// FirebaseProject is the project's own Firebase project (the FP) and
 	// FirebaseAPIKey its restricted web API key (not a secret: it may call
 	// only Identity Toolkit and Secure Token). TokenSigner is the signer
 	// account the launcher mints run tokens as. All four are written by
-	// fugaro init --firebase from the Firebase root's outputs.
+	// fugaro update --firebase from the Firebase root's outputs.
 	FirebaseProject string `yaml:"firebase_project,omitempty"`
 	FirebaseAPIKey  string `yaml:"firebase_api_key,omitempty"`
 	TokenSigner     string `yaml:"token_signer,omitempty"`
@@ -362,7 +362,7 @@ func (c *Config) validateBudget(bad func(string, ...any)) {
 	}
 }
 
-// Terraform is what fugaro init needs to plan the installation again: its
+// Terraform is what fugaro update needs to plan the installation again: its
 // state bucket, and the inputs that exist only as flags.
 type Terraform struct {
 	StateBucket string   `yaml:"state_bucket,omitempty"`
@@ -371,7 +371,7 @@ type Terraform struct {
 	Operators   []string `yaml:"operators,omitempty"`
 	// BudgetAdmins are further budget admins on the Firebase project, IAM
 	// members (user:, group: or serviceAccount:); the GCP project's owners
-	// and editors are admins too, read when fugaro init --firebase runs.
+	// and editors are admins too, read when fugaro update --firebase runs.
 	BudgetAdmins []string `yaml:"budget_admins,omitempty"`
 	// RegistryCleanup (dry-run, on or off), NoLogIsolation and BudgetBackend
 	// are the installation's switches that exist as flags: adopt mode copies
@@ -567,7 +567,7 @@ type Endpoints struct {
 	// Engine root is not a CLI client's endpoint, it is the reaper job's
 	// (internal/backend/batch/reap.go's Endpoints).
 	Batch string `yaml:"batch,omitempty"`
-	// The APIs only fugaro init calls: bucket and IAM policy reads and
+	// The APIs only fugaro update calls: bucket and IAM policy reads and
 	// writes, service accounts, registries, the project's number, and the
 	// enable of Cloud Resource Manager.
 	Storage          string `yaml:"storage,omitempty"`
@@ -576,7 +576,7 @@ type Endpoints struct {
 	ResourceManager  string `yaml:"resource_manager,omitempty"`
 	CloudScheduler   string `yaml:"cloud_scheduler,omitempty"`
 	ServiceUsage     string `yaml:"service_usage,omitempty"`
-	// CloudBilling is read by fugaro init --firebase to check that the
+	// CloudBilling is read by fugaro update --firebase to check that the
 	// Firebase project has billing.
 	CloudBilling string `yaml:"cloud_billing,omitempty"`
 	// FirebaseDatabase lists the Firebase project's databases (init --firebase).
@@ -616,8 +616,8 @@ type Repo struct {
 	// repositories. It is not a secret.
 	GitHubAppID string `yaml:"github_app_id,omitempty"`
 	// Vertex records that one of the repository's workflows authenticates
-	// its agent through Vertex AI (agent.auth: vertex), so fugaro init
-	// enables the Vertex AI API. fugaro init --repo sets it.
+	// its agent through Vertex AI (agent.auth: vertex), so fugaro update
+	// enables the Vertex AI API. fugaro update sets it.
 	Vertex bool `yaml:"vertex,omitempty"`
 }
 
@@ -771,7 +771,7 @@ func LoadProject(getenv func(string) string, name string) (*Config, string, erro
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("%w at %s: run fugaro init to write it", ErrMissing, path)
+		return nil, fmt.Errorf("%w at %s: run fugaro setup to write it", ErrMissing, path)
 	}
 	if err != nil {
 		return nil, err
@@ -798,7 +798,7 @@ func BaseImageNameKind(ref string) string {
 	return ""
 }
 
-// ParseBaseImageFlag reads one fugaro init --base-image value: KIND=IMAGE, or
+// ParseBaseImageFlag reads one fugaro update --base-image value: KIND=IMAGE, or
 // a bare IMAGE whose repository name says the kind (fugaro-<kind>, as in
 // ghcr.io/dimipaun/fugaro-go:1 or <registry>/fugaro-base/fugaro-web-node:dev-abc).
 func ParseBaseImageFlag(v string) (kind, ref string, err error) {
@@ -1168,7 +1168,7 @@ func (c *Config) PriceOverride(region string) (backend.Prices, bool) {
 func (c *Config) Warnings() []string {
 	var w []string
 	if c.Build.ServiceAccount != "" {
-		w = append(w, "build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; fugaro init drops it")
+		w = append(w, "build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; fugaro update drops it")
 	}
 	return append(w, c.notes...)
 }
@@ -1202,7 +1202,7 @@ func (c *Config) RunsBucketName() string {
 // (builds/<slug>/<workflow>/image.json), as gs://<name>: always the runs
 // bucket, the only bucket a build account may write (under
 // builds/<slug>/), never another bucket_url. fugaro image build, fugaro
-// init's first build and the daily check send it; readiness, ls and
+// setup's first build and the daily check send it; readiness, ls and
 // image status read it. "" when there is no runs bucket name.
 func (c *Config) RecordBucketURL() string {
 	if name := c.RunsBucketName(); name != "" {

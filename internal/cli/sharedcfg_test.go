@@ -94,7 +94,7 @@ func TestInitConfigOnlyPublishesTheSharedConfig(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	dir := sharedRuns(t)
-	if _, _, err := executeStdin(t, "", "init", "--config-only", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup", "--config-only", "--yes"); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(sharedObjectPath(dir))
@@ -109,7 +109,7 @@ func TestInitConfigOnlyPublishesTheSharedConfig(t *testing.T) {
 func TestInitPublishConfigAlone(t *testing.T) {
 	r := newInitRig(t)
 	dir := sharedRuns(t)
-	out, _, err := executeStdin(t, "", "init", "--publish-config")
+	out, _, err := executeStdin(t, "", "setup", "--publish-config")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestInitPublishConfigAsLauncherIsRefused(t *testing.T) {
 	}
 	t.Cleanup(func() { sharedBucketOpener = old })
 	r.gcs.DenyWrites(initRunsBucket, "fugaro/")
-	_, _, err := executeStdin(t, "", "init", "--publish-config")
+	_, _, err := executeStdin(t, "", "setup", "--publish-config")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -149,7 +149,7 @@ func TestInitWarnsWhenSharedConfigPublishIsForbidden(t *testing.T) {
 	}
 	t.Cleanup(func() { sharedBucketOpener = old })
 	r.gcs.DenyWrites(initRunsBucket, "fugaro/")
-	out, _, err := executeStdin(t, "", "init", "--yes")
+	out, _, err := executeStdin(t, "", "setup", "--yes")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -165,7 +165,7 @@ func TestInitPublishConfigNeedsALocalConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", "")
-	_, _, err := executeStdin(t, "", "init", "--publish-config", "--name", "aurora")
+	_, _, err := executeStdin(t, "", "setup", "--publish-config", "--name", "aurora")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -174,7 +174,14 @@ func TestInitPublishConfigNeedsALocalConfig(t *testing.T) {
 func TestInitPublishConfigExcludesTheOtherModes(t *testing.T) {
 	newInitRig(t)
 	for _, other := range []string{"--config-only", "--plan-only", "--print-vars", "--forget"} {
-		_, _, err := executeStdin(t, "", "init", "--publish-config", other)
+		// --forget is the update door's flag (W1.2): setup refuses it before
+		// the run's own mode checks, so the row that pairs it with a mode
+		// runs the door that takes it.
+		door := "setup"
+		if other == "--forget" {
+			door = "update"
+		}
+		_, _, err := executeStdin(t, "", door, "--publish-config", other)
 		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--publish-config") || !strings.Contains(err.Error(), "exclude one another") {
 			t.Errorf("%s: exit %d, err %v", other, ExitCode(err), err)
 		}
@@ -193,7 +200,7 @@ func TestInitPublishFailureWarnsAndSucceeds(t *testing.T) {
 		f.Close()
 		t.Skip("the directory is writable despite its mode (running as root)")
 	}
-	out, _, err := executeStdin(t, "", "init", "--config-only", "--yes")
+	out, _, err := executeStdin(t, "", "setup", "--config-only", "--yes")
 	if err != nil {
 		t.Fatalf("a publish failure must not fail init: %v", err)
 	}
@@ -322,7 +329,7 @@ func TestRepoOnboardingPublishesAndKeepsOtherReposPublished(t *testing.T) {
 
 func TestInitPublishConfigIsInstallationOnlyForRepo(t *testing.T) {
 	newInitRig(t)
-	_, _, err := executeStdin(t, "", "init", "--repo", "--publish-config")
+	_, _, err := executeStdin(t, "", "setup", "--repo", "--publish-config")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--publish-config") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -490,7 +497,7 @@ func TestInitPublishConfigSaysSoWhenItDoesNotPublish(t *testing.T) {
 	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(data), "runs_bucket: fugaro-runs-proj-1234", "runs_bucket: my-own-runs", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := executeStdin(t, "", "init", "--publish-config")
+	out, _, err := executeStdin(t, "", "setup", "--publish-config")
 	// An explicit publish request that publishes nothing is a failure.
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "nothing was published") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
@@ -600,7 +607,7 @@ func TestInitPublishFromACodingAgentSession(t *testing.T) {
 			dir := sharedRuns(t)
 			t.Setenv(marker, "1")
 			refusal := initflow.AgentRefusal(marker)
-			_, _, err := executeStdin(t, "", "init", "--publish-config")
+			_, _, err := executeStdin(t, "", "setup", "--publish-config")
 			if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), refusal) {
 				t.Fatalf("--publish-config: exit %d, err %v; want %q", ExitCode(err), err, refusal)
 			}

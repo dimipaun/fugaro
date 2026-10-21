@@ -14,9 +14,9 @@ import (
 )
 
 // ServiceResourceManager is the Cloud Resource Manager API, through which
-// fugaro init reads the project's number. Terraform enables it with the
-// installation's other APIs, but init reads the number before the first
-// apply, so on a fresh project init enables it itself (EnableService).
+// fugaro setup reads the project's number. Terraform enables it with the
+// installation's other APIs, but setup reads the number before the first
+// apply, so on a fresh project setup enables it itself (EnableService).
 const ServiceResourceManager = "cloudresourcemanager.googleapis.com"
 
 // The APIs discovery and the readiness gates read, by service name.

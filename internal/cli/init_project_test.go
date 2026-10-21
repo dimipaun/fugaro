@@ -71,7 +71,7 @@ func (r *projectRig) run(t *testing.T, terminal bool, stdin string, args ...stri
 	if terminal {
 		fakeTerminal(t)
 	}
-	return executeStdin(t, stdin, append([]string{"init", "--gcp-project", newProj}, args...)...)
+	return executeStdin(t, stdin, append([]string{"setup", "--gcp-project", newProj}, args...)...)
 }
 
 func (r *projectRig) nothingDone(t *testing.T, why string) {
@@ -416,17 +416,17 @@ func TestProjectFlagsRefusedBeforeAnyCall(t *testing.T) {
 	// The project's ID: validated, and never taken from anywhere but the flag.
 	for _, id := range []string{"abc", "Upper-case-id", "1starts-digit", "ends-with-hyphen-", "has_underscore", "this-id-is-way-too-long-for-gcp-1", "my-google-project", "has-ssl-in-it"} {
 		r := newProjectRig(t)
-		_, _, err := executeStdin(t, id+"\n", "init", "--create-project", "--gcp-project", id)
+		_, _, err := executeStdin(t, id+"\n", "setup", "--create-project", "--gcp-project", id)
 		if ExitCode(err) != ExitUserError {
 			t.Errorf("%q: exit %d (%v)", id, ExitCode(err), err)
 		}
 		r.nothingDone(t, id)
 	}
 	r := newProjectRig(t)
-	if _, _, err := executeStdin(t, "", "init", "--create-project"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--gcp-project") {
+	if _, _, err := executeStdin(t, "", "setup", "--create-project"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--gcp-project") {
 		t.Errorf("--create-project without --gcp-project: %v", err)
 	}
-	if _, _, err := executeStdin(t, "", "init", "--repo", "--create-project", "--gcp-project", newProj); ExitCode(err) != ExitUserError {
+	if _, _, err := executeStdin(t, "", "setup", "--repo", "--create-project", "--gcp-project", newProj); ExitCode(err) != ExitUserError {
 		t.Errorf("--repo with --create-project: %v", err)
 	}
 	r.nothingDone(t, "flag refusals")
@@ -459,7 +459,7 @@ func TestOrgPolicyErrorVerbatim(t *testing.T) {
 func TestNeverUsesGcloudDefaultProject(t *testing.T) {
 	r := newProjectRig(t)
 	const dflt = "their-default-9999"
-	if _, _, err := executeStdin(t, dflt+"\n", "init", "--create-project"); ExitCode(err) != ExitUserError {
+	if _, _, err := executeStdin(t, dflt+"\n", "setup", "--create-project"); ExitCode(err) != ExitUserError {
 		t.Errorf("without --gcp-project: exit %d (%v)", ExitCode(err), err)
 	}
 	// The environment's default (gcloud's, Terraform's, Google's) does not
@@ -704,7 +704,7 @@ func TestBillingLinkedWhileConfirmingIsNotReplaced(t *testing.T) {
 	cmd.SetIn(&onRead{r: strings.NewReader(billingAcc + "\n"), fn: func() { r.bill.SetBilling(newProj, true) }})
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetArgs([]string{"init", "--gcp-project", newProj, "--create-project", "--link-billing", billingAcc})
+	cmd.SetArgs([]string{"setup", "--gcp-project", newProj, "--create-project", "--link-billing", billingAcc})
 	err := cmd.Execute()
 	if n := r.bill.Attempts(); n != 0 {
 		t.Errorf("%d write(s) attempted\n%s", n, out.String())
