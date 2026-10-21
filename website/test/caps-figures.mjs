@@ -51,13 +51,26 @@
 //      (960 px, its own breakpoint and not the site's 48 rem), and a block that was deleted or
 //      moved behind a wider query leaves one column of cards on a desktop — the comparison the
 //      band is for, and the mirror of the wide table's fit this gate used to read at 768 px.
+//   8. **the bar's own sentence names the marks the bar draws, and only those.** The bar is a
+//      picture of the figures above it, and its `aria-label` is what a reader who cannot see it
+//      has: a label that names a mark the bar does not draw describes a picture that is not
+//      there (the review job has no middle half and no worst run, so its bar draws neither),
+//      and a label that drops one leaves a mark unexplained. The component's own comment states
+//      this contract and nothing else held it: the sentence and the drawn marks are read
+//      against each other, mark by mark.
+//   9. **the hero's two actions are 44 px targets.** The owner's brief of 2026-10-19 measures
+//      every control a page asks a reader to tap against 44 px, and this page's two are the
+//      hero's filled call to action and the quiet link beside it. The reading is
+//      `test/lib/controls.mjs`'s, which the homepage's own controls are held by as well — one
+//      rule read in both places, over each page's own list.
 //
 // **What this gate does not read.** The figures themselves: whether the card prints the figure
 // the file carries, under the field it is for, is `caps-and-costs.mjs`'s subject, and the two
 // files are split that way because a page can print the right figures in a card a phone cannot
 // read and vice versa. The runs line is a caption rather than a figure under a name, so rule 6
-// does not reach it, and the bar under the figures is a picture of figures the card prints above
-// it: it carries no text and is not a cell.
+// does not reach it, and the bar's geometry — where each mark sits along the cap — is the
+// component's arithmetic over the file's own figures, which rule 8 reads only as far as *which*
+// marks are drawn.
 //
 // Everything else is the shape the site's other layout gates keep: a pure failure function over
 // one built page's HTML and CSS, a case that reads the built artifact, and one fixture case per
@@ -68,6 +81,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { DIST, cssDeclarations, cssRules, parse, textOf, walk } from './lib/html.mjs'
+import { controlTargetFailures } from './lib/controls.mjs'
 
 const ROUTE = 'caps-and-costs/index.html'
 
@@ -96,6 +110,28 @@ const PHONE = 360
 const JOBS = /(^|[^\w-])caps-jobs(?![\w-])/
 const FIGURE_ROW = /(^|[^\w-])caps-figure-row(?![\w-])/
 const FIGURE = /caps-(job|figure)/
+
+/**
+ * The controls this page asks a reader to tap, and what a failure calls each one: the hero's
+ * filled call to action and the quiet link beside it. Held to the 44 px target by
+ * `test/lib/controls.mjs`, which the homepage's own controls are held by as well.
+ */
+const CONTROL_TARGETS = [
+  ['caps-cta', "the hero's filled call to action"],
+  ['caps-cta-quiet', "the hero's quiet call to action"],
+]
+
+/**
+ * The marks a bar can draw, each with the phrase the bar's own sentence uses for it. The order
+ * is the order the bar draws them in, and the review job draws neither of the two ends: it has
+ * no middle half and no worst run, so its bar is the median and the nine-in-ten mark alone.
+ */
+const BAR_MARKS = [
+  ['caps-bar-range', 'the middle half'],
+  ['caps-bar-median', 'the median'],
+  ['caps-bar-nine', 'nine runs in ten stayed under this'],
+  ['caps-bar-worst', 'the worst run'],
+]
 
 /** A string with its whitespace flattened, for comparisons across markup. */
 function collapse(text) {
@@ -274,6 +310,13 @@ export function figureLayoutFailures(css, html) {
   const out = []
   const fail = (why) => out.push(why)
 
+  // ---- the controls: every one the page asks a reader to tap is a 44 px target -----------
+  //
+  // Read first, and over the whole stylesheet, because it is not about the figures: a page that
+  // lost the band below still has to be tappable, and the two checks would otherwise be read as
+  // one. The rule is `test/lib/controls.mjs`'s, the list is this page's.
+  for (const line of controlTargetFailures(css, CONTROL_TARGETS)) fail(line)
+
   // ---- the markup: every figure under the name it is for ---------------------------------
 
   const doc = parse(html)
@@ -321,6 +364,36 @@ export function figureLayoutFailures(css, html) {
     oneOf('caps-job-name', 'job name')
     oneOf('caps-job-median-label', 'label on its median')
     oneOf('caps-job-median-value', 'median')
+
+    // The bar, and the sentence that stands in for it. The bar is a picture of the figures the
+    // card prints above it — it carries no text a reader can see — so its `aria-label` is the
+    // whole of what a reader who cannot see it is told, and the component's own comment states
+    // the contract this reads: the sentence names the marks the bar draws, and only those. The
+    // review job is where the two drift apart: it has no middle half and no worst run, so its
+    // bar draws neither, and a sentence that promised them describes a picture that is not
+    // there.
+    const bar = [...walk(card)].find(
+      (el) => el.name === 'svg' && classesOf(el).includes('caps-bar'),
+    )
+    if (bar === undefined) {
+      fail(`${where} draws no bar: the bar is the card's figures as a picture against the per-run cap, and a card without one is a card this check reads no further than`)
+    } else {
+      const label = collapse(bar.attrs.get('aria-label') ?? '')
+      if (label === '') {
+        fail(`${where} draws a bar with no accessible name: the bar is a picture and carries no text of its own, so a reader who cannot see it is told nothing about the figures it draws`)
+      } else {
+        for (const [klass, phrase] of BAR_MARKS) {
+          const drawn = [...walk(bar)].some((el) => classesOf(el).includes(klass))
+          const named = label.includes(phrase)
+          if (drawn && !named) {
+            fail(`${where} draws the ${klass} mark and its sentence does not name ${JSON.stringify(phrase)} — ${JSON.stringify(label)}: a mark the bar draws and the sentence does not mention is a figure a reader who cannot see the bar is never told about`)
+          }
+          if (!drawn && named) {
+            fail(`${where} draws no ${klass} mark and its sentence names ${JSON.stringify(phrase)} — ${JSON.stringify(label)}: the sentence describes a picture that is not there, which is what the review job's bar does when it is given a middle half it has no figure for`)
+          }
+        }
+      }
+    }
 
     // The card's own `<dl>`: the labelled figures, held to the name each one is under. The
     // label is the markup's own here — the `<dt>` before its `<dd>` — so the four ways a card
@@ -578,6 +651,13 @@ test('every figures refusal fires on the defect it names', () => {
     ['two figures under one name', plant(/>Worst<\/dt>/, '>9 in 10 under</dt>'), /prints two figures under the name "9 in 10 under"/],
     ['a figure that prints nothing', plant(/>\$5\.24<\/dd>/, '></dd>'), /prints no figure under the name "Worst"/],
     ['a card with no list of figures', plant(/<dl class="caps-job-figures"[^>]*>([\s\S]*?)<\/dl>/, (_all, inner) => `<div class="caps-job-figures">${inner}</div>`), /carries no <dl> of labelled figures/],
+    ['a card with no bar', plant(/class="caps-bar"/, 'class="caps-not-the-bar"'), /draws no bar/],
+    ['a bar with no accessible name', plant(/aria-label="An independent review-only run against our per-run cap: [^"]*"/, 'aria-label=""'), /draws a bar with no accessible name/],
+    // The bar's sentence and the marks it draws, read against each other — the pair the review
+    // job's own figures pull apart.
+    ['a bar whose sentence drops a mark it draws', plant(/aria-label="A first task run against our per-run cap: the middle half, /, 'aria-label="A first task run against our per-run cap: '), /draws the caps-bar-range mark and its sentence does not name "the middle half"/],
+    ['a bar whose sentence names a mark it does not draw', plant(/aria-label="An independent review-only run against our per-run cap: the median/, 'aria-label="An independent review-only run against our per-run cap: the middle half, the median'), /draws no caps-bar-range mark and its sentence names "the middle half"/],
+    ['a bar whose sentence loses the worst run it draws', plant(/ and the worst run\."/, '."'), /draws the caps-bar-worst mark and its sentence does not name "the worst run"/],
     // The phone's layout, one declaration at a time.
     ['the cards left in three columns at a phone width', plant(/grid-template-columns:1fr/, 'grid-template-columns:repeat(3,minmax(0,1fr))', 'css'), /laid out in 3 columns/],
     ['a row that cannot wrap', plant(/\.caps-figure-row\[[^\]]*\]\{[^}]*\}/, (rule) => rule.replace('flex-wrap:wrap;', ''), 'css'), /cannot wrap/],
@@ -590,6 +670,14 @@ test('every figures refusal fires on the defect it names', () => {
     // or moved behind a wider query, it leaves one column of cards on a desktop.
     ['the wide layout\'s block deleted', plant(/\.caps-jobs\[[^\]]*\]\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)\}/, '', 'css'), /laid out in 1 column\(s\)/],
     ['the wide layout\'s block moved behind a wider query', plant(/\(width>=60rem\)/, '(width>=100rem)', 'css'), /laid out in 1 column\(s\)/],
+    // And the page's own two controls, held to the target size the owner's brief of 2026-10-19
+    // measures every control a reader is asked to tap against. The declaration is the whole of
+    // what the rule can read — a filled link's own height is a fraction of a pixel short with
+    // nothing in the markup to say so — so the two ways it can go are a smaller minimum and no
+    // minimum at all, and the third is a minimum that holds at one width only.
+    ['a hero action under the 44 px target', plant(/\.caps-cta\[[^\]]*\]\{[^}]*\}/, (rule) => rule.replace('min-height:44px', 'min-height:20px'), 'css'), /the hero's filled call to action is a 20 px target/],
+    ['a hero action with no minimum at all', plant(/\.caps-cta-quiet\[[^\]]*\]\{[^}]*\}/, (rule) => rule.replace('min-height:44px;', ''), 'css'), /the hero's quiet call to action is no declared target/],
+    ['a hero action whose minimum holds only above a breakpoint', plant(/\.caps-cta\[[^\]]*\]\{[^}]*\}/, (rule) => `${rule.replace('min-height:44px;', '')}@media (min-width:48rem){.caps-cta{min-height:56px}}`, 'css'), /the hero's filled call to action is no declared target/],
   ]
   for (const [what, page, expected] of cases) {
     const failures = figureLayoutFailures(page.css, page.html)

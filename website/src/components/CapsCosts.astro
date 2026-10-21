@@ -191,13 +191,17 @@ const DASH = '—'
 /**
  * What one job's card draws, computed once: the four figures as the file spells them, the
  * bar's marks as coordinates, and the sentence the bar carries for a reader who cannot see
- * it. The sentence names the marks the bar actually draws — the review job has no middle
- * half and no worst run, and a label that promised them would describe a picture that is
- * not there.
+ * it. The sentence names the marks the bar actually draws, in the order it draws them — the
+ * review job has no middle half and no worst run, so its bar draws neither, and a label that
+ * promised them would describe a picture that is not there.
  */
 const JOBS = typical.jobs.map((job) => {
-  const marks = ['the middle half', 'the median', 'nine runs in ten stayed under this']
-  if (job.worstUSD !== null) marks.push('the worst run')
+  const marks = [
+    ...(job.middleHalfUSD === null ? [] : ['the middle half']),
+    'the median',
+    'nine runs in ten stayed under this',
+    ...(job.worstUSD === null ? [] : ['the worst run']),
+  ]
   return {
     id: job.id,
     name: job.name,

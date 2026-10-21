@@ -1052,13 +1052,21 @@ added or removed without this sentence moving fails there:
   body, which is the size `base.css` would otherwise leave a table at; and the three cards are
   side by side above this page's own 60 rem breakpoint, read again at 960 and at 1280 px, so a
   block that was deleted or moved behind a wider query is refused rather than green on every
-  phone width. Its refusals are kept the way the others keep theirs: every defect it is written
-  for has a case that plants the one thing it names in the artifact's own bytes — a card without
-  a name or a list of figures, a figure with no `<dt>` before it, two figures under one name, the
-  grid left at three columns at a phone's width, a row that cannot wrap, the nowrap figures and
-  the scroll box in force at the phone's width, a box wider than the phone's content box, the
-  rows at a table's smaller type, and the wide layout deleted or moved — and each case watches
-  the named refusal come back.
+  phone width. Two rules were added when the bars arrived: **the bar's own sentence names the
+  marks the bar draws, and only those** — the bar is a picture with no text a reader can see, so
+  its `aria-label` is the whole of what a reader who cannot see it is told, and the review job
+  has no middle half and no worst run, so its bar draws neither; and **the page's two hero
+  actions are 44 px targets**, read by `test/lib/controls.mjs`, the rule the homepage's own
+  controls are held by as well. Its refusals are kept the way the others keep theirs: every
+  defect it is written for has a case that plants the one thing it names in the artifact's own
+  bytes — a card without a name or a list of figures, a figure with no `<dt>` before it, two
+  figures under one name, a card with no bar, a bar with no accessible name, a bar whose
+  sentence drops a mark it draws or names one it does not, a hero action under the 44 px target
+  or with no minimum at all or with one that holds only above a breakpoint, the grid left at
+  three columns at a phone's width, a row that cannot wrap, the nowrap figures and the scroll
+  box in force at the phone's width, a box wider than the phone's content box, the rows at a
+  table's smaller type, and the wide layout deleted or moved — and each case watches the named
+  refusal come back.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
