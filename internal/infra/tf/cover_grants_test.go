@@ -555,12 +555,25 @@ func TestOnlyTheDeployerRolesNameTheDeployer(t *testing.T) {
 // account that could then reach the runs bucket and forge the marker.
 //
 // The condition known only after apply is a row for EACH of the two roles, and
-// the plain role is not the scoped one's case under another name: a computed
-// condition is not in `after` at all, so a plain fugaroDeployer binding carrying
-// one reads as the modules' own — there is no condition to see and nothing to
-// refuse — and the one role that must never be conditional is left decided
-// during apply. Delete the unknown-condition check in deployerGrant and both of
-// those rows fail with no refusal at all, while every other row still passes.
+// the plain role is not the scoped one's case under another name. What catches
+// a condition the plan has not decided is the check's own `unknownAt` clauses,
+// which read `after_unknown` by path — condition[0].title, .expression,
+// .description — so they catch it whether the whole condition is computed or
+// only its expression is. The row the plain role needs is the WHOLLY computed
+// one: a condition the plan does not know at all is in `after` as nothing, so
+// the "under a condition" branch has no condition to see and the binding reads
+// as the modules' plain one — `fugaroDeployer` decided during apply, on the
+// account the fence exists for, with no refusal at all. A plan whose expression
+// alone is computed still carries its block in `after` (with the expression
+// null), so the plain branch refuses that one as "under a condition" with the
+// check gone and without it: that row is held to the refusal naming the unknown
+// condition, not to the binding being accepted.
+//
+// Mutation (verified, run and restored): removing the check's `unknownAt`
+// clauses fails the row whose expression alone is computed; removing the whole
+// check fails the wholly computed row with no refusal at all, and the scoped
+// role's unknown-condition row above with a refusal that is not the one it
+// names — so that row is evidence about the message and not about acceptance.
 func TestDeployerGrantConditions(t *testing.T) {
 	const account = "serviceAccount:fugaro-deployer@proj-1.iam.gserviceaccount.com"
 	scoped := "projects/proj-1/roles/" + DeployerStorageRole
@@ -590,19 +603,21 @@ func TestDeployerGrantConditions(t *testing.T) {
 		"the scoped role with a description":                   {role: scoped, member: account, after: map[string]any{"condition": []any{map[string]any{"title": DeployerConditionTitle, "expression": scopedExpr, "description": "x"}}}, covered: false, why: "description"},
 		"the scoped role with two conditions":                  {role: scoped, member: account, after: map[string]any{"condition": []any{exact[0], map[string]any{"title": DeployerConditionTitle, "expression": scopedExpr, "description": nil}}}, covered: false, why: "more than one condition"},
 		"the scoped role with a condition that is not a block": {role: scoped, member: account, after: map[string]any{"condition": []any{"true", "true"}}, covered: false, why: "not a condition block"},
-		"the scoped role with an unknown condition":            {role: scoped, member: account, unknown: map[string]any{"condition": []any{map[string]any{"expression": true}}}, covered: false, why: "not known"},
+		"the scoped role with an unknown condition":            {role: scoped, member: account, after: map[string]any{"condition": []any{map[string]any{"title": DeployerConditionTitle, "expression": nil, "description": nil}}}, unknown: map[string]any{"condition": []any{map[string]any{"expression": true}}}, covered: false, why: "not known"},
 		"the scoped role to a person":                          {role: scoped, member: "user:me@example.com", after: map[string]any{"condition": exact}, covered: false, why: "kind of principal"},
 		"the plain role with no condition":                     {role: plain, member: account, covered: true},
 		"the plain role under the scoped condition":            {role: plain, member: account, after: map[string]any{"condition": exact}, covered: false, why: "under a condition"},
 		"the plain role under any condition":                   {role: plain, member: account, after: map[string]any{"condition": cond("fugaro-x", "true")}, covered: false, why: "under a condition"},
 		// The plain role's condition being UNKNOWN is its own row, and it is the
-		// one the two rows above cannot stand in for: a wholly computed condition
-		// is not in `after` at all, so the "under a condition" check sees no
-		// condition and the binding reads as the modules' plain one — which
-		// leaves `fugaroDeployer` decided during apply, on the account the
-		// fence exists for.
+		// one the two rows above cannot stand in for. The wholly computed
+		// condition is the plan shape that leaves `after` with no condition at
+		// all — the "under a condition" branch then sees nothing and the binding
+		// reads as the modules' plain one, which leaves `fugaroDeployer` decided
+		// during apply, on the account the fence exists for — and the second row
+		// is the other half of the same `unknownAt` read: a block that is in
+		// `after` with its expression known only after apply.
 		"the plain role with a wholly computed condition":        {role: plain, member: account, unknown: map[string]any{"condition": true}, covered: false, why: "not known"},
-		"the plain role with a condition known only after apply": {role: plain, member: account, unknown: map[string]any{"condition": []any{map[string]any{"expression": true}}}, covered: false, why: "not known"},
+		"the plain role with a condition known only after apply": {role: plain, member: account, after: map[string]any{"condition": []any{map[string]any{"title": DeployerConditionTitle, "expression": nil, "description": nil}}}, unknown: map[string]any{"condition": []any{map[string]any{"expression": true}}}, covered: false, why: "not known"},
 		"the plain role to a person":                             {role: plain, member: "user:me@example.com", covered: false, why: "kind of principal"},
 	} {
 		t.Run(name, func(t *testing.T) {

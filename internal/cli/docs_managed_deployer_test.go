@@ -1025,6 +1025,78 @@ func TestGcpSetupSaysWhyTheManagedGateIsClosed(t *testing.T) {
 	}
 }
 
+// TestManagedDeployerStepFourDenialIsPrecise: the register and the design of
+// record both said a step-4 denial — a positive action the deployer was refused
+// — stops Check 68 for any of the five `resource.name` services, and the design
+// said it again in §5 after the register had been made precise. §8 point 3's
+// ruling of 2026-10-20 draws the line, and the two texts have to draw it the
+// same way: IAM service accounts and Cloud Run jobs are the feature's own use,
+// so a denial there is the §5 option-2 fallback, while API keys, Cloud Scheduler
+// jobs, Artifact Registry repositories (and Secret Manager secrets, for its own
+// reason) are the acceptable drops — the service's type and its permissions go
+// with its role (R5). A reader who takes either text as "any denial stops the
+// check" drops a service that was survivable; a reader who takes it as "a denial
+// is a drop" ships a feature that cannot create the accounts and jobs a managed
+// plan is made of.
+//
+// Mutations (verified, run and restored): the design's "a step-4 denial for one
+// of those five services, is STOP and redesign" and the register's "a step-4
+// denial for one of those five services — STOP and redesign" put back, one at a
+// time — each fails here, naming its file.
+func TestManagedDeployerStepFourDenialIsPrecise(t *testing.T) {
+	for _, path := range []string{
+		"docs/design/managed-deployer-fence.md",
+		"docs/gcp-live-checklist.md",
+	} {
+		doc := flattenDoc(readDoc(t, path))
+		for _, want := range []string{
+			"IAM service accounts and Cloud Run jobs",
+			"acceptable drops",
+			"point 3",
+		} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s does not say %q: §8 point 3's ruling of 2026-10-20 is the line a step-4 denial is read against — a denial for IAM service accounts or Cloud Run jobs is the fallback, and the other services are the drops", path, want)
+			}
+		}
+		if strings.Contains(doc, "step-4 denial for one of those five services") {
+			t.Errorf("%s still says a step-4 denial for any of the five `resource.name` services stops the check: the ruling is service by service, and that sentence is what a reader takes as the rule", path)
+		}
+	}
+}
+
+// TestChecklistCheck68MethodRunsAsAScript: Check 68's guard stops with `exit 1`
+// and its Restore's stop is a `return` from the function it lives in, and both
+// mean what they are written to mean only when the block is run as a script. The
+// Method said "in one shell you keep for the whole check, in `bash`" and left
+// which shell to the reader: sourced into the shell the owner is working in, the
+// first stop closes that shell and takes its message with it, and the Restore's
+// stop — the one that fires with the gate still OPEN — loses the message that is
+// the only thing saying so. The sentence also carries what running it as a
+// script costs: the three variables the guard reads come from the environment,
+// so they have to be exported, or the script never sees them.
+//
+// Mutation (verified, run and restored): the sentence dropped — this fails.
+func TestChecklistCheck68MethodRunsAsAScript(t *testing.T) {
+	doc := flattenDoc(readDoc(t, "docs/gcp-live-checklist.md"))
+	const lead = "**Method.** All of it is yours, in one shell you keep for the whole check, in `bash`"
+	i := strings.Index(doc, lead)
+	if i < 0 {
+		t.Fatalf("Check 68's Method no longer opens with %q; update this test's marker", lead)
+	}
+	method := doc[i:]
+	if end := strings.Index(method, "```bash"); end >= 0 {
+		method = method[:end]
+	}
+	for _, want := range []string{
+		"run it as `bash chk68.sh`, never `. chk68.sh` or `source chk68.sh`",
+		"export CHK68_OWNER_RUN=yes CHK68_INSTALLATION=fugaro CHK68_PROJECT=fugaro-dev",
+	} {
+		if !strings.Contains(method, want) {
+			t.Errorf("Check 68's Method does not say %q: the guard's stops are `exit 1`, so the block is run as a script and never sourced, and the three variables the guard reads have to be exported to reach that script", want)
+		}
+	}
+}
+
 // TestChecklistCheck68NegativeDirectionNamesAgree: the negative direction acted
 // on the sandbox installation's own resources — its secret, its service account,
 // its repository, its API key, its Cloud Run job, its scheduler job, and a write

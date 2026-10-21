@@ -439,18 +439,30 @@ unsupported for a type, that type's clause can never be satisfied, the role
 grants nothing, and the fence is fail-closed but absent: the deployer would hold
 five roles that do nothing. §9's Check 68 measures it per service in both
 directions (a condition IAM refuses in step 2/3, or a denied positive action in
-step 4), and **the trigger is explicit: a condition IAM will not store, or a
-step-4 denial for one of those five services, is STOP and redesign — not a
-patch.** Option 2 above is that redesign and it is ready: project-level bindings
+step 4), and **the trigger is precise, service by service, and §8 point 3's
+ruling of 2026-10-20 draws the line between its two outcomes.** A condition IAM
+**refuses to store** (step 2 or step 3) is a STOP and this fallback whatever
+service it belongs to: a shape `setIamPolicy` will not take is the 0.8.6 outage
+again. Of a **step-4 denial** — a positive action the deployer was refused — the
+two services that are the feature's own use, **IAM service accounts and Cloud Run
+jobs**, are that same STOP and this same fallback and not a drop; the other
+three of the five — **API keys, Cloud Scheduler jobs and Artifact Registry
+repositories** — are the **acceptable drops** the ruling names (Secret Manager
+secrets with them, for its own reason: that condition's open question is the
+`extract` form and not `resource.name`): the service's type and its permissions
+go with its role (R5), the FACT records which service was dropped, and the check
+carries on with the rest rather than stopping. Option 2 above is that redesign
+and it is ready: project-level bindings
 in the managed project, no condition at all, no `extract`, no `resource.name`,
 no per-service reasoning, and the only option that depends on no UNVERIFIED
 Google behaviour beyond C8. What it needs before it can be taken is the two
 decisions §8's open point 1 and option 2's own "what it needs from the owner"
 name — whether "whatever is in the project it was given" is the intent, and who
 creates the managed project — and those are the owner's, taken with Check 68's
-results in hand. One service failing is the smaller case and R5 covers it: the
-type is dropped from the design and its permissions with it. Most of them
-failing is this fallback.
+results in hand. **A drop is the smaller case and R5 is what covers it**: the
+type goes from the design and its permissions with it. **A STOP is this fallback
+whether it is one service or most of them** — a condition IAM will not store, or
+a step-4 denial for one of the two services that are the feature's own use.
 
 **Why not 3.** The most moving parts, the most owner setup, and the only option
 whose viability depends on provider support this repository cannot check.
