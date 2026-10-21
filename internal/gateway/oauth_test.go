@@ -610,6 +610,9 @@ func TestOAuthProductionRefusesALoopbackBase(t *testing.T) {
 		"http://[::1]:8080",
 		"http://api.anthropic.com", // the token would go in the clear
 		"https://api.anthropic.com.evil.example",
+		// Anthropic's name on somebody else's port is somebody else's port:
+		// the rule is about where the token goes (TestOAuthPortIsPartOfTheHostItChecks).
+		"https://api.anthropic.com:8443",
 		"http://169.254.169.254",
 	} {
 		if err := checkOAuthBaseURL(bad); err == nil {
@@ -629,6 +632,39 @@ func TestOAuthProductionRefusesALoopbackBase(t *testing.T) {
 			_ = gw.Close(context.Background())
 			t.Errorf("an OAuth upstream on the loopback base %q started in production", bad)
 		}
+	}
+}
+
+// TestOAuthPortIsPartOfTheHostItChecks: url.Hostname() strips the port, and the
+// D133 rule is about where the credential goes, so a base of
+// https://api.anthropic.com:8443 is not Anthropic's own endpoint and neither is
+// a destination on that port. Judging the stripped name made oauthHostOK say
+// yes to both ends of such a pair, and checkOAuthDest's full-Host comparison
+// then found the two Hosts equal -- so the subscription token would have been
+// attached to a request to port 8443, which is the one thing tier A exists to
+// prevent. The loopback stand-in is the only host here that has a port, and it
+// is the branch that splits one off.
+//
+// Mutation (pass u.Hostname() at oauthHostOK's call sites): every case below
+// is accepted, and the control still passes.
+func TestOAuthPortIsPartOfTheHostItChecks(t *testing.T) {
+	const ported = "https://api.anthropic.com:8443"
+	for _, base := range []string{ported, "https://api.anthropic.com:443"} {
+		if err := checkOAuthBaseURL(base); err == nil {
+			t.Errorf("base %q is accepted: the port is not part of the host this rule judges", base)
+		}
+	}
+	// The destination leg is the one that actually attaches the credential: a
+	// base that carries a port makes both ends agree on the stripped name.
+	for _, dest := range []string{ported + "/v1/messages", "https://api.anthropic.com:443/v1/messages"} {
+		if err := checkOAuthDest(ported, dest); err == nil {
+			t.Errorf("checkOAuthDest(%q, %q) is accepted: the token would go to that port", ported, dest)
+		}
+	}
+	// The control: the endpoint itself, on the port it really has (none), is
+	// still accepted -- so this refuses the port and not the endpoint.
+	if err := checkOAuthDest("https://api.anthropic.com", "https://api.anthropic.com/v1/messages"); err != nil {
+		t.Errorf("the portless pair is refused: %v", err)
 	}
 }
 

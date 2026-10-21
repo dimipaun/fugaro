@@ -15,7 +15,10 @@
 
 locals {
   # The whole file is gated on the one opt-in: null creates nothing, and a
-  # single boolean keeps the five resources of this file in step.
+  # single boolean keeps the four resources of this file in step (the account,
+  # the bundle container, the accessor grant on it, and the service —
+  # TestCredentialsServiceResourcesAreCounted is what holds this number and the
+  # file's own resources together, in both directions).
   credentials_service_on = var.credentials_service != null
 }
 

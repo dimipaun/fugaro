@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // The Batch half of `fugaro validate` (plan 2026-10-19-compute-backend.md
@@ -339,5 +342,164 @@ workflows:
 	// backend is a fact about the installation (design §4.1).
 	if ps := computeProblems(cfg, nil); len(ps) != 0 {
 		t.Errorf("with no project config the resources are checked against the VM's limits: %v", ps)
+	}
+}
+
+// TestComputeProblemsJudgeOnlyTheFilesOwnProject: the backend, the machine
+// type a VM is and the size a workflow may ask for are facts about the
+// installation the FILE's project names, so a project config selected for
+// another project judges nothing here. It is the guard budgetProblems,
+// providerProblems and cascadeProblems all carry, and the shape `fugaro
+// validate` in project A's checkout hands these checks for a file that names
+// project B: without it the file is refused on limits that are not its
+// installation's (the one call site, computeCheckoutProblems).
+//
+// Mutation (drop the `lc != nil && lc.Name != cfg.Project` early return): the
+// foreign-project cases below fail.
+func TestComputeProblemsJudgeOnlyTheFilesOwnProject(t *testing.T) {
+	// One config per backend, each refused on that backend and accepted on the
+	// other, so the "own project" arm is a case the check really does fire on:
+	// 8 CPUs/32Gi is a Cloud Run job task and more than an e2-standard-4's task
+	// share (TestComputeProblemsUsesTheBackendsOwnLimits), and 3 CPUs is not
+	// one of Cloud Run's sizes while being inside an e2-standard-8's share.
+	const (
+		batchRefused = `version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  web:
+    commands: { build: "true", test: "true" }
+    resources: { cpu: 8, memory: 32Gi }
+`
+		cloudRunRefused = `version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  web:
+    commands: { build: "true", test: "true" }
+    resources: { cpu: 3, memory: 4Gi }
+`
+	)
+	for _, tc := range []struct{ backendName, machineType, yaml string }{
+		{backend.CloudBatch, "e2-standard-4", batchRefused},
+		{backend.CloudRun, "", cloudRunRefused},
+	} {
+		cfg := batchValidateConfig(t, tc.yaml)
+		if ps := computeProblems(cfg, batchValidateRig(t, tc.machineType, tc.backendName)); len(ps) == 0 {
+			t.Fatalf("backend %q: the rig's own project accepts these resources, so this case proves nothing", tc.backendName)
+		}
+		foreign := batchValidateRig(t, tc.machineType, tc.backendName)
+		foreign.Name = "somewhere-else"
+		if ps := computeProblems(cfg, foreign); len(ps) != 0 {
+			t.Errorf("backend %q: a config selected for another project judged this file: %v", tc.backendName, ps)
+		}
+	}
+}
+
+// TestBatchValidateProblemsJudgeOnlyTheFilesOwnProject is the same guard on the
+// Batch checks: the machine type, the task timeout and the artifact boundary
+// are all read from the installation the file's project names, so another
+// project's config -- which is to say, no installation of this file's at all,
+// the same state as a nil lc -- refuses nothing here.
+//
+// Mutation (drop the `lc.Name != cfg.Project` half of the early return): the
+// foreign-project cases below fail.
+func TestBatchValidateProblemsJudgeOnlyTheFilesOwnProject(t *testing.T) {
+	cfg := batchValidateConfig(t, batchValidateYAML)
+	impl := &recipe.Recipe{Name: "impl", Mode: recipe.ModeImplement}
+	art := &recipe.Recipe{Name: "deliver", Mode: recipe.ModeArtifact}
+	// A machine type this build cannot price, so the check has something to say
+	// about the rig's own project.
+	own := batchValidateRig(t, "e2-micro", backend.CloudBatch)
+	if ps := batchValidateProblems(own, cfg, impl); len(ps) == 0 {
+		t.Fatal("the rig's own project is not refused for an unpriceable machine type, so this case proves nothing")
+	}
+	foreign := batchValidateRig(t, "e2-micro", backend.CloudBatch)
+	foreign.Name = "somewhere-else"
+	for name, rcp := range map[string]*recipe.Recipe{"an implement recipe": impl, "the artifact boundary": art} {
+		if ps := batchValidateProblems(foreign, cfg, rcp); len(ps) != 0 {
+			t.Errorf("%s: a config selected for another project judged this file: %v", name, ps)
+		}
+	}
+	// And the unreadable-recipe arm is the nil-config arm, which is the same
+	// state: no installation of this file's to fail closed against.
+	if ps := batchValidateProblems(foreign, cfg, nil); len(ps) != 0 {
+		t.Errorf("a config selected for another project refused an unresolved recipe: %v", ps)
+	}
+}
+
+// TestTheCheckoutReadRunsTheBatchChecksToo: a resolved checkout is read
+// through loadCheckoutResolved by `fugaro image refresh`, image build and the
+// layer commands, and that read called computeProblems alone. computeProblems
+// drops the one Issue batch.CheckResources answers with no Field -- the
+// machine type the price table does not carry, a fact about the installation's
+// batch block rather than about a workflow -- on the premise that
+// batchValidateProblems reports it once, at batch.machine_type. The premise
+// holds only where BOTH are called, which is what `fugaro validate` does and
+// the checkout read did not: so an installation whose machine type cannot be
+// priced was told nothing at all, and no per-workflow resource check ran
+// either (CheckResources cannot size a VM it cannot price, so it returns that
+// one issue and nothing else). Unreachable today only because
+// internal/localcfg refuses backend: cloud-batch; the enable task makes it
+// reachable, which is why it is closed here.
+//
+// Mutation (drop the batchValidateProblems half from the shared helper): this
+// fails, and the checkout read reports nothing again.
+func TestTheCheckoutReadRunsTheBatchChecksToo(t *testing.T) {
+	root := t.TempDir()
+	testutil.Git(t, root, "init", "-q")
+	if err := os.WriteFile(filepath.Join(root, "fugaro.yaml"), []byte(batchValidateYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// e2-standard-64 is a machine type localcfg accepts and the price table
+	// does not carry, which is the shape CheckResources answers with no Field.
+	lc := batchValidateRig(t, "e2-standard-64", backend.CloudBatch)
+	_, _, err := loadCheckoutResolved(t.Context(), root, lc, layerOptions{NoBucket: true, Lenient: true})
+	if err == nil {
+		t.Fatal("the checkout read accepted a fugaro.yaml on an installation whose machine type the price table does not carry")
+	}
+	if !strings.Contains(err.Error(), "batch.machine_type") {
+		t.Errorf("the checkout read refused with %q, which does not name batch.machine_type: the problem computeProblems drops for the caller that also runs batchValidateProblems has no second home in this one", err)
+	}
+}
+
+// TestOnlyTheSharedHelperCallsTheBackendsChecks holds the premise the test
+// above is about structurally: every offline check of a checkout's fugaro.yaml
+// is taken through computeCheckoutProblems, so no caller can take
+// computeProblems without batchValidateProblems again. A new call site that
+// reaches for one of the two directly fails here rather than in production,
+// where the symptom is an installation told nothing about a machine type the
+// price table does not carry.
+//
+// Mutation (add a direct computeProblems call in another command file): this
+// fails naming the file.
+func TestOnlyTheSharedHelperCallsTheBackendsChecks(t *testing.T) {
+	files, err := filepath.Glob("../../internal/cli/*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The declarations are not calls, and the files that hold them: stripping
+	// them first is what makes the count below a count of call sites.
+	decls := []string{"func computeProblems(", "func batchValidateProblems("}
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") || strings.HasSuffix(path, "compute.go") {
+			// compute.go is the one home of both calls (computeCheckoutProblems
+			// is the pair's single call site), and its two declarations are
+			// there besides.
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := strings.Join(strings.Fields(string(data)), " ")
+		for _, d := range decls {
+			code = strings.ReplaceAll(code, d, "func <decl>(")
+		}
+		for _, name := range []string{"computeProblems(", "batchValidateProblems("} {
+			if strings.Contains(code, name) {
+				t.Errorf("%s calls %s directly: every offline check of a checkout is taken through computeCheckoutProblems, because computeProblems drops the machine type's own problem on the premise that batchValidateProblems reports it at that caller -- a caller that takes one half reports nothing for an installation whose machine type the price table does not carry", path, strings.TrimSuffix(name, "("))
+			}
+		}
 	}
 }

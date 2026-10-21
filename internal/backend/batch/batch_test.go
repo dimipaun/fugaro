@@ -1091,6 +1091,15 @@ func preemptEvent() map[string]any {
 // not (a live run must never read as failed); and a job whose state this build
 // cannot read is not, whatever its events say, because the state is the half
 // that says the execution is over at all.
+//
+// The evidence half is the narrower one and gets four cases of its own, because
+// an event is not evidence of a reclaim merely for mentioning preemption: the
+// reserved code (written out, so the constant has a second home that fails when
+// it moves), the event's own word in another case, and the two reports that
+// mention a preemption without being one -- a quota that ran out of preemptible
+// CPUs and the notice duration. A reader that accepted any of them would tell a
+// person their run's machine was reclaimed by the platform when their run
+// simply crashed.
 func TestAPreemptedJobReadsAsPreempted(t *testing.T) {
 	ctx := context.Background()
 	for _, c := range []struct {
@@ -1109,6 +1118,38 @@ func TestAPreemptedJobReadsAsPreempted(t *testing.T) {
 		{name: "FAILED for another reason", state: "FAILED", events: []map[string]any{
 			{"type": "STATUS_CHANGED", "description": "Task state is FAILED", "taskState": "FAILED",
 				"taskExecution": map[string]any{"exitCode": 50000}},
+		}, terminal: true},
+		// The number is written out here, once, on purpose. Every other case
+		// reaches it through preemptExitCode, so a constant that moved would
+		// move the test with it and nothing would fail; this literal is what
+		// makes 50001 the platform's answer and not the code's. Change the
+		// constant and this case reads a FAILED job carrying 50001 as *not*
+		// preempted -- which is the failure a number with one home is supposed
+		// to raise, and the one Check 57a step 7 is what finally settles.
+		{name: "FAILED with the reserved preemption code written out", state: "FAILED", events: []map[string]any{
+			{"type": "STATUS_CHANGED", "description": "Task state is FAILED", "taskState": "FAILED",
+				"taskExecution": map[string]any{"exitCode": 50001}},
+		}, preempted: true, terminal: true},
+		// The event's word is read without regard to case: the platform writes
+		// the prose of its own report, and a reader that knew only the
+		// lower-case spelling would find no preemption in a report that shouts
+		// it.
+		{name: "FAILED with the event's word in another case", state: "FAILED", events: []map[string]any{
+			{"type": "STATUS_CHANGED", "description": "The task's VM was PREEMPTED"},
+		}, preempted: true, terminal: true},
+		// And the word has to be the reclaim. "Preemptible" names a class of
+		// VM a *quota* event can say the project ran out of -- a fact about the
+		// project's capacity, not about this execution's machine -- and
+		// "preemption" is the notice's noun rather than the event that took the
+		// VM. Neither is evidence: a run whose VM was never reclaimed must not
+		// read as reclaimed because its project is out of preemptible CPUs or
+		// because the job asked for a notice it never received.
+		{name: "FAILED with a quota event naming preemptible CPUs", state: "FAILED", events: []map[string]any{
+			{"type": "STATUS_CHANGED", "description": "Quota 'PREEMPTIBLE_CPUS' exceeded. Limit: 0.0 in region us-central1.",
+				"taskState": "FAILED", "taskExecution": map[string]any{"exitCode": 1}},
+		}, terminal: true},
+		{name: "FAILED with an event about the preemption notice", state: "FAILED", events: []map[string]any{
+			{"type": "STATUS_CHANGED", "description": "The job's preemption notice duration is 0 seconds."},
 		}, terminal: true},
 		{name: "FAILED with no events at all", state: "FAILED", terminal: true},
 		{name: "RUNNING carrying the preemption event", state: "RUNNING", events: []map[string]any{preemptEvent()}},

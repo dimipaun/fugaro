@@ -56,7 +56,7 @@ type fakeDB struct {
 	onGet func(path string)
 
 	gets, puts, patches, deletes int
-	putErr, patchErr             error
+	putErr, patchErr, getErr     error
 }
 
 func newFakeDB() *fakeDB {
@@ -106,6 +106,9 @@ func (d *fakeDB) GetETag(_ context.Context, path string, out any) (string, bool,
 	d.gets++
 	if d.onGet != nil {
 		d.onGet(path)
+	}
+	if d.getErr != nil {
+		return "", false, d.getErr
 	}
 	if raw, ok := d.nodes[path]; ok {
 		if err := json.Unmarshal(raw, out); err != nil {
@@ -762,6 +765,32 @@ func TestAPlacementIsWrittenAsOneThing(t *testing.T) {
 	held, err := st.Leases(ctx, now)
 	if err != nil || len(held) != 1 || held[0].Credential != a1.Name || held[0].Slug != run.Slug || held[0].Run != run.ID {
 		t.Fatalf("the placed run's lease = %v, %v; want one hold on %q for %+v", held, err, a1.Name, run)
+	}
+}
+
+// A read that fails is not an empty state. Each of the three reads a selection
+// decides on answers with an error, and with the database's own error inside
+// it: an empty answer on a failed read is the fail-open direction — no marks
+// reads as no credential exhausted, no leases as a free slot for every run, no
+// current credential as the run holding none — and a caller that could not tell
+// a refusal from an empty answer would act on it.
+func TestAReadThatFailsIsNotAnEmptyState(t *testing.T) {
+	db := newFakeDB()
+	db.put(pathMarks, map[string]Mark{})
+	db.put(pathLeases, map[string]map[string]Lease{})
+	db.put(PathCurrent(run), a1.Name)
+	failure := errors.New("the database is unreachable")
+	db.getErr = failure
+	st := &RTDBStore{DB: db}
+
+	if marks, err := st.Marks(ctx); !errors.Is(err, failure) {
+		t.Errorf("Marks on a failed read = %v, %v; want the read's error", marks, err)
+	}
+	if leases, err := st.Leases(ctx, now); !errors.Is(err, failure) {
+		t.Errorf("Leases on a failed read = %v, %v; want the read's error", leases, err)
+	}
+	if name, found, err := st.Current(ctx, run); !errors.Is(err, failure) || found || name != "" {
+		t.Errorf("Current on a failed read = %q, found=%v, %v; want no name and the read's error", name, found, err)
 	}
 }
 

@@ -480,18 +480,18 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 }
 
 // doctorManagedDeployer is the info line that says plainly why the managed
-// deployer's scoped role (fugaroDeployerScoped) and its conditioned binding
-// are absent from every installation in this release
-// (managedDeployerShipped): so that nobody reads their absence as a broken
-// installation. Informational, never a warning and never failing, not even
-// with --strict; nil once the managed deployer ships.
+// deployer's seven scoped roles and their seven conditioned bindings are
+// absent from every installation in this release (managedDeployerShipped): so
+// that nobody reads their absence as a broken installation. Informational,
+// never a warning and never failing, not even with --strict; nil once the
+// managed deployer ships.
 func doctorManagedDeployer() *doctorCheck {
 	if managedDeployerOpen {
 		return nil
 	}
 	return &doctorCheck{ID: "managed-deployer-disabled", Severity: "info",
-		Problem: "the managed deployer's scoped role is disabled in this release, so its absence is expected: its fmgd- prefix fence is not an IAM condition GCP accepts yet, so the role and its binding are not created, and managed projects (fugaro init --create-project --managed, fugaro managed apply, fugaro restore) are refused until 0.9.5",
-		Fix:     "nothing to do: an installation and a project created without --managed are unaffected (docs/design/managed-projects.md)"}
+		Problem: "the managed deployer's scoped roles are disabled in this release, so their absence is expected: the redesigned fmgd- prefix fence (one IAM condition per service) has not been measured live yet, so the seven roles and their seven bindings are not created, and managed projects (fugaro init --create-project --managed, fugaro managed apply, fugaro restore) are refused until 0.10.0",
+		Fix:     "nothing to do: an installation and a project created without --managed are unaffected (docs/design/managed-deployer-fence.md, Check 68 of docs/gcp-live-checklist.md)"}
 }
 
 // doctorBaseImage warns when the installation has no Fugaro base recorded
@@ -636,7 +636,7 @@ func doctorGitHubApps(ctx context.Context, lc *localcfg.Config, notice io.Writer
 		// grant naming a different ID means this check would read a key the
 		// build's clone would not, which makes the diagnostic misleading
 		// rather than wrong, so it is a warning with the apply that fixes it.
-		logical := "github-app-key"
+		logical := config.GitHubAppKeySecret
 		projectID, _ := infra.ProjectSecretCandidate(lc, logical, repo)
 		buildSA := buildAccountMember(gcp.BuildServiceAccountID(slug) + "@" + lc.GCPProject + ".iam.gserviceaccount.com")
 		keyID, err := resolveGitSecretID(ctx, lc, lc.GCPProject, repo, logical, gcp.SecretID(slug, logical), projectID, buildSA, "the GitHub App check of "+repo)

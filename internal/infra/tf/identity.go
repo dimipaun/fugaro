@@ -472,10 +472,22 @@ func RemovedIdentity(rc ResourceChange) RemovalIdentity {
 // instanceValue is a before view's value for a per-instance attribute as an
 // identity writes it: a string as the plan wrote it, and a NUMBER as the
 // decimal the plan wrote — google_storage_bucket_object.generation is a number
-// in terraform's JSON, and this is where it is read. The values these
-// attributes hold are RFC 3339 timestamps, uids and small integers, and the
-// integer ones (a generation, a service account's unique_id) are far below
-// 2^53, which float64 holds exactly, so the decimal is the plan's own.
+// in terraform's JSON, and this is where it is read.
+//
+// That one is the only number of the seven attributes removalInstanceAttributes
+// binds. The rest are RFC 3339 timestamps (a bucket's time_created, a secret's
+// and a repository's create_time), uids, and a service account's unique_id —
+// and the provider writes every one of those as a STRING, unique_id included,
+// which is why nothing here renders them. unique_id is the case that makes the
+// point: it is a 21-digit number, above 2^53, so a float64 could not hold it
+// exactly, and the value an identity carries for it is the plan's own text
+// rather than a rendering of a number.
+//
+// A generation is exact, and it is exact on both sides at once: the digits
+// terraform's JSON was parsed from are already a float64 by the time this reads
+// them, GCS's generations are far below 2^53, and RemovedIdentity and
+// ApprovalFor both come through here — so the entry the owner approves is the
+// entry the gate compares, byte for byte.
 //
 // Any other value — a null, an object, a list, a bool — is "", the fail-closed
 // answer: a view that does not carry the value in the shape the provider

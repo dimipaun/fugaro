@@ -293,6 +293,14 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 		return "" // no workflow has a deployed job here yet
 	}
 	mount := jobConfigCopyMountNote(slices.Sorted(maps.Keys(projectScopes)))
+	// The credentials clause (C1.20) is orthogonal to both of the halves
+	// below: it is about the workflow's own auth mode and the two owner-run
+	// steps it needs, not about anything the deployed copy carries. It is
+	// therefore the LAST clause of every shape this note takes, and it is a
+	// reason to speak on its own — a cascade repository whose env copy
+	// matches still has something to be told, which is why the silent branch
+	// below is reached only when all three clauses are "".
+	creds := jobConfigCopyCredentialsNote(cfg)
 	if len(diffs) == 0 {
 		// The mount-only case: nothing the diff can see has drifted, but
 		// the mounts are the half it never sees, so the note is still
@@ -300,10 +308,13 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 		// the last init --repo. Nobody holds such a name, though: then
 		// there is nothing this note could tell them and it stays
 		// silent, exactly as it did before the mounts had a clause.
-		if mount == "" {
+		if mount == "" && creds == "" {
 			return ""
 		}
-		return "the deployed job's environment matches the local project config, but the mounts are not in that copy: " + mount
+		if mount == "" {
+			return "the deployed job's environment matches the local project config, but " + creds
+		}
+		return "the deployed job's environment matches the local project config, but the mounts are not in that copy: " + mount + joinClause(creds)
 	}
 	stale := fmt.Sprintf("the deployed job's copy of the local project config is STALE (%s): a version upgrade never refreshes it",
 		strings.Join(diffs, "; "))
@@ -313,17 +324,20 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 	// are is the difference between a note the operator acts on and one they
 	// learn to ignore.
 	if p := jobConfigCopyPolicyNote(cctx, lc); p != "" {
-		if mount == "" {
-			return stale + p
-		}
-		return stale + p + "; " + mount
+		return stale + p + joinClause(mount) + joinClause(creds)
 	}
 	tail := fmt.Sprintf("; runs on %s use the old copy until you run fugaro init --repo . in your own terminal (never run automatically)",
 		pluginwire.Printable(repo))
-	if mount != "" {
-		tail += "; " + mount
+	return stale + tail + joinClause(mount) + joinClause(creds)
+}
+
+// joinClause is one "; "-separated clause, or nothing when the clause is ""
+// (so a caller never emits a trailing "; ").
+func joinClause(s string) string {
+	if s == "" {
+		return ""
 	}
-	return stale + tail
+	return "; " + s
 }
 
 // jobConfigCopyMountNote is the drift note's mount clause (plan Task 2.3
@@ -354,6 +368,39 @@ func jobConfigCopyMountNote(names []string) string {
 	}
 	return fmt.Sprintf("what a job mounts is still decided here: a project secret created or deleted after the last `fugaro init --repo .` changes what this repository's job mounts (`fugaro secrets set NAME`, D2's default), and for this repository those names are %s — that is what a re-run is for, while a new version of one of them or a rotated value needs no re-run, because the job mounts the container and not a copy of the value; a run picks a mount change up on the next `fugaro init --repo .` in your own terminal, until phase 3 gives the mounts to a shared profile",
 		strings.Join(names, ", "))
+}
+
+// jobConfigCopyCredentialsNote is the drift note's credentials clause (plan
+// task C1.20): the one thing `fugaro upgrade` has to say about the
+// credentials service, and the reason it has to say it here.
+//
+// `agent.auth: cascade` is a value the setup skill offers and the config
+// reader accepts (C1.1) from the release that carries the service, and a
+// repository whose file names it is a repository whose jobs must NOT mount a
+// model credential: the run asks the installation's service for one instead.
+// That is not something a version upgrade does. Two owner-run steps do it —
+// the installation's credentials stage, which turns the service on, and each
+// repository's own `fugaro init --repo .`, which drops the job's
+// model-secret accessors and grants its account an invoker on the service —
+// and until they have run, the checkout says `cascade` while its jobs are
+// unchanged, exactly the half-state the skill's offer is pinned against
+// (C1.19). An upgrade is where the operator learns it: the step names both,
+// in the order they have to run.
+//
+// "" for every other auth: nothing of this is about a workflow that mounts
+// its own credential, which is every repository until its file says
+// otherwise. The check is the resolved auth (the same defaulting the config
+// reader does), so a file that names none is judged by the default rather
+// than by the empty string.
+func jobConfigCopyCredentialsNote(cfg *config.Config) string {
+	auth := cfg.Agent.Auth
+	if auth == "" {
+		auth = config.DefaultAgentAuth
+	}
+	if auth != config.AuthCascade {
+		return ""
+	}
+	return fmt.Sprintf("this repository's workflows run with agent.auth: %s, and that mode's credential comes from the installation's credentials service at call time: a job that is `cascade` must mount no model credential at all, and the two steps that make it so are owner-run. Turn the service on in the installation with `fugaro init --provision-credentials` (a typed confirmation, and it needs the installation's Firebase rules redeployed with `fugaro init --firebase` first), then run `fugaro init --repo .` in this checkout and in every other repository of the project, which is what drops each job's model-secret accessors and grants its account an invoker on the service. Until both have run, a %s run is refused at launch and the deployed job still mounts the credential it should not", config.AuthCascade, config.AuthCascade)
 }
 
 // jobConfigCopyPolicyNote is the drift note's policy clause: what a
