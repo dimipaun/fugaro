@@ -553,6 +553,14 @@ func TestOnlyTheDeployerRolesNameTheDeployer(t *testing.T) {
 // after apply or with more than one condition hands the deployer every update,
 // delete, setIamPolicy and actAs of the scoped role project-wide, which is the
 // account that could then reach the runs bucket and forge the marker.
+//
+// The condition known only after apply is a row for EACH of the two roles, and
+// the plain role is not the scoped one's case under another name: a computed
+// condition is not in `after` at all, so a plain fugaroDeployer binding carrying
+// one reads as the modules' own — there is no condition to see and nothing to
+// refuse — and the one role that must never be conditional is left decided
+// during apply. Delete the unknown-condition check in deployerGrant and both of
+// those rows fail with no refusal at all, while every other row still passes.
 func TestDeployerGrantConditions(t *testing.T) {
 	const account = "serviceAccount:fugaro-deployer@proj-1.iam.gserviceaccount.com"
 	scoped := "projects/proj-1/roles/" + DeployerStorageRole
@@ -587,7 +595,15 @@ func TestDeployerGrantConditions(t *testing.T) {
 		"the plain role with no condition":                     {role: plain, member: account, covered: true},
 		"the plain role under the scoped condition":            {role: plain, member: account, after: map[string]any{"condition": exact}, covered: false, why: "under a condition"},
 		"the plain role under any condition":                   {role: plain, member: account, after: map[string]any{"condition": cond("fugaro-x", "true")}, covered: false, why: "under a condition"},
-		"the plain role to a person":                           {role: plain, member: "user:me@example.com", covered: false, why: "kind of principal"},
+		// The plain role's condition being UNKNOWN is its own row, and it is the
+		// one the two rows above cannot stand in for: a wholly computed condition
+		// is not in `after` at all, so the "under a condition" check sees no
+		// condition and the binding reads as the modules' plain one — which
+		// leaves `fugaroDeployer` decided during apply, on the account the
+		// fence exists for.
+		"the plain role with a wholly computed condition":        {role: plain, member: account, unknown: map[string]any{"condition": true}, covered: false, why: "not known"},
+		"the plain role with a condition known only after apply": {role: plain, member: account, unknown: map[string]any{"condition": []any{map[string]any{"expression": true}}}, covered: false, why: "not known"},
+		"the plain role to a person":                             {role: plain, member: "user:me@example.com", covered: false, why: "kind of principal"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			after := map[string]any{"member": tc.member, "role": tc.role}
