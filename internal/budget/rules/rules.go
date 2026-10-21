@@ -155,6 +155,25 @@ const (
 	MaxPublicKey = 4096
 	// MaxBootLength bounds a heartbeat's boot id: the schema's BOOT_MAX.
 	MaxBootLength = 64
+	// LeaseGraceMs is how long a lease keeps its seat without a renewal, in
+	// epoch milliseconds: internal/lease's DefaultGrace (10 minutes, D2), the
+	// same number runstore.ClaimTTL and shared/lease's CLAIM_TTL use. It is
+	// baked into the rules because the *database* is what decides whether a
+	// takeover may land: a client whose grace disagreed with this one would
+	// either take a seat the database still considers held (and be refused) or
+	// refuse a takeover the database would have allowed. The two numbers are
+	// held together by internal/lease's
+	// TestTheRulesCarryTheLeaseAndTheGraceWeApply, which reads the generated
+	// document rather than this constant — what has to agree is the deployed
+	// rules, not a second copy of the number.
+	LeaseGraceMs int64 = 600_000
+	// MaxGeneration bounds a lease's fencing token (internal/lease's
+	// Record.Generation): the largest integer a double represents exactly
+	// (2^53-1), the line MaxTimestamp is held to and for the same reason — the
+	// rules compare the new value with the old one plus one, and past that line
+	// the database's arithmetic rounds. The token moves by one per takeover, so
+	// a bound no lease reaches is not a limitation.
+	MaxGeneration int64 = 1<<53 - 1
 )
 
 // The character patterns the rules apply, each the shared schema's own regex
@@ -206,6 +225,8 @@ func Generate() ([]byte, error) {
 		"MaxTimestamp":       MaxTimestamp,
 		"MaxAgentNameLength": MaxAgentNameLength,
 		"MaxOptionLength":    MaxOptionLength,
+		"LeaseGraceMs":       LeaseGraceMs,
+		"MaxGeneration":      MaxGeneration,
 	}); err != nil {
 		return nil, fmt.Errorf("rules: template: %w", err)
 	}
@@ -639,6 +660,8 @@ func wordMacro(m string, depth int) (string, error) {
 		return "$i.matches(" + indexPattern(MaxAgents) + ")", nil
 	case "PERRUNOK":
 		return perRunOK(depth)
+	case "LEASEWRITE":
+		return leaseWrite(), nil
 	case "GLOBALDAILY":
 		return "root.child('config/caps/global/dailyMicros').val()", nil
 	case "RUNDELTA":
@@ -668,6 +691,72 @@ func wordMacro(m string, depth int) (string, error) {
 // them in the pattern's set.
 func boundedMatch(max int, pattern string) string {
 	return fmt.Sprintf("(newData.isString() && newData.val().length > 0 && newData.val().length <= %d && newData.val().matches(%s))", max, pattern)
+}
+
+// leaseWrite is the lease's whole `.write`: the four transitions that may
+// change `orchestrators/$slug/$job/lease`, and nothing else (central
+// orchestrator P3, decisions D1, D2, D3).
+//
+// It is on the lease node's `.write` and not on a child's `.validate` because
+// of how the engine evaluates a write. The three statements below were
+// measured on the emulator with this document (they are what
+// TestLeaseDeletingARequiredFieldIsRefused and its neighbours pin), and the
+// first two are easy to get backwards:
+//
+//   - A `.write` is consulted at the location written *and at every ancestor*,
+//     with `data` and `newData` read at the ancestor. So this one rule sees
+//     every write to any part of the lease as the whole record it makes, and
+//     the four transitions below are the only ones it accepts.
+//   - A `.validate` is consulted at the location written, at its ancestors and
+//     at the children of the location written — but not at a node that is none
+//     of those. The lease node's own `.validate` is therefore *not* inert: it
+//     is read for a write to `lease/holder_uid` (the lease node is an ancestor
+//     of the written location), which is what makes its hasChildren clause the
+//     thing that refuses a write deleting a required field — the `.write`
+//     predicate alone allows the holder's `renewed_at`-only write, that being
+//     the heartbeat. The transition used to live on the `generation` child,
+//     and that is exactly why it was bypassable: a write to `lease/holder_uid`
+//     never reaches a sibling, so the seat was stolen field by field. Deleting
+//     the hasChildren clause, or moving it onto a child, reopens that class of
+//     write rather than tidying anything.
+//   - A child `.write: false` would not help: a grant cascades down and cannot
+//     be withdrawn by a deeper node (measured: 200).
+//
+// The four transitions, each reading `data` (the record now), `newData` (the
+// record after this write) and `auth.uid` (the writer):
+//
+//  1. **Create** on an absent node, at generation 1, by the writer itself.
+//  2. **Renew**: the seat is the writer's already and stays its own, at the
+//     same generation. This is the heartbeat, and it is the generation that
+//     makes it a heartbeat rather than a takeover: the fencing token does not
+//     move for a holder, so a stale process that lost the seat to a takeover
+//     writes a generation that is no longer the recorded one and is refused.
+//  3. **Takeover** of a seat that is nobody's (a released lease keeps its
+//     node, with an empty holder_uid) or stale — its holder has not renewed
+//     for the grace — moving the generation on by one. The staleness test is
+//     `now - renewed_at >= LeaseGraceMs`, the database's own `now` and never a
+//     clock the writer brought with it; internal/lease's Record.Fresh applies
+//     the same comparison at the same boundary (`now < renewed_at + grace`),
+//     so the two never disagree about the instant a seat becomes takeable.
+//  4. **Release**: the holder gives the seat up, moving the generation on and
+//     emptying the holder. Only the recorded holder may, for renew's reason.
+//
+// Every transition fixes the generation or moves it by exactly one, and every
+// one of them requires the writer to be the holder the record ends with — so a
+// write that changes no generation (a child write, a multi-path update that
+// rewrites `holder` alone) satisfies none of them unless the writer already
+// holds the seat. The stamp is required to be the database's own by the
+// renewed_at field's `.validate` (`NEW == now`), which is what a write can only
+// satisfy with rtdb.ServerTimestamp.
+func leaseWrite() string {
+	uid, gen := "newData.child('holder_uid').val()", "newData.child('generation').val()"
+	oldUid, oldGen := "data.child('holder_uid').val()", "data.child('generation').val()"
+	create := "(!data.exists() && " + uid + " == auth.uid && " + gen + " == 1)"
+	renew := "(data.exists() && " + oldUid + " == auth.uid && " + uid + " == auth.uid && " + gen + " == " + oldGen + ")"
+	take := fmt.Sprintf("(data.exists() && %s == auth.uid && %s == %s + 1 && (%s == '' || now - data.child('renewed_at').val() >= %d))",
+		uid, gen, oldGen, oldUid, LeaseGraceMs)
+	release := "(data.exists() && " + oldUid + " == auth.uid && " + uid + " == '' && " + gen + " == " + oldGen + " + 1)"
+	return "(" + create + " || " + renew + " || " + take + " || " + release + ")"
 }
 
 // kindOf is the kind of the message at the snapshot, as the rules read it: the

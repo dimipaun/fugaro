@@ -466,8 +466,8 @@ func (h *harness) mustRead(c *rtdb.Client, path string) {
 	}
 }
 
-// rawDenied sends one non-multi-path request with the run's token (the REST
-// client has no root PUT) and demands a 401.
+// rawDenied sends one non-multi-path request with the token these claims
+// describe (the REST client has no root PUT) and demands a 401.
 func (h *harness) rawDenied(c claims, method, path, body string) {
 	h.t.Helper()
 	before := h.snapshot()
@@ -479,7 +479,7 @@ func (h *harness) rawDenied(c claims, method, path, body string) {
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
-		h.t.Fatalf("%s /%s with a run's token: status %d, want 401", method, path, resp.StatusCode)
+		h.t.Fatalf("%s /%s with this token: status %d, want 401", method, path, resp.StatusCode)
 	}
 	if after := h.snapshot(); after != before {
 		h.t.Fatalf("%s /%s denied but the database changed", method, path)

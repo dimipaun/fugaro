@@ -20,6 +20,11 @@ import (
 type Request struct {
 	Method, Path, Query string
 	Body                []byte
+	// Header is the request's headers, cloned. It is what a test reads to
+	// check a conditional write: the RTDB client's If-Match (PutIfMatch) and
+	// X-Firebase-ETag (GetETag) are headers, and a caller that wrote a lease
+	// with an unconditional PUT would be a compare-and-set that is not one.
+	Header http.Header
 }
 
 // Server records requests and hands them to a handler.
@@ -62,7 +67,7 @@ func newServer(t *testing.T, h func(w http.ResponseWriter, r *http.Request, body
 			return
 		}
 		s.mu.Lock()
-		s.reqs = append(s.reqs, Request{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Body: body})
+		s.reqs = append(s.reqs, Request{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Body: body, Header: r.Header.Clone()})
 		refusal, disabled := s.refusal, s.disabled
 		for sub, e := range s.pathRefusals {
 			if strings.Contains(r.URL.Path, sub) {

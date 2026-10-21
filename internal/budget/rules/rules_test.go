@@ -1167,31 +1167,39 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 
 // TestUserReadGrantsAreExactlyTheNamedFamilies: the read grants D112's answer
 // adds, and nothing else. The user claim reads the eight expressions a run
-// token already carried (each now `… || USER`) and the two nodes of its own
-// mailbox — and a grant anywhere else, on a family tension (b1) struck or on a
-// parent that would cascade to one, fails here as well as in the golden.
+// token already carried (each now `… || USER`), the two nodes of its own
+// mailbox, and the lease of one job (central-orchestrator D15: the seat is
+// what the local orchestrator and the app both have to be able to see, and the
+// `fugaro watch` half of P3 renders it) — and a grant anywhere else, on a
+// family tension (b1) struck or on a parent that would cascade to one, fails
+// here as well as in the golden.
 //
 // F11's property is the half this pins from the other side: the eight are the
 // only families a signed-in user reaches, so an account with no mu claim reads
 // nothing (admitted nowhere), and no family of the run's own slices — agents
 // and outcomes above all — was widened by this change.
+//
+// Hand mutation this fails on: granting the orchestrators subtree a read above
+// the lease (the whole `orchestrators` family, or a `$job`'s other nodes), or
+// granting the lease to anything but the device-allowlisted user claim.
 func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 	paths := generatedPaths(t)
-	// The eight, and the two mailbox nodes, which are scoped to the mailbox
-	// the claim owns.
+	// The eight, the two mailbox nodes, which are scoped to the mailbox the
+	// claim owns, and the lease of one job, which is scoped to the job.
 	// generatedPaths spells $slug as slugForPath (it is the one wildcard the
 	// tests substitute), so the keys below do too.
 	want := map[string]bool{
-		"config/caps/global":                       true,
-		"config/caps/defaults":                     true,
-		"config/caps/repos/" + slugForPath:         true,
-		"config/kill/global":                       true,
-		"config/kill/repos/" + slugForPath:         true,
-		"spend/$day/global":                        true,
-		"spend/$day/repos/" + slugForPath:          true,
-		"spend/$day/runs/" + slugForPath + "/$run": true,
-		"mailbox/$mb/outbox":                       true,
-		"mailbox/$mb/heartbeat":                    true,
+		"config/caps/global":                           true,
+		"config/caps/defaults":                         true,
+		"config/caps/repos/" + slugForPath:             true,
+		"config/kill/global":                           true,
+		"config/kill/repos/" + slugForPath:             true,
+		"spend/$day/global":                            true,
+		"spend/$day/repos/" + slugForPath:              true,
+		"spend/$day/runs/" + slugForPath + "/$run":     true,
+		"mailbox/$mb/outbox":                           true,
+		"mailbox/$mb/heartbeat":                        true,
+		"orchestrators/" + slugForPath + "/$job/lease": true,
 	}
 	got := map[string]string{}
 	for p, attrs := range paths {
@@ -1672,17 +1680,45 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 			t.Errorf("/%s changed:\n  was %v\n  now %v", p, want, got)
 		}
 	}
-	// And the addition is the one this task makes: the new paths are exactly
-	// the credentials family. Anything else that appears here is a rules change
-	// nobody asked for.
+	// And the additions are the two this document has made since generation 3:
+	// the credentials family (C1.3) and the orchestrators lease (central
+	// orchestrator P3, which is generation 4). Anything else that appears here
+	// is a rules change nobody asked for.
 	for p := range after {
 		if _, ok := before[p]; ok {
 			continue
 		}
-		if !isNewCredsPath(p) {
+		if !isNewCredsPath(p) && !isNewLeasePath(p) {
 			t.Errorf("/%s is new and is not one of this task's additions", p)
 		}
 	}
+}
+
+// isNewLeasePath reports whether p is one of the nodes the lease family adds:
+// the three wildcard levels, the record, and the fields the rules name. An
+// explicit set rather than a prefix match, for isNewCredsPath's reason — a path
+// *under* the family is a change to what the family contains, and a grant
+// hidden under /orchestrators is exactly what a prefix match would wave
+// through.
+func isNewLeasePath(p string) bool {
+	base := "orchestrators/" + slugForPath + "/$job"
+	for _, q := range []string{
+		"orchestrators",
+		"orchestrators/" + slugForPath,
+		base,
+		base + "/$other",
+		base + "/lease",
+	} {
+		if p == q {
+			return true
+		}
+	}
+	for _, f := range []string{"holder", "holder_uid", "generation", "renewed_at", "mode", "pr", "$other"} {
+		if p == base+"/lease/"+f {
+			return true
+		}
+	}
+	return false
 }
 
 // isNewCredsPath reports whether p is one of the three things C1.3 adds: the
@@ -1709,29 +1745,31 @@ func isNewCredsPath(p string) bool {
 	return p == entry+"credential" || p == entry+"waiting_until"
 }
 
-// TestRulesVersionUnchanged: this task does not move the rules generation. The
-// deployed document changes, but the generations an installation compares are
-// left where they are, and the credentials children get a marker of their own
-// instead (C1.3's "no RulesVersion bump", marker.go):
+// TestRulesVersionUnchanged: the document generation moves for the lease, and
+// nothing else does.
 //
 //   - projectpolicy.RulesVersion is the generation of the whole document, read
-//     by the deploy's downgrade refusal, the runner's policy gate and doctor's
-//     policy-rules-skew. Moving it would tell every installation whose owner has
-//     not redeployed yet that its rules are older than the binary's, for a
-//     change that adds optional children of nodes runs already write.
-//   - projectpolicy.PolicyRulesVersion gates the policy nodes, which this change
-//     does not touch. It stays 1.
+//     by the deploy's downgrade refusal, the runner's policy messages and
+//     doctor's policy-rules-skew. The lease is a subtree that did not exist,
+//     and the seat a holder relies on is only a seat because the deployed rules
+//     say so — under a generation-3 document every lease call is refused — so
+//     this one moves. It is 4 (central-orchestrator P3).
+//   - projectpolicy.PolicyRulesVersion gates the policy nodes, which this
+//     change does not touch: no published policy is dropped by the bump and
+//     publishing keeps working. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
 //     which a cascade launch, the init stage and doctor read (C1.19-C1.21).
+//     The credentials children did *not* move the document generation (C1.3's
+//     "no RulesVersion bump", marker.go) and this change does not move theirs.
 //
 // The numbers are asserted rather than referenced so that a bump has to come
 // here and say so.
 //
-// Hand mutation this fails on: bumping any of the three (or lowering
+// Hand mutation this fails on: bumping any of the four (or lowering
 // CredsRulesVersion), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 3 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 3: this change does not move the document generation", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 4 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 4: the lease subtree is a generation of its own", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)

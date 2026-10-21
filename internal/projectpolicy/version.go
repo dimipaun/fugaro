@@ -214,9 +214,42 @@ const PolicyRulesVersion = 1
 // C1.21 the trap is recorded here and in `internal/budget/rules`'s KNOWN GAP
 // rather than reported.
 //
+// Generation 4 is the orchestrators lease (central-orchestrator plan P3,
+// decisions D1, D2, D3): the `orchestrators/<slug>/<job>/lease` subtree — the
+// record a shepherd holds while it acts on a job, and the compare-and-set that
+// hands the seat on. It moves the generation where generation 3's credentials
+// children deliberately did not, and the difference is the direction the
+// change is unsafe in. The credentials children are optional fields of nodes a
+// run already writes: an installation that never opts in behaves identically,
+// and a bump would have cost every installation whose owner has not redeployed
+// its published policy for nothing. The lease is a **subtree that did not
+// exist**, and what matters is the write that must not be allowed before the
+// document is deployed. A takeover is a compare-and-set the database enforces
+// (internal/budget/rules' LEASETAKE: a seat is taken over only when it is free
+// or its holder has not renewed for the grace), and the seat the *holder*
+// relies on is only a seat because the rules say so: under a generation-3
+// document every lease call is refused — no grant reaches the path and the
+// root is `.write: false` — so there is no state in which two orchestrators
+// both believe they hold one. The generation is what makes that refusal the
+// documented one rather than a permission error an operator has to interpret.
+//
+// What the bump does to an existing installation, plainly. The policy is
+// untouched: Read and the publish gate stay on PolicyRulesVersion (1), so no
+// published policy is dropped and publishing keeps working. What moves is
+// `fugaro doctor`'s `policy-rules-skew` — it compares the deployed document
+// with this binary's — which warns until the owner re-runs `fugaro init
+// --firebase` and the deploy records generation 4, and the deploy's own
+// downgrade refusal (internal/infra's DB.Plan), which stops a plan from
+// putting an older document over a newer marker. The runner's messages name
+// this constant as the generation it reads, so a policy it cannot read is
+// reported against the document this binary expects. Until the redeploy the
+// installation simply has no central orchestrators, which is P3's own default:
+// the feature is off until a project opts in, and D19's service is not
+// deployed at all.
+//
 // It is not Version: the policy schema and the rules that guard it move
 // independently.
-const RulesVersion = 3
+const RulesVersion = 4
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own
