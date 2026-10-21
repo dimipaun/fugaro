@@ -461,6 +461,48 @@ func TestAccountsLsNeverFailsOnAnUnreadableMark(t *testing.T) {
 	}
 }
 
+// TestAccountsLsStateReadIsBounded: the state column's read accepts the
+// request and never answers — the unreachable database that drops packets
+// rather than refusing, which is the case a per-call timeout turns into a
+// minute of a terminal showing nothing, because the project check is a call of
+// its own. The command bounds the whole read (accountsStateBudget) instead, so
+// it answers in seconds with the names and a note saying why, and the note
+// names the bound rather than leaving the operator to guess whether the command
+// hung or the database is empty.
+//
+// The elapsed time is the assertion: with the bound removed the marks read
+// waits out internal/rtdb's 30 s per-call timeout, so the threshold below is
+// wide enough for a loaded machine and far below the unbounded wait.
+func TestAccountsLsStateReadIsBounded(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.appendConfig(t, claudeAccountsConfig)
+	_, release := f.db.HoldNext("creds/marks")
+	defer release()
+
+	start := time.Now()
+	out, _, err := execute(t, "accounts", "ls", "--repo", "acme/other", "--json")
+	took := time.Since(start)
+	if err != nil {
+		t.Fatalf("accounts ls failed on a read that never answered: %v", err)
+	}
+	if took > 15*time.Second {
+		t.Fatalf("accounts ls took %s on a read that never answered, want it bounded well below the per-call timeout", took)
+	}
+	var doc accountsListDoc
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("unmarshal %q: %v", out, err)
+	}
+	if len(doc.Accounts) != 3 {
+		t.Errorf("accounts = %v, want the three names: they are answered without the network", doc.Accounts)
+	}
+	if doc.States != nil {
+		t.Errorf("states = %+v, want none: the read did not answer", doc.States)
+	}
+	if !strings.Contains(doc.StateNote, accountsStateBudget.String()) {
+		t.Errorf("state_note = %q, want it to name the bound (%s) the read was cut off at", doc.StateNote, accountsStateBudget)
+	}
+}
+
 // TestAccountsClearMark is C1.21's clear: the operator replaces a refused
 // token, then clears the account's mark, and the mark becomes available. The
 // write is the operator's own (an admin), it is conditional (PutIfMatch, so a

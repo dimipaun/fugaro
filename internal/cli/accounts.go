@@ -120,6 +120,12 @@ and a machine where no project config could be selected, answer with the names
 alone and a note saying why: the command never turns "could not read" into
 "every account is available".
 
+That read is bounded: five seconds for the whole of it (the token source, the
+project check and the marks), one attempt per call, and no retry. A database
+that is unreachable rather than refusing — a laptop offline, a firewall that
+drops — therefore costs this command seconds, not the per-call timeout twice,
+and the names are printed with a note saying the states could not be read.
+
 --json's "complete" is false when no project config could be selected for a
 reason other than an explicit --config/--project/$FUGARO_CONFIG/$FUGARO_PROJECT
 (several project configs with nothing to pick one, for example): "accounts"
@@ -205,6 +211,25 @@ func accountsLs(cmd *cobra.Command, o accountsOptions) error {
 	return printAccounts(cmd.OutOrStdout(), doc, o.asJSON)
 }
 
+// accountsStateBudget bounds the whole state read of `fugaro accounts ls`: the
+// token source, the project check and the marks read, together.
+//
+// The command is an inventory an operator runs while looking at a terminal, and
+// the names it prints — the reason it exists — are already answered without the
+// network. The state column is not, and it is the only part that can hang: with
+// no bound, a database that is unreachable rather than refusing (a laptop
+// offline, a firewall that drops, a service that accepts and never answers)
+// leaves the command waiting out rtdb's per-call timeout twice — up to a minute
+// of a screen that shows nothing. Five seconds is enough for a read that is
+// going to answer from anywhere the operator can work, and the note
+// accountsStates returns says what happened, so the names are printed either
+// way.
+//
+// Each call is still ONE attempt, as every non-stream call in internal/rtdb is
+// (there is no retry to disable): the bound shortens the waiting, it does not
+// change the number of requests.
+const accountsStateBudget = 5 * time.Second
+
 // accountsStates is every listed account's credential state, read from the
 // cascade's own subtree (creds/marks, internal/creds). The second return is
 // the note to carry when there is nothing to show, and it is never a failure:
@@ -223,9 +248,10 @@ func accountsLs(cmd *cobra.Command, o accountsOptions) error {
 // rather than printing every account as available, which is a claim about
 // marks this command did not read.
 //
-// The names above are answered without the network; this is where the command
-// stops being purely local. A project with no budget backend returns before
-// this point and stays offline, which is what its own note says.
+// The names are answered without the network; this is where the command stops
+// being purely local, and it is where accountsStateBudget bounds it. A project
+// with no budget backend returns before that point and stays offline, which is
+// what its own note says.
 func accountsStates(ctx context.Context, lc *localcfg.Config, names []string, selNote string) (map[string]accountState, string, error) {
 	if lc == nil {
 		return nil, "no project config could be selected, so no credential state could be read (" + selNote + ")", nil
@@ -242,20 +268,25 @@ func accountsStates(ctx context.Context, lc *localcfg.Config, names []string, se
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return nil, "", err
 	}
+	// The whole read is bounded, from the token source down (accountsStateBudget).
+	// The deadline travels into every request this read makes through the
+	// context, so rtdb's own per-call timeout is a ceiling this only shortens.
+	ctx, cancel := context.WithTimeout(ctx, accountsStateBudget)
+	defer cancel()
 	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
 	if err != nil {
-		return nil, fmt.Sprintf("no credential state could be read: %v", err), nil
+		return nil, fmt.Sprintf("no credential state could be read within %s: %v", accountsStateBudget, err), nil
 	}
 	// The database must be this project's own (the check every other reader and
 	// writer makes): a budget.rtdb_url pointing at another project's database
 	// would otherwise have this command print that project's marks as this
 	// project's states, which is a wrong answer rather than a missing one.
 	if err := checkDBProject(ctx, db, lc); err != nil {
-		return nil, fmt.Sprintf("no credential state could be read: %v", err), nil
+		return nil, fmt.Sprintf("no credential state could be read within %s: %v", accountsStateBudget, err), nil
 	}
 	marks, err := (&creds.RTDBStore{DB: db}).Marks(ctx)
 	if err != nil {
-		return nil, fmt.Sprintf("no credential state could be read: %v", err), nil
+		return nil, fmt.Sprintf("no credential state could be read within %s: %v", accountsStateBudget, err), nil
 	}
 	out := make(map[string]accountState, len(names))
 	for _, n := range names {

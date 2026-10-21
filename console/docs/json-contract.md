@@ -566,8 +566,14 @@ accounts"** (the type's own doc comment is the authority). Flags: `--repo`
 local and offline — "never calls Secret Manager" — but **the state column is
 not**: when the selected project has a Firebase budget backend, the marks are
 read from that database as the person (ADC, an admin's read of `creds/marks`),
-which is what makes `states` a value rather than an assumption. A project with
-no backend stays offline and answers with the names and a `state_note`.
+which is what makes `states` a value rather than an assumption. **That read is
+bounded — five seconds for the whole of it, one attempt per call, no retry**
+(`accountsStateBudget`, CLI 0.10.0) — so a database that is unreachable rather
+than refusing (a laptop offline, a firewall that drops) costs the screen
+seconds, not the per-call timeout twice, and the command answers with the names
+and a `state_note` naming the bound. A project with no backend, by contrast,
+makes no call at all: it stays offline and answers with the names and a
+`state_note` of its own.
 
 **`states` (CLI 0.10.0, credentials-service C1.21)** is every listed account's
 credential state, keyed by account name, and it is **absent exactly when no
