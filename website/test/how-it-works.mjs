@@ -958,6 +958,13 @@ function different(values) {
  *  fill, the loop's own line by its stroke, with `fill: none` declared over it. */
 const PAINT_PROPERTIES = { text: ['fill'], line: ['stroke'], rect: ['fill', 'stroke'], path: ['fill', 'stroke'] }
 
+/** What a drawing holds besides the shapes it paints: the two `<svg>` roots, the groups the
+ *  geometry is nested in, and the words a screen reader reads. An element of any other name is
+ *  refused rather than skipped — a `<polygon>`, a `<circle>` or a `<marker>` added to the drawing
+ *  is a shape this reading does not know how to resolve the paint of, and a shape it cannot read
+ *  is exactly where an unpainted one would hide. */
+const DRAWING_CONTAINERS = new Set(['svg', 'g', 'title', 'desc', 'defs'])
+
 /** WCAG 2.1 AA for body text: the ratio every label of the drawing is held to. The labels are
  *  12 px and up (the floor `runDiagramFailures` holds the drawings to), which is not "large
  *  text", so the ratio is the body one and not the 3:1 UI one. */
@@ -1109,7 +1116,15 @@ export function runPaintFailures(html, css, palette = paletteTokensInForce()) {
 
       for (const shape of walk(svg)) {
         const properties = PAINT_PROPERTIES[shape.name]
-        if (properties === undefined) continue
+        if (properties === undefined) {
+          if (!DRAWING_CONTAINERS.has(shape.name)) {
+            note(
+              shape,
+              `it is a \`<${shape.name}>\`, and this reading knows how a drawing's \`<rect>\`, \`<path>\`, \`<line>\` and \`<text>\` are painted and nothing else. A shape it cannot read is a shape whose paint no check holds, which is the gap the defect of 2026-10-21 came through: teach this reading the element and how it takes its colour`,
+            )
+          }
+          continue
+        }
         const readings = properties.map((property) => ({ property, ...(paintInForce(css, shape, property) ?? { value: null, from: null }) }))
         const declared = readings.filter((reading) => reading.value !== null)
 
@@ -1422,6 +1437,11 @@ test('every paint refusal fires on the defect it names', (t) => {
   const noFillRule = css.replace(new RegExp(`(\\.run-diagram\\[${scope}\\] \\.run-card\\{[^{}]*?)fill:[^;]+;`), '$1')
   assert.notEqual(noFillRule, css, 'the page\'s stylesheet no longer paints `.run-card` with a `fill` this fixture can take out')
   const attributeVar = page.replace(/<rect class="run-card"/, '<rect fill="var(--surface)" class="run-card"')
+  // And a shape of a kind this reading has not been taught: the drawing is rect, path, line and
+  // text today, and a `<polygon>` added to it tomorrow would otherwise be the one shape no check
+  // holds — which is how the drawing shipped unpainted in the first place.
+  const unknownShape = page.replace(/<line /, '<polygon points="0,0 4,0 2,4" ')
+  assert.notEqual(unknownShape, page, 'the drawing no longer holds a `<line>` this fixture can rebuild as a shape the reading does not know')
 
   const cases = [
     ['the scoped paint rules the drawing shipped with (2026-10-21)', { html: page, css: rescoped }, /no rule of the page's stylesheet can reach it/],
@@ -1429,6 +1449,7 @@ test('every paint refusal fires on the defect it names', (t) => {
     ['a card painted through a var() in its presentation attribute', { html: attributeVar, css: noFillRule }, /`var\(\)` is not a colour in an SVG presentation attribute/],
     ['a label painted on the surface it is drawn on', { html: page, css: repaint('run-small', 'var(--border)') }, /under the 4\.5:1 the site's own text is held to/],
     ['a label drawn in a colour no contrast check can compute', { html: page, css: repaint('run-name', 'currentColor') }, /this reading cannot turn into a colour/],
+    ['a shape of a kind the reading has not been taught', { html: unknownShape, css }, /knows how a drawing's .* are painted and nothing else/],
   ]
   for (const [what, fixture, wanted] of cases) {
     const failures = verdict(fixture.css, fixture.html)
