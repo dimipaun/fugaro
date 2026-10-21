@@ -27,17 +27,22 @@
 // alphanumeric or `_`, so neither `--force` nor `..` is a run and neither is a
 // repository. Every OTHER value the schema accepts may be `-`-leading, may be
 // `.` or `..`, may carry `*`, `?`, `\`, quotes or a format character (U+202E, a
-// zero-width space, a byte-order mark), or may be a single space. An id and a
-// boot are database keys and nothing more: an id may be a space, or begin with
-// `--`, or carry a metacharacter, and an agent id is drawn from
-// [A-Za-z0-9._:-], which admits `--force` and `..`. A sender, a body, an option
-// and an advertised name are wider still. All of that is deliberate — these are
-// strings a phone speaks, not arguments a program reads — so no identity and no
-// key may be passed to a program as argv or used as a path segment: a task that
-// must name a file after an id encodes it first (T4's ledger), and no task may
-// hand an agent id, a boot or a key to a command (T5 and T6).
+// zero-width space, a byte-order mark), or may be a single space. An id is a
+// database key and nothing more: it may be a space, or begin with `--`, or
+// carry a metacharacter. An agent id and a boot are **not** keys: both ends
+// validate each with the identity field — `[A-Za-z0-9._:-]`, bounded by its own
+// width, `AgentMax` for an agent and `BootMax` for a boot — so a space and every
+// metacharacter are refused in one, while `--force` and `..` are both valid
+// identities. A narrower alphabet is not argv-safety, and a boot's width is its
+// own rather than an id's. A sender, a body, an option and an advertised name
+// are wider still. All of that is deliberate — these are strings a phone speaks,
+// not arguments a program reads — so no identity and no key may be passed to a
+// program as argv or used as a path segment: a task that must name a file after
+// an id encodes it first (T4's ledger), and no task may hand an agent id, a boot
+// or a key to a command (T5 and T6).
 // TestTheDocSaysWhichValuesAreNotArgvSafe pins this paragraph, both halves of
-// it: what the four fields refuse, and what the rest accept.
+// it: the shapes the four argv-safe fields refuse, and the odd values every
+// other field accepts.
 package mailbox
 
 import (
@@ -66,7 +71,8 @@ const (
 	SenderMax = 200
 	// TextMax bounds a message's body, in code units.
 	TextMax = 4096
-	// AgentMax bounds an agent id, and a boot id, which share one alphabet.
+	// AgentMax bounds an agent id. A boot id is drawn from the same alphabet
+	// (both are identityField values) but is bounded by BootMax, not by this.
 	AgentMax = 64
 	// AgentNameMax bounds the spoken name of an advertised agent.
 	AgentNameMax = 64

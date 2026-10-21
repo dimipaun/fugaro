@@ -720,9 +720,19 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 // that look like identifiers and are not.
 //
 // The four are `action.target.run`, `action.target.repo`, `action.target.pr` and
-// `action.head_sha`, and they are the four because their alphabets exclude a
-// leading flag character, every shell metacharacter and every path that is not a
-// name — the first half of this test is that exclusion, field by field.
+// `action.head_sha`, and they are the four because nothing a program must never
+// be handed can be spelled in them — the first half of this test is that, and
+// what "never handed" means is different for each kind of value:
+//
+//   - the three string fields (`run`, `repo`) are held against the three shapes
+//     a command line must never receive: a flag character first, a metacharacter
+//     inside, and a path that walks out of its directory;
+//   - `pr` is an integer, so it is held against the three ways a value fails to
+//     be a whole number of at least one — a number below one, a number that is
+//     not whole, and a string, which is where a flag character would live;
+//   - `head_sha` is a git object name, so it is held against the three ways a
+//     string fails to be one: a character that is not hex, an uppercase one, and
+//     a length that is neither of the two an object name may have.
 //
 // Every other value the schema accepts may be `-`-leading, may be `.` or `..`,
 // may carry `*`, `?`, `\`, quotes or a format character, or may be a single
@@ -790,11 +800,44 @@ func TestTheDocSaysWhichValuesAreNotArgvSafe(t *testing.T) {
 			"each half of a repository begins with an alphanumeric or `_`"},
 		{"a head SHA carrying a character that is not hex", merge(repo("owner/name"), strings.Repeat("a", SHAMin-1)+"*"),
 			"a head SHA is lowercase hex and nothing else"},
+		{"a head SHA carrying an uppercase character", merge(repo("owner/name"), strings.Repeat("a", SHAMin-1)+"A"),
+			"a git object name is lowercase hex, so an uppercase one is not a SHA this app signed"},
+		{"a head SHA of a length no object name has", merge(repo("owner/name"), strings.Repeat("a", SHAMin+1)),
+			"a head SHA is 40 or 64 characters, and nothing in between"},
+		{"a PR number below one", merge(map[string]any{"repo": "owner/name", "pr": number("0")}, strings.Repeat("a", SHAMin)),
+			"a PR is an integer of at least one, and no repository has a PR 0"},
+		{"a PR number that is not whole", merge(map[string]any{"repo": "owner/name", "pr": number("532.5")}, strings.Repeat("a", SHAMin)),
+			"a PR number is a whole number, and `gh pr merge 532.5` is not a command"},
+		{"a PR number written as a string", merge(map[string]any{"repo": "owner/name", "pr": "--force"}, strings.Repeat("a", SHAMin)),
+			"a PR is a number, so a flag character has no shape to arrive in"},
 	}
 	for _, tc := range refused {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, refusal := ValidateMessage(tc.record); refusal == nil {
 				t.Errorf("this value is accepted, and the paragraph says the four argv-safe fields cannot carry it: %s", tc.why)
+			}
+		})
+	}
+
+	// A boot is neither a key nor an id, and the paragraph says so: it is
+	// validated with the identity field, bounded by its own width. The two
+	// shapes an id would accept and a boot does not are a space -- an id may be
+	// one -- and a length past the bound, which is `BootMax` and not the wider
+	// `IDMax`.
+	refusedBoots := []struct {
+		name string
+		boot string
+		why  string
+	}{
+		{"a boot that is a single space", " ",
+			"a boot is an identity, and a space is not in [A-Za-z0-9._:-]"},
+		{"a boot one code unit past its bound", strings.Repeat("b", BootMax+1),
+			"a boot is bounded by BootMax, and not by the wider bound an id has"},
+	}
+	for _, tc := range refusedBoots {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, refusal := ValidateHeartbeat(heartbeat(Record{"boot": tc.boot})); refusal == nil {
+				t.Errorf("this boot is accepted, and the paragraph says no program may be handed one: %s", tc.why)
 			}
 		})
 	}
